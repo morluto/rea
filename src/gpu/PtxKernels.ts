@@ -297,6 +297,7 @@ const declaration = (
 export function* readPtxKernels(
   text: string,
   objectId: string,
+  targetTracker?: PtxTargetTracker,
 ): Generator<{ kernel: GpuKernel; coverage: "complete" | "partial" }> {
   if (Buffer.byteLength(text) > GPU_REPORT_BYTES)
     throw new BinaryResourceFailure(
@@ -313,8 +314,12 @@ export function* readPtxKernels(
   let kernelCount = 0;
   let outerDepth = 0;
   let version: PtxVersion | null = null;
+  let firstToken = true;
+  let targetTrackingEnabled = false;
   for (let step = iterator.next(); !step.done; step = iterator.next()) {
     const token = step.value;
+    const isFirst = firstToken;
+    firstToken = false;
     if (token.value === "{") {
       outerDepth++;
       continue;
@@ -328,6 +333,16 @@ export function* readPtxKernels(
     if (token.value === ".version") {
       const value = iterator.next();
       version = value.done ? null : ptxVersion(value.value.value);
+      if (isFirst) targetTrackingEnabled = version !== null;
+      continue;
+    }
+    if (
+      targetTracker !== undefined &&
+      targetTrackingEnabled &&
+      token.value === ".target"
+    ) {
+      const value = iterator.next();
+      targetTracker.observe(value.done ? undefined : value.value.value);
       continue;
     }
     if (token.value !== ".entry") continue;
@@ -567,11 +582,77 @@ export function* readPtxKernels(
   if (outerDepth !== 0) rejectGpu("Unbalanced PTX body");
 }
 
-interface PtxTargetFacts {
+export interface PtxTargetFacts {
   readonly recognized: boolean;
   readonly target: string | null;
   readonly limitation: string | null;
 }
+
+/** Single-pass `.target` directive accumulator shared by target discovery and module parsing. */
+export interface PtxTargetTracker {
+  observe(spelling: string | undefined): void;
+  markMalformed(): void;
+  facts(): PtxTargetFacts;
+}
+
+export const createPtxTargetTracker = (): PtxTargetTracker => {
+  let target: string | null = null,
+    targetIdentity: string | null = null,
+    targetArchitecture = -1,
+    ambiguous = false,
+    unsupported = false,
+    malformed = false;
+  return {
+    observe(spelling) {
+      if (spelling === undefined) {
+        unsupported = true;
+        return;
+      }
+      const match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
+      if (match === null) {
+        unsupported = true;
+        return;
+      }
+      const architecture = Number(match[1]);
+      if (!Number.isSafeInteger(architecture)) {
+        unsupported = true;
+        return;
+      }
+      const identity = ptxTargetIdentity(spelling);
+      if (architecture > targetArchitecture) {
+        target = spelling;
+        targetIdentity = identity;
+        targetArchitecture = architecture;
+        ambiguous = false;
+      } else if (
+        architecture === targetArchitecture &&
+        targetIdentity !== identity
+      ) {
+        ambiguous = true;
+      }
+    },
+    markMalformed() {
+      malformed = true;
+    },
+    facts() {
+      const recognized = target !== null;
+      const limitation = !recognized
+        ? null
+        : unsupported
+          ? "Unsupported PTX target directives leave the effective target unknown."
+          : ambiguous
+            ? "Same-generation PTX target profiles cannot be represented by one effective target."
+            : malformed
+              ? "Malformed PTX text prevents complete target discovery."
+              : null;
+      return {
+        recognized,
+        target: limitation === null ? target : null,
+        limitation,
+      };
+    },
+  };
+};
 
 /** PTX's compute spelling is an alias for the corresponding baseline SM target. */
 export const ptxTargetIdentity = (target: string): string =>
@@ -580,13 +661,8 @@ export const ptxTargetIdentity = (target: string): string =>
 /** Resolve all module-scope targets through the highest numbered architecture. */
 export const readPtxTarget = (text: string): PtxTargetFacts => {
   const stream = tokens(text);
-  let depth = 0,
-    target: string | null = null,
-    targetIdentity: string | null = null,
-    targetArchitecture = -1,
-    ambiguous = false,
-    unsupported = false,
-    malformed = false;
+  const tracker = createPtxTargetTracker();
+  let depth = 0;
   try {
     const first = stream.next();
     if (first.done || first.value.value !== ".version")
@@ -609,51 +685,11 @@ export const readPtxTarget = (text: string): PtxTargetFacts => {
       if (depth !== 0) continue;
       if (token.value !== ".target") continue;
       const value = stream.next();
-      if (value.done) {
-        unsupported = true;
-        continue;
-      }
-      const spelling = value.value.value,
-        match = /^(?:sm_|compute_)([0-9]+)(?:a|f)?$/u.exec(spelling);
-      if (match === null) {
-        unsupported = true;
-        continue;
-      }
-      const architecture = Number(match[1]);
-      if (!Number.isSafeInteger(architecture)) {
-        unsupported = true;
-        continue;
-      }
-      const identity = ptxTargetIdentity(spelling);
-      if (architecture > targetArchitecture) {
-        target = spelling;
-        targetIdentity = identity;
-        targetArchitecture = architecture;
-        ambiguous = false;
-      } else if (
-        architecture === targetArchitecture &&
-        targetIdentity !== identity
-      ) {
-        ambiguous = true;
-      }
+      tracker.observe(value.done ? undefined : value.value.value);
     }
   } catch (cause) {
     if (!(cause instanceof BinaryFormatFailure)) throw cause;
-    malformed = true;
+    tracker.markMalformed();
   }
-  const recognized = target !== null;
-  const limitation = !recognized
-    ? null
-    : unsupported
-      ? "Unsupported PTX target directives leave the effective target unknown."
-      : ambiguous
-        ? "Same-generation PTX target profiles cannot be represented by one effective target."
-        : malformed
-          ? "Malformed PTX text prevents complete target discovery."
-          : null;
-  return {
-    recognized,
-    target: limitation === null ? target : null,
-    limitation,
-  };
+  return tracker.facts();
 };

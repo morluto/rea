@@ -65,6 +65,7 @@ import {
   type AmdElfMetadata,
 } from "./GpuElfKernels.js";
 import {
+  createPtxTargetTracker,
   ptxTargetIdentity,
   readPtxKernels,
   readPtxTarget,
@@ -412,7 +413,8 @@ export class GpuInventory {
           );
         }
       }
-      this.#decoded(row, sha256Hex(bytes), bytes.length);
+      const decodedSha256 = sha256Hex(bytes);
+      this.#decoded(row, decodedSha256, bytes.length);
       const decoded = new GpuBufferSource(bytes, row.id);
       if (row.kind === "ptx") {
         // Standalone discovery already retained this encoding failure.
@@ -424,7 +426,44 @@ export class GpuInventory {
         const content = bytes.subarray(0, length);
         const text = standalonePtx?.text ?? readPtxText(content, "complete");
         if (text === null) return rejectGpu(PTX_INVALID_UTF8);
-        const target = standalonePtx?.targetFacts ?? readPtxTarget(text);
+        const artifact = {
+          id: `${row.id}/ptx`,
+          object_id: row.id,
+          sha256: length === bytes.length ? decodedSha256 : sha256Hex(content),
+          media_type: "text/x-ptx" as const,
+          encoding: "utf-8" as const,
+          byte_length: content.length,
+          text,
+          location: gpuLocation(decoded, 0, content.length),
+        };
+        this.#retain(artifact);
+        this.ptx_artifacts.push(artifact);
+        // Extract target directives and kernel entries in a single token pass
+        // for embedded PTX; on a parse failure fall back to readPtxTarget so
+        // any target directives after a malformed entry are still preserved.
+        const tracker =
+          standalonePtx === undefined ? createPtxTargetTracker() : undefined;
+        let parsed: {
+          kernel: GpuKernel;
+          coverage: "complete" | "partial";
+        }[];
+        try {
+          parsed = [...readPtxKernels(text, row.id, tracker)];
+        } catch (cause) {
+          if (tracker !== undefined) {
+            const fallbackTarget = readPtxTarget(text);
+            this.#target(row, {
+              value: fallbackTarget.target,
+              key: fallbackTarget.target,
+              scope: "exact",
+              ...(fallbackTarget.limitation === null
+                ? {}
+                : { limitation: fallbackTarget.limitation }),
+            });
+          }
+          throw cause;
+        }
+        const target = standalonePtx?.targetFacts ?? tracker!.facts();
         const conflict = this.#target(row, {
           value: target.target,
           key: target.target,
@@ -434,19 +473,6 @@ export class GpuInventory {
             : { limitation: target.limitation }),
         });
         if (conflict !== undefined) coverage = "partial";
-        const parsed = readPtxKernels(text, row.id);
-        const artifact = {
-          id: `${row.id}/ptx`,
-          object_id: row.id,
-          sha256: sha256Hex(content),
-          media_type: "text/x-ptx" as const,
-          encoding: "utf-8" as const,
-          byte_length: content.length,
-          text,
-          location: gpuLocation(decoded, 0, content.length),
-        };
-        this.#retain(artifact);
-        this.ptx_artifacts.push(artifact);
         for (const { kernel, coverage: kernelCoverage } of parsed) {
           if (conflict !== undefined) kernel.limitations.push(conflict);
           if (kernelCoverage === "partial") coverage = "partial";
