@@ -295,6 +295,20 @@ it("does not recount a multi-record event once it is past the retained window", 
   expect(metadata.event_count_lower_bound).toBe(true);
 });
 
+it("keeps a record whose opaque body holds a line-separator character", async () => {
+  // The scanner splits on "\n" only, so a U+2028 in the body keeps the record
+  // on one line while still exercising the separator `.` excludes from a regex.
+  const metadata = await metadataOf(
+    [
+      record("SYSCALL", 1700000000, 123, 1000, "success=yes"),
+      record("USER", 1700000000, 124, 1001, "acct=u\u2028name=odd"),
+    ].join("\n"),
+  );
+  expect(metadata.malformed_line_count).toBe(0);
+  expect(metadata.record_count).toBe(2);
+  expect(metadata.event_count).toBe(2);
+});
+
 it("records trailing bytes when the last line has no newline", async () => {
   const metadata = await metadataOf(
     `line one\n${record("SYSCALL", 1700000000, 123, 1000, "success=yes")}`,

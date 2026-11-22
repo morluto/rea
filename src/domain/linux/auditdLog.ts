@@ -29,8 +29,10 @@ export const AUDITD_INLINE_EVENT_TYPE_LIMIT = 16;
 export const AUDITD_RETAINED_EVENT_LIMIT = 4096;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
+// The body is opaque bytes: a literal CR, U+2028 or U+2029 can reach it through
+// an encoded message, and `.` would reject the whole record for them.
 const RECORD_HEADER =
-  /^(?:node=(?<node>\S+) )?type=(?<type>\S+) msg=audit\((?<sec>\d+)\.(?<millis>\d{1,3}):(?<serial>\d+)\):(?: (?<body>.*))?$/u;
+  /^(?:node=(?<node>\S+) )?type=(?<type>\S+) msg=audit\((?<sec>\d+)\.(?<millis>\d{1,3}):(?<serial>\d+)\):(?: (?<body>[\s\S]*))?$/u;
 /** `msg=audit(...)` can precede or follow `type=`; auditd always emits type first. */
 const AUDIT_REFERENCE = /audit\((\d+)\.(\d{1,3}):(\d+)\)/u;
 
