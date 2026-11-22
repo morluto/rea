@@ -395,9 +395,7 @@ class AuditdLogScanner {
     // represent stay distinct instead of decoding to the same U+FFFD. The
     // digest keeps retained state to one short key per record per event; the
     // retention window bounds how many events hold those keys at once.
-    const recordKey = createHash("sha256")
-      .update(lineBytes)
-      .digest("base64");
+    const recordKey = createHash("sha256").update(lineBytes).digest("base64");
     if (event.seenRecords.has(recordKey)) {
       event.duplicateCount += 1;
       this.#duplicateCount += 1;
