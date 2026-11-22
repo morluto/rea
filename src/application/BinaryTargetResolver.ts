@@ -8,8 +8,12 @@ import {
   artifactNameForClassification,
   namedArtifactFormat,
 } from "../domain/artifactNameSelection.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import {
+  createCachedPrefixReader,
+  readFileHandleRange,
+} from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { hasDosMzMagic } from "../domain/dosMz.js";
 import { hasXarMagic } from "../domain/binaryContainer.js";
 import {
   regularFileCancellation,
@@ -778,22 +782,12 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
-  const readCachedRange = async (
-    position: number,
-    length: number,
-  ): Promise<Uint8Array> => {
-    throwIfTargetResolutionCancelled(signal);
-    if (position >= 0 && length >= 0) {
-      if (position + length <= magic.length)
-        return magic.subarray(position, position + length);
-      if (magic.length >= initial.size)
-        return magic.subarray(
-          Math.min(position, initial.size),
-          Math.min(position + length, initial.size),
-        );
-    }
-    return readHandleRange(handle, position, length, signal);
-  };
+  const readCachedRange = createCachedPrefixReader(
+    handle,
+    magic,
+    initial.size,
+    () => throwIfTargetResolutionCancelled(signal),
+  );
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
@@ -1018,7 +1012,7 @@ const readExecutableMetadata = async (
   // Header commitments such as Mach-O load commands and FAT slices are
   // checked against the whole file, not the probed prefix.
   const fileSize = initial.size;
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) {
+  if (hasDosMzMagic(bytes)) {
     let evidence = parseMzHeaderEvidence(bytes, fileSize);
     let signatureEvidence:
       | { readonly offset: number; readonly bytes: Buffer }

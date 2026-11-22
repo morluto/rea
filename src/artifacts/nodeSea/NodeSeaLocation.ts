@@ -1,3 +1,5 @@
+import { hasElfMagic } from "../../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -162,13 +164,13 @@ export const locateNodeSea = async (
         : await locateFatMachO(carrier, prefix);
     return collapseRanges(carrier, "mach-o", ranges);
   }
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+  if (hasElfMagic(prefix))
     return collapseRanges(
       carrier,
       "elf",
       await locateElfNotes(carrier, prefix),
     );
-  if (prefix[0] === 0x4d && prefix[1] === 0x5a)
+  if (hasDosMzMagic(prefix))
     return collapseRanges(
       carrier,
       "pe",

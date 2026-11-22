@@ -27,6 +27,7 @@ import { readPeSectionHeader } from "./peSectionHeader.js";
 import { isStrictUtf8 } from "./strictUtf8.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
 import {
+  hasDosMzMagic,
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   type MzHeaderEvidence,
@@ -129,7 +130,7 @@ export const claimsExecutableHeader = (
   (bytes.length >= 4 &&
     (hasElfMagic(bytes) ||
       readMachoHeaderPrefixFacts(bytes).format !== null)) ||
-  (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) ||
+  hasDosMzMagic(bytes) ||
   readFatContainerHeader(bytes, fileSize).state !== "not-fat";
 
 /**
@@ -145,7 +146,7 @@ export const parseExecutableHeader = (
   fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
   if (hasElfMagic(bytes)) return parseElf(bytes, fileSize);
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
+  if (hasDosMzMagic(bytes))
     return parseMzExecutableMetadata(
       bytes,
       parseMzHeaderEvidence(bytes, fileSize, mzWindowsHeaderSignature),

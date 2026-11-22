@@ -1,6 +1,9 @@
 import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
-import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
+import {
+  createCachedPrefixReader,
+  readFileHandleRange,
+} from "../../filesystem/readFileHandleRange.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
@@ -339,23 +342,12 @@ const classifyRootFormat = async (
     throw artifactOperationCause(cause);
   }
   // Fill each range: a short result is end of file, not a partial host read.
-  const read = async (position: number, length: number): Promise<Buffer> => {
-    abortIfNeeded(signal);
-    if (position >= 0 && length >= 0) {
-      if (position + length <= evidence.prefix.length)
-        return evidence.prefix.subarray(position, position + length);
-      if (evidence.prefix.length >= archiveBytes)
-        return evidence.prefix.subarray(
-          Math.min(position, archiveBytes),
-          Math.min(position + length, archiveBytes),
-        );
-    }
-    const bytes = await readFileHandleRange(handle, position, length, () =>
-      abortIfNeeded(signal),
-    );
-    abortIfNeeded(signal);
-    return bytes;
-  };
+  const read = createCachedPrefixReader(
+    handle,
+    evidence.prefix,
+    archiveBytes,
+    () => abortIfNeeded(signal),
+  );
   const locateFlash = (selection: EspFlashSelection, explicit: boolean) =>
     locateEspFlashLayout(archiveBytes, read, selection, {
       explicit,
