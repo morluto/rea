@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFile,
@@ -11,7 +10,6 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -24,7 +22,12 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { sectionNameFixtures } from "./lib/elf-section-name-fixtures.mjs";
 import { withLargeResultMcp } from "./lib/large-result-mcp.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
@@ -42,7 +45,7 @@ if (
     "verify:binary:layout requires Linux x64, absolute REA_PWNTOOLS_PYTHON (pwntools 4.15.0/pyelftools 0.33/Unicorn 2.1.2) and REA_VERIFY_STRACE_COMMAND. gcc, ld, strip and the AArch64/i686/ARM/MIPS/MIPSel linux-gnu cross gcc and readelf must be available. No target is executed.",
   );
 const run = createVerifierRun();
-const execute = promisify(execFile);
+const commands = await createVerifierCommands();
 const CROSS_TOOLCHAINS = [
   ["aarch64-linux-gnu", "EM_AARCH64", 64, "little"],
   ["i686-linux-gnu", "EM_386", 32, "little"],
@@ -50,29 +53,6 @@ const CROSS_TOOLCHAINS = [
   ["mips-linux-gnu", "EM_MIPS", 32, "big"],
   ["mipsel-linux-gnu", "EM_MIPS", 32, "little"],
 ];
-for (const command of [
-  "gcc",
-  "ld",
-  "strip",
-  "/usr/bin/prlimit",
-  strace,
-  ...CROSS_TOOLCHAINS.flatMap(([prefix]) => [
-    `${prefix}-gcc`,
-    `${prefix}-readelf`,
-  ]),
-]) {
-  try {
-    await execute(command, [command === strace ? "-V" : "--version"], {
-      timeout: 10_000,
-      maxBuffer: 1024 * 1024,
-    });
-  } catch (cause) {
-    throw new Error(
-      `verify:binary:layout prerequisite unavailable: ${command}`,
-      { cause },
-    );
-  }
-}
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const root = await VerifierFixture.open({
@@ -105,7 +85,30 @@ let cases = 0;
 let bootstrapCases = 0;
 const failures = [];
 try {
-  await execute(
+  for (const command of [
+    "gcc",
+    "ld",
+    "strip",
+    "/usr/bin/prlimit",
+    strace,
+    ...CROSS_TOOLCHAINS.flatMap(([prefix]) => [
+      `${prefix}-gcc`,
+      `${prefix}-readelf`,
+    ]),
+  ]) {
+    try {
+      await commands.exec(command, [command === strace ? "-V" : "--version"], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+      });
+    } catch (cause) {
+      throw new Error(
+        `verify:binary:layout prerequisite unavailable: ${command}`,
+        { cause },
+      );
+    }
+  }
+  await commands.exec(
     "gcc",
     [
       "-std=c11",
@@ -139,6 +142,24 @@ try {
     ),
     (error) => {
       assert.ok(error instanceof OwnedCommandFailure);
+      // This control exercises the real launcher's identity directly.
+      const supervisor = error.cleanupOwner;
+      if (supervisor !== undefined) {
+        commands.adopt(
+          {
+            async close() {
+              const stopped = await supervisor.stop();
+              assert.notEqual(
+                stopped.status,
+                "incomplete",
+                JSON.stringify(stopped),
+              );
+            },
+          },
+          limitedPython,
+        );
+      } else if (error.cleanupFailure !== null)
+        root.retain(error.cleanupFailure);
       assert.equal(error.reason, "timeout");
       assert.equal(error.cleanupFailure, null);
       assert.ok(error.snapshot.stdout.text.includes("limited child ready"));
@@ -165,7 +186,7 @@ try {
     const markerPath = join(bootstrapRoot, `failure-${bootstrapCases}`);
     let exitCode = 0;
     try {
-      await execute(
+      await commands.exec(
         python,
         ["-I", bootstrapPath, markerPath, "unused-request"],
         {
@@ -174,7 +195,7 @@ try {
         },
       );
     } catch (cause) {
-      assert.equal(typeof cause.code, "number");
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
       exitCode = cause.code;
     }
     assert.equal(exitCode, status);
@@ -194,6 +215,7 @@ try {
         "-pie",
         "-fstack-protector-all",
         "-fcf-protection=full",
+        "-Wl,-z,ibtplt",
         "-Wl,-z,relro,-z,now",
         "-Wl,-z,noexecstack",
       ],
@@ -212,7 +234,7 @@ try {
     ["library", ["-shared", "-fPIC", "-fno-stack-protector"]],
     ["packed-relative", ["-shared", "-fPIC", "-Wl,-z,pack-relative-relocs"]],
   ])
-    await execute(
+    await commands.exec(
       "gcc",
       ["-O1", "-g", ...flags, source, "-o", join(root.path, name)],
       { timeout: 30_000, maxBuffer: 1024 * 1024 },
@@ -245,13 +267,17 @@ try {
   emptyBytes.writeBigUInt64LE(0n, unusedHeader + 40);
   await writeFile(join(root.path, "empty-segment"), emptyBytes);
   await copyFile(join(root.path, "protected"), join(root.path, "stripped"));
-  await execute("strip", ["--strip-all", join(root.path, "stripped")], {
+  await commands.exec("strip", ["--strip-all", join(root.path, "stripped")], {
     timeout: 10_000,
   });
-  await execute("gcc", ["-c", highSource, "-o", join(root.path, "high.o")], {
-    timeout: 10_000,
-  });
-  await execute(
+  await commands.exec(
+    "gcc",
+    ["-c", highSource, "-o", join(root.path, "high.o")],
+    {
+      timeout: 10_000,
+    },
+  );
+  await commands.exec(
     "ld",
     [
       "-Ttext=0x20000000000001",
@@ -363,15 +389,23 @@ try {
     [...toolchain, "relocatable", ["-c", "-fPIC"]],
   ])) {
     const path = join(root.path, `${prefix}-${kind}`);
-    await execute(`${prefix}-gcc`, ["-O1", ...flags, source, "-o", path], {
-      timeout: 30_000,
-      maxBuffer: 1024 * 1024,
-    });
-    const { stdout } = await execute(`${prefix}-readelf`, ["-SWsr", path], {
-      timeout: 10_000,
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, LC_ALL: "C" },
-    });
+    await commands.exec(
+      `${prefix}-gcc`,
+      ["-O1", ...flags, source, "-o", path],
+      {
+        timeout: 30_000,
+        maxBuffer: 1024 * 1024,
+      },
+    );
+    const { stdout } = await commands.exec(
+      `${prefix}-readelf`,
+      ["-SWsr", path],
+      {
+        timeout: 10_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: "C" },
+      },
+    );
     const expectedSections = [
       ...stdout.matchAll(
         /^\s*\[\s*(\d+)\]\s+(\S+)\s+\S+\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+[A-Za-z]*\s+(\d+)\s+\d+\s+\d+\s*$/gm,
@@ -574,10 +608,17 @@ try {
   // CET images carry .plt, .plt.got and .plt.sec. Upstream emulates each in
   // its own 1 GiB Unicorn instance; under the default address-space limit the
   // .plt.sec stubs must still be recovered rather than dropped with a warning.
-  const pltSec = protectedReport.sections.find(
-    (section) => section.name.display === ".plt.sec",
+  const pltSections = new Map(
+    protectedReport.sections.map((section) => [section.name.display, section]),
   );
-  assert.ok(pltSec, "the protected fixture must emit .plt.sec");
+  for (const name of [".plt", ".plt.got", ".plt.sec"]) {
+    const section = pltSections.get(name);
+    assert.ok(
+      section !== undefined && BigInt(section.size) > 0n,
+      `the protected fixture must emit a nonempty ${name}`,
+    );
+  }
+  const pltSec = pltSections.get(".plt.sec");
   assert.ok(
     !protectedReport.diagnostics.stderr.includes("Could not populate PLT"),
     protectedReport.diagnostics.stderr,
@@ -1462,7 +1503,7 @@ try {
   }
   for (const name of ["protected", "sectionless"]) {
     const trace = join(root.path, `exec.trace.${name}`);
-    await execute(
+    await commands.exec(
       strace,
       [
         "-ff",
@@ -1515,27 +1556,43 @@ try {
   cases += 2;
 } catch (cause) {
   failures.push(cause);
-} finally {
-  // The root is removed only after the client and transport confirm.
-  root.releaseAfter(() => client.close());
-  root.releaseAfter(() => transport.close());
+}
+try {
+  await root.closeEarly([
+    () => client.close(),
+    () => transport.close(),
+    () => commands.close(),
+  ]);
+} catch (cause) {
+  failures.push(cause);
+}
+const verifier = await completeVerifierRun(run);
+try {
+  assertVerifierCleanupComplete(verifier.process_lineage);
+} catch (cause) {
+  failures.push(cause);
+  root.releaseAfter(async () =>
+    assertVerifierCleanupComplete(
+      (await completeVerifierRun(run)).process_lineage,
+    ),
+  );
+}
+if (failures.length === 0) {
   try {
     await root.release();
   } catch (cause) {
     failures.push(cause);
   }
 }
-const verifier = await completeVerifierRun(run);
-try {
-  assert.equal(verifier.process_lineage.status, "verified");
-  assert.deepEqual(verifier.process_lineage.descendants, []);
-} catch (cause) {
-  failures.push(cause);
-}
 if (failures.length > 0) {
   console.error(
     JSON.stringify(
-      { status: "failed", public_cases: cases, verifier },
+      {
+        status: "failed",
+        public_cases: cases,
+        retained_workspace: root.path,
+        verifier,
+      },
       null,
       2,
     ),
@@ -1543,7 +1600,7 @@ if (failures.length > 0) {
   throw Object.assign(
     new AggregateError(
       failures,
-      "Offline binary layout verification failed; cleanup failures are retained.",
+      `Offline binary layout verification failed; retained workspace: ${root.path}`,
     ),
     // The caller can retry the retained root from the final failure.
     root.released ? {} : { cleanupLeases: [root] },
@@ -1590,7 +1647,7 @@ async function inspect(
   } else {
     let response;
     try {
-      response = await execute(
+      response = await commands.exec(
         process.execPath,
         [entrypoint, "inspect-binary-layout", path, "--json"],
         {
@@ -1601,8 +1658,8 @@ async function inspect(
       );
     } catch (cause) {
       if (category === undefined) throw cause;
-      if (typeof cause.code !== "number") throw cause;
-      const error = JSON.parse(cause.stdout);
+      if (cause?.name !== "VerifierCommandExitError") throw cause;
+      const error = JSON.parse(cause.snapshot.stdout.text);
       assert.equal(error.category, category, JSON.stringify(error));
       return error;
     }

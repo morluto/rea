@@ -99,10 +99,10 @@ compressed file bytes. Other compressed payload sections remain opaque.
   can emulate selected instructions in Unicorn; its outputs are static candidates.
   Each PLT section (`.plt`, `.plt.got`, `.plt.sec`, `.MIPS.stubs`) uses its
   own Unicorn instance with a 1 GiB virtual map. REA releases each instance
-  before the next section, so PLT emulation needs about 1.1 GiB of address
-  space and the default limit covers CET x86-64 images. Under a tighter
-  `address_space_bytes`, upstream skips the remaining PLT sections and its
-  warning appears in `diagnostics.stderr`; structural facts are unaffected.
+  before the next section. The tested CET x86-64 images used about 1.1 GiB of
+  address space during PLT emulation and fit within the default limit. Under
+  a tighter `address_space_bytes`, upstream skips the remaining PLT sections
+  and reports a warning in `diagnostics.stderr`. Structural facts are unaffected.
   Exec syscall tracing observes host process launches. Map completeness
   remains unknown and original upstream warnings are returned inline.
 - Canary, PIE, NX, executable-stack and RELRO are static inferences. NX and
