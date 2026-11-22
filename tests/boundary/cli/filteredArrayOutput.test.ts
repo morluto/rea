@@ -494,7 +494,7 @@ it("projects consecutive slices through nested root arrays and merges cell field
 it.each([
   ["rows[0,2][-2,-1]", { rows: [[1], [3]] }],
   ["rows[0,2][1,1]", { rows: [[], []] }],
-  ["rows[0,2][invalid,1]", { rows: [[1], [3]] }],
+  ["rows[0,2][,1]", { rows: [[1], [3]] }],
 ] as const)("retains parsed slice bounds for %s", async (filter, expected) => {
   const output = await runFilteredCli(
     {
