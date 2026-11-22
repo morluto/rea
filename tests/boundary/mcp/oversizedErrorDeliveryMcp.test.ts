@@ -1,10 +1,15 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import {
+  Client,
+  InMemoryTransport,
+  isInitializeRequest,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/client";
 import {
   STDIO_DEFAULT_MAX_BUFFER_SIZE,
   type CallToolResult,
 } from "@modelcontextprotocol/server";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
@@ -13,6 +18,7 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import * as toolResultEncoding from "../../../src/server/toolResultEncoding.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -36,6 +42,78 @@ const failureWithName = (
     ]),
     targetContent,
   );
+
+it.each(SUPPORTED_PROTOCOL_VERSIONS)(
+  "reuses a projected error through MCP %s and re-encodes budget or provenance mismatches",
+  async (version) => {
+    const server = new EvidenceMcpServer(
+      { name: "projected-error-server", version: "1" },
+      { capabilities: {} },
+      undefined,
+      delivery,
+    );
+    const smaller = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2);
+    server.registerTool(
+      "record_unknown",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0),
+    );
+    server.registerTool(
+      "export_evidence_bundle",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0, false, smaller),
+    );
+    server.registerTool(
+      "list_strings",
+      { inputSchema: z.object({}) },
+      async () => failureWithName(0),
+    );
+    const client = new Client(
+      { name: "projected-error-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const send = clientTransport.send.bind(clientTransport);
+    const initialize = vi
+      .spyOn(clientTransport, "send")
+      .mockImplementation((message, options) =>
+        send(
+          isInitializeRequest(message)
+            ? {
+                ...message,
+                params: { ...message.params, protocolVersion: version },
+              }
+            : message,
+          options,
+        ),
+      );
+    const encode = vi.spyOn(toolResultEncoding, "encodeToolResult");
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect(client.getNegotiatedProtocolVersion()).toBe(version);
+      for (const [name, encodings] of [
+        ["record_unknown", 1],
+        ["export_evidence_bundle", 2],
+        ["list_strings", 2],
+      ] as const) {
+        encode.mockClear();
+        const result = await client.callTool({ name, arguments: {} });
+        expect(parseMcpToolError(result)).toMatchObject({
+          error: { code: "invalid_request" },
+        });
+        expect(encode).toHaveBeenCalledTimes(encodings);
+        if (name === "list_strings")
+          expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
+      }
+    } finally {
+      initialize.mockRestore();
+      encode.mockRestore();
+      await Promise.all([client.close(), server.close()]);
+    }
+  },
+);
 
 // The delivered error carries its JSON once, as text, so only a diagnostic
 // larger than the whole budget is oversized.

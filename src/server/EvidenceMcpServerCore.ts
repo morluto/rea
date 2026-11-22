@@ -57,6 +57,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
+  projectedErrorEncoding,
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
@@ -502,9 +503,12 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                 input,
                 normalized(context as ServerContext),
               );
-        return await (this.analysisSettings === undefined
+        const result = await (this.analysisSettings === undefined
           ? invoke()
           : this.analysisSettings.run(invoke));
+        if (request !== undefined)
+          request.projectedErrorEncoding = projectedErrorEncoding(result);
+        return result;
       } finally {
         request?.finishHandler();
       }
@@ -799,7 +803,7 @@ class ErrorEvidenceTransport implements Transport {
       id !== undefined && this.pendingToolLists.has(id);
     try {
       const publish = async (): Promise<void> => {
-        const recovered = this.recoverProtocolError(message, tool);
+        const recovered = this.recoverProtocolError(message, tool, request);
         const advertised = rewritesOutputSchemas
           ? presentOutputSchemasForToolsList(
               recovered,
@@ -892,6 +896,7 @@ class ErrorEvidenceTransport implements Transport {
   private recoverError(
     message: JSONRPCMessage,
     tool: string | undefined,
+    request: McpToolRequest | undefined,
   ): JSONRPCMessage {
     if (
       !isJSONRPCResultResponse(message) ||
@@ -905,8 +910,19 @@ class ErrorEvidenceTransport implements Transport {
     const targetContent =
       carriesTargetContentMarker(message.result) ||
       (tool !== undefined && toolReturnsTargetContent(tool));
-    // SDK validation failures have no structured carrier. Size their existing
-    // text-only result without serializing the complete JSON-RPC message.
+    // The SDK can project a new result object. Reuse only the handler encoding
+    // for this request whose text and delivery requirements survived projection.
+    const preencoded = request?.projectedErrorEncoding;
+    const [content] = message.result.content;
+    if (
+      preencoded !== undefined &&
+      preencoded.budgetBytes === budget &&
+      preencoded.targetContent === targetContent &&
+      message.result.content.length === 1 &&
+      content?.type === "text" &&
+      content.text === preencoded.text
+    )
+      return message;
     const isStructured = message.result.structuredContent !== undefined;
     const structured = isStructured
       ? ownedJsonObjectSchema.parse(message.result.structuredContent)
@@ -1190,8 +1206,9 @@ class ErrorEvidenceTransport implements Transport {
   private recoverProtocolError(
     message: JSONRPCMessage,
     tool: string | undefined,
+    request: McpToolRequest | undefined,
   ): JSONRPCMessage {
-    const recovered = this.recoverError(message, tool);
+    const recovered = this.recoverError(message, tool, request);
     if (
       !isJSONRPCErrorResponse(recovered) ||
       tool === undefined ||

@@ -90,7 +90,7 @@ import {
   providerRetryAction,
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -1098,7 +1098,7 @@ export const createGhidraProviderClient = (input: {
       ? ok(
           projectExecution(
             operation,
-            jsonValueSchema.parse(attested.value),
+            ownedJsonValueSchema.parse(attested.value),
             observation,
           ),
         )
@@ -1294,7 +1294,7 @@ export const createGhidraProviderClient = (input: {
               ...executionMetadata,
               rawResult: called.value,
             };
-            normalized = jsonValueSchema.parse({
+            normalized = ownedJsonValueSchema.parse({
               ...normalized,
               metadata_recovery: metadata,
             });

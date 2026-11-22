@@ -159,6 +159,20 @@ const overflowNextStep = (
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
+/** The encoding already computed by `ToolResultDelivery` for a structured error result. */
+export interface ProjectedErrorEncoding {
+  readonly budgetBytes: number;
+  readonly targetContent: boolean;
+  readonly text: string;
+}
+
+const projectedErrorEncodings = new WeakMap<object, ProjectedErrorEncoding>();
+
+/** Return the `ToolResultDelivery` encoding stamped on this exact error result, if any. */
+export const projectedErrorEncoding = (
+  result: object,
+): ProjectedErrorEncoding | undefined => projectedErrorEncodings.get(result);
+
 export class ToolResultDelivery {
   readonly maximumResponseBytes: number;
   readonly resultBudgetBytes: number;
@@ -465,12 +479,19 @@ export class ToolResultDelivery {
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
-    return {
+    const result: CallToolResult = {
       content: encoded.ok ? [{ type: "text", text: encoded.text }] : [],
       structuredContent,
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
     };
+    if (encoded.ok)
+      projectedErrorEncodings.set(result, {
+        budgetBytes: this.resultBudgetBytes,
+        targetContent,
+        text: encoded.text,
+      });
+    return result;
   }
 
   private successResult(
