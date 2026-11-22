@@ -6,7 +6,7 @@ import {
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import type { Logger } from "pino";
-import { nativeTarget } from "./options.js";
+import { nativeTarget } from "./nativeTargetOption.js";
 import type { CliInstance } from "./types.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";

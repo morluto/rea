@@ -130,19 +130,45 @@ const DEFERRED_IMPORTS = [
     name: "environment-server",
     path: "/dist/server/environment/serveEnvironment.js",
   },
+  {
+    name: "mcp-registration",
+    path: "/dist/cli/mcpRegistration.js",
+  },
 ] as const;
+
+const HEAVY_SHARED_MODULES = [
+  {
+    name: "analysis-view-service",
+    path: "/dist/application/analysisView/AnalysisViewService.js",
+  },
+  {
+    name: "analysis-view-result",
+    path: "/dist/domain/analysisView/analysisViewResult.js",
+  },
+  {
+    name: "session-tool-contracts",
+    path: "/dist/contracts/sessionToolContracts.js",
+  },
+  ...DEFERRED_IMPORTS,
+] as const;
+
 // Report each resolved deferred package on stderr without changing resolution.
-const RESOLUTION_HOOK = `data:text/javascript,${encodeURIComponent(`
+const createResolutionHook = (
+  entries: readonly { readonly name: string; readonly path: string }[],
+): string =>
+  `data:text/javascript,${encodeURIComponent(`
 import { registerHooks } from "node:module";
-const imports = ${JSON.stringify(DEFERRED_IMPORTS)};
+const imports = ${JSON.stringify(entries)};
 registerHooks({
   resolve(specifier, context, next) {
     const resolved = next(specifier, context);
-    const name = imports.find((item) =>
-      resolved.url.includes(item.path) ||
-      (item.path.startsWith("/dist/") && item.path.endsWith(".js") &&
-       resolved.url.includes("/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-")),
-    );
+    const name = imports.find((item) => {
+      if (resolved.url.includes(item.path)) return true;
+      if (!item.path.startsWith("/dist/") || !item.path.endsWith(".js")) return false;
+      const facade = "/dist/cli-runtime/" + item.path.slice(6, -3).split("/").join("__") + "-";
+      const shared = "/dist/cli-runtime/" + item.path.slice(item.path.lastIndexOf("/") + 1, -3) + "-";
+      return resolved.url.includes(facade) || resolved.url.includes(shared);
+    });
     if (name !== undefined)
       process.stderr.write(${JSON.stringify(MARKER)} + name.name + "\\n");
     return resolved;
@@ -160,6 +186,10 @@ const resolvedMarkers = (stderr: string): ReadonlySet<string> =>
 
 const resolvedPackages = async (
   arguments_: readonly string[],
+  entries: readonly {
+    readonly name: string;
+    readonly path: string;
+  }[] = DEFERRED_IMPORTS,
 ): Promise<ReadonlySet<string>> => {
   const commands = await createVerifierCommands();
   onTestFinished(() => commands.close());
@@ -167,7 +197,7 @@ const resolvedPackages = async (
     () =>
       commands.exec(
         process.execPath,
-        [`--import=${RESOLUTION_HOOK}`, ...arguments_],
+        [`--import=${createResolutionHook(entries)}`, ...arguments_],
         { cwd: process.cwd(), maxBuffer: 16 * 1_024 * 1_024, timeout: 15_000 },
       ),
     [() => commands.close()],
@@ -221,6 +251,47 @@ describe("CLI startup imports", () => {
         ),
       ),
     ).resolves.toContain("isomorphic-git");
+    await expect(
+      resolvedPackages(
+        evaluate(
+          'await import("./dist/application/analysisView/AnalysisViewService.js");',
+        ),
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toContain("analysis-view-service");
+    await expect(
+      resolvedPackages(["scripts/rea.mjs", "mcp", "add", "--help"]),
+    ).resolves.toContain("mcp-registration");
+    await expect(
+      resolvedPackages(
+        evaluate(
+          'await import("./dist/domain/analysisView/analysisViewResult.js"); await import("./dist/contracts/sessionToolContracts.js");',
+        ),
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toEqual(
+      new Set(["analysis-view-result", "session-tool-contracts"]),
+    );
+  });
+
+  it("does not load AnalysisView or session contracts for single-command startup", async () => {
+    for (const command of ["inspect-uefi-nvram", "inspect-sqlite-database"]) {
+      await expect(
+        resolvedPackages(
+          ["scripts/rea.mjs", command, "--help"],
+          HEAVY_SHARED_MODULES,
+        ),
+      ).resolves.toEqual(new Set());
+    }
+    for (const command of ["inspect-wasm-artifact", "guided-workflows"]) {
+      const loaded = await resolvedPackages(
+        ["scripts/rea.mjs", command, "--help"],
+        HEAVY_SHARED_MODULES,
+      );
+      expect(loaded).not.toContain("analysis-view-service");
+      expect(loaded).not.toContain("session-tool-contracts");
+      expect(loaded).not.toContain("mcp-registration");
+    }
   });
 
   it("does not load command-specific code to register the command catalog", async () => {
@@ -293,7 +364,11 @@ describe("MCP startup imports", () => {
   it("initializes and lists tools over stdio with HTTP-only environment settings present", async () => {
     const transport = new StdioClientTransport({
       command: process.execPath,
-      args: [`--import=${RESOLUTION_HOOK}`, "scripts/rea.mjs", "mcp"],
+      args: [
+        `--import=${createResolutionHook(DEFERRED_IMPORTS)}`,
+        "scripts/rea.mjs",
+        "mcp",
+      ],
       cwd: process.cwd(),
       env: {
         PATH: process.env.PATH ?? "",

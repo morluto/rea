@@ -28,7 +28,6 @@ import {
   evidenceDeliveryCommitted,
   publishEvidenceDelivery,
 } from "../application/EvidenceBundleCommands.js";
-import { inspectAnalysisViewValidated } from "../application/analysisView/AnalysisViewService.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -267,7 +266,9 @@ const publishDeliveredEvidence = async (
 > => {
   const delivered =
     input.detail === "summary"
-      ? inspectAnalysisViewValidated({
+      ? (
+          await import("../application/analysisView/AnalysisViewService.js")
+        ).inspectAnalysisViewValidated({
           source: { kind: "inline", evidence: complete },
           view: input.view ?? { kind: "summary" },
         })
