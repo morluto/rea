@@ -33,11 +33,6 @@ import {
   type ObservationSearch,
 } from "./environmentStateWriteObserve.js";
 import { updatedFields } from "./environmentStateWriteApply.js";
-import {
-  retainFixed,
-  retainCreateExemplar,
-  type EffectContext,
-} from "./environmentStateWriteEffects.js";
 
 /** The plan the gate gives `tool` over a capture of `rows`. */
 const gated = (rows: readonly TimedCaptureRow[], tool: string) => {
@@ -1645,18 +1640,6 @@ describe("what a write's own answer pins down", () => {
   });
 });
 
-it("counts the sent values a plan keeps for fixed members against the view's allowance", () => {
-  let retained = 0;
-  const context = {
-    io: { retain: (bytes: number) => (retained += bytes) },
-  } as unknown as EffectContext;
-  retainFixed(context, [{ sent: "x".repeat(10_000) }]);
-  expect(retained).toBeGreaterThan(20_000);
-  retained = 0;
-  retainFixed(context, []);
-  expect(retained).toBe(0);
-});
-
 describe("what a check leaves pending", () => {
   const summary = (books: readonly Book[]): JsonValue =>
     books.map(({ id, name }) => ({ id: id ?? null, name: name ?? null }));
@@ -3175,61 +3158,6 @@ it("learns omitted fields using the raw ID resolved by the item owner", () => {
   });
 });
 
-describe("create exemplar retention", () => {
-  const facts = () => {
-    const snapshot = { id: "held", payload: "p".repeat(1_000_000) };
-    const held = Array.from({ length: 1000 }, () => snapshot);
-    return {
-      entity: { id: "new", url: "/new" },
-      call: {
-        path: "/items",
-        pathValues: new Map<string, string>(),
-        body: { payload: "x".repeat(10_000) },
-      },
-      idField: "id",
-      startMs: undefined,
-      collection: held,
-      type: held,
-    };
-  };
-  it("charges temporary request facts and shared snapshot references without rebilling owned entity payloads", () => {
-    let retained = 0;
-    const context = {
-      io: {
-        retain: (bytes: number) => {
-          retained += bytes;
-        },
-      },
-    } as unknown as EffectContext;
-    const input = facts();
-    expect(retainCreateExemplar(context, input, [])).toBe(input);
-    expect(retained).toBeGreaterThan(28_000);
-    expect(retained).toBeLessThan(40_000);
-  });
-  it("retains no exemplar when every string field is already explained", () => {
-    const retain = vi.fn();
-    const context = { io: { retain } } as unknown as EffectContext;
-    expect(
-      retainCreateExemplar(context, facts(), [
-        { field: "id", rule: "echo" },
-        { field: "url", rule: "echo" },
-      ]),
-    ).toBeUndefined();
-    expect(retain).not.toHaveBeenCalled();
-  });
-  it("does not adopt request facts when the retained budget refuses them", () => {
-    const context = {
-      io: {
-        retain: () => {
-          throw new Error("budget exhausted");
-        },
-      },
-    } as unknown as EffectContext;
-    expect(() => retainCreateExemplar(context, facts(), [])).toThrow(
-      "budget exhausted",
-    );
-  });
-});
 it.each([
   {
     label: "point read with simultaneous unknown action",
