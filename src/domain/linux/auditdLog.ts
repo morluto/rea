@@ -321,7 +321,10 @@ class AuditdLogScanner {
     else this.#maxIdentity = identity;
 
     const existing = this.#events.get(key);
-    if (existing === undefined && this.#windowEventCount >= AUDITD_RETAINED_EVENT_LIMIT) {
+    if (
+      existing === undefined &&
+      this.#windowEventCount >= AUDITD_RETAINED_EVENT_LIMIT
+    ) {
       this.#beyondWindowEventCount += 1;
       this.#skippedRecordCount += 1;
       this.#lastEventKey = key;
