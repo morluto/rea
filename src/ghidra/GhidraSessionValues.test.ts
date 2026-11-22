@@ -43,15 +43,12 @@ const refuseHandshake = (
 it("checks admitted language, compiler, and image base independently", () => {
   const value = session();
   const commitment = { ...expected, expectedImageBase: "0x0" };
-  expect(parseGhidraSessionInfo(value, commitment)).toMatchObject({
-    ok: true,
-    value: {
-      target: {
-        language_id: "x86:LE:16:Real Mode",
-        compiler_spec_id: "default",
-        image_base: "0x0",
-      },
-    },
+  const parsed = parseGhidraSessionInfo(value, commitment);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.target).toMatchObject({
+    language_id: "x86:LE:16:Real Mode",
+    compiler_spec_id: "default",
+    image_base: "0x0",
   });
   // Each variation keeps run, target and profile identity intact.
   for (const changed of [
@@ -88,12 +85,12 @@ describe("Ghidra PDB observations", () => {
       },
     ],
   ] as const)("preserves %s", (_name, attributes) => {
-    expect(
-      parseGhidraSessionInfo({ ...session(), pdb: attributes }, expected),
-    ).toMatchObject({
-      ok: true,
-      value: { pdb: attributes },
-    });
+    const parsed = parseGhidraSessionInfo(
+      { ...session(), pdb: attributes },
+      expected,
+    );
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.pdb).toEqual(attributes);
   });
   it.each([
     { ...pdb, loaded: "false" },
@@ -254,13 +251,12 @@ it.each([false, true])(
       expectedReadOnly: true,
       expectedExistingProject: existingProject,
     };
-    expect(parseGhidraSessionInfo(value, commitment)).toMatchObject({
-      ok: true,
-      value: {
-        read_only: true,
-        capabilities: value.capabilities,
-        analysis_complete: existingProject ? null : true,
-      },
+    const parsed = parseGhidraSessionInfo(value, commitment);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value).toMatchObject({
+      read_only: true,
+      capabilities: value.capabilities,
+      analysis_complete: existingProject ? null : true,
     });
 
     refuseHandshake({ ...value, read_only: false }, commitment);
