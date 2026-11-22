@@ -1504,7 +1504,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/peCertificatesCli.test.ts",
-        "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
+        "reports PKCS#7 signer identity and BER lengths through both adapters",
       ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),
