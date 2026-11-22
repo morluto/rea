@@ -418,13 +418,34 @@ const appendExportEntry = (ctx: DecoderContext, formIndex: number): void => {
   ctx.result.entries.push(entry);
 };
 
+/** Read only the leading WAT form keyword without splitting or retaining children. */
+const readFormHead = (form: string): string | undefined => {
+  let i = 1;
+  const last = form.length - 1;
+  while (i < last) {
+    if (isWatWhitespace(form, i)) {
+      i++;
+      continue;
+    }
+    const commentEnd = scanCommentEnd(form, i);
+    if (commentEnd !== undefined) {
+      i = commentEnd;
+      continue;
+    }
+    const code = form.charCodeAt(i);
+    if (code === 0x22 || code === 0x28) return undefined;
+    const end = scanAtomEnd(form, i);
+    return end > i ? form.slice(i, end) : undefined;
+  }
+  return undefined;
+};
+
 /** Resolve index spaces at the producer, not from retained raw WAT in consumers. */
 const decodeWabtInterface = (
   forms: readonly string[],
   result: WasmInterface,
   maximumBytes: number | undefined,
 ): WasmInterface => {
-  const formParts: (readonly string[] | undefined)[] = Array(forms.length);
   const shortGroupCache = new Map<string, readonly string[]>();
   const splitGroup = (form: string): readonly string[] => {
     if (form.length > 256) return splitParts(form, maximumBytes);
@@ -435,20 +456,21 @@ const decodeWabtInterface = (
     }
     return cached;
   };
-  const getFormParts = (index: number): readonly string[] => {
-    let parsed = formParts[index];
-    if (parsed === undefined) {
-      parsed = splitParts(forms[index]!, maximumBytes);
-      formParts[index] = parsed;
-    }
-    return parsed;
-  };
+  const getFormParts = (index: number): readonly string[] =>
+    splitParts(forms[index]!, maximumBytes);
   let typeSpaceUnknown = false;
+  const typeIndices: number[] = [];
+  const importIndices: number[] = [];
+  const definitionIndices: number[] = [];
+  const exportIndices: number[] = [];
   for (let i = 0; i < forms.length; i++) {
-    if (getFormParts(i)[0] === "rec") {
-      typeSpaceUnknown = true;
-      break;
-    }
+    const head = readFormHead(forms[i]!);
+    if (head === "rec") typeSpaceUnknown = true;
+    else if (head === "type") typeIndices.push(i);
+    else if (head === "import") importIndices.push(i);
+    else if (head === "export") exportIndices.push(i);
+    else if (head !== undefined && DEFINITION_KINDS.has(head))
+      definitionIndices.push(i);
   }
   const ctx: DecoderContext = {
     forms,
@@ -463,32 +485,22 @@ const decodeWabtInterface = (
     ambiguousSpaces: new Set(),
     typeSpaceUnknown,
   };
-  const importIndices: number[] = [];
-  const definitionIndices: number[] = [];
-  const exportIndices: number[] = [];
-  for (let i = 0; i < forms.length; i++) {
+  for (const i of typeIndices) {
     const p = getFormParts(i);
-    const head = p[0];
-    if (head === "import") importIndices.push(i);
-    else if (head === "export") exportIndices.push(i);
-    else if (head !== undefined && DEFINITION_KINDS.has(head))
-      definitionIndices.push(i);
-    else if (head === "type") {
-      if (p[1]?.startsWith("$") === true)
-        indexLabel(ctx, p[1], "type", ctx.types.length);
-      const body = p.find((item) => item.startsWith("("));
-      ctx.budget.reserve(256 + (body?.length ?? 0) * 6);
-      if (body === undefined || typeSpaceUnknown) {
-        if (body !== undefined) splitGroup(body);
-        ctx.types.push(null);
-      } else {
-        const bodyParts = splitGroup(body);
-        ctx.types.push(
-          bodyParts[0] === "func"
-            ? parseFunctionType(bodyParts, "func", splitGroup)
-            : null,
-        );
-      }
+    if (p[1]?.startsWith("$") === true)
+      indexLabel(ctx, p[1], "type", ctx.types.length);
+    const body = p.find((item) => item.startsWith("("));
+    ctx.budget.reserve(256 + (body?.length ?? 0) * 6);
+    if (body === undefined || typeSpaceUnknown) {
+      if (body !== undefined) splitGroup(body);
+      ctx.types.push(null);
+    } else {
+      const bodyParts = splitGroup(body);
+      ctx.types.push(
+        bodyParts[0] === "func"
+          ? parseFunctionType(bodyParts, "func", splitGroup)
+          : null,
+      );
     }
   }
   for (const i of importIndices) appendImportEntry(ctx, i);
