@@ -189,6 +189,11 @@ export const documentationSections = [
         route: "/rust-binaries",
       },
       {
+        text: "LabVIEW RSRC containers",
+        source: "labview-analysis.md",
+        route: "/labview-analysis",
+      },
+      {
         text: "Static CUDA and HIP code objects",
         source: "gpu-code-objects.md",
         route: "/gpu-code-objects",
