@@ -17,7 +17,9 @@ import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
+  completedStableArtifactStream,
   readStableArtifact,
+  streamStableArtifact,
   type StableArtifactSnapshot,
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
@@ -243,6 +245,14 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         throw cause;
       }
     };
+    const readIdentity = (path: string, maximumBytes: number) =>
+      streamStableArtifact(path, maximumBytes, {
+        retainBytes: () => 0,
+        onChunk: () => {},
+        chunkBytes: 1024 * 1024,
+        signal: options?.signal,
+        resourceScope: this.#resources,
+      });
     const commandTimeoutMs =
       input.command_timeout_ms ??
       options?.commandTimeoutMs ??
@@ -283,13 +293,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         );
         const path = selection.resolvedPath;
         await access(path, constants.X_OK);
-        const binary = await readStableArtifact(
-          path,
-          limits.toolBytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
+        const binary = await readIdentity(path, limits.toolBytes);
         commands.push({
           tool,
           path,
@@ -312,13 +316,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       let snapshotHash: string | undefined;
       const verifySnapshot = async () => {
         if (snapshotHash === undefined) return;
-        const bytes = await readStableArtifact(
-          snapshotPath,
-          limits.inputBytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
+        const bytes = await readIdentity(snapshotPath, limits.inputBytes);
         if (bytes.sha256 !== snapshotHash)
           throw new AnalysisArtifactChangedError(
             OPERATION,
@@ -380,13 +378,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           ...(options?.signal === undefined ? {} : { signal: options.signal }),
           capturedOutput,
         });
-        const current = await readStableArtifact(
-          command.path,
-          limits.toolBytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
+        const current = await readIdentity(command.path, limits.toolBytes);
         if (current.sha256 !== command.sha256)
           throw new AnalysisOutputError(
             OPERATION,
@@ -461,19 +453,28 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         artifact = observed;
         candidates.push(observed);
       });
-      for (const path of new Set([input.path, ...input.candidate_paths])) {
-        if (path === input.path) continue;
-        artifactInput = {
-          path,
-          field: ["candidate_paths", input.candidate_paths.indexOf(path)],
-        };
-        await readSelectedInput(path, (snapshot) => {
+      const seenCandidates = new Set([input.path]);
+      for (const [index, path] of input.candidate_paths.entries()) {
+        if (seenCandidates.has(path)) continue;
+        seenCandidates.add(path);
+        artifactInput = { path, field: ["candidate_paths", index] };
+        try {
+          const candidate = await readIdentity(path, limits.inputBytes);
           candidates.push({
             path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            sha256: candidate.sha256,
+            bytes: candidate.size,
           });
-        });
+        } catch (cause: unknown) {
+          const completed = completedStableArtifactStream(cause);
+          if (completed !== undefined)
+            candidates.push({
+              path,
+              sha256: completed.sha256,
+              bytes: completed.size,
+            });
+          throw cause;
+        }
       }
       for (const [index, path] of input.glue_paths.entries()) {
         artifactInput = { path, field: ["glue_paths", index] };

@@ -409,3 +409,73 @@ describe.skipIf(jdk === undefined)(
     });
   },
 );
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge spellingMatches and ValueMatcher.requiresLeafCheck",
+  () => {
+    it("exercises production literalMatcher, literalCandidateMatcher, and regexMatcher across leaf checks", async () => {
+      const cases = [
+        // [factory, expr, qualified, leaf, aliasQualified, aliasLeaf, expected]
+        // literalMatcher skips redundant leaf scan when leaf is a suffix of qualified
+        ["literal", "missing", "ns::work", "work", "", "", "false||1"],
+        ["literal", "work", "ns::work", "work", "", "", "true||1"],
+        // literalCandidateMatcher(null / ascii) also skips redundant suffix leaf scans
+        ["candidate-ascii", "miss", "ns::work", "work", "", "", "false||1"],
+        ["candidate-null", "", "ns::work", "work", "", "", "false||1"],
+        [
+          "candidate-ascii",
+          "sort",
+          "ns::other",
+          "other",
+          "alt::\u017fort",
+          "\u017fort",
+          "false|alt::\u017fort|2",
+        ],
+        // Equal primary spelling still runs only 1 check even with requiresLeafCheck=true
+        ["regex-cs", "^missing$", "plain", "plain", "", "", "false||1"],
+        // regexMatcher preserves requiresLeafCheck=true so anchored ^work$ matches the leaf of ns::work
+        ["regex-cs", "^work$", "ns::work", "work", "", "", "true||2"],
+        ["regex-ci", "^WORK$", "ns::work", "work", "", "", "true||2"],
+        ["regex-cs", "^missing$", "ns::work", "work", "", "", "false||2"],
+        // Non-suffix leaf still falls back to leaf scan even for literalMatcher
+        ["literal", "weird", "ns::work", "weird_leaf", "", "", "true||2"],
+        // Primary miss + suffixed alias miss runs 2 qualified checks total under literalMatcher
+        [
+          "literal",
+          "missing",
+          "ns::work",
+          "work",
+          "alt::alias",
+          "alias",
+          "false||2",
+        ],
+        [
+          "literal",
+          "alias",
+          "ns::work",
+          "work",
+          "alt::alias",
+          "alias",
+          "false|alt::alias|2",
+        ],
+      ] as const;
+      const stdout = await runBridgeProbe(
+        requireProbe(),
+        "spelling-match",
+        cases
+          .map((row) =>
+            [
+              row[0],
+              encodeUtf16Hex(row[1]),
+              encodeUtf16Hex(row[2]),
+              encodeUtf16Hex(row[3]),
+              encodeUtf16Hex(row[4]),
+              encodeUtf16Hex(row[5]),
+            ].join("|"),
+          )
+          .join("\n"),
+      );
+      expect(splitProbeLines(stdout)).toEqual(cases.map((row) => row[6]));
+    });
+  },
+);

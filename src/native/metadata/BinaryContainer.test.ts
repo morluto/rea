@@ -233,21 +233,38 @@ it("indexes exactly the spans mappedFileOffset accepts, rejects and translates",
 });
 
 it("maps adjacent ranges sharing one file translation", () => {
-  const lookup = createFileMappingIndex([
+  const { offset: lookup, prefix } = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x10 },
     { address: 0x1010n, offset: 0x410, size: 0x10 },
-  ]).offset;
+  ]);
   expect(lookup(0x1008n, 8)).toBe(0x408);
   expect(lookup(0x100cn, 8)).toBe(0x40c);
+  expect(prefix(0x100cn, 32)).toEqual({
+    address: 0x100cn,
+    offset: 0x40c,
+    size: 20,
+  });
+  expect(prefix(0x100cn, 5)).toEqual({
+    address: 0x100cn,
+    offset: 0x40c,
+    size: 5,
+  });
+  expect(prefix(0xfffn, 32)).toBeNull();
 });
 
 it("rejects partially overlapping mappings with different file translations", () => {
-  const lookup = createFileMappingIndex([
+  const { offset: lookup, prefix } = createFileMappingIndex([
     { address: 0x1000n, offset: 0x400, size: 0x20 },
     { address: 0x1018n, offset: 0x900, size: 0x10 },
-  ]).offset;
+  ]);
   expect(lookup(0x1000n, 0x10)).toBe(0x400);
   expect(() => lookup(0x1010n, 0x10)).toThrow(/ambiguous/u);
+  expect(prefix(0x1010n, 0x10)).toEqual({
+    address: 0x1010n,
+    offset: 0x410,
+    size: 8,
+  });
+  expect(prefix(0x1018n, 0x10)).toBeNull();
 });
 
 const mappings = [
@@ -273,10 +290,14 @@ it.each(
   },
 );
 it("refuses a zero-fill alias inside a span spanning multiple mappings", () => {
-  expect(() =>
-    mappedFileOffset(mappings, 102n, 4, [{ address: 104n, size: 1n }]),
-  ).toThrow(/zero-fill/);
+  const fills = [{ address: 104n, size: 1n }];
+  expect(() => mappedFileOffset(mappings, 102n, 4, fills)).toThrow(/zero-fill/);
+  const { prefix } = createFileMappingIndex(mappings, fills);
+  expect(prefix(102n, 4)).toEqual({ address: 102n, offset: 2, size: 2 });
+  expect(prefix(104n, 4)).toBeNull();
+  expect(prefix(105n, 4)).toEqual({ address: 105n, offset: 5, size: 3 });
 });
+
 it.each(["scan", "index"] as const)(
   "reads strings across discontiguous source ranges without examining bytes after NUL (%s)",
   (mode) => {

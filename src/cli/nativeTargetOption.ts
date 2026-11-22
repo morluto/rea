@@ -1,4 +1,4 @@
-import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
 /** Help of the flags that bind a native target interpretation. */

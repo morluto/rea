@@ -160,6 +160,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public final class ReaGhidraBridgeHelperProbe {
 `;
@@ -753,11 +755,59 @@ const JAVA_PROBE_DRIVER = String.raw`
         }
     }
 
+    private static void runSpellingMatch() throws IOException {
+        for (String line : readStdinLines()) {
+            String[] fields = line.split("\\|", -1);
+            String factory = fields[0];
+            String expr = decodeHex(fields[1]);
+            String qualified = decodeHex(fields[2]);
+            String leaf = decodeHex(fields[3]);
+            String aliasQualified = decodeHex(fields[4]);
+            String aliasLeaf = decodeHex(fields[5]);
+            ValueMatcher delegate = switch (factory) {
+                case "literal" -> literalMatcher(expr);
+                case "candidate-ascii" -> literalCandidateMatcher(expr);
+                case "candidate-null" -> literalCandidateMatcher(null);
+                case "regex-cs" -> regexMatcher(expr, true);
+                case "regex-ci" -> regexMatcher(expr, false);
+                default -> throw new IllegalArgumentException("Unknown matcher factory: " + factory);
+            };
+            int[] calls = new int[1];
+            ValueMatcher matcher = new ValueMatcher() {
+                @Override
+                public boolean matches(String value) {
+                    calls[0]++;
+                    return delegate.matches(value);
+                }
+
+                @Override
+                public boolean requiresLeafCheck() {
+                    return delegate.requiresLeafCheck();
+                }
+            };
+            ProcedureEntry entry = new ProcedureEntry(
+                null,
+                null,
+                qualified,
+                leaf,
+                qualified.endsWith(leaf),
+                aliasQualified.isEmpty()
+                    ? List.of()
+                    : List.of(new ProcedureAlias(aliasLeaf, aliasQualified)),
+                new ProcedureFacts(),
+                new SymbolFacts()
+            );
+            ProcedureNameMatch result = matchProcedureNames(entry, matcher);
+            System.out.println(result.primary() + "|" + String.join(",", result.aliases()) + "|" + calls[0]);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         switch (args[0]) {
             case "fold-char" -> runFoldChar();
             case "literal-batch" -> runLiteralBatch();
             case "literal-direct" -> runLiteralDirect();
+            case "spelling-match" -> runSpellingMatch();
             case "write-response" -> runWriteResponse();
             case "surrogate-writer" -> runSurrogateWriterChecks();
             case "write-failures" -> runWriteFailures();
@@ -774,10 +824,15 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     "    private Map<String, Object> procedureIndex() {",
     "    private Function resolveProcedure(String value) throws Exception {",
   );
+  const matchMethods = extractBridgeSlice(
+    bridgeSource,
+    "    private static ProcedureNameMatch matchProcedureNames(",
+    "    private List<NameEntry> names() throws Exception {",
+  );
   const literalMethods = extractBridgeSlice(
     bridgeSource,
     "    private static ValueMatcher literalMatcher(String pattern) {",
-    "    private static ValueMatcher regexMatcher(String expression, boolean caseSensitive) {",
+    "    private static SessionDescriptor readDescriptor(",
   );
   const responseMethods = extractBridgeSlice(
     bridgeSource,
@@ -794,6 +849,11 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     "    private record ProcedureAlias(",
     "    private record StringEntry(",
   );
+  const procedureNameMatchRecord = extractBridgeSlice(
+    bridgeSource,
+    "    private record ProcedureNameMatch(",
+    "    private record FunctionAnalysisObservation(",
+  );
   const requestFailureClass = extractRequestFailureSlice(bridgeSource);
   return [
     JAVA_HEADER,
@@ -801,7 +861,9 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     JAVA_GHIDRA_STUBS,
     valueMatcherInterface,
     procedureRecords,
+    procedureNameMatchRecord,
     procedureMethods,
+    matchMethods,
     literalMethods,
     responseMethods,
     requestFailureClass,
