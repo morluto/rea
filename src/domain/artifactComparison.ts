@@ -287,7 +287,8 @@ export type UnreportedArtifactPathClassifier = (
  * number of paths it omitted from `changes`. Only a path observed once on each
  * side of a fully covered comparison is unchanged; this matches the paths
  * counted in `summary.unchanged`. A path neither inventory observed is not
- * evidence of equality.
+ * evidence of equality: it is unobserved under complete coverage and unknown
+ * otherwise.
  */
 export const prepareUnreportedArtifactPaths = (
   result: ArtifactComparisonResult,
@@ -306,11 +307,19 @@ export const prepareUnreportedArtifactPaths = (
   const leftByPath = occurrencesByPath(left.occurrences);
   const rightByPath = occurrencesByPath(right.occurrences);
   return (logicalPath) => {
-    // The index holds only observed paths; absence on both sides is unobserved.
+    // The index holds only observed paths. Absence on both sides proves the
+    // selector names no compared member only when coverage is complete;
+    // otherwise the path may lie where the comparison never reached.
     const leftMatches = leftByPath.get(logicalPath);
     const rightMatches = rightByPath.get(logicalPath);
     if (leftMatches === undefined && rightMatches === undefined)
-      return { status: "unobserved" };
+      return fullyCovered
+        ? { status: "unobserved" }
+        : {
+            status: "unknown",
+            limitation:
+              "The selected artifact path was not observed in either inventory, and the comparison does not have complete coverage; it may name a member the comparison never reached.",
+          };
     if (fullyCovered && leftMatches?.length === 1 && rightMatches?.length === 1)
       return { status: "unchanged" };
     return {

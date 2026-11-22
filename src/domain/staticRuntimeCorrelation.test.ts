@@ -817,3 +817,65 @@ describe("prepared unreported artifact paths", () => {
     );
   });
 });
+
+describe("unobserved artifact paths", () => {
+  it("keeps a path neither inventory observed unknown without complete coverage", () => {
+    const partial = createEvidence(
+      evidenceSubjectInput(artifactLeft.subject),
+      artifactLeft.provider,
+      {
+        operation: artifactLeft.operation,
+        parameters: artifactLeft.parameters,
+        result: {
+          ...artifactInventoryResultSchema.parse(
+            artifactLeft.normalized_result,
+          ),
+          coverage: { scope: "root", status: "unknown" },
+        },
+        confidence: artifactLeft.confidence,
+        authority: artifactLeft.authority,
+      },
+    );
+    const comparison = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        predicateType: "rea.artifact-comparison",
+        operation: "compare_artifacts",
+        parameters: {
+          left_evidence_ids: [partial.evidence_id],
+          right_evidence_ids: [partial.evidence_id],
+        },
+        result: compareArtifacts(partial, partial),
+        confidence: "derived",
+        authority: "analyst-inference",
+        evidenceLinks: [partial.evidence_id],
+      },
+    );
+    const input = select("never/reached.js");
+    const result = correlateStaticAndRuntime(
+      {
+        ...input,
+        static_comparisons: [comparison],
+        mappings: input.mappings.map((item) => ({
+          ...item,
+          static: {
+            ...item.static,
+            comparison_evidence_id: comparison.evidence_id,
+          },
+        })),
+      },
+      {
+        sourceEvidence: (id) =>
+          id === partial.evidence_id ? partial : undefined,
+      },
+    );
+    expect(result.correlations.items[0]).toMatchObject({
+      static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+      classification: "unresolved_branch",
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /not observed in either inventory/u,
+    );
+  });
+});
