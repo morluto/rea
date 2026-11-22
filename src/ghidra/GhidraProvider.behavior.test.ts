@@ -625,7 +625,10 @@ describe("Ghidra provider", () => {
 
 describe("Ghidra Xtensa ELF support", () => {
   it("refuses an Xtensa header without its .xtensa.info declarations instead of guessing the ABI", async () => {
-    const parsed = parseExecutableHeader(elf(1, 1, 94), "x64");
+    // A fixed-address ET_EXEC header, so the lane reaches its ABI check.
+    const header = elf(1, 1, 94);
+    header.writeUInt16LE(2, 16);
+    const parsed = parseExecutableHeader(header, "x64");
     if (!parsed.ok) throw new Error("Expected valid Xtensa ELF target");
     const target: BinaryTarget = {
       path: "/tmp/esp32s3.elf",

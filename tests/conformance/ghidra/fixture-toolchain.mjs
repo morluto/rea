@@ -22,6 +22,7 @@ export const FIXTURE_TOOLS = Object.freeze({
   riscvLinker: { variable: "REA_RISCV_LLD", fallback: "ld.lld" },
   riscvReadelf: { variable: "REA_RISCV_READELF", fallback: "llvm-readelf" },
   riscvObjdump: { variable: "REA_RISCV_OBJDUMP", fallback: "llvm-objdump" },
+  xtensaReadelf: { variable: "REA_XTENSA_READELF", fallback: "readelf" },
   // The PSPSDK build runs these by name; no variable selects them.
   make: { fallback: "make" },
   pspConfig: { fallback: "psp-config" },
@@ -99,6 +100,8 @@ const gnuReadelf = /^GNU readelf\b/u;
 // The RISC-V fixture parses LLVM's attribute layout and disassembles one
 // symbol with --disassemble-symbols, which GNU binutils do not provide.
 const llvm = /\bLLVM\b/u;
+// The Xtensa lane parses either binutils' or LLVM's `-h -s -n -W` layout.
+const gnuOrLlvmReadelf = /\b(?:GNU readelf|LLVM)\b/u;
 const tools = FIXTURE_TOOLS;
 
 /** What each lane's fixtures and independent readers run. */
@@ -147,6 +150,8 @@ export const LANE_TOOLCHAINS = Object.freeze({
     runs(tools.riscvReadelf, llvm),
     runs(tools.riscvObjdump, llvm),
   ],
+  // The C fixture's compiler is optional and caller-selected (REA_XTENSA_CC).
+  xtensa: [runs(tools.xtensaReadelf, gnuOrLlvmReadelf)],
   // The ESP image and flash lanes build ESP32-C3 ELF files with the same
   // RISC-V Clang, linking through --ld-path; esptool is checked by the lane.
   esp: [

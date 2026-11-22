@@ -135,7 +135,7 @@ export const ghidraXtensaProfileParameters = (
       abi: abi?.status === "declared" ? abi.abi : null,
       literals: literals?.status === "declared" ? literals.literals : null,
     },
-    xtensa_support_lane: "elf32-le-exec-windowed-generic-v1",
+    xtensa_support_lane: "elf32-le-exec-windowed-generic",
   };
 };
 

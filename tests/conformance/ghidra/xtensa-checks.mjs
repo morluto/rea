@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
+
 export const XTENSA_LANGUAGE = "Xtensa:LE:32:default";
 export const XTENSA_COMPILER_SPEC = "default";
 
@@ -78,7 +80,7 @@ export function parseXtensaReadelf(text, names) {
  * runs as a process tree that the lane's commands own.
  */
 export async function inspectXtensaReadelf(path, names, commands) {
-  const command = process.env.REA_XTENSA_READELF ?? "readelf";
+  const command = fixtureCommand(FIXTURE_TOOLS.xtensaReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,

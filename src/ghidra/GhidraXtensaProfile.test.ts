@@ -160,7 +160,7 @@ const registerPinCases = () => {
       loader: "auto-from-header",
       language_id: "Xtensa:LE:32:default",
       compiler_spec_id: "default",
-      language_selection: "provider-pinned-v1",
+      language_selection: "provider-pinned",
       xtensa_elf: {
         elf_class: 32,
         byte_order: "little",
@@ -169,7 +169,7 @@ const registerPinCases = () => {
         abi: "windowed",
         literals: "pc-relative",
       },
-      xtensa_support_lane: "elf32-le-exec-windowed-generic-v1",
+      xtensa_support_lane: "elf32-le-exec-windowed-generic",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual(PINNED);
   });
@@ -367,7 +367,7 @@ const registerOverrideCases = () => {
     expect(resolved.value.profile?.parameters).toMatchObject({
       language_id: "Xtensa:LE:32:default",
       compiler_spec_id: "default",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
   });
 
@@ -388,7 +388,7 @@ const registerOverrideCases = () => {
     expect(parameters).toMatchObject({
       language_id: "Xtensa:LE:32:default",
       compiler_spec_id: "default",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual(PINNED);
     const client = provider.createClient(target(), resolved.value.profile);
