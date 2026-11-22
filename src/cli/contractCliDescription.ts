@@ -755,9 +755,23 @@ const camelCase = (field: string): string =>
     letter.toUpperCase(),
   );
 
+const admitsOmissionCache = new WeakMap<z.ZodType, boolean>();
+
 /** The contract object admits this field's key being absent. */
-const admitsOmission = (field: z.ZodType): boolean =>
-  z.object({ value: field }).safeParse({}).success;
+const admitsOmission = (field: z.ZodType): boolean => {
+  if (
+    field instanceof z.ZodOptional ||
+    field instanceof z.ZodExactOptional ||
+    field instanceof z.ZodDefault ||
+    field instanceof z.ZodPrefault
+  )
+    return true;
+  const cached = admitsOmissionCache.get(field);
+  if (cached !== undefined) return cached;
+  const result = z.object({ value: field }).safeParse({}).success;
+  admitsOmissionCache.set(field, result);
+  return result;
+};
 
 const isWrapper = (value: z.ZodType) =>
   value instanceof z.ZodOptional ||
