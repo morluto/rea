@@ -498,30 +498,39 @@ const requireBody = (
     );
 };
 
+interface DeclaredLength {
+  readonly length: number;
+  readonly field: string;
+  /** Offset of the length field within the descriptor body. */
+  readonly bodyOffset: number;
+}
+
+// The descriptor body starts after the 8-byte tag and 8-byte
+// num_bytes_following fields, so body offsets map to file offsets at + 16.
 const tailParts = (
   body: Buffer,
   fixed: number,
-  lengths: readonly number[],
-  field: string,
+  lengths: readonly DeclaredLength[],
+  descriptor: string,
   at: number,
 ): Buffer[] => {
   let cursor = fixed;
   const parts: Buffer[] = [];
-  for (const length of lengths) {
+  for (const { length, field, bodyOffset } of lengths) {
     if (cursor > body.length || length > body.length - cursor)
       malformed(
-        `${field} descriptor is shorter than its declared lengths`,
+        `${descriptor} descriptor ${field} extends past the descriptor`,
         field,
-        at,
+        at + 16 + bodyOffset,
       );
     parts.push(body.subarray(cursor, cursor + length));
     cursor += length;
   }
   if (body.length - cursor >= AVB_DESCRIPTOR_ALIGNMENT)
     malformed(
-      `${field} descriptor padding is not smaller than 8 bytes`,
-      field,
-      at,
+      `${descriptor} descriptor padding is not smaller than 8 bytes`,
+      "num_bytes_following",
+      at + 8,
     );
   return parts;
 };
@@ -592,7 +601,11 @@ const parseHashtree = (
   const [name, salt, digest] = tailParts(
     body,
     164,
-    [nameLength, saltLength, digestLength],
+    [
+      { length: nameLength, field: "partition name length", bodyOffset: 88 },
+      { length: saltLength, field: "salt length", bodyOffset: 92 },
+      { length: digestLength, field: "root digest length", bodyOffset: 96 },
+    ],
     "hashtree",
     at,
   );
@@ -644,7 +657,11 @@ const parseHash = (
   const [name, salt, digest] = tailParts(
     body,
     116,
-    [nameLength, saltLength, digestLength],
+    [
+      { length: nameLength, field: "partition name length", bodyOffset: 40 },
+      { length: saltLength, field: "salt length", bodyOffset: 44 },
+      { length: digestLength, field: "digest length", bodyOffset: 48 },
+    ],
     "hash",
     at,
   );
@@ -679,7 +696,13 @@ const parseCmdline = (body: Buffer, at: number): AndroidVbmetaDescriptor => {
   requireBody(body, 8, "kernel cmdline", at);
   const flags = u32(body, 0);
   const length = u32(body, 4);
-  const [cmdline] = tailParts(body, 8, [length], "kernel cmdline", at);
+  const [cmdline] = tailParts(
+    body,
+    8,
+    [{ length, field: "kernel cmdline length", bodyOffset: 4 }],
+    "kernel cmdline",
+    at,
+  );
   const text = textField(cmdline!);
   return {
     tag: AVB_DESCRIPTOR_TAG.KERNEL_CMDLINE,
@@ -714,7 +737,10 @@ const parseChain = (
   const [name, key] = tailParts(
     body,
     76,
-    [nameLength, keyLength],
+    [
+      { length: nameLength, field: "partition name length", bodyOffset: 4 },
+      { length: keyLength, field: "public key length", bodyOffset: 8 },
+    ],
     "chain partition",
     at,
   );

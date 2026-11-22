@@ -648,6 +648,29 @@ it("locates an unterminated hashtree algorithm at its field", () => {
   });
 });
 
+it("locates oversized tail lengths at their length fields", () => {
+  const cases = [
+    [AVB_DESCRIPTOR_TAG.HASHTREE, 88, "partition name length"],
+    [AVB_DESCRIPTOR_TAG.HASHTREE, 96, "root digest length"],
+    [AVB_DESCRIPTOR_TAG.HASH, 44, "salt length"],
+    [AVB_DESCRIPTOR_TAG.KERNEL_CMDLINE, 4, "kernel cmdline length"],
+    [AVB_DESCRIPTOR_TAG.CHAIN_PARTITION, 8, "public key length"],
+  ] as const;
+  for (const [tag, bodyOffset, field] of cases) {
+    const bytes = Buffer.from(sampleAndroidVbmeta());
+    const descriptor = descriptorHeaders(bytes).find(
+      (header) => header.tag === tag,
+    )!;
+    bytes.writeUInt32BE(0xffff, descriptor.offset + 16 + bodyOffset);
+    expect(stopped(bytes).failure).toMatchObject({
+      kind: "malformed",
+      field,
+      offset: descriptor.offset + 16 + bodyOffset,
+      descriptor_offset: descriptor.offset,
+    });
+  }
+});
+
 it("keeps decoded descriptors when a later descriptor is malformed", () => {
   const bytes = androidVbmetaMalformedLaterDescriptor();
   const headers = descriptorHeaders(bytes);
