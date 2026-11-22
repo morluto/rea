@@ -90,7 +90,8 @@ const declaredTextOf = (element: Element): DeclaredText => {
   return { text: collected.join(""), nested };
 };
 
-const textOf = (element: Element): string => javaTrim(declaredTextOf(element).text);
+const textOf = (element: Element): string =>
+  javaTrim(declaredTextOf(element).text);
 
 /**
  * A text field of a model element. A nested element means the value is not the
@@ -241,10 +242,12 @@ const coordinate = (
   collector: Collector,
   root: Element,
 ): MavenCoordinate => ({
-  group_id: element === undefined ? null : text(element, "groupId", collector, root),
+  group_id:
+    element === undefined ? null : text(element, "groupId", collector, root),
   artifact_id:
     element === undefined ? null : text(element, "artifactId", collector, root),
-  version: element === undefined ? null : text(element, "version", collector, root),
+  version:
+    element === undefined ? null : text(element, "version", collector, root),
   packaging:
     element === undefined ? null : text(element, "packaging", collector, root),
 });
@@ -397,9 +400,7 @@ const parseDependency = (
   const type = text(element, "type", collector, root);
   const optionalElement = child(element, "optional");
   const optionalDeclared =
-    optionalElement === undefined
-      ? null
-      : declaredTextOf(optionalElement).text;
+    optionalElement === undefined ? null : declaredTextOf(optionalElement).text;
   const exclusions = children(element, "exclusions").flatMap((container) =>
     children(container, "exclusion").flatMap((exclusion) => {
       const exclusionGroup = text(exclusion, "groupId", collector, root);
@@ -500,10 +501,8 @@ const collectProperties = (
         sourcePointer,
         lineOf(property),
       );
-    const {
-      url: value,
-      url_credentials_redacted: value_credentials_redacted,
-    } = redactRecordedTransportUrl(textOf(property));
+    const { url: value, url_credentials_redacted: value_credentials_redacted } =
+      redactRecordedTransportUrl(textOf(property));
     const fact = {
       name,
       value: value ?? "",
@@ -588,9 +587,7 @@ export const parseMavenPom = (
         ? undefined
         : child(activation, "activeByDefault");
     const activeDeclared =
-      activeElement === undefined
-        ? null
-        : declaredTextOf(activeElement).text;
+      activeElement === undefined ? null : declaredTextOf(activeElement).text;
     const profileFact = {
       id,
       active_by_default: declaredBoolean(activeDeclared),
@@ -620,12 +617,7 @@ export const parseMavenPom = (
     if (profileManagementElement !== undefined)
       profileManagement.push(
         ...sectionDependencies(
-          soleChild(
-            profileManagementElement,
-            "dependencies",
-            collector,
-            root,
-          ),
+          soleChild(profileManagementElement, "dependencies", collector, root),
           root,
           "dependency_management",
           id,
@@ -795,12 +787,10 @@ export const parseMavenPom = (
           : resolveReference(declared, resolver);
       // A resolved value may embed a repository URL; its userinfo never leaves
       // the parser, matching how declared properties and repositories redact.
-      const {
-        url: resolved,
-        url_credentials_redacted: credentials_redacted,
-      } = redactRecordedTransportUrl(
-        resolution.kind === "resolved" ? resolution.value : null,
-      );
+      const { url: resolved, url_credentials_redacted: credentials_redacted } =
+        redactRecordedTransportUrl(
+          resolution.kind === "resolved" ? resolution.value : null,
+        );
       const fact = {
         name,
         declared,

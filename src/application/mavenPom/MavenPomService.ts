@@ -9,9 +9,7 @@ import {
   type ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisInputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
@@ -216,9 +214,15 @@ const readPom = async (
         retainCompletedIdentity: true,
       },
       unclassified: (cause) =>
-        new ArtifactOperationError(operation, "io", undefined, "POM read failed.", {
-          cause,
-        }),
+        new ArtifactOperationError(
+          operation,
+          "io",
+          undefined,
+          "POM read failed.",
+          {
+            cause,
+          },
+        ),
     });
     return err(
       projectStableArtifactFailure(
