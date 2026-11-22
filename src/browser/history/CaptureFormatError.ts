@@ -1,4 +1,6 @@
 import { ParseFailureError } from "../../domain/parseFailure.js";
+import type { ArtifactLimitBoundary } from "../../domain/artifactOperationError.js";
+import type { ArtifactFixedLimit } from "../../resources/index.js";
 
 /** The ParseFailure format of a historical web network capture. */
 export const CAPTURE_FORMAT = "web-network-capture";
@@ -61,6 +63,16 @@ export const captureLimitForReply = (
 ): CaptureReplyLimitName | undefined =>
   CAPTURE_REPLY_LIMITS.find((name) => CAPTURE_LIMITS[name].reply === reason);
 
+/**
+ * A fixed ceiling that the reader under a capture decoder named, and the
+ * resource it bounds. The capture keeps the reader's ceiling instead of
+ * attributing the refusal to one of its own budgets.
+ */
+export interface CaptureFixedCeiling {
+  readonly fixedAllowance: ArtifactFixedLimit;
+  readonly boundary: ArtifactLimitBoundary;
+}
+
 /** Expected malformed, unsupported or oversized producer data at a historical decoder boundary. */
 export class CaptureFormatError extends ParseFailureError<
   "malformed" | "unsupported" | "limit"
@@ -72,7 +84,9 @@ export class CaptureFormatError extends ParseFailureError<
     cause?: unknown,
   );
   constructor(
-    limit: { readonly name: CaptureLimitName; readonly maximum: number },
+    limit:
+      | { readonly name: CaptureLimitName; readonly maximum: number }
+      | CaptureFixedCeiling,
     message: string,
     pointer?: string,
   );
@@ -80,7 +94,8 @@ export class CaptureFormatError extends ParseFailureError<
     kind:
       | "malformed"
       | "unsupported"
-      | { readonly name: CaptureLimitName; readonly maximum: number },
+      | { readonly name: CaptureLimitName; readonly maximum: number }
+      | CaptureFixedCeiling,
     message: string,
     pointer = "",
     cause?: unknown,
@@ -101,24 +116,35 @@ export class CaptureFormatError extends ParseFailureError<
               kind: "limit",
               format: CAPTURE_FORMAT,
               detail: message,
-              limit: { name: kind.name, maximum: kind.maximum },
+              limit:
+                "fixedAllowance" in kind
+                  ? {
+                      name: kind.fixedAllowance.name,
+                      maximum: kind.fixedAllowance.limit,
+                    }
+                  : { name: kind.name, maximum: kind.maximum },
               ...field,
             },
       cause === undefined ? undefined : { cause },
     );
     this.name = "CaptureFormatError";
+    this.ceiling =
+      typeof kind === "object" && "fixedAllowance" in kind ? kind : undefined;
   }
+
+  /** The reader-named fixed ceiling, for a limit that is not a capture budget. */
+  readonly ceiling: CaptureFixedCeiling | undefined;
 
   /** JSON pointer of the failing capture value; empty for the whole input. */
   get pointer(): string {
     return this.failure.field ?? "";
   }
 
-  /** The exhausted budget, for a `limit` failure. */
+  /** The exhausted capture budget, for a `limit` failure that is not a fixed ceiling. */
   get limit():
     | { readonly name: CaptureLimitName; readonly maximum: number }
     | undefined {
-    return this.failure.kind === "limit"
+    return this.failure.kind === "limit" && this.ceiling === undefined
       ? {
           name: this.failure.limit.name as CaptureLimitName,
           maximum: this.failure.limit.maximum,
@@ -132,7 +158,9 @@ export class CaptureFormatError extends ParseFailureError<
     | "unsupported"
     | "decoder"
     | "input-limit"
-    | "expanded-limit" {
+    | "expanded-limit"
+    | "fixed-limit" {
+    if (this.ceiling !== undefined) return "fixed-limit";
     const { limit } = this;
     if (limit === undefined)
       return this.failure.kind === "unsupported" ? "unsupported" : "format";

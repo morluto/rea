@@ -47,7 +47,7 @@ const { PrivateRuntimeRoot } = await import(
 );
 const { PrivateRuntimeRootUnavailableError } = await import(
   pathToFileURL(
-    join(packageRoot, "dist/process/PrivateRuntimeRootUnavailableError.js"),
+    join(packageRoot, "dist/domain/privateRuntimeRootUnavailableError.js"),
   )
 );
 // Windows children write beneath the root; a private root's DELETE handle would block them.

@@ -46,8 +46,10 @@
         "tests/**/package.json",
         "tsconfig.json",
         "tsconfig.build.json",
+        "tsconfig.scripts.json",
         "vitest.config.ts",
         "scripts/**/*.d.{cts,mts,ts}",
+        "scripts/**/*.mjs",
         "scripts/**/package.json",
         ".github/actions/**/*.{cts,mts,ts,tsx}",
         ".github/**/package.json",
@@ -84,6 +86,7 @@
         "src/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "tests/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "docs/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
+        "docs/reference/rea-limit-inventory.md",
         ".github/actions/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "website/**/*.{cjs,cts,js,jsx,mjs,mts,ts,tsx}",
         "src/**/*.{json,md,py,yaml,yml}",
@@ -140,7 +143,6 @@
     "test:run": {
       "cache": false,
       "dependsOn": [
-        "artifacts:mcp-catalog",
         "artifacts:product-catalog",
         "artifacts:managed-evidence",
         "artifacts:skills"
@@ -183,16 +185,6 @@
           ]
         }
       ]
-    },
-    "artifacts:mcp-catalog": {
-      "dependsOn": ["compile"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs"
-      ],
-      "outputs": [".cache/mcp-tool-catalog.json"]
     },
     "artifacts:skills": {
       "dependsOn": ["compile"],
@@ -242,19 +234,9 @@
         "scripts/lib/format-generated-file.mjs",
         ".oxfmtrc.json"
       ],
-      "outputs": ["docs/error-contract.schema.json"]
-    },
-    "mcp-catalog:check:built": {
-      "dependsOn": ["artifacts:mcp-catalog"],
-      "inputs": [
-        "package.json",
-        "package-lock.json",
-        "scripts/generate-mcp-tool-catalog.mjs",
-        "scripts/lib/generated-file.mjs",
-        {
-          "mode": "dependencyOutputs",
-          "globs": [".cache/mcp-tool-catalog.json"]
-        }
+      "outputs": [
+        "docs/error-contract.schema.json",
+        "docs/user-visible-errors.csv"
       ]
     },
     "evidence:check:built": {

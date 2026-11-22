@@ -3,7 +3,11 @@ import type { z } from "zod";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { projectInputIssues } from "../inputIssueProjection.js";
 import type { Evidence } from "../evidence.js";
-import { safeParseEvidence } from "../evidenceValidation.js";
+import {
+  safeParseEvidence,
+  unsupportedEvidenceFormatError,
+} from "../evidenceValidation.js";
+import { isUnsupportedEvidenceFormat } from "../evidenceFormat.js";
 
 const OPERATION = "reconcile_javascript_runtime";
 
@@ -26,6 +30,8 @@ export const authenticateRuntimeEvidence = (
 ): Evidence => {
   const parsed = safeParseEvidence(input);
   if (parsed.ok) return parsed.value;
+  if (isUnsupportedEvidenceFormat(parsed.error))
+    throw unsupportedEvidenceFormatError(parsed.error);
   throw inputErrorAtPath(parsed.error.issues, input, path, parsed.error);
 };
 

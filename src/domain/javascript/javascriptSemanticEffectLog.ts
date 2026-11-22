@@ -1,6 +1,6 @@
 /**
  * The effect log: one owner of the questions readers ask about recorded
- * effects (docs/adr/javascript/pushed-effect-invalidation.md). Readers ask
+ * effects. Readers ask
  * whether a read may observe an effect; the timing, capture and path proofs
  * stay here. Recorded opaque sites live in javascriptSemanticEffectRecord.ts.
  */
@@ -11,6 +11,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
@@ -19,10 +20,18 @@ import {
   invalidateSemanticMutationPaths,
 } from "./javascriptSemanticMutationValues.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
+import type { SemanticAliasSelectionPath } from "./javascriptSemanticAliasSelections.js";
+import {
+  semanticEffectPathCandidates,
+  semanticEffectPathMatches,
+  semanticSomeEffectPathCandidate,
+} from "./javascriptSemanticEffectPathIndex.js";
 import {
   isUnshadowedGlobal,
+  isSemanticArrayPatternEffect,
   semanticBindingEffectFollowsCapture,
   semanticEscapeFollowsCapture,
+  semanticDefiniteEffectPrecedesReference,
   semanticEffectTiming,
   semanticBindingEffectFollowsRead,
   semanticReadPrecedesEffectWithinActivation,
@@ -33,6 +42,7 @@ import {
   semanticBindingLookupAt,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticReferenceEffectsAtSite,
 } from "./javascriptSemanticState.js";
 
@@ -137,7 +147,7 @@ export const createSemanticOpaqueGlobalObserver = (
 };
 
 /** Global code can affect globals, but cannot rebind its caller's locals. */
-const semanticOpaqueGlobalMayHaveChanged = (
+export const semanticOpaqueGlobalMayHaveChanged = (
   read: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
@@ -304,6 +314,27 @@ export const ambientPathMayHaveChanged = (
   state.ambientWrites.covers(path) ||
   (observes === "contents" && state.ambientEscapes.covers(path));
 
+/**
+ * Whether a source-visible ambient write or escape recorded anywhere in the
+ * source reaches `path`, one of its prefixes or any member below it. A reader
+ * that depends on every member of an ambient object asks this. The answer
+ * ignores timing, so it holds at every read site.
+ */
+export const ambientPathOrMemberMayHaveChanged = (
+  state: JavaScriptSemanticAnalysisState,
+  path: JavaScriptSemanticPropertyPath,
+): boolean =>
+  state.ambientWrites.touches(path) || state.ambientEscapes.touches(path);
+
+/**
+ * Whether an assignment to the ambient binding `name` is recorded anywhere in
+ * the source. The answer ignores timing, so it holds at every read site.
+ */
+export const ambientBindingHasWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  name: string,
+): boolean => state.ambientBindingWrites.has(name);
+
 /** Whether a recorded ambient effect's path is `target` or one of its prefixes. */
 export const ambientEffectCovers = (
   effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
@@ -321,18 +352,65 @@ export const ambientEffectCovers = (
  */
 export type SemanticEffectOrdering = "activation" | "top-level";
 
-const effectMayPrecedeRead = (
+/**
+ * Whether `effect` may run before `read` under `ordering`. Owners that index
+ * their own effects (the ambient-write producer, RequireOrigin's
+ * `module.require` writes) ask this; readers of recorded effects ask the
+ * queries below.
+ */
+export const semanticEffectMayPrecede = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
   effect: t.Node | undefined,
-  ordering: SemanticEffectOrdering,
+  ordering: SemanticEffectOrdering = "activation",
 ): boolean =>
   ordering === "activation"
     ? semanticEffectTiming(read, effect, state) !== "after"
     : !semanticTopLevelEffectFollowsCapture(read, effect, state.parentsByNode);
 
+/** Whether `effect` may run after `read`: it is not proven to run before. */
+export const semanticEffectMayFollow = (
+  state: JavaScriptSemanticAnalysisState,
+  read: t.Node,
+  effect: t.Node | undefined,
+): boolean => semanticEffectTiming(read, effect, state) !== "before";
+
 type AmbientEffect =
   JavaScriptSemanticAnalysisState["ambientWriteEffects"][number];
+
+/** Which effects on the native prototype chain can alter array iteration. */
+export const semanticArrayPrototypeIterationMayChange = (
+  path: JavaScriptSemanticPropertyPath,
+): boolean => {
+  let offset = 0;
+  while (path[offset] === "constructor" && path[offset + 1] === "prototype")
+    offset += 2;
+  const key = path[offset];
+  return (
+    key === undefined ||
+    key === null ||
+    typeof key === "object" ||
+    semanticArrayIndex(key) !== null ||
+    key === "__proto__"
+  );
+};
+
+/** Seed the iteration guard from the earlier, alias-aware ambient effect index. */
+export const semanticAmbientArrayIterationUnknown = (
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const changesIteration = ({ path }: AmbientEffect): boolean =>
+    path[0] === "global" &&
+    (path[1] === "Array" || path[1] === "Object" || path[1] === null) &&
+    (path[2] === "prototype" || path[2] === null) &&
+    semanticArrayPrototypeIterationMayChange(path.slice(3));
+  return (
+    state.ambientWriteEffects.some(changesIteration) ||
+    state.ambientEscapeEffects.some(changesIteration)
+  );
+};
+
+type MemberWrite = JavaScriptSemanticBindingState["memberWrites"][number];
 
 /** Matching effects per queried path; the effect lists only grow, so their
  * lengths tell when a retained selection is stale. */
@@ -384,18 +462,19 @@ const ambientPathEffects = (
 /**
  * `mayObserve` for an ambient member path: whether a recorded write to `path`
  * or to one of its prefixes may run before `read`. With `"contents"`, an
- * escape of it to code whose effects are not evaluated counts too.
+ * escape of it to code whose effects are not evaluated counts too. Ambient
+ * questions use activation timing only, so every reader of one ambient path
+ * or name gets the same answer for the same read.
  */
 export const ambientPathMayObserveAt = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
   path: readonly string[],
   observes: "value" | "contents" = "value",
-  ordering: SemanticEffectOrdering = "activation",
 ): boolean => {
   const { writes, escapes } = ambientPathEffects(state, path);
   const mayPrecede = ({ node }: AmbientEffect): boolean =>
-    effectMayPrecedeRead(state, read, node, ordering);
+    semanticEffectMayPrecede(state, read, node);
   return (
     writes.some(mayPrecede) ||
     (observes === "contents" && escapes.some(mayPrecede))
@@ -404,25 +483,31 @@ export const ambientPathMayObserveAt = (
 
 /**
  * `mayObserve` for an unbound name: whether a recorded assignment to the
- * ambient binding `name` may run before `read`.
+ * ambient binding `name` may run before `read`. The loader and the origin of
+ * one unbound `require` call, and the original global `process` object, ask
+ * this one question.
  */
 export const ambientBindingMayObserveWriteAt = (
   state: JavaScriptSemanticAnalysisState,
   read: t.Node,
   name: string,
-  ordering: SemanticEffectOrdering = "activation",
 ): boolean =>
   (state.ambientBindingWrites.get(name) ?? []).some((write) =>
-    effectMayPrecedeRead(state, read, write, ordering),
+    semanticEffectMayPrecede(state, read, write),
   );
 
 /**
- * A count that grows whenever an ambient write is recorded. A cache that
- * depends on ambient writes stores it and recomputes when it differs.
+ * A count that grows whenever an ambient write is recorded, or with
+ * `"contents"` also an ambient escape: the effects `ambientPathMayObserveAt`
+ * reads with the same argument. A cache that depends on them stores it and
+ * recomputes when it differs.
  */
-export const semanticAmbientWriteGeneration = (
+export const semanticAmbientEffectGeneration = (
   state: JavaScriptSemanticAnalysisState,
-): number => state.ambientWriteEffects.length;
+  observes: "value" | "contents" = "value",
+): number =>
+  state.ambientWriteEffects.length +
+  (observes === "contents" ? state.ambientEscapeEffects.length : 0);
 
 /**
  * A count that grows whenever a member write or escape is recorded on
@@ -432,6 +517,14 @@ export const semanticAmbientWriteGeneration = (
 export const semanticBindingEffectGeneration = (
   binding: JavaScriptSemanticBindingState,
 ): number => binding.memberWrites.length + binding.escapedPaths.length;
+
+/** A read may need to distinguish a captured reference from its merged value. */
+export const hasRecordedReferenceEffects = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  semanticBindingEffectGeneration(binding) > 0 ||
+  state.opaqueEffects.byScope.size > 0;
 
 /**
  * Recorded ambient writes to `global` paths, as intrinsic paths with
@@ -490,6 +583,60 @@ export const bindingMemberEffectMayPrecede = (
   );
 
 /**
+ * Whether a recorded member write to `binding`'s object, or (with
+ * `"member-effects"`) an escape of it, may run before every read `observedAt`
+ * names for it. `observedAt` returns undefined for an effect the reader does
+ * not ask about. A reader that asks only about writes skips the escapes, which
+ * grow with every call through the binding.
+ */
+export const bindingMemberEffectMayPrecedeReads = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  observedAt: (
+    kind: "member-write" | "escape",
+    effect: MemberWrite,
+  ) => readonly t.Node[] | undefined,
+  ordering: SemanticEffectOrdering,
+  observes: "member-writes" | "member-effects" = "member-effects",
+): boolean => {
+  for (const [kind, effects] of [
+    ["member-write", binding.memberWrites],
+    ["escape", observes === "member-effects" ? binding.escapedPaths : []],
+  ] as const)
+    for (const effect of effects) {
+      const reads = observedAt(kind, effect);
+      if (
+        reads?.every((read) =>
+          semanticEffectMayPrecede(state, read, effect.node, ordering),
+        )
+      )
+        return true;
+    }
+  return false;
+};
+
+/** Whether a selected receiver's contents can change before use.
+ * Writes replacing the receiver are covered by the source-selection query.
+ */
+export const bindingProjectedContentsMayChangeAt = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  path: JavaScriptSemanticPropertyPath,
+  read: t.Node,
+): boolean =>
+  opaqueCodeMayReachBindingReference(binding, state, read) ||
+  bindingMemberEffectMayPrecedeReads(
+    state,
+    binding,
+    (kind, effect) =>
+      (kind === "escape" || effect.path.length > path.length) &&
+      semanticEffectPathMatches(effect.path.slice(0, path.length), path)
+        ? [read]
+        : undefined,
+    "activation",
+  );
+
+/**
  * Whether an assignment to `binding` recorded as a reference initializer
  * (a pattern or other non-ordinary write) may run before `read`.
  */
@@ -525,6 +672,154 @@ export const prototypeMutationMayPrecede = (
       semanticEffectTiming(read, effect.node, state) !== "after",
   );
 
+/**
+ * Whether the `method` a read selects from `binding`'s object may have been
+ * replaced before the read: by direct eval that can reach the object (a const
+ * binding still exposes its properties), or by a write to the object, to
+ * `method` or to its prototype, or by an escape of the object or its
+ * prototype. Passing the method itself cannot replace its native [[Call]], and
+ * the call that receives the object has already selected the method.
+ * With `fresh`, each activation initializes a new instance. Writes to a
+ * shared prototype can still reach later activations or replacement receivers.
+ * `targets` filters only effects confined to the selected instance.
+ */
+export const bindingMethodMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  {
+    fresh,
+    inherited,
+    definingPrototypeDepth,
+    isolatedNativeCloses,
+    targets,
+  }: {
+    fresh: boolean;
+    inherited: boolean;
+    definingPrototypeDepth: number | undefined;
+    isolatedNativeCloses: boolean;
+    targets: (effect: JavaScriptSemanticMemberEffect) => boolean;
+  },
+): boolean => {
+  // A prototype hop stays on the receiver chain. A constructor hop can
+  // return to that chain through .prototype. A wildcard may do either.
+  const reachesReceiver = (
+    path: JavaScriptSemanticPropertyPath,
+    length: number,
+    escape = false,
+  ) => {
+    if (!inherited) return length === 0;
+    let receiver = true;
+    let constructor = false;
+    for (let i = 0; i < length && (receiver || constructor); i++) {
+      const key = path[i]!;
+      const nextConstructor: boolean =
+        receiver && semanticPropertyPathKeyMatches(key, "constructor");
+      receiver =
+        (receiver && semanticPropertyPathKeyMatches(key, "__proto__")) ||
+        (constructor && semanticPropertyPathKeyMatches(key, "prototype"));
+      constructor = nextConstructor;
+    }
+    // The native constructor itself also exposes its mutable prototype.
+    return receiver || (escape && constructor);
+  };
+  const mayPrecede = (
+    effect: t.Node | undefined,
+    onInstance: boolean,
+  ): boolean =>
+    semanticEffectTiming(read, effect, state) !== "after" &&
+    !(
+      fresh &&
+      onInstance &&
+      effect !== undefined &&
+      semanticReadPrecedesEffectWithinActivation(
+        read,
+        effect,
+        state.parentsByNode,
+      )
+    );
+  for (const effect of semanticOpaqueBindingEffects(
+    binding,
+    state,
+    "reference",
+  ))
+    if (mayPrecede(effect, !inherited)) return true;
+  const shadowedWrite = (path: JavaScriptSemanticPropertyPath): boolean =>
+    definingPrototypeDepth !== undefined &&
+    path.length - 1 > definingPrototypeDepth &&
+    path.at(-1) === method &&
+    path.slice(0, -1).every((key) => key === "__proto__");
+  return (
+    binding.memberWrites.some(
+      (effect) =>
+        (effect.path.length > 1 || targets(effect)) &&
+        !shadowedWrite(effect.path) &&
+        // A write changes a slot on its parent. Rebinding C.prototype
+        // leaves the prototype of an already acquired receiver intact.
+        (effect.path.length === 0 ||
+          (reachesReceiver(effect.path, effect.path.length - 1) &&
+            (semanticPropertyPathKeyMatches(effect.path.at(-1)!, method) ||
+              (inherited &&
+                semanticPropertyPathKeyMatches(
+                  effect.path.at(-1)!,
+                  "__proto__",
+                ))))) &&
+        mayPrecede(effect.node, effect.path.length <= 1),
+    ) ||
+    binding.escapedPaths.some((effect) => {
+      // An opaque caller handed an instance can still reach its shared prototype.
+      const instanceOnly = effect.path.length === 0 && !inherited;
+      return (
+        !(isolatedNativeCloses && effect.path.length === 0) &&
+        (!instanceOnly || targets(effect)) &&
+        reachesReceiver(effect.path, effect.path.length, true) &&
+        effect.node !== state.parentsByNode.get(read) &&
+        mayPrecede(effect.node, instanceOnly)
+      );
+    })
+  );
+};
+
+/** Whether a member write to `binding`'s object is recorded. */
+export const bindingHasMemberWrites = (
+  binding: JavaScriptSemanticBindingState,
+): boolean => binding.memberWrites.length > 0;
+
+/** An opaque release can see the receiver only through its recorded effects. */
+export const bindingEffectsConfinedToReceiverCalls = (
+  binding: JavaScriptSemanticBindingState,
+  matchesCall: (node: t.Node) => boolean,
+): boolean =>
+  !bindingHasMemberWrites(binding) &&
+  binding.escapedPaths.every(
+    ({ node, path }) =>
+      path.length === 0 && node !== undefined && matchesCall(node),
+  );
+
+/**
+ * Whether an escape of `binding`'s object is recorded at a site other than
+ * `except`, the call a reader is already evaluating.
+ */
+export const bindingHasEscapesOutside = (
+  binding: JavaScriptSemanticBindingState,
+  except: t.Node | undefined,
+): boolean => binding.escapedPaths.some((effect) => effect.node !== except);
+
+/**
+ * The nodes recorded member writes to `binding`'s object involve, in record
+ * order: each write's site (undefined when it was recorded without one), then
+ * the sources it assigned.
+ */
+export function* semanticMemberWriteNodes(
+  binding: JavaScriptSemanticBindingState,
+): Generator<t.Node | undefined> {
+  for (const effect of binding.memberWrites) {
+    yield effect.node;
+    for (const source of effect.assignedSources ?? []) yield source.node;
+  }
+}
+
 /** The sources recorded member writes assigned into `binding`'s object. */
 export function* semanticMemberWriteSources(
   binding: JavaScriptSemanticBindingState,
@@ -532,6 +827,168 @@ export function* semanticMemberWriteSources(
   for (const effect of binding.memberWrites)
     yield* effect.assignedSources ?? [];
 }
+
+const sameLiteralPrefix = (
+  prefix: JavaScriptSemanticPropertyPath,
+  path: SemanticAliasSelectionPath,
+): boolean =>
+  prefix.every(
+    (key, index) =>
+      key !== null &&
+      typeof key !== "object" &&
+      path[index] !== null &&
+      typeof path[index] !== "object" &&
+      String(key) === String(path[index]),
+  );
+
+/**
+ * `mayObserve` for a projected member read of `binding`'s object at `path`:
+ * the recorded member writes to `path` or to one of its prefixes that may run
+ * before the read, in record order. `read.at(depth)` is where the selection
+ * at `depth` is read; `read.capturedAt(depth)` is the copy that captured it,
+ * when the read went through shallow copies, and `read.captured` are the
+ * initializers the read's binding was captured from.
+ *
+ * Two replacement proofs stay here. A definite `=` write to a captured prefix
+ * after the capture replaces the receiver, so writes through that prefix are
+ * not observed when `freshReceiver` shows the new receiver is a fresh
+ * allocation. The last definite `=` write to the selected path itself that
+ * precedes the read is the replacement; `superseded` tells which earlier
+ * writes it replaces.
+ */
+export const semanticBindingMemberWritesObservedAt = (
+  state: JavaScriptSemanticAnalysisState,
+  binding: JavaScriptSemanticBindingState,
+  path: SemanticAliasSelectionPath,
+  read: {
+    readonly at: (depth: number) => t.Node;
+    readonly capturedAt: ((depth: number) => t.Node | undefined) | undefined;
+    readonly captured: readonly {
+      readonly node: t.Node;
+      readonly projection: unknown;
+    }[];
+  },
+  freshReceiver: (
+    root: t.Node,
+    path: JavaScriptSemanticPropertyPath,
+    state: JavaScriptSemanticAnalysisState,
+  ) => boolean,
+): {
+  readonly writes: readonly MemberWrite[];
+  /** Whether a definite replacement of the selected path precedes the read. */
+  readonly replaced: boolean;
+  readonly superseded: (effect: MemberWrite) => boolean;
+  /** Whether an escape of `path` or a prefix may precede the read. */
+  readonly escapeMayPrecede: () => boolean;
+} => {
+  const { at, capturedAt, captured } = read;
+  // Only a definite assignment can replace an already captured receiver.
+  // Select candidates once per query rather than rescanning every propagated
+  // may-write for each matching effect.
+  type PrefixReplacement = MemberWrite & {
+    readonly receiverIdentity: "definite";
+    readonly node: t.AssignmentExpression;
+  };
+  const prefixReplacements =
+    capturedAt === undefined
+      ? []
+      : binding.memberWrites.filter(
+          (replacement): replacement is PrefixReplacement =>
+            replacement.receiverIdentity === "definite" &&
+            t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
+            replacement.path.length < path.length,
+        );
+  const targetsReplacedPrefix = (effect: MemberWrite): boolean =>
+    prefixReplacements.some((replacement) => {
+      const capture = capturedAt!(replacement.path.length);
+      const receiverAt = effect.receiverAt ?? effect.node;
+      return (
+        capture !== undefined &&
+        receiverAt !== undefined &&
+        replacement.path.length < effect.path.length &&
+        sameLiteralPrefix(replacement.path, effect.path) &&
+        semanticTopLevelEffectFollowsCapture(
+          capture,
+          replacement.node,
+          state.parentsByNode,
+        ) &&
+        semanticDefiniteEffectPrecedesReference(
+          replacement.node,
+          receiverAt,
+          state.parentsByNode,
+        ) &&
+        freshReceiver(
+          replacement.node.right,
+          effect.path.slice(replacement.path.length, -1),
+          state,
+        )
+      );
+    });
+  // Every condition is a pure query. Test the selected path first: it is the
+  // cheapest and rejects most records of a binding with many member paths.
+  const matches = (effect: MemberWrite) =>
+    semanticEffectPathMatches(effect.path, path) &&
+    (effect.receiverInitializers === undefined ||
+      effect.receiverInitializers.length === 0 ||
+      captured.length === 0 ||
+      effect.receiverInitializers.some((receiver) =>
+        captured.some(
+          (source) =>
+            source.node === receiver.node &&
+            JSON.stringify(source.projection) ===
+              JSON.stringify(receiver.projection),
+        ),
+      )) &&
+    semanticEffectTiming(at(effect.path.length), effect.node, state) !==
+      "after" &&
+    !targetsReplacedPrefix(effect);
+  const writes = semanticEffectPathCandidates(
+    binding.memberWrites,
+    path,
+  ).filter(matches);
+  let replacement: MemberWrite | undefined;
+  for (const effect of writes) {
+    if (
+      effect.receiverIdentity === "definite" &&
+      t.isAssignmentExpression(effect.node, { operator: "=" }) &&
+      sameLiteralPrefix(effect.path, path) &&
+      semanticDefiniteEffectPrecedesReference(
+        effect.node,
+        at(effect.path.length),
+        state.parentsByNode,
+      ) &&
+      (replacement === undefined ||
+        semanticDefiniteEffectPrecedesReference(
+          replacement.node!,
+          effect.node,
+          state.parentsByNode,
+        ) ||
+        (replacement.node === effect.node &&
+          (replacement.assignedSources?.[0]?.target?.start ?? -1) <
+            (effect.assignedSources?.[0]?.target?.start ?? -1)))
+    )
+      replacement = effect;
+  }
+  const superseded = (effect: MemberWrite) =>
+    replacement !== undefined &&
+    effect.node !== undefined &&
+    effect !== replacement &&
+    (semanticEffectTiming(replacement.node!, effect.node, state) === "before" ||
+      (effect.node === replacement.node &&
+        (effect.assignedSources?.[0]?.target?.start ?? -1) <
+          (replacement.assignedSources?.[0]?.target?.start ?? -1)));
+  return {
+    writes,
+    replaced: replacement !== undefined,
+    superseded,
+    escapeMayPrecede: () =>
+      semanticSomeEffectPathCandidate(
+        binding.escapedPaths,
+        path,
+        (effect) => matches(effect) && !superseded(effect),
+      ),
+  };
+};
 
 /** Declaration assignability is independent of observed explicit writes. */
 const semanticBindingCanBeRebound = (
@@ -573,6 +1030,128 @@ const opaqueCodeMayReachBindingReference = (
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
+/** Whether a binding can acquire members outside its retained assignment sources. */
+export const bindingHasUnmodeledMemberValues = (
+  binding: JavaScriptSemanticBindingState,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (opaqueCodeMayReachBindingReference(binding, state, undefined))
+    return true;
+  if (
+    binding.memberWrites.some((effect) => effect.assignedSources === undefined)
+  )
+    return true;
+  // The queried store itself can mark its selected slot escaped. Its retained
+  // RHS still participates in the source proof.
+  const storeIsModeled = binding.memberWrites.some(
+    (effect) => effect.node === write,
+  );
+  return binding.escapedPaths.some(
+    (effect) => effect.node !== write || !storeIsModeled,
+  );
+};
+
+const inactiveMemberWriteNodes = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  WeakSet<t.Node>
+>();
+
+export const retainSemanticInactiveMemberWrites = (
+  state: JavaScriptSemanticAnalysisState,
+  nodes: readonly t.Node[],
+): void => {
+  inactiveMemberWriteNodes.set(state, new WeakSet(nodes));
+};
+
+const observesCapturedWrite = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node | undefined,
+  node: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  node === undefined ||
+  (inactiveMemberWriteNodes.get(state)?.has(node) !== true &&
+    (capture === undefined ||
+      !semanticBindingEffectFollowsCapture(
+        binding,
+        capture,
+        node,
+        state.parentsByNode,
+      )));
+
+const observesCapturedEscape = (
+  binding: JavaScriptSemanticBindingState,
+  capture: t.Node | undefined,
+  node: t.Node | undefined,
+  parents: JavaScriptSemanticAnalysisState["parentsByNode"],
+): boolean =>
+  capture === undefined ||
+  !semanticEscapeFollowsCapture(binding, capture, node, parents);
+
+/** Whether a captured own slot or its receiver may have changed before the read. */
+export const capturedBindingPathMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  capture: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  return (
+    opaqueCodeMayReachBindingReference(binding, state, capture) ||
+    semanticOpaqueGlobalMayHaveChanged(capture, state) ||
+    semanticSomeEffectPathCandidate(
+      binding.memberWrites,
+      path,
+      (effect) =>
+        semanticEffectPathMatches(effect.path, path) &&
+        observesCapturedWrite(binding, capture, effect.node, state),
+    ) ||
+    semanticSomeEffectPathCandidate(
+      binding.escapedPaths,
+      path,
+      (effect) =>
+        semanticEffectPathMatches(effect.path, path) &&
+        observesCapturedEscape(
+          binding,
+          capture,
+          effect.node,
+          state.parentsByNode,
+        ),
+    )
+  );
+};
+
+/** Preserve an own-data read when the only possible changes follow it in an iterator phase. */
+export const bindingPathOnlyEscapesAtLaterIteratorEffects = (
+  binding: JavaScriptSemanticBindingState,
+  path: readonly string[],
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  let laterIterator = false;
+  const matches = (effect: JavaScriptSemanticMemberEffect): boolean =>
+    semanticEffectPathMatches(effect.path, path);
+  if (
+    semanticSomeEffectPathCandidate(binding.escapedPaths, path, (effect) => {
+      if (!matches(effect)) return false;
+      if (
+        !isSemanticArrayPatternEffect(effect.node) ||
+        semanticEffectTiming(read, effect.node, state) !== "after"
+      )
+        return true;
+      laterIterator = true;
+      return false;
+    }) ||
+    !laterIterator
+  )
+    return false;
+  return (
+    !opaqueCodeMayReachBindingReference(binding, state, read) &&
+    !semanticOpaqueGlobalMayHaveChanged(read, state) &&
+    !semanticSomeEffectPathCandidate(binding.memberWrites, path, matches)
+  );
+};
+
 /**
  * The value of `binding`'s reference as a read captured at `capturePoint`
  * observes it, after the recorded effects that may precede the capture:
@@ -589,16 +1168,8 @@ export const applySemanticBindingReferenceEffects = (
   let projected = invalidateSemanticMutationPaths(
     value,
     binding.memberWrites
-      .filter(
-        ({ node }) =>
-          capturePoint === undefined ||
-          node === undefined ||
-          !semanticBindingEffectFollowsCapture(
-            binding,
-            capturePoint,
-            node,
-            state.parentsByNode,
-          ),
+      .filter(({ node }) =>
+        observesCapturedWrite(binding, capturePoint, node, state),
       )
       .map(({ path }) => path),
   );
@@ -606,8 +1177,7 @@ export const applySemanticBindingReferenceEffects = (
     // Escapes only invalidate object references; other lattice values survive.
     if (projected.status !== "object" && projected.status !== "array") break;
     if (
-      capturePoint !== undefined &&
-      semanticEscapeFollowsCapture(
+      !observesCapturedEscape(
         binding,
         capturePoint,
         escape.node,

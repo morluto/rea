@@ -1,8 +1,9 @@
+import { boundedList } from "../../domain/boundedList.js";
 import { basename, dirname, posix, win32 } from "node:path";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/index.js";
 import { appendCallerPath } from "../../filesystem/callerPath.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
 import type { GoBinaryService } from "../go/GoBinaryService.js";
@@ -10,12 +11,12 @@ import type { RustBinaryService } from "../rust/RustBinaryService.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { providerCleanupErrorFromCloseRejections } from "../../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -24,15 +25,11 @@ import {
   electronFuseReportSchema,
   type ElectronFuseReport,
 } from "../../domain/electron/electronFuses.js";
-import {
-  createEvidence,
-  evidenceSchema,
-  type Evidence,
-} from "../../domain/evidence.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { recognizeEvidence } from "../../domain/evidenceValidation.js";
 import { evidenceSubjectFormatSchema } from "../../domain/evidenceSubject.js";
 import { goBinarySchema } from "../../domain/go/goBinary.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../../domain/investigationProviders.js";
-import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   scanCredentialMarkers,
   type CredentialMarkerHit,
@@ -54,7 +51,8 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import { goBuildPaths } from "../../domain/releaseExposureGoPaths.js";
 import { rustBinarySchema } from "../../domain/rust/rustBinary.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 export interface ReleaseExposureOwners {
   readonly reader: ReleaseExposurePort;
@@ -77,7 +75,7 @@ export class ReleaseExposureService {
       ["rust binaries", () => this.owners.rustBinaries.close()],
     ] as const;
     const settled = await Promise.allSettled(
-      owners.map(([, close]) => close()),
+      owners.map(async ([, close]) => close()),
     );
     const failures = settled.flatMap((result, index) => {
       const owner = owners[index];
@@ -216,9 +214,14 @@ export class ReleaseExposureService {
         image.sha256 === undefined ? [] : [[image.path, image.sha256] as const],
       ),
     );
-    const fuseImages: FuseImageFact[] = [];
+    const fuseImages: CollectedFuseImage[] = [];
     for (const candidate of prepared.scan.fuse_candidates) {
-      if (bundleReadCovers(candidate, digests, fuseImages)) continue;
+      if (
+        fuseImages.some(
+          (image) => image.inventoriedBundleFile === candidate.path,
+        )
+      )
+        continue;
       fuseImages.push(
         await settle(
           () => this.#fuseImage(candidate, digests, options),
@@ -323,7 +326,7 @@ export class ReleaseExposureService {
         return err(cause);
       return ok({
         family: "unknown",
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         archivePaths: [],
       });
     }
@@ -333,7 +336,7 @@ export class ReleaseExposureService {
     candidate: ReleaseExposureFuseCandidate,
     digests: ReadonlyMap<string, string>,
     options: ExecutionOptions | undefined,
-  ): Promise<Result<FuseImageFact, AnalysisError>> {
+  ): Promise<Result<CollectedFuseImage, AnalysisError>> {
     let result: Result<Evidence, AnalysisError>;
     try {
       result = await this.owners.electronFuses.inspect(
@@ -347,7 +350,7 @@ export class ReleaseExposureService {
         kind: "failed",
         role: candidate.role,
         path: candidate.path,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       });
     }
     if (!result.ok) {
@@ -431,12 +434,7 @@ export class ReleaseExposureService {
     } catch (cause) {
       if (cause instanceof AnalysisError && stopsAudit(cause))
         return err(cause);
-      return ok(
-        failedMetadata(
-          cause instanceof Error ? cause.message : String(cause),
-          path,
-        ),
-      );
+      return ok(failedMetadata(errorMessage(cause), path));
     }
   }
 }
@@ -457,18 +455,22 @@ interface OwnerOutcome {
  * completeProviderEvidence carries as the error's partial observation.
  */
 const completedOwnerEvidence = (error: AnalysisError): Evidence | undefined => {
-  const partial = error.partialObservation;
-  return evidenceSchema.safeParse(partial).success
-    ? (partial as Evidence)
-    : undefined;
+  // Only authenticated Evidence settles the owner; otherwise it did not run.
+  const partial = recognizeEvidence(error.partialObservation);
+  return partial.ok ? partial.value : undefined;
 };
+
+interface CollectedFuseImage extends FuseImageFact {
+  /** The exact inventoried regular file whose validated bytes a bundle read covered. */
+  readonly inventoriedBundleFile?: string;
+}
 
 /** Settle one fuse image from its owner's Evidence. */
 const fuseImageFact = (
   candidate: ReleaseExposureFuseCandidate,
   digests: ReadonlyMap<string, string>,
   value: Evidence,
-): FuseImageFact => {
+): CollectedFuseImage => {
   const report = electronFuseReportSchema.safeParse(value.normalized_result);
   if (!report.success)
     return {
@@ -477,7 +479,13 @@ const fuseImageFact = (
       path: candidate.path,
       reason: "Electron fuse report did not match its schema.",
     };
-  if (fuseImageChanged(candidate, digests, report.data.artifact.sha256))
+  const bundleFile =
+    candidate.role === "app-bundle"
+      ? report.data.artifact.resolved_path
+      : undefined;
+  const expected = digests.get(bundleFile ?? candidate.path);
+  // A digest captured for another path cannot bind this read to inventory.
+  if (digests.size > 0 && expected !== report.data.artifact.sha256)
     return {
       kind: "failed",
       role: candidate.role,
@@ -488,7 +496,9 @@ const fuseImageFact = (
     kind: "report",
     role: candidate.role,
     path: candidate.path,
-    sha256: report.data.artifact.sha256,
+    ...(bundleFile !== undefined && expected !== undefined
+      ? { inventoriedBundleFile: bundleFile }
+      : {}),
     implications: fuseImplications(report.data),
   };
 };
@@ -544,14 +554,19 @@ const stopsAudit = (error: AnalysisError): boolean =>
 
 /**
  * Attach this audit's report, which replaces an owner's own partial for one
- * image. An error with unfinished cleanup is kept, so its owner can resolve it.
+ * image. Keep the cleanup owner even if it confirms release before the report
+ * is assembled.
  */
 const withAuditPartial = (
   error: AnalysisError,
   report: Evidence,
 ): AnalysisError => {
-  if (error.partialObservation !== undefined && !error.cleanupIncomplete)
-    return cancelledBy(RELEASE_EXPOSURE_OPERATION, carriedReason(error.cause), {
+  if (
+    error instanceof AnalysisCancelledError &&
+    error.partialObservation !== undefined &&
+    !error.carriesCleanup
+  )
+    return cancelledBy(RELEASE_EXPOSURE_OPERATION, error, {
       partialObservation: report,
     });
   error.partialObservation = report;
@@ -564,18 +579,18 @@ const ownerCloseFailure = (
 ): unknown => {
   const [first] = failures;
   if (failures.length === 1 && first !== undefined) return first.cause;
-  const typed = failures.flatMap(({ cause }) =>
-    cause instanceof AnalysisError ? [cause] : [],
-  );
-  const resources = failures.flatMap(({ cause }) => {
-    if (cause instanceof AnalysisError) return cause.cleanupResources;
-    return cause instanceof ArtifactReaderFailure
-      ? (cause.cleanup?.resources ?? [])
-      : [];
-  });
-  const aggregate = new ProviderCleanupError(
+  return providerCleanupErrorFromCloseRejections(
     RELEASE_EXPOSURE_PROVIDER.id,
-    [...new Set(resources)],
+    failures.map(({ cause }) => ({
+      cause,
+      cleanupOwner:
+        cause instanceof AnalysisError && cause.carriesCleanup
+          ? cause
+          : undefined,
+      ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+        ? { unconfirmedResources: cause.cleanup.resources }
+        : {}),
+    })),
     {
       failures: failures.map(({ owner, cause }) => ({
         owner,
@@ -583,53 +598,14 @@ const ownerCloseFailure = (
           cause instanceof AnalysisError
             ? projectAnalysisError(cause)
             : {
-                message: cause instanceof Error ? cause.message : String(cause),
+                message: errorMessage(cause),
               },
       })),
     },
     {
-      cause: new AggregateError(
-        failures.map(({ cause }) => cause),
-        `Release exposure cleanup failed: ${failures.map(({ owner }) => owner).join(", ")}.`,
-      ),
+      message: `Release exposure cleanup failed: ${failures.map(({ owner }) => owner).join(", ")}.`,
       operation: RELEASE_EXPOSURE_OPERATION,
     },
-  );
-  const live = typed.filter((cause) => cause.cleanupIncomplete);
-  // An opaque rejection supplies no release authority, so it stays incomplete.
-  if (live.length === failures.length) aggregate.bindCleanupDependencies(live);
-  return aggregate;
-};
-
-/**
- * An app bundle resolves to a file through paths the inventory may spell
- * differently, so its digest must match some inventoried native image.
- */
-const fuseImageChanged = (
-  candidate: ReleaseExposureFuseCandidate,
-  digests: ReadonlyMap<string, string>,
-  sha256: string,
-): boolean => {
-  const expected = digests.get(candidate.path);
-  if (expected !== undefined) return expected !== sha256;
-  return digests.size > 0 && ![...digests.values()].includes(sha256);
-};
-
-/**
- * The bundle read lands on the framework file, which the sample may also list.
- * The bundle candidate comes first, so that image needs no second read.
- */
-const bundleReadCovers = (
-  candidate: ReleaseExposureFuseCandidate,
-  digests: ReadonlyMap<string, string>,
-  images: readonly FuseImageFact[],
-): boolean => {
-  const digest = digests.get(candidate.path);
-  return (
-    digest !== undefined &&
-    images.some(
-      (image) => image.role === "app-bundle" && image.sha256 === digest,
-    )
   );
 };
 
@@ -845,11 +821,13 @@ const limitNativeSample = (
         (ranked.get(left.path) ?? 0) - (ranked.get(right.path) ?? 0),
     );
   const preferredPaths = new Set(preferred.map((image) => image.path));
-  const kept = [
-    ...preferred,
-    ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
-  ].slice(0, MAX_RELEASE_EXPOSURE_NATIVE_IMAGES);
-  const omittedNative = scan.native_images.length - kept.length;
+  const { items: kept, omitted: omittedNative } = boundedList(
+    [
+      ...preferred,
+      ...scan.native_images.filter((image) => !preferredPaths.has(image.path)),
+    ],
+    MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
+  );
   const keptPaths = new Set(kept.map((image) => image.path));
   // With no named host, any sampled sibling could be it, so none settles alone.
   const hostsAmong = (

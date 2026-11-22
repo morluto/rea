@@ -1,7 +1,7 @@
 import {
   BinaryReader,
   BinaryResourceFailure,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { GPU_OBJECT_BYTES, GPU_REPORT_BYTES, rejectGpu } from "./GpuSource.js";
 import { Budget } from "../domain/budget.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";

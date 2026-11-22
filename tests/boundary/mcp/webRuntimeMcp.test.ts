@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, expect, it, onTestFinished } from "vitest";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -76,7 +79,7 @@ it("advertises actual SDK schemas, instrumentation effects and session-owned inl
     expect(ajv.validate(inputSchema, args)).toBe(true);
     const response = await client.callTool(
       { name, arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const parsed = toolContract(name).outputSchema.parse(
@@ -122,7 +125,10 @@ it("reports provider progress for observe_web_execution to the MCP caller", asyn
       }),
     },
   );
-  const client = new Client({ name: "web-runtime-progress", version: "1" });
+  const client = new Client(
+    { name: "web-runtime-progress", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -216,6 +222,16 @@ cliTest(
           initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
         },
       });
+      // The observation names the page it was armed on.
+      expect(evidence.subject).toEqual({
+        identity: {
+          kind: "url",
+          url: `${browser.allowedOrigin}/app?caller=retained#details`,
+          origin: browser.allowedOrigin,
+        },
+        name: null,
+        local_path: null,
+      });
       expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
       const cliResult = await cli.run({
         arguments: [
@@ -284,7 +300,7 @@ cliTest(
           selector: "#selected",
         },
       },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError).not.toBe(true);
     const cliResult = await cli.run({

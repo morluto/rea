@@ -1,7 +1,4 @@
-import {
-  cliCompletionShell,
-  splitIncurBuiltinArguments,
-} from "../cliBuiltinArguments.js";
+import type { CliGlobalArguments } from "../cliBuiltinArguments.js";
 import { RECORDED_CLI_COMMAND_REGISTRATIONS } from "../recordedCliCommandRegistrations.js";
 import {
   CLI_COMMAND_REGISTRATIONS,
@@ -19,28 +16,43 @@ const COMMAND_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
   "--no-timings",
 ]);
 
+/** Global switches that inspect a single known command without listing others. */
+const COMMAND_DISCOVERY_FLAGS: ReadonlySet<string> = new Set([
+  "--help",
+  "-h",
+  "--schema",
+  "--llms",
+  "--llms-full",
+]);
+
 const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
   Object.hasOwn(CLI_COMMAND_REGISTRATIONS, id);
 
 /**
  * The registrars the command these arguments run needs, or undefined when the
- * complete CLI must answer. A standalone `--version` needs none: Incur answers
- * it from the CLI identity alone. Help, schemas, `--llms`, completions, other
- * Incur builtins, unknown names ("did you mean"), and a missing or unusable
- * recording all describe or search every command.
+ * complete CLI must answer, as it does for shell completion, which has no
+ * global arguments. A standalone version or retired per-command MCP query
+ * needs no registrar. A recorded top-level command's `--help`, `-h`, `--schema`,
+ * `--llms`, or `--llms-full` only needs that command's registrar. Root help/
+ * manifests, unknown names ("did you mean"), other CLI builtins, and a missing
+ * or unusable recording all describe or search every command.
  */
-export const selectCliRegistrations = (
-  arguments_: readonly string[],
-  environment: Readonly<NodeJS.ProcessEnv>,
+const selectCliRegistrations = (
+  global: CliGlobalArguments | undefined,
   recorded: Readonly<Record<string, string>> | undefined,
 ): readonly CliCommandRegistrationId[] | undefined => {
-  if (cliCompletionShell(environment) !== undefined) return undefined;
-  const { command, flags } = splitIncurBuiltinArguments(arguments_);
+  if (global === undefined) return undefined;
+  const { command, flags } = global;
+  if (flags.has("--mcp") && command.length > 0) return [];
   if (command.length === 0 && flags.size === 1 && flags.has("--version"))
     return [];
   if (recorded === undefined) return undefined;
   for (const flag of flags)
-    if (!COMMAND_OUTPUT_FLAGS.has(flag) && !flag.startsWith("--timings="))
+    if (
+      !COMMAND_OUTPUT_FLAGS.has(flag) &&
+      !COMMAND_DISCOVERY_FLAGS.has(flag) &&
+      !flag.startsWith("--timings=")
+    )
       return undefined;
   const name = command[0];
   if (name === undefined || !Object.hasOwn(recorded, name)) return undefined;
@@ -57,22 +69,23 @@ export interface CliRuntime {
 
 /**
  * Load the command runtime for one invocation. A recorded top-level command
- * loads only its registrar's module graph, a standalone version query loads
- * none, and anything else loads the complete CLI.
+ * loads only its registrar's module graph. A standalone version or retired
+ * mode query loads none; anything else loads the complete CLI.
  */
 export const loadCliRuntime = async (
-  arguments_: readonly string[],
+  global: CliGlobalArguments | undefined,
   environment: NodeJS.ProcessEnv,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): Promise<CliRuntime> => {
   const ids = selectCliRegistrations(
-    arguments_,
-    environment,
+    global,
     RECORDED_CLI_COMMAND_REGISTRATIONS,
   );
   if (ids === undefined) {
     const { createCli, closeCliResources } = await import("../cli.js");
     return {
-      createCli: (resultOutput) => createCli(environment, resultOutput),
+      createCli: (resultOutput) =>
+        createCli(environment, resultOutput, undefined, savedDefaults),
       closeCliResources,
     };
   }
@@ -90,6 +103,7 @@ export const loadCliRuntime = async (
     createCli: (resultOutput) =>
       createCliShell({
         selectedEnvironment: environment,
+        savedDefaults,
         resultOutput,
         registrations: selected.map((registration, index) => ({
           registration,

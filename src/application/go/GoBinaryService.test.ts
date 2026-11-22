@@ -76,9 +76,8 @@ it("preserves unsupported subject architectures and does not duplicate metadata"
   const result = await service.inspect({ path: report.artifact.path });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
-    architecture: null,
     local_path: report.artifact.path,
-    digest: { sha256: report.artifact.sha256 },
+    identity: { architecture: null, sha256: report.artifact.sha256 },
   });
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.raw_result).toBeNull();

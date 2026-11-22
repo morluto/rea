@@ -15,7 +15,7 @@ import {
   fitFixture,
   type FitFixtureImage,
 } from "../../../src/artifacts/fit/FitImage.fixture.js";
-import { dtString } from "../../../src/firmware/devicetree/Devicetree.fixture.js";
+import { dtString } from "../../../src/domain/firmware/devicetree.fixture.js";
 
 type McpCall = Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"];
 const image = (name: string, content: string): FitFixtureImage => ({

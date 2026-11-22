@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../domain/analysisResourceLimits.js";
-import { HopperProtocolError } from "../domain/hopperErrors.js";
+import { HopperProtocolError } from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   analysisBookmarkSchema,
@@ -216,8 +216,7 @@ export type ValueKeepingContracts<Contracts extends HopperReplyContracts> = {
 };
 
 /** The production table, checked to keep every reply value unchanged. */
-export const hopperBridgeReplyContracts: ValueKeepingContracts<HopperBridgeReplyContracts> =
-  hopperReplySchemas;
+hopperReplySchemas satisfies ValueKeepingContracts<HopperBridgeReplyContracts>;
 
 /** The validated reply a contract table assigns to one method. */
 export type HopperContractReply<

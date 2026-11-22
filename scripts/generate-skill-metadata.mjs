@@ -24,7 +24,7 @@ const current = (
 ).replaceAll("\r\n", "\n");
 const cacheBust = String(Date.now());
 const { DEFAULT_CATALOG_IDENTITY } = await import(
-  `${pathToFileURL(join(root, "dist/catalogIdentity.js")).href}?${cacheBust}`
+  `${pathToFileURL(join(root, "dist/contracts/catalog/catalogIdentity.js")).href}?${cacheBust}`
 );
 const { PRODUCT_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/identity.js")).href}?${cacheBust}`

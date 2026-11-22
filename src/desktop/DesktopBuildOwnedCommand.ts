@@ -1,8 +1,11 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  type ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import {
@@ -14,12 +17,12 @@ import {
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
   AnalysisOutputError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Run a setup command with ownership of its entire process family and partial output. */
 export const runDesktopBuildOwnedCommand = async (input: {
@@ -142,7 +145,7 @@ export const runDesktopBuildOwnedCommand = async (input: {
         ? preparation instanceof DarwinProcessOwnershipInspectionError
           ? preparation.capturedOutput
           : undefined
-        : artifactCommandOutput(command.snapshot);
+        : capturedProviderOutput(command.snapshot);
     const reason = desktopBuildOwnedCommandReason(failure);
     const physical =
       failure instanceof AnalysisError
@@ -210,6 +213,6 @@ export const desktopBuildOwnedCommandReason = (cause: unknown): string => {
       ? preparation.capturedOutput?.stderr.trim()
       : undefined) ??
     "";
-  const message = cause instanceof Error ? cause.message : String(cause);
+  const message = errorMessage(cause);
   return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
 };

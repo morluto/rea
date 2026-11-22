@@ -10,7 +10,7 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { HopperProcessError } from "../domain/hopperErrors.js";
+import { HopperProcessError } from "./HopperErrors.js";
 import { err, ok } from "../domain/result.js";
 import { observeProcessStartIdentity } from "../process/ProcessOwnershipObservation.js";
 import type { BridgeLaunch } from "./BridgeLauncher.js";
@@ -19,6 +19,7 @@ import {
   confirmExternalApplicationExit,
   type HopperOwnedResources,
 } from "./HopperCleanup.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 
 const loggerHarness = () => {
   const logs: unknown[] = [];
@@ -70,6 +71,7 @@ const externalApplicationResources = (): HopperOwnedResources => ({
   processSupervisor: undefined,
   runtimeRoot: undefined,
   shutdownConfirmed: false,
+  inspections: new ArtifactResourceScope(),
   externalApplication: {
     pid: 123,
     identity: { state: "readable", identity: "captured-start" },
@@ -224,6 +226,7 @@ describe("Hopper shutdown rejection diagnostics", () => {
         processSupervisor: undefined,
         runtimeRoot: undefined,
         shutdownConfirmed: false,
+        inspections: new ArtifactResourceScope(),
         externalApplication: undefined,
       },
       activeRequest: null,
@@ -264,6 +267,7 @@ describe("Hopper shutdown rejection diagnostics", () => {
         processSupervisor: undefined,
         runtimeRoot: undefined,
         shutdownConfirmed: false,
+        inspections: new ArtifactResourceScope(),
         externalApplication: undefined,
       },
       activeRequest: null,
@@ -368,6 +372,7 @@ it.each([
         processSupervisor: undefined,
         runtimeRoot: undefined,
         shutdownConfirmed: false,
+        inspections: new ArtifactResourceScope(),
         externalApplication: undefined,
       },
       activeRequest: null,
@@ -425,6 +430,7 @@ it("keeps a prepared backing image when native document closure cannot be confir
         runtimeRoot,
         processSupervisor: undefined,
         shutdownConfirmed: false,
+        inspections: new ArtifactResourceScope(),
         externalApplication: undefined,
       },
       activeRequest: null,

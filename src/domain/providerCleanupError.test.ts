@@ -5,7 +5,7 @@ import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
 import { cleanupRetryRemediation } from "./analysisErrorRecovery.js";
 import { analysisErrorRemediationAction } from "./analysisErrorPresentation.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "./analysisErrorProjectionSchema.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const CLOSE_RETRY = { operation: "close_binary" } as const;

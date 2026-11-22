@@ -1,7 +1,7 @@
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -19,6 +19,7 @@ import {
   type CutterDiscoveryOptions,
 } from "./CutterBridgeClient.js";
 import { CUTTER_PROVIDER_IDENTITY } from "./CutterProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface CutterBridgePort {
   listSessions(
@@ -78,11 +79,11 @@ export class CutterBridgeService {
       );
       if (!receipt.ok)
         return err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             pending.failure,
             receipt.error,
             "cutter_command",
-          ).bindCleanupDependencies([pending.failure, receipt.error]),
+          ),
         );
       if (!receipt.value) return err(pending.failure);
       pending.release.confirm();
@@ -128,17 +129,17 @@ export class CutterBridgeService {
               "cutter",
               [],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { cause },
             );
       throw pending.ok
         ? failure
-        : analysisErrorWithCleanupFailure(
+        : analysisErrorWithCleanupDependencies(
             pending.error,
             failure,
             "close_cutter",
-          ).bindCleanupDependencies([pending.error, failure]);
+          );
     }
     if (!pending.ok) throw pending.error;
   }
@@ -162,9 +163,8 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         {
           ...CUTTER_PROVIDER_IDENTITY,
           version: output.cutterVersion,
@@ -180,7 +180,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -190,13 +190,18 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
-          subjectUnavailableReason:
-            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
+          rawResult: output.output,
+          authority: "external-service",
           limitations: [
+            "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+            ...(input.json
+              ? [
+                  "JSON integer literals outside JavaScript's safe integer range are retained as decimal strings.",
+                ]
+              : []),
             ...(output.executionState === "unknown"
               ? [
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",
@@ -230,6 +235,9 @@ export class CutterBridgeService {
               resources: [`cutter-session:${input.session_id}`],
             },
             partialObservation: evidence,
+            ...(output.outputLimit === undefined
+              ? {}
+              : { limit: output.outputLimit }),
           },
         );
         const release = new AnalysisCleanupRelease();

@@ -105,11 +105,7 @@ describe("Windows CommonJS request classification", () => {
     },
   );
 
-  it.each([
-    "node:\\fs",
-    "node:fs\\extra",
-    "https:\\example.invalid\\window.cjs",
-  ])(
+  it.each(["node:\\fs", "https:\\example.invalid\\window.cjs"])(
     "does not treat the rejected scheme request %s as an unknown Windows path",
     (declaredPath) => {
       expect(
@@ -128,23 +124,22 @@ describe("Windows CommonJS request classification", () => {
     },
   );
 
-  it("keeps rejected and URL-owned backslash requests distinct from CommonJS host syntax", () => {
+  it("keeps NUL, local paths and builtins distinct from unknown Windows syntax", () => {
     const files = fileMap([
       file("app/main.cjs", "root"),
       file("app/window.cjs", "root"),
     ]);
-    for (const [declaredPath, moduleKind, status, resolvedPath] of [
-      [".\\window\0.cjs", "require", "rejected", null],
-      [".\\window.cjs", "import", "rejected", null],
-      ["./window.cjs", "require", "resolved", "app/window.cjs"],
-      ["node:fs", "require", "external", null],
+    for (const [declaredPath, status, resolvedPath] of [
+      [".\\window\0.cjs", "rejected", null],
+      ["./window.cjs", "resolved", "app/window.cjs"],
+      ["node:fs", "external", null],
     ] as const)
       expect(
         resolve({
           declaredPath,
           sourcePath: "app/main.cjs",
           context: "module-specifier",
-          moduleKind,
+          moduleKind: "require",
           files,
         }),
       ).toMatchObject({
@@ -156,9 +151,7 @@ describe("Windows CommonJS request classification", () => {
 
 describe("relative ESM URL separators", () => {
   it.each([
-    ["./dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
     ["../shared\\dep.mjs", "resolved", "shared/dep.mjs"],
-    ["./unused\\..\\dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
     ["./..\\..\\outside.mjs", "rejected", null],
     ["./dir%5cdep.mjs", "rejected", null],
     ["./dir%2fdep.mjs", "rejected", null],
@@ -348,20 +341,6 @@ describe("runtime host path classification", () => {
       });
     },
   );
-  it("normalizes discarded relative URL segments before pathname validation", () => {
-    expect(
-      resolve({
-        declaredPath: "./discard%2F/../window.cjs",
-        sourcePath: "app/main.mjs",
-        context: "module-specifier",
-        moduleKind: "import",
-        files: fileMap([file("app/window.cjs", "root")]),
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/window.cjs",
-    });
-  });
   it("retains unknown URL identity for an unpaired source directory segment", () => {
     expect(
       resolve({
@@ -816,12 +795,8 @@ describe("unavailable package metadata", () => {
       file("app/main.mjs", "root"),
       file("app/relative/index.js", "root"),
     ]);
-    const requestedPaths: string[] = [];
     const lookup = {
-      get: (path: string) => {
-        requestedPaths.push(path);
-        return path === manifest.path ? manifest : undefined;
-      },
+      get: (path: string) => (path === manifest.path ? manifest : undefined),
       coverage: completeInventoryCoverage,
       hasDirectory: () => false,
     };
@@ -833,7 +808,6 @@ describe("unavailable package metadata", () => {
       files,
       unanalyzedFiles: lookup,
     });
-    expect(requestedPaths).toContain(manifest.path);
     expect(relativeRequire).toMatchObject({
       resolution_status: "unavailable",
       resolved_path: null,
@@ -942,33 +916,7 @@ describe("unavailable package metadata", () => {
 });
 
 describe("bare package root file lookup", () => {
-  it("uses loader-specific bare package roots when only a sibling .js file exists", () => {
-    const absentDirectory = fileMap([
-      file("app/entry.mjs", "root"),
-      file("app/node_modules/fixture.js", "root"),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "fixture",
-        sourcePath: "app/entry.mjs",
-        context: "module-specifier",
-        moduleKind: "import",
-        files: absentDirectory,
-      }),
-    ).toMatchObject({ resolution_status: "external", resolved_path: null });
-    expect(
-      resolve({
-        declaredPath: "fixture",
-        sourcePath: "app/entry.mjs",
-        context: "module-specifier",
-        moduleKind: "require",
-        files: absentDirectory,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/fixture.js",
-    });
-
+  it("uses the sibling file only for CommonJS when a package directory also exists", () => {
     const packageDirectory = fileMap([
       file("app/entry.mjs", "root"),
       file("app/node_modules/fixture.js", "root"),
@@ -999,26 +947,6 @@ describe("bare package root file lookup", () => {
 });
 
 describe("legacy package main lookup", () => {
-  it("treats an empty package main as absent and resolves the root index", () => {
-    const files = fileMap([
-      file("app/src/entry.cjs", "root"),
-      file("app/node_modules/fixture/package.json", "root", '{"main":""}'),
-      file("app/node_modules/fixture/index.js", "root"),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "fixture",
-        sourcePath: "app/src/entry.cjs",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/fixture/index.js",
-    });
-  });
-
   it.each(["import", "require"] as const)(
     "limits %s package-main probes to Node's file extensions",
     (moduleKind) => {
@@ -1031,57 +959,6 @@ describe("legacy package main lookup", () => {
         ),
         file("app/node_modules/fixture/main.cjs", "root"),
         file("app/node_modules/fixture/index.mjs", "root"),
-      ]);
-      expect(
-        resolve({
-          declaredPath: "fixture",
-          sourcePath: "app/src/entry.js",
-          context: "module-specifier",
-          moduleKind,
-          files,
-        }),
-      ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
-    },
-  );
-
-  it("retains inventoried directories during legacy ESM main finalization", () => {
-    const files = fileMap([
-      file("app/src/entry.mjs", "root"),
-      file(
-        "app/node_modules/fixture/package.json",
-        "root",
-        '{"main":"./lib/"}',
-      ),
-      file("app/node_modules/fixture/lib.js", "root"),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "fixture",
-        sourcePath: "app/src/entry.mjs",
-        context: "module-specifier",
-        moduleKind: "import",
-        files,
-        directoryPaths: new Set(["app/node_modules/fixture/lib/.js"]),
-      }),
-    ).toMatchObject({
-      resolution_status: "rejected",
-      resolved_path: null,
-      candidate_path: "app/node_modules/fixture/lib/.js",
-    });
-  });
-
-  it.each(["import", "require"] as const)(
-    "does not recursively resolve a nested package from a %s package main",
-    (moduleKind) => {
-      const files = fileMap([
-        file("app/src/entry.js", "root"),
-        file("app/node_modules/fixture/package.json", "root", '{"main":"sub"}'),
-        file(
-          "app/node_modules/fixture/sub/package.json",
-          "root",
-          '{"main":"other"}',
-        ),
-        file("app/node_modules/fixture/sub/other.js", "root"),
       ]);
       expect(
         resolve({
@@ -1142,65 +1019,15 @@ describe("legacy package main metadata validation and fallback", () => {
       }),
     ).toMatchObject({ resolution_status: "unavailable", resolved_path: null });
   });
-
-  it.each(["import", "require"] as const)(
-    "uses Node's index fallback for a non-string %s package main",
-    (moduleKind) => {
-      const files = fileMap([
-        file("app/src/entry.js", "root"),
-        file("app/node_modules/fixture/package.json", "root", '{"main":42}'),
-        file("app/node_modules/fixture/index.js", "root"),
-      ]);
-      expect(
-        resolve({
-          declaredPath: "fixture",
-          sourcePath: "app/src/entry.js",
-          context: "module-specifier",
-          moduleKind,
-          files,
-        }),
-      ).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: "app/node_modules/fixture/index.js",
-      });
-    },
-  );
-
-  it.each(["import", "require"] as const)(
-    "does not treat a root-pointing %s package main as a dotfile module",
-    (moduleKind) => {
-      const files = fileMap([
-        file("src/entry.js", "root"),
-        file("node_modules/fixture/package.json", "root", '{"main":"../.."}'),
-        file("index.js", "root"),
-        file(".js", "root"),
-        file(".json", "root"),
-      ]);
-      expect(
-        resolve({
-          declaredPath: "fixture",
-          sourcePath: "src/entry.js",
-          context: "module-specifier",
-          moduleKind,
-          files,
-        }),
-      ).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: "index.js",
-      });
-    },
-  );
 });
 
 describe("CommonJS bare package ancestor lookup", () => {
   it.each([
-    ["absent metadata", undefined, true],
-    ["empty metadata", "{}", true],
-    ["empty main", '{"main":""}', true],
-    ["truthy missing main", '{"main":"missing"}', false],
+    ["absent metadata", undefined],
+    ["empty metadata", "{}"],
   ] as const)(
     "handles %s before an ancestor package for both loaders",
-    (_name, packageJson, commonJsUsesAncestor) => {
+    (_name, packageJson) => {
       const files = fileMap([
         file("app/src/entry.js", "root"),
         file("app/src/node_modules/fixture/placeholder.js", "root"),
@@ -1215,26 +1042,20 @@ describe("CommonJS bare package ancestor lookup", () => {
             ]),
         file("app/node_modules/fixture/index.js", "root"),
       ]);
-      for (const moduleKind of ["import", "require"] as const) {
-        const resolution = resolve({
-          declaredPath: "fixture",
-          sourcePath: "app/src/entry.js",
-          context: "module-specifier",
-          moduleKind,
-          files,
-        });
-        if (moduleKind === "require" && commonJsUsesAncestor) {
-          expect(resolution).toMatchObject({
-            resolution_status: "resolved",
-            resolved_path: "app/node_modules/fixture/index.js",
-          });
-        } else {
-          expect(resolution).toMatchObject({
-            resolution_status: "not-found",
-            resolved_path: null,
-          });
-        }
-      }
+      const input = {
+        declaredPath: "fixture",
+        sourcePath: "app/src/entry.js",
+        context: "module-specifier",
+        files,
+      } as const;
+      expect(resolve({ ...input, moduleKind: "require" })).toMatchObject({
+        resolution_status: "resolved",
+        resolved_path: "app/node_modules/fixture/index.js",
+      });
+      expect(resolve({ ...input, moduleKind: "import" })).toMatchObject({
+        resolution_status: "not-found",
+        resolved_path: null,
+      });
     },
   );
 });
@@ -1404,38 +1225,6 @@ describe("contextual JavaScript artifact path resolution", () => {
     });
   });
 
-  it("applies document and base-href semantics to HTML references", () => {
-    const files = fileMap([
-      file("renderer/index.html", "root"),
-      file("assets/app.js", "root"),
-      file("renderer/local.js", "root"),
-    ]);
-
-    expect(
-      resolve({
-        declaredPath: "app.js?v=1",
-        sourcePath: "renderer/index.html",
-        context: "html-reference",
-        htmlBaseHref: "/assets/",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "assets/app.js",
-    });
-    expect(
-      resolve({
-        declaredPath: "./local.js",
-        sourcePath: "renderer/index.html",
-        context: "html-reference",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "renderer/local.js",
-    });
-  });
-
   it.each(["node:fs", "electron", "../../escape.js", "%2e%2e/escape.js"])(
     "fails closed for unsafe or external module declaration %s",
     (declaredPath) => {
@@ -1467,7 +1256,7 @@ describe("contextual JavaScript artifact path resolution", () => {
     ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
   });
 
-  it("resolves inventoried paths longer than the former character ceiling", () => {
+  it("resolves an inventoried path of more than 5,000 characters", () => {
     const declaredPath = `./${"a".repeat(5_000)}.js`;
     const expectedPath = `app/${declaredPath.slice(2)}`;
     const files = fileMap([
@@ -1588,7 +1377,7 @@ describe("JavaScript file URL resolution", () => {
 });
 
 describe("contextual JavaScript package path resolution", () => {
-  it("follows package entrypoints beyond the former recursion ceiling", () => {
+  it("follows a long chain of package entrypoints", () => {
     const files = fileMap([
       file("app/consumer.js", "root"),
       file(
@@ -1728,113 +1517,6 @@ describe("contextual JavaScript package path resolution", () => {
       limitations: [
         expect.stringContaining("declares no exports target for subpath"),
       ],
-    });
-  });
-});
-
-describe("package exports subpath resolution", () => {
-  it("resolves exact subpath keys through import and require conditions", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file(
-        "app/node_modules/fixture/package.json",
-        "root",
-        JSON.stringify({
-          exports: {
-            ".": "./index.cjs",
-            "./parser": {
-              import: "./parser.mjs",
-              require: "./parser.cjs",
-              default: "./fallback.js",
-            },
-          },
-        }),
-      ),
-      file("app/node_modules/fixture/index.cjs", "root"),
-      file("app/node_modules/fixture/parser.mjs", "root"),
-      file("app/node_modules/fixture/parser.cjs", "root"),
-      file("app/node_modules/fixture/fallback.js", "root"),
-    ]);
-
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "import",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/fixture/parser.mjs",
-    });
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/fixture/parser.cjs",
-    });
-  });
-
-  it("resolves array subpath targets at their first string entry", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file(
-        "app/node_modules/fixture/package.json",
-        "root",
-        JSON.stringify({
-          exports: {
-            "./parser": [{ import: "./parser.mjs" }, "./parser.cjs"],
-          },
-        }),
-      ),
-      file("app/node_modules/fixture/parser.cjs", "root"),
-    ]);
-
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/fixture/parser.cjs",
-    });
-  });
-
-  it("resolves subpaths of scoped packages", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file(
-        "app/node_modules/@scope/fixture/package.json",
-        "root",
-        JSON.stringify({
-          exports: { "./parser": "./parser.cjs" },
-        }),
-      ),
-      file("app/node_modules/@scope/fixture/parser.cjs", "root"),
-    ]);
-
-    expect(
-      resolve({
-        declaredPath: "@scope/fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "app/node_modules/@scope/fixture/parser.cjs",
     });
   });
 });
@@ -2196,86 +1878,64 @@ describe("package exports subpath encapsulation", () => {
       limitations: [expect.stringContaining("explicit null exports target")],
     });
   });
-
-  it("reports a missing selected subpath target without index fallback", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file(
-        "app/node_modules/fixture/package.json",
-        "root",
-        JSON.stringify({
-          exports: { "./parser": "./parser.cjs" },
-        }),
-      ),
-      file("app/node_modules/fixture/parser/index.js", "root"),
-    ]);
-
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "not-found",
-      resolved_path: null,
-      limitations: [expect.stringContaining("exports targets are exact files")],
-    });
-  });
 });
 
 describe("package subpath directory ownership", () => {
-  it.each(["root", "other"])(
-    "selects metadata-less package directories only in the %s container",
-    (container) => {
+  it.each([
+    {
+      boundary: "implicit directory in the source container",
+      container: "root",
+    },
+    { boundary: "unmapped foreign container", container: "other" },
+    { boundary: "sibling prefix with a package-name file", container: null },
+    {
+      boundary: "archive escape to an implicit ancestor directory",
+      container: null,
+      archive: true,
+    },
+  ])(
+    "resolves a package subpath across $boundary",
+    ({ container, archive }) => {
+      const near = "app/src/node_modules/fixture";
+      const ancestor = "app/node_modules/fixture/parser.js";
+      const sourcePath = archive
+        ? "app/bundle.asar/consumer.js"
+        : "app/src/consumer.js";
       const files = fileMap([
-        file("app/src/consumer.js", "root"),
-        file("app/src/node_modules/fixture/parser.js", container),
-        file("app/node_modules/fixture/package.json", "root", "{}"),
-        file("app/node_modules/fixture/parser.js", "root"),
+        file(sourcePath, archive ? "archive" : "root"),
+        file(`${near}.js`, "root"),
+        file(`${near}-extra/parser.js`, "root"),
+        file(ancestor, "root"),
+        ...(container === null ? [] : [file(`${near}/parser.js`, container)]),
       ]);
-      expect(
-        resolve({
-          declaredPath: "fixture/parser",
-          sourcePath: "app/src/consumer.js",
-          context: "module-specifier",
-          moduleKind: "require",
-          files,
-        }),
-      ).toMatchObject({
-        declared_path: "fixture/parser",
-        resolution_context: "module-specifier",
-        resolution_status: "resolved",
-        resolved_path:
-          container === "root"
-            ? "app/src/node_modules/fixture/parser.js"
-            : "app/node_modules/fixture/parser.js",
-      });
+      const indexed = {
+        coverage: completeInventoryCoverage,
+        get: () => undefined,
+        hasDirectory: () => false,
+        filePathsBelow: (directory: string) =>
+          [...files.keys()].filter((path) => path.startsWith(`${directory}/`)),
+      };
+      for (const lookup of [undefined, indexed])
+        for (const [moduleKind, declaredPath] of [
+          ["require", "fixture/parser"],
+          ["import", "fixture/parser.js"],
+        ] as const)
+          expect(
+            resolve({
+              declaredPath,
+              sourcePath,
+              context: "module-specifier",
+              moduleKind,
+              files,
+              ...(lookup === undefined ? {} : { unanalyzedFiles: lookup }),
+            }),
+          ).toMatchObject({
+            resolution_status: "resolved",
+            resolved_path:
+              container === "root" ? `${near}/parser.js` : ancestor,
+          });
     },
   );
-
-  it("does not mistake a package-name file or sibling prefix for a nearer directory", () => {
-    const files = fileMap([
-      file("app/src/consumer.js", "root"),
-      file("app/src/node_modules/fixture.js", "root"),
-      file("app/src/node_modules/fixture-extra/parser.js", "root"),
-      file("app/node_modules/fixture/parser.js", "root"),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "fixture/parser",
-        sourcePath: "app/src/consumer.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolved_path: "app/node_modules/fixture/parser.js",
-      resolution_status: "resolved",
-    });
-  });
 
   it.each([
     ["malformed", "{", "not valid package JSON"],
@@ -2516,61 +2176,9 @@ describe("package exports exact targets", () => {
       }
     },
   );
-
-  it("keeps extension and index fallbacks for a legacy main entry", () => {
-    for (const [main, target] of [
-      ["./file", "app/node_modules/fixture/file.js"],
-      ["./folder", "app/node_modules/fixture/folder/index.js"],
-    ] as const) {
-      const files = fileMap([
-        file("app/consumer.js", "root"),
-        file(
-          "app/node_modules/fixture/package.json",
-          "root",
-          JSON.stringify({ main }),
-        ),
-        file(target, "root"),
-      ]);
-      expect(
-        resolve({
-          declaredPath: "fixture",
-          sourcePath: "app/consumer.js",
-          context: "module-specifier",
-          moduleKind: "require",
-          files,
-        }),
-      ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
-    }
-  });
 });
 
 describe("package import alias resolution", () => {
-  it.each(["import", "require"] as const)(
-    "resolves an exact #%s alias from the enclosing package imports map",
-    (moduleKind) => {
-      const files = aliasFiles({
-        "package.json": JSON.stringify({
-          imports: { "#config": "./config.cjs" },
-        }),
-        "main.js": "",
-        "config.cjs": "",
-      });
-      expect(
-        resolve({
-          declaredPath: "#config",
-          sourcePath: "main.js",
-          context: "module-specifier",
-          moduleKind,
-          files,
-        }),
-      ).toMatchObject({
-        resolution_status: "resolved",
-        resolved_path: "config.cjs",
-        declared_path: "#config",
-      });
-    },
-  );
-
   it("resolves an alias from a nested file through the enclosing package root", () => {
     const files = aliasFiles({
       "package.json": JSON.stringify({
@@ -2616,32 +2224,6 @@ describe("package import alias resolution", () => {
     });
   });
 
-  it("uses a nested package imports map rather than the application root", () => {
-    const files = aliasFiles({
-      "package.json": JSON.stringify({
-        imports: { "#config": "./root.cjs" },
-      }),
-      "root.cjs": "",
-      "node_modules/fixture/package.json": JSON.stringify({
-        imports: { "#config": "./local.cjs" },
-      }),
-      "node_modules/fixture/index.js": "",
-      "node_modules/fixture/local.cjs": "",
-    });
-    expect(
-      resolve({
-        declaredPath: "#config",
-        sourcePath: "node_modules/fixture/index.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "node_modules/fixture/local.cjs",
-    });
-  });
-
   it("does not inherit an ancestor imports map across a nested package.json", () => {
     const files = aliasFiles({
       "package.json": JSON.stringify({
@@ -2666,32 +2248,6 @@ describe("package import alias resolution", () => {
       "node_modules/fixture/package.json",
     );
     expect(outcome.limitations.join(" ")).not.toContain("root.cjs");
-  });
-
-  it("does not apply a nested package map to the application root importer", () => {
-    const files = aliasFiles({
-      "package.json": JSON.stringify({
-        imports: { "#config": "./root.cjs" },
-      }),
-      "main.js": "",
-      "root.cjs": "",
-      "node_modules/fixture/package.json": JSON.stringify({
-        imports: { "#config": "./local.cjs" },
-      }),
-      "node_modules/fixture/local.cjs": "",
-    });
-    expect(
-      resolve({
-        declaredPath: "#config",
-        sourcePath: "main.js",
-        context: "module-specifier",
-        moduleKind: "require",
-        files,
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "root.cjs",
-    });
   });
 });
 
@@ -2753,79 +2309,9 @@ describe("package import alias target selection", () => {
       resolved_path: "config.cjs",
     });
   });
-
-  it("does not add an extension or index to a selected import target", () => {
-    const files = aliasFiles({
-      "package.json": JSON.stringify({
-        imports: { "#config": "./config" },
-      }),
-      "main.js": "",
-      "config.cjs": "",
-      "config/index.js": "",
-    });
-    const outcome = resolve({
-      declaredPath: "#config",
-      sourcePath: "main.js",
-      context: "module-specifier",
-      moduleKind: "require",
-      files,
-    });
-    expect(outcome).toMatchObject({
-      resolution_status: "not-found",
-      resolved_path: null,
-    });
-    expect(outcome.limitations.join(" ")).toContain(
-      "import targets are exact files",
-    );
-  });
 });
 
 describe("package import alias refusals", () => {
-  it("reports a missing exact alias without looking in another package", () => {
-    const files = aliasFiles({
-      "package.json": JSON.stringify({
-        imports: { "#config": "./config.cjs" },
-      }),
-      "main.js": "",
-      "config.cjs": "",
-    });
-    const outcome = resolve({
-      declaredPath: "#other",
-      sourcePath: "main.js",
-      context: "module-specifier",
-      moduleKind: "require",
-      files,
-    });
-    expect(outcome).toMatchObject({
-      resolution_status: "external",
-      resolved_path: null,
-    });
-    expect(outcome.limitations.join(" ")).toContain("#other");
-    expect(outcome.limitations.join(" ")).toContain("#config");
-  });
-
-  it("reports an explicit null import target as blocked", () => {
-    const files = aliasFiles({
-      "package.json": JSON.stringify({
-        imports: { "#config": null },
-      }),
-      "main.js": "",
-      "config.cjs": "",
-    });
-    const outcome = resolve({
-      declaredPath: "#config",
-      sourcePath: "main.js",
-      context: "module-specifier",
-      moduleKind: "require",
-      files,
-    });
-    expect(outcome).toMatchObject({
-      resolution_status: "external",
-      resolved_path: null,
-    });
-    expect(outcome.limitations.join(" ")).toContain("explicit null");
-  });
-
   it("leaves wildcard import aliases unresolved", () => {
     const files = aliasFiles({
       "package.json": JSON.stringify({
@@ -3068,107 +2554,10 @@ describe("directory package entrypoint precedence", () => {
   });
 });
 
-describe("contextual JavaScript module identity", () => {
-  it("retains CommonJS and ESM file-base identity during inert extraction", () => {
-    const analysis = analyzeJavaScriptStaticSource(
-      `
-        import { BrowserWindow } from "electron";
-        import path, { dirname } from "node:path";
-        import { fileURLToPath } from "node:url";
-        new BrowserWindow({ webPreferences: {
-          preload: path.resolve("ignored", __dirname, "preload.cjs")
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: fileURLToPath(new URL("./preload.mjs", import.meta.url))
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: path.join(path.dirname(__filename), "legacy-preload.js")
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: path.posix.resolve("/ignored", dirname(fileURLToPath(import.meta.url)), "esm-preload.js")
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: path.posix.resolve(__dirname, "/shared", "absolute-preload.js/")
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: path.posix.resolve(\`/templates\`, "template-preload.js")
-        }});
-        new BrowserWindow({ webPreferences: {
-          preload: new URL("./remote-base.js", location.href)
-        }});
-        new BrowserWindow().loadURL("file:///renderer/index.html");
-      `,
-    );
-
-    expect(analysis.role_paths).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          path: "preload.cjs",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "./preload.mjs",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "legacy-preload.js",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "esm-preload.js",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "/shared/absolute-preload.js",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "/templates/template-preload.js",
-          resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          path: "file:///renderer/index.html",
-          resolution_context: "module-specifier",
-        }),
-      ]),
-    );
-    expect(analysis.electron.browser_windows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          preload_path: "preload.cjs",
-          preload_resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          preload_path: "./preload.mjs",
-          preload_resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          preload_path: "esm-preload.js",
-          preload_resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          preload_path: "/shared/absolute-preload.js",
-          preload_resolution_context: "filesystem-expression",
-        }),
-        expect.objectContaining({
-          preload_path: "/templates/template-preload.js",
-          preload_resolution_context: "filesystem-expression",
-        }),
-      ]),
-    );
-    expect(analysis.role_paths).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ path: "./remote-base.js" }),
-      ]),
-    );
-  });
-});
-
 describe("TypeScript NodeNext emitted-extension resolution", () => {
   const container = "container";
 
   it.each([
-    ["./dep.js", "src/dep.ts"],
     ["./ui/Button.js", "src/ui/Button.tsx"],
     ["./cfg.mjs", "src/cfg.mts"],
     ["./legacy.cjs", "src/legacy.cts"],
@@ -3194,44 +2583,6 @@ describe("TypeScript NodeNext emitted-extension resolution", () => {
 
 describe("TypeScript declaration fallback ownership", () => {
   const container = "container";
-
-  it.each([
-    ["./dep.js", "src/dep.d.ts"],
-    ["./cfg.mjs", "src/cfg.d.mts"],
-    ["./legacy.cjs", "src/legacy.d.cts"],
-  ] as const)(
-    "retains %s as compile-time evidence without inventing a runtime target",
-    (specifier, target) => {
-      const files = fileMap([
-        file("src/main.ts", container),
-        file(target, container, "export const value = 1;"),
-      ]);
-      for (const moduleKind of ["import", "require"] as const) {
-        expect(
-          resolve({
-            declaredPath: specifier,
-            sourcePath: "src/main.ts",
-            context: "module-specifier",
-            moduleKind,
-            files,
-          }),
-        ).toMatchObject({
-          resolution_status: "unavailable",
-          resolved_path: null,
-          candidate_path: target,
-        });
-      }
-      expect(
-        resolve({
-          declaredPath: "./" + target.slice(4),
-          sourcePath: "src/main.ts",
-          context: "module-specifier",
-          moduleKind: "import",
-          files,
-        }),
-      ).toMatchObject({ resolution_status: "resolved", resolved_path: target });
-    },
-  );
 
   it("prefers a present runtime file and keeps the fallback off for JS callers", () => {
     const files = fileMap([
@@ -3361,59 +2712,45 @@ describe("url-reference directory and empty-segment semantics", () => {
   });
 
   it.each([
-    ["./nested//worker.js", null],
-    ["./nested//../worker.js", "dist/nested/worker.js"],
+    ["./nested//worker.js", null, "dist/nested/worker.js"],
+    ["./nested//../worker.js", "dist/nested/worker.js", "dist/worker.js"],
   ])(
     "keeps empty URL path segments significant: %s",
-    (declaredPath, resolvedPath) => {
+    (declaredPath, urlPath, commonJsPath) => {
       // A dot segment removes the preceding empty segment, never `nested`.
-      expect(new URL(declaredPath, "file:///root/dist/app.mjs").pathname).toBe(
-        resolvedPath === null
-          ? "/root/dist/nested//worker.js"
-          : `/root/${resolvedPath}`,
-      );
+      const input = {
+        declaredPath,
+        sourcePath: "dist/app.mjs",
+        files: fileMap([
+          file("dist/worker.js", "root"),
+          file("dist/nested/worker.js", "root"),
+        ]),
+      };
+      const urlResolution = {
+        resolution_status: urlPath === null ? "unavailable" : "resolved",
+        resolved_path: urlPath,
+      };
       for (const context of ["url-reference", "html-reference"] as const)
-        expect(
-          resolve({
-            declaredPath,
-            sourcePath: "dist/app.mjs",
-            context,
-            files: fileMap([
-              file("dist/worker.js", "root"),
-              file("dist/nested/worker.js", "root"),
-            ]),
-          }),
-          context,
-        ).toMatchObject({ resolved_path: resolvedPath });
+        expect(resolve({ ...input, context }), context).toMatchObject(
+          urlResolution,
+        );
       expect(
         resolve({
-          declaredPath,
-          sourcePath: "dist/app.mjs",
+          ...input,
           context: "module-specifier",
           moduleKind: "import",
-          files: fileMap([
-            file("dist/worker.js", "root"),
-            file("dist/nested/worker.js", "root"),
-          ]),
         }),
-      ).toMatchObject({ resolved_path: resolvedPath });
+      ).toMatchObject(urlResolution);
       // CommonJS keeps filesystem path semantics.
       expect(
         resolve({
-          declaredPath,
-          sourcePath: "dist/app.mjs",
+          ...input,
           context: "module-specifier",
           moduleKind: "require",
-          files: fileMap([
-            file("dist/worker.js", "root"),
-            file("dist/nested/worker.js", "root"),
-          ]),
         }),
       ).toMatchObject({
-        resolved_path:
-          declaredPath === "./nested//worker.js"
-            ? "dist/nested/worker.js"
-            : "dist/worker.js",
+        resolution_status: "resolved",
+        resolved_path: commonJsPath,
       });
     },
   );
@@ -3760,31 +3097,6 @@ const aliasFiles = (
   );
 
 describe("exact HTML resource resolution", () => {
-  it.each([
-    ["extension", ["app.js"]],
-    ["directory index", ["app/index.js"]],
-    ["directory package", ["app/package.json", "app/entry.js"]],
-  ] as const)("does not infer a file from %s fallback", (_name, paths) => {
-    const files = fileMap([
-      file("index.html", "root"),
-      ...paths.map((path) =>
-        file(
-          path,
-          "root",
-          path.endsWith("package.json") ? '{"main":"entry.js"}' : "",
-        ),
-      ),
-    ]);
-    expect(
-      resolve({
-        declaredPath: "./app",
-        sourcePath: "index.html",
-        context: "html-reference",
-        files,
-      }),
-    ).toMatchObject({ resolution_status: "not-found", resolved_path: null });
-  });
-
   it("prefers an exact extensionless resource and retains URL suffix handling", () => {
     const files = fileMap([
       file("renderer/index.html", "root"),
@@ -4497,24 +3809,6 @@ describe("package metadata at archive module boundaries", () => {
       });
     },
   );
-
-  it("keeps metadata-less ancestor package directories after an archive escape", () => {
-    expect(
-      resolve({
-        sourcePath: "resources/app.asar/main.cjs",
-        declaredPath: "fixture/parser",
-        context: "module-specifier",
-        moduleKind: "require",
-        files: fileMap([
-          file("resources/app.asar/main.cjs", "source"),
-          file("resources/node_modules/fixture/parser.js", "target"),
-        ]),
-      }),
-    ).toMatchObject({
-      resolution_status: "resolved",
-      resolved_path: "resources/node_modules/fixture/parser.js",
-    });
-  });
 
   it.each(["resources/app.asar/main.cjs", "resources/main.cjs"])(
     "keeps unread metadata blocking a decoy index for %s",

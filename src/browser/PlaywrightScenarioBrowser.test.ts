@@ -1,12 +1,12 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../resources/AnalysisCleanupLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { afterEach, expect, it, vi } from "vitest";
 import { mkdir, writeFile, rm, access, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import type {
   Browser,
   BrowserContext,
@@ -18,6 +18,7 @@ import { DEFAULT_CDP_COMMAND_TIMEOUT_MS } from "../domain/browserDeadline.js";
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS } from "./PlaywrightExecutionBoundary.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
   attachedScenarioLeaseKey,
   failBrowserScenarioOperation,
@@ -25,11 +26,8 @@ import {
   PlaywrightScenarioBrowserCleanupOwner,
 } from "./PlaywrightScenarioBrowser.js";
 
-const hostPlatform = process.platform;
-
 afterEach(() => {
   vi.unstubAllEnvs();
-  Object.defineProperty(process, "platform", { value: hostPlatform });
 });
 
 it("locks one attached browser for spellings that discover the same endpoint", () => {
@@ -39,63 +37,83 @@ it("locks one attached browser for spellings that discover the same endpoint", (
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-2"),
   );
-});
-
-it("locks one attached browser across loopback spellings of one endpoint", () => {
-  expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-1"),
-  );
-  expect(attachedScenarioLeaseKey("http://[::1]:9222", "page-1")).not.toBe(
-    attachedScenarioLeaseKey("http://[::1]:9222", "page-2"),
-  );
   expect(attachedScenarioLeaseKey("http://127.0.0.1:9222", "page-1")).not.toBe(
     attachedScenarioLeaseKey("http://127.0.0.1:9223", "page-1"),
   );
 });
 
-const deferred = <Value>() => {
-  let resolve: (value: Value | PromiseLike<Value>) => void = () => undefined;
-  const promise = new Promise<Value>((resolvePromise) => {
-    resolve = resolvePromise;
-  });
-  return { promise, resolve };
+const launchScenario = browserScenarioSchema.parse({
+  browser: { mode: "launch", executable_path: process.execPath },
+  start_url: { url: "https://example.test" },
+  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
+});
+
+const rejectedLaunch = async (
+  scenario = launchScenario,
+  {
+    environment = {},
+    platform,
+    cause = new Error("launch boundary reached"),
+  }: {
+    readonly environment?: Readonly<Record<string, string | undefined>>;
+    readonly platform?: NodeJS.Platform;
+    readonly cause?: Error;
+  } = {},
+) => {
+  const launchPersistentContext = vi
+    .fn<typeof import("playwright-core").chromium.launchPersistentContext>()
+    .mockRejectedValue(cause);
+  const result = await openPlaywrightScenarioBrowser(scenario, environment, {
+    launcher: {
+      launchPersistentContext,
+      connectOverCDP: async () => {
+        throw new Error("Unexpected connection");
+      },
+    },
+    ...(platform === undefined ? {} : { platform }),
+  }).then(
+    (opened) => ({ opened }),
+    (failure: unknown) => ({ failure }),
+  );
+  if ("opened" in result) {
+    await result.opened.cleanup.close();
+    throw new Error("Expected browser startup failure");
+  }
+  expect(launchPersistentContext).toHaveBeenCalledOnce();
+  const [profile, options] = launchPersistentContext.mock.calls[0]!;
+  return { failure: result.failure, profile, options };
 };
 
-it("passes the selected environment to the actual browser launch boundary", async () => {
-  vi.stubEnv("LANG", "ambient-language");
-  const selected = {
-    LANG: "selected-language",
-    PATH: "/selected/bin",
-    REA_PRIVATE_VALUE: "not-a-launch-setting",
-  };
-  let launchedEnvironment: unknown;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-    ],
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(scenario, selected, {
-      launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
-        },
-        launchPersistentContext: async (_profile, options) => {
-          launchedEnvironment = options?.env;
-          throw new Error("launch boundary reached");
-        },
+it.each([
+  { platform: "win32", systemRootKey: "SYSTEMROOT" },
+  { platform: "linux", systemRootKey: "SystemRoot" },
+] as const)(
+  "passes the selected environment to the $platform browser launch boundary",
+  async ({ platform, systemRootKey }) => {
+    vi.stubEnv("LANG", "ambient-language");
+    const selected = snapshotEnvironment(
+      {
+        LANG: "selected-language",
+        PATH: "/selected/bin",
+        SystemRoot: "C:/WINDOWS",
+        REA_PRIVATE_VALUE: "not-a-launch-setting",
       },
-    }),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(launchedEnvironment).toEqual({
-    LANG: "selected-language",
-    PATH: "/selected/bin",
-  });
-});
+      platform,
+    );
+    const { failure, options } = await rejectedLaunch(launchScenario, {
+      environment: selected,
+      platform,
+    });
+    expect(failure).toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
+    expect(options?.env).toEqual({
+      LANG: "selected-language",
+      PATH: "/selected/bin",
+      [systemRootKey]: "C:/WINDOWS",
+    });
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "passes the caller-selected symlink-parent executable to the launch boundary",
@@ -105,37 +123,13 @@ it.skipIf(process.platform === "win32")(
       await mkdir(join(root, "real/inner"), { recursive: true });
       await symlink(join(root, "real/inner"), join(root, "link"));
       const selected = absoluteCallerPath("link/../browser", { cwd: root });
-      let launchedExecutable: string | undefined;
-      const scenario = browserScenarioSchema.parse({
-        browser: { mode: "launch", executable_path: selected },
-        start_url: { url: "https://example.test" },
-        actions: [
-          { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-        ],
-      });
-
-      await expect(
-        openPlaywrightScenarioBrowser(
-          scenario,
-          {},
-          {
-            launcher: {
-              connectOverCDP: async () => {
-                throw new Error("Unexpected connection");
-              },
-              launchPersistentContext: async (_profile, options) => {
-                launchedExecutable = options?.executablePath;
-                throw new Error("fake launch boundary reached");
-              },
-            },
-          },
-        ),
-      ).rejects.toMatchObject({
-        diagnostics: { startup_error: "fake launch boundary reached" },
-      });
-
-      expect(launchedExecutable).toBe(selected);
-      expect(selected).toBe(`${root}/link/../browser`);
+      const { options } = await rejectedLaunch(
+        browserScenarioSchema.parse({
+          ...launchScenario,
+          browser: { mode: "launch", executable_path: selected },
+        }),
+      );
+      expect(options?.executablePath).toBe(`${root}/link/../browser`);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -143,49 +137,21 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("keeps Termux execution support when launching Chromium on Android", async () => {
-  Object.defineProperty(process, "platform", { value: "android" });
-  vi.stubEnv("PREFIX", "/data/data/com.termux/files/usr");
-  const selected = { LANG: "selected-language", PREFIX: process.env.PREFIX };
-  let launchOptions: Parameters<
-    typeof import("playwright-core").chromium.launchPersistentContext
-  >[1];
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [
-      { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-    ],
+  vi.stubEnv("PREFIX", "/ambient/termux");
+  const { options } = await rejectedLaunch(launchScenario, {
+    platform: "android",
+    environment: {
+      LANG: "selected-language",
+      PREFIX: "/data/data/com.termux/files/usr",
+    },
   });
-
-  await expect(
-    openPlaywrightScenarioBrowser(scenario, selected, {
-      launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
-        },
-        launchPersistentContext: async (_profile, options) => {
-          launchOptions = options;
-          throw new Error("launch boundary reached");
-        },
-      },
-    }),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-
-  expect(launchOptions?.chromiumSandbox).toBe(false);
-  expect(launchOptions?.args).toEqual(["--single-process"]);
-  expect(launchOptions?.env).toEqual({
+  expect(options?.chromiumSandbox).toBe(false);
+  expect(options?.args).toEqual(["--single-process"]);
+  expect(options?.env).toEqual({
     LANG: "selected-language",
     LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   });
-});
-
-const launchScenario = browserScenarioSchema.parse({
-  browser: { mode: "launch", executable_path: process.execPath },
-  start_url: { url: "https://example.test" },
-  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
 });
 
 it("does not launch a browser for an already-cancelled opening", async () => {
@@ -218,8 +184,7 @@ it.each([false, true])(
   async (cancelled) => {
     const controller = new AbortController();
     const reason = { caller: "cancelled during browser launch" };
-    const started = deferred<void>();
-    const launched = deferred<BrowserContext>();
+    const launch = phaseGate<void, BrowserContext>();
     let profile = "";
     const close = vi.fn(async () => undefined);
     const newPage = vi.fn(async () => ({}) as Page);
@@ -231,8 +196,7 @@ it.each([false, true])(
         launcher: {
           launchPersistentContext: (directory) => {
             profile = directory;
-            started.resolve(undefined);
-            return launched.promise;
+            return launch.hold();
           },
           connectOverCDP: async () => {
             throw new Error("Unexpected connection");
@@ -250,9 +214,9 @@ it.each([false, true])(
       newPage,
     } as unknown as BrowserContext;
     try {
-      await awaitAcknowledgement(started.promise, opening, "browser launch");
+      await launch.reached(opening, "browser launch");
       if (cancelled) controller.abort(reason);
-      launched.resolve(context);
+      launch.release(context);
       const result = await opening;
       if (result.ok) {
         try {
@@ -275,7 +239,7 @@ it.each([false, true])(
       await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       controller.abort(reason);
-      launched.resolve(context);
+      launch.release(context);
       const outcome = await opening;
       if (outcome.ok) await outcome.value.cleanup.close();
     }
@@ -290,34 +254,20 @@ it.each([
 ])(
   "launches Chromium with sandbox $sandbox for $environment",
   async ({ environment, sandbox }) => {
-    Object.defineProperty(process, "platform", { value: "linux" });
-    let launchOptions: Parameters<
-      typeof import("playwright-core").chromium.launchPersistentContext
-    >[1];
-
-    await expect(
-      openPlaywrightScenarioBrowser(launchScenario, environment, {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            launchOptions = options;
-            throw new Error("launch boundary reached");
-          },
-        },
-      }),
-    ).rejects.toMatchObject({
+    const { failure, options } = await rejectedLaunch(launchScenario, {
+      platform: "linux",
+      environment,
+    });
+    expect(failure).toMatchObject({
       diagnostics: { startup_error: "launch boundary reached" },
       // Chromium's startup log, not REA, says whether the sandbox caused it.
       remediationAction: sandbox
         ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
         : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
     });
-
-    expect(launchOptions?.chromiumSandbox).toBe(sandbox);
-    expect(launchOptions?.args).toEqual([]);
-    expect(launchOptions?.env).toEqual({});
+    expect(options?.chromiumSandbox).toBe(sandbox);
+    expect(options?.args).toEqual([]);
+    expect(options?.env).toEqual({});
   },
 );
 
@@ -353,13 +303,12 @@ it("waits for bounded event finalization and owned browser teardown", async () =
 it("keeps attached-target ownership after the cleanup response timeout", async () => {
   vi.useFakeTimers();
   try {
-    const closeStarted = deferred<void>();
-    const closeResult = deferred<void>();
+    const browserClose = phaseGate();
     const settled: boolean[] = [];
     const cleanup = new PlaywrightScenarioBrowserCleanupOwner({
       closeBrowser: async (disconnectAtBoundary) => {
-        closeStarted.resolve(undefined);
-        await disconnectAtBoundary(() => closeResult.promise);
+        const closed = browserClose.hold();
+        await disconnectAtBoundary(() => closed);
       },
       removeProfile: undefined,
       onSettled: (browserClosed) => settled.push(browserClosed),
@@ -373,7 +322,7 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
       reason: "cleanup_failed",
       cleanup: { reason: expect.stringContaining("timed out") },
     });
-    await closeStarted.promise;
+    await browserClose.reached(timedOutClose, "browser close");
     let responseSettled = false;
     void timedOutClose
       .finally(() => {
@@ -388,7 +337,7 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
     await timeoutExpectation;
     expect(settled).toEqual([]);
 
-    closeResult.resolve(undefined);
+    browserClose.release();
     await cleanup.close();
     expect(settled).toEqual([true]);
     expect(timedOutFailure).toMatchObject({
@@ -400,108 +349,73 @@ it("keeps attached-target ownership after the cleanup response timeout", async (
   }
 });
 
-it("does not configure a late attached connection after cancellation", async () => {
-  const connection =
-    deferred<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>();
-  const connectionStarted = deferred<void>();
-  const connectedBrowser = {
-    close: vi.fn(async () => undefined),
-    contexts: vi.fn(() => []),
-    isConnected: vi.fn(() => true),
-    version: () => "fixture",
-  };
-  const controller = new AbortController();
-  const launcher = {
-    connectOverCDP: () => {
-      connectionStarted.resolve(undefined);
-      return connection.promise;
-    },
-    launchPersistentContext: async () => {
-      throw new Error("Unexpected launch");
-    },
-  };
-  const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "page-1",
-    },
-    start_url: { url: "https://example.test" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
-  });
-  const opening = openPlaywrightScenarioBrowser(
-    scenario,
-    {},
-    {
-      launcher,
-      signal: controller.signal,
-    },
-  );
-  try {
-    await awaitAcknowledgement(
-      connectionStarted.promise,
-      opening,
-      "CDP connection",
-    );
-    controller.abort();
-    connection.resolve(connectedBrowser);
-
-    await expect(opening).rejects.toMatchObject({
-      _tag: "BrowserObservationError",
-      reason: "cancelled",
+it.each(["handshake", "target discovery"] as const)(
+  "closes the attached browser on cancellation during $0",
+  async (stage) => {
+    const caller = new AbortController();
+    const reason = new Error(`cancel during ${stage}`);
+    const handshake = phaseGate();
+    const browser = {
+      close: vi.fn(async () => undefined),
+      contexts: vi.fn(() => {
+        caller.abort(reason);
+        return [];
+      }),
+      isConnected: () => true,
+      version: () => "fixture",
+    };
+    const scenario = browserScenarioSchema.parse({
+      browser: {
+        mode: "connect",
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "page-1",
+      },
+      start_url: { url: "https://example.test" },
+      actions: scenarioActions,
     });
-    expect(connectedBrowser.contexts).not.toHaveBeenCalled();
-    expect(connectedBrowser.close).toHaveBeenCalledOnce();
-  } finally {
-    controller.abort();
-    connection.resolve(connectedBrowser);
-    const opened = await opening.catch(() => undefined);
-    await opened?.cleanup.close();
-  }
-});
-
-it("closes an attached connection when cancellation starts target discovery", async () => {
-  const controller = new AbortController();
-  const connectedBrowser = {
-    close: vi.fn(async () => undefined),
-    contexts: vi.fn(() => {
-      controller.abort();
-      return [];
-    }),
-    isConnected: vi.fn(() => true),
-    version: () => "fixture",
-  };
-  const launcher = {
-    connectOverCDP: async () => connectedBrowser,
-    launchPersistentContext: async () => {
-      throw new Error("Unexpected launch");
-    },
-  };
-  const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "page-1",
-    },
-    start_url: { url: "https://example.test" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
-  });
-
-  await expect(
-    openPlaywrightScenarioBrowser(
+    const opening = openPlaywrightScenarioBrowser(
       scenario,
       {},
       {
-        launcher,
-        signal: controller.signal,
+        signal: caller.signal,
+        launcher: {
+          connectOverCDP: async () => {
+            if (stage === "handshake") await handshake.hold();
+            return browser;
+          },
+          launchPersistentContext: async () => {
+            throw new Error("Unexpected launch");
+          },
+        },
       },
-    ),
-  ).rejects.toMatchObject({
-    _tag: "AnalysisCancelledError",
-  });
-  expect(connectedBrowser.contexts).toHaveBeenCalledOnce();
-  expect(connectedBrowser.close).toHaveBeenCalledOnce();
-});
+    );
+    try {
+      if (stage === "handshake") {
+        await handshake.reached(opening, "browser handshake");
+        caller.abort(reason);
+        handshake.release();
+      }
+      await expect(opening).rejects.toMatchObject(
+        stage === "handshake"
+          ? {
+              _tag: "BrowserObservationError",
+              reason: "cancelled",
+              cause: reason,
+            }
+          : { _tag: "AnalysisCancelledError", cause: reason },
+      );
+      expect(browser.contexts).toHaveBeenCalledTimes(
+        stage === "handshake" ? 0 : 1,
+      );
+      expect(browser.close).toHaveBeenCalledOnce();
+    } finally {
+      caller.abort(reason);
+      handshake.release();
+      const opened = await opening.catch(() => undefined);
+      await opened?.cleanup.close();
+    }
+  },
+);
 
 const attachedBrowserFixture = (
   callbacks: {
@@ -514,6 +428,7 @@ const attachedBrowserFixture = (
     readonly isTargetClosed?: () => boolean;
     readonly isBrowserConnected?: () => boolean;
   } = {},
+  commandTimeoutMs?: number,
 ) => {
   const discoverySession = {
     send: vi.fn(async () => ({ targetInfo: { targetId: "page-1" } })),
@@ -555,6 +470,9 @@ const attachedBrowserFixture = (
     },
     start_url: { url: "https://example.test" },
     actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+    ...(commandTimeoutMs === undefined
+      ? {}
+      : { command_timeout_ms: commandTimeoutMs }),
   });
   return {
     browser,
@@ -646,8 +564,7 @@ it("restores its environment overrides before releasing an attached browser", as
 });
 
 it("checks a late stop after attached restoration and before transport disconnect", async () => {
-  const restorationStarted = deferred<void>();
-  const finishRestoration = deferred<void>();
+  const restoration = phaseGate();
   const order: string[] = [];
   const fixture = attachedBrowserFixture({
     send: async (method, parameters) => {
@@ -656,8 +573,7 @@ it("checks a late stop after attached restoration and before transport disconnec
         (parameters as { timezoneId?: string }).timezoneId === ""
       ) {
         order.push("restore-started");
-        restorationStarted.resolve(undefined);
-        await finishRestoration.promise;
+        await restoration.hold();
         order.push("restore-finished");
       }
     },
@@ -677,16 +593,12 @@ it("checks a late stop after attached restoration and before transport disconnec
   });
 
   try {
-    await awaitAcknowledgement(
-      restorationStarted.promise,
-      release,
-      "browser restoration",
-    );
+    await restoration.reached(release, "browser restoration");
     revision += 1;
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release;
   } finally {
-    finishRestoration.resolve(undefined);
+    restoration.release();
     await release.catch(() => undefined);
   }
 
@@ -733,139 +645,176 @@ it.each(["locale", "focus"] as const)(
   },
 );
 
-it("does not clear an attached environment override it failed to acquire", async () => {
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      )
-        throw new Error("caller already owns locale");
-    },
-  });
-
-  await expect(fixture.open()).rejects.toThrow("caller already owns locale");
-  expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
-  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-    "Emulation.clearDeviceMetricsOverride",
-    undefined,
-  );
-  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
-  expect(fixture.browser.close).toHaveBeenCalledOnce();
-});
-
-it("restores an attached environment override whose success reply is malformed", async () => {
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      )
+it.each(["rejected", "malformed acknowledgement"] as const)(
+  "restores only acquired overrides when locale application returns %s",
+  async (outcome) => {
+    const localeFailure = new Error("caller already owns locale");
+    const fixture = attachedBrowserFixture({
+      send: async (method, parameters) => {
+        if (
+          method !== "Emulation.setLocaleOverride" ||
+          (parameters as { locale?: string }).locale !== "en-US"
+        )
+          return;
+        if (outcome === "rejected") throw localeFailure;
         return "applied";
-      return undefined;
-    },
-  });
-
-  await expect(fixture.open()).rejects.toMatchObject({
-    reason: "protocol_error",
-  });
-  expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-    "Emulation.setLocaleOverride",
-    { locale: "" },
-  );
-  expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
-});
-
-it("waits for a cancelled environment mutation before restoring it", async () => {
-  const localeStarted = deferred<void>();
-  const localeResult = deferred<void>();
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        method === "Emulation.setLocaleOverride" &&
-        (parameters as { locale?: string }).locale === "en-US"
-      ) {
-        localeStarted.resolve(undefined);
-        await localeResult.promise;
-      }
-    },
-  });
-  const controller = new AbortController();
-  const opening = fixture.open(controller.signal);
-  try {
-    await awaitAcknowledgement(
-      localeStarted.promise,
-      opening,
-      "locale mutation",
-    );
-    const cancelled = expect(opening).rejects.toMatchObject({
-      _tag: "AnalysisCancelledError",
+      },
     });
-    controller.abort();
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(fixture.environmentSession.send).not.toHaveBeenCalledWith(
-      "Emulation.setLocaleOverride",
-      { locale: "" },
+    const result = await fixture.open().then(
+      (opened) => ({ opened }),
+      (failure: unknown) => ({ failure }),
     );
-
-    localeResult.resolve(undefined);
-    await cancelled;
-    expect(fixture.environmentSession.send).toHaveBeenCalledWith(
-      "Emulation.setLocaleOverride",
-      { locale: "" },
+    if ("opened" in result) {
+      await result.opened.cleanup.close();
+      throw new Error("Expected locale acquisition failure");
+    }
+    const { failure } = result;
+    if (outcome === "rejected") expect(failure).toBe(localeFailure);
+    else expect(failure).toMatchObject({ reason: "protocol_error" });
+    expect(
+      vi.mocked(fixture.environmentSession.send).mock.calls.slice(2),
+    ).toEqual(
+      outcome === "rejected"
+        ? [["Emulation.clearDeviceMetricsOverride", undefined]]
+        : [
+            ["Emulation.setLocaleOverride", { locale: "" }],
+            ["Emulation.clearDeviceMetricsOverride", undefined],
+          ],
     );
     expect(fixture.environmentSession.detach).toHaveBeenCalledOnce();
     expect(fixture.browser.close).toHaveBeenCalledOnce();
-  } finally {
-    controller.abort();
-    localeResult.resolve(undefined);
-    const opened = await opening.catch(() => undefined);
-    await opened?.cleanup.close();
-  }
-});
+  },
+);
 
-it("releases cleanup ownership when the attached target is destroyed", async () => {
-  let targetClosed = false;
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        targetClosed &&
-        method === "Emulation.setTimezoneOverride" &&
-        (parameters as { timezoneId?: string }).timezoneId === ""
-      )
-        throw new Error("Target closed");
-    },
-    isTargetClosed: () => targetClosed,
-  });
-  const opened = await fixture.open();
-  targetClosed = true;
+it.each([
+  {
+    mutation: "locale",
+    method: "Emulation.setLocaleOverride",
+    stop: "cancellation",
+  },
+  { mutation: "media", method: "Emulation.setEmulatedMedia", stop: "deadline" },
+  {
+    mutation: "focus",
+    method: "Emulation.setFocusEmulationEnabled",
+    stop: "deadline",
+  },
+] as const)(
+  "joins a pending $mutation acknowledgement after $stop before restoring it",
+  async ({ mutation, method, stop }) => {
+    const pending = phaseGate();
+    const progress: string[] = [];
+    const restoreOrHold = async (reset: boolean) => {
+      if (reset) progress.push("restored");
+      else {
+        await pending.hold();
+        progress.push("acknowledged");
+      }
+    };
+    const fixture = attachedBrowserFixture(
+      {
+        send: async (command, parameters) => {
+          if (command !== method) return;
+          const options = parameters as { locale?: string; enabled?: boolean };
+          await restoreOrHold(
+            options.locale === "" || options.enabled === false,
+          );
+        },
+        emulateMedia: async (options) => {
+          if (mutation === "media")
+            await restoreOrHold(options?.colorScheme === null);
+        },
+        detach: async () => {
+          progress.push("detached");
+        },
+        closeBrowser: async () => {
+          progress.push("disconnected");
+        },
+      },
+      40,
+    );
+    vi.useFakeTimers();
+    const caller = new AbortController();
+    const reason = new Error("cancel while applying locale");
+    const observed = vi.fn();
+    const opening = fixture.open(caller.signal);
+    void opening.then(observed, observed);
+    try {
+      await pending.reached(opening, method);
+      if (stop === "cancellation") caller.abort(reason);
+      await vi.advanceTimersByTimeAsync(stop === "deadline" ? 40 : 0);
+      expect(observed).not.toHaveBeenCalled();
+      expect(progress).toEqual([]);
 
-  await opened.cleanup.close();
-  expect(fixture.browser.close).toHaveBeenCalledOnce();
-});
+      pending.release();
+      const failure = await opening.catch((cause: unknown) => cause);
+      if (stop === "deadline")
+        expect(failure).toMatchObject({
+          reason: "timeout",
+          diagnostics: { phase: "command", command_timeout_ms: 40, method },
+        });
+      else {
+        expect(failure).toBeInstanceOf(AnalysisCancelledError);
+        expect(failure).toHaveProperty("cause", reason);
+      }
+      expect(progress).toEqual([
+        "acknowledged",
+        "restored",
+        "detached",
+        "disconnected",
+      ]);
+      const commands = vi
+        .mocked(fixture.environmentSession.send)
+        .mock.calls.map(([name]) => name);
+      expect(
+        commands.filter(
+          (name) => name === "Emulation.clearDeviceMetricsOverride",
+        ),
+      ).toHaveLength(mutation === "media" ? 0 : 1);
+      if (mutation === "locale")
+        expect(commands).not.toContain("Emulation.setTimezoneOverride");
+    } finally {
+      caller.abort(reason);
+      pending.release();
+      try {
+        const opened = await opening.catch(() => undefined);
+        await opened?.cleanup.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  },
+);
 
-it("releases cleanup ownership when the attached browser disconnects", async () => {
-  let connected = true;
-  const fixture = attachedBrowserFixture({
-    send: async (method, parameters) => {
-      if (
-        !connected &&
-        method === "Emulation.setTimezoneOverride" &&
-        (parameters as { timezoneId?: string }).timezoneId === ""
-      )
-        throw new Error("Browser disconnected");
-    },
-    isBrowserConnected: () => connected,
-  });
-  const opened = await fixture.open();
-  connected = false;
-
-  await opened.cleanup.close();
-  expect(fixture.browser.close).not.toHaveBeenCalled();
-});
+it.each(["target destroyed", "browser disconnected"] as const)(
+  "releases attached ownership once the %s",
+  async (loss) => {
+    let lost = false;
+    const fixture = attachedBrowserFixture({
+      send: async (method, parameters) => {
+        if (
+          lost &&
+          method === "Emulation.setTimezoneOverride" &&
+          (parameters as { timezoneId?: string }).timezoneId === ""
+        )
+          throw new Error(loss);
+      },
+      isTargetClosed: () => lost && loss === "target destroyed",
+      isBrowserConnected: () => !lost || loss !== "browser disconnected",
+    });
+    const opened = await fixture.open();
+    try {
+      lost = true;
+      await opened.cleanup.close();
+      expect(opened.cleanup.cleanupResources).toEqual([]);
+      expect(fixture.browser.close).toHaveBeenCalledTimes(
+        loss === "target destroyed" ? 1 : 0,
+      );
+    } finally {
+      lost = false;
+      await opened.cleanup.close();
+    }
+  },
+);
 
 it("cancels same-target queued connection before acquiring a browser", async () => {
   const makeScenario = (targetId: string) =>
@@ -884,21 +833,11 @@ it("cancels same-target queued connection before acquiring a browser", async () 
         },
       ],
     });
-  let rejectFirst: ((cause: Error) => void) | undefined;
-  const firstConnection = new Promise<never>((_resolve, reject) => {
-    rejectFirst = reject;
-  });
-  let resolveFirstStarted: (() => void) | undefined;
-  const firstStarted = new Promise<void>((resolve) => {
-    resolveFirstStarted = resolve;
-  });
+  const firstConnection = phaseGate<void, never>();
   const endpoints: string[] = [];
   const connectOverCDP = vi.fn((endpoint: string) => {
     endpoints.push(endpoint);
-    if (endpoints.length === 1) {
-      resolveFirstStarted?.();
-      return firstConnection;
-    }
+    if (endpoints.length === 1) return firstConnection.hold();
     return Promise.reject(new Error("connection failed"));
   });
   const launchPersistentContext = vi.fn(async () => {
@@ -911,127 +850,122 @@ it("cancels same-target queued connection before acquiring a browser", async () 
     environment,
     { launcher },
   );
-  await firstStarted;
-  expect(connectOverCDP).toHaveBeenCalledTimes(1);
+  const firstRefusal = new Error("first connection failed");
+  try {
+    await firstConnection.reached(first, "first CDP connection");
+    expect(connectOverCDP).toHaveBeenCalledTimes(1);
 
-  const controller = new AbortController();
-  const removeAbort = vi.spyOn(controller.signal, "removeEventListener");
-  const queued = openPlaywrightScenarioBrowser(
-    makeScenario("page-1"),
-    environment,
-    { launcher, signal: controller.signal },
-  );
-  controller.abort();
-  await expect(queued).rejects.toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "cancelled",
-  });
-  expect(connectOverCDP).toHaveBeenCalledTimes(1);
-  expect(removeAbort).toHaveBeenCalledWith("abort", expect.any(Function));
+    const controller = new AbortController();
+    const removeAbort = vi.spyOn(controller.signal, "removeEventListener");
+    const queued = openPlaywrightScenarioBrowser(
+      makeScenario("page-1"),
+      environment,
+      { launcher, signal: controller.signal },
+    );
+    const reason = new Error("cancel queued attach");
+    controller.abort(reason);
+    await expect(queued).rejects.toMatchObject({
+      _tag: "BrowserObservationError",
+      reason: "cancelled",
+      cause: reason,
+    });
+    expect(connectOverCDP).toHaveBeenCalledTimes(1);
+    expect(removeAbort).toHaveBeenCalledWith("abort", expect.any(Function));
 
-  await expect(
-    openPlaywrightScenarioBrowser(makeScenario("page-2"), environment, {
-      launcher,
-    }),
-  ).rejects.toThrow("connection failed");
-  expect(connectOverCDP).toHaveBeenCalledTimes(2);
+    await expect(
+      openPlaywrightScenarioBrowser(makeScenario("page-2"), environment, {
+        launcher,
+      }),
+    ).rejects.toThrow("connection failed");
+    expect(connectOverCDP).toHaveBeenCalledTimes(2);
 
-  const launch = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(launch, environment, { launcher }),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(launchPersistentContext).toHaveBeenCalledTimes(1);
+    await expect(
+      openPlaywrightScenarioBrowser(launchScenario, environment, { launcher }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+    });
+    expect(launchPersistentContext).toHaveBeenCalledTimes(1);
 
-  if (rejectFirst === undefined)
-    throw new Error("first connection did not begin");
-  rejectFirst(new Error("first connection failed"));
-  await expect(first).rejects.toThrow("first connection failed");
-  await expect(
-    openPlaywrightScenarioBrowser(makeScenario("page-1"), environment, {
-      launcher,
-    }),
-  ).rejects.toThrow("connection failed");
-  expect(connectOverCDP).toHaveBeenCalledTimes(3);
+    firstConnection.reject(firstRefusal);
+    await expect(first).rejects.toThrow("first connection failed");
+    await expect(
+      openPlaywrightScenarioBrowser(makeScenario("page-1"), environment, {
+        launcher,
+      }),
+    ).rejects.toThrow("connection failed");
+    expect(connectOverCDP).toHaveBeenCalledTimes(3);
+  } finally {
+    firstConnection.reject(firstRefusal);
+    await first.catch(() => undefined);
+  }
 });
 
 it("serializes concurrent attach across loopback spellings of one browser", async () => {
-  const makeScenario = (endpoint: string) =>
-    browserScenarioSchema.parse({
-      browser: { mode: "connect", cdp_endpoint: endpoint, target_id: "page-1" },
-      start_url: { url: "https://example.test" },
-      actions: [
-        {
-          step_id: "wait",
-          action: "wait_for_timeout",
-          duration_ms: 1,
+  const open = (endpoint: string) =>
+    openPlaywrightScenarioBrowser(
+      browserScenarioSchema.parse({
+        browser: {
+          mode: "connect",
+          cdp_endpoint: endpoint,
+          target_id: "page-1",
         },
-      ],
-    });
-  const firstConnection =
-    deferred<Pick<Browser, "contexts" | "close" | "isConnected" | "version">>();
-  let rejectFirstConnection: ((cause: Error) => void) | undefined;
-  const failingConnection = new Promise<never>((_resolve, reject) => {
-    rejectFirstConnection = reject;
-  });
-  const firstStarted = deferred<void>();
-  const endpoints: string[] = [];
-  const connectOverCDP = vi.fn((endpoint: string) => {
-    endpoints.push(endpoint);
-    if (endpoints.length === 1) {
-      firstStarted.resolve(undefined);
-      return firstConnection.promise;
-    }
-    return failingConnection;
-  });
+        start_url: { url: "https://example.test" },
+        actions: scenarioActions,
+      }),
+      {},
+      { launcher },
+    );
+  const firstConnection = phaseGate<
+    void,
+    Pick<Browser, "contexts" | "close" | "isConnected" | "version">
+  >();
+  const firstClose = phaseGate();
+  const secondFailure = new Error("second connection failed");
+  const order: string[] = [];
   const launcher = {
-    connectOverCDP,
+    connectOverCDP: async (endpoint: string) => {
+      order.push(endpoint);
+      if (endpoint === "http://127.0.0.1:9222") return firstConnection.hold();
+      throw secondFailure;
+    },
     launchPersistentContext: async () => {
       throw new Error("Unexpected launch");
     },
   };
 
-  const first = openPlaywrightScenarioBrowser(
-    makeScenario("http://127.0.0.1:9222"),
-    {},
-    { launcher },
-  );
-  await firstStarted.promise;
+  const first = open("http://127.0.0.1:9222");
+  await firstConnection.reached(first, "first CDP connection");
+  const outcomes = Promise.allSettled([first, open("http://[::1]:9222")]);
 
-  const second = openPlaywrightScenarioBrowser(
-    makeScenario("http://[::1]:9222"),
-    {},
-    { launcher },
-  );
-  const race = await Promise.race([
-    second.then(
-      () => "settled" as const,
-      () => "settled" as const,
-    ),
-    new Promise((resolve) => setTimeout(() => resolve("queued"), 100)),
-  ]);
-  // The loopback spelling is the same browser, so the second attach must wait
-  // for the lease instead of dialing in parallel and being rejected.
-  expect(race).toBe("queued");
-  expect(connectOverCDP).toHaveBeenCalledTimes(1);
-
-  firstConnection.resolve({
-    close: vi.fn(async () => undefined),
-    contexts: vi.fn(() => []),
-    isConnected: vi.fn(() => true),
+  firstConnection.release({
+    close: async () => {
+      await firstClose.hold();
+      order.push("first transport closed");
+    },
+    contexts: () => [],
+    isConnected: () => true,
     version: () => "fixture",
   });
-  await expect(first).rejects.toThrow();
-  if (rejectFirstConnection === undefined)
-    throw new Error("second connection did not begin");
-  rejectFirstConnection(new Error("second connection failed"));
-  await expect(second).rejects.toThrow("second connection failed");
-  expect(endpoints).toEqual(["http://127.0.0.1:9222", "http://[::1]:9222"]);
+  let settled: Awaited<typeof outcomes>;
+  try {
+    await firstClose.reached(first, "first transport close");
+  } finally {
+    firstClose.release();
+    settled = await outcomes;
+  }
+
+  expect(settled).toMatchObject([
+    {
+      status: "rejected",
+      reason: { _tag: "BrowserObservationError", reason: "target_not_found" },
+    },
+    { status: "rejected", reason: secondFailure },
+  ]);
+  expect(order).toEqual([
+    "http://127.0.0.1:9222",
+    "first transport closed",
+    "http://[::1]:9222",
+  ]);
 });
 
 it("tracks only pending browser cleanup resources and resolves prior errors after exact recovery", async () => {
@@ -1042,6 +976,8 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
   let browserDenied = true;
   let profileDenied = true;
   let browserCloses = 0;
+  const finishEvents = vi.fn(async () => undefined);
+  const settlements: boolean[] = [];
   const owner = new PlaywrightScenarioBrowserCleanupOwner({
     closeBrowser: async (disconnectAtBoundary) => {
       browserCloses++;
@@ -1050,23 +986,35 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
           throw new Error("controlled transport close failure");
       });
     },
+    onSettled: (closed) => settlements.push(closed),
     removeProfile: async () => {
       if (profileDenied) throw new Error("controlled profile removal failure");
       await rm(profile, { recursive: true });
     },
   });
   try {
-    const first: unknown = await owner.close().catch((cause: unknown) => cause);
-    expect(first).toMatchObject({
-      cleanupIncomplete: true,
-      cleanupResources: ["browser_transport", "browser_profile"],
+    const initial = await Promise.allSettled([
+      owner.close(finishEvents),
+      owner.close(finishEvents),
+    ]);
+    const firstFailures = initial.map((result) => {
+      if (result.status !== "rejected")
+        throw new Error("Expected transport refusal");
+      const failure: unknown = result.reason;
+      expect(failure).toMatchObject({
+        reason: "cleanup_failed",
+        cleanupIncomplete: true,
+        cleanupResources: ["browser_transport", "browser_profile"],
+      });
+      return failure;
     });
+    expect(settlements).toEqual([false]);
     browserDenied = false;
     const second: unknown = await owner
       .close()
       .catch((cause: unknown) => cause);
     expect(owner.browserClosed).toBe(true);
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: true,
         cleanupResources: ["browser_profile"],
@@ -1075,122 +1023,20 @@ it("tracks only pending browser cleanup resources and resolves prior errors afte
     profileDenied = false;
     await owner.close();
     await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
-    for (const error of [first, second])
+    for (const error of [...firstFailures, second])
       expect(error).toMatchObject({
         cleanupIncomplete: false,
         cleanupResources: [],
       });
+    await owner.close(finishEvents);
     expect(browserCloses).toBe(2);
+    expect(finishEvents).toHaveBeenCalledOnce();
+    expect(settlements).toEqual([false, true, true]);
   } finally {
     browserDenied = false;
     profileDenied = false;
     await owner.close();
   }
-});
-
-it("rechecks the browser release gate after finalization changes its revision", async () => {
-  const eventsStarted = deferred<void>();
-  const finishEvents = deferred<void>();
-  const gateStarted = deferred<void>();
-  const finishGate = deferred<void>();
-  const closeBrowser = vi.fn(
-    async (
-      disconnectAtBoundary: (disconnect: () => Promise<void>) => Promise<void>,
-    ) => disconnectAtBoundary(async () => undefined),
-  );
-  const owner = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser,
-    removeProfile: undefined,
-  });
-  let revision = 0;
-  const gateRuns: number[] = [];
-  const release = owner.release(
-    async () => {
-      eventsStarted.resolve(undefined);
-      await finishEvents.promise;
-    },
-    {
-      get revision() {
-        return revision;
-      },
-      async run() {
-        gateRuns.push(revision);
-        if (gateRuns.length === 1) {
-          gateStarted.resolve(undefined);
-          await finishGate.promise;
-        }
-      },
-    },
-  );
-
-  try {
-    await awaitAcknowledgement(
-      eventsStarted.promise,
-      release,
-      "browser event finalization",
-    );
-    finishEvents.resolve(undefined);
-    await awaitAcknowledgement(
-      gateStarted.promise,
-      release,
-      "browser release gate",
-    );
-    revision += 1;
-    finishGate.resolve(undefined);
-    await release;
-  } finally {
-    finishEvents.resolve(undefined);
-    finishGate.resolve(undefined);
-    await release.catch(() => undefined);
-  }
-
-  expect(gateRuns).toEqual([0, 1]);
-  expect(closeBrowser).toHaveBeenCalledTimes(1);
-  expect(owner.browserClosed).toBe(true);
-});
-
-it("runs the latest stop gate after attached restoration and before disconnect", async () => {
-  const restorationStarted = deferred<void>();
-  const finishRestoration = deferred<void>();
-  const gateRevisions: number[] = [];
-  let revision = 0;
-  let disconnected = false;
-  const owner = new PlaywrightScenarioBrowserCleanupOwner({
-    closeBrowser: async (disconnectAtBoundary) => {
-      restorationStarted.resolve(undefined);
-      await finishRestoration.promise;
-      await disconnectAtBoundary(async () => {
-        disconnected = true;
-      });
-    },
-    removeProfile: undefined,
-  });
-  const release = owner.release(undefined, {
-    get revision() {
-      return revision;
-    },
-    async run() {
-      gateRevisions.push(revision);
-    },
-  });
-
-  try {
-    await awaitAcknowledgement(
-      restorationStarted.promise,
-      release,
-      "browser restoration",
-    );
-    revision += 1;
-    finishRestoration.resolve(undefined);
-    await release;
-  } finally {
-    finishRestoration.resolve(undefined);
-    await release.catch(() => undefined);
-  }
-
-  expect(gateRevisions).toEqual([1]);
-  expect(disconnected).toBe(true);
-  expect(owner.browserClosed).toBe(true);
 });
 
 it.each([false, true])(
@@ -1212,8 +1058,7 @@ it.each([false, true])(
       removeProfile: undefined,
     });
     const failure = new Error("navigation stop was not confirmed");
-    const gateStarted = deferred<void>();
-    const finishGate = deferred<void>();
+    const gateRun = phaseGate();
     let revision = 0;
     let failGate = true;
     const gate = {
@@ -1223,8 +1068,7 @@ it.each([false, true])(
       async run() {
         if (failGate) {
           failGate = false;
-          gateStarted.resolve(undefined);
-          await finishGate.promise;
+          await gateRun.hold();
           throw failure;
         }
       },
@@ -1235,13 +1079,9 @@ it.each([false, true])(
       (cause: unknown) => ({ ok: false as const, cause }),
     );
     try {
-      await awaitAcknowledgement(
-        gateStarted.promise,
-        release,
-        "browser release gate",
-      );
+      await gateRun.reached(release, "browser release gate");
       if (changeRevision) revision += 1;
-      finishGate.resolve(undefined);
+      gateRun.release();
       await expect(release).resolves.toEqual({ ok: false, cause: failure });
       expect(closeBrowser).toHaveBeenCalledTimes(1);
       expect(transportClosed).toBe(false);
@@ -1253,7 +1093,7 @@ it.each([false, true])(
       expect(transportClosed).toBe(true);
       expect(owner.browserClosed).toBe(true);
     } finally {
-      finishGate.resolve(undefined);
+      gateRun.release();
       try {
         await release;
       } finally {
@@ -1265,40 +1105,46 @@ it.each([false, true])(
 
 it("bounds an opening failure response while retaining the same late cleanup lease", async () => {
   vi.useFakeTimers();
-  let acknowledge: () => void = () => {};
-  const late = new Promise<void>((resolve) => {
-    acknowledge = resolve;
-  });
-  const lease = new AnalysisCleanupLease(() => late, ["browser_profile"]);
-  const reason = { caller: "cancelled opening" };
+  const late = phaseGate();
+  const lease = new AnalysisCleanupLease(
+    () => late.hold(),
+    ["browser_profile"],
+  );
   const primary = new AnalysisCancelledError("capture_browser_scenario", {
-    cause: reason,
+    cause: new Error("cancelled opening"),
   });
+  const settled = vi.fn<(cause: unknown) => void>();
+  const opening = failBrowserScenarioOperation(lease, primary).catch(settled);
   try {
-    const opening = failBrowserScenarioOperation(lease, primary).catch(
-      (cause: unknown) => cause,
-    );
-    await vi.advanceTimersByTimeAsync(30_000);
-    const failure = await opening;
+    await late.reached(opening, "opening failure cleanup");
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(settled).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledOnce();
+    const failure = settled.mock.calls[0]![0];
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected typed cleanup failure");
+    expect(failure.cleanupPrimary).toBe(primary);
     expect(failure).toMatchObject({
       cleanupIncomplete: true,
       cleanupResources: ["browser_profile"],
     });
     expect(lease.released).toBe(false);
-    acknowledge();
+    late.release();
     await lease.release();
     expect(failure).toMatchObject({
       cleanupIncomplete: false,
       cleanupResources: [],
     });
-    if (!(failure instanceof AnalysisError))
-      throw new Error("Expected typed cleanup failure");
-    expect(projectAnalysisError(failure)).toMatchObject({ code: "cancelled" });
-    expect(primary.cause).toBe(reason);
+    expect(projectAnalysisError(failure).code).toBe("cancelled");
   } finally {
-    acknowledge();
-    await lease.release();
-    vi.useRealTimers();
+    late.release();
+    try {
+      await opening;
+      await lease.release();
+    } finally {
+      vi.useRealTimers();
+    }
   }
 });
 
@@ -1306,122 +1152,29 @@ const scenarioActions = [
   { step_id: "settle", action: "wait_for_timeout" as const, duration_ms: 1 },
 ];
 
-it("applies command_timeout_ms to launch startup", async () => {
-  let timeout: number | undefined;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    command_timeout_ms: 4_321,
-    actions: scenarioActions,
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            timeout = options?.timeout;
-            throw new Error("launch boundary reached");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(timeout).toBe(4_321);
-});
-
-it("uses the default command deadline for an omitted launch timeout", async () => {
-  let timeout: number | undefined;
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    actions: scenarioActions,
-  });
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (_profile, options) => {
-            timeout = options?.timeout;
-            throw new Error("launch boundary reached");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    diagnostics: { startup_error: "launch boundary reached" },
-  });
-  expect(timeout).toBe(DEFAULT_CDP_COMMAND_TIMEOUT_MS);
-});
-
-it("applies command_timeout_ms to the primary connect handshake when service workers are allowed", async () => {
-  let timeout: number | undefined;
-  const started = performance.now();
-  const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "connect",
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "primary-handshake",
-    },
-    start_url: { url: "https://example.test" },
-    environment: { service_workers: "allow" },
-    command_timeout_ms: 50,
-    actions: scenarioActions,
-  });
-  const opening = openPlaywrightScenarioBrowser(
-    scenario,
-    {},
-    {
-      launcher: {
-        connectOverCDP: async (_endpoint, options) => {
-          timeout = options?.timeout;
-          return new Promise(() => undefined);
-        },
-        launchPersistentContext: async () => {
-          throw new Error("Unexpected launch");
-        },
-      },
-    },
-  );
-  const failure = await opening.then(
-    () => undefined,
-    (cause: unknown) => cause,
-  );
-  expect(failure).toMatchObject({
-    reason: "timeout",
-    userMessage: expect.stringContaining("50 ms command_timeout_ms"),
-    remediationAction: expect.stringContaining("capture-browser-scenario JSON"),
-    diagnostics: { phase: "handshake", command_timeout_ms: 50 },
-  });
-  expect(
-    (failure as { remediationAction?: string }).remediationAction,
-  ).not.toContain("--command-timeout-ms");
-  expect(timeout).toBe(50);
-  // The fake ignores Playwright's timeout; only REA's own 50 ms deadline can
-  // stop the handshake before the default it would otherwise wait for.
-  expect(performance.now() - started).toBeLessThan(
-    DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  );
-});
+it.each([
+  { selected: undefined, effective: DEFAULT_CDP_COMMAND_TIMEOUT_MS },
+  { selected: 4_321, effective: 4_321 },
+])(
+  "passes the effective $effective ms command deadline to startup (selected: $selected)",
+  async ({ selected, effective }) => {
+    const { options } = await rejectedLaunch({
+      ...launchScenario,
+      ...(selected === undefined ? {} : { command_timeout_ms: selected }),
+    });
+    expect(options?.timeout).toBe(effective);
+  },
+);
 
 it("applies command_timeout_ms to primary target lookup when service workers are allowed", async () => {
-  const started = performance.now();
+  const lookup = phaseGate();
+  const detach = vi.fn(async () => undefined);
+  const targetId = "primary-target-info";
   const scenario = browserScenarioSchema.parse({
     browser: {
       mode: "connect",
       cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "primary-target-info",
+      target_id: targetId,
     },
     start_url: { url: "https://example.test" },
     environment: { service_workers: "allow" },
@@ -1429,104 +1182,137 @@ it("applies command_timeout_ms to primary target lookup when service workers are
     actions: scenarioActions,
   });
   const browser = {
-    close: async () => undefined,
+    close: vi.fn(async () => undefined),
     contexts: () => [
       {
         pages: () => [{} as Page],
         newCDPSession: async () =>
           ({
-            send: () => new Promise(() => undefined),
-            detach: async () => undefined,
+            send: async () => {
+              await lookup.hold();
+              return { targetInfo: { targetId } };
+            },
+            detach,
           }) as unknown as CDPSession,
       } as unknown as BrowserContext,
     ],
     isConnected: () => true,
     version: () => "fixture",
   };
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async (_endpoint, options) => {
-            expect(options?.timeout).toBe(50);
-            return browser;
-          },
-          launchPersistentContext: async () => {
-            throw new Error("Unexpected launch");
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
-    reason: "timeout",
-    userMessage: expect.stringContaining("Target.getTargetInfo"),
-  });
-  // A lookup bounded by the default instead of command_timeout_ms ends later.
-  expect(performance.now() - started).toBeLessThan(
-    DEFAULT_CDP_COMMAND_TIMEOUT_MS,
-  );
-});
-
-it("closes a context that launches after its deadline before removing the profile", async () => {
-  const order: string[] = [];
-  let profilePath = "";
-  const scenario = browserScenarioSchema.parse({
-    browser: { mode: "launch", executable_path: process.execPath },
-    start_url: { url: "https://example.test" },
-    command_timeout_ms: 40,
-    actions: scenarioActions,
-  });
-  const failure = await openPlaywrightScenarioBrowser(
+  const connectOverCDP = vi.fn(async () => browser);
+  vi.useFakeTimers();
+  const opening = openPlaywrightScenarioBrowser(
     scenario,
     {},
     {
       launcher: {
-        connectOverCDP: async () => {
-          throw new Error("Unexpected connection");
-        },
-        launchPersistentContext: async (profile) => {
-          profilePath = profile;
-          await new Promise((resolve) => setTimeout(resolve, 80));
-          order.push("launched");
-          return {
-            close: async () => {
-              order.push("close");
-            },
-          } as unknown as BrowserContext;
+        connectOverCDP,
+        launchPersistentContext: async () => {
+          throw new Error("Unexpected launch");
         },
       },
     },
-  ).then(
-    () => undefined,
-    (cause: unknown) => cause,
   );
-  expect(failure).toMatchObject({
-    reason: "timeout",
-    userMessage: expect.stringContaining(
-      "Browser launch and persistent-context startup",
-    ),
-    diagnostics: { phase: "launch", command_timeout_ms: 40 },
-  });
-  expect(
-    (failure as { remediationAction?: string }).remediationAction,
-  ).not.toContain("--command-timeout-ms");
-  expect(order).toEqual(["launched", "close"]);
-  await expect(access(profilePath)).rejects.toThrow();
+  const settled = vi.fn();
+  void opening.then(settled, settled);
+  try {
+    await lookup.reached(opening, "target lookup");
+    expect(connectOverCDP).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:9222",
+      { timeout: 50, noDefaults: true },
+    );
+    await vi.advanceTimersByTimeAsync(49);
+    expect(settled).not.toHaveBeenCalled();
+    expect(detach).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        reason: "timeout",
+        userMessage: expect.stringContaining("Target.getTargetInfo"),
+        diagnostics: {
+          phase: "command",
+          command_timeout_ms: 50,
+          method: "Target.getTargetInfo",
+        },
+      }),
+    );
+    expect(detach).toHaveBeenCalledOnce();
+    expect(browser.close).toHaveBeenCalledOnce();
+  } finally {
+    lookup.release();
+    try {
+      const opened = await opening.catch(() => undefined);
+      await opened?.cleanup.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+});
+
+it("closes a context that launches after its deadline before removing the profile", async () => {
+  const launch = phaseGate<string, BrowserContext>();
+  const close = phaseGate();
+  const scenario = { ...launchScenario, command_timeout_ms: 40 };
+  vi.useFakeTimers();
+  const opening = openPlaywrightScenarioBrowser(
+    scenario,
+    {},
+    {
+      launcher: {
+        launchPersistentContext: (profile) => launch.hold(profile),
+        connectOverCDP: async () => {
+          throw new Error("Unexpected connection");
+        },
+      },
+    },
+  );
+  const lateContext = {
+    close: () => close.hold(),
+  } as unknown as BrowserContext;
+  try {
+    const profile = await launch.reached(opening, "browser startup");
+    await vi.advanceTimersByTimeAsync(40);
+    launch.release(lateContext);
+    await close.reached(opening, "late browser context release");
+    await expect(access(profile)).resolves.toBeUndefined();
+    close.release();
+    const failure = await opening.catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({
+      reason: "timeout",
+      userMessage: expect.stringContaining(
+        "Browser launch and persistent-context startup",
+      ),
+      diagnostics: { phase: "launch", command_timeout_ms: 40 },
+    });
+    expect(
+      (failure as { remediationAction?: string }).remediationAction,
+    ).not.toContain("--command-timeout-ms");
+    await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    launch.release(lateContext);
+    close.release();
+    try {
+      const opened = await opening.catch(() => undefined);
+      await opened?.cleanup.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  }
 });
 
 it("closes a browser that connects after its deadline without waiting to report the timeout", async () => {
   vi.useFakeTimers();
-  let releaseHandshake!: () => void;
-  const held = new Promise<void>((resolve) => {
-    releaseHandshake = resolve;
+  const handshake = phaseGate();
+  const browser = {
+    close: vi.fn(async () => undefined),
+    contexts: vi.fn(() => []),
+    isConnected: () => true,
+    version: () => "late-connect",
+  };
+  const connectOverCDP = vi.fn(async () => {
+    await handshake.hold();
+    return browser;
   });
-  let handshakeEntered!: () => void;
-  const entered = new Promise<void>((resolve) => {
-    handshakeEntered = resolve;
-  });
-  const closed = vi.fn(async () => undefined);
   const leases: AnalysisCleanupLease[] = [];
   const scenario = browserScenarioSchema.parse({
     browser: {
@@ -1546,16 +1332,7 @@ it("closes a browser that connects after its deadline without waiting to report 
     {
       retainCleanup: (lease) => leases.push(lease),
       launcher: {
-        connectOverCDP: async () => {
-          handshakeEntered();
-          await held;
-          return {
-            close: closed,
-            contexts: () => [],
-            isConnected: () => true,
-            version: () => "late-connect",
-          };
-        },
+        connectOverCDP,
         launchPersistentContext: async () => {
           throw new Error("Unexpected launch");
         },
@@ -1567,19 +1344,40 @@ it("closes a browser that connects after its deadline without waiting to report 
       settled = true;
     });
   try {
-    await entered;
-    await vi.advanceTimersByTimeAsync(40);
+    await handshake.reached(opening, "late CDP handshake");
+    expect(connectOverCDP).toHaveBeenCalledExactlyOnceWith(
+      "http://127.0.0.1:9222",
+      { timeout: 40, noDefaults: true },
+    );
+    await vi.advanceTimersByTimeAsync(39);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
     expect(settled).toBe(true);
-    expect(closed).not.toHaveBeenCalled();
-    expect(await opening).toMatchObject({ reason: "timeout" });
+    expect(browser.close).not.toHaveBeenCalled();
+    const failure = await opening;
+    expect(failure).toMatchObject({
+      reason: "timeout",
+      userMessage: expect.stringContaining("40 ms command_timeout_ms"),
+      remediationAction: expect.stringContaining(
+        "capture-browser-scenario JSON",
+      ),
+      diagnostics: { phase: "handshake", command_timeout_ms: 40 },
+    });
+    expect(
+      (failure as { remediationAction?: string }).remediationAction,
+    ).not.toContain("--command-timeout-ms");
     expect(leases).toHaveLength(1);
-    expect(leases[0]?.released).toBe(false);
-    releaseHandshake();
+    expect(leases[0]).toMatchObject({
+      released: false,
+      cleanupResources: ["browser_transport"],
+    });
+    handshake.release();
     await leases[0]!.release();
-    expect(closed).toHaveBeenCalledTimes(1);
+    expect(browser.close).toHaveBeenCalledOnce();
+    expect(browser.contexts).not.toHaveBeenCalled();
     expect(leases[0]?.released).toBe(true);
   } finally {
-    releaseHandshake();
+    handshake.release();
     try {
       await opening;
       await Promise.all(leases.map((lease) => lease.release()));
@@ -1589,100 +1387,6 @@ it("closes a browser that connects after its deadline without waiting to report 
   }
 });
 
-it.each(["media", "focus"] as const)(
-  "restores a late %s mutation after its deadline",
-  async (mutation) => {
-    let restored = false;
-    const scenario = browserScenarioSchema.parse({
-      browser: {
-        mode: "connect",
-        cdp_endpoint: "http://127.0.0.1:9222",
-        target_id: "late-environment-target",
-      },
-      start_url: { url: "https://example.test" },
-      environment: { service_workers: "allow" },
-      command_timeout_ms: 40,
-      actions: scenarioActions,
-    });
-    const discoverySession = {
-      send: vi.fn(async () => ({
-        targetInfo: { targetId: "late-environment-target" },
-      })),
-      detach: vi.fn(async () => undefined),
-    } as unknown as CDPSession;
-    const environmentSession = {
-      send: vi.fn(
-        async (method: string, parameters?: { enabled?: boolean }) => {
-          if (method !== "Emulation.setFocusEmulationEnabled") return {};
-          if (parameters?.enabled === false) {
-            if (mutation === "focus") restored = true;
-          } else if (mutation === "focus")
-            await new Promise((resolve) => setTimeout(resolve, 80));
-          return {};
-        },
-      ),
-      detach: vi.fn(async () => undefined),
-    } as unknown as CDPSession;
-    const page = {
-      emulateMedia: vi.fn(async (options: { colorScheme?: string | null }) => {
-        if (options.colorScheme === null) {
-          if (mutation === "media") restored = true;
-          return;
-        }
-        if (mutation === "media")
-          await new Promise((resolve) => setTimeout(resolve, 80));
-      }),
-      isClosed: vi.fn(() => false),
-    } as unknown as Page;
-    const context = {
-      pages: () => [page],
-      newCDPSession: vi
-        .fn()
-        .mockResolvedValueOnce(discoverySession)
-        .mockResolvedValueOnce(environmentSession),
-    } as unknown as BrowserContext;
-    const browser = {
-      close: vi.fn(async () => undefined),
-      contexts: () => [context],
-      isConnected: vi.fn(() => true),
-      version: () => "late-environment",
-    };
-    await expect(
-      openPlaywrightScenarioBrowser(
-        scenario,
-        {},
-        {
-          launcher: {
-            connectOverCDP: async () => browser,
-            launchPersistentContext: async () => {
-              throw new Error("Unexpected launch");
-            },
-          },
-        },
-      ),
-    ).rejects.toMatchObject({
-      reason: "timeout",
-      userMessage: expect.stringContaining(
-        mutation === "media"
-          ? "Emulation.setEmulatedMedia"
-          : "Emulation.setFocusEmulationEnabled",
-      ),
-    });
-    expect(restored).toBe(true);
-    if (mutation === "media")
-      expect(environmentSession.send).not.toHaveBeenCalledWith(
-        "Emulation.clearDeviceMetricsOverride",
-        undefined,
-      );
-    else
-      expect(environmentSession.send).toHaveBeenCalledWith(
-        "Emulation.clearDeviceMetricsOverride",
-        undefined,
-      );
-    expect(browser.close).toHaveBeenCalledOnce();
-  },
-);
-
 it.each([
   new Error("Timeout unrelated launch diagnostic"),
   Object.assign(new Error("unrelated launch failure"), {
@@ -1690,83 +1394,33 @@ it.each([
   }),
 ])(
   "preserves a launch failure without inferring a Playwright deadline: %s",
-  async (failure) => {
-    const scenario = browserScenarioSchema.parse({
-      browser: {
-        mode: "launch",
-        executable_path: process.execPath,
-        headless: true,
-      },
-      start_url: { url: "https://example.test" },
-      command_timeout_ms: 4_321,
-      actions: scenarioActions,
+  async (cause) => {
+    const { failure, profile } = await rejectedLaunch(launchScenario, {
+      cause,
     });
-    let profilePath: string | undefined;
-    await expect(
-      openPlaywrightScenarioBrowser(
-        scenario,
-        {},
-        {
-          launcher: {
-            connectOverCDP: async () => {
-              throw new Error("Unexpected connection");
-            },
-            launchPersistentContext: async (profile) => {
-              profilePath = profile;
-              throw failure;
-            },
-          },
-        },
-      ),
-    ).rejects.toMatchObject({
+    expect(failure).toMatchObject({
       _tag: "ProviderAdapterError",
-      cause: failure,
       diagnostics: {
         executable_path: process.execPath,
-        startup_error: failure.message,
+        startup_error: cause.message,
       },
     });
-    expect(profilePath).toBeDefined();
-    await expect(access(profilePath!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
+    expect(failure).toHaveProperty("cause", cause);
+    await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 
 it("normalizes a genuine Playwright launch timeout and releases its profile", async () => {
   const { errors } = await import("playwright-core");
-  const failure = new errors.TimeoutError("native launch deadline");
-  const scenario = browserScenarioSchema.parse({
-    browser: {
-      mode: "launch",
-      executable_path: process.execPath,
-      headless: true,
-    },
-    start_url: { url: "https://example.test" },
-    command_timeout_ms: 4_321,
-    actions: scenarioActions,
-  });
-  let profilePath: string | undefined;
-  await expect(
-    openPlaywrightScenarioBrowser(
-      scenario,
-      {},
-      {
-        launcher: {
-          connectOverCDP: async () => {
-            throw new Error("Unexpected connection");
-          },
-          launchPersistentContext: async (profile) => {
-            profilePath = profile;
-            throw failure;
-          },
-        },
-      },
-    ),
-  ).rejects.toMatchObject({
+  const cause = new errors.TimeoutError("native launch deadline");
+  const { failure, profile } = await rejectedLaunch(
+    { ...launchScenario, command_timeout_ms: 4_321 },
+    { cause },
+  );
+  expect(failure).toMatchObject({
     reason: "timeout",
     userMessage: expect.stringContaining("4321 ms command_timeout_ms"),
-    cause: failure,
+    cause,
     diagnostics: {
       phase: "launch",
       command_timeout_ms: 4_321,
@@ -1774,8 +1428,7 @@ it("normalizes a genuine Playwright launch timeout and releases its profile", as
       producer_message: "native launch deadline",
     },
   });
-  expect(profilePath).toBeDefined();
-  await expect(access(profilePath!)).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(access(profile)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 it("keeps discovered transport credentials out of projected handshake timeouts", async () => {

@@ -1,9 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -32,7 +33,6 @@ it.each([
       );
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const source = (side: "1" | "2", space: string) => {
       const example = FUNCTION_COMPARISON_EXAMPLE.left;
       const value = functionDossierSchema.parse(example.normalized_result);
@@ -251,7 +251,7 @@ it.each([
 
 const wrongKindFunctionEvidence = (mismatch: "operation" | "predicate") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation:
@@ -326,7 +326,6 @@ describe("function comparison input-kind diagnostics", () => {
         throw new Error("Wrong-kind function input must not launch a provider");
       });
       const harness = await createApplicationMcpHarness({ session });
-      onTestFinished(harness.close);
       const wrong = wrongKindFunctionEvidence(mismatch);
       const good =
         FUNCTION_COMPARISON_EXAMPLE[side === "left" ? "right" : "left"];
@@ -375,7 +374,6 @@ describe("function comparison input-kind diagnostics", () => {
       true,
     );
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const result = await harness.client.callTool({
       name: "compare_functions",
       arguments: {
@@ -406,7 +404,6 @@ describe("function comparison input-kind diagnostics", () => {
       throw new Error("Tampered function input must not launch a provider");
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const tampered = {
       ...FUNCTION_COMPARISON_EXAMPLE.left,
       limitations: [
@@ -476,17 +473,25 @@ it.each([
       authority: "analyst-inference" as const,
       evidenceLinks: [left.evidence_id, right.evidence_id],
     };
-    const consistent = createEvidence(undefined, provider, {
-      ...observation,
-      result: result,
-    });
+    const consistent = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      provider,
+      {
+        ...observation,
+        result: result,
+      },
+    );
     const inconsistent =
       status === "unchanged"
         ? null
-        : createEvidence(undefined, provider, {
-            ...observation,
-            result: { ...result, status: "unchanged" },
-          });
+        : createEvidence(
+            unknownTarget("derived-from-linked-evidence"),
+            provider,
+            {
+              ...observation,
+              result: { ...result, status: "unchanged" },
+            },
+          );
     const directory = await createTestTempDirectory("rea-function-status-");
     const path = join(directory, "bundle.json");
     await writeFile(
@@ -504,7 +509,6 @@ it.each([
       throw new Error("Imported comparison must not launch a provider");
     });
     const harness = await createApplicationMcpHarness({ session });
-    onTestFinished(harness.close);
     const imported = await harness.client.callTool({
       name: "import_evidence_bundle",
       arguments: { path },

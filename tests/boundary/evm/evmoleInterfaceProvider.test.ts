@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { access, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -917,7 +918,7 @@ it
     });
     const evidence = parseEvidence(result.error.partialObservation);
     expect(evidence.subject?.local_path).toBe(path);
-    expect(evidence.subject?.digest.sha256).toBe(
+    expect(fileIdentity(evidence.subject).sha256).toBe(
       createHash("sha256").update(source).digest("hex"),
     );
     expect(Buffer.compare(await readFile(path), source)).toBe(0);

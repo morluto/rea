@@ -3,9 +3,9 @@ import {
   desktopApplicationSchema,
   inspectDesktopApplicationInputSchema,
 } from "../domain/desktopApplication.js";
-import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { desktopApplicationSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/desktopApplicationSummarySchema.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, evidenceEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
 
 /** Static directory triage belongs to the existing artifact family. */
@@ -13,7 +13,8 @@ export const DESKTOP_APPLICATION_TOOL_CONTRACTS = [
   {
     name: "inspect_desktop_application",
     availability: "standalone",
-    ...toolContractMetadata("inspect_desktop_application"),
+    cli: true,
+    ...toolContractMetadata("inspect_desktop_application", evidenceEffects),
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:

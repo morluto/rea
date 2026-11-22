@@ -1,3 +1,4 @@
+import { unknownTarget, sameTargetIdentity } from "./targetIdentity.js";
 import type { Evidence } from "./evidence.js";
 import { createAnalysisProfile } from "./analysisProfile.js";
 import {
@@ -37,6 +38,14 @@ const COMPARISON_EVIDENCE_IDENTITIES = {
     predicate: "rea.process-comparison",
     provider: PROCESS_PROVIDER,
   },
+  compare_web_screenshots: {
+    predicate: "rea.web-screenshot-diff",
+    provider: {
+      id: "rea-cdp-browser",
+      name: "REA Chrome DevTools Protocol observation provider",
+      version: "2",
+    },
+  },
 } as const;
 
 export type ComparisonEvidenceOperation =
@@ -58,11 +67,21 @@ export const hasComparisonEvidenceIdentity = (evidence: Evidence): boolean => {
       : evidence.provider.id === expected.provider.id &&
         evidence.provider.name === expected.provider.name &&
         evidence.provider.version === expected.provider.version;
+  const subjectMatches =
+    evidence.operation === "compare_web_screenshots"
+      ? sameTargetIdentity(
+          evidence.subject.identity,
+          unknownTarget("not-observed"),
+        )
+      : sameTargetIdentity(
+          evidence.subject.identity,
+          unknownTarget("derived-from-linked-evidence"),
+        );
   return (
     evidence.predicate_type === expected.predicate &&
     providerMatches &&
     evidence.confidence === "derived" &&
     evidence.authority === "analyst-inference" &&
-    evidence.subject === null
+    subjectMatches
   );
 };

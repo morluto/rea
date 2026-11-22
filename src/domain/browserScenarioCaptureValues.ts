@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import { utcDateTimeSchema } from "./offsetDateTime.js";
 
@@ -8,9 +6,13 @@ import {
   browserNetworkBodySchema,
   browserNetworkHeadersSchema,
 } from "./browserNetworkEvidence.js";
-import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
+import {
+  browserResponseStatusSchema,
+  sanitizedBrowserUrlSchema,
+} from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const textArtifactSchema = z
   .strictObject({
@@ -20,7 +22,7 @@ const textArtifactSchema = z
   })
   .superRefine((artifact, context) => {
     const bytes = Buffer.from(artifact.text);
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256)
       context.addIssue({
         code: "custom",
@@ -210,7 +212,7 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(999),
+      status: browserResponseStatusSchema,
       failure: z.null(),
     }),
     z.strictObject({
@@ -450,7 +452,7 @@ const browserScenarioStepShape = {
   artifacts: browserStepArtifactsSchema,
   completeness: browserScenarioCompletenessSchema,
 };
-export const browserScenarioStepSchema = z.union([
+export const browserScenarioStepSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...browserScenarioStepShape,
     status: z.literal("completed"),

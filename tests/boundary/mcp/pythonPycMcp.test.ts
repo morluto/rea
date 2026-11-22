@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -172,7 +175,7 @@ it("advertises inspect_python_pyc and reads nested code objects", async () => {
     );
     const response = await client.callTool(
       { name: "inspect_python_pyc", arguments: { path } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
     const evidence = completePycEvidenceSchema.parse(
@@ -258,7 +261,7 @@ it("advertised pyc output schema preserves historical signed fields", async () =
       );
       const response = await client.callTool(
         { name: "inspect_python_pyc", arguments: { path } },
-        { toolDefinition: advertised },
+        { toolDefinition: withCanonicalOutputSchema(advertised) },
       );
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
       const evidence = completePycEvidenceSchema.parse(

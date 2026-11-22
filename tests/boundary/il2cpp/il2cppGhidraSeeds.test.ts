@@ -3,7 +3,6 @@ import {
   AnalysisResourceConstraintError,
 } from "../../../src/domain/analysisErrorCore.js";
 import { expect, it } from "vitest";
-import { parseGhidraSeeds } from "../../../src/ghidra/GhidraAnalysisSeeds.js";
 import {
   ghidraDefaultBase,
   il2cppGhidraSeeds,
@@ -14,6 +13,7 @@ import {
   type Il2cppMetadata,
 } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
+import { parseGhidraSeeds } from "../../../src/domain/native/ghidraSeedFile.js";
 
 const type = (
   name: string,
@@ -235,6 +235,10 @@ it("bounds folded-name retention against the actual Ghidra file admission", () =
   if (!(caught instanceof AnalysisResourceConstraintError))
     throw new Error("Expected seed-file allowance refusal");
   expect(caught.message).toMatch(/byte admission/);
+  expect(caught.fixedAllowance).toMatchObject({
+    limit: 32 * 1024 * 1024,
+    unit: "bytes",
+  });
   expect(analysisErrorRemediationAction(caught)).toContain(
     "The IL2CPP Ghidra seed-file allowance",
   );
@@ -280,6 +284,10 @@ it("refuses names the real Ghidra seed parser cannot admit", () => {
   if (!(caught instanceof AnalysisResourceConstraintError))
     throw new Error("Expected seed-name allowance refusal");
   expect(caught.message).toMatch(/character admission/);
+  expect(caught.fixedAllowance).toMatchObject({
+    limit: 2000,
+    unit: "characters",
+  });
   expect(analysisErrorRemediationAction(caught)).toContain(
     "The IL2CPP Ghidra seed-name allowance",
   );

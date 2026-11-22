@@ -1,9 +1,10 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { createHash } from "node:crypto";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { mkdir, open, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { Budget } from "../domain/budget.js";
 import type { DesktopApplicationCapture } from "../domain/desktop/desktopCapture.js";
 import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
@@ -23,17 +24,13 @@ import {
   RegularFileCapacityError,
   readStableFileBytes,
 } from "../filesystem/readStableFileBytes.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import type {
+  DesktopCaptureStore,
+  RetainOutcome,
+} from "../ports/CaptureContentStore.js";
 
 type Omission = DesktopApplicationCapture["state"]["omitted_content"][number];
-
-/** A stored file, or why its bytes were left out. */
-export type RetainOutcome =
-  | {
-      readonly kind: "retained";
-      readonly sha256: string;
-      readonly size: number;
-    }
-  | { readonly kind: "omitted"; readonly reason: Omission["reason"] };
 
 class ChangedSinceWalk extends Error {}
 
@@ -41,7 +38,7 @@ class ChangedSinceWalk extends Error {}
 const DENIED_CODES = new Set(["EACCES", "EPERM", "ENXIO"]);
 
 /** Content-addressed copies of observed files under `<capture>/content`. */
-export class DesktopContentStore {
+export class DesktopContentStore implements DesktopCaptureStore {
   readonly #directory: string;
   readonly #maxFileBytes: number;
   readonly #stored = new Map<string, number>();
@@ -141,7 +138,7 @@ export class DesktopContentStore {
 
   /** Store bytes already read, such as a verified apt key; over the per-file limit or the remaining budget they are omitted. */
   async retainBytes(bytes: Buffer): Promise<RetainOutcome> {
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const size = bytes.byteLength;
     if (size > this.#maxFileBytes)
       return { kind: "omitted", reason: "too_large" };

@@ -2,7 +2,7 @@ import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import * as owned from "../process/OwnedCommand.js";
 import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
 import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";

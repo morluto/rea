@@ -1,7 +1,9 @@
+import { readInitializerWord } from "./initializerWord.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
+  admitMachoSymtabRanges,
   MachoLoadCommandCursor,
   readMachoLoadCommandTableHeader,
   readMachoSymtabCommand,
@@ -17,19 +19,27 @@ import {
 import {
   parsePointerFixupsSteps,
   type PointerFixups,
-} from "../AppleMachoFixups.js";
-import { parseMachoLayout } from "../AppleMachoSelection.js";
-import { selectMachoSlice } from "../metadata/MachoSliceSelection.js";
-import { decodeMachoName } from "../AppleMachoNames.js";
+} from "../../domain/apple/appleMachoFixups.js";
+import { parseMachoLayout } from "../../domain/apple/appleMachoSelection.js";
+import { selectMachoSlice } from "../../domain/apple/machoSliceSelection.js";
+import { decodeMachoName } from "../../domain/apple/appleMachoNames.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   createFileMappingIndex,
   type ImageSection,
-} from "../metadata/BinaryContainer.js";
-import { readMachoImage } from "../metadata/MachoImage.js";
+} from "../../domain/binaryContainer.js";
+import { readMachoImage } from "../../domain/apple/machoImage.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
 import {
   finishInitializerReport,
+  preferInitializerSymbolName,
+  withheldInitializerSymbolName,
+  type InitializerSymbolName,
   type CollectedInitializer,
   type InitializerPage,
 } from "./initializerReport.js";
@@ -70,18 +80,29 @@ export interface MachoInitializerImage {
 }
 
 interface MachoScan {
+  readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly notes: InitializerNotes;
-  incomplete: boolean;
+  /** Known gaps (`partial`) and undetermined facts (`unknown`) noted so far. */
+  coverage: CoverageStatus;
   /** Pointer slots whose fixup decode returned no rebase, bind or raw value. */
   undecoded: number;
   /** Object-file slots whose section relocation this reader does not apply. */
   unappliedObjectRelocations: number;
 }
 
-const note = (scan: MachoScan, message: string): void => {
+/** Widen coverage: `partial` for a known gap, `unknown` when it cannot be determined. */
+const widen = (scan: MachoScan, effect: "partial" | "unknown"): void => {
+  scan.coverage = joinCoverageStatus([scan.coverage, effect]);
+};
+
+const note = (
+  scan: MachoScan,
+  message: string,
+  effect: "partial" | "unknown",
+): void => {
   scan.notes.add(message);
-  scan.incomplete = true;
+  widen(scan, effect);
 };
 
 /**
@@ -111,7 +132,7 @@ const layoutFixups = async (
     slice: undefined,
   });
   if (!selected.ok) {
-    note(scan, selected.error.message);
+    note(scan, selected.error.message, "unknown");
     return { fixups: null, base: null };
   }
   try {
@@ -136,6 +157,7 @@ const layoutFixups = async (
       cause instanceof Error
         ? cause.message
         : "Mach-O fixups could not be decoded.",
+      "unknown",
     );
     return { fixups: null, base: null };
   }
@@ -193,21 +215,24 @@ interface SymbolTable {
   readonly symoff: number;
   readonly nsyms: number;
   readonly strings: Buffer;
-  readonly wide: boolean;
-  readonly little: boolean;
+  readonly width: 12 | 16;
 }
 
 interface MachoSymbols {
-  readonly names: ReadonlyMap<bigint, string>;
+  readonly names: ReadonlyMap<bigint, InitializerSymbolName>;
   readonly table: SymbolTable | null;
 }
 
-/** Name at `strx`. Index 0 is the empty name; an index outside the table is unreadable. */
+/**
+ * Name at `strx`. Index 0 is the empty name; an index outside the table is
+ * unreadable, which leaves coverage unknown. A name exceeding the byte
+ * budget stays marked until a collected entry uses it.
+ */
 const nameAt = (
   scan: MachoScan,
   strings: Buffer,
   strx: number,
-): string | null => {
+): InitializerSymbolName | null => {
   if (strx === 0) return null;
   const observed = observeElfStringTableEntry(
     strings,
@@ -215,19 +240,24 @@ const nameAt = (
     MAX_NATIVE_INITIALIZER_NAME_BYTES + 1,
   );
   if (observed.state === "truncated") {
-    scan.notes.tally("long-symbol-name");
-    scan.incomplete = true;
+    // The table's last NUL establishes a terminator beyond the name window.
+    if (strings.at(-1) === 0) {
+      scan.notes.tally("long-symbol-name");
+      return withheldInitializerSymbolName;
+    }
+    scan.notes.tally("unverified-symbol-terminator");
+    widen(scan, "unknown");
     return null;
   }
   if (observed.state === "outside") {
     scan.notes.tally("unreadable-symbol-name");
-    scan.incomplete = true;
+    widen(scan, "unknown");
     return null;
   }
   const text = decodeMachoName(observed.bytes);
   if (typeof text !== "string") {
     scan.notes.tally("unreadable-symbol-name");
-    scan.incomplete = true;
+    widen(scan, "unknown");
     return null;
   }
   return text.length === 0 ? null : text;
@@ -238,13 +268,12 @@ const readSymbols = (
   wide: boolean,
   little: boolean,
 ): MachoSymbols => {
-  const names = new Map<bigint, string>();
+  const names = new Map<bigint, InitializerSymbolName>();
   let first: SymbolTable | null = null;
   const done = (): MachoSymbols => ({ names, table: first });
   const header = readMachoLoadCommandTableHeader(scan.bytes, scan.bytes.length);
   if (!header.ok || header.value === null) return done();
   const cursor = new MachoLoadCommandCursor(header.value);
-  const width = wide ? 16 : 12;
   // One budget across every LC_SYMTAB, so repeated commands cannot multiply the work.
   let budget = SYMBOL_SCAN;
   const seen = new Set<string>();
@@ -256,20 +285,15 @@ const readSymbols = (
     if (frame.value.command !== LC.SYMTAB) continue;
     const table = readMachoSymtabCommand(body, little);
     if (table === null) {
-      note(scan, "LC_SYMTAB is truncated.");
+      note(scan, "LC_SYMTAB is truncated.", "unknown");
       return done();
     }
-    const stringsEnd = table.stroff + table.strsize;
-    if (
-      table.symoff < 0 ||
-      table.stroff < 0 ||
-      table.strsize < 0 ||
-      stringsEnd > scan.bytes.length ||
-      table.nsyms > (scan.bytes.length - table.symoff) / width
-    ) {
-      note(scan, "LC_SYMTAB points outside the Mach-O image.");
+    const ranges = admitMachoSymtabRanges(table, wide, scan.bytes.length);
+    if (ranges === null) {
+      note(scan, "LC_SYMTAB points outside the Mach-O image.", "unknown");
       return done();
     }
+    const { width, stringsEnd } = ranges;
     const range = `${String(table.symoff)}:${String(table.nsyms)}:${String(table.stroff)}:${String(table.strsize)}`;
     if (seen.has(range)) {
       // Nothing is lost by skipping an identical copy, so coverage stays as it was.
@@ -284,37 +308,34 @@ const readSymbols = (
       symoff: table.symoff,
       nsyms: table.nsyms,
       strings,
-      wide,
-      little,
+      width,
     };
     const count = Math.min(table.nsyms, budget);
     budget -= count;
     const stopped = table.nsyms > count;
     for (let index = 0; index < count; index += 1) {
       const at = table.symoff + index * width;
-      const type = scan.bytes[at + 4] ?? 0;
-      // Skip debugger stabs and undefined (N_UNDF) entries.
-      if ((type & 0xe0) !== 0 || (type & 0x0e) === 0) continue;
-      const strx = little
-        ? scan.bytes.readUInt32LE(at)
-        : scan.bytes.readUInt32BE(at);
-      const value = wide
-        ? little
-          ? scan.bytes.readBigUInt64LE(at + 8)
-          : scan.bytes.readBigUInt64BE(at + 8)
-        : BigInt(
-            little
-              ? scan.bytes.readUInt32LE(at + 8)
-              : scan.bytes.readUInt32BE(at + 8),
-          );
+      const type = scan.reader.u8(at + 4);
+      // Only N_ABS and N_SECT carry addresses. N_INDR's n_value is a string
+      // table index, and N_PBUD is still undefined in this image.
+      const kind = type & 0x0e;
+      if ((type & 0xe0) !== 0 || (kind !== 0x02 && kind !== 0x0e)) continue;
+      const strx = scan.reader.u32(at);
+      const value = scan.reader.word(at + 8, wide ? 64 : 32);
       const text = nameAt(scan, strings, strx);
-      if (text === null || names.has(value)) continue;
-      names.set(value, text);
+      if (text === null) continue;
+      const previous = names.get(value);
+      if (
+        previous === undefined ||
+        (previous === withheldInitializerSymbolName && typeof text === "string")
+      )
+        names.set(value, text);
     }
     if (stopped) {
       note(
         scan,
         `Symbol scanning stopped at ${String(SYMBOL_SCAN)} symbols across all LC_SYMTAB commands. Later names may be missing.`,
+        "unknown",
       );
       return done();
     }
@@ -329,18 +350,13 @@ const readSymbols = (
  */
 const uncheckedFixupReason = (
   scan: MachoScan,
-  little: boolean,
   decoded: boolean,
 ): string | null => {
   const header = readMachoLoadCommandTableHeader(scan.bytes, scan.bytes.length);
   if (!header.ok || header.value === null) return null;
   const cursor = new MachoLoadCommandCursor(header.value);
   const word = (at: number): number =>
-    at + 4 > scan.bytes.length
-      ? 0
-      : little
-        ? scan.bytes.readUInt32LE(at)
-        : scan.bytes.readUInt32BE(at);
+    at + 4 > scan.bytes.length ? 0 : scan.reader.u32(at);
   while (cursor.nextOffset !== null) {
     const commandAt = header.value.headerSize + cursor.nextOffset;
     const frame = cursor.read(scan.bytes.subarray(commandAt, commandAt + 8));
@@ -421,8 +437,9 @@ const decodePointer = (
     const overBudget =
       decoded.symbol.length > MAX_NATIVE_INITIALIZER_NAME_BYTES;
     if (overBudget) {
+      // This entry's own import name is withheld: a known gap.
       scan.notes.tally("long-symbol-name");
-      scan.incomplete = true;
+      widen(scan, "partial");
     }
     return {
       method: "unresolved_import",
@@ -432,29 +449,13 @@ const decodePointer = (
       definedName: null,
     };
   }
-  note(scan, decoded.reason);
+  note(scan, decoded.reason, "unknown");
   return {
     method: "unresolved",
     value: null,
     importName: null,
     definedName: null,
   };
-};
-
-const readWord = (
-  bytes: Buffer,
-  offset: number,
-  width: number,
-  little: boolean,
-): bigint | null => {
-  if (offset < 0 || offset > bytes.length - width) return null;
-  if (width === 8)
-    return little
-      ? bytes.readBigUInt64LE(offset)
-      : bytes.readBigUInt64BE(offset);
-  return BigInt(
-    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset),
-  );
 };
 
 interface SectionWalk {
@@ -512,6 +513,7 @@ const objectRelocations = (
     note(
       walk.scan,
       `${section.name} relocation entries lie outside the file, so its slots are listed as unresolved.`,
+      "unknown",
     );
     return { bySlot, complete: false };
   }
@@ -521,6 +523,7 @@ const objectRelocations = (
     note(
       walk.scan,
       `Object-file relocation scanning stopped at ${String(SECTION_RELOCATION_SCAN)} entries. Slots past that point are listed as unresolved.`,
+      "unknown",
     );
   const little = walk.image.byte_order === "little";
   const length = stride === 8 ? 3 : 2;
@@ -543,10 +546,8 @@ const objectRelocations = (
   for (let index = 0; index < read; index += 1) {
     if (index % 4096 === 0) assertArtifactReadActive(walk.signal);
     const at = offset + index * 8;
-    const first = little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
-    const info = little
-      ? bytes.readUInt32LE(at + 4)
-      : bytes.readUInt32BE(at + 4);
+    const first = walk.scan.reader.u32(at);
+    const info = walk.scan.reader.u32(at + 4);
     // R_SCATTERED: the low 24 bits hold the address in either byte order.
     if ((first & 0x80000000) !== 0) {
       add(first & 0xffffff, 1 << ((first >>> 28) & 3), { kind: "other" });
@@ -590,28 +591,22 @@ const objectSymbol = (
 ): SlotRelocation => {
   const table = walk.symbols.table;
   if (table === null || index >= table.nsyms) return UNRESOLVED;
-  const width = table.wide ? 16 : 12;
+  const { width } = table;
   const at = table.symoff + index * width;
-  const bytes = walk.scan.bytes;
+  const { reader, bytes } = walk.scan;
   if (at + width > bytes.length) return UNRESOLVED;
-  const strx = table.little ? bytes.readUInt32LE(at) : bytes.readUInt32BE(at);
-  const type = bytes[at + 4] ?? 0;
-  const value = table.wide
-    ? table.little
-      ? bytes.readBigUInt64LE(at + 8)
-      : bytes.readBigUInt64BE(at + 8)
-    : BigInt(
-        table.little ? bytes.readUInt32LE(at + 8) : bytes.readUInt32BE(at + 8),
-      );
+  const strx = reader.u32(at);
+  const type = reader.u8(at + 4);
+  const value = reader.word(at + 8, width === 16 ? 64 : 32);
   // Debugger stabs never name a relocation target.
   if ((type & 0xe0) !== 0) return UNRESOLVED;
-  const name = nameAt(walk.scan, table.strings, strx);
+  const ownName = () => nameAt(walk.scan, table.strings, strx);
   // N_UNDF: defined in another object or library.
   if ((type & 0x0e) === 0)
     return {
       method: "unresolved_import",
       value: null,
-      importName: name,
+      importName: ownName(),
       definedName: null,
     };
   // Only N_SECT has an address in this object.
@@ -620,7 +615,8 @@ const objectSymbol = (
     method: "symbol_addend",
     value: BigInt.asUintN(walk.image.bits, value + stored),
     importName: null,
-    definedName: stored === 0n ? name : null,
+    // A nonzero addend points past the symbol, so its name is not reported.
+    definedName: stored === 0n ? ownName() : null,
   };
 };
 
@@ -657,11 +653,13 @@ const slotsOf = async (
   offsets: boolean,
   entries: CollectedInitializer[],
 ): Promise<boolean> => {
-  const stride = offsets ? 4 : walk.image.bits / 8;
+  const bits = offsets ? 32 : walk.image.bits;
+  const stride = bits / 8;
   if (!section.file_backed) {
     note(
       walk.scan,
       `${section.name} is not file-backed. Its slots were omitted.`,
+      "partial",
     );
     return false;
   }
@@ -669,9 +667,9 @@ const slotsOf = async (
     note(
       walk.scan,
       `${section.name} size is not a multiple of its slot width. Trailing bytes were not read.`,
+      "partial",
     );
   const count = Math.floor(section.size / stride);
-  const little = walk.image.byte_order === "little";
   const relocations = walk.object
     ? objectRelocations(walk, section, stride)
     : undefined;
@@ -683,13 +681,14 @@ const slotsOf = async (
     }
     const slotVa = section.address + BigInt(index * stride);
     const slotFile = section.offset + index * stride;
-    const stored = readWord(walk.scan.bytes, slotFile, stride, little);
+    const stored = readInitializerWord(walk.scan.reader, slotFile, bits);
     const mappingMismatch =
       !walk.object && walk.locate(slotVa, stride) !== walk.fileBase + slotFile;
     if (mappingMismatch)
       note(
         walk.scan,
         `${section.name} slot mapping disagrees with its section offset; affected slots are unresolved.`,
+        "unknown",
       );
     const unresolved: SlotRelocation = {
       method: "unresolved",
@@ -731,12 +730,15 @@ const slotsOf = async (
     const symbol =
       applied.method === "unresolved_import"
         ? applied.importName
-        : (applied.definedName ??
-          (applied.value === null
-            ? null
-            : (walk.symbols.names.get(applied.value) ??
-              (code === null ? null : walk.symbols.names.get(code)) ??
-              null)));
+        : typeof applied.definedName === "string" || applied.value === null
+          ? applied.definedName
+          : preferInitializerSymbolName(
+              applied.definedName,
+              preferInitializerSymbolName(
+                walk.symbols.names.get(applied.value),
+                code === null ? null : walk.symbols.names.get(code),
+              ),
+            );
     entries.push({
       index: entries.length,
       kind,
@@ -790,10 +792,12 @@ export const readMachoInitializers = async (
   );
   if (!header.ok || header.value === null)
     throw new BinaryFormatFailure("malformed", "Unrecognized Mach-O header");
+  const little = container.byte_order === "little";
   const scan: MachoScan = {
+    reader: new BinaryReader(image.bytes, little, "macho"),
     bytes: image.bytes,
     notes: new InitializerNotes(),
-    incomplete: false,
+    coverage: "complete",
     undecoded: 0,
     unappliedObjectRelocations: 0,
   };
@@ -804,7 +808,6 @@ export const readMachoInitializers = async (
       "malformed",
       "arm64_32 Mach-O uses 4-byte pointers but declares a 64-bit header",
     );
-  const little = container.byte_order === "little";
   // Object files carry section relocations, not dyld fixups.
   const object = header.value.fileType === MH_OBJECT;
   const decoded = object
@@ -812,7 +815,7 @@ export const readMachoInitializers = async (
     : await layoutFixups(scan, container.bits, little, cpu, signal);
   const unchecked = object
     ? null
-    : uncheckedFixupReason(scan, little, decoded.fixups !== null);
+    : uncheckedFixupReason(scan, decoded.fixups !== null);
   const base = imageBase(container.mappings, decoded.base);
   const symbols = readSymbols(
     scan,
@@ -833,6 +836,7 @@ export const readMachoInitializers = async (
         note(
           scan,
           "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.",
+          "unknown",
         );
       return null;
     }
@@ -874,23 +878,27 @@ export const readMachoInitializers = async (
     note(
       scan,
       "Initializer scanning stopped at 65536 slots. Later slots were not read.",
+      "partial",
     );
   // decode() records failures lazily, so sample them only after every slot was decoded.
   if (
     container.macho_chained_fixups === true &&
     (decoded.fixups === null || decoded.fixups.failures.length > 0)
   )
-    note(scan, "Mach-O chained fixup coverage is incomplete.");
-  if (unchecked !== null && scan.undecoded > 0) note(scan, unchecked);
+    note(scan, "Mach-O chained fixup coverage is incomplete.", "unknown");
+  if (unchecked !== null && scan.undecoded > 0)
+    note(scan, unchecked, "unknown");
   if (scan.unappliedObjectRelocations > 0)
     note(
       scan,
       `${String(scan.unappliedObjectRelocations)} object-file slot(s) have section relocations this reader does not apply and are listed as unresolved.`,
+      "unknown",
     );
   if (scan.undecoded > 0)
     note(
       scan,
       `${String(scan.undecoded)} pointer slot(s) could not be decoded through Mach-O fixups and are listed as unresolved.`,
+      "unknown",
     );
   return finishInitializerReport(
     {
@@ -907,6 +915,6 @@ export const readMachoInitializers = async (
     entries.length,
     scan.notes,
     page,
-    scan.incomplete,
+    scan.coverage,
   );
 };

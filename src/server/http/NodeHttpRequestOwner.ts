@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { writeWebResponse } from "./nodeHttpBridge.js";
+import { Budget } from "../../domain/budget.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 
 const HTTP_RESPONSE_SOURCE = "MCP HTTP response source";
@@ -26,19 +27,20 @@ interface NodeHttpRequestTarget {
 
 /** Own admitted exchanges and separately joinable response-source cleanup. */
 export class NodeHttpRequestOwner {
-  #active = 0;
+  readonly #dispatches: Budget;
   readonly #exchanges = new Set<Promise<void>>();
   readonly #bodyCleanups = new Set<Promise<void>>();
   readonly #cleanupFailures: unknown[] = [];
 
   constructor(
-    private readonly capacity: number,
+    capacity: number,
     private readonly target: NodeHttpRequestTarget,
   ) {
     if (!Number.isSafeInteger(capacity) || capacity < 1)
       throw new RangeError(
         "maxConcurrentDispatches must be a positive safe integer",
       );
+    this.#dispatches = new Budget(capacity);
   }
 
   handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -51,9 +53,9 @@ export class NodeHttpRequestOwner {
     const refusal =
       this.#cleanupFailures.length > 0
         ? "cleanup"
-        : this.#active >= this.capacity
-          ? "capacity"
-          : undefined;
+        : this.#dispatches.tryCharge(1)
+          ? undefined
+          : "capacity";
     if (refusal !== undefined) {
       return this.#trackExchange(async () => {
         try {
@@ -66,7 +68,6 @@ export class NodeHttpRequestOwner {
         }
       });
     }
-    this.#active += 1;
     let reserved = true;
     let dispatched = false;
     let inputDone = false;
@@ -77,7 +78,7 @@ export class NodeHttpRequestOwner {
     const release = (): void => {
       if (!reserved) return;
       reserved = false;
-      this.#active -= 1;
+      this.#dispatches.refund(1);
       request.off("end", inputEnded);
       request.off("close", inputEnded);
       response.off("close", inputEnded);

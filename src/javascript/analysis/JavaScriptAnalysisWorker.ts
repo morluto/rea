@@ -1,31 +1,41 @@
 import {
+  runtimeExhaustionReport,
+  type RuntimeExhaustion,
+} from "../../process/RuntimeExhaustion.js";
+import {
   DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
   javaScriptMemberMutationAllowanceField,
   javaScriptMemberMutationRefusal,
   reportsJavaScriptMemberMutationRefusal,
 } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { MAX_NODE_TIMER_DELAY_MS } from "../../domain/analysisResourceLimits.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   retainProcessInspectionCleanup,
   processInspectionCancellationError,
 } from "../../providers/OwnedCommandCleanup.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
+import { Budget } from "../../domain/budget.js";
 import { analysisSettingLimit } from "../../domain/analysisSettingDefinitions.js";
 import { WorkerFrameSignal } from "../../process/WorkerFrameSignal.js";
+import {
+  Utf8NdjsonLineBuffer,
+  Utf8NdjsonOversizeError,
+} from "../../process/Utf8NdjsonLineBuffer.js";
 import type {
   JavaScriptSemanticProjectionCapacity,
   JavaScriptSemanticFileProjection,
 } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourceTransfer.js";
-import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
@@ -55,7 +65,7 @@ import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
-} from "../../process/RuntimeControlUnavailableError.js";
+} from "../../domain/runtimeControlUnavailableError.js";
 import { javaScriptWorkerMemoryLimitBytes } from "../../process/JavaScriptWorkerMemoryLimit.js";
 import {
   spawnOwnedProviderProcess,
@@ -96,6 +106,8 @@ import {
   javaScriptWorkerAdmissionSchema,
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const OPERATION = "analyze_javascript_application";
 const PROVIDER = "javascript-static-analysis";
@@ -126,6 +138,8 @@ type WorkerPrimaryFailure =
       readonly code: number | null;
       readonly signal: NodeJS.Signals | null;
       readonly heapExhaustion: boolean;
+      /** The runtime's own report, kept once the supervisor observed it. */
+      readonly exhaustion?: RuntimeExhaustion;
     };
 
 /** One sequential owned worker, retained between source files and closed after analysis. */
@@ -137,8 +151,7 @@ export class JavaScriptAnalysisWorker {
   #heapLimitBytes = 0;
   #frames: JavaScriptWorkerMessage[] = [];
   readonly #frameSignal = new WorkerFrameSignal();
-  #pending = "";
-  #decoder = new StringDecoder("utf8");
+  readonly #lines = new Utf8NdjsonLineBuffer(() => DEFAULTS.protocolBytes);
   #primaryFailure: WorkerPrimaryFailure | undefined;
   #activeJobId: string | undefined;
   #activeJobPhase = "startup";
@@ -146,7 +159,6 @@ export class JavaScriptAnalysisWorker {
   #terminalResponseId: string | undefined;
   #phase = "startup";
   #lastFailure: AnalysisError | undefined;
-  #estimatedRetainedBytes = 0;
   #staticProjectionReservations: {
     sourceIndex: number;
     path: string;
@@ -158,7 +170,12 @@ export class JavaScriptAnalysisWorker {
   #parentCapacityExhaustion: Readonly<Record<string, number>> | undefined;
   #sourcesRemaining: number | undefined;
   #deadline: ProviderStartupDeadline | undefined;
-  #resultBudgetBytes = 0;
+  /**
+   * Estimated retained result bytes against the result budget. Static
+   * checkpoints may over-commit it up to the static capacity; the worker
+   * reports that exhaustion itself rather than refusing the checkpoint.
+   */
+  #retained = new Budget(0);
   #staticCapacityBytes = 0;
   /** Null when the runtime enforces the V8 heap flags instead. */
   readonly #processMemoryLimitBytes: number | null;
@@ -166,33 +183,30 @@ export class JavaScriptAnalysisWorker {
     if (this.#deadline?.interruption !== undefined) return;
     this.#observeMemoryLimit();
     try {
-      this.#pending +=
-        typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
-      let newline: number;
-      while ((newline = this.#pending.indexOf("\n")) >= 0) {
-        const line = this.#pending.slice(0, newline);
-        this.#pending = this.#pending.slice(newline + 1);
-        if (
-          Buffer.byteLength(line) > DEFAULTS.protocolBytes ||
-          this.#frames.length >= 16
-        ) {
+      for (const line of this.#lines.pushRaw(
+        typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+      )) {
+        if (!line.ok) throw line.error;
+        if (this.#frames.length >= 16) {
           this.#latchOutputFailure(
             "JavaScript worker exceeded its control-frame budget",
           );
           return;
         }
-        const raw: unknown = JSON.parse(line);
+        const raw: unknown = JSON.parse(line.value);
         const frame = javaScriptWorkerMessageSchema.parse(raw);
         this.#frames.push(frame);
         this.#observeJobFrame(frame);
         this.#frameSignal.wake("frame");
       }
-      if (Buffer.byteLength(this.#pending) > DEFAULTS.protocolBytes)
-        this.#latchOutputFailure(
-          "JavaScript worker control frame is unterminated or oversized",
-        );
     } catch (cause: unknown) {
-      this.#latchOutputFailure(message(cause));
+      this.#latchOutputFailure(
+        cause instanceof Utf8NdjsonOversizeError
+          ? cause.boundary === "tail"
+            ? "JavaScript worker control frame is unterminated or oversized"
+            : "JavaScript worker exceeded its control-frame budget"
+          : errorMessage(cause),
+      );
     }
   };
 
@@ -219,6 +233,9 @@ export class JavaScriptAnalysisWorker {
       supervisorOptions: {
         captureStdout: false,
         maxDiagnosticBytes: 256 * 1024,
+        // V8's heap report is observed as output streams, so a retention
+        // budget or a stack trace that overflowed it cannot hide it.
+        runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
@@ -259,7 +276,7 @@ export class JavaScriptAnalysisWorker {
       this.#primaryFailure === undefined &&
       this.#lastFailure === undefined &&
       this.#frames.length === 0 &&
-      this.#pending === "" &&
+      this.#lines.pendingBytes === 0 &&
       this.#runtime.inputFailure === undefined &&
       !this.#runtime.hasPendingCleanup &&
       !this.#inspectionResources.hasPending &&
@@ -278,7 +295,6 @@ export class JavaScriptAnalysisWorker {
         "JavaScript worker source count must be a nonnegative safe integer",
       );
     this.#sourcesRemaining = sourceCount;
-    this.#estimatedRetainedBytes = 0;
     this.#staticProjectionReservations = [];
     this.#revokedStaticProjections = [];
     this.#nextSourceIndex = 0;
@@ -308,7 +324,7 @@ export class JavaScriptAnalysisWorker {
       this.#remainingParentHeapBytes() -
         24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
     );
-    this.#resultBudgetBytes = Math.floor(capacity / 2);
+    this.#retained = new Budget(Math.floor(capacity / 2));
     this.#staticCapacityBytes = Math.floor(capacity * STATIC_CAPACITY_SHARE);
   }
 
@@ -360,7 +376,7 @@ export class JavaScriptAnalysisWorker {
       const supervisor = this.#runtime.supervisor;
       if (rootPath === undefined || supervisor === undefined)
         throw new TypeError("JavaScript worker resources were not acquired");
-      if (this.#frames.length !== 0 || this.#pending !== "")
+      if (this.#frames.length !== 0 || this.#lines.pendingBytes !== 0)
         throw new AnalysisOutputError(
           OPERATION,
           "JavaScript worker has unsolicited or incomplete control frames",
@@ -385,7 +401,7 @@ export class JavaScriptAnalysisWorker {
           this.limits.memberMutationAllowance ??
             DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
         ),
-        text_sha256: createHash("sha256").update(file.text.value).digest("hex"),
+        text_sha256: sha256Hex(file.text.value),
         file: metadata,
         package_type: packageType,
         purpose,
@@ -515,7 +531,7 @@ export class JavaScriptAnalysisWorker {
               `Completed module facts for ${file.path} exceed the parent's remaining result budget; static facts were retained`,
               {
                 ...this.#limits(),
-                parent_result_budget_bytes: this.#resultBudgetBytes,
+                parent_result_budget_bytes: this.#retained.maximum,
                 parent_available_result_budget_bytes: remaining,
                 module_transfer_bytes: descriptor.module_bytes,
                 module_retention_estimate_bytes: moduleEstimate,
@@ -538,8 +554,9 @@ export class JavaScriptAnalysisWorker {
         );
         module = decoded.module;
         projection = decoded.projection;
-        this.#estimatedRetainedBytes +=
-          moduleEstimate + (retainGraph ? graphEstimate : 0);
+        this.#retained.chargeOverCommitting(
+          moduleEstimate + (retainGraph ? graphEstimate : 0),
+        );
         result = retainGraph
           ? ok({ javascript, module, projection: decoded.projection })
           : err({
@@ -552,7 +569,7 @@ export class JavaScriptAnalysisWorker {
                 `Semantic graph for ${file.path} exceeds the parent's remaining result budget; static and module facts were retained`,
                 {
                   ...this.#limits(),
-                  parent_result_budget_bytes: this.#resultBudgetBytes,
+                  parent_result_budget_bytes: this.#retained.maximum,
                   parent_available_result_budget_bytes: remaining,
                   module_retention_estimate_bytes: moduleEstimate,
                   graph_retention_estimate_bytes: graphEstimate,
@@ -629,7 +646,7 @@ export class JavaScriptAnalysisWorker {
               }),
             )
           : previous;
-        const error = this.#cleanupError(message(cause), primary);
+        const error = this.#cleanupError(errorMessage(cause), primary);
         this.#runtime.bindCleanupFailure(error);
         result = err({
           javascript,
@@ -699,11 +716,11 @@ export class JavaScriptAnalysisWorker {
           ? runtime.reason
           : this.#failure(runtime.reason, "worker close", undefined);
       if (inspectionError !== undefined)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           runtimeError,
           inspectionError,
           OPERATION,
-        ).bindCleanupDependencies([runtimeError, inspectionError]);
+        );
       throw runtimeError;
     }
     if (inspectionError !== undefined) throw inspectionError;
@@ -858,10 +875,7 @@ export class JavaScriptAnalysisWorker {
         },
       );
     const checkpoint = await readFile(path);
-    if (
-      expected !== undefined &&
-      createHash("sha256").update(checkpoint).digest("hex") !== expected.sha256
-    )
+    if (expected !== undefined && sha256Hex(checkpoint) !== expected.sha256)
       throw new AnalysisOutputError(
         OPERATION,
         "JavaScript static checkpoint digest does not match",
@@ -885,9 +899,8 @@ export class JavaScriptAnalysisWorker {
     const staticCeiling =
       retainedBytes + used_heap_size <= liveAvailable
         ? this.#staticCapacityBytes
-        : this.#resultBudgetBytes;
-    const needed =
-      retainedBytes - (staticCeiling - this.#estimatedRetainedBytes);
+        : this.#retained.maximum;
+    const needed = retainedBytes - (staticCeiling - this.#retained.used);
     if (needed > 0 && retainedBytes <= liveAvailable) {
       // Plan all revocations first so an insufficient set leaves the earlier
       // relationships intact rather than sacrificing them for a failed read.
@@ -900,14 +913,14 @@ export class JavaScriptAnalysisWorker {
       if (reclaimable >= needed) {
         const revoked = this.#staticProjectionReservations.splice(start);
         for (const reservation of revoked) {
-          this.#estimatedRetainedBytes -= reservation.bytes;
+          this.#retained.refund(reservation.bytes);
           this.#revokedStaticProjections.push({
             sourceIndex: reservation.sourceIndex,
             error: new AnalysisResourceConstraintError(
               OPERATION,
               "memory",
               `Expanded application relationships for ${reservation.path} were omitted to retain static facts for later sources`,
-              { parent_result_budget_bytes: this.#resultBudgetBytes },
+              { parent_result_budget_bytes: this.#retained.maximum },
               {
                 remediationAction: `Read the retained static facts or analyze fewer source files. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
               },
@@ -920,7 +933,7 @@ export class JavaScriptAnalysisWorker {
     // admission so a second read cannot reject after revocations commit.
     const remaining = Math.max(
       0,
-      Math.min(staticCeiling - this.#estimatedRetainedBytes, liveAvailable),
+      Math.min(staticCeiling - this.#retained.used, liveAvailable),
     );
     this.#parentCapacityExhaustion =
       retainedBytes > remaining
@@ -931,7 +944,7 @@ export class JavaScriptAnalysisWorker {
             static_retention_estimate_bytes: retainedBytes,
           }
         : undefined;
-    this.#estimatedRetainedBytes += retainedBytes;
+    this.#retained.chargeOverCommitting(retainedBytes);
     const expandedBytes = estimateJavaScriptStaticApplicationProjection(
       facts,
       bytes,
@@ -939,7 +952,7 @@ export class JavaScriptAnalysisWorker {
     );
     const availableResultBudget = this.#remainingResultBudget();
     if (expandedBytes <= availableResultBudget) {
-      this.#estimatedRetainedBytes += expandedBytes;
+      this.#retained.chargeOverCommitting(expandedBytes);
       this.#staticProjectionReservations.push({
         sourceIndex,
         path: sourcePath,
@@ -951,7 +964,7 @@ export class JavaScriptAnalysisWorker {
         "memory",
         `Expanded application relationships for ${sourcePath} exceed the parent's result budget; complete static facts were retained on the file node`,
         {
-          parent_result_budget_bytes: this.#resultBudgetBytes,
+          parent_result_budget_bytes: this.#retained.maximum,
           parent_available_result_budget_bytes: availableResultBudget,
           application_projection_required_bytes: expandedBytes,
         },
@@ -972,7 +985,7 @@ export class JavaScriptAnalysisWorker {
       `The parent's result capacity was exhausted after retaining static facts for ${path}; remaining sources were not analyzed`,
       {
         ...this.#limits(),
-        parent_result_budget_bytes: this.#resultBudgetBytes,
+        parent_result_budget_bytes: this.#retained.maximum,
         ...this.#parentCapacityExhaustion,
         parent_result_budget_exhausted: true,
       },
@@ -1024,7 +1037,7 @@ export class JavaScriptAnalysisWorker {
   #remainingResultBudget(): number {
     // One sequential worker produces one next checkpoint at a time. Reserve
     // its maximum protocol size at the same retained expansion used on receipt;
-    // earlier checkpoints are already charged to estimatedRetainedBytes.
+    // earlier checkpoints are already charged to the retained budget.
     // Reserving every unexamined source's maximum would reject useful results
     // merely because many small files remain. Actual retained growth and live
     // heap capacity are checked again for every checkpoint and transfer.
@@ -1040,7 +1053,7 @@ export class JavaScriptAnalysisWorker {
     return Math.max(
       0,
       Math.min(
-        this.#resultBudgetBytes - this.#estimatedRetainedBytes,
+        this.#retained.remaining,
         this.#remainingParentHeapBytes() -
           24 * JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
       ),
@@ -1075,15 +1088,16 @@ export class JavaScriptAnalysisWorker {
         );
       return;
     }
-    if (
-      event.type === "output" &&
-      event.stream === "stderr" &&
-      this.#primaryFailure?.kind === "exit" &&
-      /heap out of memory|heap limit|allocation failed/iu.test(
-        this.#runtime.supervisor?.snapshot().stderr.text ?? "",
-      )
-    ) {
-      this.#primaryFailure = { ...this.#primaryFailure, heapExhaustion: true };
+    const reported =
+      event.type === "output"
+        ? this.#runtime.supervisor?.snapshot().runtimeExhaustion
+        : undefined;
+    if (reported !== undefined && this.#primaryFailure?.kind === "exit") {
+      this.#primaryFailure = {
+        ...this.#primaryFailure,
+        heapExhaustion: true,
+        exhaustion: reported,
+      };
       this.#frameSignal.wake("failure");
     }
     if (event.type === "exit" && (event.code !== 0 || event.signal !== null)) {
@@ -1092,20 +1106,19 @@ export class JavaScriptAnalysisWorker {
           kind: "exit",
           code: event.code,
           signal: event.signal,
-          heapExhaustion:
-            /heap out of memory|heap limit|allocation failed/iu.test(
-              event.snapshot.stderr.text,
-            ),
+          heapExhaustion: event.snapshot.runtimeExhaustion !== undefined,
+          ...(event.snapshot.runtimeExhaustion === undefined
+            ? {}
+            : { exhaustion: event.snapshot.runtimeExhaustion }),
         };
       else if (
         this.#primaryFailure.kind === "exit" &&
-        /heap out of memory|heap limit|allocation failed/iu.test(
-          event.snapshot.stderr.text,
-        )
+        event.snapshot.runtimeExhaustion !== undefined
       ) {
         this.#primaryFailure = {
           ...this.#primaryFailure,
           heapExhaustion: true,
+          exhaustion: event.snapshot.runtimeExhaustion,
         };
         this.#frameSignal.wake("failure");
       }
@@ -1231,10 +1244,11 @@ export class JavaScriptAnalysisWorker {
         this.limits.timeoutMs,
         this.limits.timeoutSource,
       ),
+      related: { parameters: ["source_paths"] },
       ...(withCapturedOutput ? { capturedOutput: this.#captured() } : {}),
       userMessage: `JavaScript source analysis reached its ${String(this.limits.timeoutMs)}ms per-source server/provider deadline (analysis_timeout_ms), not the MCP client deadline.`,
       remediationAction:
-        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms through MCP, or use rea analyze-javascript-application <input_path> --analysis-timeout-ms <milliseconds> on the CLI. Alternatively, reduce semantic limits or select exact inventoried source_paths (CLI: --source-path on that command). Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
+        "Reuse accessible partial_observation Evidence to avoid recomputation; reading it is not a prerequisite for a corrected retry. Increase analysis_timeout_ms on the next call. Alternatively, reduce semantic limits or select exact inventoried source_paths. Omit source_paths to analyze all sources; an empty array is invalid. detail: summary reduces response size, not analysis work. Allow execution, cleanup and delivery headroom in the MCP client tool deadline; increasing that client deadline alone does not change this server budget. Resolve any reported incomplete cleanup before retrying.",
     });
   }
   #workerExitFailure(
@@ -1255,6 +1269,15 @@ export class JavaScriptAnalysisWorker {
         this.#limits(),
         {
           capturedOutput: this.#captured(),
+          ...(failure.exhaustion === undefined
+            ? {}
+            : {
+                diagnostics: {
+                  runtime_exhaustion_report: runtimeExhaustionReport(
+                    failure.exhaustion,
+                  ),
+                },
+              }),
           ...(WORKER_HEAP_FLAGS_ENFORCED
             ? {
                 limit: analysisSettingLimit(
@@ -1448,7 +1471,7 @@ export class JavaScriptAnalysisWorker {
     )
       return new AnalysisOutputError(
         OPERATION,
-        `${path} during ${this.#phase}: ${message(cause)}`,
+        `${path} during ${this.#phase}: ${errorMessage(cause)}`,
         { cause, capturedOutput: this.#captured() },
       );
     return cause instanceof RuntimeControlUnavailableError
@@ -1459,7 +1482,7 @@ export class JavaScriptAnalysisWorker {
           diagnostics: {
             source_path: path,
             phase: this.#phase,
-            message: message(cause),
+            message: errorMessage(cause),
           },
         });
   }
@@ -1522,14 +1545,10 @@ export class JavaScriptAnalysisWorker {
     this.#ready = false;
     this.#frames = [];
     this.#frameSignal.clear();
-    this.#pending = "";
-    this.#decoder = new StringDecoder("utf8");
+    this.#lines.reset();
     this.#primaryFailure = undefined;
     this.#activeJobId = undefined;
     this.#staticResponseId = undefined;
     this.#terminalResponseId = undefined;
   }
 }
-
-const message = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

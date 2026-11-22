@@ -1,7 +1,7 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { afterEach, expect, it, vi } from "vitest";
 
 import { ApktoolResourceAnalysisService } from "../application/apktool/ApktoolResourceAnalysisService.js";
@@ -100,12 +100,16 @@ const decode = async (
   );
 
 it("applies the omitted 600000 ms decode deadline and a selected value on the next decode", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-apktool-deadline-"));
+  const root = await createTestTempDirectory("rea-apktool-deadline-");
   const path = join(root, "probe.apk");
   await writeFile(path, "apk-bytes");
   installLauncher();
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
   const provider = new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/opt/apktool/apktool" },
+    environment: { REA_APKTOOL_COMMAND: command },
   });
   try {
     const omitted = await decode(provider, path);
@@ -120,14 +124,24 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     const projected = projectAnalysisError(timedOut.error);
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: 200 },
+      details: {
+        timeout_ms: 200,
+        limit: {
+          control_kind: "parameter",
+          parameter: "decode_timeout_ms",
+          effective_value: 200,
+        },
+      },
     });
+    expect(projected.remediation.action).not.toContain("--");
     expect(projected.message).toContain("200 ms");
     expect(projected.remediation.action).toContain("decode_timeout_ms");
     expect(projected.remediation.action).toContain(
       String(MAX_NODE_TIMER_DELAY_MS),
     );
-    expect(projected.remediation.action).toContain("600000");
+    expect(projected.remediation.action).toContain(
+      String(DEFAULT_APKTOOL_DECODE_TIMEOUT_MS),
+    );
     expect(projected.remediation.action).toContain("next decode");
     expect(projected.remediation.action).toContain("no runtime override");
     expect(decodeTimeouts).toEqual([DEFAULT_APKTOOL_DECODE_TIMEOUT_MS, 200]);
@@ -146,11 +160,12 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
 
     const maximum = await decode(provider, path, MAX_NODE_TIMER_DELAY_MS);
     if (maximum.ok) throw new Error("Expected the maximum decode deadline");
-    expect(projectAnalysisError(maximum.error).remediation.action).toContain(
-      "do not increase it further",
-    );
+    expect(projectAnalysisError(maximum.error).details?.limit).toMatchObject({
+      parameter: "decode_timeout_ms",
+      effective_value: MAX_NODE_TIMER_DELAY_MS,
+      maximum: MAX_NODE_TIMER_DELAY_MS,
+    });
   } finally {
     await provider.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

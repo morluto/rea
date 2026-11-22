@@ -1,6 +1,6 @@
 import { inspectModelArtifactInputSchema } from "../../domain/model/modelArtifactQuery.js";
-import type { ModelArtifactPort } from "./ModelArtifactPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ModelArtifactPort } from "../../ports/model/ModelArtifactPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { modelArtifactSchema } from "../../domain/model/modelArtifact.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";

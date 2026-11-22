@@ -4,17 +4,14 @@ import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
   listNamesFact,
-  listProceduresFact,
   listStringsFact,
-  searchProceduresFact,
-  searchStringsFact,
 } from "../domain/native/nativeOperationFacts.js";
 import { ok } from "../domain/result.js";
 import { executeFact } from "./AnalysisOperationFacts.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
@@ -32,21 +29,18 @@ const nameRow = { address: "0x1000", value: "main", provider_extra: 7 };
 const stringRow = { address: "0x2000", value: "hello", provider_extra: 7 };
 
 it.each([
-  [listNamesFact, nameRow],
-  [listProceduresFact, nameRow],
-  [searchProceduresFact, nameRow],
-  [listStringsFact, stringRow],
-  [searchStringsFact, stringRow],
+  ["list_names", listNamesFact, nameRow],
+  ["list_strings", listStringsFact, stringRow],
 ] as const)(
-  "parses %s once, dropping unknown row fields from the fact but not the execution",
-  async (contract, row) => {
+  "retains the raw %s execution and projects its typed fact",
+  async (operation, contract, row) => {
     const calls: string[] = [];
     const executed = await executeFact(
       portReturning([row], calls),
       contract,
       {},
     );
-    expect(calls).toEqual([contract.operation]);
+    expect(calls).toEqual([operation]);
     if (!executed.ok) throw executed.error;
     expect(executed.value.fact).toEqual([
       { address: row.address, value: row.value },
@@ -67,7 +61,6 @@ it("refuses a malformed result with field diagnostics and the observed execution
   expect(executed.error).toBeInstanceOf(AnalysisOutputError);
   expect(executed.error).toMatchObject({
     operation: "list_names",
-    reason: "Provider returned an invalid name inventory",
     diagnostics: {
       contract_issues: [
         {

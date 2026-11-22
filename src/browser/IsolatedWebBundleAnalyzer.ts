@@ -23,7 +23,7 @@ import {
   cancelledBy,
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -306,11 +306,11 @@ export class IsolatedWebBundleAnalyzer {
       failure =
         failure === undefined
           ? cleanup
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               failure,
               cleanup,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([failure, cleanup]);
+            );
     } finally {
       deadline.dispose();
     }
@@ -321,11 +321,11 @@ export class IsolatedWebBundleAnalyzer {
       failure = hasPrimaryFailure
         ? analysisErrorWithCancellation(failure, cancelled)
         : failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               cancelled,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([cancelled, failure])
+            )
           : cancelled;
     } else if (!hasPrimaryFailure && deadline.interruption === "timeout") {
       const totalTimeoutMs =
@@ -341,11 +341,11 @@ export class IsolatedWebBundleAnalyzer {
       );
       failure =
         failure?.cleanupIncomplete === true
-          ? analysisErrorWithCleanupFailure(
+          ? analysisErrorWithCleanupDependencies(
               timeout,
               failure,
               "analyze_web_bundle",
-            ).bindCleanupDependencies([timeout, failure])
+            )
           : timeout;
     }
     if (failure !== undefined) {

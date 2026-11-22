@@ -84,7 +84,7 @@ it("keeps a selected valid registration distinct from a live IDA connection", as
     JSON.stringify({
       mode: "attached",
       url: "http://127.0.0.1:13337/mcp",
-      protocol: "legacy",
+      protocol: "native",
     }),
   );
   const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
@@ -333,12 +333,12 @@ it.each(["http", "stdio"] as const)(
             transport === "http"
               ? {
                   url: "http://127.0.0.1:8745/mcp",
-                  protocol: "legacy",
+                  protocol: "native",
                   headers: { Authorization: token, "X-Input": "retained" },
                 }
               : {
                   command: "fixture",
-                  protocol: "legacy",
+                  protocol: "native",
                   env: { PRIVATE_VALUE: token, IDADIR: "/fixture/ida" },
                   sensitive: { env: ["PRIVATE_VALUE"] },
                 },
@@ -366,7 +366,7 @@ it.each(["http", "stdio"] as const)(
           transport === "http"
             ? {
                 url: "http://127.0.0.1:8745/mcp",
-                protocol: "legacy",
+                protocol: "native",
                 headers: {
                   Authorization: "second credential",
                   "X-Input": "changed input",
@@ -374,7 +374,7 @@ it.each(["http", "stdio"] as const)(
               }
             : {
                 command: "fixture",
-                protocol: "legacy",
+                protocol: "native",
                 env: {
                   PRIVATE_VALUE: "second credential",
                   IDADIR: "/changed/ida",
@@ -397,9 +397,7 @@ it.each(["http", "stdio"] as const)(
 it("applies runtime regex budgets through a bound IDA client and recovers in the same session", async () => {
   const { root, target } = await createIdaTarget();
   const path = join(root, "registration.json");
-  let client:
-    | import("../application/AnalysisProvider.js").AnalysisClient
-    | undefined;
+  let client: import("../ports/AnalysisProvider.js").AnalysisClient | undefined;
   let provider: IdaProvider | undefined;
   try {
     await writeFile(
@@ -407,7 +405,7 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
       JSON.stringify({
         mode: "attached",
         url: "http://127.0.0.1:13337/mcp",
-        protocol: "legacy",
+        protocol: "native",
       }),
     );
     const parsed = parseConfig({ REA_IDA_MCP_CONFIG: path });
@@ -416,10 +414,10 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     const producer = new RecordingIdaMcp(target, "attached");
     const value = "a".repeat(40) + "!";
     producer.overrideCall = (name) =>
-      name === "list_strings"
+      name === "find_regex"
         ? {
-            data: [{ address: "0x3000", length: value.length, string: value }],
-            next_offset: null,
+            matches: [{ addr: "0x3000", string: value }],
+            cursor: { done: true },
           }
         : undefined;
     provider = new IdaProvider(
@@ -450,6 +448,13 @@ it("applies runtime regex budgets through a bound IDA client and recovers in the
     expect(failed).toMatchObject({
       ok: false,
       error: {
+        _tag: "AnalysisResourceConstraintError",
+        operation: "search_strings",
+        resource: "cpu",
+        reportedLimits: {
+          matching_deadline_ms: 100,
+          matching_deadline_source: "runtime",
+        },
         limit: {
           setting: "regex.matching_deadline_ms",
           effective_value: 100,

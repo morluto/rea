@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { DesktopViewPolicyInput } from "../../domain/desktop/desktopViewPolicy.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
@@ -62,9 +63,10 @@ const draft = async (
   selection: DraftSelection,
   viewPolicy: DesktopViewPolicyInput | undefined,
 ): Promise<Evidence> => {
-  const { evidence, capture } = await readDesktopCapture(folder, signal);
+  const source = await readDesktopCapture(folder, signal);
+  const { evidence, capture } = source;
   const stateEvidence = await inspectDesktopApplicationState(
-    folder,
+    source,
     readers,
     signal,
     { viewPolicy },
@@ -160,7 +162,7 @@ const draft = async (
       .sort(),
   } as unknown as JsonValue;
   if (signal?.aborted === true) throw cancelledBy(OPERATION, signal);
-  return createEvidence(undefined, DESKTOP_PROVIDER, {
+  return createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-application-task-draft",
     operation: OPERATION,
     parameters: {

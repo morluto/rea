@@ -13,6 +13,7 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const assertUncertainEvidence = async (
   client: Client,
@@ -222,7 +223,10 @@ it("preserves live Cutter command Evidence and parity through the MCP boundary",
       providerEnvironment: { ...process.env, REA_CUTTER_BRIDGE_DIR: directory },
     },
   );
-  const client = new Client({ name: "cutter-mcp-boundary", version: "1" });
+  const client = new Client(
+    { name: "cutter-mcp-boundary", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -241,6 +245,7 @@ it("preserves live Cutter command Evidence and parity through the MCP boundary",
   expect(discovery.structuredContent).toMatchObject({
     discovery_status: "sessions_found",
     sessions: [{ session_id: sessionId, document_generation: 3 }],
+    limitations: [],
   });
 
   const command = await client.callTool({

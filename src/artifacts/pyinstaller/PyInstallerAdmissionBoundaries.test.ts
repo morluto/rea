@@ -6,7 +6,7 @@ import {
   phaseGate,
 } from "../../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "../ArtifactReader.js";
+import type { ArtifactEntry } from "../../resources/ArtifactReader.js";
 import { PyInstallerPyzStore } from "./PyInstallerPyzStore.js";
 import {
   cArchiveExecutable,

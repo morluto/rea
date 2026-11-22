@@ -3,7 +3,9 @@ import { z } from "zod";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
+  managedInspectionStateSchema,
   cliMetadataGuidSchema,
+  managedMetadataStatusSchema,
   managedNativeImportSchema,
 } from "./managedArtifact.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
@@ -50,7 +52,7 @@ const observedCandidatesSchema = z
   .tuple([nativeSymbolSchema], nativeSymbolSchema)
   .check(z.minLength(1));
 
-export const pinvokeVerificationSchema = z.union([
+export const pinvokeVerificationSchema = z.discriminatedUnion("basis", [
   z.strictObject({
     ...pinvokeVerificationContextShape,
     status: z.literal("verified"),
@@ -164,10 +166,10 @@ export const managedNativeVerificationResultSchema = z
       artifact_sha256: digestSchema,
       artifact_path: z.string().min(1),
       mvid: cliMetadataGuidSchema.nullable(),
-      metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+      metadata_status: managedMetadataStatusSchema,
       pinvoke_imports_total: z.int().min(0),
       native_implementations_total: z.int().min(0),
-      coverage_state: z.enum(["complete", "partial", "unavailable"]),
+      coverage_state: managedInspectionStateSchema,
     }),
     native_observations: z.strictObject({
       total: z.int().min(1),

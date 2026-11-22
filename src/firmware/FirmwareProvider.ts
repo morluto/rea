@@ -1,14 +1,14 @@
 import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
-import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { assertArtifactCommandPath } from "../process/ArtifactCommandPath.js";
 import { join } from "node:path";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
 import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import {
   firmwareResultSchemas,
   DEFAULT_FIRMWARE_ANALYSIS_TIMEOUT_MS,
@@ -16,7 +16,10 @@ import {
   type FirmwarePartialObservation,
 } from "../domain/firmware/firmwareAnalysis.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -31,8 +34,11 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../artifacts/SafeOutputTreeAdmission.js";
+import {
+  SafeOutputTree,
+  outputDirectoryAdmissionRefusal,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { publishFirmwareExtraction } from "./FirmwarePublication.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -47,6 +53,7 @@ import {
   firmwareFileSizeLimit,
   firmwareToolUnavailable,
   resolveFirmwareCommand,
+  firmwareExecutionOutput,
   runFirmwareCommand,
   readFirmwareCommandReport,
   type FirmwareLauncher,
@@ -65,7 +72,7 @@ import {
   firmwarePhaseInterruption,
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {
@@ -97,9 +104,9 @@ const combineCleanupFailures = (
   failures: readonly AnalysisError[],
 ): AnalysisError | undefined => {
   if (failures.length < 2) return failures[0];
-  return new ProviderCleanupError(
+  return providerCleanupErrorFromFailures(
     "firmware",
-    failures.flatMap((failure) => [...failure.cleanupResources]),
+    failures,
     {
       reason: "Multiple owned firmware resources could not be cleaned",
       failures: failures.map((failure) => ({
@@ -115,8 +122,8 @@ const combineCleanupFailures = (
         reason: failure.diagnostics?.reason ?? failure.message,
       })),
     },
-    { operation: "close_firmware", cause: new AggregateError(failures) },
-  ).bindCleanupDependencies(failures);
+    { operation: "close_firmware" },
+  );
 };
 const waitForPredecessor = (
   predecessor: Promise<void>,
@@ -166,6 +173,8 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
       Record<string, string | undefined>
     > = process.env,
     readonly launcher?: FirmwareLauncher,
+    /** The host the engines run on; selects the supported-host gate and environment rules. */
+    readonly host: HostPlatform = HOST_PLATFORM,
   ) {}
 
   /** Inspect regions or explicitly extract selected bytes without changing the source. */
@@ -288,7 +297,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -309,7 +318,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path, pending.tree?.tree.outputRoot ?? path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -330,7 +339,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
               pending.engine,
               [path],
               {
-                reason: cause instanceof Error ? cause.message : String(cause),
+                reason: errorMessage(cause),
               },
               { operation: pending.operation, cause },
             ),
@@ -348,7 +357,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
     // Capture configuration after queue admission; later operations may select updates.
     const environment = snapshotEnvironment(
       this.environment,
-      HOST_PLATFORM.platform,
+      this.host.platform,
     );
     let root: PrivateRuntimeRoot | undefined;
     let rootLease: AnalysisCleanupLease | undefined;
@@ -382,6 +391,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         engineName,
         request.operation,
         this.#files,
+        this.host.platform,
         signal,
       );
       root = await PrivateRuntimeRoot.create({ prefix: "rea-firmware-" });
@@ -425,15 +435,7 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
         });
         for (const selected of [command.command, command.limiter])
           await assertArtifactCommandPath(selected, request.operation, {
-            capturedOutput: {
-              stdout: output.stdout.text,
-              stderr: output.stderr.text,
-              stdout_bytes: output.stdout.bytes,
-              stderr_bytes: output.stderr.bytes,
-              exit_code: output.exit_code ?? null,
-              signal: output.signal,
-              truncated: false,
-            },
+            capturedOutput: firmwareExecutionOutput(output),
           });
         return output;
       };
@@ -707,7 +709,7 @@ const finishFirmwareWorkspace = async (
           ? [request.input.output_directory]
           : []),
       ],
-      { reason: cause instanceof Error ? cause.message : String(cause) },
+      { reason: errorMessage(cause) },
       {
         cause,
         operation: request.operation,

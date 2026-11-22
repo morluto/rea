@@ -1,8 +1,11 @@
-import { createHash } from "node:crypto";
+import { boundedList, type BoundedList } from "../domain/boundedList.js";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
+import {
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
@@ -16,25 +19,22 @@ import {
 } from "../contracts/guidanceContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   bindRegularFileCleanup,
   RetainedRegularFileCleanupFailure,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   parseGuidanceSections,
   type GuideSection,
 } from "./GuidanceSections.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const SKILL_ROOT = `../../skills/${PRODUCT_IDENTITY.skillName}/`;
 const SOURCE = "installed_rea_guidance" as const;
 const MAX_GUIDE_FILE_BYTES = 1_048_576;
 const MAX_GUIDE_BUNDLE_BYTES = 4_194_304;
-const sha256 = (value: string | Uint8Array): string =>
-  createHash("sha256").update(value).digest("hex");
-
 interface GuidanceBundle {
   readonly digest: string;
   readonly sections: readonly GuideSection[];
@@ -112,9 +112,9 @@ const readBundle = async (
             "Installed REA guidance is missing or unreadable; no complete bundle could be indexed.",
         };
   }
-  const digest = sha256(
+  const digest = sha256Hex(
     [...files]
-      .map(([path, content]) => `${path}\0${sha256(content)}\n`)
+      .map(([path, content]) => `${path}\0${sha256Hex(content)}\n`)
       .join(""),
   );
   const sections = parseGuidanceSections(files);
@@ -192,7 +192,7 @@ const sectionLocator = (
     bundle: bundle.digest,
     guide: section.guide,
     ordinal: section.ordinal,
-    section: sha256(section.content),
+    section: sha256Hex(section.content),
   });
   return `rea-guide-v1.${Buffer.from(identity).toString("base64url")}`;
 };
@@ -294,7 +294,7 @@ const searchGuidanceInScope = async (
         message: "Invalid guidance continuation token",
       },
     ]);
-  const queryDigest = sha256(parsed.data.query);
+  const queryDigest = sha256Hex(parsed.data.query);
   if (cursor !== undefined && cursor.query !== queryDigest)
     return invalidInput("search_guidance", input, [
       {
@@ -503,7 +503,7 @@ const isWithin = (section: GuideSection, ancestor: GuideSection): boolean => {
 const subsectionPointers = (
   match: RankedSection,
   coverage: readonly TermCoverage[],
-): { readonly pointers: readonly TermCoverage[]; readonly omitted: number } => {
+): BoundedList<TermCoverage> => {
   const descendants: TermCoverage[] = [];
   // Document order keeps every subsection contiguous after its parent.
   for (let index = match.index + 1; index < coverage.length; index += 1) {
@@ -528,10 +528,7 @@ const subsectionPointers = (
     for (const word of best.own) remaining.delete(word);
     pointers.push(best);
   }
-  return {
-    pointers: pointers.slice(0, MAX_SUBSECTION_POINTERS),
-    omitted: Math.max(0, pointers.length - MAX_SUBSECTION_POINTERS),
-  };
+  return boundedList(pointers, MAX_SUBSECTION_POINTERS);
 };
 
 const presentMatch = (
@@ -554,7 +551,7 @@ const presentMatch = (
       relevance: `Matched ${matched.join(", ")} in this section's own text.`,
       context: contextFor(section.ownContent, matched),
     };
-  const { pointers, omitted } = subsectionPointers(match, coverage);
+  const { items: pointers, omitted } = subsectionPointers(match, coverage);
   return {
     ...common,
     relevance: `Matched ${matched.join(", ")} only across different subsections; no single subsection contains every term.`,
@@ -626,7 +623,7 @@ const readGuidanceSectionInScope = async (
     (candidate) =>
       candidate.guide === identity.guide &&
       candidate.ordinal === identity.ordinal &&
-      sha256(candidate.content) === identity.section,
+      sha256Hex(candidate.content) === identity.section,
   );
   if (section === undefined)
     return ok(

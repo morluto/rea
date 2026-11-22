@@ -1,17 +1,19 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { getEventListeners, once } from "node:events";
-import { readFile, truncate, writeFile } from "node:fs/promises";
+import { mkdir, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
+import { setImmediate } from "node:timers/promises";
 
 import { expect, it, vi } from "vitest";
 
 import { FitArtifactReader } from "./FitArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { ArtifactFileSource } from "./ArtifactFileSource.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as fitStructure from "./fit/FitStructure.js";
 import * as fileChunks from "../filesystem/readFileHandleChunks.js";
+import { openRegularFile } from "../filesystem/RegularFile.js";
 import {
   FIT_DEVICETREE,
   FIT_EMBEDDED,
@@ -22,10 +24,12 @@ import {
 import {
   cells,
   devicetreeFixture,
-} from "../firmware/devicetree/Devicetree.fixture.js";
+} from "../domain/firmware/devicetree.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { renameOpenParent } from "../../tests/fixtures/renameOpenParent.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
+import { ArtifactFileSource } from "../resources/index.js";
 
 const MIB = 1024 * 1024;
 
@@ -472,6 +476,88 @@ it("keeps the cancellation reason during hash verification", async () => {
   }
 });
 
+it.each([false, true])(
+  "joins an admitted FIT preparation digest read when closing (I/O fault: %s)",
+  async (fail) => {
+    const data = Buffer.from("external payload checked by the FIT digest");
+    const bytes = fitFixture({
+      images: [{ name: "kernel", data, hashes: ["sha256"] }],
+      mode: "offset",
+    });
+    const imageOffset = bytes.indexOf(data);
+    expect(imageOffset).toBeGreaterThanOrEqual(bytes.readUInt32BE(4));
+    const path = await writeFit("held-hash.itb", bytes);
+    const descriptor = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new FitArtifactReader(path, descriptor);
+    const gate = phaseGate();
+    const read = descriptor.handle.read.bind(descriptor.handle);
+    const physical = Object.assign(new Error("FIT digest read failed"), {
+      code: "EIO",
+    });
+    vi.spyOn(descriptor.handle, "read").mockImplementation(
+      async (...args: unknown[]) => {
+        const result = await Reflect.apply(read, descriptor.handle, args);
+        if (args[3] === BigInt(imageOffset)) await gate.hold();
+        return result;
+      },
+    );
+    try {
+      const inventory = firstEntry(reader).catch((cause: unknown) => cause);
+      await gate.reached(inventory, "external FIT image digest read");
+      let closed = false;
+      const closing = reader.close().then(() => {
+        closed = true;
+      });
+      await setImmediate();
+      const closeWaited = !closed;
+      if (fail) gate.reject(physical);
+      else gate.release();
+      const outcome = await inventory;
+      await closing;
+      if (fail) expect(outcome).toBe(physical);
+      else expect(outcome).toMatchObject({ reason: "unavailable" });
+      expect(closeWaited).toBe(true);
+      expect(reader.formatMetadata()).toBeUndefined();
+    } finally {
+      gate.release();
+      await reader.close();
+      await descriptor.handle.close();
+    }
+  },
+);
+
+it("keeps FIT extraction bound to the admitted descriptor", async (context) => {
+  const root = await createTestTempDirectory("rea-fit-admitted-source-");
+  const selected = join(root, "selected");
+  await mkdir(selected);
+  const path = join(selected, "kernel.itb");
+  const data = Buffer.from("original FIT image");
+  const fixture = (image: Buffer) =>
+    fitFixture({
+      mode: "offset",
+      images: [{ name: "kernel", data: image, hashes: ["sha256"] }],
+    });
+  await writeFile(path, fixture(data));
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new FitArtifactReader(path, descriptor);
+  try {
+    const entry = await firstEntry(reader);
+    const swapped = await renameOpenParent(selected, join(root, "original"));
+    if (swapped.kind === "blocked") context.skip();
+    await mkdir(selected);
+    await writeFile(path, fixture(Buffer.from("replaced FIT image")));
+    expect(entry).toMatchObject({
+      path: "images/kernel.bin",
+      sourcePath: "/images/kernel",
+      formatMetadata: { hashes_verified: 1 },
+    });
+    expect((await buffer(await reader.open(entry))).equals(data)).toBe(true);
+  } finally {
+    await reader.close();
+    await descriptor.handle.close();
+  }
+});
+
 it("keeps the cancellation reason after an image stream was opened", async () => {
   const reader = new FitArtifactReader(await writeFit("stream.itb", LARGE_FIT));
   const controller = new AbortController();
@@ -540,61 +626,39 @@ it.each([null, { stage: "buffered image" }])(
 );
 
 it("preserves a final validation failure when cancellation overlaps it", async () => {
-  const reader = new FitArtifactReader(
-    await writeFit("final-validation.itb", FIT_EXTERNAL),
-  );
+  const path = await writeFit("final-validation.itb", FIT_EXTERNAL);
+  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new FitArtifactReader(path, descriptor);
   const controller = new AbortController();
   const finalValidation = phaseGate();
-  const failure = new ArtifactReaderFailure("integrity", "carrier changed");
-  const read = ArtifactFileSource.prototype.read;
-  const readChunks = fileChunks.readFileHandleChunks;
-  let owner: ArtifactFileSource | undefined;
-  let imageEnded = false;
-  let observer: ReturnType<typeof vi.spyOn> | undefined;
-  let chunksObserver: ReturnType<typeof vi.spyOn> | undefined;
-  let consumed: Promise<void> | undefined;
+  let consumed: Promise<Buffer> | undefined;
   try {
     const entry = await firstEntry(reader);
-    observer = vi
-      .spyOn(ArtifactFileSource.prototype, "read")
-      .mockImplementation(async function (this: ArtifactFileSource, signal) {
-        // Only this reader's open/validation receives this caller signal.
-        if (signal === controller.signal) owner ??= this;
-        if (this === owner && imageEnded) {
-          await finalValidation.hold();
-          throw failure;
-        }
-        return read.call(this, signal);
-      });
-    chunksObserver = vi
-      .spyOn(fileChunks, "readFileHandleChunks")
-      .mockImplementation((handle, options) => {
-        const source = readChunks(handle, options);
-        if (options?.signal === controller.signal)
-          source.once("end", () => {
-            imageEnded = true;
-          });
-        return source;
-      });
     const stream = await reader.open(entry, controller.signal);
-    consumed = (async () => {
-      for await (const _chunk of stream) {
-        /* drain */
-      }
-    })();
+    const stat = descriptor.handle.stat.bind(descriptor.handle);
+    vi.spyOn(descriptor.handle, "stat").mockImplementationOnce(
+      async (...args) => {
+        await finalValidation.hold();
+        return await stat(...args);
+      },
+    );
+    consumed = buffer(stream);
     await finalValidation.reached(consumed, "FIT final validation");
+    await truncate(path, FIT_EXTERNAL.length - 1);
     controller.abort({ stage: "final validation" });
     finalValidation.release();
-    await expect(consumed).rejects.toBe(failure);
+    await expect(consumed).rejects.toMatchObject({
+      reason: "integrity",
+      integrityCheck: "container-identity",
+    });
     await reader.close();
     expect(stream.closed).toBe(true);
     expect(getEventListeners(controller.signal, "abort")).toEqual([]);
   } finally {
     finalValidation.release();
     await consumed?.catch(() => undefined);
-    chunksObserver?.mockRestore();
-    observer?.mockRestore();
     await reader.close();
+    await descriptor.handle.close();
   }
 });
 

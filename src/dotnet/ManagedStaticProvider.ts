@@ -6,10 +6,12 @@ import {
   type CapabilityDescriptor,
   type ExecutionOptions,
   type ProviderIdentity,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../resources/index.js";
 import { managedStaticCapabilities } from "./ManagedStaticProviderMetadata.js";
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
 import {
@@ -39,7 +41,7 @@ import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { managedInspectionInputFailure } from "./ManagedReaderFailure.js";
+import { managedInspectionInputFailure } from "../domain/managed/managedReaderFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import {
@@ -48,6 +50,7 @@ import {
   readManagedSnapshot,
   verifyManagedSourceIdentity,
 } from "./ManagedSnapshot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Execution-free managed PE/CLI auxiliary provider. */
 export class ManagedStaticProvider implements AnalysisProvider {
@@ -197,9 +200,7 @@ class ManagedStaticClient implements AnalysisClient {
       MANAGED_STATIC_PROVIDER.id,
       cleanup?.resources ?? [this.target.path],
       {
-        reason:
-          cleanup?.reason ??
-          (cause instanceof Error ? cause.message : String(cause)),
+        reason: cleanup?.reason ?? errorMessage(cause),
       },
       { cause, operation },
     );

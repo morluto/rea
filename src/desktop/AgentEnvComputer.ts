@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 
@@ -8,12 +8,15 @@ import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../domain/stringPatterns.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
+import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
+import type { ComputerRelease } from "../domain/desktop/computerRelease.js";
 import type {
-  ComputerHelper,
-  ComputerRelease,
-} from "./AgentEnvComputerHelper.js";
+  ComputerCommandResult,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
 import {
   DATA_OBJECTS,
   dataGetSchema,
@@ -22,6 +25,9 @@ import {
 } from "./ComputerHomeFiles.js";
 import { DRAWN_WAIT_MS, drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -181,15 +187,14 @@ const rpcSchema = z.union([
   z.object({ result: z.looseObject({}) }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
 ]);
-const execSchema = z.object({
+/** `computer-exec/v1`'s answer: a command's outcome, its output without the control token. */
+const execSchema: z.ZodType<ComputerCommandResult> = z.object({
   exit_code: z.int().nullable(),
   stdout: z.string(),
   stderr: z.string(),
   truncated: z.boolean(),
   timed_out: z.boolean(),
 });
-/** A command's outcome through `computer-exec/v1`, its output without the control token. */
-export type ComputerCommandResult = z.infer<typeof execSchema>;
 const cardSchema = z.looseObject({
   children_environments: z
     .array(z.looseObject({ name: z.string(), url: z.string().optional() }))
@@ -209,6 +214,17 @@ export interface DriverResult {
   readonly content: readonly Readonly<Record<string, JsonValue>>[];
   readonly structured: Readonly<Record<string, JsonValue>> | null;
 }
+
+/** Decode the driver's first screenshot only when its encoded bytes are intact. */
+export const readComputerScreenshotBytes = (
+  reply: DriverResult,
+): Buffer | undefined => {
+  if (reply.isError) return undefined;
+  const data = reply.content.find((block) => block.type === "image")?.data;
+  if (typeof data !== "string" || data.length === 0 || !isCanonicalBase64(data))
+    return undefined;
+  return Buffer.from(data, "base64");
+};
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (
@@ -322,7 +338,7 @@ export class AppDataRefusal extends Error {
   }
 }
 
-export class AgentEnvComputer {
+export class AgentEnvComputer implements ControlledComputer {
   readonly sandboxId: string;
   readonly #baseUrl: string;
   readonly #token: string | null;
@@ -422,7 +438,7 @@ export class AgentEnvComputer {
       if (signal.aborted) throw signal.reason;
       if (cause instanceof ComputerStartFailure) throw cause;
       throw new ComputerStartFailure(
-        `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
+        `The computer came up but REA could not use it: ${errorMessage(cause)}`,
         undefined,
         { cause, reason: stage === "readiness" ? "not_ready" : "unusable" },
       );
@@ -533,10 +549,7 @@ export class AgentEnvComputer {
     )?.file?.bytes;
     const bytes =
       encoded === undefined ? undefined : Buffer.from(encoded, "base64");
-    if (
-      bytes?.length !== segment.bytes ||
-      createHash("sha256").update(bytes).digest("hex") !== segment.sha256
-    )
+    if (bytes?.length !== segment.bytes || sha256Hex(bytes) !== segment.sha256)
       throw new Error(
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );
@@ -697,7 +710,9 @@ export class AgentEnvComputer {
   redacted(text: string): string {
     return this.#token === null
       ? text
-      : text.replaceAll(this.#token, "[control token]");
+      : redactExplicitText(text, [this.#token], {
+          replacement: "[control token]",
+        });
   }
 
   /** A framework-only route of the computer, with its control token; its answer is read within `bounds.limit`. */

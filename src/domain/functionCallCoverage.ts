@@ -19,6 +19,7 @@ export const combineFunctionRelationshipCoverage = (
     { direction: "callees" as const, coverage: callees },
   ];
   const diagnostics = uniqueSorted(
+    // optional-fact-default: descriptive caveats; discovery status carries completeness.
     reads.flatMap(({ coverage }) => coverage?.diagnostics ?? []),
   );
   const discovery = {
@@ -109,6 +110,7 @@ export const assessFunctionCallCoverage = (
   dossier: Pick<FunctionDossier, "unresolved_calls">,
 ): FunctionCallCoverageAssessment => {
   const unresolvedCallCaveats = uniqueSorted(
+    // optional-fact-default: caveat text only; discoveryStatus carries completeness.
     (dossier.unresolved_calls ?? []).map(
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
@@ -138,6 +140,7 @@ export const assessFunctionCallCoverage = (
       ...unresolvedCallCaveats,
     ]),
     unresolvedCallCaveats,
+    // optional-fact-default: descriptive caveats; discoveryStatus carries completeness.
     diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
     discoveryLimitations,
     discoveryStatus,

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readTsharkJsonPackets } from "../pcap/TsharkJsonPackets.js";
+import { readTsharkJsonPackets } from "../domain/pcap/tsharkJsonPackets.js";
 
 const packetsSchema = z.array(packetFieldsSchema);
 

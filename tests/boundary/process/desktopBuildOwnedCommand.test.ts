@@ -2,10 +2,11 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { runDesktopBuildOwnedCommand } from "../../../src/desktop/DesktopBuildOwnedCommand.js";
 import { prepareProcessOwnershipInspection } from "../../../src/process/ProcessOwnershipObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
 import { waitFor } from "../../support/testWait.js";
 
 it.skipIf(process.platform === "win32")(
@@ -44,7 +45,7 @@ it.skipIf(process.platform === "win32")(
       });
       const pid = Number(await readFile(pidFile, "utf8"));
       expect(Number.isInteger(pid)).toBe(true);
-      expect(() => process.kill(pid, 0)).toThrow();
+      expect(await processHasStopped(pid)).toBe(true);
       await expect(stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
       await expect(stat(workspace)).rejects.toMatchObject({ code: "ENOENT" });
       expect(resources.hasPending).toBe(false);
@@ -89,7 +90,7 @@ it.skipIf(process.platform === "win32")(
         cause: reason,
         diagnostics: { command_failure: "cancelled" },
       });
-      expect(() => process.kill(pid, 0)).toThrow();
+      expect(await processHasStopped(pid)).toBe(true);
       await expect(stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       controller.abort(reason);

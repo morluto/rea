@@ -1,7 +1,7 @@
 import type { FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { expect, it } from "vitest";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+import { readArtifactFileChunks } from "../resources/readArtifactFileChunks.js";
 import { readValidatedAsarEntry } from "./AsarEntryStream.js";
 
 it.each(["complete", "truncated"])(

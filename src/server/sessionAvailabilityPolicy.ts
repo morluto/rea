@@ -3,7 +3,6 @@ import {
   HOST_RESTRICTED_FEATURES,
   type HostRestrictedFeature,
 } from "../contracts/toolAvailability.js";
-import { platform } from "node:process";
 import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 
 /** Either the caller or the observed host can mark an integration unsupported. */
@@ -22,42 +21,38 @@ const combineHostUnsupported = (
 export const sessionAvailabilityPolicy = (
   configured: (() => AvailabilityPolicy) | undefined,
   defaults: CapabilityAvailabilityFacts,
+  /** The host process capture plans for and runs on. */
+  platform: NodeJS.Platform,
 ): (() => AvailabilityPolicy) => {
   const policy =
     configured ??
-    (() => ({
-      packetCaptureEnabled:
-        defaults.optionalFeatures?.packetCaptureEnabled ?? false,
-      signalRecordingEnabled:
-        defaults.optionalFeatures?.signalRecordingEnabled ?? false,
-      wasmArtifactEnabled:
-        defaults.optionalFeatures?.wasmArtifactEnabled ?? false,
-      evmInterfaceEnabled:
-        defaults.optionalFeatures?.evmInterfaceEnabled ?? false,
-      processCaptureEnabled: platform !== "win32",
-      recordedCrashEnabled:
-        defaults.optionalFeatures?.recordedCrashEnabled ?? false,
-      binaryLayoutEnabled:
-        defaults.optionalFeatures?.binaryLayoutEnabled ?? false,
-      firmwareInspectionEnabled:
-        defaults.optionalFeatures?.firmwareInspectionEnabled ?? false,
-      firmwareExtractionEnabled:
-        defaults.optionalFeatures?.firmwareExtractionEnabled ?? false,
-      javascriptRecoveryEnabled:
-        defaults.optionalFeatures?.javascriptRecoveryEnabled ?? false,
-      webModuleResolutionEnabled:
-        defaults.optionalFeatures?.webModuleResolutionEnabled ?? false,
-      browserObservationEnabled:
-        defaults.optionalFeatures?.browserObservationEnabled ?? false,
-      browserScenarioEnabled:
-        defaults.optionalFeatures?.browserScenarioEnabled ?? false,
-      electronObservationEnabled:
-        defaults.optionalFeatures?.electronObservationEnabled ?? false,
-      electronAutomationEnabled:
-        defaults.optionalFeatures?.electronAutomationEnabled ?? false,
-      v8InspectorObservationEnabled:
-        defaults.optionalFeatures?.v8InspectorObservationEnabled ?? false,
-    }));
+    (() => {
+      const features = {
+        ...defaults.optionalFeatures,
+        ...defaults.observeOptionalFeatures?.(),
+      };
+      return {
+        packetCaptureEnabled: features.packetCaptureEnabled ?? false,
+        signalRecordingEnabled: features.signalRecordingEnabled ?? false,
+        wasmArtifactEnabled: features.wasmArtifactEnabled ?? false,
+        evmInterfaceEnabled: features.evmInterfaceEnabled ?? false,
+        processCaptureEnabled: platform !== "win32",
+        recordedCrashEnabled: features.recordedCrashEnabled ?? false,
+        binaryLayoutEnabled: features.binaryLayoutEnabled ?? false,
+        firmwareInspectionEnabled: features.firmwareInspectionEnabled ?? false,
+        firmwareExtractionEnabled: features.firmwareExtractionEnabled ?? false,
+        javascriptRecoveryEnabled: features.javascriptRecoveryEnabled ?? false,
+        webModuleResolutionEnabled:
+          features.webModuleResolutionEnabled ?? false,
+        browserObservationEnabled: features.browserObservationEnabled ?? false,
+        browserScenarioEnabled: features.browserScenarioEnabled ?? false,
+        electronObservationEnabled:
+          features.electronObservationEnabled ?? false,
+        electronAutomationEnabled: features.electronAutomationEnabled ?? false,
+        v8InspectorObservationEnabled:
+          features.v8InspectorObservationEnabled ?? false,
+      };
+    });
   // Observed host support also bounds a configured policy: no policy lets the
   // default providers pass their execution host checks.
   return () => {

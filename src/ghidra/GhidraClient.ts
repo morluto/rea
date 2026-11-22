@@ -11,7 +11,10 @@ import { z } from "zod";
 import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import type { Socket } from "node:net";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
+import type {
+  ProgressReporter,
+  ProgressUpdate,
+} from "../ports/ProgressReporter.js";
 
 import {
   AnalysisCancelledError,
@@ -26,6 +29,7 @@ import {
   providerRetryAction,
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
+import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
@@ -89,22 +93,23 @@ import {
   type NativeLoadImageObservation,
   type NativeLoadImagePartialObservation,
 } from "../domain/native/nativeLoadImage.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
   bindArtifactFileCleanup,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+  readArtifactFileChunks,
+} from "../resources/index.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 
 export type GhidraTargetSnapshot =
   | { readonly kind: "captured"; readonly bytes: Buffer }
@@ -131,6 +136,7 @@ import {
   GhidraCheckpoint,
   type GhidraPackedProgram,
 } from "./GhidraCheckpoint.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 /**
@@ -309,7 +315,17 @@ export class GhidraClient {
     progress?: ProgressReporter,
   ): Promise<GhidraStartResult> {
     if (progress !== undefined)
-      return this.#reportStartupWait(this.start(signal), signal, progress);
+      return this.#withProgressHeartbeat(this.start(signal), {
+        intervalMs: 10_000,
+        signal,
+        progress,
+        createUpdate: (elapsedSeconds) => ({
+          phase: "ghidra_startup",
+          completed: 0,
+          total: null,
+          message: `Waiting for Ghidra startup (${String(elapsedSeconds)}s elapsed); import, auto-analysis and bridge readiness may still be pending`,
+        }),
+      });
     if (signal?.aborted === true)
       return Promise.resolve(err(this.#startupWaitCancellation(signal)));
     if (this.#closePromise !== undefined)
@@ -348,7 +364,7 @@ export class GhidraClient {
       },
       (cause: unknown) => {
         this.#logger.debug(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra startup promise rejected during bookkeeping",
         );
         if (this.#startupAttempt === attempt) this.#startupAttempt = undefined;
@@ -382,11 +398,16 @@ export class GhidraClient {
     return this.start(signal);
   }
 
-  async #reportStartupWait(
-    started: Promise<GhidraStartResult>,
-    signal: AbortSignal | undefined,
-    progress: ProgressReporter,
-  ): Promise<GhidraStartResult> {
+  async #withProgressHeartbeat<Value>(
+    pending: Promise<Value>,
+    options: {
+      readonly intervalMs: number;
+      readonly signal: AbortSignal | undefined;
+      readonly progress: ProgressReporter;
+      readonly createUpdate: (elapsedSeconds: number) => ProgressUpdate;
+    },
+  ): Promise<Value> {
+    const { intervalMs, signal, progress, createUpdate } = options;
     const startedAt = performance.now();
     let active = true;
     let reporting = false;
@@ -396,21 +417,18 @@ export class GhidraClient {
       void Promise.resolve()
         .then(() => {
           if (!active || signal?.aborted) return;
-          return progress.report({
-            phase: "ghidra_startup",
-            completed: 0,
-            total: null,
-            message: `Waiting for Ghidra startup (${String(Math.floor((performance.now() - startedAt) / 1000))}s elapsed); import, auto-analysis and bridge readiness may still be pending`,
-          });
+          return progress.report(
+            createUpdate(Math.floor((performance.now() - startedAt) / 1000)),
+          );
         })
-        // Notification failure does not release the owned startup process.
+        // Notification failure does not release or alter the owned Ghidra work.
         .catch(() => {})
         .finally(() => {
           reporting = false;
         });
-    }, 10_000);
+    }, intervalMs);
     try {
-      return await started;
+      return await pending;
     } finally {
       active = false;
       clearInterval(timer);
@@ -452,7 +470,10 @@ export class GhidraClient {
   callToolIfReady(
     operation: GhidraOperation,
     parameters: Readonly<Record<string, JsonValue>>,
-    options: { readonly signal?: AbortSignal } = {},
+    options: {
+      readonly signal?: AbortSignal;
+      readonly progress?: ProgressReporter;
+    } = {},
   ): Promise<Result<JsonValue, GhidraSessionError> | undefined> {
     if (!this.isReady()) return Promise.resolve(undefined);
     return this.#callTool(operation, parameters, options);
@@ -477,6 +498,7 @@ export class GhidraClient {
     parameters: Readonly<Record<string, JsonValue>>,
     options: {
       readonly signal?: AbortSignal;
+      readonly progress?: ProgressReporter;
       readonly decompileTimeoutSeconds?: number | null;
       readonly decompileMaxPayloadMiB?: number | null;
       readonly valueFlowLimits?: NativeValueFlowLimits;
@@ -489,7 +511,7 @@ export class GhidraClient {
       typeof parameters.pattern === "string"
         ? parameters.pattern
         : undefined;
-    return this.#enqueue(
+    const pending = this.#enqueue(
       operation,
       pattern !== undefined
         ? {
@@ -510,6 +532,18 @@ export class GhidraClient {
           : { decompileMaxPayloadMiB: options.decompileMaxPayloadMiB }),
       },
     );
+    if (options.progress === undefined) return pending;
+    return this.#withProgressHeartbeat(pending, {
+      intervalMs: 5_000,
+      signal: options.signal,
+      progress: options.progress,
+      createUpdate: (elapsedSeconds) => ({
+        phase: "ghidra_operation",
+        completed: 0,
+        total: null,
+        message: `Waiting for Ghidra ${operation} (${String(elapsedSeconds)}s elapsed); bridge analysis may still be pending`,
+      }),
+    });
   }
 
   /** Read the private immutable source for format parsers that require captured bytes. */
@@ -694,12 +728,40 @@ export class GhidraClient {
     );
   }
 
+  /**
+   * Read caller-chosen positional ranges of the private immutable source. A
+   * range past the end returns the bytes that exist. Nothing is retained as a
+   * partial observation, so callers use this only for advisory reads.
+   */
+  readTargetSnapshotRanges<T>(
+    read: (
+      range: (position: number, length: number) => Promise<Uint8Array>,
+      size: number,
+    ) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<Result<T, GhidraSessionError>> {
+    return this.#withTargetSnapshot(
+      (handle, initial) =>
+        read(
+          (position, length) =>
+            readFileHandleRange(handle, position, length, () =>
+              assertRegularFileActive(signal),
+            ),
+          initial.size,
+        ),
+      undefined,
+      signal,
+    );
+  }
+
   async #withTargetSnapshot<T>(
     read: (handle: FileHandle, initial: Stats, path: string) => Promise<T>,
-    observe: (
-      value: T,
-      path: string,
-    ) => FileSnapshotPartialObservation | NativeLoadImagePartialObservation,
+    observe:
+      | ((
+          value: T,
+          path: string,
+        ) => FileSnapshotPartialObservation | NativeLoadImagePartialObservation)
+      | undefined,
     signal?: AbortSignal,
   ): Promise<Result<T, GhidraSessionError>> {
     let completedObservation:
@@ -735,7 +797,7 @@ export class GhidraClient {
               assertRegularFileActive(signal);
               if (!sameRegularFileState(initial, after))
                 throw new RegularFileChangedError(path);
-              completedObservation = observe(value, path);
+              completedObservation = observe?.(value, path);
               return value;
             },
           ),
@@ -843,7 +905,7 @@ export class GhidraClient {
         ),
       ],
       {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         diagnostics: this.#diagnostics(),
       },
       { cause },
@@ -901,7 +963,7 @@ export class GhidraClient {
       () => ok(null),
       (cause: unknown) => {
         this.#logger.error(
-          { error: cause instanceof Error ? cause.message : String(cause) },
+          { error: errorMessage(cause) },
           "Ghidra cleanup after active request cancellation failed",
         );
         return err(this.#cleanupError(cause));
@@ -972,11 +1034,22 @@ export class GhidraClient {
     this.#activeOutputCheckpoint = undefined;
     this.#outputDrainPromise = undefined;
     this.#outputDrainIncomplete = false;
-    const deadline = new ProviderStartupDeadline(
-      this.#options.readStartupTimeoutMs?.() ?? this.#options.startupTimeoutMs,
-      signal,
-      { finalizeMs: OUTPUT_DRAIN_MS },
+    const startupTimeout = readRuntimeSetting(
+      () =>
+        this.#options.readStartupTimeoutMs?.() ??
+        this.#options.startupTimeoutMs,
     );
+    if (!startupTimeout.ok)
+      return err(
+        this.#failure(
+          "admission",
+          startupTimeout.error.message,
+          startupTimeout.error,
+        ),
+      );
+    const deadline = new ProviderStartupDeadline(startupTimeout.value, signal, {
+      finalizeMs: OUTPUT_DRAIN_MS,
+    });
     try {
       const result = await this.#startWithin(deadline);
       return result.ok && deadline.signal.aborted
@@ -1348,15 +1421,15 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,
-      ...(this.#targetAdmission === undefined
-        ? {}
-        : { targetAdmission: this.#targetAdmission }),
       ...(this.#options.expectedLanguageId === undefined
         ? {}
         : { expectedLanguageId: this.#options.expectedLanguageId }),
       ...(this.#options.expectedCompilerSpecId === undefined
         ? {}
         : { expectedCompilerSpecId: this.#options.expectedCompilerSpecId }),
+      ...(this.#options.expectedImageBase === undefined
+        ? {}
+        : { expectedImageBase: this.#options.expectedImageBase }),
     });
     if (parsed.ok) return parsed;
     return err(
@@ -1515,7 +1588,7 @@ export class GhidraClient {
         firstCause ??= cause;
         leftovers.push({
           path: root.path,
-          reason: cause instanceof Error ? cause.message : String(cause),
+          reason: errorMessage(cause),
         });
       }
     }
@@ -1537,15 +1610,9 @@ export class GhidraClient {
   }
 
   #redactAuthentication(value: string, incomplete = false): string {
-    for (const token of this.#authenticationTokens) {
-      const bytes = Buffer.byteLength(value);
-      value = redactCapturedTransportCredential(
-        { text: value, bytes, observedBytes: bytes + (incomplete ? 1 : 0) },
-        token,
-        "[REDACTED]",
-      );
-    }
-    return value;
+    return redactExplicitText(value, [...this.#authenticationTokens], {
+      cutOff: incomplete,
+    });
   }
 
   #onProcessDiagnostic(event: ProviderProcessDiagnostic): void {

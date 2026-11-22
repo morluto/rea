@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../../tests/fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { open, stat, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,7 +32,9 @@ it("keeps whole-file identity and entropy while selecting unaligned blocks and a
     bytes: 1024,
     sha256: createHash("sha256").update(bytes).digest("hex"),
   });
-  expect(result.value.subject?.digest.sha256).toBe(report.artifact.sha256);
+  expect(fileIdentity(result.value.subject).sha256).toBe(
+    report.artifact.sha256,
+  );
   expect(result.value.confidence).toBe("observed");
 });
 

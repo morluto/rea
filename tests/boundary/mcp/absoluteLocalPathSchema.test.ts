@@ -8,6 +8,7 @@ import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { silentLogger } from "../../../src/logger.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface PathInputCase {
   readonly name: string;
@@ -35,7 +36,10 @@ const createMcp = async (firmwareCalls: string[], profile?: "compact") => {
       },
     },
   );
-  const client = new Client({ name: "absolute-path-schema", version: "1" });
+  const client = new Client(
+    { name: "absolute-path-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
 
@@ -79,6 +83,7 @@ const standaloneAnalysisCases = (
     { name: "inspect_sqlite_database", input: {} },
     { name: "inspect_pe_resources", input: {} },
     { name: "inspect_native_exports", input: {} },
+    { name: "inspect_elf_dependencies", input: {} },
     { name: "inspect_electron_fuses", input: {} },
     { name: "inspect_packet_capture", input: { fields: ["ip.addr"] } },
     {
@@ -242,7 +247,7 @@ const inputCases = (
   ];
 };
 
-it("advertises full host-absolute path constraints after SDK schema conversion", async () => {
+it("advertises portable absolute-path constraints after SDK schema conversion", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls, "compact");
   try {
@@ -284,7 +289,8 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     for (const { name, field, valid, invalid } of schemaCases) {
       if (!listed.tools.some((tool) => tool.name === name))
         throw new Error(`Missing advertised tool ${name}`);
-      // Path rules belong to the canonical input contract.
+      // The canonical projection keeps portable constraints; handlers enforce
+      // the executing host's stricter path rules.
       const validate = ajv.compile(canonicalInputSchema(name));
       expect(validate(invalid), `${name}.${field}`).toBe(false);
       expect(

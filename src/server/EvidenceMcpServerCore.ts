@@ -1,3 +1,4 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { DEFAULT_MCP_MAX_INPUT_ELEMENTS } from "../config/mcpInputBudget.js";
@@ -27,7 +28,7 @@ import {
   type TransportSendOptions,
 } from "@modelcontextprotocol/server";
 
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { transportClosedByOwner } from "./transportOwnerClose.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import {
@@ -35,14 +36,12 @@ import {
   advertiseToolOutput,
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
+import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import {
-  advertisedToolPresentation,
-  resolveMcpOutputSchemaProfile,
-  type McpOutputSchemaProfile,
-} from "../config/mcpOutputSchemaProfile.js";
-import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../config/mcpInputSchemaProfile.js";
-import type { createCatalogIdentity } from "../catalogIdentity.js";
-import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
+  hasGuaranteedObjectOutputRoot,
+  omitAdvertisedOutputJsonSchema,
+  transformAdvertisedInputJsonSchema,
+} from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   AnalysisInputError,
@@ -55,7 +54,7 @@ import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysi
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
   type ToolResultDelivery,
@@ -68,7 +67,7 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
-import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
 import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
@@ -80,7 +79,7 @@ import {
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
 
-/** Capture structured issues from the canonical validation the SDK already performs. */
+/** Capture caller selections and issues at the canonical SDK validation boundary. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
   tool: string,
   schema: Schema,
@@ -101,6 +100,8 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
               issues: result.issues as readonly z.core.$ZodIssue[],
               input: value,
             };
+          if (result.issues === undefined)
+            context?.captureCallerParameters(tool, value, result.value);
           return result;
         };
         const result = standard.validate(value);
@@ -279,7 +280,13 @@ export const forgetPendingMcpRequest = (
   pendingCompletions.delete(id);
 };
 import type { PromptCompletionSource } from "./promptCompletion.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
+import {
+  advertisedToolPresentation,
+  resolveMcpOutputSchemaProfile,
+  type McpOutputSchemaProfile,
+  COMPACT_INPUT_SCHEMA_PRESENTATION,
+} from "../contracts/mcpSchemaPresentation.js";
 
 /** Standard-schema registration boundary shared with deferred SDK bindings. */
 export interface StandardToolRegistration {
@@ -314,8 +321,21 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Install discovery after canonical registrations, before connecting. */
   enableProgressiveCatalog(): void {
     if (this.progressiveCatalog !== undefined) return;
-    const catalog = new ProgressiveToolCatalog(
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    const adapter = super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
+    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
       this.registrations,
+      adapter,
       this.catalogIdentity,
       (change) => {
         this.catalogChangeDepth++;
@@ -332,18 +352,6 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       () => this.delivery,
     );
     this.progressiveCatalog = catalog;
-    const { name, ...config } = DISCOVER_TOOLS;
-    // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers. Its
-    // advertisement still follows the selected input presentation.
-    super.registerTool(
-      name,
-      { ...config, ...this.presentInput(name, config) },
-      (input, context) => {
-        context.mcpReq.signal.throwIfAborted();
-        return catalog.discover(input);
-      },
-    );
   }
 
   override sendToolListChanged(): void {
@@ -441,21 +449,33 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const presented = this.presentInput(name, config);
-    const registeredConfig = {
-      ...config,
-      ...(presented.description === undefined
-        ? {}
-        : { description: presented.description }),
-      ...(presented.inputSchema === undefined
-        ? {}
-        : {
-            inputSchema: captureInputValidation(
-              name,
-              presented.inputSchema as StandardSchemaWithJSON,
-            ),
-          }),
-    };
+    const advertised = this.advertisesTool(name);
+    const presented = advertised ? this.presentInput(name, config) : config;
+    const outputSchema =
+      this.presentation.output === undefined &&
+      config.outputSchema !== undefined &&
+      hasGuaranteedObjectOutputRoot(config.outputSchema)
+        ? omitAdvertisedOutputJsonSchema(config.outputSchema)
+        : config.outputSchema;
+    const registeredConfig = advertised
+      ? {
+          ...config,
+          ...(presented.description === undefined
+            ? {}
+            : { description: presented.description }),
+          ...(presented.inputSchema === undefined
+            ? {}
+            : {
+                inputSchema: captureInputValidation(
+                  name,
+                  presented.inputSchema as StandardSchemaWithJSON,
+                ),
+              }),
+          ...(outputSchema === undefined ? {} : { outputSchema }),
+        }
+      : outputSchema === undefined
+        ? config
+        : { ...config, outputSchema };
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -494,7 +514,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       registeredConfig as never,
       scoped as never,
     );
-    if (!this.advertisesTool(name)) registered.disable();
+    if (!advertised) registered.disable();
     return registered;
   }
 
@@ -876,7 +896,7 @@ class ErrorEvidenceTransport implements Transport {
     // text-only result without serializing the complete JSON-RPC message.
     const isStructured = message.result.structuredContent !== undefined;
     const structured = isStructured
-      ? jsonObjectSchema.parse(message.result.structuredContent)
+      ? ownedJsonObjectSchema.parse(message.result.structuredContent)
       : undefined;
     const sdkResultWithMarker =
       !isStructured &&
@@ -917,7 +937,7 @@ class ErrorEvidenceTransport implements Transport {
       encoded =
         normalized.result.content.length === 0
           ? encodeToolResult(
-              jsonObjectSchema.parse(structuredContent),
+              ownedJsonObjectSchema.parse(structuredContent),
               budget,
               "error-text",
               targetContent,
@@ -929,7 +949,7 @@ class ErrorEvidenceTransport implements Transport {
     }
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
-    const originalResult = jsonObjectSchema.parse(message.result);
+    const originalResult = ownedJsonObjectSchema.parse(message.result);
     const retainedResult = structured ?? originalResult;
     const originalError = isStructured
       ? analysisErrorProjectionSchema.safeParse(structured?.["error"])
@@ -938,7 +958,7 @@ class ErrorEvidenceTransport implements Transport {
     // The SDK error contains its rendered issue, not a separate argument bag;
     // transport authentication and caller arguments are never added here.
     const evidence = createEvidence(
-      undefined,
+      unknownTarget("unsupported-subject"),
       { id: "rea-mcp", name: "REA MCP delivery", version: "1" },
       {
         operation: "mcp_tool_error",

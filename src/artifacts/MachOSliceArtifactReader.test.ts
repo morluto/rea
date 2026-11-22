@@ -12,11 +12,11 @@ import { MachOSliceArtifactReader } from "./MachOSliceArtifactReader.js";
 import { err, ok } from "../domain/result.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
-import type { NativeCommandRunner } from "../native/CommandRunner.js";
-import { NativeCommandFailure } from "../native/CommandRunner.js";
+import type { NativeCommandRunner } from "../providers/NativeCommandRunner.js";
+import { NativeCommandFailure } from "../providers/NativeCommandRunner.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import type { ArtifactEntry } from "./ArtifactReader.js";
+import type { ArtifactEntry } from "../resources/ArtifactReader.js";
 
 const sliceOwnershipFixture = async (secondSlice = false) => {
   const root = await createTestTempDirectory("rea-slice-ownership-");

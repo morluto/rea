@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";

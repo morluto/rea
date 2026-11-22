@@ -4,7 +4,7 @@ import {
   gdbCommandResultSchema,
 } from "../commandObservation.js";
 import { digestSchema } from "../digests.js";
-import { providerSchema } from "../evidence.js";
+import { providerSchema, evidenceSubjectTarget } from "../evidence.js";
 import { analysisInputErrorFromIssues } from "../inputIssueProjection.js";
 import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok } from "../result.js";
@@ -19,7 +19,8 @@ import {
   completeWithinViewCoverage,
 } from "./analysisViewCoverage.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const commandSummaryContext = {
   source_provider: providerSchema.nullable(),
@@ -38,6 +39,13 @@ export const gdbCommandSummarySchema = gdbCommandResultSchema
       log_utf16_units: z.number().int().nonnegative(),
     }),
   });
+
+const readGdbCommandResult = createAnalysisViewResultReader(
+  gdbCommandResultSchema,
+);
+const readCommandObservation = createAnalysisViewResultReader(
+  commandObservationSchema,
+);
 
 /** Select existing owner facts without parsing a command or its output protocol. */
 export const projectCommandObservationView = (
@@ -81,15 +89,16 @@ export const projectCommandObservationView = (
         { cause: parameters.error },
       ),
     );
+  const subject =
+    parent.subject === undefined
+      ? undefined
+      : evidenceSubjectTarget(parent.subject);
   const artifact =
-    parent.subject === null
-      ? null
-      : parent.subject === undefined
-        ? (parent.artifact ?? null)
-        : {
-            path: parent.subject.local_path,
-            sha256: parent.subject.digest.sha256,
-          };
+    parent.subject === undefined
+      ? (parent.artifact ?? null)
+      : subject === undefined
+        ? null
+        : { path: subject.path, sha256: subject.sha256 };
   const shared = {
     kind: "summary" as const,
     view,
@@ -114,13 +123,11 @@ export const projectCommandObservationView = (
     ),
   };
   if (parent.operation === "gdb_console") {
-    const parsed = parseAnalysisViewResult(gdbCommandResultSchema, parent);
+    const parsed = readGdbCommandResult(parent);
     if (!parsed.ok) return parsed;
     const selection = parameters.data;
     if (
-      typeof selection === "object" &&
-      selection !== null &&
-      !Array.isArray(selection) &&
+      isRecord(selection) &&
       typeof selection.command === "string" &&
       selection.command !== parsed.value.command
     )
@@ -149,7 +156,7 @@ export const projectCommandObservationView = (
       },
     });
   }
-  const parsed = parseAnalysisViewResult(commandObservationSchema, parent);
+  const parsed = readCommandObservation(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (

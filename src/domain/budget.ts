@@ -11,6 +11,11 @@ const isAmount = (value: number): boolean =>
  * that fits what remains, a refused charge changes nothing, and a refund never
  * raises the remainder above the maximum. Each owner keeps its own limit
  * failure, passed to `charge` as `exhausted`.
+ *
+ * An owner whose ceiling is advisory may charge past it with
+ * `chargeOverCommitting`; the budget then records the excess as
+ * `overCommitted`, reports no remainder, and refuses `tryCharge` until refunds
+ * bring use back under the maximum.
  */
 export class Budget {
   #used = 0;
@@ -27,9 +32,14 @@ export class Budget {
     return this.#used;
   }
 
-  /** Amount still available. */
+  /** Amount still available; zero while over-committed. */
   get remaining(): number {
-    return this.maximum - this.#used;
+    return Math.max(0, this.maximum - this.#used);
+  }
+
+  /** Amount charged past the maximum by `chargeOverCommitting`. */
+  get overCommitted(): number {
+    return Math.max(0, this.#used - this.maximum);
   }
 
   /** Charge `amount` when it fits; otherwise charge nothing and return false. */
@@ -42,6 +52,21 @@ export class Budget {
   /** Charge `amount`, or throw the owner's limit failure without charging. */
   charge(amount: number, exhausted: () => Error): void {
     if (!this.tryCharge(amount)) throw exhausted();
+  }
+
+  /**
+   * Charge `amount` whether or not it fits, for an owner that reports the
+   * excess itself rather than refusing it. Returns the shortfall: the part of
+   * `amount` beyond what remained, zero when it fit.
+   */
+  chargeOverCommitting(amount: number): number {
+    if (!isAmount(amount))
+      throw invariantViolation(
+        `Budget charge must be a non-negative safe integer, got ${String(amount)}`,
+      );
+    const shortfall = Math.max(0, amount - this.remaining);
+    this.#used += amount;
+    return shortfall;
   }
 
   /**

@@ -2,8 +2,8 @@ import {
   inspectGpuCodeObjectsInputSchema,
   gpuCodeObjectsSchema,
 } from "../../domain/gpu/gpuCodeObjects.js";
-import type { GpuCodeObjectsPort } from "./GpuCodeObjectsPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { GpuCodeObjectsPort } from "../../ports/gpu/GpuCodeObjectsPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {

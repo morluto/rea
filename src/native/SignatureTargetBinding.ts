@@ -22,22 +22,23 @@ import {
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+  bindArtifactFileCleanup,
+  type ArtifactResourceOwner,
+} from "../resources/index.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
-import type { ArtifactResourceOwner } from "../artifacts/ArtifactResourceScope.js";
 
 import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SignatureOwner = Extract<
   ArtifactResourceOwner,
@@ -93,7 +94,7 @@ const signatureReadFailure = (
         path: target.path,
         phase: "target-version-binding",
         system_code: typeof code === "string" ? code : null,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -222,11 +223,11 @@ export const withSignatureTarget = async (
       );
       bindArtifactFileCleanup(cause, failure);
       return err(
-        analysisErrorWithCleanupFailure(
+        analysisErrorWithCleanupDependencies(
           outcome,
           failure,
           "inspect_signature",
-        ).bindCleanupDependencies([outcome, failure]),
+        ),
       );
     }
     return err(outcome);
@@ -244,7 +245,7 @@ const signatureCleanupFailure = (
     NATIVE_MACOS_PROVIDER_IDENTITY.id,
     resources,
     {
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
       phase: `signature-snapshot-${phase}`,
       path: target.path,
     },
@@ -270,7 +271,7 @@ const snapshotFailure = (
       diagnostics: {
         path: target.path,
         phase: `signature-snapshot-${phase}`,
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
       },
     },
   );
@@ -284,6 +285,33 @@ const snapshotIO = async <T>(
     return await operation();
   } catch (cause: unknown) {
     throw snapshotFailure(target, phase, cause);
+  }
+};
+
+const SIGNATURE_COPY_CHUNK_BYTES = 1024 * 1024;
+
+const writeAllSignatureBytes = async (
+  target: BinaryTarget,
+  snapshot: FileHandle,
+  chunk: Buffer,
+  length: number,
+  fileOffset: number,
+  signal?: AbortSignal,
+): Promise<void> => {
+  let written = 0;
+  while (written < length) {
+    assertRegularFileActive(signal);
+    const { bytesWritten } = await snapshotIO(target, "write", () =>
+      snapshot.write(chunk, written, length - written, fileOffset + written),
+    );
+    assertRegularFileActive(signal);
+    if (bytesWritten === 0)
+      throw snapshotFailure(
+        target,
+        "write",
+        "Signature snapshot write made no progress",
+      );
+    written += bytesWritten;
   }
 };
 
@@ -306,9 +334,12 @@ const copySignatureBytes = async (
       }),
     );
   const hash = createHash("sha256");
-  const chunk = Buffer.alloc(64 * 1024);
+  const chunk =
+    size === 0
+      ? null
+      : Buffer.allocUnsafe(Math.min(SIGNATURE_COPY_CHUNK_BYTES, size));
   let position = 0;
-  while (position < size) {
+  while (position < size && chunk !== null) {
     assertRegularFileActive(signal);
     const { bytesRead } = await source.file.read(
       chunk,
@@ -323,10 +354,17 @@ const copySignatureBytes = async (
         target.path,
         `Signature target was truncated while hashing: ${target.path}`,
       );
-    const bytes = chunk.subarray(0, bytesRead);
+    const bytes =
+      bytesRead === chunk.length ? chunk : chunk.subarray(0, bytesRead);
     hash.update(bytes);
-    // writeFile retries short writes; memory remains bounded to this chunk.
-    await snapshotIO(target, "write", () => snapshot.writeFile(bytes));
+    await writeAllSignatureBytes(
+      target,
+      snapshot,
+      chunk,
+      bytesRead,
+      position,
+      signal,
+    );
     position += bytesRead;
   }
   return hash.digest("hex");

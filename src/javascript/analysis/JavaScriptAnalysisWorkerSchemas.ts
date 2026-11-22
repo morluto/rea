@@ -11,6 +11,7 @@ import {
   javaScriptSemanticEvidenceContextSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../domain/coverage.js";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
@@ -93,6 +94,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       ...shape,
       channel: z.string(),
       channel_expression: z.null(),
+      channel_basis: z.literal("static-value").exactOptional(),
     }),
     z.strictObject({
       ...electronFindingContext,
@@ -384,7 +386,7 @@ const referenceShape = {
 /** Exact producer facts recoverable before a later semantic worker failure. */
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
-    parse_status: z.enum(["complete", "partial", "failed"]),
+    parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
     analysis_coverage: javaScriptStaticCoverageSchema,
     routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
@@ -476,6 +478,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    loaderCondition: z.string().min(1).exactOptional(),
     limitations: strings,
   })
   .transform((analysis) => ({
@@ -734,7 +737,7 @@ const callable = z.strictObject({
   ),
   returnCoverage: z.strictObject({
     retainedCount: count,
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     omittedCount: z.union([z.literal(0), z.null()]),
   }),
 });

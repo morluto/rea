@@ -3,7 +3,7 @@ import {
   schemaDepth,
   serializedBytes,
 } from "./compactJsonSchema.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -35,7 +35,8 @@ export type AdvertisedDialectRule =
   | "tool-name"
   // Claude Code truncates a tool description at 4,096 characters.
   | "tool-description-length"
-  // Moonshot rejects a parameters schema above its literal size cap (#1484).
+  // Moonshot rejects a parameters schema above its literal size cap (#1484),
+  // measured after clients such as Kimi expand its references.
   | "input-bytes"
   // OpenCode and Muse Spark reject nesting deeper than ten levels (#2813, #919).
   | "input-depth"
@@ -343,27 +344,88 @@ type SchemaKind = "input" | "output";
 const visitSchemas = (
   schema: unknown,
   path: string,
-  visit: (node: unknown, path: string, keyword: string | undefined) => void,
+  visit: (
+    node: unknown,
+    path: string,
+    keyword: string | undefined,
+  ) => boolean | void,
   keyword?: string,
-): void => {
-  visit(schema, path, keyword);
-  if (!isRecord(schema)) return;
+  trackPaths = true,
+): boolean => {
+  if (visit(schema, path, keyword) === true) return true;
+  if (!isRecord(schema)) return false;
   for (const [key, value] of Object.entries(schema)) {
-    if (schemaMaps.has(key) && isRecord(value))
+    if (schemaMaps.has(key) && isRecord(value)) {
       for (const [name, child] of Object.entries(value))
-        visitSchemas(child, `${path}.${key}.${name}`, visit, key);
-    else if (schemaArrays.has(key) && Array.isArray(value))
-      value.forEach((child, index) =>
-        visitSchemas(child, `${path}.${key}[${String(index)}]`, visit, key),
-      );
-    else if (schemaChildren.has(key)) {
-      if (Array.isArray(value))
-        value.forEach((child, index) =>
-          visitSchemas(child, `${path}.${key}[${String(index)}]`, visit, key),
-        );
-      else visitSchemas(value, `${path}.${key}`, visit, key);
+        if (
+          visitSchemas(
+            child,
+            trackPaths ? `${path}.${key}.${name}` : "",
+            visit,
+            key,
+            trackPaths,
+          )
+        )
+          return true;
+    } else if (schemaArrays.has(key) && Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++)
+        if (
+          visitSchemas(
+            value[index],
+            trackPaths ? `${path}.${key}[${String(index)}]` : "",
+            visit,
+            key,
+            trackPaths,
+          )
+        )
+          return true;
+    } else if (schemaChildren.has(key)) {
+      if (Array.isArray(value)) {
+        for (let index = 0; index < value.length; index++)
+          if (
+            visitSchemas(
+              value[index],
+              trackPaths ? `${path}.${key}[${String(index)}]` : "",
+              visit,
+              key,
+              trackPaths,
+            )
+          )
+            return true;
+      } else if (
+        visitSchemas(
+          value,
+          trackPaths ? `${path}.${key}` : "",
+          visit,
+          key,
+          trackPaths,
+        )
+      ) {
+        return true;
+      }
     }
   }
+  return false;
+};
+
+const visitNodePatterns = (
+  node: unknown,
+  path: string,
+  onPattern: (patternPath: string, pattern: string) => boolean | void,
+): boolean => {
+  if (!isRecord(node)) return false;
+  if (typeof node.pattern === "string" && onPattern(path, node.pattern))
+    return true;
+  if (isRecord(node.patternProperties))
+    for (const pattern of Object.keys(node.patternProperties))
+      if (
+        onPattern(
+          `${path}.patternProperties[${JSON.stringify(pattern)}]`,
+          pattern,
+        )
+      )
+        return true;
+  return false;
 };
 
 /**
@@ -375,15 +437,9 @@ export const advertisedSchemaPatterns = (
 ): readonly { readonly path: string; readonly pattern: string }[] => {
   const patterns: { path: string; pattern: string }[] = [];
   visitSchemas(root, "$", (node, path) => {
-    if (!isRecord(node)) return;
-    if (typeof node.pattern === "string")
-      patterns.push({ path, pattern: node.pattern });
-    if (isRecord(node.patternProperties))
-      for (const pattern of Object.keys(node.patternProperties))
-        patterns.push({
-          path: `${path}.patternProperties[${JSON.stringify(pattern)}]`,
-          pattern,
-        });
+    visitNodePatterns(node, path, (patternPath, pattern) => {
+      patterns.push({ path: patternPath, pattern });
+    });
   });
   return patterns;
 };
@@ -428,85 +484,133 @@ const isNullableUnion = (node: Readonly<Record<string, unknown>>): boolean =>
       PRIMITIVE_TYPES.has(branch.type),
   );
 
-const nodeViolations = (
-  tool: string,
+const hasDisallowedRootShape = (input: unknown): boolean =>
+  !isRecord(input) ||
+  input.type !== "object" ||
+  Object.hasOwn(input, "anyOf") ||
+  Object.hasOwn(input, "oneOf") ||
+  Object.hasOwn(input, "allOf");
+
+const scanNodeInputViolations = (
   node: unknown,
   path: string,
   keyword: string | undefined,
-): AdvertisedDialectViolation[] => {
-  const violations: AdvertisedDialectViolation[] = [];
-  const add = (rule: AdvertisedDialectRule, detail?: string) =>
-    violations.push({
-      tool,
-      schema: "input",
-      path,
-      rule,
-      ...(detail === undefined ? {} : { detail }),
-    });
+  report: (rule: AdvertisedDialectRule, detail?: string) => boolean,
+): boolean => {
   if (!isRecord(node)) {
     // `additionalProperties: false` is the closed-object form every target accepts.
-    if (
+    return (
       typeof node === "boolean" &&
-      !(node === false && keyword === "additionalProperties")
-    )
-      add("boolean-schema");
-    return violations;
+      !(node === false && keyword === "additionalProperties") &&
+      report("boolean-schema")
+    );
   }
   for (const key of Object.keys(node))
-    if (!ALLOWED_KEYWORDS.has(key)) add("keyword", key);
+    if (!ALLOWED_KEYWORDS.has(key) && report("keyword", key)) return true;
   const { type } = node;
-  if (Array.isArray(type)) add("type", "type-list");
-  else if (type === undefined) {
-    if (!isNullableUnion(node)) add("type", "untyped");
-  }
-  // The null branch of a nullable union is typed by its own `type`.
-  else if (
+  if (Array.isArray(type)) {
+    if (report("type", "type-list")) return true;
+  } else if (type === undefined) {
+    if (!isNullableUnion(node) && report("type", "untyped")) return true;
+  } else if (
+    // The null branch of a nullable union is typed by its own `type`.
     type === "null" &&
     keyword === "anyOf" &&
     Object.keys(node).length === 1
+  ) {
+    return false;
+  } else if (typeof type !== "string" || !PRIMITIVE_TYPES.has(type)) {
+    if (report("type", `type:${String(type)}`)) return true;
+  }
+  if (
+    type === "array" &&
+    node.items === undefined &&
+    report("array-items", "missing")
   )
-    return violations;
-  else if (typeof type !== "string" || !PRIMITIVE_TYPES.has(type))
-    add("type", `type:${String(type)}`);
-  if (type === "array" && node.items === undefined)
-    add("array-items", "missing");
-  if (node.items !== undefined && type !== "array")
-    add("array-items", "beside-non-array-type");
-  if (Array.isArray(node.items)) add("array-items", "tuple");
+    return true;
+  if (
+    node.items !== undefined &&
+    type !== "array" &&
+    report("array-items", "beside-non-array-type")
+  )
+    return true;
+  if (Array.isArray(node.items) && report("array-items", "tuple")) return true;
   if (node.enum !== undefined) {
     const values = node.enum;
-    if (!Array.isArray(values) || values.length === 0) add("enum", "empty");
-    else if (values.some((value) => typeof value !== "string"))
-      add("enum", "non-string");
-    else if (values.includes("")) add("enum", "empty-string");
-    if (type !== "string") add("enum", "not-on-string-type");
+    if (!Array.isArray(values) || values.length === 0) {
+      if (report("enum", "empty")) return true;
+    } else if (values.some((value) => typeof value !== "string")) {
+      if (report("enum", "non-string")) return true;
+    } else if (values.includes("") && report("enum", "empty-string")) {
+      return true;
+    }
+    if (type !== "string" && report("enum", "not-on-string-type")) return true;
   }
   if (node.anyOf !== undefined) {
     const branches = node.anyOf;
-    if (path === "$") add("any-of", "root");
-    if (!Array.isArray(branches) || branches.length < 2)
-      add("any-of", "fewer-than-two-branches");
-    else if (
-      branches.some((branch) => !isRecord(branch) || branch.type === undefined)
-    )
-      add("any-of", "untyped-branch");
-    if (node.properties !== undefined) add("any-of", "beside-properties");
+    if (path === "$" && report("any-of", "root")) return true;
+    if (!Array.isArray(branches) || branches.length < 2) {
+      if (report("any-of", "fewer-than-two-branches")) return true;
+    } else if (
+      branches.some(
+        (branch) => !isRecord(branch) || branch.type === undefined,
+      ) &&
+      report("any-of", "untyped-branch")
+    ) {
+      return true;
+    }
+    if (node.properties !== undefined && report("any-of", "beside-properties"))
+      return true;
   }
   if (
     typeof node.description === "string" &&
-    node.description.length > ADVERTISED_DESCRIPTION_MAX_CHARACTERS
+    node.description.length > ADVERTISED_DESCRIPTION_MAX_CHARACTERS &&
+    report("description-length")
   )
-    add("description-length");
+    return true;
   for (const bound of ["minLength", "maxLength", "minItems", "maxItems"])
     if (
       typeof node[bound] === "number" &&
-      node[bound] >= ADVERTISED_BOUND_LIMIT
+      node[bound] >= ADVERTISED_BOUND_LIMIT &&
+      report("bound", bound)
     )
-      add("bound", bound);
+      return true;
   if (isRecord(node.properties))
     for (const name of Object.keys(node.properties))
-      if (!PROPERTY_NAME.test(name)) add("property-name", name);
-  return violations;
+      if (!PROPERTY_NAME.test(name) && report("property-name", name))
+        return true;
+  return false;
+};
+
+/**
+ * Short-circuiting equivalent of `advertisedInputDialectViolations(tool).length > 0`
+ * for an input schema without allocating per-violation diagnostics.
+ */
+export const hasAdvertisedInputDialectViolation = (
+  input: unknown,
+  options?: { readonly skipRootBounds?: boolean },
+): boolean => {
+  if (
+    !options?.skipRootBounds &&
+    (serializedBytes(input) > ADVERTISED_INPUT_SCHEMA_MAX_BYTES ||
+      schemaDepth(input) > COMPACT_SCHEMA_MAX_DEPTH)
+  )
+    return true;
+  if (hasDisallowedRootShape(input)) return true;
+  return visitSchemas(
+    input,
+    "$",
+    (node, path, keyword) =>
+      scanNodeInputViolations(node, path, keyword, () => true) ||
+      visitNodePatterns(
+        node,
+        path,
+        (_patternPath, pattern) =>
+          portablePatternViolations(pattern).length > 0,
+      ),
+    undefined,
+    false,
+  );
 };
 
 /** Advertised tool fields the portable dialect constrains. */
@@ -536,15 +640,19 @@ export const advertisedInputDialectViolations = (
     whole("input", "input-bytes");
   if (schemaDepth(input) > COMPACT_SCHEMA_MAX_DEPTH)
     whole("input", "input-depth");
-  if (
-    !isRecord(input) ||
-    input.type !== "object" ||
-    ["anyOf", "oneOf", "allOf"].some((key) => Object.hasOwn(input, key))
-  )
-    whole("input", "root-shape");
-  visitSchemas(input, "$", (node, path, keyword) =>
-    violations.push(...nodeViolations(name, node, path, keyword)),
-  );
+  if (hasDisallowedRootShape(input)) whole("input", "root-shape");
+  visitSchemas(input, "$", (node, path, keyword) => {
+    scanNodeInputViolations(node, path, keyword, (rule, detail) => {
+      violations.push({
+        tool: name,
+        schema: "input",
+        path,
+        rule,
+        ...(detail === undefined ? {} : { detail }),
+      });
+      return false;
+    });
+  });
   violations.push(...patternViolations(name, "input", input));
   return violations;
 };
@@ -560,38 +668,3 @@ export const advertisedOutputPatternViolations = (
   tool.outputSchema === undefined
     ? []
     : patternViolations(tool.name, "output", tool.outputSchema);
-
-/** Stable count key: schema, rule and, when present, the specific construct. */
-export const advertisedDialectViolationKey = (
-  violation: AdvertisedDialectViolation,
-): string =>
-  [violation.schema, violation.rule, violation.detail]
-    .filter((part) => part !== undefined)
-    .join(" ");
-
-/** Occurrences per violation key, in key order. */
-export const countAdvertisedDialectViolations = (
-  violations: Iterable<AdvertisedDialectViolation>,
-): Readonly<Record<string, number>> => {
-  const counts = new Map<string, number>();
-  for (const violation of violations) {
-    const key = advertisedDialectViolationKey(violation);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  return Object.fromEntries(
-    [...counts].sort(([left], [right]) => (left < right ? -1 : 1)),
-  );
-};
-
-/**
- * Keys whose observed count exceeds the recorded allowance. A key absent from
- * `allowed` is enforced at zero, so a new construct fails immediately.
- */
-export const advertisedDialectRegressions = (
-  observed: Readonly<Record<string, number>>,
-  allowed: Readonly<Record<string, number>>,
-): readonly string[] =>
-  Object.entries(observed).flatMap(([key, count]) => {
-    const limit = Object.hasOwn(allowed, key) ? allowed[key]! : 0;
-    return count > limit ? [`${key}: ${String(count)} > ${String(limit)}`] : [];
-  });

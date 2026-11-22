@@ -1,4 +1,8 @@
 import {
+  registerMcpClientOnHost,
+  registerMcpClientsOnHost,
+} from "../../tests/fixtures/mcpRegistration.js";
+import {
   lstat,
   mkdir,
   readFile,
@@ -15,17 +19,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { ok } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 let resources: ArtifactResourceScope;
 beforeEach(() => {
   resources = new ArtifactResourceScope();
 });
 import { OwnedStagedOutput } from "../filesystem/OwnedStagedOutput.js";
-import {
-  mcpClientRegistrationWritten,
-  registerMcpClient,
-  registerMcpClients,
-} from "./McpClientRegistration.js";
+import { mcpClientRegistrationWritten } from "./McpClientRegistration.js";
 import {
   mcpClientRegistrationProfile,
   resolveMcpRegistrationClients,
@@ -49,9 +49,9 @@ const register = (
   path: string,
   launcher: { command: string; args: readonly string[] },
   signal?: AbortSignal,
-) => registerMcpClient(clientFor(path), launcher, signal, resources);
+) => registerMcpClientOnHost(clientFor(path), launcher, signal, resources);
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
-import * as regularReads from "./RegularFileRead.js";
+import * as regularReads from "../process/RegularFileRead.js";
 
 const launcher = {
   command: "/fixture/server path",
@@ -140,7 +140,7 @@ it("registers Cline CLI in the settings file selected by its environment", async
     if (client === undefined)
       throw new Error("Missing selected Cline CLI client");
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toEqual(ok({ status: unchanged ? "unchanged" : "configured" }));
     expect(JSON.parse(await readFile(expected, "utf8"))).toMatchObject({
       mcpServers: { rea: launcher },
@@ -341,7 +341,7 @@ it("refuses global Junie registration when known configuration disables or obscu
     if (!selected.ok) throw selected.error;
     const [client] = selected.value;
     if (client === undefined) throw new Error("Junie was not selected");
-    return registerMcpClient(client, launcher, undefined, resources);
+    return registerMcpClientOnHost(client, launcher, undefined, resources);
   };
   await writeFile(config, JSON.stringify({ "mcp-default-locations": false }));
   expect(await register({})).toMatchObject({
@@ -593,7 +593,7 @@ describe("Registration cancellation with independent failures", () => {
         throw physical;
       },
     );
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       [clientFor(first.path), clientFor(second.path)],
       launcher,
       controller.signal,
@@ -629,7 +629,7 @@ describe("Registration cancellation with independent failures", () => {
         }
         throw new Error("Unexpected staging owner");
       });
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       [clientFor(first.path), clientFor(second.path)],
       launcher,
       controller.signal,
@@ -689,7 +689,7 @@ describe("Registration cancellation and sibling outcomes", () => {
       clientFor(bad.path),
       clientFor(good.path, "json", "cursor"),
     ];
-    const outcomes = await registerMcpClients(
+    const outcomes = await registerMcpClientsOnHost(
       clients,
       launcher,
       undefined,
@@ -704,7 +704,7 @@ describe("Registration cancellation and sibling outcomes", () => {
     ]);
     const controller = new AbortController();
     controller.abort("before batch");
-    const cancelled = await registerMcpClients(
+    const cancelled = await registerMcpClientsOnHost(
       clients,
       launcher,
       controller.signal,
@@ -727,7 +727,7 @@ describe("Registration cancellation and sibling outcomes", () => {
         return publication;
       },
     );
-    const partial = await registerMcpClients(
+    const partial = await registerMcpClientsOnHost(
       [clients[1]!, clients[0]!],
       { command: "next", args: [] },
       late.signal,
@@ -834,7 +834,7 @@ describe("Client registration publication recovery", () => {
           },
         ];
         const outcomes = await resources.run(() =>
-          registerMcpClients(clients, launcher, undefined, resources),
+          registerMcpClientsOnHost(clients, launcher, undefined, resources),
         );
         expect(outcomes).toMatchObject([
           {

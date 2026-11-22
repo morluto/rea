@@ -36,11 +36,7 @@ import {
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
 import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -281,8 +277,8 @@ const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
   .extend({ procedure: procedureIdentity })
   .strict();
 
-// Current Ghidra profiles commit to emitting containment exactly for an interior
-// listing address. The shared Evidence schema remains optional for older records.
+// Ghidra emits containment exactly for an interior listing address. The shared
+// schema keeps it optional: other statuses have no container.
 const ghidraInstruction = nativeInstructionSchema.superRefine(
   (value, context) => {
     if (
@@ -425,7 +421,9 @@ export const parseGhidraFunctionResult = (
   const parsed = resultSchemas[operation].safeParse(observation.value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `observation.value` comes from an admitted JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         limitations: observation.limitations,
         ...(observation.cache_policy === undefined
           ? {}

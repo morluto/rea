@@ -17,7 +17,7 @@ import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   collectWebModuleImports,
-  matchCapturedModules,
+  createCapturedModuleMatcher,
 } from "../domain/webModuleImports.js";
 import {
   webModuleTraceInputSchema,
@@ -34,11 +34,11 @@ import {
   capturedWebManifestIdentity,
   validateSelectedWebScript,
 } from "./ValidateSelectedWebScript.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   WebModuleArtifactPort,
   WebModuleResolutionPort,
-} from "./WebModulePorts.js";
+} from "../ports/WebModulePorts.js";
 
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
@@ -204,6 +204,7 @@ export class WebModuleTraceService {
         );
     }
     let literalIndex = 0;
+    const matchCaptured = createCapturedModuleMatcher(data.manifest.scripts);
     const imports: WebModuleTraceResult["imports"] = [];
     for (const reference of syntax.imports) {
       let resolved:
@@ -226,9 +227,7 @@ export class WebModuleTraceService {
         ...reference,
         resolution: resolved,
         captured_candidates:
-          resolved.state === "resolved"
-            ? matchCapturedModules(resolved.url, data.manifest.scripts)
-            : [],
+          resolved.state === "resolved" ? matchCaptured(resolved.url) : [],
         execution: "unknown",
       });
     }

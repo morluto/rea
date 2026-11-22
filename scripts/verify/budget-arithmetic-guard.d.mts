@@ -1,1 +1,4 @@
-export function budgetArithmeticCount(content: string): number;
+export function budgetArithmeticCount(
+  content: string,
+  file?: { readonly source: string },
+): number;

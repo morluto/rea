@@ -53,7 +53,13 @@ export interface EspPartition {
 
 export interface EspPartitionTableMd5 {
   readonly status: "valid" | "invalid" | "absent";
+  /** Byte offset of the MD5 entry from the start of the table, or null when absent. */
   readonly entryOffset: number | null;
+  /**
+   * Partition entries that follow the MD5 record and are outside its digest.
+   * Zero when the record is absent or every partition entry precedes it.
+   */
+  readonly entriesAfterChecksum: number;
   readonly stored: string | null;
   readonly computed: string | null;
 }
@@ -63,11 +69,20 @@ export type EspBootTableAdmission = "admitted" | "rejected" | "unknown";
 export interface EspPartitionTable {
   readonly partitions: readonly EspPartition[];
   readonly md5: EspPartitionTableMd5;
-  readonly bootAdmission: EspBootTableAdmission;
   /** Bytes through the terminating entry. */
   readonly length: number;
   readonly limitations: readonly string[];
 }
+
+/** Classify boot selection from the retained checksum facts. */
+export const espBootTableAdmission = (
+  md5: EspPartitionTableMd5,
+): EspBootTableAdmission =>
+  md5.status === "invalid"
+    ? "rejected"
+    : md5.entriesAfterChecksum > 0
+      ? "unknown"
+      : "admitted";
 
 const partition = (
   entry: Uint8Array,
@@ -98,7 +113,10 @@ const partition = (
  * over the entries before it, and a terminator whose magic, type and subtype
  * are all `0xFF`. A structural fault means the bytes are not a table. An MD5
  * mismatch or a second MD5 entry, which the bootloader rejects, is reported
- * as an integrity fact so that the declared entries stay visible. ESP-IDF
+ * as an integrity fact so that the declared entries stay visible. Partition
+ * entries after the MD5 record stay in the table. The digest covers only the
+ * entries before it; `entriesAfterChecksum` counts the later ones, and a
+ * limitation names that count and the record's table-relative offset. ESP-IDF
  * accepts a table with no partition entries, but REA requires one before
  * the terminator, so that neither erased flash nor a lone MD5 entry is read
  * as a table.
@@ -111,9 +129,11 @@ export const decodeEspPartitionTable = (
   let md5: EspPartitionTableMd5 = {
     status: "absent",
     entryOffset: null,
+    entriesAfterChecksum: 0,
     stored: null,
     computed: null,
   };
+  let partitionsAfterMd5 = 0;
   for (let slot = 0; slot < MAX_ENTRIES; slot += 1) {
     const at = slot * ENTRY_BYTES;
     const entry = bytes.subarray(at, at + ENTRY_BYTES);
@@ -123,6 +143,7 @@ export const decodeEspPartitionTable = (
       );
     const magic = u16(entry, 0);
     if (magic === PARTITION_MAGIC) {
+      if (md5.entryOffset !== null) partitionsAfterMd5 += 1;
       partitions.push(partition(entry, partitions.length, at));
       continue;
     }
@@ -141,6 +162,7 @@ export const decodeEspPartitionTable = (
       md5 = {
         status: stored === computed ? "valid" : "invalid",
         entryOffset: at,
+        entriesAfterChecksum: 0,
         stored,
         computed,
       };
@@ -154,24 +176,20 @@ export const decodeEspPartitionTable = (
       magic === END_MAGIC && entry[2] === END_TYPE && entry[3] === END_TYPE;
     // An MD5 entry is not a partition: a table declares at least one.
     if (terminator && partitions.length > 0) {
-      const digestOffset = md5.entryOffset;
-      // The ESP-IDF loader limits its raw-slot loop to the count of partition
-      // records. An early MD5 slot can make it miss later declarations.
-      const earlyDigest =
-        digestOffset !== null && digestOffset < partitions.length * ENTRY_BYTES;
-      if (md5.status === "valid" && earlyDigest)
+      const reported: EspPartitionTableMd5 = {
+        ...md5,
+        entriesAfterChecksum: partitionsAfterMd5,
+      };
+      // ESP-IDF limits its raw-slot loop to the number of partition records;
+      // a checksum occupying an earlier slot can hide later declarations.
+      const bootAdmission = espBootTableAdmission(reported);
+      if (reported.entryOffset !== null && reported.entriesAfterChecksum > 0)
         limitations.push(
-          `The partition table MD5 at ${offsetText(digestOffset)} covers only the preceding entries. Boot selection is unknown.`,
+          `${String(reported.entriesAfterChecksum)} partition entries after the MD5 record at table-relative offset ${offsetText(reported.entryOffset)} are outside its checksum coverage.${bootAdmission === "unknown" ? " Boot selection is unknown." : ""}`,
         );
       return ok({
         partitions,
-        md5,
-        bootAdmission:
-          md5.status === "invalid"
-            ? "rejected"
-            : earlyDigest
-              ? "unknown"
-              : "admitted",
+        md5: reported,
         length: at + ENTRY_BYTES,
         limitations,
       });

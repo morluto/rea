@@ -1,4 +1,10 @@
-import { DOMParser, onErrorStopParsing, type Document } from "@xmldom/xmldom";
+import {
+  DOMParser,
+  onErrorStopParsing,
+  type Document,
+  type Element,
+  type Node,
+} from "@xmldom/xmldom";
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
 import {
@@ -9,6 +15,12 @@ import {
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
 export const XML_LINE_ENDING = /\r\n?|\n/gu;
+
+/** Match an element in no namespace, including under an explicit empty default. */
+export const isUnqualifiedXmlElement = (node: Node | null): node is Element =>
+  node !== null &&
+  node.nodeType === 1 &&
+  (node as Element).namespaceURI === null;
 
 const XML_FORMAT = "xml";
 
@@ -115,14 +127,14 @@ const checkXmlSyntax = (
       checkName(instruction.target),
     );
   }
-  syntax.on("doctype", (declaration) => {
-    if (doctype === "reject") throw unsupportedDoctype("doctype");
-    if (doctype !== "external") return;
-    if (declaresInternalSubset(declaration))
-      throw unsupportedDoctype("internal-subset");
-    if (!EXTERNAL_DOCTYPE.test(declaration)) throw notWellFormed();
-    checkName(declaration.trimStart().split(/[ \t\r\n]/u, 1)[0] ?? "");
-  });
+  if (doctype !== "allow")
+    syntax.on("doctype", (declaration) => {
+      if (doctype === "reject") throw unsupportedDoctype("doctype");
+      if (declaresInternalSubset(declaration))
+        throw unsupportedDoctype("internal-subset");
+      if (!EXTERNAL_DOCTYPE.test(declaration)) throw notWellFormed();
+      checkName(declaration.trimStart().split(/[ \t\r\n]/u, 1)[0] ?? "");
+    });
   syntax.write(source).close();
 };
 
@@ -245,24 +257,96 @@ export const xmlAttributeQuoteRanges = (
   }
 };
 
+class StopXmlNodeCount extends Error {}
+
+type XmlLineEndings = "preserve" | "normalize";
+
+interface XmlNodeLimitFailure {
+  readonly kind: "node-limit";
+  readonly maximum: number;
+  readonly required: number;
+}
+
+/**
+ * Validate an XML document that disallows a DOCTYPE and count its projected
+ * nodes in the same stream. Honor the node ceiling before allocating a DOM.
+ */
+export const parseXmlDocumentWithinNodeLimit = (
+  source: string,
+  policy: {
+    readonly maximumNodes: number;
+    readonly lineEndings: XmlLineEndings;
+  },
+): Result<Document, XmlParseFailure | XmlNodeLimitFailure> => {
+  let nodes = 0;
+  let doctypeSeen = false;
+  let failure: XmlParseFailure | undefined;
+  const count = () => {
+    nodes += 1;
+    if (nodes > policy.maximumNodes) throw new StopXmlNodeCount();
+  };
+  try {
+    checkXmlSyntax(source, "allow", (syntax) => {
+      // A counting failure unrelated to XML syntax must keep its own cause.
+      syntax.on("error", (cause) => {
+        throw notWellFormed(cause);
+      });
+      syntax.on("doctype", () => {
+        // The node ceiling can be reached even after a DOCTYPE was seen.
+        doctypeSeen = true;
+      });
+      syntax.on("opentagstart", count);
+      syntax.on("attribute", count);
+      syntax.on("text", count);
+      syntax.on("cdata", count);
+      syntax.on("comment", count);
+      syntax.on("processinginstruction", count);
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof StopXmlNodeCount)
+      return err({
+        kind: "node-limit",
+        maximum: policy.maximumNodes,
+        required: nodes,
+      });
+    if (!isXmlFailure(cause)) throw cause;
+    failure = cause;
+  }
+  if (doctypeSeen) return err(unsupportedDoctype("doctype"));
+  return failure === undefined
+    ? buildXmlDocument(source, policy.lineEndings)
+    : err(failure);
+};
+
 /** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,
   policy: {
     readonly doctype: DoctypePolicy;
-    readonly lineEndings: "preserve" | "normalize";
+    readonly lineEndings: XmlLineEndings;
     readonly nameSupported?: (name: string) => boolean;
   },
 ): Result<Document, XmlParseFailure> => {
   try {
     checkXmlSyntax(source, policy.doctype, undefined, policy.nameSupported);
+  } catch (cause: unknown) {
+    return err(xmlFailure(cause));
+  }
+  return buildXmlDocument(source, policy.lineEndings);
+};
+
+const buildXmlDocument = (
+  source: string,
+  lineEndings: XmlLineEndings,
+): Result<Document, XmlParseFailure> => {
+  try {
     // Saxes owns well-formedness outside DTDs. The DOM parser additionally
     // checks DTD syntax and builds source-located nodes; its advisory warnings
     // (including literal U+FFFD) are not byte-decoding or syntax failures.
     return ok(
       new DOMParser({
         normalizeLineEndings:
-          policy.lineEndings === "preserve"
+          lineEndings === "preserve"
             ? (text) => text
             : (text) => text.replace(XML_LINE_ENDING, "\n"),
         onError: onErrorStopParsing,

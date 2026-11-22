@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -92,16 +93,23 @@ it.each(["compact"] as const)(
   async (profile) => {
     // Distinct authenticated observations may have identical derived contents.
     const comparisons = Array.from({ length: 12 }, (_, observation) =>
-      createEvidence(undefined, FUNCTION_COMPARISON_EVIDENCE.provider, {
-        operation: "compare_functions",
-        predicateType: "rea.function-comparison",
-        parameters: { ...FUNCTION_COMPARISON_EVIDENCE.parameters, observation },
-        result: FUNCTION_COMPARISON_EVIDENCE.normalized_result,
-        confidence: "derived",
-        authority: "analyst-inference",
-        limitations: FUNCTION_COMPARISON_EVIDENCE.limitations,
-        evidenceLinks: FUNCTION_COMPARISON_EVIDENCE.evidence_links,
-      }),
+      createEvidence(
+        unknownTarget("derived-from-linked-evidence"),
+        FUNCTION_COMPARISON_EVIDENCE.provider,
+        {
+          operation: "compare_functions",
+          predicateType: "rea.function-comparison",
+          parameters: {
+            ...FUNCTION_COMPARISON_EVIDENCE.parameters,
+            observation,
+          },
+          result: FUNCTION_COMPARISON_EVIDENCE.normalized_result,
+          confidence: "derived",
+          authority: "analyst-inference",
+          limitations: FUNCTION_COMPARISON_EVIDENCE.limitations,
+          evidenceLinks: FUNCTION_COMPARISON_EVIDENCE.evidence_links,
+        },
+      ),
     );
     const directory = await createTestTempDirectory(
       "rea-retained-comparisons-",

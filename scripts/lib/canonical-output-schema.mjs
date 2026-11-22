@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DISCOVER_TOOLS } from "../../dist/catalogDiscovery.js";
+import { DISCOVER_TOOLS } from "../../dist/contracts/catalog/catalogDiscovery.js";
 import { TOOL_CONTRACTS } from "../../dist/contracts/toolContracts.js";
 import { advertisedOutputJsonSchema } from "../../dist/contracts/toolSchemaMetadata.js";
 

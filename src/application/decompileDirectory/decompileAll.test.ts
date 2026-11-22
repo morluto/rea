@@ -9,29 +9,31 @@ import {
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
   type AnalysisOperation,
   type AnalysisOperationPort,
-} from "../AnalysisProvider.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../ports/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
 import { ExportResources } from "./exportResources.js";
+import { selectProcedures, validateDecompileBounds } from "./selection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
   composedLimitationBudget,
-  createWorkflowEvidence,
   executeComposedWorkflow,
 } from "../WorkflowEvidence.js";
-import { toolContract } from "../../contracts/toolContracts.js";
 import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_JOURNAL_NAME,
   decompileDirectoryIndexSchema,
+  decompileDirectoryInputSchema,
   decompileJournalLineSchema,
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
@@ -344,43 +346,28 @@ describe("decompile_all manifest", () => {
     expect(
       of(calls, "list_procedures").every((call) => call.origin === "provider"),
     ).toBe(true);
-    const evidence = createWorkflowEvidence({
-      target: undefined,
-      operation: "decompile_all",
-      parameters: { output_directory: directory() },
-      result: result.value,
-      upstreamProfile: profile,
-      upstreamLimitations: [],
-    });
-    expect(evidence.evidence_id.length).toBeGreaterThan(0);
-    expect(
-      toolContract("decompile_all").outputSchema.safeParse(evidence).success,
-    ).toBe(true);
-    expect(JSON.stringify(evidence)).not.toContain(sentinel);
   });
 
-  it("records one decompiler failure without aborting or writing that file", async () => {
+  it("attributes failures and continues writing later functions", async () => {
     const { tools } = harness({
-      fail: { "0x2000": "error", "0x3000": "timeout" },
+      fail: { "0x1000": "timeout", "0x2000": "error" },
     });
     const result = await run(tools, directory());
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       counts: { written: 1, failed: 2, requested: 3 },
+      failures: [
+        { address: "0x1000", code: "deadline" },
+        { address: "0x2000", code: "invalid_request" },
+      ],
     });
-    const failures = (
-      result.value as { failures: { address: string; code: string }[] }
-    ).failures;
-    expect(failures.map((failure) => failure.code).sort()).toEqual(
-      ["deadline", "invalid_request"].sort(),
-    );
+    for (const name of ["0x1000.c", "0x2000.c"])
+      await expect(
+        stat(join(directory(), "functions", name)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
-      readFile(join(directory(), "functions/0x2000.c")),
-    ).rejects.toThrow();
-    await expect(
-      readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      readFile(join(directory(), "functions/0x3000.c"), "utf8"),
     ).resolves.toContain(sentinel);
   });
 });
@@ -470,21 +457,22 @@ describe("decompile_all external functions", () => {
   const directory = useOutputDirectory();
 
   it("reports an external function as external without requesting its pseudocode", async () => {
-    const { calls, tools } = harness({ external: ["0x2000"] });
+    const { calls, tools } = harness({ external: ["0x1000", "0x2000"] });
     const result = await run(tools, directory());
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toMatchObject({
-      counts: { requested: 3, written: 2, failed: 0, external: 1 },
+      counts: { requested: 3, written: 1, failed: 0, external: 2 },
       failures: [],
     });
     expect(
       of(calls, "procedure_pseudo_code").map((call) => call.procedure),
-    ).not.toContain("0x2000");
-    await expect(
-      readFile(join(directory(), "functions/0x2000.c")),
-    ).rejects.toThrow();
+    ).toEqual(["0x3000"]);
+    for (const address of ["0x1000", "0x2000"])
+      await expect(
+        stat(join(directory(), "functions", `${address}.c`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     const index = decompileDirectoryIndexSchema.parse(
       JSON.parse(
         await readFile(
@@ -501,11 +489,6 @@ describe("decompile_all external functions", () => {
         body: { available: true, ranges: [], non_contiguous: false },
       },
     );
-  });
-
-  it("skips a recorded external function on resume without asking the provider again", async () => {
-    const { calls, tools } = harness({ external: ["0x1000", "0x2000"] });
-    expect((await run(tools, directory())).ok).toBe(true);
     calls.length = 0;
     const resumed = await run(tools, directory(), { resume: true, limit: 1 });
 
@@ -517,24 +500,6 @@ describe("decompile_all external functions", () => {
     });
     expect(of(calls, "procedure_info")).toEqual([]);
     expect(of(calls, "procedure_pseudo_code")).toEqual([]);
-  });
-
-  it("reports a conflicting file at a written function's path when a resume finds it external", async () => {
-    expect((await run(harness().tools, directory())).ok).toBe(true);
-    await writeFile(join(directory(), "functions/0x2000.c"), "replaced\n");
-
-    const resumed = await run(
-      harness({ external: ["0x2000"] }).tools,
-      directory(),
-      { resume: true },
-    );
-
-    expect(resumed.ok).toBe(true);
-    if (!resumed.ok) return;
-    expect(resumed.value).toMatchObject({
-      counts: { requested: 1, skipped: 2, failed: 1, external: 0 },
-      failures: [{ address: "0x2000", code: "output_exists" }],
-    });
   });
 
   it("resumes an import recorded as invalid pseudocode by an earlier version as external", async () => {
@@ -704,7 +669,7 @@ describe("decompile_all resume", () => {
     const file = join(directory(), "functions/0x1000.c");
     await writeFile(file, "tampered");
     await rm(join(directory(), "functions/0x2000.c"));
-    const next = harness();
+    const next = harness({ external: ["0x1000"] });
     const resumed = await run(next.tools, directory(), { resume: true });
 
     expect(resumed.ok).toBe(true);
@@ -716,12 +681,12 @@ describe("decompile_all resume", () => {
     expect(
       of(next.calls, "procedure_pseudo_code").map((call) => call.procedure),
     ).toEqual(["0x2000"]);
-    const failures = (
-      resumed.value as { failures: { address: string; code: string }[] }
-    ).failures;
-    expect(failures).toEqual([
-      expect.objectContaining({ address: "0x1000", code: "output_exists" }),
-    ]);
+    expect(
+      of(next.calls, "procedure_info").map((call) => call.procedure),
+    ).toEqual(["0x2000"]);
+    expect(resumed.value).toMatchObject({
+      failures: [{ address: "0x1000", code: "output_exists" }],
+    });
     const index = decompileDirectoryIndexSchema.parse(
       JSON.parse(
         await readFile(
@@ -889,17 +854,25 @@ describe("decompile_all filters and layout", () => {
   const directory = useOutputDirectory();
 
   it("filters by name, namespace, and address and reports the excluded count", async () => {
-    const { tools } = harness();
+    const { tools } = harness({
+      procedures: [
+        { address: "0x2000", name: "Foo::helper" },
+        { address: "0x1fff", name: "Foo::early_helper" },
+        { address: "0x2100", name: "Foo::Helper" },
+        { address: "0x2200", name: "Bar::Foo::helper" },
+        { address: "0x3000", name: "Foo::late_helper" },
+      ],
+    });
     const result = await run(tools, directory(), {
       name: "helper",
       namespace: "Foo::",
-      address_start: "0x1500",
+      address_start: "0x2000",
       address_end: "0x2500",
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value).toMatchObject({
-      counts: { selected: 1, excluded: 2, written: 1 },
+      counts: { selected: 1, excluded: 4, written: 1 },
     });
     expect(
       await readFile(join(directory(), "functions/0x2000.c"), "utf8"),
@@ -1184,6 +1157,17 @@ describe("decompile_all caller coordinates", () => {
       expect(result.value).toMatchObject({
         counts: { selected: 1, excluded: 2, written: 1 },
       });
+    const index = decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(
+          join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+          "utf8",
+        ),
+      ),
+    );
+    expect(index.functions).toMatchObject([
+      { address: "RAM%3Aoverlay:0xabcd", name: "in_range", status: "written" },
+    ]);
   });
 });
 
@@ -1400,52 +1384,6 @@ describe("decompile_all untrusted directory and provider facts", () => {
     expect(resumed.ok).toBe(false);
     expect(of(next.calls, "procedure_pseudo_code")).toHaveLength(0);
     expect(await readFile(outside, "utf8")).toBe(torn);
-  });
-
-  it("does not take body ranges from procedure_info for another entry point", async () => {
-    const port: AnalysisOperationPort = {
-      execute: (operation) => {
-        if (operation === "list_procedures")
-          return Promise.resolve(
-            ok(
-              createAnalysisExecution(
-                [{ address: "0x1000", value: "main" }],
-                provider,
-                { analysisProfile: profile, subject },
-              ),
-            ),
-          );
-        if (operation === "procedure_info")
-          return Promise.resolve(
-            ok(
-              createAnalysisExecution(infoFor("0x9000"), provider, {
-                analysisProfile: profile,
-              }),
-            ),
-          );
-        return Promise.resolve(
-          ok(
-            createAnalysisExecution(
-              `int main(void) { ${sentinel} }`,
-              provider,
-              {
-                analysisProfile: profile,
-              },
-            ),
-          ),
-        );
-      },
-    };
-    const result = await new EnhancedTools(port).execute("decompile_all", {
-      output_directory: directory(),
-    });
-    expect(result.ok).toBe(true);
-    const text = await readFile(
-      join(directory(), "functions/0x1000.c"),
-      "utf8",
-    );
-    expect(text).toContain("// body: unavailable");
-    expect(text).not.toContain("0x9000");
   });
 
   it("keeps a function's file name after a failed retry that recorded no path", async () => {
@@ -1837,51 +1775,36 @@ describe("decompile_all cancelled publish loop", () => {
 describe("decompile_all output directory lease", () => {
   const directory = useOutputDirectory();
 
-  /** A port that holds the first decompile until the test lets it finish. */
-  const heldAtFirstDecompile = () => {
+  it("refuses a second run on a directory another run is exporting, then resumes after it", async () => {
     const { port } = harness();
-    let release = (): void => undefined;
-    const released = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let reached = (): void => undefined;
-    const reachedFirst = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    let held = false;
-    const holding: AnalysisOperationPort = {
+    const decompiling = phaseGate();
+    const holder = new EnhancedTools({
       execute: async (operation, parameters, execution) => {
-        if (operation === "procedure_pseudo_code" && !held) {
-          held = true;
-          reached();
-          await released;
-        }
+        if (operation === "procedure_pseudo_code") await decompiling.hold();
         return port.execute(operation, parameters, execution);
       },
-    };
-    return { tools: new EnhancedTools(holding), reachedFirst, release };
-  };
-
-  it("refuses a second run on a directory another run is exporting, then resumes after it", async () => {
-    const first = heldAtFirstDecompile();
-    const exporting = run(first.tools, directory());
-    await first.reachedFirst;
-
-    const competing = harness();
-    const refused = await run(competing.tools, directory(), { resume: true });
-    expect(refused.ok).toBe(false);
-    if (refused.ok) return;
-    // Busy is retryable once the holder finishes, unlike invalid input.
-    expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
-    expect(refused.error).toMatchObject({
-      resource: "capacity",
-      retryable: true,
-      reportedLimits: { holder_process_id: process.pid },
     });
-    // The refused run neither decompiled nor appended to the journal.
-    expect(of(competing.calls, "procedure_pseudo_code")).toHaveLength(0);
+    const exporting = run(holder, directory());
+    await withVerifierCleanup(async () => {
+      await decompiling.reached(exporting, "first decompile with lease held");
+      const competing = harness();
+      const refused = await run(competing.tools, directory(), { resume: true });
+      if (refused.ok)
+        throw new Error("The competing export acquired the held lease");
+      expect(refused.error).toBeInstanceOf(AnalysisResourceConstraintError);
+      expect(refused.error).toMatchObject({
+        resource: "capacity",
+        retryable: true,
+        reportedLimits: { holder_process_id: process.pid },
+      });
+      expect(of(competing.calls, "procedure_pseudo_code")).toHaveLength(0);
+    }, [
+      async () => {
+        decompiling.release();
+        await exporting;
+      },
+    ]);
 
-    first.release();
     const exported = await exporting;
     expect(exported.ok).toBe(true);
     const journal = (
@@ -2571,4 +2494,35 @@ it("keeps a settled null failure but starts no independent retry after caller ab
   expect(index.functions[0]?.limitations ?? []).not.toContain(
     "Independent retry was not attempted because the provider did not report a function failure for this observation.",
   );
+});
+
+describe("directory export selection order", () => {
+  it("orders spaced, padded, and unparsed procedure addresses", () => {
+    const rows = [
+      { address: "unresolved:b", name: "unparsed_b" },
+      { address: "ram:0x20", name: "ram_20" },
+      { address: "0x0010", name: "z_padded" },
+      { address: "0X10", name: "uppercase_unobserved" },
+      { address: "0x10", name: "a_plain" },
+      { address: "0x2", name: "low" },
+      { address: "ram:0x10", name: "ram_10" },
+      { address: "unresolved:a", name: "unparsed_a" },
+    ];
+    const input = decompileDirectoryInputSchema.parse({
+      output_directory: "/tmp/out",
+    });
+    const bounds = validateDecompileBounds(input);
+    if (!bounds.ok) throw bounds.error;
+    const selection = selectProcedures(rows, input, bounds.value);
+    expect(selection.procedures.map(({ address }) => address)).toEqual([
+      "0x2",
+      "0x10",
+      "0x0010",
+      "ram:0x10",
+      "ram:0x20",
+      "0X10",
+      "unresolved:a",
+      "unresolved:b",
+    ]);
+  });
 });

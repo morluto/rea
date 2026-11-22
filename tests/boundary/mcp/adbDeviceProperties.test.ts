@@ -14,6 +14,7 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const scenarios = [
   {
@@ -56,6 +57,7 @@ for (const scenario of scenarios) {
       const binary = await workspace.write(
         "adb",
         `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"
   exit 0
@@ -102,7 +104,10 @@ exit 1
           },
         );
         onTestFinished(() => server.close());
-        const client = new Client({ name: "adb-properties", version: "1" });
+        const client = new Client(
+          { name: "adb-properties", version: "1" },
+          { jsonSchemaValidator: createMcpSchemaValidation() },
+        );
         onTestFinished(() => client.close());
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();

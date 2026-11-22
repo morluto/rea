@@ -1,10 +1,13 @@
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { normalizeArtifactPath } from "../../artifacts/ArtifactPaths.js";
-import type { WebScriptArtifactPort } from "../../application/WebScriptArtifactPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+  normalizeArtifactPath,
+} from "../../resources/index.js";
+import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -25,6 +28,8 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
   constructor(
     readonly operation: WebArtifactReadContext["operation"],
     readonly resources = new ArtifactResourceScope(),
+    // The host whose filesystem holds the selected manifest.
+    readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
   ) {}
 
   close(): Promise<void> {
@@ -119,7 +124,7 @@ export class LocalWebScriptArtifacts implements WebScriptArtifactPort {
           "path",
           `Selected source path changes during normalization: ${selected.content.relative_path}`,
         );
-      if (process.platform === "win32" && portable.includes("\\"))
+      if (this.platform === "win32" && portable.includes("\\"))
         throw new ArtifactReaderFailure(
           "path",
           `Windows source path cannot contain backslashes as literal name characters: ${JSON.stringify(portable)}`,

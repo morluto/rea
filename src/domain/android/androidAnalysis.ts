@@ -3,10 +3,8 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
-import {
-  androidCoverageSchema,
-  androidManifestComponentsSchema,
-} from "./androidManifestComponents.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
   validateAndroidPackageDelivery,
@@ -148,7 +146,7 @@ export const androidRequestSchema = z.discriminatedUnion("operation", [
 ]);
 
 const textCoverage = z.strictObject({
-  status: androidCoverageSchema,
+  status: knownCoverageStatusSchema,
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });
@@ -225,6 +223,14 @@ const engine = z.strictObject({
 const common = { engine };
 
 /** Portable observations with explicit decompiler and identity limitations. */
+const methodInspectionIdentity = {
+  ...common,
+  class_name: z.string(),
+  method,
+  overload_count: z.int().positive(),
+  mapping: androidMappingReportSchema.exactOptional(),
+};
+
 export const androidResultSchemas = {
   inspect_android_jni_bindings: androidJniReportSchema.extend(common),
   inspect_android_package: z.strictObject({
@@ -269,18 +275,25 @@ export const androidResultSchemas = {
     inner_classes: z.array(z.string()),
     mapping: androidMappingReportSchema.exactOptional(),
   }),
-  inspect_android_method: z.strictObject({
-    ...common,
-    class_name: z.string(),
-    method: method,
-    overload_count: z.int().positive(),
-    representation: z.enum(["java", "smali"]),
-    body_status: z.enum(["available", "not_available"]),
-    fell_back: z.boolean(),
-    markers: z.array(z.string()),
-    source: textCoverage,
-    mapping: androidMappingReportSchema.exactOptional(),
-  }),
+  inspect_android_method: z.union([
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.enum(["java", "smali"]),
+      body_status: z.enum(["available", "not_available"]),
+      fell_back: z.boolean(),
+      markers: z.array(z.string()),
+      source: textCoverage,
+    }),
+    z.strictObject({
+      ...methodInspectionIdentity,
+      representation: z.null(),
+      body_status: z.literal("not_available"),
+      body_unavailable_reason: z.string().min(1),
+      fell_back: z.literal(false),
+      markers: z.array(z.string()),
+      source: z.null(),
+    }),
+  ]),
   trace_android_references: z.strictObject({
     ...common,
     target_definition: z.enum(["defined", "external"]),

@@ -5,7 +5,10 @@ import { runInNewContext } from "node:vm";
 import { stripTypeScriptTypes } from "node:module";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import {
+  lazyLocalToolsMcp,
+  type connectLocalToolsMcp,
+} from "../../fixtures/localToolsMcp.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
@@ -17,6 +20,8 @@ import {
 } from "../../../src/domain/analysisView/analysisViewResult.js";
 
 const sourcePositionSchema = z.object({ line: z.number(), column: z.number() });
+const silentCliEnv = { REA_LOG_LEVEL: "silent" } as const;
+const sharedMcp = lazyLocalToolsMcp();
 const callPathConditionSchema = z.object({
   expression: z.string(),
   location: z.object({
@@ -141,6 +146,7 @@ const analyze = async (cli: TestCli, extra = "") => {
   });
   const output = await cli.run({
     arguments: ["analyze-javascript-application", root, "--json"],
+    environment: silentCliEnv,
   });
   expect(output.exitCode, output.stderr).toBe(0);
   const { normalized_result: result } = z
@@ -221,6 +227,7 @@ cliTest(
     );
     const traced = await cli.run({
       arguments: ["trace-application-feature", input, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -340,7 +347,7 @@ cliTest(
   async ({ cli }) => {
     for (const surface of ["CLI", "stdio MCP"] as const) {
       const connection =
-        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+        surface === "stdio MCP" ? await sharedMcp() : undefined;
       const artifacts = new Set<string>();
       for (const fixture of fallthroughCases) {
         const root = await createTestTempDirectory(
@@ -423,6 +430,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const { normalized_result: application } = z
@@ -465,6 +473,7 @@ cliTest(
     );
     const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -493,6 +502,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -550,6 +560,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -583,6 +594,7 @@ cliTest(
     );
     const traced = await cli.run({
       arguments: ["trace-application-feature", traceInput, "--json"],
+      environment: silentCliEnv,
     });
     expect(traced.exitCode).toBe(0);
     const { normalized_result: trace } = z
@@ -598,7 +610,7 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
     `retains explicit nested contextBridge members after an unknown spread through ${surface}`,
     async ({ cli }) => {
       const connection =
-        surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+        surface === "stdio MCP" ? await sharedMcp() : undefined;
       const analyzeBridge = async (api: string) => {
         const root = await createTestTempDirectory(
           "rea-electron-spread-bridge-members-",
@@ -664,7 +676,9 @@ for (const surface of ["CLI", "stdio MCP"] as const) {
           contextBridge.exposeInMainWorld("direct", { d: () => ipcRenderer.send("direct:d") });
           named("label", globalThis.bridgeName);`,
       });
-      const application = await analyzeJavaScriptDirectory(surface, cli, root);
+      const application = await analyzeJavaScriptDirectory(surface, cli, root, {
+        mcpCall: surface === "stdio MCP" ? (await sharedMcp()).call : undefined,
+      });
       const bridges = application.graph.nodes
         .filter((node) => node.kind === "context-bridge-api")
         .flatMap((node) => node.observations)
@@ -853,6 +867,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -907,6 +922,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode, output.stderr).toBe(0);
     const { normalized_result: application } = z
@@ -942,6 +958,7 @@ cliTest(
     );
     const competing = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(competing.exitCode, competing.stderr).toBe(0);
     const { normalized_result: competingApplication } = z
@@ -973,6 +990,7 @@ cliTest(
     });
     const output = await cli.run({
       arguments: ["analyze-javascript-application", root, "--json"],
+      environment: silentCliEnv,
     });
     expect(output.exitCode).toBe(0);
     const { normalized_result: application } = z
@@ -1241,8 +1259,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       }),
     );
     await writeFixtureFiles(root, files);
-    const connection =
-      surface === "stdio MCP" ? await connectLocalToolsMcp() : undefined;
+    const connection = surface === "stdio MCP" ? await sharedMcp() : undefined;
     if (connection !== undefined) {
       const failure = await connection.call("analyze_javascript_application", {
         input_path: join(root, "absent"),

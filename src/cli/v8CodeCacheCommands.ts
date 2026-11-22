@@ -1,6 +1,5 @@
 import type { Logger } from "pino";
 
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createV8CodeCacheService } from "../composition/v8CodeCache.js";
 import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../contracts/v8/v8CodeCacheToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -24,7 +23,6 @@ export const registerV8CodeCacheCommands = (
     logger,
     contract,
     {
-      command: CLI_COMMANDS.inspectV8CodeCache,
       description:
         "Inspect a V8 code cache header and its embedded printable byte patterns without executing it",
       positionals: ["path"],

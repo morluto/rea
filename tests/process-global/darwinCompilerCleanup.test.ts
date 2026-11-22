@@ -42,7 +42,7 @@ import {
   DarwinProcessOwnershipInspectionError,
 } from "../../src/process/DarwinProcessRunTokenReader.js";
 import { NativeMacOSProvider } from "../../src/native/NativeMacOSProvider.js";
-import { XcrunCommandRunner } from "../../src/native/CommandRunner.js";
+import { XcrunCommandRunner } from "../../src/providers/NativeCommandRunner.js";
 import { nativeMachoTargetForFile } from "../fixtures/nativeCommands.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import { GhidraHeadlessLauncher } from "../../src/ghidra/GhidraLauncher.js";

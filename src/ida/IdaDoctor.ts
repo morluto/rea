@@ -1,7 +1,7 @@
 import type {
   DoctorProviderCheck,
   DoctorProviderInspection,
-} from "../application/Doctor.js";
+} from "../ports/DoctorProviderInspection.js";
 import {
   readIdaConfiguration,
   type IdaConfiguration,
@@ -14,7 +14,7 @@ import {
   IDA_WORKSPACE_ROOT_REMEDIATION,
   type IdaAdmission,
 } from "./IdaAdmission.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 
 /** Client settings consulted by this readiness probe. */
 export const IDA_DOCTOR_SETTINGS = ["REA_IDA_MCP_CONFIG"] as const;

@@ -5,7 +5,7 @@ import type {
   AnalysisOperationPort,
   ExecutionOptions,
   ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { parseRelatedAddresses } from "../../domain/native/nativeObservation.js";
 import { referenceKindSchema } from "../../domain/native/nativeReference.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";

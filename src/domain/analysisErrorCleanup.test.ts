@@ -1,3 +1,4 @@
+import { unknownTarget } from "./targetIdentity.js";
 import { expect, it } from "vitest";
 import {
   AnalysisCancelledError,
@@ -7,7 +8,11 @@ import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "./analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+  withInheritedCleanupOwnership,
+} from "./analysisErrorCleanup.js";
 import {
   projectAnalysisError,
   projectAnalysisErrorWithoutCapturedOutput,
@@ -188,7 +193,7 @@ it.each([
       truncated: true,
     },
     partialObservation: createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: null },
       {
         operation: "inspect",
@@ -324,12 +329,12 @@ it("preserves recovery and secondary failures owned by an intermediate cleanup",
 
 it("prefers the outer publication source over the nested primary observation", () => {
   const provider = { id: "fixture", name: "Fixture", version: null };
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "source",
     parameters: {},
     result: "source",
   });
-  const nested = createEvidence(undefined, provider, {
+  const nested = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "nested",
     parameters: {},
     result: "nested",
@@ -412,7 +417,7 @@ it("retains an observation attached to the composite after the primary failed", 
     cleanup,
   ).bindCleanupDependencies([primary, cleanup]);
   const observation = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: null },
     {
       operation: "inspect",
@@ -525,3 +530,112 @@ it.each(["primary", "cleanup", "default", "cleanup-continuing"] as const)(
     expect(projectAnalysisError(composed).code).toBe("cleanup_incomplete");
   },
 );
+
+it("tracks a shared resource until both cleanup owners release", () => {
+  const first = new ProviderCleanupError(
+    "fixture",
+    ["shared-handle", "first-handle"],
+    { reason: "first" },
+    { operation: "fixture_close" },
+  );
+  const second = new ProviderCleanupError(
+    "fixture",
+    ["shared-handle", "second-handle"],
+    { reason: "second" },
+    { operation: "fixture_close" },
+  );
+  const untyped = new Error("untyped close failure");
+
+  const composite = providerCleanupErrorFromFailures(
+    "fixture-provider",
+    [first, second],
+    "Fixture cleanup remains incomplete",
+    {
+      operation: "fixture_close",
+      causes: [first, untyped, second],
+      message: "Fixture cleanup failed",
+    },
+  );
+
+  expect(composite).toBeInstanceOf(ProviderCleanupError);
+  expect(composite).toMatchObject({
+    providerId: "fixture-provider",
+    operation: "fixture_close",
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "first-handle", "second-handle"],
+    diagnostics: { reason: "Fixture cleanup remains incomplete" },
+  });
+  expect(composite.cause).toBeInstanceOf(AggregateError);
+  expect((composite.cause as AggregateError).errors).toEqual([
+    first,
+    untyped,
+    second,
+  ]);
+  expect((composite.cause as AggregateError).message).toBe(
+    "Fixture cleanup failed",
+  );
+
+  releaseOwnedCleanup(first);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["shared-handle", "second-handle"],
+  });
+  releaseOwnedCleanup(second);
+  expect(composite).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
+});
+
+it("defaults the aggregate cause to the owned failures", () => {
+  const only = new ProviderCleanupError(
+    "fixture",
+    ["only-handle"],
+    { reason: "only" },
+    { operation: "fixture_close" },
+  );
+  const composite = providerCleanupErrorFromFailures(
+    "fixture-provider",
+    [only],
+    "Fixture cleanup remains incomplete",
+    { operation: "fixture_close" },
+  );
+  expect((composite.cause as AggregateError).errors).toEqual([only]);
+  expect((composite.cause as AggregateError).message).toBe("");
+});
+
+it("follows an existing owner's release via withInheritedCleanupOwnership", () => {
+  const owner = new ProviderCleanupError("fixture", ["owned-handle"], {});
+  const cleanup = { reason: owner.message, resources: owner.cleanupResources };
+  const wrapper = withInheritedCleanupOwnership(
+    new AnalysisCapabilityUnavailableError("fixture", "open", "wrapped", {
+      cleanup,
+    }),
+    owner,
+  );
+  expect(wrapper.cleanupIncomplete).toBe(true);
+  expect(wrapper.cleanupResources).toEqual(["owned-handle"]);
+
+  releaseOwnedCleanup(owner);
+  expect(wrapper.cleanupIncomplete).toBe(false);
+  expect(wrapper.cleanupResources).toEqual([]);
+
+  const unownedCleanup = new AnalysisCapabilityUnavailableError(
+    "fixture",
+    "open",
+    "wrapped",
+    {
+      cleanup,
+    },
+  );
+  const retainedUnknown = withInheritedCleanupOwnership(unownedCleanup, owner);
+  expect(retainedUnknown.cleanupIncomplete).toBe(true);
+
+  const cleanOwner = new AnalysisInputError("open", undefined, []);
+  const cleanWrapper = withInheritedCleanupOwnership(
+    new AnalysisInputError("open", undefined, []),
+    cleanOwner,
+  );
+  expect(cleanWrapper.hasCleanupOwner).toBe(false);
+  expect(cleanWrapper.cleanupIncomplete).toBe(false);
+});

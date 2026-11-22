@@ -1,6 +1,6 @@
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import { createHash } from "node:crypto";
-import { createWriteStream } from "node:fs";
+import { createWriteStream, type Stats } from "node:fs";
 import { chmod, lstat, opendir, readlink } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -27,15 +27,15 @@ import {
 } from "./FirmwareFailures.js";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import type { SafeOutputTree } from "../artifacts/SafeOutputTree.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  type SafeOutputTree,
+  readArtifactFileChunks,
+  ArtifactResourceScope,
   withArtifactRegularFile,
   assertArtifactReadActive,
   mapArtifactFileFailure,
   artifactSelectedPathErrno,
-} from "../artifacts/ArtifactFileOperation.js";
-import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+} from "../resources/index.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import { NonRegularFileReadError } from "../filesystem/RegularFile.js";
 import { observedSymlinkTarget } from "../domain/symlinkTarget.js";
@@ -51,7 +51,7 @@ export interface FirmwareEntry {
 }
 
 /** An aborted inventory reports its phase deadline's timeout or its caller's cancellation. */
-const throwIfFirmwareInventoryCancelled = (
+export const throwIfFirmwareInventoryCancelled = (
   signal: AbortSignal | undefined,
   operation: string,
   deadline: FirmwareDeadline | undefined,
@@ -209,7 +209,7 @@ export class FirmwareFileAccess {
   /** Own the exact source descriptor consumed by publication through its final close. */
   publish(
     entry: FirmwareEntry,
-    sha256: string,
+    sha256: string | null | undefined,
     tree: SafeOutputTree,
     signal: AbortSignal,
   ) {
@@ -229,7 +229,10 @@ export class FirmwareFileAccess {
                 yield* readArtifactFileChunks(handle, { signal });
               })(),
             ),
-            { sha256, bytes: entry.size },
+            {
+              bytes: entry.size,
+              ...(sha256 === undefined || sha256 === null ? {} : { sha256 }),
+            },
             signal,
           ),
       ),
@@ -422,18 +425,58 @@ export const inventoryFirmwareOutput = async (
         );
       names.push(decoded.name);
     }
-    for (const name of names.sort()) {
-      const path = join(directory, name);
-      const stat = await lstat(path).catch((cause: unknown) => {
-        if (
-          cause instanceof Error &&
-          "code" in cause &&
-          cause.code === "ENOENT"
-        )
-          return undefined;
-        throw cause;
-      });
-      if (stat === undefined) continue;
+    const sortedNames = names.sort();
+    const inspected = new Array<
+      | {
+          readonly path: string;
+          readonly stat: Stats;
+          readonly linkTarget:
+            | ReturnType<typeof observedSymlinkTarget>
+            | undefined;
+        }
+      | undefined
+    >(sortedNames.length);
+    let cursor = 0;
+    let firstFailure: unknown;
+    const inspectWorker = async (): Promise<void> => {
+      while (firstFailure === undefined) {
+        const index = cursor++;
+        const name = sortedNames[index];
+        if (name === undefined) return;
+        try {
+          throwIfFirmwareInventoryCancelled(signal, operation, deadline);
+          const path = join(directory, name);
+          const stat = await lstat(path).catch((cause: unknown) => {
+            if (
+              cause instanceof Error &&
+              "code" in cause &&
+              cause.code === "ENOENT"
+            )
+              return undefined;
+            throw cause;
+          });
+          if (stat === undefined) continue;
+          const linkTarget = stat.isSymbolicLink()
+            ? observedSymlinkTarget(
+                await readlink(path, { encoding: "buffer" }),
+              )
+            : undefined;
+          inspected[index] = { path, stat, linkTarget };
+        } catch (cause: unknown) {
+          firstFailure ??= cause;
+          return;
+        }
+      }
+    };
+    const workerCount = Math.min(16, sortedNames.length);
+    await Promise.allSettled(
+      Array.from({ length: workerCount }, () => inspectWorker()),
+    );
+    if (firstFailure !== undefined) throw firstFailure;
+
+    for (const item of inspected) {
+      if (item === undefined) continue;
+      const { path, stat, linkTarget } = item;
       if (stat.isDirectory()) {
         pending.push(path);
         continue;
@@ -443,9 +486,6 @@ export const inventoryFirmwareOutput = async (
         throw firmwareStagingLimit(operation, "max_output_bytes", maxBytes);
       if (stat.isFile() && stat.size >= fileSizeBytes)
         throw firmwareFileSizeLimitReached(operation, fileSizeBytes);
-      const linkTarget = stat.isSymbolicLink()
-        ? observedSymlinkTarget(await readlink(path, { encoding: "buffer" }))
-        : undefined;
       entries.push({
         path,
         relativePath: relative(root, path).split(sep).join("/"),
@@ -487,7 +527,7 @@ export const firmwareStagingBudgetRemediation = (
 };
 
 /** The same selected aggregate budget is enforced during and after extraction. */
-const firmwareStagingLimit = (
+export const firmwareStagingLimit = (
   operation: string,
   field: "max_output_files" | "max_output_bytes",
   maximum: number,
@@ -508,7 +548,7 @@ const firmwareStagingLimit = (
  * staged file that reaches the producer's limit may be truncated. That limit
  * sits one byte above every budget unless an inherited ceiling removed the byte.
  */
-const firmwareFileSizeLimitReached = (
+export const firmwareFileSizeLimitReached = (
   operation: string,
   fileSizeBytes: number,
 ) =>

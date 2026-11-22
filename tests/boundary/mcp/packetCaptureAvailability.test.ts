@@ -1,13 +1,15 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 import { sessionOutputSchemas } from "../../../src/contracts/toolOutputSchemaGroups.js";
+import * as pcapConfiguration from "../../../src/pcap/PcapConfiguration.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
+import { SIMULATED_LINUX_X64 } from "../../fixtures/simulatedHost.js";
 
 // The server enables default packet tools only on Linux, where they can run.
 const linux = process.platform === "linux";
@@ -110,4 +112,110 @@ it("advertises pcap capture host support separately from the always available cl
           remediation: expect.stringContaining("native memory bound"),
         },
   );
+});
+
+const readPacketCaptureEntry = async (
+  client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
+) => {
+  const response = await client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  if (response.isError === true) throw new Error("binary_session failed");
+  const parsed = sessionOutputSchemas.binary_session.parse(
+    response.structuredContent,
+  ).result;
+  return expandToolAvailability(parsed.tool_availability).find(
+    (tool) => tool.name === "inspect_packet_capture",
+  );
+};
+
+it.skipIf(process.platform === "win32")(
+  "defers tshark PATH probing until binary_session and detects newly added tshark",
+  async () => {
+    const directory = await createTestTempDirectory("rea-packet-lazy-");
+    const bin = join(directory, "bin");
+    await mkdir(bin);
+    const probeSpy = vi.spyOn(pcapConfiguration, "locateWiresharkTool");
+    onTestFinished(() => probeSpy.mockRestore());
+
+    const session = createTestBinarySession(() => {
+      throw new Error("binary analysis must not start during status discovery");
+    });
+    const { client } = await createApplicationMcpHarness({
+      session,
+      serverOptions: {
+        host: SIMULATED_LINUX_X64,
+        environment: { PATH: bin, REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" },
+      },
+      clientIdentity: { name: "packet-capture-lazy", version: "1" },
+    });
+
+    expect(probeSpy).not.toHaveBeenCalled();
+    expect(await readPacketCaptureEntry(client)).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+    });
+    expect(probeSpy).toHaveBeenCalledTimes(1);
+
+    const tshark = join(bin, "tshark");
+    await writeFile(tshark, "");
+    await chmod(tshark, 0o700);
+
+    expect(await readPacketCaptureEntry(client)).toMatchObject({
+      available: true,
+      reason: "available",
+    });
+    expect(probeSpy).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("skips tshark PATH probing when artifact tools are not advertised or availabilityPolicy is configured", async () => {
+  const probeSpy = vi.spyOn(pcapConfiguration, "locateWiresharkTool");
+  onTestFinished(() => probeSpy.mockRestore());
+
+  const makeSession = () =>
+    createTestBinarySession(() => {
+      throw new Error("binary analysis must not start during status discovery");
+    });
+
+  const scoped = await createApplicationMcpHarness({
+    session: makeSession(),
+    serverOptions: {
+      host: SIMULATED_LINUX_X64,
+      environment: {
+        PATH: "/nonexistent-rea-probe-path",
+        REA_MCP_TOOL_FAMILIES: "session",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+      },
+    },
+    clientIdentity: { name: "packet-capture-unadvertised", version: "1" },
+  });
+  const scopedStatus = await scoped.client.callTool({
+    name: "binary_session",
+    arguments: {},
+  });
+  expect(scopedStatus.isError).not.toBe(true);
+  expect(probeSpy).not.toHaveBeenCalled();
+
+  const configured = await createApplicationMcpHarness({
+    session: makeSession(),
+    serverOptions: {
+      host: SIMULATED_LINUX_X64,
+      environment: {
+        PATH: "/nonexistent-rea-probe-path",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+      },
+      availabilityPolicy: () => ({
+        processCaptureEnabled: true,
+        packetCaptureEnabled: false,
+      }),
+    },
+    clientIdentity: { name: "packet-capture-configured", version: "1" },
+  });
+  expect(await readPacketCaptureEntry(configured.client)).toMatchObject({
+    available: false,
+    reason: "provider_missing",
+  });
+  expect(probeSpy).not.toHaveBeenCalled();
 });

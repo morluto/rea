@@ -1,5 +1,7 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
 import {
   samplingInspectionFailures,
+  samplingObservation,
   settleSamplingReads,
   SamplingReadBatchFailure,
 } from "../../process/capture/ProcessSamplingObservation.js";
@@ -11,6 +13,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -42,17 +45,22 @@ import * as captureFailures from "./DesktopCaptureFailure.js";
 import * as providerProcess from "../../process/ProviderProcess.js";
 import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
 import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { CaptureFile } from "./DesktopCaptureOutput.js";
+import { indexState, observedFileAt } from "./DesktopStateVersions.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
@@ -166,6 +174,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });
@@ -328,6 +337,116 @@ it.each([false, true])(
   },
 );
 
+it.skipIf(process.platform === "win32")(
+  "publishes omissions only from checkpoints completed before a later read is cancelled",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const physicalHome = await realpath(home);
+    const output = join(root, "out");
+    const baseline = join(physicalHome, "baseline-too-large.txt");
+    const committed = join(physicalHome, "committed-too-large.txt");
+    const abandoned = join(physicalHome, "a-abandoned-too-large.txt");
+    const interrupted = join(physicalHome, "b-interrupted.txt");
+    const oversized = "x".repeat(17);
+    await writeFile(baseline, oversized);
+    const controller = new AbortController();
+    const reason = new Error("cancel at the next physical content read");
+    const original = DesktopContentStore.prototype.retain;
+    const observed: string[] = [];
+    const retain = vi
+      .spyOn(DesktopContentStore.prototype, "retain")
+      .mockImplementation(async function (
+        this: DesktopContentStore,
+        path,
+        version,
+        signal,
+      ) {
+        if (path === interrupted) controller.abort(reason);
+        const outcome = await original.call(this, path, version, signal);
+        if (outcome.kind === "omitted") observed.push(path);
+        return outcome;
+      });
+
+    try {
+      const desktopHost = host(environment);
+      const recorded = captureFixture();
+      const evidence = await captureDesktopApplication(
+        { ...request(output), statePaths: [home], maxFileBytes: 16 },
+        {
+          ...desktopHost,
+          desktop: {
+            ...desktopHost.desktop,
+            inspectApplication: async () => ({
+              ok: true,
+              value: {
+                inventory: { ...recorded.application, state_directories: [] },
+                limitations: [],
+                signingKeys: new Map(),
+              },
+            }),
+            runningApplicationWindows: async () => ({
+              state: "listed",
+              windows: [],
+            }),
+            runSession: async ({ checkpoint }) => {
+              const seen = { openedFiles: new Set<string>(), titles: [] };
+              await writeFile(committed, oversized);
+              await checkpoint("saved", "request", 500, seen);
+              await writeFile(abandoned, oversized);
+              await writeFile(interrupted, "small");
+              await expect(
+                checkpoint("interrupted", "request", 1000, seen),
+              ).rejects.toMatchObject({
+                reason: "cancelled",
+                cause: reason,
+              });
+              return {
+                session: { ...recorded.session, end_reason: "cancelled" },
+                unreleased: undefined,
+                unreadableWindowSamples: 0,
+              };
+            },
+          },
+        },
+        controller.signal,
+      );
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(observed).toEqual([baseline, committed, abandoned]);
+      expect(capture.state.checkpoints.map(({ name }) => name)).toEqual([
+        "baseline",
+        "saved",
+      ]);
+
+      const published = desktopApplicationCaptureSchema.parse(
+        JSON.parse(await readFile(join(output, "capture.json"), "utf8"))
+          .normalized_result,
+      );
+      const index = indexState(published);
+      expect(observedFileAt(baseline, 0, index)).toEqual({
+        present: true,
+        sha256: null,
+      });
+      expect(observedFileAt(committed, 1, index)).toEqual({
+        present: true,
+        sha256: null,
+      });
+      expect(observedFileAt(abandoned, 0, index)).toEqual({
+        present: false,
+        sha256: null,
+      });
+      expect(capture.state.omitted_content).toEqual([
+        { path: baseline, reason: "too_large" },
+        { path: committed, reason: "too_large" },
+      ]);
+    } finally {
+      retain.mockRestore();
+    }
+  },
+);
+
 it.skipIf(process.platform !== "linux")(
   "returns the published evidence when cancellation arrives during publication",
   async () => {
@@ -365,68 +484,62 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
+it.skipIf(process.platform !== "linux")(
+  "keeps ownership of a worker after its clean-env launcher exits",
+  async () => {
+    const { root, environment } = await fixture();
+    const app = join(root, "bin/fakeapp");
+    const worker = join(root, "worker");
+    const pidFile = join(root, "worker-pid");
+    const completed = join(root, "worker-completed");
+    await executable(app, `#!/bin/sh\n"${worker}" &\nexit 0\n`);
+    await executable(
+      worker,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$$" > "${pidFile}"`,
+        "/bin/sleep 2",
+        '[ "${INHERITED-unset}" = unset ] && [ "$SELECTED" = yes ] || exit 91',
+        `touch "${completed}"`,
+      ].join("\n"),
+    );
+    const entry = join(root, "clean.desktop");
+    const argv = ["/usr/bin/env", "-i", "SELECTED=yes", app];
+    await writeFile(
+      entry,
+      `[Desktop Entry]\nType=Application\nName=FakeApp\nExec=${argv.join(" ")}\n`,
+    );
+
+    const evidence = await captureDesktopApplication(
+      {
+        ...request(join(root, "out")),
+        desktopEntry: entry,
+        executable: undefined,
+        maxDurationSeconds: 8,
+      },
+      host({ ...environment, INHERITED: "host" }),
+    );
+    if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+    const capture = desktopApplicationCaptureSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(capture.application.argv).toEqual(argv);
+    expect(capture.session).toMatchObject({
+      end_reason: "application_exited",
+      cleanup: { verified: true },
+    });
+    const workerPid = Number(await readFile(pidFile, "utf8"));
+    expect(workerPid).not.toBe(capture.session.launch_pid);
+    expect(capture.session.processes).toContainEqual(
+      expect.objectContaining({ pid: workerPid, started_by_capture: true }),
+    );
+    expect(fileExists(completed)).toBe(true);
+  },
+);
+
 describe.skipIf(process.platform !== "linux")(
   "captureDesktopApplication on Linux",
   () => {
-    it("records the window, a requested checkpoint and the state change with its content", async () => {
-      const { root, home, environment } = await fixture();
-      const output = join(root, "out");
-      const statePath = join(home, ".config/fakeapp/state.ini");
-      let checkpointAt: number | undefined;
-      const nextRequest = (): SessionRequest | undefined => {
-        if (checkpointAt === undefined) {
-          if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
-          checkpointAt = performance.now();
-          return { kind: "checkpoint", name: "written" };
-        }
-        // Leave time for window samples before stopping.
-        return performance.now() - checkpointAt > 1500
-          ? { kind: "stop" }
-          : undefined;
-      };
-
-      const evidence = await captureDesktopApplication(
-        request(output),
-        host(environment, nextRequest),
-      );
-
-      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
-      expect(evidence.operation).toBe("capture_desktop_application");
-      const capture = desktopApplicationCaptureSchema.parse(
-        evidence.normalized_result,
-      );
-      expect(capture.session).toMatchObject({
-        end_reason: "stop_requested",
-        window_match: { class: "FakeApp", instance: "fakeapp" },
-      });
-      expect(capture.session.first_window_ms).not.toBeNull();
-      expect(capture.host).toMatchObject({
-        hostname: hostname(),
-        user: userInfo().username,
-      });
-      expect(
-        capture.state.checkpoints.map((checkpoint) => checkpoint.name),
-      ).toEqual(["baseline", "written", "stop", "exit"]);
-      expect(capture.state.checkpoints[0]?.retained).toEqual([
-        { path: statePath, sha256: sha256("count=0\n"), size: 8 },
-      ]);
-      const change = capture.state.checkpoints[1]?.changes.find(
-        (candidate) => candidate.path === statePath,
-      );
-      expect(change).toMatchObject({
-        kind: "modified",
-        before: { sha256: sha256("count=0\n") },
-        after: { sha256: sha256("count=1\n") },
-        in_state_directory: true,
-      });
-      expect(
-        await readFile(join(output, "content", sha256("count=1\n")), "utf8"),
-      ).toBe("count=1\n");
-      expect(
-        JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
-      ).toEqual(JSON.parse(JSON.stringify(evidence)));
-    });
-
     it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
       const { root, home, environment } = await fixture();
       const output = join(root, "out");
@@ -575,15 +688,50 @@ describe.skipIf(process.platform !== "linux")(
       const capture = desktopApplicationCaptureSchema.parse(
         evidence.normalized_result,
       );
+      expect(evidence.operation).toBe("capture_desktop_application");
+      expect(capture.session).toMatchObject({
+        end_reason: "stop_requested",
+        window_match: { class: "FakeApp", instance: "fakeapp" },
+        first_window_ms: expect.any(Number),
+      });
+      expect(capture.host).toMatchObject({
+        hostname: hostname(),
+        user: userInfo().username,
+      });
+      expect(capture.state.checkpoints.map(({ name }) => name)).toEqual([
+        "baseline",
+        "seed",
+        "stop",
+        "exit",
+      ]);
+      expect(capture.state.checkpoints[0]?.retained).toEqual([
+        { path: statePath, sha256: sha256("count=0\n"), size: 8 },
+      ]);
       const seed = capture.state.checkpoints[1];
-      // The acknowledgement comes after the checkpoint is taken and carries its counts and the file the app wrote.
+      if (seed === undefined) throw new Error("Expected the recorded seed");
+      expect(seed.changes.find(({ path }) => path === statePath)).toMatchObject(
+        {
+          kind: "modified",
+          before: { sha256: sha256("count=0\n") },
+          after: { sha256: sha256("count=1\n") },
+          in_state_directory: true,
+        },
+      );
+      expect(
+        await readFile(join(output, "content", sha256("count=1\n")), "utf8"),
+      ).toBe("count=1\n");
+      expect(
+        JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
+      ).toEqual(JSON.parse(JSON.stringify(evidence)));
+
+      // The acknowledgement carries the counts from the recorded checkpoint.
       expect(parsed[2]).toEqual({
         kind: "checkpoint",
         name: "seed",
         trigger: "request",
-        at_ms: seed?.at_ms,
-        entries: seed?.entries,
-        changes: seed?.changes.length,
+        at_ms: seed.at_ms,
+        entries: seed.entries,
+        changes: seed.changes.length,
         retained_files: 1,
         retained_bytes: 8,
         changed_files: [".config/fakeapp/state.ini"],
@@ -1107,7 +1255,7 @@ const sessionInspectionFailure = async (
     stopped.inspectionCleanup === undefined
   )
     throw new Error("Expected actual supervisor-held inspection cleanup");
-  return new desktopSession.DesktopSessionCleanupError(cause, {
+  return new DesktopSessionCleanupError(cause, {
     reason: stopped.reason,
     inspectionCleanup: stopped.inspectionCleanup,
     leases: [
@@ -1118,6 +1266,18 @@ const sessionInspectionFailure = async (
     ],
   });
 };
+
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
 
 it.for([
   { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
@@ -1137,7 +1297,7 @@ it.for([
     const completed = { value: "caller-selected completed sampling peer" };
     let sourceFailure: unknown = descriptor.failure;
     const captured = captureFixture();
-    let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
+    let sessionFailure: DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
     let projectedFailure: AnalysisError | undefined;
     vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
@@ -1157,6 +1317,9 @@ it.for([
       state: "listed",
       windows: [],
     });
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
+    );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockRejectedValue(descriptor.failure);

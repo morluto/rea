@@ -23,3 +23,21 @@ export const inesFixture = (
     options.trailing ?? Buffer.alloc(0),
   ]);
 };
+
+/** The same file layout identified as NES 2.0, with header byte overrides. */
+export const nes2Fixture = (
+  options: {
+    readonly trainer?: boolean;
+    readonly header?: Readonly<Record<number, number>>;
+    readonly miscRom?: Buffer;
+  } = {},
+): Buffer => {
+  const bytes = inesFixture({
+    trainer: options.trainer === true,
+    trailing: options.miscRom ?? Buffer.alloc(0),
+  });
+  bytes.writeUInt8(bytes.readUInt8(7) | 0x08, 7);
+  for (const [index, value] of Object.entries(options.header ?? {}))
+    bytes.writeUInt8(value, Number(index));
+  return bytes;
+};

@@ -1,7 +1,9 @@
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { parseJsonStringLiteral } from "../domain/jsonDuplicateMember.js";
 import { escapeJsonPointerToken } from "../domain/jsonPointer.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/index.js";
 import type {
   ModelMetadata,
   ModelTensor,
@@ -50,7 +52,7 @@ class HeaderJson {
         const raw = this.text.slice(start, this.#position);
         this.budget.charge(6 * raw.length + 2);
         try {
-          const value: unknown = JSON.parse(raw);
+          const value: unknown = parseJsonStringLiteral(raw);
           if (typeof value !== "string")
             return rejectModel("Invalid JSON string");
           for (const unit of value) {
@@ -217,8 +219,10 @@ export const readSafetensorsHeader = async (
   if ((pickle || zip) && reader.size < 9) rejectPickle();
   const second = await reader.take(4);
   reader.excludeSafetensorsLengthPrefix();
+  // first and second are exact four-byte takes of the little-endian u64 prefix.
   const length =
-    BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
+    new BinaryReader(first, true, "safetensors").word(0, 32) +
+    (new BinaryReader(second, true, "safetensors").word(0, 32) << 32n);
   const brace = length === 0n ? undefined : (await reader.take(1))[0];
   // A brace after an admissible length is safetensors, even if truncated.
   if (

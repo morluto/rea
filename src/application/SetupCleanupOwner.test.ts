@@ -4,9 +4,9 @@ import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
+} from "../resources/AnalysisCleanupLease.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 
 const errorSources = (error: unknown): ReadonlySet<unknown> => {

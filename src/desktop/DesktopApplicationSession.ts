@@ -2,7 +2,10 @@ import {
   SamplingReadBatchFailure,
   samplingInspectionFailures,
 } from "../process/capture/ProcessSamplingObservation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   assertProcessOwnershipInspectionActive,
@@ -11,10 +14,8 @@ import {
 } from "../process/ProcessInspectionCancellation.js";
 import { randomUUID } from "node:crypto";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
-  type DesktopCaptureEvent,
   type DesktopSession,
 } from "../domain/desktop/desktopCapture.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
@@ -35,78 +36,20 @@ import {
   sampleProcesses,
   sampleTokenCarriers,
   trackProcess,
-  type WindowMatching,
 } from "./DesktopSessionObservations.js";
-import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
+import {
+  DesktopSessionCleanupError,
+  type CheckpointTrigger,
+  type DesktopSessionOutcome,
+  type DesktopSessionPlan,
+  type DesktopWindowObserver,
+  type UnresolvedCleanup,
+  type WindowSample,
+} from "../ports/DesktopApplicationSession.js";
 
 /** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
-
-/** A cleanup that could not be confirmed, and the exact owners that can retry it. */
-export interface UnresolvedCleanup {
-  readonly reason: string;
-  readonly leases: readonly AnalysisCleanupLease[];
-  /** Failure-time facts remain available after the lease releases its owners. */
-  readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
-}
-
-/** The session record and, when cleanup was not verified, what remains owned. */
-export interface DesktopSessionOutcome {
-  readonly session: DesktopSession;
-  readonly unreleased: UnresolvedCleanup | undefined;
-  /** Samples whose window list could not be read; their windows are unknown. */
-  readonly unreadableWindowSamples: number;
-}
-
-/** A session failed, and the processes it launched could not all be removed. */
-export class DesktopSessionCleanupError extends Error {
-  constructor(
-    readonly primary: unknown,
-    readonly cleanup: UnresolvedCleanup,
-  ) {
-    super(`desktop session cleanup is incomplete: ${cleanup.reason}`, {
-      cause: primary,
-    });
-    this.name = "DesktopSessionCleanupError";
-  }
-}
-
-/** A line the person or driver sent while the session runs. */
-export type SessionRequest =
-  | { readonly kind: "checkpoint"; readonly name: string | undefined }
-  | { readonly kind: "stop" };
-
-type CheckpointTrigger = "request" | "stop" | "exit";
-
-/** Everything the session loop needs from its caller. */
-export interface DesktopSessionPlan {
-  readonly argv: readonly string[];
-  readonly workingDirectory: string;
-  readonly environment: NodeJS.ProcessEnv;
-  readonly windows: X11WindowObserver;
-  readonly windowMatching: WindowMatching;
-  readonly roots: readonly string[];
-  readonly maxDurationMs: number;
-  readonly pollIntervalMs: number;
-  readonly nextRequest: () => SessionRequest | undefined;
-  /** Record a checkpoint, given the files the app holds open and the titles its windows have shown so far. */
-  readonly checkpoint: (
-    name: string,
-    trigger: CheckpointTrigger,
-    atMs: number,
-    seen: {
-      readonly openedFiles: ReadonlySet<string>;
-      readonly titles: readonly string[];
-    },
-  ) => Promise<void>;
-  /** Progress text, with the event a driver waits on when there is one. */
-  readonly report: (
-    message: string,
-    event?: DesktopCaptureEvent,
-  ) => Promise<void>;
-  readonly signal: AbortSignal | undefined;
-}
 
 /**
  * Windows that already match the application by name before it is launched,
@@ -115,7 +58,7 @@ export interface DesktopSessionPlan {
  * state would sit outside the baseline.
  */
 export const runningApplicationWindows = async (
-  windows: X11WindowObserver,
+  windows: DesktopWindowObserver,
   names: ReadonlySet<string>,
   signal?: AbortSignal,
 ): Promise<WindowSample> => {
@@ -152,7 +95,7 @@ const sampleSession = async (
       signal,
     );
   else observations.unreadableWindowSamples += 1;
-  await sampleOpenFiles(observations, plan.roots);
+  await sampleOpenFiles(observations, plan.roots, signal);
   if (!observations.announced && observations.firstWindowMs !== null) {
     observations.announced = true;
     await plan.report(
@@ -168,8 +111,9 @@ const checkpointNow = (
   observations: SessionObservations,
   name: string,
   trigger: CheckpointTrigger,
+  atMs = observations.now(),
 ): Promise<void> =>
-  plan.checkpoint(name, trigger, observations.now(), {
+  plan.checkpoint(name, trigger, atMs, {
     openedFiles: new Set(observations.openedFiles.keys()),
     titles: [...observations.windows.values()]
       .filter((window) => window.application)
@@ -192,9 +136,16 @@ const requestCheckpoint = async (
     });
     return;
   }
-  const chosen = name ?? `checkpoint-${String(observations.now())}`;
+  const atMs = observations.now();
+  let chosen = name;
+  if (chosen === undefined) {
+    const base = `checkpoint-${String(atMs)}`;
+    chosen = base;
+    for (let suffix = 2; taken.has(chosen); suffix += 1)
+      chosen = `${base}-${String(suffix)}`;
+  }
   taken.add(chosen);
-  await checkpointNow(plan, observations, chosen, "request");
+  await checkpointNow(plan, observations, chosen, "request", atMs);
 };
 
 /**
@@ -345,7 +296,18 @@ const launch = async (
   runId: string,
   signal: AbortSignal,
 ) => {
-  const [command, ...arguments_] = plan.argv;
+  // An env wrapper can clear or overwrite the token supplied to its own
+  // process. Give the application the supervisor's token as the last
+  // assignment, without changing the recorded argv or the wrapper's options.
+  const argv =
+    plan.envProgramIndex === undefined
+      ? plan.argv
+      : plan.argv.toSpliced(
+          plan.envProgramIndex,
+          0,
+          `REA_PROCESS_RUN_ID=${runId}`,
+        );
+  const [command, ...arguments_] = argv;
   const spawned = await spawnOwnedProviderProcess({
     command: command ?? "",
     arguments: arguments_,

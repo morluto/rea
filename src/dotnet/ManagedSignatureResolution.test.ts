@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
@@ -14,23 +14,23 @@ import {
   methodGenericArity,
   readTypeDefinitions,
   type SignatureTypeName,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
 import { signature } from "../../tests/fixtures/managedSignature.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { compareManagedMembers } from "../domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { managedSignatureTypeNames } from "./ManagedSignatureTypeNames.js";
-import { metadataCodedIndexCoordinate } from "./ManagedMetadataHeaps.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
+import { metadataCodedIndexCoordinate } from "../domain/managed/managedMetadataHeaps.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 
 // A top-level type's name digest, as ManagedSignatureTypeNames forms it.
 const nameDigest = (name: string): Buffer => {
@@ -821,19 +821,16 @@ describe("comparison of edges to a TypeSpec-owned member", () => {
     },
   );
 
-  it("keeps historical target-row resolution unknown", () => {
+  it("refuses an edge that omits its target-row resolution", () => {
     const inspection = typeSpecMember(0x0a00_0001);
-    const historical = {
-      ...inspection,
-      call_edges: inspection.call_edges.map(
-        ({ target_row_resolved: _omitted, ...edge }) => edge,
-      ),
-    };
-    const comparison = compareManagedMembers(
-      { evidenceId: `ev_${"a".repeat(64)}`, result: historical },
-      { evidenceId: `ev_${"b".repeat(64)}`, result: historical },
-    );
-    expect(comparison.methods[0]?.status).toBe("unknown");
+    expect(
+      managedMemberInspectionSchema.safeParse({
+        ...inspection,
+        call_edges: inspection.call_edges.map(
+          ({ target_row_resolved: _omitted, ...edge }) => edge,
+        ),
+      }).success,
+    ).toBe(false);
   });
 
   it("compares a proven TypeSpec field row through the same owner", () => {

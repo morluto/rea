@@ -1,7 +1,7 @@
 import { types } from "node:util";
 import { z } from "zod";
 import { isImmutableJsonSnapshot } from "./immutableJson.js";
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Maximum JSON nesting accepted before recursive result cloning. */
 export const MAX_JSON_DEPTH = 1000;
@@ -14,6 +14,40 @@ export type JsonValue =
   | null
   | JsonValue[]
   | { [key: string]: JsonValue };
+
+/**
+ * Structural equality for admitted JSON. Object keys are unordered, array
+ * elements are ordered, and undefined is the sentinel for an absent root.
+ */
+export const equalJsonValues = (
+  left: JsonValue | undefined,
+  right: JsonValue | undefined,
+): boolean => {
+  if (left === right) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  )
+    return false;
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false;
+    for (let index = 0; index < left.length; index++)
+      if (!equalJsonValues(left[index], right[index])) return false;
+    return true;
+  }
+  if (Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  for (const key of keys)
+    if (
+      !Object.prototype.propertyIsEnumerable.call(right, key) ||
+      !equalJsonValues(left[key], right[key])
+    )
+      return false;
+  return true;
+};
 
 const immutableValidation = new WeakMap<object, string | undefined>();
 
@@ -29,6 +63,28 @@ export const jsonValueValidationIssue = (root: unknown): string | undefined => {
 function* ownEnumerableKeys(value: Record<string, unknown>): Generator<string> {
   for (const key in value) if (Object.hasOwn(value, key)) yield key;
 }
+
+function* jsonObjectValues(
+  record: Record<string, JsonValue>,
+): Generator<JsonValue> {
+  for (const key of ownEnumerableKeys(record)) yield record[key]!;
+}
+
+/** Check a validated value's nesting without queuing whole containers. */
+export const jsonValueExceedsDepth = (
+  root: JsonValue,
+  limit: number,
+): boolean => {
+  const levels: Iterator<JsonValue>[] = [[root].values()];
+  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
+    const next = level.next();
+    if (next.done === true) levels.pop();
+    else if (levels.length - 1 > limit) return true;
+    else if (Array.isArray(next.value)) levels.push(next.value.values());
+    else if (isRecord(next.value)) levels.push(jsonObjectValues(next.value));
+  }
+  return false;
+};
 
 /** Validate JSON in bounded steps; cache only authenticated immutable roots. */
 export function* jsonValueValidationSteps(
@@ -144,20 +200,24 @@ export function* jsonValueValidationSteps(
   }
 }
 
-const preserveJsonValue = (value: JsonValue): JsonValue => {
+const copyJsonValue = (
+  value: JsonValue,
+  borrowImmutable: boolean,
+): JsonValue => {
   const immutableCandidate: unknown = value;
-  if (isImmutableJsonSnapshot(immutableCandidate)) return value;
+  if (borrowImmutable && isImmutableJsonSnapshot(immutableCandidate))
+    return value;
   if (Array.isArray(value)) {
     const copy: JsonValue[] = [];
     for (let index = 0; index < value.length; index += 1)
-      copy.push(preserveJsonValue(value[index]!));
+      copy.push(copyJsonValue(value[index]!, borrowImmutable));
     return copy;
   }
   if (value !== null && typeof value === "object") {
     const copy: Record<string, JsonValue> = {};
     for (const key of ownEnumerableKeys(value))
       Object.defineProperty(copy, key, {
-        value: preserveJsonValue(value[key]!),
+        value: copyJsonValue(value[key]!, borrowImmutable),
         enumerable: true,
         configurable: true,
         writable: true,
@@ -166,6 +226,12 @@ const preserveJsonValue = (value: JsonValue): JsonValue => {
   }
   return value;
 };
+
+const preserveJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, true);
+
+const detachJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, false);
 
 const validatedJsonValue = z
   .unknown()
@@ -186,6 +252,14 @@ export const jsonValueSchema = z
   .transform(preserveJsonValue);
 jsonValueSchema._zod.toJSONSchema = () => ({});
 
+/** Parse bounded JSON into detached mutable copies, cloning sealed subtrees. */
+export const detachedJsonValueSchema = z
+  .unknown()
+  .nonoptional()
+  .pipe(validatedJsonValue)
+  .transform(detachJsonValue);
+detachedJsonValueSchema._zod.toJSONSchema = () => ({});
+
 /** Validate JSON that the current boundary exclusively owns, without a second full-tree copy. */
 export const ownedJsonValueSchema = z
   .unknown()
@@ -203,6 +277,11 @@ objectValidation._zod.toJSONSchema = objectProjection;
 /** JSON object boundary for caller-visible parameter maps. */
 export const jsonObjectSchema = jsonValueSchema.pipe(objectValidation);
 jsonObjectSchema._zod.toJSONSchema = objectProjection;
+
+/** Detached JSON object boundary for mutable caller exports. */
+export const detachedJsonObjectSchema =
+  detachedJsonValueSchema.pipe(objectValidation);
+detachedJsonObjectSchema._zod.toJSONSchema = objectProjection;
 
 /** Validate an exclusively owned JSON object while retaining its existing tree. */
 export const ownedJsonObjectSchema =

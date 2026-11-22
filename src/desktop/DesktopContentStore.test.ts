@@ -9,7 +9,7 @@ import type { DesktopPathState } from "../domain/desktop/desktopStateDiff.js";
 import { DesktopContentStore } from "./DesktopContentStore.js";
 import { walkHomeState } from "./HomeStateWalker.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 
 const sha256 = (text: string) =>

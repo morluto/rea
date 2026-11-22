@@ -113,6 +113,12 @@ export const createTestProcessRegistry = (
       const stderr: Buffer[] = [];
       child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
       child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+      let inputFailure: Error | undefined;
+      child.stdin.once("error", (error: NodeJS.ErrnoException) => {
+        // A child can reject input by exiting while the parent is writing.
+        // Keep its exit status and captured output as the command result.
+        if (error.code !== "EPIPE") inputFailure = error;
+      });
       if (input === undefined) child.stdin.end();
       else child.stdin.end(input);
 
@@ -175,6 +181,7 @@ export const createTestProcessRegistry = (
           cause: result,
         });
       }
+      if (inputFailure !== undefined) throw inputFailure;
       return result;
     },
     shutdown: async () => {

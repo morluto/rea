@@ -10,6 +10,7 @@ import {
   createEvidence,
   parseEvidence,
   type Evidence,
+  evidenceSubjectInput,
 } from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { functionComparisonResultSchema } from "../../../src/domain/functionComparisonSchemas.js";
@@ -66,16 +67,20 @@ const expectRejectedDimensionCitation = async (
     dimensions: original.dimensions.map(altered),
     changes: original.changes.map(altered),
   });
-  const invalid = createEvidence(undefined, comparison.provider, {
-    predicateType: comparison.predicate_type,
-    operation: comparison.operation,
-    parameters: comparison.parameters,
-    result,
-    confidence: comparison.confidence,
-    authority: comparison.authority,
-    limitations: comparison.limitations,
-    evidenceLinks: [main.evidence_id, another.evidence_id],
-  });
+  const invalid = createEvidence(
+    evidenceSubjectInput(comparison.subject),
+    comparison.provider,
+    {
+      predicateType: comparison.predicate_type,
+      operation: comparison.operation,
+      parameters: comparison.parameters,
+      result,
+      confidence: comparison.confidence,
+      authority: comparison.authority,
+      limitations: comparison.limitations,
+      evidenceLinks: [main.evidence_id, another.evidence_id],
+    },
+  );
   const response = await client.callTool({
     name: "find_changed_behavior",
     arguments: { comparisons: [invalid] },
@@ -149,19 +154,23 @@ it.each(["compact"] as const)(
         ]),
       },
     });
-    const contradictory = createEvidence(undefined, comparison.provider, {
-      predicateType: comparison.predicate_type,
-      operation: comparison.operation,
-      parameters: {
-        left_evidence_id: main.evidence_id,
-        right_evidence_id: another.evidence_id,
+    const contradictory = createEvidence(
+      evidenceSubjectInput(comparison.subject),
+      comparison.provider,
+      {
+        predicateType: comparison.predicate_type,
+        operation: comparison.operation,
+        parameters: {
+          left_evidence_id: main.evidence_id,
+          right_evidence_id: another.evidence_id,
+        },
+        result: comparison.normalized_result,
+        confidence: comparison.confidence,
+        authority: comparison.authority,
+        limitations: comparison.limitations,
+        evidenceLinks: [main.evidence_id, another.evidence_id],
       },
-      result: comparison.normalized_result,
-      confidence: comparison.confidence,
-      authority: comparison.authority,
-      limitations: comparison.limitations,
-      evidenceLinks: [main.evidence_id, another.evidence_id],
-    });
+    );
     const contradictoryBehavior = await client.callTool({
       name: "find_changed_behavior",
       arguments: { comparisons: [contradictory] },

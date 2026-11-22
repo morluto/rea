@@ -1,5 +1,9 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import type { Evidence } from "../evidence.js";
+import {
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
+  type Evidence,
+} from "../evidence.js";
 import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
@@ -50,11 +54,12 @@ export const parseStaticLayer = (
     },
     evidencePath,
   );
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidInput(
       [...evidencePath, "subject"],

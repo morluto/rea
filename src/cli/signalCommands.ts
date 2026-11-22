@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 
 import type { SignalRecordingService } from "../application/signals/SignalRecordingService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createSignalRecordingService } from "../composition/signals.js";
 import { SIGNAL_TOOL_CONTRACTS } from "../contracts/signals/signalToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -28,7 +27,6 @@ export const registerSignalCommands = (
     logger,
     contractNamed(SIGNAL_TOOL_CONTRACTS, "inspect_signal_decoders"),
     {
-      command: CLI_COMMANDS.inspectSignalDecoders,
       description: "Search installed sigrok decoders or selected decoder help",
       jsonText: ["producer_limits"],
       nullFlags: {
@@ -55,7 +53,6 @@ export const registerSignalCommands = (
     logger,
     contractNamed(SIGNAL_TOOL_CONTRACTS, "decode_signal_recording"),
     {
-      command: CLI_COMMANDS.decodeSignalRecording,
       description:
         "Decode an existing signal recording with caller-supplied sigrok",
       positionals: ["path"],

@@ -10,15 +10,17 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { DECOMPILE_DIRECTORY_JOURNAL_NAME } from "../../contracts/decompileDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
@@ -27,7 +29,7 @@ import {
   stableFileHashCause,
 } from "../../filesystem/StableFileHash.js";
 import type { OwnedLease } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 
 /** Publication committed before its staging cleanup failed. */
 export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
@@ -200,11 +202,11 @@ export class ExportResources {
     return closed.ok
       ? err(error)
       : err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             error,
             closed.error,
             "decompile_all",
-          ).bindCleanupDependencies([closed.error]),
+          ),
         );
   }
 

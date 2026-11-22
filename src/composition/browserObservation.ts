@@ -1,4 +1,4 @@
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
 import { CdpBrowserProvider } from "../browser/CdpBrowserProvider.js";
 import type { WebBundleAnalysisAdmission } from "../browser/IsolatedWebBundleAnalyzer.js";
 import { resolveJavaScriptMemberMutationAllowance } from "../config/javascriptMemberMutationAllowance.js";

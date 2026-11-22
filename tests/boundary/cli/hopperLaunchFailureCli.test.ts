@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 
 const FAILED_LAUNCHER = `#!/bin/sh
 printf 'Cannot launch Hopper!\\nDocument state is unknown.\\n' >&2

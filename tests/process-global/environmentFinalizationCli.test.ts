@@ -5,7 +5,7 @@ import type { ServedEnvironment } from "../../src/server/environment/serveEnviro
 import type { ServeStreamableHttpOptions } from "../../src/server/http/serveStreamableHttp.js";
 import { StreamableHttpListenError } from "../../src/server/http/streamableHttpListenError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
+import { phaseArrival } from "../support/lifecycleHarness.js";
 import { writeEnvironmentServeFiles } from "../fixtures/environmentServe.js";
 
 const control = vi.hoisted(() => ({
@@ -102,11 +102,8 @@ it.each([
     );
     const originalExitCode = process.exitCode;
     const originalListeners = new Set(process.listeners("SIGINT"));
-    let ready!: () => void;
-    const started = new Promise<void>((resolve) => {
-      ready = resolve;
-    });
-    control.ready = ready;
+    const startup = phaseArrival();
+    control.ready = () => startup.arrive();
     control.served = undefined;
     control.failClose = fails;
     control.closeCalls = 0;
@@ -131,7 +128,7 @@ it.each([
       },
     );
     try {
-      await awaitAcknowledgement(started, pending, "environment CLI startup");
+      await startup.reached(pending, "environment CLI startup");
       const served = observedEnvironment();
       if (served === undefined) throw new Error("Environment was not admitted");
       if (ending === "signal") {

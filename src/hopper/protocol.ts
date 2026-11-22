@@ -1,9 +1,10 @@
 import { z } from "zod";
 
 import {
+  HOPPER_DIAGNOSTIC_TYPES,
   HopperProtocolError,
   HopperRemoteError,
-} from "../domain/hopperErrors.js";
+} from "./HopperErrors.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -13,15 +14,7 @@ const remoteErrorSchema = z
   .object({
     code: z.int(),
     message: z.string(),
-    type: z
-      .enum([
-        "remote",
-        "authorization",
-        "invalid_request",
-        "capability_unavailable",
-        "bridge_exception",
-      ])
-      .default("remote"),
+    type: z.enum(HOPPER_DIAGNOSTIC_TYPES).default("remote"),
   })
   .strict();
 

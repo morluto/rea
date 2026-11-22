@@ -15,7 +15,7 @@ import { sqliteDatabaseCapability } from "./sqlite/SqliteDatabaseCapability.js";
 import type {
   OptionalProviderLoadFailures,
   OptionalProviderLoadFailure,
-} from "./OptionalObservationProviders.js";
+} from "../ports/OptionalObservationProviders.js";
 import type {
   CommandProviderLaunchFailures,
   ReverseEngineeringOperation,
@@ -36,7 +36,6 @@ import {
 } from "../contracts/toolOutputSchemaPrimitives.js";
 import {
   annotationsFromEffects,
-  toolSessionEffects,
   type ToolEffects,
 } from "../contracts/toolEffects.js";
 import type { ToolKind } from "../contracts/toolContractTypes.js";
@@ -49,8 +48,8 @@ import { isMachOFormat } from "../domain/binaryTargetTypes.js";
 import type {
   AnalysisOperation,
   ProviderAvailability,
-} from "./AnalysisProvider.js";
-import type { JebAnalysisAvailability } from "./jeb/JebAnalysisPort.js";
+} from "../ports/AnalysisProvider.js";
+import type { JebAnalysisAvailability } from "../ports/jeb/JebAnalysisPort.js";
 import { FRIDA_TOOL_CONTRACTS } from "../contracts/fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
@@ -59,8 +58,8 @@ import {
   cleanupRetryRemediation,
   type AnalysisCleanupRetry,
 } from "../domain/analysisErrorRecovery.js";
-import { isBundleResourceOperation } from "./binary/BundleResourceSession.js";
 import { offeredOperationAlternatives } from "./OperationAlternatives.js";
+import { isBundleResourceOperation } from "../ports/BundleResourceOperations.js";
 
 const FRIDA_OPERATION_NAMES: ReadonlySet<string> = new Set(
   FRIDA_TOOL_CONTRACTS.map(({ name }) => name),
@@ -349,7 +348,7 @@ export const buildCapabilityInventory = (
     });
     const effects = composedEffects(
       contract.name,
-      toolSessionEffects(contract.name),
+      contract.sessionEffects,
       status.capabilities,
     );
     const annotations = annotationsFromEffects(effects);
@@ -600,7 +599,7 @@ const workflowAvailabilityFor = (
                 : "provider_missing",
           remediation:
             policy.androidAnalysisAvailability?.remediation ??
-            "Set REA_JADX_MCP_JAR to the jadx-headless-mcp 0.7.1 release JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
+            "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp JAR (rea doctor --provider jadx names its download URL and SHA-256) and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
         };
   if (kind === "adb-provider")
     return ownerProbeAvailability(

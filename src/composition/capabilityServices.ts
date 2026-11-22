@@ -1,11 +1,17 @@
-import type { OptionalProviderLoadFailures } from "../application/OptionalObservationProviders.js";
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
+import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
   selectWiresharkTool,
 } from "../pcap/PcapConfiguration.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
-import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
+import type {
+  CapabilityAvailabilityFacts,
+  OptionalAvailabilityFeatures,
+} from "../application/CapabilityAvailability.js";
 import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclarationId,
@@ -26,22 +32,25 @@ import {
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
 import { createV8CodeCacheService } from "./v8CodeCache.js";
+import { createMavenGradleMetadataService } from "./mavenGradleMetadata.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
+import { createNugetNupkgService } from "./nugetNupkg.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
 import { createWebRuntimeService } from "./webRuntime.js";
 import { createJavaScriptRecoveryProvider } from "./javascriptRecovery.js";
 import { wakaruHostSupported } from "../javascript/recovery/WakaruCommand.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { createReverseEngineeringService } from "./reverseEngineering.js";
 import type {
   ReverseEngineeringService,
@@ -76,10 +85,13 @@ import {
   createBinaryLayoutService,
   createDevicetreeService,
   createElfNotesService,
+  createDwarfUnitsService,
+  createElfDebugLinkService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
   createKernelModuleService,
+  createElfDependenciesService,
   createKernelBuildConfigService,
 } from "./binaryDiagnostics.js";
 import { pwntoolsHostSupported } from "../native/pwntools/PwntoolsDecoder.js";
@@ -95,27 +107,29 @@ import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
-import type { BrowserObservationPort } from "../application/BrowserObservationPort.js";
-import type { BrowserScenarioCapturePort } from "../application/BrowserScenarioCapturePort.js";
-import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
-import type { ElectronObservationPort } from "../application/javascript/ElectronObservationPort.js";
-import type { JavaScriptRuntimeObservationPort } from "../application/javascript/JavaScriptRuntimeObservationPort.js";
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
+import type { BrowserScenarioCapturePort } from "../ports/BrowserScenarioCapturePort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { JavaScriptRuntimeObservationPort } from "../ports/javascript/JavaScriptRuntimeObservationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { WebModuleTraceService } from "../application/WebModuleTraceService.js";
 import type { WebSourceLocationService } from "../application/WebSourceLocationService.js";
 import type { WebRuntimeService } from "../application/WebRuntimeService.js";
 import type { WebNetworkCaptureService } from "../application/WebNetworkCaptureService.js";
-import type { JavaScriptRecoveryPort } from "../application/javascript/JavaScriptRecoveryPort.js";
-import type { FirmwareAnalysisPort } from "../application/firmware/FirmwareAnalysisPort.js";
-import type { AndroidAnalysisPort } from "../application/android/AndroidAnalysisPort.js";
+import type { JavaScriptRecoveryPort } from "../ports/javascript/JavaScriptRecoveryPort.js";
+import type { FirmwareAnalysisPort } from "../ports/firmware/FirmwareAnalysisPort.js";
+import type { AndroidAnalysisPort } from "../ports/android/AndroidAnalysisPort.js";
 import type { ApktoolResourceAnalysisPort } from "../application/apktool/ApktoolResourceAnalysisPort.js";
 import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
 import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
 import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
@@ -134,10 +148,13 @@ export interface CapabilityServiceOptions {
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
+  readonly nugetNupkg?: NugetNupkgService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
+  readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -187,7 +204,7 @@ export interface CapabilityHostContext {
   readonly settings: AnalysisSettingsReader;
   readonly options: CapabilityServiceOptions;
   readonly platform: NodeJS.Platform;
-  readonly arch: string;
+  readonly arch: NodeJS.Architecture;
 }
 
 interface CapabilityInstance<Value> {
@@ -257,8 +274,9 @@ const modules = {
     apkSignatureModule.create(environment, options.apkSignature),
   ),
   evmInterface: service(
-    ({ environment, options }) =>
-      options.evmInterface ?? evmInterfaceModule.create(environment),
+    ({ environment, options, platform, arch }) =>
+      options.evmInterface ??
+      evmInterfaceModule.create(environment, { platform, architecture: arch }),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
         evmInterface: outsideHost(
@@ -277,7 +295,7 @@ const modules = {
         : {
             probes: {
               evmLimiterAvailability: (signal: AbortSignal) =>
-                evmLimiterAvailability(environment, { signal }),
+                evmLimiterAvailability(environment, { platform, arch, signal }),
             },
           }),
     }),
@@ -287,8 +305,9 @@ const modules = {
       options.sqliteDatabase ?? createSqliteDatabaseService(environment),
   ),
   binaryLayout: service(
-    ({ environment, options }) =>
-      options.binaryLayout ?? createBinaryLayoutService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.binaryLayout ??
+      createBinaryLayoutService(environment, { platform, architecture: arch }),
     (context) => ({
       hostUnsupported: {
         binaryLayout: outsideHost(
@@ -304,8 +323,12 @@ const modules = {
     }),
   ),
   recordedCrash: service(
-    ({ environment, options }) =>
-      options.recordedCrash ?? createRecordedCrashService(environment),
+    ({ environment, options, platform, arch }) =>
+      options.recordedCrash ??
+      createRecordedCrashService(environment, {
+        platform,
+        architecture: arch,
+      }),
     (context) => ({
       hostUnsupported: {
         recordedCrash: outsideHost(
@@ -340,6 +363,7 @@ const modules = {
     ({ providerEnvironment, options }) =>
       new DesktopBuildComputers(
         providerEnvironment,
+        readHostFile,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
         options.desktopBuildStartTiming,
@@ -358,6 +382,10 @@ const modules = {
   v8CodeCache: service(
     ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),
   ),
+  mavenGradleMetadata: service(
+    ({ options }) =>
+      options.mavenGradleMetadata ?? createMavenGradleMetadataService(),
+  ),
   modelArtifact: service(() => createModelArtifactService()),
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
   il2cppMetadata: service(
@@ -367,10 +395,13 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  dwarfUnits: service(() => createDwarfUnitsService()),
+  elfDebugLink: service(() => createElfDebugLinkService()),
   nativeInitializers: service(() => createNativeInitializersService()),
   elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
   kernelModule: service(() => createKernelModuleService()),
+  elfDependencies: service(() => createElfDependenciesService()),
   kernelBuildConfig: service(() => createKernelBuildConfigService()),
   peLoadConfig: service(() => createPeLoadConfigService()),
   binaryHardening: service(() => createBinaryHardeningService()),
@@ -386,15 +417,21 @@ const modules = {
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
   ),
+  nugetNupkg: service(
+    ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
+  ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>
       options.webNetworkCapture ??
       createWebNetworkCaptureService(environment, settings),
   ),
   javascriptRecovery: capability(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       options.javascriptRecovery ??
-      createJavaScriptRecoveryProvider(environment),
+      createJavaScriptRecoveryProvider(environment, undefined, {
+        platform,
+        architecture: arch,
+      }),
     (value) => value.close?.() ?? Promise.resolve(),
     ({ environment, options, platform, arch }) => ({
       hostUnsupported: {
@@ -421,9 +458,13 @@ const modules = {
     }),
   ),
   firmwareAnalysis: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform, arch }) =>
       new FirmwareAnalysisService(
-        options.firmwareAnalysis ?? createFirmwareAnalysisProvider(environment),
+        options.firmwareAnalysis ??
+          createFirmwareAnalysisProvider(environment, undefined, {
+            platform,
+            architecture: arch,
+          }),
       ),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
@@ -448,8 +489,15 @@ const modules = {
       },
     }),
   ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
+  ),
   gdbSessions: capability(
-    ({ providerEnvironment }) => createGdbSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createGdbSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
     ({ platform }) => ({
       hostUnsupported: {
@@ -458,8 +506,8 @@ const modules = {
     }),
   ),
   rizinDebugSessions: capability(
-    ({ providerEnvironment }) =>
-      createRizinDebugSessionManager(providerEnvironment),
+    ({ providerEnvironment, platform }) =>
+      createRizinDebugSessionManager(providerEnvironment, { platform }),
     (value) => value.closeAll(),
   ),
   android: service(
@@ -474,8 +522,8 @@ const modules = {
     }),
   ),
   pcap: service(
-    ({ environment, options }) =>
-      options.pcapAnalysis ?? createPcapAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.pcapAnalysis ?? createPcapAnalysisProvider(environment, platform),
     ({ options, platform }) => ({
       hostUnsupported: {
         pcapCapture: outsideHost(
@@ -503,8 +551,9 @@ const modules = {
     }),
   ),
   packetCapture: service(
-    ({ environment, options }) =>
-      options.packetCapture ?? createPacketCaptureService(environment),
+    ({ environment, options, platform }) =>
+      options.packetCapture ??
+      createPacketCaptureService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         packetCapture: outsideHost(
@@ -512,16 +561,18 @@ const modules = {
           tsharkHostSupported(platform),
         ),
       },
-      optionalFeatures: {
+      // Probe PATH only when `binary_session` queries default availability.
+      observeOptionalFeatures: () => ({
         packetCaptureEnabled:
           options.packetCapture !== undefined ||
           (tsharkHostSupported(platform) && tsharkLocatable(environment)),
-      },
+      }),
     }),
   ),
   signalRecording: service(
-    ({ environment, options }) =>
-      options.signalRecording ?? createSignalRecordingService(environment),
+    ({ environment, options, platform }) =>
+      options.signalRecording ??
+      createSignalRecordingService(environment, platform),
     ({ environment, options, platform }) => ({
       hostUnsupported: {
         signalRecording: outsideHost(
@@ -542,9 +593,9 @@ const modules = {
     (value) => value.provider.close?.() ?? Promise.resolve(),
   ),
   apktool: service(
-    ({ environment, options }) =>
+    ({ environment, options, platform }) =>
       options.apktoolAnalysis ??
-      createApktoolResourceAnalysisProvider(environment),
+      createApktoolResourceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         apktoolAnalysisAvailability: (signal: AbortSignal) =>
@@ -563,8 +614,9 @@ const modules = {
     }),
   ),
   adbDevice: service(
-    ({ environment, options }) =>
-      options.adbDeviceAnalysis ?? createAdbDeviceAnalysisProvider(environment),
+    ({ environment, options, platform }) =>
+      options.adbDeviceAnalysis ??
+      createAdbDeviceAnalysisProvider(environment, platform),
     (_context, value) => ({
       probes: {
         adbAnalysisAvailability: (signal: AbortSignal) =>
@@ -652,6 +704,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
   const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
+  const optionalFeatureObservers: (() => Partial<OptionalAvailabilityFeatures>)[] =
+    [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -676,6 +730,9 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
         instance.availability?.observeCommandProviderFailures;
       if (observeCommandFailure !== undefined)
         commandFailureObservers.push(observeCommandFailure);
+      const observeOptional = instance.availability?.observeOptionalFeatures;
+      if (observeOptional !== undefined)
+        optionalFeatureObservers.push(observeOptional);
       return [
         id,
         instance.ownership === "host"
@@ -692,6 +749,15 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    observeOptionalFeatures: (): Partial<OptionalAvailabilityFeatures> =>
+      Object.assign(
+        {},
+        ...optionalFeatureObservers.map((observe) => observe()),
+      ),
+    createManagedBinarySession: async () => {
+      const { createManagedBinarySession } = await import("./binary.js");
+      return createManagedBinarySession();
+    },
     close: () => scope.close(),
   };
 };

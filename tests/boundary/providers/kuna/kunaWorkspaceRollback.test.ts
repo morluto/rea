@@ -18,7 +18,7 @@ import { ExecFileOutputCancelledError } from "../../../../src/process/ExecFileOu
 import { PrivateRuntimeRoot } from "../../../../src/process/PrivateRuntimeRoot.js";
 import { ProviderCleanupError } from "../../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 import { session } from "./kunaSessionFixture.js";
 import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
@@ -93,14 +93,7 @@ it.each(["clean", "refuse"] as const)(
     const commands = new KunaTargetCommands(fixture.target, {
       signal: lifetime.signal,
     });
-    let entered!: () => void;
-    let release!: () => void;
-    const started = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    const workspaceRollback = phaseGate();
     const create = PrivateRuntimeRoot.create;
     let holdFailures = mode === "refuse";
     let rootClose: ReturnType<typeof vi.spyOn> | undefined;
@@ -110,8 +103,7 @@ it.each(["clean", "refuse"] as const)(
         const root = await create(options);
         const close = root.close.bind(root);
         rootClose = vi.spyOn(root, "close").mockImplementation(async () => {
-          entered();
-          await gate;
+          await workspaceRollback.hold();
           if (holdFailures) throw new Error("controlled finalization refusal");
           await close();
         });
@@ -129,7 +121,7 @@ it.each(["clean", "refuse"] as const)(
     );
     let closing: ReturnType<typeof commands.close> | undefined;
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, pending, "workspace rollback");
+      await workspaceRollback.reached(pending, "workspace rollback");
       lifetime.abort({ caller: "shutdown during rollback" });
       closing = commands.close();
       let closed = false;
@@ -144,7 +136,7 @@ it.each(["clean", "refuse"] as const)(
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
       expect(closed).toBe(false);
-      release();
+      workspaceRollback.release();
       const result = await pending;
       if (result.ok) throw new Error("Expected changed-target failure");
       expect(result.error.cleanupIncomplete).toBe(mode === "refuse");
@@ -160,7 +152,7 @@ it.each(["clean", "refuse"] as const)(
     }, [
       () => {
         holdFailures = false;
-        release();
+        workspaceRollback.release();
       },
       async () => {
         await pending;

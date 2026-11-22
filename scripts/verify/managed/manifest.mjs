@@ -2,26 +2,60 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import {
   readManagedSnapshot,
   verifyManagedSourceIdentity,
-} from "../../../dist/dotnet/ManagedSnapshot.js";
+} from "#dist/dotnet/ManagedSnapshot.js";
 import { withVerifierArtifactScope } from "../../lib/verifier-artifact-scope.mjs";
 
-import { parseBinaryTarget } from "../../../dist/application/BinaryTargetResolver.js";
-import { inspectManagedArtifactBytes } from "../../../dist/dotnet/ManagedArtifactInspector.js";
-import { inspectManagedMembersBytes } from "../../../dist/dotnet/ManagedMemberInspector.js";
-import { projectManagedApplicationGraphEvidence } from "../../../dist/application/managed/ManagedApplicationGraphService.js";
-import { traceApplicationFeatureEvidence } from "../../../dist/application/javascript/JavaScriptApplicationWorkflowService.js";
-import { createEvidence } from "../../../dist/domain/evidence.js";
-import { MANAGED_STATIC_PROVIDER } from "../../../dist/domain/investigationProviders.js";
+import { parseBinaryTarget } from "#dist/application/BinaryTargetResolver.js";
+import { inspectManagedArtifactBytes } from "#dist/dotnet/ManagedArtifactInspector.js";
+import { inspectManagedMembersBytes } from "#dist/dotnet/ManagedMemberInspector.js";
+import { projectManagedApplicationGraphEvidence } from "#dist/application/managed/ManagedApplicationGraphService.js";
+import { traceApplicationFeatureEvidence } from "#dist/application/javascript/JavaScriptApplicationWorkflowService.js";
+import { createEvidence } from "#dist/domain/evidence.js";
+import { MANAGED_STATIC_PROVIDER } from "#dist/domain/investigationProviders.js";
+import { managedApplicationGraphResultSchema } from "#dist/domain/managed/managedApplicationGraph.js";
 import {
   ensure,
   methodTokenRow,
   parseManagedAppManifest,
 } from "./manifest-parser.mjs";
 
+/** @typedef {import("#dist/domain/binaryTargetTypes.js").BinaryTarget} BinaryTarget */
+/** @typedef {import("#dist/resources/ArtifactResourceScope.js").ArtifactResourceScope} ArtifactResourceScope */
+/** @typedef {import("#dist/domain/evidence.js").Evidence} Evidence */
+/** @typedef {ReturnType<typeof inspectManagedArtifactBytes>} ManagedArtifactInspection */
+/** @typedef {ReturnType<typeof inspectManagedMembersBytes>["methods"][number]} ManagedMethod */
+/** @typedef {import("./manifest-parser.mjs").ManagedAppManifest} ManagedAppManifest */
+/** @typedef {import("./manifest-parser.mjs").ManagedAppManifestMethod} ManagedAppManifestMethod */
+/** @typedef {import("./manifest-parser.mjs").ManagedAppManifestGraph} ManagedAppManifestGraph */
+/**
+ * One manifest method's application graph projection.
+ * @typedef {{
+ *   readonly method: ManagedMethod;
+ *   readonly evidence: Evidence;
+ *   readonly nodeKinds: readonly string[];
+ *   readonly summary: import("zod").output<typeof managedApplicationGraphResultSchema>["summary"];
+ * }} ManifestMethodProjection
+ */
+/**
+ * Inputs shared by the graph projections of one verified target.
+ * @typedef {{
+ *   readonly graphByToken: Map<string, ManifestMethodProjection>;
+ *   readonly inspectedMethods: ReadonlyMap<string, ManagedMethod>;
+ *   readonly bytes: Buffer;
+ *   readonly target: BinaryTarget;
+ *   readonly artifact: ManagedArtifactInspection;
+ * }} ProjectionState
+ */
+
 // Preserve fs.readFile admission: Node internal kIoMaxLength is 2 GiB minus one.
 // https://nodejs.org/api/errors.html#err_fs_file_too_large
 const READ_FILE_MAX_BYTES = 0x7fff_ffff;
 
+/**
+ * Verify a caller-selected managed app manifest against its target.
+ * @param {unknown} rawManifest
+ * @param {string} manifestPath Resolves a relative target path.
+ */
 export async function verifyManagedAppManifest(rawManifest, manifestPath) {
   return withVerifierArtifactScope((resources) =>
     resources.run(() =>
@@ -30,6 +64,11 @@ export async function verifyManagedAppManifest(rawManifest, manifestPath) {
   );
 }
 
+/**
+ * @param {unknown} rawManifest
+ * @param {string} manifestPath
+ * @param {ArtifactResourceScope} resources
+ */
 async function verifyManifestSnapshot(rawManifest, manifestPath, resources) {
   const manifest = parseManagedAppManifest(rawManifest);
   const targetPath = isAbsolute(manifest.target.path)
@@ -93,6 +132,10 @@ async function verifyManifestSnapshot(rawManifest, manifestPath, resources) {
   };
 }
 
+/**
+ * @param {ManagedAppManifest} manifest
+ * @param {ManagedArtifactInspection} artifact
+ */
 function verifyManifestTarget(manifest, artifact) {
   ensure(
     artifact.classification.status === "managed",
@@ -121,9 +164,15 @@ function verifyManifestTarget(manifest, artifact) {
     );
 }
 
+/**
+ * @param {ManagedAppManifest} manifest
+ * @param {Buffer} bytes
+ * @param {BinaryTarget} target
+ */
 function verifyManifestMethods(manifest, bytes, target) {
   const methods = [];
   let assertions = 0;
+  /** @type {Map<string, ManagedMethod>} */
   const inspectedMethods = new Map();
   for (const expectedMethod of manifest.methods) {
     const method = inspectManagedMethodByToken(bytes, target, expectedMethod);
@@ -160,6 +209,16 @@ function verifyManifestMethods(manifest, bytes, target) {
   return { methods, inspectedMethods, assertions };
 }
 
+/**
+ * @param {{
+ *   readonly graphManifest: ManagedAppManifestGraph;
+ *   readonly bytes: Buffer;
+ *   readonly target: BinaryTarget;
+ *   readonly artifact: ManagedArtifactInspection;
+ *   readonly manifestMethods: readonly ManagedAppManifestMethod[];
+ *   readonly inspectedMethods: ReadonlyMap<string, ManagedMethod>;
+ * }} options
+ */
 function verifyManagedAppManifestApplicationGraph({
   graphManifest,
   bytes,
@@ -168,6 +227,7 @@ function verifyManagedAppManifestApplicationGraph({
   manifestMethods,
   inspectedMethods,
 }) {
+  /** @type {Map<string, ManifestMethodProjection>} */
   const graphByToken = new Map();
   const projectionState = {
     graphByToken,
@@ -242,6 +302,11 @@ function verifyManagedAppManifestApplicationGraph({
   };
 }
 
+/**
+ * @param {ProjectionState} state
+ * @param {string} token
+ * @returns {ManifestMethodProjection}
+ */
 const projectManifestMethod = (state, token) => {
   const existing = state.graphByToken.get(token);
   if (existing !== undefined) return existing;
@@ -286,20 +351,25 @@ const projectManifestMethod = (state, token) => {
     projected.ok,
     `application graph projection failed for method ${token}`,
   );
+  // Read the projection through the managed graph owner's result schema.
+  const graph = managedApplicationGraphResultSchema.parse(
+    projected.value.normalized_result,
+  );
   const projection = {
     method,
     evidence: projected.value,
-    nodeKinds: [
-      ...new Set(
-        projected.value.normalized_result.graph.nodes.map(({ kind }) => kind),
-      ),
-    ].sort(),
-    summary: projected.value.normalized_result.summary,
+    nodeKinds: [...new Set(graph.graph.nodes.map(({ kind }) => kind))].sort(),
+    summary: graph.summary,
   };
   state.graphByToken.set(token, projection);
   return projection;
 };
 
+/**
+ * @param {Buffer} bytes
+ * @param {BinaryTarget} target
+ * @param {ManagedAppManifestMethod} expectedMethod
+ */
 function inspectManagedMethodByToken(bytes, target, expectedMethod) {
   const members = inspectManagedMethodPageByToken(
     bytes,
@@ -320,6 +390,11 @@ function inspectManagedMethodByToken(bytes, target, expectedMethod) {
   return method;
 }
 
+/**
+ * @param {Buffer} bytes
+ * @param {BinaryTarget} target
+ * @param {string} token
+ */
 function inspectManagedMethodPageByToken(bytes, target, token) {
   const row = methodTokenRow(token);
   return inspectManagedMembersBytes(bytes, target, {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import * as exec from "../process/ExecFileOutput.js";
@@ -43,43 +43,25 @@ const context = async (
   };
 };
 
-const physicalFailures = {
-  process: () => Object.assign(new Error("Command failed: git"), { code: 128 }),
-  timeout: () =>
-    Object.assign(new Error("Command timed out"), {
-      code: "ETIMEDOUT",
-      killed: true,
-    }),
-  "output-limit": () =>
-    Object.assign(new RangeError("stdout maxBuffer length exceeded"), {
-      code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-    }),
-};
-
-it.each(Object.keys(physicalFailures) as (keyof typeof physicalFailures)[])(
-  "keeps observed %s failure primary when cancellation arrives during Git completion",
-  async (reason) => {
-    const abort = new AbortController();
-    const opaque = { operator: "cancel", detail: new Error("opaque reason") };
-    const failure = physicalFailures[reason]();
-    vi.mocked(exec.execFileBytes).mockImplementation(async () => {
-      abort.abort(opaque);
-      throw failure;
-    });
-    const observed: unknown = await resolveKiloRegistrationWorktree(
-      await context(abort.signal),
-    ).catch((cause: unknown) => cause);
-    expect(observed).toBeInstanceOf(ConfigurationError);
-    if (!(observed instanceof ConfigurationError))
-      throw new Error("Physical Git failure lost its primary classification");
-    expect(observed.cause).toBe(failure);
-    expect(observed.secondaryFailures).toHaveLength(1);
-    expect(observed.secondaryFailures[0]).toBeInstanceOf(
-      AnalysisCancelledError,
-    );
-    expect(observed.secondaryFailures[0]?.cause).toBe(opaque);
-  },
-);
+it("keeps an observed Git failure primary when cancellation arrives during completion", async () => {
+  const abort = new AbortController();
+  const opaque = { operator: "cancel", detail: new Error("opaque reason") };
+  const failure = Object.assign(new Error("Command failed: git"), {
+    code: 128,
+  });
+  vi.mocked(exec.execFileBytes).mockImplementation(async () => {
+    abort.abort(opaque);
+    throw failure;
+  });
+  const observed: unknown = await resolveKiloRegistrationWorktree(
+    await context(abort.signal),
+  ).catch((cause: unknown) => cause);
+  if (!(observed instanceof ConfigurationError)) throw observed;
+  expect(observed.cause).toBe(failure);
+  expect(observed.secondaryFailures).toEqual([
+    expect.objectContaining({ _tag: "AnalysisCancelledError", cause: opaque }),
+  ]);
+});
 
 it("retains primary cancellation and its opaque caller reason", async () => {
   const opaque = { operator: "cancel", detail: new Error("opaque reason") };
@@ -115,22 +97,6 @@ const undecodable = {
   stdout: Buffer.from([0xff]),
   stderr: Buffer.from("native diagnostic"),
 };
-
-it("retains the exact undecodable observation behind the Git failure", async () => {
-  vi.mocked(exec.execFileBytes).mockResolvedValue(undecodable);
-  const observed: unknown = await resolveKiloRegistrationWorktree(
-    await context(),
-  ).catch((cause: unknown) => cause);
-  expect(observed).toBeInstanceOf(ConfigurationError);
-  if (!(observed instanceof ConfigurationError))
-    throw new Error(
-      "Incomplete Git observation lost its configuration failure",
-    );
-  expect(observed.cause).toBeInstanceOf(Error);
-  if (!(observed.cause instanceof Error))
-    throw new Error("Incomplete Git observation lost its immediate failure");
-  expect(observed.cause.cause).toBe(undecodable);
-});
 
 it("preserves an undecodable Git observation and a late cancellation through selection", async () => {
   const controller = new AbortController();

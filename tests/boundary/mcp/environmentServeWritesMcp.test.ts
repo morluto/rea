@@ -36,6 +36,7 @@ import {
   jsonObjectSchema,
   type JsonValue,
 } from "../../../src/domain/jsonValue.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 /** The book the first served create of "Boundary Book" makes: one second past the served clock's start. */
 const BOUNDARY_BOOK = book(3, "Boundary Book", bookClock(13));
@@ -123,7 +124,10 @@ processTest(
     await expect(
       rpc("data/add", { parts: [{ kind: "data", data: document }] }),
     ).resolves.toMatchObject({ result: {} });
-    const client = new Client({ name: "own-keys-writes", version: "1" });
+    const client = new Client(
+      { name: "own-keys-writes", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       for (const [tool, args, name, id] of [
@@ -177,7 +181,10 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({ name: "write-views", version: "1" });
+    const client = new Client(
+      { name: "write-views", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -262,10 +269,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "write-schema-defaults",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "write-schema-defaults",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -372,7 +382,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "environment-writes", version: "1" });
+      const client = new Client(
+        { name: "environment-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         const { tools } = await client.listTools();
@@ -460,7 +473,10 @@ describe("rea environment-serve write tools", () => {
         "--port",
         "0",
       ]);
-      const client = new Client({ name: "raw-utf16-writes", version: "1" });
+      const client = new Client(
+        { name: "raw-utf16-writes", version: "1" },
+        { jsonSchemaValidator: createMcpSchemaValidation() },
+      );
       await client.connect(new StreamableHTTPClientTransport(started.url));
       try {
         for (const id of [3, 4]) {
@@ -525,10 +541,13 @@ processTest(
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "bulk-response-verification",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "bulk-response-verification",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();
@@ -626,10 +645,13 @@ processTest.for([
       "--port",
       "0",
     ]);
-    const client = new Client({
-      name: "contradictory-reference",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "contradictory-reference",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     await client.connect(new StreamableHTTPClientTransport(started.url));
     try {
       const { tools } = await client.listTools();

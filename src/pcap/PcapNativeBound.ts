@@ -20,6 +20,7 @@ import type { ArtifactAnalysisResources } from "../process/ArtifactAnalysisResou
 import { prlimitCeilingArguments } from "../process/LinuxResourceLimits.js";
 import type { runPcapCommand } from "./PcapCommand.js";
 import type { ArtifactCommandPath } from "../process/ArtifactCommandPath.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const PRLIMIT_COMMAND_ENV = "REA_TSHARK_PRLIMIT_COMMAND";
 /** Repair for an unusable selected capture limiter; readiness and admission share it. */
@@ -70,6 +71,7 @@ const PCAP_CPU_SECONDS = 300;
 
 /** Own native capture admission and the exact enforced resource profile. */
 export const preparePcapNativeBound = async (
+  platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>>,
   resources: ArtifactAnalysisResources,
   probe: (
@@ -87,7 +89,7 @@ export const preparePcapNativeBound = async (
   nativeBound: NonNullable<Parameters<typeof runPcapCommand>[0]["nativeBound"]>;
   limitations: readonly string[];
 }> => {
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     return {
       nativeBound: {
         memoryLimitBytes: BOUNDED_PRODUCER_LIMITS.address_space_bytes,
@@ -97,7 +99,7 @@ export const preparePcapNativeBound = async (
       ],
     };
   }
-  if (!pcapCaptureHostSupported(process.platform)) {
+  if (!pcapCaptureHostSupported(platform)) {
     const reason = PCAP_CAPTURE_UNSUPPORTED_HOST_REASON;
     throw new AnalysisCapabilityUnavailableError("pcap", operation, reason, {
       userMessage: reason,
@@ -178,7 +180,7 @@ export const preparePcapNativeBound = async (
         configuration_key: PRLIMIT_COMMAND_ENV,
         configured,
       },
-      userMessage: `${reason} (${cause instanceof Error ? cause.message : String(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
+      userMessage: `${reason} (${errorMessage(cause)}) ${PCAP_LIMITER_REMEDIATION}`,
       remediationAction: PCAP_LIMITER_REMEDIATION,
     });
   }

@@ -1,7 +1,6 @@
 import type { Logger } from "pino";
 
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createPacketCaptureService } from "../composition/captures.js";
 import { CAPTURE_TOOL_CONTRACTS } from "../contracts/captures/captureToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
@@ -28,7 +27,6 @@ export const registerCaptureCommands = (
     logger,
     contractNamed(CAPTURE_TOOL_CONTRACTS, "inspect_packet_fields"),
     {
-      command: CLI_COMMANDS.inspectPacketFields,
       description: "Search installed TShark protocol and field definitions",
       jsonText: ["producer_limits"],
       nullFlags: {
@@ -57,7 +55,6 @@ export const registerCaptureCommands = (
     logger,
     contractNamed(CAPTURE_TOOL_CONTRACTS, "inspect_packet_capture"),
     {
-      command: CLI_COMMANDS.inspectPacketCapture,
       description:
         "Inspect an existing packet capture with caller-supplied TShark",
       positionals: ["path"],

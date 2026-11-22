@@ -16,18 +16,18 @@ const retentionExceeded = (
   retainedBytes: number,
 ): AnalysisResourceConstraintError => {
   const limit = retentionLimit(kind);
-  const allowance = `Complete browser runtime ${kind} retention (${String(limit)} bytes)`;
+  const allowance = `Complete browser runtime ${kind} retention`;
   return new AnalysisResourceConstraintError(
     operation,
     "capacity",
-    `${allowance} exceeded; no partial runtime result is returned.`,
+    `${allowance} (${String(limit)} bytes) exceeded; no partial runtime result is returned.`,
     {
       boundary: "browser-runtime-retention",
       kind,
       retained_bytes: retainedBytes,
       limit_bytes: limit,
     },
-    fixedAllowanceOptions(allowance, "live"),
+    fixedAllowanceOptions(allowance, "live", { limit, unit: "bytes" }),
   );
 };
 

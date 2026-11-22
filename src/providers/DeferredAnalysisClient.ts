@@ -3,7 +3,7 @@ import type {
   RetainedResourceScope,
   ProviderRuntimeLineageSnapshot,
   ProviderRequestActivitySnapshot,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import type { ProviderOperationHealth } from "../domain/providerOperationHealth.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {

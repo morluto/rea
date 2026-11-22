@@ -12,6 +12,7 @@ export const TOOL_FAMILY_IDS = [
   "artifact",
   "managed",
   "firmware",
+  "uefi",
   "android",
   "pcap",
   "flutter",
@@ -31,6 +32,13 @@ export type ToolFamilyId = (typeof TOOL_FAMILY_IDS)[number];
 /** Whether a parsed selection value names a published tool family. */
 export const isToolFamilyId = (value: string): value is ToolFamilyId =>
   (TOOL_FAMILY_IDS as readonly string[]).includes(value);
+
+/** An absent selection advertises every tool. A selected scope admits known families only. */
+export const isToolFamilyAdvertised = (
+  selection: ReadonlySet<string> | undefined,
+  family: ToolFamilyId | undefined,
+): boolean =>
+  selection === undefined || (family !== undefined && selection.has(family));
 
 /**
  * Invoke one registrar per published family, in {@link TOOL_FAMILY_IDS} order.

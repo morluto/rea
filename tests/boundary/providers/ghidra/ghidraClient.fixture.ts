@@ -8,6 +8,7 @@ import type {
   GhidraLaunchSession,
   GhidraLauncher,
 } from "../../../../src/ghidra/GhidraLauncher.js";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 
 /** Shared real-socket producer for Ghidra client and public MCP regressions. */
 export const ghidraFixturePath = fileURLToPath(
@@ -71,10 +72,8 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
   readonly processes: ChildProcess[] = [];
   readonly requests: string[] = [];
   readonly packedPrograms: GhidraLaunchSession["packedProgram"][] = [];
-  #notifyCheckpointHeld: (() => void) | undefined;
-  readonly checkpointHeld = new Promise<void>((resolve) => {
-    this.#notifyCheckpointHeld = resolve;
-  });
+  /** The fixture child holds its checkpoint request open (an IPC event). */
+  readonly checkpointHold = phaseArrival();
 
   constructor(readonly mode: FixtureMode = "success") {}
 
@@ -108,7 +107,7 @@ export class GhidraFixtureLauncher implements GhidraLauncher {
         "event" in value &&
         value.event === "checkpoint-held"
       )
-        this.#notifyCheckpointHeld?.();
+        this.checkpointHold.arrive();
       if (
         typeof value === "object" &&
         value !== null &&

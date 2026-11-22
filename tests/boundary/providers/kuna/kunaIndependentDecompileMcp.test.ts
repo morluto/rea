@@ -1,6 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it as test, vi } from "vitest";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
@@ -10,7 +11,6 @@ import { elfNoteFixture } from "../../../../src/native/elf/ElfNotes.fixture.js";
 import { createApplicationMcpHarness } from "../../../fixtures/applicationMcpHarness.js";
 import { callAdvertisedMcpTool } from "../../../fixtures/advertisedMcpTool.js";
 import { createMcpSchemaValidation } from "../../../fixtures/mcpSchemaValidation.js";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   fakeKunaCalls,
@@ -47,6 +47,29 @@ it("runs a cold independent request without starting a project export", async ()
       return result.structuredContent;
     };
     await call("open_binary", { path: target, provider_id: "kuna" });
+    const refused = await harness.client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "0x1000", analysis: "call_destination" },
+    });
+    expect(refused.isError).toBe(true);
+    expect(
+      JSON.parse((refused.content[0] as { text: string }).text).error,
+    ).toMatchObject({ code: "invalid_request" });
+    const status = await call("binary_session", { detail: "summary" });
+    expect(status).toMatchObject({
+      result: {
+        capabilities: expect.arrayContaining([
+          expect.objectContaining({
+            groups: expect.arrayContaining([
+              expect.objectContaining({
+                operations: expect.arrayContaining(["procedure_pseudo_code"]),
+                available: true,
+              }),
+            ]),
+          }),
+        ]),
+      },
+    });
     const evidence = parseEvidence(
       await call("procedure_pseudo_code", {
         procedure: "main",
@@ -279,10 +302,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
     };
     expect(failure.error.code).toBe("cleanup_incomplete");
     const acquire = KunaRunSlots.prototype.acquire;
-    let arrived!: () => void;
-    const admission = new Promise<void>((resolve) => {
-      arrived = resolve;
-    });
+    const slotAdmission = phaseArrival();
     let slotSettled = false;
     const spy = vi
       .spyOn(KunaRunSlots.prototype, "acquire")
@@ -291,7 +311,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
         void result.then(() => {
           slotSettled = true;
         });
-        arrived();
+        slotAdmission.arrive();
         return result;
       });
     restoreAcquire = () => spy.mockRestore();
@@ -300,11 +320,7 @@ it("retains the independent run slot until an unproven stop is resolved", async 
       { procedure: "main", analysis: "independent_fresh" },
       caller.signal,
     ).catch(() => undefined);
-    await awaitAcknowledgement(
-      admission,
-      queued,
-      "independent run slot admission",
-    );
+    await slotAdmission.reached(queued, "independent run slot admission");
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(slotSettled).toBe(false);
     expect(

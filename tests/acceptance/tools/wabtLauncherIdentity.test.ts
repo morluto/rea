@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { wasmArtifactSchema } from "../../../src/domain/wasm/wasmArtifact.js";
 import { observeProcessStartIdentity } from "../../../src/process/ProcessOwnershipObservation.js";

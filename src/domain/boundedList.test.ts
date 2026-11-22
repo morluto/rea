@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 
-import { BoundedListCollector, boundedList } from "./boundedList.js";
+import {
+  BoundedListCollector,
+  boundedList,
+  describeBoundedList,
+} from "./boundedList.js";
 
 it("retains up to the maximum and counts every item past it", () => {
   expect(boundedList([1, 2], 3)).toEqual({ items: [1, 2], omitted: 0 });
@@ -21,4 +25,15 @@ it("collects up to the maximum and counts later pushes", () => {
   expect(collector.retains("a")).toBe(true);
   expect(collector.retains("c")).toBe(false);
   expect(collector.toList()).toEqual({ items: ["a", "b"], omitted: 2 });
+});
+
+it("names the retained items and counts the rest", () => {
+  expect(describeBoundedList(boundedList(["a", "b"], 3), "; ")).toBe("a; b");
+  expect(describeBoundedList(boundedList(["a", "b", "c", "d"], 2), ", ")).toBe(
+    "a, b, and 2 more",
+  );
+  // Nothing retained: no leading separator.
+  expect(describeBoundedList(boundedList(["a", "b"], 0), ", ")).toBe(
+    "and 2 more",
+  );
 });

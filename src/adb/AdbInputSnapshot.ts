@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { open, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisOutputError,

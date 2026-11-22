@@ -10,6 +10,7 @@ import {
   distinctItems,
   excludedValues,
   maxCodePoints,
+  jsonDocumentText,
   requirePresence,
 } from "./schemaConstraints.js";
 
@@ -184,5 +185,54 @@ describe("schema constraints", () => {
       "a".repeat(63),
       "a".repeat(64),
     ]);
+  });
+});
+
+describe("value requirements and JSON document text", () => {
+  it("declares a rule requiring a value as if/then with a const", () => {
+    const schema = requirePresence(
+      z.strictObject({
+        depth: z.int().optional(),
+        detail: z.enum(["complete", "summary"]).optional(),
+      }),
+      [
+        {
+          when: "depth",
+          requires: "detail",
+          requiresValue: "summary",
+          message: "depth needs summary",
+        },
+      ],
+    );
+    expect(z.toJSONSchema(schema)).toMatchObject({
+      if: { required: ["depth"] },
+      then: {
+        required: ["detail"],
+        properties: { detail: { const: "summary" } },
+      },
+    });
+    expectAgreement(schema, [
+      {},
+      { depth: 1 },
+      { depth: 1, detail: "complete" },
+      { depth: 1, detail: "summary" },
+      { detail: "complete" },
+    ]);
+    expect(
+      schema.safeParse({ depth: 1, detail: "complete" }).error?.issues,
+    ).toMatchObject([{ path: ["depth"], message: "depth needs summary" }]);
+  });
+
+  it("declares JSON document text with its content schema", () => {
+    expect(
+      z.toJSONSchema(jsonDocumentText(z.string(), { type: "object" })),
+    ).toMatchObject({
+      type: "string",
+      contentMediaType: "application/json",
+      contentSchema: { type: "object" },
+    });
+    expect(z.toJSONSchema(jsonDocumentText(z.string()))).not.toHaveProperty(
+      "contentSchema",
+    );
   });
 });

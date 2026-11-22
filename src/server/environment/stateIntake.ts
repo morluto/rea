@@ -5,7 +5,7 @@ import { mediaTypeEssence } from "../../domain/analysisView/recordedMediaType.js
 import {
   ArtifactResourceRetryFailure,
   type ArtifactResourceScope,
-} from "../../artifacts/ArtifactResourceScope.js";
+} from "../../resources/index.js";
 import { STATE_INTAKE_LIMIT_BYTES } from "../../application/environment/environmentStateDocument.js";
 import { isExactJsonNumber } from "../../domain/exactJsonNumber.js";
 import { paddedBase64ByteLength } from "../../domain/paddedBase64.js";
@@ -20,7 +20,7 @@ import {
   withOwnedRegularFile,
 } from "../../filesystem/OwnedRegularFile.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a named file or download could not be read, or a call was cancelled: a category naming neither the uri nor the content. */
 export type IntakeFailure =

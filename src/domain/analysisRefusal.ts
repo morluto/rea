@@ -102,9 +102,13 @@ export const analysisRefusalRemediation = (
     case "fixed_ceiling": {
       const { ceiling } = refusal;
       const base = fixedAllowanceRemediation(ceiling.name, ceiling.kind);
+      const value =
+        ceiling.limit === undefined || ceiling.unit === undefined
+          ? ""
+          : ` The allowance is ${String(ceiling.limit)} ${ceiling.unit}; this release has no runtime override.`;
       return ceiling.narrowing === undefined
-        ? base
-        : `${base} ${ceiling.narrowing}`;
+        ? `${base}${value}`
+        : `${base}${value} ${ceiling.narrowing}`;
     }
     case "adjustable_budget":
       return adjustableBudgetRemediation(

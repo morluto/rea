@@ -1,12 +1,22 @@
-import { readerIntegrityFailure } from "../artifacts/StableArtifactFailure.js";
+import {
+  readerIntegrityFailure,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  withArtifactRegularFile,
+  bindArtifactFileCleanup,
+  artifactFilePrimaryFacts,
+  artifactFileCancellationCause,
+  artifactFileCompletion,
+  selectedFileTargetError,
+} from "../resources/index.js";
 import { MODEL_ARTIFACT_PROVIDER_IDENTITY } from "./ModelArtifactProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
-import type { ModelArtifactPort } from "../application/model/ModelArtifactPort.js";
+import type { ModelArtifactPort } from "../ports/model/ModelArtifactPort.js";
 import {
   createModelArtifactEvidence,
   createModelArtifactPartialEvidence,
 } from "../domain/model/modelArtifactEvidence.js";
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type {
   ModelArtifact,
   ModelArtifactPartial,
@@ -25,35 +35,23 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
-  withArtifactRegularFile,
-  bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  artifactFileCancellationCause,
-  artifactFileCompletion,
-} from "../artifacts/ArtifactFileOperation.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ModelHeaderReader } from "./ModelHeaderReader.js";
 import { GgufHeader } from "./GgufHeader.js";
 import { readSafetensorsHeader } from "./SafetensorsHeader.js";
 import {
   modelCapacityFailure,
-  modelCapacityLimitOf,
+  modelCapacityConstraint,
   MODEL_REPORT_BYTES,
-  modelCapacityRemediation,
-  modelCapacityReportedLimits,
 } from "./ModelFormat.js";
 import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
-import { ParseFailureError } from "../domain/parseFailure.js";
 import { parseFailureAnalysisError } from "../domain/parseFailureAnalysisError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { selectedFileTargetError } from "../artifacts/RegularFileErrorProjection.js";
 import {
   isSelectedRegularFileError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_model_artifact";
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -109,10 +107,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       );
     } catch (cause) {
       const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
-      const capacity =
-        primary instanceof ParseFailureError
-          ? modelCapacityLimitOf(primary)
-          : undefined;
+      const capacityError = modelCapacityConstraint(OPERATION, primary);
       const formatError = parseFailureAnalysisError(
         OPERATION,
         input.path,
@@ -121,19 +116,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
       let error: AnalysisError;
       if (origin === "owned-or-classified" && primary instanceof AnalysisError)
         error = primary;
-      else if (primary instanceof ParseFailureError && capacity !== undefined)
-        // A model allowance names its own recovery.
-        error = new AnalysisResourceConstraintError(
-          OPERATION,
-          "memory",
-          primary.message,
-          modelCapacityReportedLimits(capacity),
-          {
-            cause,
-            retryable: false,
-            remediationAction: modelCapacityRemediation(capacity),
-          },
-        );
+      else if (capacityError !== undefined) error = capacityError;
       else if (formatError !== undefined) error = formatError;
       else if (
         origin === "owned-or-classified" &&
@@ -182,8 +165,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           cause,
           diagnostics: {
             path: input.path,
-            reason:
-              primary instanceof Error ? primary.message : String(primary),
+            reason: errorMessage(primary),
           },
         });
       if (
@@ -400,7 +382,7 @@ export class ModelArtifactProvider implements ModelArtifactPort {
         tensor_data: "not-interpreted" as const,
         array_values: parsed.metadata.every((row) => row.preview_complete)
           ? ("complete" as const)
-          : ("preview" as const),
+          : ("partial" as const),
         storage_sizes: parsed.tensors.every(
           (row) => row.storage_validation === "consistent",
         )

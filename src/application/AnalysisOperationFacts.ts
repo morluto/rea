@@ -10,7 +10,7 @@ import type {
   AnalysisOperation,
   AnalysisOperationPort,
   ExecutionOptions,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 
 /** A completed execution and its result parsed once against its named contract. */
 export interface AnalysisFactExecution<Fact> {

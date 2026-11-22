@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { maxCodePoints } from "../schemaConstraints.js";
 import { localPathStringSchema } from "../localPath.js";
-import { coverageStatusSchema } from "../coverage.js";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
+import type { AnalysisParameterLimit } from "../analysisSettings.js";
+import { analysisParameterLimitSchema } from "../analysisSettingDefinitions.js";
 
 /** Full logical ZIP path budget, enforced by Flutter library inventory. */
 export const MAX_FLUTTER_LIBRARY_PATH_BYTES = 1024;
@@ -64,6 +66,27 @@ export type DartPoolPolicy = {
   readonly token_bytes: number;
   readonly contains?: string | undefined;
 };
+/** A string-pool budget a result can name as its per-call control. */
+export type DartPoolBudget = Exclude<keyof DartPoolPolicy, "contains">;
+
+/**
+ * The per-call control of one string-pool budget, named by its contract
+ * field; each adapter names the option that sets it.
+ */
+export const dartPoolBudgetLimit = (
+  budget: DartPoolBudget,
+  policy: DartPoolPolicy,
+): AnalysisParameterLimit => ({
+  control_kind: "parameter",
+  parameter: `pool_policy.${budget}`,
+  effective_value: policy[budget],
+  unit: budget === "uri_limit" || budget === "token_limit" ? "count" : "bytes",
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  default_value: DART_POOL_DEFAULTS[budget],
+  applies_at: "next_call",
+});
+
 export const dartPoolPolicy = (
   selected?: DartPoolPolicyInput,
 ): DartPoolPolicy => ({
@@ -84,7 +107,6 @@ export const dartPoolPolicy = (
  * the failures, caps and disagreements it recorded, so it never reports
  * `unknown`.
  */
-const flutterCoverageSchema = coverageStatusSchema.exclude(["unknown"]);
 
 export const flutterInputSchemas = {
   identify_flutter_build: z.strictObject({
@@ -194,7 +216,7 @@ export const flutterResultSchemas = {
         }),
       }),
     ),
-    coverage: flutterCoverageSchema,
+    coverage: knownCoverageStatusSchema,
   }),
   inspect_dart_aot: z.strictObject({
     target: z.strictObject({
@@ -204,7 +226,7 @@ export const flutterResultSchemas = {
     }),
     abi: z.string().min(1),
     libapp: z.strictObject({
-      coverage: flutterCoverageSchema.describe(
+      coverage: knownCoverageStatusSchema.describe(
         "Coverage of ELF symbols, independent data headers, AOT kind, extents and agreeing hashes",
       ),
       bytes: z.int().nonnegative(),
@@ -217,6 +239,13 @@ export const flutterResultSchemas = {
       snapshot_hash_candidates: z.array(z.string().regex(/^[0-9a-f]{32}$/u)),
       /** Distinct exported data headers with a valid hash at the header's fixed offset. */
       snapshot_hash_sources: z.int().nonnegative(),
+      snapshot_profile: z
+        .enum(["legacy-split", "unified"])
+        .nullable()
+        .exactOptional()
+        .describe(
+          "Export profile supported by the observed headers. Null means unresolved. Older Evidence may omit it.",
+        ),
       /** Snapshot symbols read from the dynamic symbol table. */
       sections: z.array(
         z.strictObject({
@@ -232,7 +261,7 @@ export const flutterResultSchemas = {
     }),
     string_pool: z.strictObject({
       policy: dartPoolPolicySchema.describe("Effective selection and budgets"),
-      coverage: flutterCoverageSchema.describe(
+      coverage: knownCoverageStatusSchema.describe(
         "Coverage of the bounded printable-run projection; independent of snapshot header validity",
       ),
       /** Distinct package: source URIs, sorted, bounded. */
@@ -245,7 +274,9 @@ export const flutterResultSchemas = {
       class_like_tokens: z.array(z.string().min(1)),
       class_like_token_count_at_least: z.int().nonnegative(),
       printable_run_count: z.int().nonnegative(),
+      /** The budgets that left the projection partial, as request parameters. */
+      limits: z.array(analysisParameterLimitSchema).min(1).exactOptional(),
     }),
-    coverage: flutterCoverageSchema,
+    coverage: knownCoverageStatusSchema,
   }),
 } as const;

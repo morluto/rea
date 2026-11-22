@@ -128,7 +128,8 @@ it("reports rejected Electron CLI arguments with structured issue details", asyn
       operation: "list_electron_targets",
       issues: [
         {
-          path: ["cdp_endpoint"],
+          // Projected from its contract, so the issue names the CLI key.
+          path: ["endpoint"],
           reason: "invalid_value",
         },
       ],

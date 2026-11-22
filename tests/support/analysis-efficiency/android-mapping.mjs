@@ -132,7 +132,7 @@ try {
     );
     const evidence = result.structuredContent;
     if (name === "export_evidence_bundle") return evidence;
-    assert.equal(evidence.subject.digest.sha256, targetSha);
+    assert.equal(evidence.subject.identity.sha256, targetSha);
     const projection = evidence.normalized_result;
     const normalized =
       values.detail === "summary" ? projection.summary : projection;
@@ -300,7 +300,7 @@ try {
         );
         assert.ok(parent, "Complete source Evidence must remain exportable");
         assert.equal(parent.operation, expected.name);
-        assert.equal(parent.subject.digest.sha256, targetSha);
+        assert.equal(parent.subject.identity.sha256, targetSha);
         assert.equal(
           parent.parameters.mapping_path,
           expected.args.mapping_path,

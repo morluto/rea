@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { open, unlink } from "node:fs/promises";
 
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
+  ArtifactResourceScope,
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
+} from "../resources/index.js";
 import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * Remediation for a host that denies writes under the session temporary root.
@@ -60,9 +61,6 @@ const errorCode = (cause: unknown): string | undefined =>
   cause instanceof Error && "code" in cause && typeof cause.code === "string"
     ? cause.code
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 /**
  * Create and delete one file under the Ghidra session root from the REA

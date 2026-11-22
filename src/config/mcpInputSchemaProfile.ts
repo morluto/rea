@@ -1,21 +1,7 @@
 import { z } from "zod";
 
-import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "../contracts/advertisedDialect.js";
-import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
-
-/** The compact presentation fits the portable dialect's per-tool size cap. */
-export const COMPACT_INPUT_SCHEMA_BUDGET_BYTES =
-  ADVERTISED_INPUT_SCHEMA_MAX_BYTES;
-
-/**
- * The one advertised input presentation. Every server, identity and recorded
- * catalog presents input schemas through it; canonical validators still
- * check every call.
- */
-export const COMPACT_INPUT_SCHEMA_PRESENTATION: CompactInputSchemaPresentation =
-  Object.freeze({ budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES });
 
 const profileConstraint =
   'REA_MCP_INPUT_SCHEMA_PROFILE accepts only "compact", the default. The "full" input profile was removed: remove the setting from the client registration, or set it to "compact". Canonical server-side validation still checks every call.';

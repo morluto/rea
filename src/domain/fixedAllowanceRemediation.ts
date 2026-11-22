@@ -2,15 +2,17 @@
  * Recovery for a deterministic allowance. Host memory, worker limits, waiting,
  * and a different output channel do not raise it.
  */
-export type FixedAllowanceKind =
-  | "parser"
-  | "count"
-  | "bytes"
-  | "report"
-  | "input"
-  | "capture"
-  | "live"
-  | "work";
+export const FIXED_ALLOWANCE_KINDS = [
+  "parser",
+  "count",
+  "bytes",
+  "report",
+  "input",
+  "capture",
+  "live",
+  "work",
+] as const;
+export type FixedAllowanceKind = (typeof FIXED_ALLOWANCE_KINDS)[number];
 
 const unchangedRequest = "Repeating the unchanged request fails the same way.";
 
@@ -78,7 +80,4 @@ export const fixedProducerInputAllowance = (
   bytes: number,
   allowance: string,
 ): { readonly retryable: false; readonly fixedAllowance: FixedAllowance } =>
-  fixedAllowanceOptions(
-    `${allowance} of ${String(bytes)} bytes (this release has no runtime override)`,
-    "input",
-  );
+  fixedAllowanceOptions(allowance, "input", { limit: bytes, unit: "bytes" });

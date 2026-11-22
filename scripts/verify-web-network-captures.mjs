@@ -32,7 +32,7 @@ if (
   !isAbsolute(executable)
 )
   throw new Error(
-    "verify:web:network-captures requires Linux and absolute REA_MITMDUMP_COMMAND for caller-supplied mitmdump 12.2.3",
+    "verify:web:network-captures requires Linux and absolute REA_MITMDUMP_COMMAND for caller-supplied mitmdump 12.3.1",
   );
 await access(executable);
 const entrypoint =
@@ -159,7 +159,7 @@ try {
         );
       } else {
         assert.equal(value.container.reported.log.creator.name, "mitmproxy");
-        assert.equal(value.container.reported.log.creator.version, "12.2.3");
+        assert.equal(value.container.reported.log.creator.version, "12.3.1");
         assert.equal(value.records[0].reported.request.postData.text, null);
         assertBinary(
           first,
@@ -214,6 +214,10 @@ try {
         format: "mitmproxy",
         sensitive_values: marked ? ["1e-7", "000000"] : [],
       });
+      assert.deepEqual(
+        value.records.map(({ ordinal }) => ordinal),
+        [0, 1],
+      );
       for (const record of value.records) {
         assert.deepEqual(record.reported.metadata.numeric_spellings, {
           small: marked ? null : 1e-7,
@@ -225,12 +229,11 @@ try {
           ["large", "1e+20"],
         ]) {
           const pointer = "/metadata/numeric_spellings/" + key;
-          assert.equal(
-            record.numeric_literals.some(
-              (number) =>
-                number.pointer === pointer && number.literal === literal,
-            ),
-            !marked,
+          assert.deepEqual(
+            record.numeric_literals
+              .filter((number) => number.pointer === pointer)
+              .map(({ literal }) => literal),
+            marked ? [] : [literal],
           );
           assert.equal(
             record.redactions.some(
@@ -764,7 +767,9 @@ try {
         "invalid_input",
       );
       assert.equal(failure.details.issues[0].reason, "out_of_range");
-      assert.deepEqual(failure.details.issues[0].path, ["capture_path"]);
+      assert.deepEqual(failure.details.issues[0].path, [
+        mode === "cli" ? "capturePath" : "capture_path",
+      ]);
       assert.equal(
         failure.details.issues[0].expected.maximum_capture_bytes,
         WEB_NETWORK_CAPTURE_LIMITS.inputBytes,
@@ -785,7 +790,10 @@ try {
       );
       const issue = failure.details.issues[0];
       assert.equal(issue.reason, "out_of_range");
-      assert.equal(issue.path[0], "capture_path");
+      assert.equal(
+        issue.path[0],
+        mode === "cli" ? "capturePath" : "capture_path",
+      );
       assert.match(issue.path[1], /^\/_extension\/child/);
       assert.equal(
         issue.expected.maximum_capture_nesting,
@@ -931,7 +939,7 @@ console.log(
     {
       status: "passed",
       public_cases: cases,
-      upstream: "mitmproxy 12.2.3 FlowWriter + SaveHar",
+      upstream: "mitmproxy 12.3.1 FlowWriter + SaveHar",
       native_failure_classifications: 7,
       offline: true,
       verifier,
@@ -1053,8 +1061,9 @@ function assertSensitiveLimitations(evidence, literals) {
           "Declared literal retained in Evidence parameter",
         );
   const result = evidence.normalized_result;
-  if (result.artifact.sha256 === null) assert.equal(evidence.subject, null);
-  else assert.equal(evidence.subject.digest.sha256, result.artifact.sha256);
+  if (result.artifact.sha256 === null)
+    assert.equal(evidence.subject.identity.kind, "unknown");
+  else assert.equal(evidence.subject.identity.sha256, result.artifact.sha256);
   assert.deepEqual(
     evidence.provider,
     result.decoder,

@@ -1,3 +1,4 @@
+import { registerMcpClientsOnHost } from "../../fixtures/mcpRegistration.js";
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import {
   chmod,
@@ -27,7 +28,6 @@ import {
   readClientRegistrationInspections,
   readClientRegistrationStatuses,
 } from "../../../src/application/ClientRegistrationStatus.js";
-import { registerMcpClients } from "../../../src/application/McpClientRegistration.js";
 import { resolveMcpRegistrationClients } from "../../../src/application/McpRegistrationCatalog.js";
 import {
   clientConfigurationAligned,
@@ -43,7 +43,7 @@ import {
 } from "../../../src/application/Uninstall.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { existingMaintenanceScope } from "../../../src/application/UpdateMaintenance.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -99,7 +99,7 @@ it.each([
     // An older, still REA-owned launcher: the package runner form that
     // current setup migrates to the selected installation.
     const legacy = { command: "npx", args: ["-y", "rea-agents@1.0.0", "mcp"] };
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       legacy,
       undefined,
@@ -181,7 +181,7 @@ it("registers Amp in settings.jsonc when that is Amp's only settings file", asyn
   );
   if (!selected.ok) throw selected.error;
   expect(selected.value[0]?.configPath).toBe(jsonc);
-  await registerMcpClients(
+  await registerMcpClientsOnHost(
     selected.value,
     { command: command[0] ?? "", args: command.slice(1) },
     undefined,
@@ -566,7 +566,7 @@ it.skipIf(platform === "win32")(
     expect(selected.value[0]).toMatchObject({
       configPaths: row?.configPaths,
     });
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       { command: command[0] ?? "", args: command.slice(1) },
       undefined,
@@ -597,37 +597,49 @@ it.skipIf(platform === "win32")(
   },
 );
 
-it("orders Goose's layers as Goose loads them", () => {
-  const home = "/fixture/home";
-  const user = "/fixture/home/.config/goose/config.yaml";
-  const unix = supportedClients(home, "linux", {
+it("selects Goose's user path and its read-only layers in native order", () => {
+  const xdg = "/fixture/alias/../config";
+  const user = `${xdg}/goose/config.yaml`;
+  const unix = supportedClients("/fixture/home", "linux", {
+    XDG_CONFIG_HOME: xdg,
     GOOSE_ADDITIONAL_CONFIG_FILES: `${user}:/fixture/team.yaml`,
   }).find(({ name }) => name === "goose");
   // Goose loads the user file again last, so that load decides precedence.
+  expect(unix?.configPath).toBe(user);
   expect(unix?.configPaths).toEqual([
     "/etc/goose/config.yaml",
     "/fixture/team.yaml",
     user,
   ]);
-  const windows = supportedClients("C:\\Users\\fixture", "win32", {
-    APPDATA: "C:\\Users\\fixture\\AppData\\Roaming",
-    PROGRAMDATA: "C:\\ProgramData",
+
+  const windowsGoose = (env: NodeJS.ProcessEnv) =>
+    supportedClients("C:\\Users\\fixture", "win32", {
+      APPDATA: "C:\\Users\\fixture\\AppData\\Roaming",
+      PROGRAMDATA: "C:\\ProgramData",
+      ...env,
+    }).find(({ name }) => name === "goose");
+  const windows = windowsGoose({
+    GOOSE_PATH_ROOT: "\\current-drive-only",
     GOOSE_ADDITIONAL_CONFIG_FILES:
       '"C:\\Team Config\\a;b.yaml";C:\\Team\\goose.yaml',
-  }).find(({ name }) => name === "goose");
-  expect(windows?.configPathError).toBeUndefined();
-  expect(windows?.configPaths?.slice(1, 3)).toEqual([
+  });
+  expect(windows?.configPath).toBe(
+    "C:\\Users\\fixture\\AppData\\Roaming\\Block\\goose\\config\\config.yaml",
+  );
+  expect(windows?.configPaths).toEqual([
+    "C:\\ProgramData\\goose\\config.yaml",
     "C:\\Team Config\\a;b.yaml",
     "C:\\Team\\goose.yaml",
+    windows?.configPath,
   ]);
-  // A drive-less Windows entry depends on Goose's current drive.
-  const driveless = supportedClients("C:\\Users\\fixture", "win32", {
-    APPDATA: "C:\\Users\\fixture\\AppData\\Roaming",
-    GOOSE_ADDITIONAL_CONFIG_FILES: "\\team\\goose.yaml",
-  }).find(({ name }) => name === "goose");
-  expect(driveless?.configPathError).toContain(
-    "\\team\\goose.yaml, which has no drive",
+  expect(windowsGoose({ GOOSE_PATH_ROOT: "D:\\selected" })?.configPath).toBe(
+    "D:\\selected\\config\\config.yaml",
   );
+  // An additional layer still requires an independent path.
+  expect(
+    windowsGoose({ GOOSE_ADDITIONAL_CONFIG_FILES: "\\team\\goose.yaml" })
+      ?.configPathError,
+  ).toContain("\\team\\goose.yaml, which has no drive");
 });
 
 it.skipIf(platform === "win32")(
@@ -723,12 +735,25 @@ it.skipIf(platform === "win32")(
 );
 
 it.skipIf(platform === "win32")(
-  "mcp add leaves an inherited Goose env alias in force",
+  "mcp add follows Goose's selected root and leaves the inherited env alias in force",
   async () => {
     const { home, team, environment, systemPaths } = await gooseFixture(
       "rea-goose-add-alias-",
     );
     await writeFile(team, 'extensions:\n  rea:\n    env:\n      KEEP: "1"\n');
+    const branch = join(home, "branch");
+    const physical = join(home, "physical");
+    const alias = join(branch, "alias");
+    const physicalChild = join(physical, "child");
+    const actual = join(physical, "selected", "config", "config.yaml");
+    const lexical = join(branch, "selected", "config", "config.yaml");
+    await mkdir(physicalChild, { recursive: true });
+    await mkdir(dirname(actual), { recursive: true });
+    await mkdir(dirname(lexical), { recursive: true });
+    await symlink(physicalChild, alias);
+    await writeFile(actual, "model: caller-selected\n");
+    await writeFile(lexical, "model: unrelated\n");
+    const rooted = { ...environment, GOOSE_PATH_ROOT: `${alias}/../selected` };
     const resources = new ArtifactResourceScope();
     const selected = await resolveMcpRegistrationClients(
       {
@@ -737,13 +762,13 @@ it.skipIf(platform === "win32")(
         cwd: home,
         home,
         platform,
-        environment,
+        environment: rooted,
         systemPaths,
       },
       resources,
     );
     if (!selected.ok) throw selected.error;
-    const [outcome] = await registerMcpClients(
+    const [outcome] = await registerMcpClientsOnHost(
       selected.value,
       { command: command[0] ?? "", args: command.slice(1) },
       undefined,
@@ -753,12 +778,22 @@ it.skipIf(platform === "win32")(
       status: "completed",
       result: { ok: true },
     });
+    expect(
+      parseGooseConfigurationYaml(await readFile(actual, "utf8")),
+    ).toMatchObject({
+      model: "caller-selected",
+      extensions: { rea: { cmd: command[0], args: command.slice(1) } },
+    });
+    expect(await readFile(lexical, "utf8")).toBe("model: unrelated\n");
+    expect(await readFile(`${actual}.rea.backup`, "utf8")).toBe(
+      "model: caller-selected\n",
+    );
     // Writing envs: {} beside the inherited alias would make the merged entry
     // ambiguous; the registration reads back as aligned instead.
     const inspections = await readClientRegistrationInspections(
       home,
       command[1],
-      { platform, environment, systemPaths },
+      { platform, environment: rooted, systemPaths },
     );
     expect(
       inspections.find(({ status }) => status.client === "goose"),

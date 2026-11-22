@@ -8,6 +8,7 @@ import {
 } from "../process/PrivateRuntimeRoot.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { resolveIdaWorkspaceParent } from "./IdaWorkspace.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** The repair for a workspaceRoot REA cannot create entries in. */
 export const IDA_WORKSPACE_ROOT_REMEDIATION =
@@ -79,6 +80,6 @@ const workspaceParentUnusable = async (
     await access(parent, constants.W_OK | constants.X_OK);
     return undefined;
   } catch (cause: unknown) {
-    return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a usable directory: ${cause instanceof Error ? cause.message : String(cause)}`;
+    return `IDA workspaceRoot ${root ?? "the system temporary directory"} is not a usable directory: ${errorMessage(cause)}`;
   }
 };

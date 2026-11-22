@@ -5,7 +5,7 @@ import {
 } from "./PeRvaSpans.js";
 import { createPefileReadCompatibility } from "./PefileReadCompatibility.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
@@ -14,8 +14,8 @@ import {
   isBinaryFormatOrStringLimitFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
-import { readPeImage } from "../metadata/PeImage.js";
+} from "../../domain/binaryContainer.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import {
   MAX_INSPECT_PE_IMPORT_RETAINED_TEXT_BYTES,
   type InspectPeImportsInput,
@@ -294,7 +294,9 @@ export const parsePeImports = async (
       }
       const hintNameRva = Number(thunk);
       try {
-        const hintAt = map(hintNameRva, 3);
+        // The two-byte hint and the separately mapped name may occupy adjacent
+        // RVA sections with different file translations.
+        const hintAt = map(hintNameRva, 2);
         const hint = reader.u16(hintAt);
         const name = cString(hintNameRva + 2);
         retain(name);

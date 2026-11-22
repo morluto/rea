@@ -4,7 +4,7 @@ import { ok } from "../domain/result.js";
 import {
   createAnalysisExecution,
   type AnalysisOperationPort,
-} from "./AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { traceLiteralFeature } from "./EnhancedLiteralTracing.js";
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };

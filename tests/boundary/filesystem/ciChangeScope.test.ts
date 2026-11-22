@@ -168,6 +168,9 @@ function classifyCommit(
         mergeBase: (base) => base,
         isAncestor: () => true,
         changedFiles: () => paths,
+        // No test reaches these synthetic paths; selection falls back to all.
+        listFiles: () => [],
+        readFiles: () => new Map(),
         readFile: (revision, path) => {
           if (path === "package.json" && packageJson !== undefined)
             return revision === PATH_BASE
@@ -190,6 +193,27 @@ const classifyPackage = (before: string, after: string) =>
   classifyCommit(["package.json"], "pull_request", false, { before, after });
 
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/readStableArtifact.ts", "sqlite"],
+  ["src/resources/readStableArtifact.ts", "browser"],
+  ["src/resources/readStableArtifact.ts", "binary_layout"],
+  ["src/resources/readStableArtifact.ts", "evm"],
+  ["src/resources/readStableArtifact.ts", "recorded_crash"],
+  ["src/resources/readStableArtifact.ts", "web_network"],
+  ["src/resources/readStableArtifact.ts", "web_source_map"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
+  ["src/resources/ArtifactReader.ts", "sqlite"],
+  ["src/resources/ArtifactReader.ts", "binary_layout"],
+  ["src/resources/ArtifactReader.ts", "evm"],
+  ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
   ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
@@ -218,12 +242,34 @@ it.each([
   ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
   ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
   ["scripts/verify-pcap.mjs", "packet_capture"],
+  [".github/actions/ubuntu-archive/action.yml", "signal_recording"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/go/GoBinaryProvider.ts", "go_binary"],
+  ["scripts/verify-go-binary.mjs", "go_binary"],
+  ["bridge/android/ReaJadxBridge.java", "android_metadata"],
+  ["src/android/JadxRelease.ts", "android_metadata"],
+  [
+    "tests/conformance/android/ReaJadxMetadataRegression.java",
+    "android_metadata",
+  ],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
   expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
@@ -376,21 +422,195 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
-it("emits an observational owner proposal without changing ordinary or full portable execution", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["src/evm/Example.ts"]);
-  expect(await classify(directory, base, head)).toMatchObject({
-    code: true,
-    testSelection: { mode: "candidate", owners: ["evm"] },
+it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
+  const { directory } = await fixture();
+  const module = "scripts/lib/uncovered.mjs";
+  const data = "tests/fixtures/independent.txt";
+  const test = "tests/boundary/filesystem/independent.test.ts";
+  await mkdir(dirname(join(directory, test)), { recursive: true });
+  await writeFile(join(directory, test), `readFileSync("${data}");\n`);
+  const base = await change(directory, [module, data]);
+  const head = await change(
+    directory,
+    [module, data],
+    "Updated fixture content\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `No test reaches shared script module: ${module}`,
+    },
   });
+});
+
+it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
+  const { directory } = await fixture();
+  // The entrypoint's output file is not part of the change.
+  await mkdir(join(directory, ".git", "info"), { recursive: true });
+  await writeFile(join(directory, ".git", "info", "exclude"), "scope-output\n");
+  const write = async (path: string, content: string) => {
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), content);
+  };
+  const imports = (specifier: string) =>
+    `import { value } from "${specifier}";\nvoid value;\n`;
+  await write("src/evm/Example.ts", "export const value = 1;\n");
+  await write("src/evm/Example.test.ts", imports("./Example.js"));
+  await write("src/evm/Other.ts", "export const value = 2;\n");
+  await write(
+    "tests/support/evmHelper.ts",
+    imports("../../src/evm/Example.js"),
+  );
+  // Through a test-only helper, through the leaf owner, and by name.
+  await write(
+    "tests/composition/helped.test.ts",
+    imports("../support/evmHelper.js"),
+  );
+  await write("tests/boundary/evm/cli.test.ts", "// spawns the built CLI\n");
+  await write(
+    "tests/conformance/named.test.ts",
+    'readFileSync("src/evm/Example.ts");\n',
+  );
+  await write(
+    "tests/composition/unrelated.test.ts",
+    imports("../../src/provider.js"),
+  );
+  const base = await commit(directory);
+  const head = await change(
+    directory,
+    ["src/evm/Example.ts"],
+    "export const value = 3;\n",
+  );
+  const selected = [
+    "src/evm/Example.test.ts",
+    "tests/boundary/evm/cli.test.ts",
+    "tests/composition/helped.test.ts",
+    "tests/conformance/named.test.ts",
+  ];
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { version: 3, mode: "selected", files: selected, shards: 1 },
+    testShards: ["1/1"],
+  });
+  const output = await readFile(join(directory, "scope-output"), "utf8");
+  expect(output).toContain("test_mode=selected\n");
+  expect(output).toContain('test_shards=["1/1"]\n');
+
+  // ci:full, main pushes and shared or untraced inputs run the complete suite.
   expect(
     await runPlanScript(directory, base, head, "pull_request", true),
   ).toMatchObject({
-    code: true,
-    testSelection: { mode: "full", owners: [] },
+    testSelection: { version: 3, mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
   });
-  const output = await readFile(join(directory, "scope-output"), "utf8");
-  expect(output).toContain('test_selection={"version":1,"mode":"full"');
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    testSelection: { mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
+  });
+  let previous = head;
+  for (const path of [
+    "src/process/Shared.ts",
+    "scripts/build-something.mjs",
+    "tests/fixtures/data.bin",
+  ]) {
+    const parent = previous;
+    previous = await change(directory, [path]);
+    expect(await classify(directory, parent, previous)).toMatchObject({
+      testSelection: { mode: "full", reason: expect.stringContaining(path) },
+    });
+  }
+  // A leaf owner's boundary tests cover its other modules.
+  const unreached = await change(
+    directory,
+    ["src/evm/Other.ts"],
+    "export const value = 4;\n",
+  );
+  expect(await classify(directory, previous, unreached)).toMatchObject({
+    testSelection: { mode: "selected" },
+  });
+  const isolated = await change(directory, ["src/unowned/Lonely.ts"]);
+  expect(await classify(directory, unreached, isolated)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "No test imports, names or sits beside a changed path",
+    },
+  });
+  // Above the cap, selection gives way to the complete suite.
+  const many = Array.from(
+    { length: 401 },
+    (_, index) => `tests/composition/many${String(index)}.test.ts`,
+  );
+  const wide = await change(directory, many);
+  expect(await classify(directory, isolated, wide)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "401 affected test files exceed the 400-file selection cap",
+    },
+  });
+  const capped = await change(directory, many.slice(0, 101), "// edited\n");
+  expect(await classify(directory, wide, capped)).toMatchObject({
+    testSelection: { mode: "selected" },
+    testShards: ["1/3", "2/3", "3/3"],
+  });
+});
+
+it("routes license inventories to docs checks and keeps blame-ignore edits formatting-only", async () => {
+  expect(await classifyPaths([".git-blame-ignore-revs"])).toMatchObject({
+    code: false,
+    docs: false,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["licenses/npm-dependencies.txt"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["THIRD_PARTY_NOTICES.md"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["LICENSE"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
+    package: false,
+  });
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
@@ -595,7 +815,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -613,6 +833,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -620,6 +842,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -752,12 +994,20 @@ it("retains native Inspector verification on every documented package host", asy
       { os: "macos-15-intel", platform: "darwin", architecture: "x64" },
     ],
   });
-  const windowsInspector = stepSchema.parse(
-    workflow.jobs["windows-curated"].steps.find(
-      (step) => step.run === "npm run verify:inspector",
-    ),
+  const windowsSteps = workflow.jobs["windows-curated"].steps;
+  const windowsBuild = windowsSteps.findIndex(
+    (step) => step.run === "npm run build:cached",
   );
-  expect(windowsInspector.if).toBeUndefined();
+  expect(windowsBuild).toBeGreaterThanOrEqual(0);
+  expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
+    const step = windowsSteps.findIndex(({ run }) => run === verifier);
+    expect(step).toBeGreaterThan(windowsBuild);
+    expect(windowsSteps[step]?.if).toBe(condition);
+  }
 });
 
 it.each([
@@ -793,6 +1043,10 @@ it.each([
   ],
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },
@@ -841,6 +1095,8 @@ it.each([
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -865,6 +1121,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
@@ -904,6 +1161,10 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
@@ -937,6 +1198,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -1003,7 +1268,7 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
-  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  ["src/hopper/HopperErrors.ts", { code: true, apple: true }],
   [
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
     { code: true, apple: true },
@@ -1019,6 +1284,49 @@ it.each([
   [
     "src/domain/windowsNativeArtifact.ts",
     { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/windows-cross-compiler/action.yml",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yml",
+    { code: true, runtime: true, package: true, binary_layout: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
@@ -1171,6 +1479,10 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "src/desktop/AgentEnvBridgeSources.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "scripts/verify-packed-bridge.mjs",
     {
       code: true,
@@ -1238,6 +1550,29 @@ it.each([
       browser: false,
     },
   ],
+  // One lane names it; others reach it only through `src/process/**`.
+  [
+    "src/process/RegularFileRead.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      javascript_recovery: false,
+      recorded_crash: false,
+      web_source_map: false,
+      package: false,
+    },
+  ],
+  [
+    "src/process/ownedDebuggerSession.ts",
+    {
+      code: true,
+      runtime: true,
+      reverse_tools: true,
+      javascript_recovery: false,
+      package: false,
+    },
+  ],
   [
     "src/server/createServer.ts",
     {
@@ -1293,11 +1628,11 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [
-    "src/cliJsonInput.ts",
+    "src/cli/cliJsonInput.ts",
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
@@ -1468,6 +1803,7 @@ it.each(["evm", "browser"])(
         outputs: {
           ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
           tier: "fast",
+          test_mode: "full",
           [scope]: "true",
         },
       },
@@ -1502,6 +1838,22 @@ it.each([
   [
     ".github/workflows/real-termux.yml",
     { workflows: true, code: false, package: false, website: false },
+  ],
+  [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
   ],
   [
     "src/domain/javascript/example.test.ts",
@@ -1541,6 +1893,11 @@ it.each([
     "docs/.vitepress/package.json",
     { code: true, docs: true, runtime: false, package: false },
   ],
+  ["package-lock.json", { code: true, docs: true, runtime: true }],
+  [
+    "scripts/generate-third-party-inventory.mjs",
+    { code: true, docs: true, runtime: false },
+  ],
   ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
   ["SECURITY.md", { code: false, docs: true, package: false }],
@@ -1560,10 +1917,6 @@ it.each([
   ],
   [
     ".github/workflows/release.yml",
-    { workflows: true, code: true, package: false, website: false },
-  ],
-  [
-    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [
@@ -2030,3 +2383,21 @@ it.each([
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

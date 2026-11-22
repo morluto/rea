@@ -48,6 +48,7 @@ describe("ESP partition tables", () => {
     );
     expect(decoded.md5.status).toBe("valid");
     expect(decoded.md5.entryOffset).toBe(7 * 32);
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.length).toBe(9 * 32);
     expect(decoded.limitations).toEqual([]);
     expect(decoded.partitions.map(({ label }) => label)).toEqual([
@@ -79,6 +80,7 @@ describe("ESP partition tables", () => {
     expect(decoded.md5).toEqual({
       status: "absent",
       entryOffset: null,
+      entriesAfterChecksum: 0,
       stored: null,
       computed: null,
     });
@@ -90,6 +92,7 @@ describe("ESP partition tables", () => {
       partitionTable(TWO_OTA_PARTITIONS, { md5: "corrupt" }),
     );
     expect(decoded.md5.status).toBe("invalid");
+    expect(decoded.md5.entriesAfterChecksum).toBe(0);
     expect(decoded.partitions).toHaveLength(6);
     expect(decoded.limitations).toEqual([
       expect.stringMatching(/MD5.*0xc0.*does not match.*bootloader rejects/iu),
@@ -490,4 +493,39 @@ describe("ESP bootloader location", () => {
       { flashAddress: 0x2000, fileOffset: 0x1000 },
     ]);
   });
+});
+
+it("keeps and discloses partitions after a matching prefix MD5", () => {
+  const [first, second, third] = TWO_OTA_PARTITIONS;
+  const prefix = partitionTable([first!]);
+  const decoded = table(
+    Buffer.concat([
+      prefix.subarray(0, 64),
+      partitionEntry(second!),
+      partitionEntry(third!),
+      prefix.subarray(64),
+    ]),
+  );
+  expect(decoded.md5).toMatchObject({
+    status: "valid",
+    entryOffset: 32,
+    entriesAfterChecksum: 2,
+  });
+  expect(decoded.md5.stored).toBe(decoded.md5.computed);
+  expect(decoded.partitions.map(({ label }) => label)).toEqual([
+    first?.label,
+    second?.label,
+    third?.label,
+  ]);
+  expect(
+    decoded.partitions.map(({ index, entryOffset, label }) => ({
+      index,
+      entryOffset,
+      label,
+    })),
+  ).toEqual([
+    { index: 0, entryOffset: 0, label: first?.label },
+    { index: 1, entryOffset: 64, label: second?.label },
+    { index: 2, entryOffset: 96, label: third?.label },
+  ]);
 });
