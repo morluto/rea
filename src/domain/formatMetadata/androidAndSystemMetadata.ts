@@ -281,7 +281,10 @@ export const compoundFileMetadataSchema = z.strictObject({
   kind: z.literal("compound-file"),
   major_version: uint32,
   sector_bytes: offset,
-  mini_sector_bytes: offset,
+  // Null when the header's mini sector shift names a size past the
+  // representable offset bound; zero would fabricate a size the file does not
+  // declare.
+  mini_sector_bytes: offset.nullable(),
   fat_sector_count: offset,
   difat_sector_count: offset,
   directory_entry_count: offset,

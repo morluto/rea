@@ -144,7 +144,11 @@ export interface CompoundFileMetadata {
   readonly kind: "compound-file";
   readonly major_version: number;
   readonly sector_bytes: number;
-  readonly mini_sector_bytes: number;
+  /**
+   * Declared mini sector size, or null when the header's shift names a size
+   * past the representable offset bound. Zero would be a fabricated fact.
+   */
+  readonly mini_sector_bytes: number | null;
   readonly fat_sector_count: number;
   readonly difat_sector_count: number;
   readonly directory_entry_count: number;
@@ -331,12 +335,17 @@ export const parseCompoundFile = (
   }
   // JavaScript's `<<` is a signed 32-bit operation and masks its count, so a
   // declared shift of 31 would publish a negative offset that the metadata
-  // schema rejects. The value is reported as-is and only a shift the schema can
-  // carry is computed.
+  // schema rejects. `Math.pow` keeps every power of two the schema's
+  // safe-integer bound can carry, so a representable declared size is never
+  // replaced by zero; a shift whose size would exceed that bound stays unknown.
   const miniSectorBytes =
-    miniSectorShift >= 0 && miniSectorShift <= 30
+    miniSectorShift >= 0 && miniSectorShift <= 52
       ? Math.pow(2, miniSectorShift)
-      : 0;
+      : null;
+  if (miniSectorBytes === null)
+    limitations.push(
+      `header declares a mini sector shift of ${String(miniSectorShift)}, whose size exceeds the representable offset bound; the mini sector size is unknown`,
+    );
 
   const declaredFatSectors = header.u32(HEADER.fatSectorCount);
   const declaredDifatSectors = header.u32(HEADER.difatSectorCount);
@@ -606,14 +615,28 @@ export const parseCompoundFile = (
   const raw = Array.from({ length: entryCount }, (_, index) =>
     readEntry(directoryBytes, directory, index, majorVersion),
   );
+  // Count every entry-derived fact in one pass: a directory can hold up to
+  // 1,048,576 entries, and independent `.filter().length` calls would each
+  // allocate a temporary array over the whole set.
+  let streamCount = 0;
+  let storageCount = 0;
+  let rootStorageCount = 0;
+  let unallocatedCount = 0;
+  let unreadableCount = 0;
+  for (const entry of raw) {
+    if (entry.type === "stream") streamCount += 1;
+    else if (entry.type === "storage") storageCount += 1;
+    else if (entry.type === "root-storage") rootStorageCount += 1;
+    if (entry.declaredType === 0) unallocatedCount += 1;
+    if (!entry.definedType) unreadableCount += 1;
+  }
   for (const problem of new Set(
     raw.map((entry) => entry.nameProblem).filter((text) => text !== null),
   ))
     limitations.push(`directory entry ${problem}`);
-  const undefinedTypes = raw.filter((entry) => !entry.definedType).length;
-  if (undefinedTypes !== 0)
+  if (unreadableCount !== 0)
     limitations.push(
-      `${String(undefinedTypes)} directory entr(ies) declare an object type the format does not define; they are listed without a role`,
+      `${String(unreadableCount)} directory entr(ies) declare an object type the format does not define; they are listed without a role`,
     );
 
   // CFB fixes the root storage at directory entry 0; a later type-5 record is
@@ -875,16 +898,14 @@ export const parseCompoundFile = (
     fat_sector_count: table.length / entriesPerSector,
     difat_sector_count: difatSectors.length,
     directory_entry_count: entries.length,
-    stream_count: entries.filter((entry) => entry.type === "stream").length,
-    storage_count: entries.filter((entry) => entry.type === "storage").length,
-    root_storage_count: entries.filter((entry) => entry.type === "root-storage")
-      .length,
+    stream_count: streamCount,
+    storage_count: storageCount,
+    root_storage_count: rootStorageCount,
     // Only a declared type 0 is unallocated; a type the format does not define
     // is counted once, in `unreadable_entry_count`.
-    unallocated_entry_count: raw.filter((entry) => entry.declaredType === 0)
-      .length,
+    unallocated_entry_count: unallocatedCount,
     orphan_entry_count: orphanCount,
-    unreadable_entry_count: raw.filter((entry) => !entry.definedType).length,
+    unreadable_entry_count: unreadableCount,
     broken_chain_count: brokenChains,
     unlisted_fat_sector_count: missingFatSectors + unlistedFatSectors,
   };

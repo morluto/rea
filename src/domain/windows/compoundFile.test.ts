@@ -29,6 +29,7 @@ const compoundFile = (options: {
   readonly totalSectors?: number;
   readonly version?: number;
   readonly sectorShift?: number;
+  readonly miniSectorShift?: number;
   readonly byteOrder?: number;
   readonly directorySector?: number;
 }): Buffer => {
@@ -42,7 +43,7 @@ const compoundFile = (options: {
   file.writeUInt16LE(options.version ?? 3, 0x1a);
   file.writeUInt16LE(options.byteOrder ?? 0xfffe, 0x1c);
   file.writeUInt16LE(options.sectorShift ?? 9, 0x1e);
-  file.writeUInt16LE(6, 0x20);
+  file.writeUInt16LE(options.miniSectorShift ?? 6, 0x20);
   file.writeUInt32LE(1, 0x2c);
   file.writeUInt32LE(options.directorySector ?? 1, 0x30);
   file.writeUInt32LE(4096, 0x38);
@@ -498,4 +499,25 @@ it("refuses a directory whose root storage is not entry 0", () => {
       message: expect.stringMatching(/entry 0 is not the root storage/u),
     },
   });
+});
+
+it("reports a representable mini sector size above the 30-bit shift", () => {
+  // A shift of 31 names a 2 GiB mini sector. `<<` would wrap it negative and
+  // the old guard published 0, a fabricated size; Math.pow keeps it exact.
+  const image = parse(
+    compoundFile({ entries: root(undefined, []), miniSectorShift: 31 }),
+  );
+  expect(image.metadata.mini_sector_bytes).toBe(2 ** 31);
+});
+
+it("reports an unrepresentable mini sector shift as unknown, not zero", () => {
+  // A shift past the safe-integer bound cannot name a representable size; the
+  // field stays null and a limitation explains it instead of publishing 0.
+  const image = parse(
+    compoundFile({ entries: root(undefined, []), miniSectorShift: 60 }),
+  );
+  expect(image.metadata.mini_sector_bytes).toBeNull();
+  expect(image.limitations).toContainEqual(
+    expect.stringMatching(/mini sector size is unknown/u),
+  );
 });
