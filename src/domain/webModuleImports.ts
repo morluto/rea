@@ -181,6 +181,8 @@ const traverseModuleImports = (
         case "ImportExpression":
           record("dynamic-import", node.source);
           break;
+        default:
+          break;
       }
     },
   });
