@@ -8,6 +8,7 @@ import {
 import { decodeCaptureText } from "./CaptureJson.js";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeHarCapture } from "./HarCapture.js";
+import { createHarValidator } from "./HarSchema.js";
 
 it.each([
   { timings: null, field: "" },
@@ -1070,3 +1071,29 @@ it.each([
     );
   },
 );
+
+it("reuses the compiled HAR validator across failing and valid calls without error leakage", () => {
+  const validate = createHarValidator();
+  const bad = historicalHar();
+  bad.log.entries[0]!.time = -1;
+  expect(() => validate(bad)).toThrow("HAR schema validation failed:");
+
+  const good = historicalHar();
+  const secondValidate = createHarValidator();
+  expect(secondValidate(good)).toEqual({
+    bracketedIpv6: null,
+    emptyServerAddress: null,
+    failedRequests: null,
+  });
+
+  const ipv6Doc = historicalHar();
+  ipv6Doc.log.creator = { name: "Playwright", version: "1.64.1" };
+  Object.assign(ipv6Doc.log.entries[0]!, {
+    serverIPAddress: "[2001:db8::1]",
+  });
+  expect(secondValidate(ipv6Doc)).toEqual({
+    bracketedIpv6: { producer: "Playwright 1.64.1", entries: [0] },
+    emptyServerAddress: null,
+    failedRequests: null,
+  });
+});
