@@ -1,7 +1,4 @@
-import type {
-  McpPhaseBudget,
-  McpStartupBudgets,
-} from "../../src/config/mcpStartupBudgets.js";
+import type { McpStartupBudgets } from "../../src/config/mcpStartupBudgets.js";
 
 interface McpProcessOptions {
   readonly command: string;
@@ -44,9 +41,6 @@ export function profileMcpModuleLoading(
 
 /** Parse Linux procfs VmRSS text into bytes. */
 export function parseLinuxVmRssBytes(status: string): number | null;
-
-/** Name one MCP startup phase budget. Mirrors `mcpPhaseBudgetRecovery`. */
-export function mcpStartupPhaseBudgetRecovery(budget: McpPhaseBudget): string;
 
 /** Collect unique file-backed ESM module URLs from Node diagnostics. */
 export function createEsmModuleProfileCollector(packageName?: string): {

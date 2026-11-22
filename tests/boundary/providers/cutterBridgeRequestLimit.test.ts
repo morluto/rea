@@ -487,7 +487,7 @@ it("refuses an escaped Cutter command before serializing it", async () => {
   }
 });
 
-it("accepts a Cutter response at the ceiling and excludes the terminating LF", async () => {
+it("accepts the frame ceiling and reports omitted output for one byte over", async () => {
   const directory = await privateDirectory();
   const ceiling = 8192;
   const output = outputForEnvelope(ceiling);
@@ -555,6 +555,9 @@ it("accepts a Cutter response at the ceiling and excludes the terminating LF", a
           execution_state: "unknown",
           error: "transport-response-missing",
           output_truncated: true,
+          message: expect.stringMatching(
+            /framed transport limit of 8192 bytes.*bridge\.max_request_bytes.*may have completed/s,
+          ),
         },
       },
     },

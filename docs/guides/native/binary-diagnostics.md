@@ -97,6 +97,12 @@ compressed file bytes. Other compressed payload sections remain opaque.
 - DT_NEEDED/PT_INTERP are reported names, not resolved runtime paths. GOT/PLT
   maps are derived convenience views and may collapse aliases. PLT inference
   can emulate selected instructions in Unicorn; its outputs are static candidates.
+  Each PLT section (`.plt`, `.plt.got`, `.plt.sec`, `.MIPS.stubs`) uses its
+  own Unicorn instance with a 1 GiB virtual map. REA releases each instance
+  before the next section. The tested CET x86-64 images used about 1.1 GiB of
+  address space during PLT emulation and fit within the default limit. Under
+  a tighter `address_space_bytes`, upstream skips the remaining PLT sections
+  and reports a warning in `diagnostics.stderr`. Structural facts are unaffected.
   Exec syscall tracing observes host process launches. Map completeness
   remains unknown and original upstream warnings are returned inline.
 - Canary, PIE, NX, executable-stack and RELRO are static inferences. NX and
@@ -144,7 +150,9 @@ extended-index verification uses 256 MiB and an explicit five-minute request
 timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to the selected policy: defaults are 3 GiB
 virtual address space, 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
-Unicorn needs a large virtual map. Limits fail with no partial success, and
+Unicorn needs a large virtual map. Limits fail with no partial success, except
+upstream PLT emulation, which returns a reduced PLT map with its warning in
+`diagnostics.stderr` when the address space cannot fit an emulator, and
 owned process/root cleanup completes independently of cancellation.
 
 For core files and optional pwndbg mapping context, use the

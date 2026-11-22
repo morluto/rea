@@ -93,9 +93,8 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       options.compactPresentation,
-      // Recorded tools carry complete output schemas; the default `off`
-      // profile omits them from listings while the runtime still validates
-      // structured results.
+      // The recorded output shape supplies the SDK's result codec.
+      // Listings omit it and the canonical runtime validates results.
       "off",
       // Scoped digests belong to the canonical runtime, which attaches them
       // before serving any tool or prompt that can report an identity.

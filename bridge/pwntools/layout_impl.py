@@ -4,6 +4,7 @@ Owned request/snapshot/reply paths are supplied by REA. No host target-process l
 user configuration initialization, debugger startup, or dependency installation.
 """
 import base64
+import gc
 import importlib.metadata
 import io
 import json
@@ -137,6 +138,7 @@ def inspect_elf(path, cache):
         from elftools.common.utils import struct_parse
         from elftools.elf.elffile import ELFFile
         from pwnlib.elf import ELF
+        from pwnlib.elf import elf as upstream_elf
         try:
             headers = ELFFile(io.BytesIO(content))
             section_count = headers.num_sections()
@@ -198,6 +200,34 @@ def inspect_elf(path, cache):
                 # Kernel banner decoding is outside this report too.
                 return None
 
+            def _populate_plt(self):
+                # Upstream emulates each present PLT section (.plt, .plt.got,
+                # .plt.sec, .MIPS.stubs) in a new Unicorn instance with a
+                # 1 GiB virtual map. Unicorn hook closures keep each instance
+                # in a reference cycle, so its map stays reserved until a
+                # cyclic collection. Under the selected address-space limit,
+                # the third section of a CET x86-64 image then fails
+                # upstream's 1 GiB probe, and upstream keeps the truncated map
+                # with only a warning. Collect after each section so the limit
+                # is charged one emulator at a time. Upstream resolves this
+                # module global per section and offers no instance hook
+                # between sections, so this is the adapter's one scoped global
+                # substitution; finally restores it in this single-request
+                # bridge process.
+                emulate = upstream_elf.emulate_plt_instructions
+
+                def emulate_then_release(*args, **kwargs):
+                    try:
+                        return emulate(*args, **kwargs)
+                    finally:
+                        gc.collect()
+
+                upstream_elf.emulate_plt_instructions = emulate_then_release
+                try:
+                    return super()._populate_plt()
+                finally:
+                    upstream_elf.emulate_plt_instructions = emulate
+
             def _get_section_name(self, header):
                 # SHN_UNDEF declares no names; upstream would otherwise read
                 # strings at the inactive section-zero offset.
@@ -206,7 +236,8 @@ def inspect_elf(path, cache):
             # pyelftools 0.33 calls these documented filters internally;
             # pwntools 4.15.0's cached overrides do not accept the argument.
             # Forward the filter on this adapter instance, without modifying
-            # either upstream package or process-global methods.
+            # either upstream package or process-global methods (the scoped
+            # PLT-pass substitution above is the only global exception).
             def iter_segments(self, type=None):
                 return (segment for segment in super().iter_segments()
                         if type is None or segment.header.p_type == type)
