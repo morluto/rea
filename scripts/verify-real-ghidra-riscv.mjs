@@ -680,7 +680,7 @@ try {
         `${name}: ${JSON.stringify(validate.errors)}`,
       );
       if (lifecycle) return admitted;
-      assert.equal(admitted.subject.digest.sha256, fixture.sha256);
+      assert.equal(admitted.subject.identity.sha256, fixture.sha256);
       if (admitted.provider.id === "ghidra") {
         assert.deepEqual(
           admitted.analysis_profile.parameters.elf_load_preparation,
@@ -833,7 +833,7 @@ try {
   const espSnapshot = parseAnalysisSnapshot(
     JSON.parse(await readFile(espSnapshotPath, "utf8")),
   );
-  assert.equal(espSnapshot.target.sha256, esp.sha256);
+  assert.equal(espSnapshot.target.identity.sha256, esp.sha256);
   assert.deepEqual(
     espSnapshot.binding.analysis_profile.parameters.elf_load_preparation,
     plan,
