@@ -1,6 +1,10 @@
 import type { ParseFailureError } from "../domain/parseFailure.js";
 import {
-  ANDROID_VBMETA_FIXED_LIMITS,
+  DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+  type AndroidVbmetaReaderLimits,
+} from "../domain/artifactReaderLimits.js";
+import {
+  ANDROID_VBMETA_LIMIT_SETTINGS,
   AVB_HEADER_SIZE,
   androidVbmetaImageExtent,
   parseAndroidVbmeta,
@@ -11,8 +15,8 @@ import type {
   AndroidVbmetaMetadata,
 } from "../domain/artifactFormatMetadata.js";
 import {
-  artifactFixedLimitFailure,
   artifactParseFailure,
+  artifactReaderLimitFailure,
 } from "../resources/index.js";
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
 import {
@@ -29,9 +33,15 @@ type VbmetaEntry = PositionalArtifactEntry & {
 /** Read a standalone vbmeta image without verifying or modifying it. */
 export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<AndroidVbmetaMetadata> {
   override readonly format = "android-vbmeta" as const;
+  readonly #limits: AndroidVbmetaReaderLimits;
 
-  constructor(path: string, admitted?: StableRegularFileDescriptor) {
+  constructor(
+    path: string,
+    admitted?: StableRegularFileDescriptor,
+    limits: AndroidVbmetaReaderLimits = DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+  ) {
     super(path, "Android vbmeta", admitted);
+    this.#limits = limits;
   }
 
   formatMetadata(): AndroidVbmetaMetadata | undefined {
@@ -51,7 +61,11 @@ export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<Androi
       signal,
     );
     this.assertOpen(signal);
-    const extent = androidVbmetaImageExtent(headerBytes, initial.size);
+    const extent = androidVbmetaImageExtent(
+      headerBytes,
+      initial.size,
+      this.#limits,
+    );
     if (!extent.ok) throw parseFailure(extent.error);
     const imageBytes = await readArtifactFileBytes(
       handle,
@@ -61,7 +75,7 @@ export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<Androi
       signal,
     );
     this.assertOpen(signal);
-    const parsed = parseAndroidVbmeta(imageBytes, initial.size);
+    const parsed = parseAndroidVbmeta(imageBytes, initial.size, this.#limits);
     if (!parsed.ok) throw parseFailure(parsed.error);
     return {
       entries: parsed.value.children.map(entryFor),
@@ -84,18 +98,14 @@ export class AndroidVbmetaArtifactReader extends PositionalArtifactReader<Androi
 const parseFailure = (failure: ParseFailureError): unknown => {
   const facts = failure.failure;
   if (facts.kind === "limit") {
-    const ceiling = ANDROID_VBMETA_FIXED_LIMITS.get(facts.limit.name);
-    if (ceiling !== undefined)
-      return artifactFixedLimitFailure(
-        {
-          name: ceiling.name,
-          kind: "parser",
-          limit: facts.limit.maximum,
-          unit: ceiling.unit,
-        },
-        failure.message,
+    const selected = ANDROID_VBMETA_LIMIT_SETTINGS.get(facts.limit.name);
+    if (selected !== undefined)
+      return artifactReaderLimitFailure(
+        `artifact_limits.android_vbmeta.${selected.setting}`,
+        facts.limit.maximum,
+        selected.unit,
+        facts.limit.required,
         "capacity",
-        { cause: failure },
       );
   }
   return artifactParseFailure(failure, undefined, () => "capacity");

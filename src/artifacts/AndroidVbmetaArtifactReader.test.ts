@@ -6,11 +6,14 @@ import type { Readable } from "node:stream";
 import { expect, it } from "vitest";
 
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import { DEFAULT_ANDROID_VBMETA_READER_LIMITS } from "../domain/artifactReaderLimits.js";
 import { ANDROID_VBMETA_LIMITATIONS } from "../domain/firmware/androidVbmeta.js";
 import {
+  ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
   SAMPLE_CHAIN_PARTITION,
   SAMPLE_PUBLIC_KEY,
   SAMPLE_PUBLIC_KEY_METADATA,
+  androidVbmetaDescriptorCountOverflow,
   androidVbmetaMalformedLaterDescriptor,
   androidVbmetaRefusals,
   sampleAndroidVbmeta,
@@ -24,6 +27,14 @@ const collect = async (stream: Readable): Promise<Buffer> => {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
   return Buffer.concat(chunks);
+};
+
+const listEntries = async (
+  reader: AndroidVbmetaArtifactReader,
+): Promise<unknown[]> => {
+  const entries: unknown[] = [];
+  for await (const entry of reader.entries()) entries.push(entry);
+  return entries;
 };
 
 const writeCarrier = async (name: string, bytes: Buffer): Promise<string> => {
@@ -163,6 +174,43 @@ it("inventories stored ranges and matches the chain key digest", async () => {
   ).toBe(node?.sha256);
   const carrier = await readFile(path);
   expect(carrier.equals(bytes)).toBe(true);
+});
+
+it("refuses descriptors past the selected count and admits them once raised", async () => {
+  const path = await writeCarrier(
+    "many-descriptors.img",
+    androidVbmetaDescriptorCountOverflow(),
+  );
+  const refused = new AndroidVbmetaArtifactReader(path);
+  try {
+    await expect(listEntries(refused)).rejects.toMatchObject({
+      reason: "limit",
+      boundary: "capacity",
+      readerLimit: {
+        parameter: "artifact_limits.android_vbmeta.descriptor_count",
+        effective_value: DEFAULT_ANDROID_VBMETA_READER_LIMITS.descriptor_count,
+        unit: "count",
+        required_value: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+        can_increase: true,
+        update_mode: "parameter",
+      },
+    });
+  } finally {
+    await refused.close();
+  }
+  const admitted = new AndroidVbmetaArtifactReader(path, undefined, {
+    ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+    descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+  });
+  try {
+    await listEntries(admitted);
+    expect(admitted.formatMetadata()?.descriptor_failure).toBeNull();
+    expect(admitted.formatMetadata()?.descriptors).toHaveLength(
+      ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+    );
+  } finally {
+    await admitted.close();
+  }
 });
 
 it("keeps parser refusal kinds on the reader", async () => {

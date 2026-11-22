@@ -4,10 +4,10 @@ import {
   AVB_HASHTREE_FLAG,
   AVB_HEADER_FLAG,
   AVB_KERNEL_CMDLINE_FLAG,
-  AVB_MAX_AUTHENTICATION_BLOCK_BYTES,
-  AVB_MAX_DESCRIPTOR_BYTES,
-  AVB_MAX_DESCRIPTORS,
 } from "./androidVbmeta.js";
+import { DEFAULT_ANDROID_VBMETA_READER_LIMITS } from "../artifactReaderLimits.js";
+
+const DEFAULTS = DEFAULT_ANDROID_VBMETA_READER_LIMITS;
 
 /** Public key bytes shared by the image and its chain-partition descriptor. */
 export const SAMPLE_PUBLIC_KEY = Buffer.from("vbmeta-test-public-key");
@@ -300,11 +300,16 @@ export const androidVbmetaMalformedLaterDescriptor = (): Buffer => {
   });
 };
 
-/** 4097 empty unknown descriptors, past the descriptor-count ceiling. */
+/**
+ * 4097 empty unknown descriptors, one past the default descriptor-count
+ * admission. The whole image is 65,856 bytes.
+ */
+export const ANDROID_VBMETA_OVERFLOW_DESCRIPTORS =
+  DEFAULTS.descriptor_count + 1;
 export const androidVbmetaDescriptorCountOverflow = (): Buffer => {
   const one = androidVbmetaDescriptor(SAMPLE_UNKNOWN_TAG, Buffer.alloc(0));
-  const table = Buffer.alloc(one.length * (AVB_MAX_DESCRIPTORS + 1));
-  for (let index = 0; index < AVB_MAX_DESCRIPTORS + 1; index += 1)
+  const table = Buffer.alloc(one.length * ANDROID_VBMETA_OVERFLOW_DESCRIPTORS);
+  for (let index = 0; index < ANDROID_VBMETA_OVERFLOW_DESCRIPTORS; index += 1)
     one.copy(table, index * one.length);
   return buildAndroidVbmeta({ descriptorBytes: table });
 };
@@ -350,7 +355,7 @@ export const androidVbmetaRefusals = () =>
     {
       name: "authentication-over-cap",
       bytes: androidVbmetaHeader({
-        authenticationDataBlockSize: AVB_MAX_AUTHENTICATION_BLOCK_BYTES + 64,
+        authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
       }),
       kind: "limit",
       code: "truncated",
@@ -359,8 +364,8 @@ export const androidVbmetaRefusals = () =>
     {
       name: "descriptors-over-cap",
       bytes: androidVbmetaHeader({
-        auxiliaryDataBlockSize: AVB_MAX_DESCRIPTOR_BYTES + 64,
-        descriptorsSize: AVB_MAX_DESCRIPTOR_BYTES + 64,
+        auxiliaryDataBlockSize: DEFAULTS.descriptor_bytes + 64,
+        descriptorsSize: DEFAULTS.descriptor_bytes + 64,
       }),
       kind: "limit",
       code: "truncated",

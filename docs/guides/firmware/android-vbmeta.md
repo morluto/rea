@@ -102,14 +102,37 @@ partition or verify either signature.
 
 ## Limits
 
-The reader admits an authentication block of at most 64 KiB, an auxiliary
-block of at most 2 MiB, and a descriptor table of at most 1 MiB and 4,096
-descriptors. Block sizes must be multiples of 64. A descriptor's
-`num_bytes_following` must be a multiple of 8, and every range must fit its
-block before those bytes are read. A declared image that ends past the file is
-`truncated`. A structural mismatch is `invalid_request`. A ceiling is
-`truncated` with `details.reason` `limit`. These refusals do not produce an
-empty successful inventory.
+The `artifact_limits.android_vbmeta` group selects four admissions per call.
+The format caps none of them: both block sizes are unsigned 64-bit header
+fields and the descriptor table has no count field.
+
+| Setting                      | Default   | Bounds                             |
+| ---------------------------- | --------- | ---------------------------------- |
+| `authentication_block_bytes` | 65,536    | declared authentication block size |
+| `auxiliary_block_bytes`      | 2,097,152 | declared auxiliary block size      |
+| `descriptor_bytes`           | 1,048,576 | declared descriptor table size     |
+| `descriptor_count`           | 4,096     | descriptors walked from the table  |
+
+The three byte sizes are admitted from the 256-byte header before the image
+body is read. The count is checked as the walk reaches each descriptor. A
+refusal is `truncated` with `details.reason` `limit` and a
+`details.reader_limit` naming the parameter, its effective value and, for
+these four, the `required_value`. For the count, that is the number of
+well-formed descriptor headers in the table. Raise the field on the next call;
+nothing restarts:
+
+```sh
+rea inspect-artifact ./vbmeta.img --json \
+  --artifact-limits '{"android_vbmeta":{"descriptor_count":4097}}'
+```
+
+Block sizes must be multiples of 64. A descriptor's `num_bytes_following` must
+be a multiple of 8, and every range must fit its block before those bytes are
+read. A declared image that ends past the file is `truncated`. A structural
+mismatch is `invalid_request`. These refusals do not produce an empty
+successful inventory. The limitation that names unknown descriptor tags lists
+at most eight; this is a presentation bound, and every descriptor stays in the
+Evidence.
 
 A malformed descriptor does not refuse the image. The walk stops there:
 `descriptors` keeps the descriptors decoded before it, and

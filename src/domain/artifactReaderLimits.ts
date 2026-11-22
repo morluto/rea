@@ -77,6 +77,26 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+/**
+ * Android vbmeta admission. The format caps none of these: the header declares
+ * both block sizes as u64 values and the descriptor table has no count field.
+ */
+export const DEFAULT_ANDROID_VBMETA_READER_LIMITS = {
+  authentication_block_bytes: 64 * 1024,
+  auxiliary_block_bytes: 2 * 1024 * 1024,
+  descriptor_bytes: 1024 * 1024,
+  descriptor_count: 4096,
+};
+export const androidVbmetaReaderLimitsSchema = z.strictObject({
+  authentication_block_bytes: bytes,
+  auxiliary_block_bytes: bytes,
+  descriptor_bytes: bytes,
+  descriptor_count: count,
+});
+export type AndroidVbmetaReaderLimits = z.output<
+  typeof androidVbmetaReaderLimitsSchema
+>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -147,6 +167,21 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  android_vbmeta: z
+    .strictObject({
+      authentication_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.authentication_block_bytes.exactOptional(),
+      auxiliary_block_bytes:
+        androidVbmetaReaderLimitsSchema.shape.auxiliary_block_bytes.exactOptional(),
+      descriptor_bytes:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_bytes.exactOptional(),
+      descriptor_count:
+        androidVbmetaReaderLimitsSchema.shape.descriptor_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android vbmeta admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_VBMETA_READER_LIMITS)}. Header-declared block and descriptor-table sizes are admitted before the image is read; the descriptor count bounds the descriptor walk.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -156,14 +191,23 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-export const artifactReaderLimitsSchema = z.strictObject({
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_vbmeta: androidVbmetaReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
-export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
+export type ArtifactReaderLimits = z.output<
+  typeof resolvedArtifactReaderLimitsSchema
+>;
+
+// Earlier Evidence predates vbmeta admission and omits that policy.
+export const artifactReaderLimitsSchema =
+  resolvedArtifactReaderLimitsSchema.extend({
+    android_vbmeta: androidVbmetaReaderLimitsSchema.exactOptional(),
+  });
 
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
@@ -175,6 +219,10 @@ export const resolveArtifactReaderLimits = (
   },
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  android_vbmeta: {
+    ...DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+    ...selected?.android_vbmeta,
+  },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),

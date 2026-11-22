@@ -1,14 +1,15 @@
 import { expect, it } from "vitest";
 
 import { androidVbmetaMetadataSchema } from "../artifactFormatMetadata.js";
+import {
+  DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+  type AndroidVbmetaReaderLimits,
+} from "../artifactReaderLimits.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import {
   ANDROID_VBMETA_LIMITATIONS,
   AVB_DESCRIPTOR_TAG,
   AVB_HEADER_FLAG,
-  AVB_MAX_AUTHENTICATION_BLOCK_BYTES,
-  AVB_MAX_AUXILIARY_BLOCK_BYTES,
-  AVB_MAX_DESCRIPTORS,
   AVB_UNKNOWN_TAGS_NAMED,
   parseAndroidVbmeta,
   type AndroidVbmetaImage,
@@ -28,6 +29,7 @@ import {
   SAMPLE_PUBLIC_KEY_METADATA,
   SAMPLE_RELEASE,
   SAMPLE_UNKNOWN_TAG,
+  ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
   androidVbmetaDescriptor,
   androidVbmetaDescriptorCountOverflow,
   androidVbmetaHeader,
@@ -43,8 +45,14 @@ const parsed = (bytes: Buffer, fileSize = bytes.length): AndroidVbmetaImage => {
   return result.value;
 };
 
-const failed = (bytes: Buffer, fileSize = bytes.length) => {
-  const result = parseAndroidVbmeta(bytes, fileSize);
+const DEFAULTS = DEFAULT_ANDROID_VBMETA_READER_LIMITS;
+
+const failed = (
+  bytes: Buffer,
+  fileSize = bytes.length,
+  limits: AndroidVbmetaReaderLimits = DEFAULTS,
+) => {
+  const result = parseAndroidVbmeta(bytes, fileSize, limits);
   if (result.ok) throw new Error("expected the vbmeta image to be refused");
   return result.error;
 };
@@ -411,6 +419,45 @@ it("retains unknown algorithms, other majors, reserved bytes, and invalid text",
   });
 });
 
+it("admits a descriptor table past the default count when the caller raises it", () => {
+  const bytes = androidVbmetaDescriptorCountOverflow();
+  expect(bytes.length).toBe(65_856);
+  const refused = failed(bytes);
+  expect(refused.failure).toMatchObject({
+    kind: "limit",
+    field: "descriptors",
+    limit: {
+      name: "Android vbmeta descriptor count",
+      maximum: DEFAULTS.descriptor_count,
+      required: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+    },
+  });
+  const raised = parseAndroidVbmeta(bytes, bytes.length, {
+    ...DEFAULTS,
+    descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+  });
+  if (!raised.ok) throw raised.error;
+  expect(raised.value.metadata.descriptors).toHaveLength(
+    ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+  );
+  expect(raised.value.metadata.descriptor_failure).toBeNull();
+
+  const header = androidVbmetaHeader({
+    authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
+  });
+  expect(failed(header).failure).toMatchObject({
+    kind: "limit",
+    limit: { required: BigInt(DEFAULTS.authentication_block_bytes + 64) },
+  });
+  // Once admitted, the declared block is checked against the file instead.
+  expect(
+    failed(header, header.length, {
+      ...DEFAULTS,
+      authentication_block_bytes: DEFAULTS.authentication_block_bytes + 64,
+    }).failure,
+  ).toMatchObject({ kind: "truncated", field: "image" });
+});
+
 it("refuses header ranges, alignment, truncation, and ceilings", () => {
   for (const fixture of androidVbmetaRefusals()) {
     expect(failed(fixture.bytes).failure, fixture.name).toMatchObject({
@@ -420,7 +467,7 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
   }
   const overAuthentication = failed(
     androidVbmetaHeader({
-      authenticationDataBlockSize: AVB_MAX_AUTHENTICATION_BLOCK_BYTES + 64,
+      authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
     }),
   );
   expect(overAuthentication.failure).toMatchObject({
@@ -430,7 +477,7 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
   expect(
     overAuthentication.failure.kind === "limit" &&
       overAuthentication.failure.limit.maximum,
-  ).toBe(AVB_MAX_AUTHENTICATION_BLOCK_BYTES);
+  ).toBe(DEFAULTS.authentication_block_bytes);
 
   const misaligned = Buffer.alloc(24);
   misaligned.writeBigUInt64BE(BigInt(SAMPLE_UNKNOWN_TAG), 0);
@@ -468,7 +515,7 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
   const atLimit = stopped(
     buildAndroidVbmeta({
       descriptorBytes: Buffer.concat([
-        Buffer.alloc(descriptor.length * AVB_MAX_DESCRIPTORS, descriptor),
+        Buffer.alloc(descriptor.length * DEFAULTS.descriptor_count, descriptor),
         Buffer.alloc(8),
       ]),
       publicKey: SAMPLE_PUBLIC_KEY,
@@ -479,7 +526,9 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
     field: "descriptor",
     unexamined_bytes: 8,
   });
-  expect(atLimit.image.metadata.descriptors).toHaveLength(AVB_MAX_DESCRIPTORS);
+  expect(atLimit.image.metadata.descriptors).toHaveLength(
+    DEFAULTS.descriptor_count,
+  );
   expect(atLimit.image.children).toMatchObject([{ path: "public_key" }]);
 
   const counted = failed(androidVbmetaDescriptorCountOverflow());
@@ -488,11 +537,11 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
     field: "descriptors",
   });
   if (counted.failure.kind === "limit")
-    expect(counted.failure.limit.maximum).toBe(AVB_MAX_DESCRIPTORS);
+    expect(counted.failure.limit.maximum).toBe(DEFAULTS.descriptor_count);
 
   const auxiliary = failed(
     androidVbmetaHeader({
-      auxiliaryDataBlockSize: AVB_MAX_AUXILIARY_BLOCK_BYTES + 64,
+      auxiliaryDataBlockSize: DEFAULTS.auxiliary_block_bytes + 64,
     }),
   );
   expect(auxiliary.failure).toMatchObject({

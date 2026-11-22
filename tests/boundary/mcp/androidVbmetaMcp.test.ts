@@ -9,8 +9,11 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
+import { DEFAULT_ANDROID_VBMETA_READER_LIMITS } from "../../../src/domain/artifactReaderLimits.js";
 import {
+  ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
   SAMPLE_PUBLIC_KEY,
+  androidVbmetaDescriptorCountOverflow,
   androidVbmetaRefusals,
   sampleAndroidVbmeta,
 } from "../../../src/domain/firmware/androidVbmeta.fixture.js";
@@ -119,6 +122,61 @@ it("keeps Android vbmeta parser refusal kinds and recovers through compiled MCP"
     await writeFile(path, sampleAndroidVbmeta());
     expect((await call("open_binary", { path })).isError).not.toBe(true);
     expect((await call("inspect_artifact", {})).isError).not.toBe(true);
+  } finally {
+    await call("close_binary", {});
+  }
+});
+
+it("refuses descriptors past the default count and admits them on retry through compiled MCP", async () => {
+  const root = await createTestTempDirectory(
+    "rea-android-vbmeta-mcp-descriptors-",
+  );
+  const path = join(root, "vbmeta.img");
+  const bytes = androidVbmetaDescriptorCountOverflow();
+  await writeFile(path, bytes);
+  const { call } = await connectLocalToolsMcp({
+    REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+  });
+  try {
+    expect((await call("open_binary", { path })).isError).not.toBe(true);
+    const { error } = parseMcpToolError(await call("inspect_artifact", {}));
+    expect(error).toMatchObject({
+      code: "truncated",
+      retryable: true,
+      details: {
+        reason: "limit",
+        reader_limit: {
+          parameter: "artifact_limits.android_vbmeta.descriptor_count",
+          effective_value:
+            DEFAULT_ANDROID_VBMETA_READER_LIMITS.descriptor_count,
+          unit: "count",
+          required_value: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+          can_increase: true,
+          update_mode: "parameter",
+        },
+      },
+    });
+    const selected = {
+      android_vbmeta: { descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS },
+    };
+    const reply = await call("inspect_artifact", {
+      detail: "summary",
+      artifact_limits: selected,
+    });
+    expect(reply.isError, JSON.stringify(reply).slice(0, 2000)).not.toBe(true);
+    const summary = z
+      .object({
+        summary: z.object({ root_format_metadata: z.unknown() }),
+      })
+      .parse(parseEvidence(reply.structuredContent).normalized_result).summary;
+    expect(
+      androidVbmetaSummaryMetadataSchema.parse(summary.root_format_metadata),
+    ).toMatchObject({
+      descriptor_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+      unknown_count: ANDROID_VBMETA_OVERFLOW_DESCRIPTORS,
+      descriptor_failure: null,
+    });
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   } finally {
     await call("close_binary", {});
   }

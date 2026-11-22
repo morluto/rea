@@ -3,6 +3,10 @@ import type {
   AndroidVbmetaDescriptor,
   AndroidVbmetaMetadata,
 } from "../artifactFormatMetadata.js";
+import {
+  DEFAULT_ANDROID_VBMETA_READER_LIMITS,
+  type AndroidVbmetaReaderLimits,
+} from "../artifactReaderLimits.js";
 import { BinaryReader } from "../binaryContainer.js";
 import { boundedList, describeBoundedList } from "../boundedList.js";
 import {
@@ -24,20 +28,6 @@ const AVB_RELEASE_STRING_SIZE = 48;
 const AVB_BLOCK_ALIGNMENT = 64;
 const AVB_DESCRIPTOR_ALIGNMENT = 8;
 
-/**
- * Authentication-block ceiling. RSA-8192 signatures are 1024 bytes; the
- * ceiling leaves room for the hash and 64-byte padding.
- */
-export const AVB_MAX_AUTHENTICATION_BLOCK_BYTES = 64 * 1024;
-/**
- * Auxiliary-block ceiling. A public key, its metadata, and the descriptor
- * table together stay inside this bound before any of those bytes are read.
- */
-export const AVB_MAX_AUXILIARY_BLOCK_BYTES = 2 * 1024 * 1024;
-/** Descriptor-table ceiling, inside the auxiliary block. */
-export const AVB_MAX_DESCRIPTOR_BYTES = 1024 * 1024;
-/** Descriptor-count ceiling. Each descriptor is walked before the next. */
-export const AVB_MAX_DESCRIPTORS = 4096;
 /** Distinct unknown descriptor tags named in the aggregate limitation. */
 export const AVB_UNKNOWN_TAGS_NAMED = 8;
 /** The only required libavb major version whose layout this reader knows. */
@@ -121,36 +111,33 @@ const CMDLINE_FLAGS: readonly (readonly [number, string])[] = [
 
 const FORMAT = "android-vbmeta";
 
-const AUTHENTICATION_BLOCK_LIMIT = {
-  name: "Android vbmeta authentication block",
-  maximum: AVB_MAX_AUTHENTICATION_BLOCK_BYTES,
-  unit: "bytes",
-};
-const AUXILIARY_BLOCK_LIMIT = {
-  name: "Android vbmeta auxiliary block",
-  maximum: AVB_MAX_AUXILIARY_BLOCK_BYTES,
-  unit: "bytes",
-};
-const DESCRIPTOR_BYTES_LIMIT = {
-  name: "Android vbmeta descriptor bytes",
-  maximum: AVB_MAX_DESCRIPTOR_BYTES,
-  unit: "bytes",
-};
-const DESCRIPTOR_COUNT_LIMIT = {
-  name: "Android vbmeta descriptor count",
-  maximum: AVB_MAX_DESCRIPTORS,
-  unit: "descriptors",
-};
+/** One caller-selected vbmeta admission budget. */
+export interface AndroidVbmetaLimitSetting {
+  readonly setting: keyof AndroidVbmetaReaderLimits;
+  readonly unit: "bytes" | "count";
+}
 
-/** Parser-owned fixed ceilings and their units for artifact recovery. */
-export const ANDROID_VBMETA_FIXED_LIMITS: ReadonlyMap<
+const AUTHENTICATION_BLOCK_LIMIT = "Android vbmeta authentication block";
+const AUXILIARY_BLOCK_LIMIT = "Android vbmeta auxiliary block";
+const DESCRIPTOR_BYTES_LIMIT = "Android vbmeta descriptor bytes";
+const DESCRIPTOR_COUNT_LIMIT = "Android vbmeta descriptor count";
+
+/**
+ * Parser limit names and the admission setting each one reports. libavb and
+ * avbtool cap none of these sizes: block sizes are u64 header fields and the
+ * descriptor table carries no count, so every budget is caller-selectable.
+ */
+export const ANDROID_VBMETA_LIMIT_SETTINGS: ReadonlyMap<
   string,
-  LimitRef & { readonly unit: string }
-> = new Map([
-  [AUTHENTICATION_BLOCK_LIMIT.name, AUTHENTICATION_BLOCK_LIMIT],
-  [AUXILIARY_BLOCK_LIMIT.name, AUXILIARY_BLOCK_LIMIT],
-  [DESCRIPTOR_BYTES_LIMIT.name, DESCRIPTOR_BYTES_LIMIT],
-  [DESCRIPTOR_COUNT_LIMIT.name, DESCRIPTOR_COUNT_LIMIT],
+  AndroidVbmetaLimitSetting
+> = new Map<string, AndroidVbmetaLimitSetting>([
+  [
+    AUTHENTICATION_BLOCK_LIMIT,
+    { setting: "authentication_block_bytes", unit: "bytes" },
+  ],
+  [AUXILIARY_BLOCK_LIMIT, { setting: "auxiliary_block_bytes", unit: "bytes" }],
+  [DESCRIPTOR_BYTES_LIMIT, { setting: "descriptor_bytes", unit: "bytes" }],
+  [DESCRIPTOR_COUNT_LIMIT, { setting: "descriptor_count", unit: "count" }],
 ]);
 
 export const ANDROID_VBMETA_LIMITATIONS = {
@@ -210,7 +197,7 @@ const truncated = (detail: string, field: string, offset: number): never => {
 
 const capacity = (
   detail: string,
-  limit: { readonly name: string; readonly maximum: number },
+  limit: LimitRef,
   field: string,
   offset: number,
 ): never => {
@@ -233,13 +220,13 @@ const u64Capped = (
   offset: number,
   field: string,
   maximum: number,
-  limit: { readonly name: string; readonly maximum: number },
+  name: string,
 ): number => {
   const value = u64(bytes, offset);
   if (value > BigInt(maximum))
     capacity(
-      `${field} of ${value.toString()} bytes exceeds the fixed ${String(maximum)}-byte ceiling`,
-      limit,
+      `${field} of ${value.toString()} bytes exceeds the selected ${String(maximum)}-byte admission`,
+      { name, maximum, required: value },
       field,
       offset,
     );
@@ -359,6 +346,7 @@ interface HeaderFields {
 export const androidVbmetaImageExtent = (
   bytes: Buffer,
   fileSize: number,
+  limits: AndroidVbmetaReaderLimits = DEFAULT_ANDROID_VBMETA_READER_LIMITS,
 ): Result<HeaderFields, AndroidVbmetaParseError> =>
   caught(() => {
     requireFileSize(fileSize);
@@ -374,14 +362,14 @@ export const androidVbmetaImageExtent = (
       bytes,
       12,
       "authentication block",
-      AVB_MAX_AUTHENTICATION_BLOCK_BYTES,
+      limits.authentication_block_bytes,
       AUTHENTICATION_BLOCK_LIMIT,
     );
     const auxiliarySize = u64Capped(
       bytes,
       20,
       "auxiliary block",
-      AVB_MAX_AUXILIARY_BLOCK_BYTES,
+      limits.auxiliary_block_bytes,
       AUXILIARY_BLOCK_LIMIT,
     );
     requireBlockAligned(authenticationSize, "authentication block");
@@ -407,7 +395,7 @@ export const androidVbmetaImageExtent = (
       bytes,
       104,
       "descriptor bytes",
-      AVB_MAX_DESCRIPTOR_BYTES,
+      limits.descriptor_bytes,
       DESCRIPTOR_BYTES_LIMIT,
     );
     rangeInside(hashOffset, hashSize, authenticationSize, "hash", 32);
@@ -847,12 +835,33 @@ const descriptorFailureLimitation = (
 ): string =>
   `Descriptor walk stopped at file offset ${String(failure.descriptor_offset)}: ${failure.detail}. ${decoded === 1 ? "The 1 descriptor" : `The ${String(decoded)} descriptors`} before it ${decoded === 1 ? "is" : "are"} decoded; the remaining ${String(failure.unexamined_bytes)} bytes of the descriptor table were not examined.`;
 
+/**
+ * Count the well-formed descriptor headers from `cursor` on without decoding
+ * their bodies. The table is already admitted, so the scan is bounded by it.
+ */
+const countDescriptorHeaders = (table: Buffer, start: number): number => {
+  let count = 0;
+  let cursor = start;
+  while (table.length - cursor >= 16) {
+    const following = u64(table, cursor + 8);
+    if (
+      following % BigInt(AVB_DESCRIPTOR_ALIGNMENT) !== 0n ||
+      following > BigInt(table.length - cursor - 16)
+    )
+      break;
+    count += 1;
+    cursor += 16 + Number(following);
+  }
+  return count;
+};
+
 /** Decode one descriptor at `cursor`, or throw where it is malformed. */
 const readDescriptor = (
   table: Buffer,
   cursor: number,
   fileOffset: number,
   descriptorCount: number,
+  maxDescriptors: number,
 ): {
   readonly descriptor: AndroidVbmetaDescriptor;
   readonly reservedNonZero: boolean;
@@ -862,13 +871,6 @@ const readDescriptor = (
     malformed(
       "descriptor header does not fit in the descriptors block",
       "descriptor",
-      fileOffset + cursor,
-    );
-  if (descriptorCount >= AVB_MAX_DESCRIPTORS)
-    capacity(
-      `descriptor count exceeds the fixed ${String(AVB_MAX_DESCRIPTORS)}-descriptor ceiling`,
-      DESCRIPTOR_COUNT_LIMIT,
-      "descriptors",
       fileOffset + cursor,
     );
   const tag = u64(table, cursor);
@@ -885,6 +887,17 @@ const readDescriptor = (
       "descriptor",
       fileOffset + cursor + 8,
     );
+  if (descriptorCount >= maxDescriptors)
+    capacity(
+      `descriptor count exceeds the selected ${String(maxDescriptors)}-descriptor admission`,
+      {
+        name: DESCRIPTOR_COUNT_LIMIT,
+        maximum: maxDescriptors,
+        required: descriptorCount + countDescriptorHeaders(table, cursor),
+      },
+      "descriptors",
+      fileOffset + cursor,
+    );
   const body = table.subarray(cursor + 16, cursor + 16 + following);
   return {
     ...parseDescriptor(tag, body, fileOffset + cursor),
@@ -895,11 +908,13 @@ const readDescriptor = (
 /**
  * Walk the descriptor table. A malformed descriptor stops the walk; the
  * descriptors before it are kept and the failure is reported, so the header
- * and the decoded prefix survive. A fixed ceiling still refuses the image.
+ * and the decoded prefix survive. The descriptor-count admission still
+ * refuses the image.
  */
 const walkDescriptors = (
   table: Buffer,
   fileOffset: number,
+  maxDescriptors: number,
 ): {
   readonly descriptors: AndroidVbmetaDescriptor[];
   readonly limitations: string[];
@@ -914,7 +929,13 @@ const walkDescriptors = (
   let failure: AndroidVbmetaDescriptorFailure | null = null;
   while (cursor < table.length) {
     const read = caught(() =>
-      readDescriptor(table, cursor, fileOffset, descriptors.length),
+      readDescriptor(
+        table,
+        cursor,
+        fileOffset,
+        descriptors.length,
+        maxDescriptors,
+      ),
     );
     if (!read.ok) {
       const facts = read.error.failure;
@@ -952,9 +973,10 @@ const walkDescriptors = (
 export const parseAndroidVbmeta = (
   bytes: Buffer,
   fileSize: number,
+  limits: AndroidVbmetaReaderLimits = DEFAULT_ANDROID_VBMETA_READER_LIMITS,
 ): Result<AndroidVbmetaImage, AndroidVbmetaParseError> =>
   caught(() => {
-    const extent = androidVbmetaImageExtent(bytes, fileSize);
+    const extent = androidVbmetaImageExtent(bytes, fileSize, limits);
     if (!extent.ok) throw extent.error;
     const header = extent.value;
     if (bytes.length < header.imageSize)
@@ -971,6 +993,7 @@ export const parseAndroidVbmeta = (
     const walked = walkDescriptors(
       table,
       auxiliaryOffset + header.descriptorsOffset,
+      limits.descriptor_count,
     );
     const publicKey =
       header.publicKeySize === 0
