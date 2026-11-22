@@ -190,9 +190,9 @@ it.each(["inline", "retained-evidence", "invalid"] as const)(
   },
 );
 
-it.each([false, true])(
-  "summarizes the selected observation path rather than older retained display metadata (history=%s)",
-  (history) => {
+it.each(["new observation", "changed path", "changed name"] as const)(
+  "summarizes selected display metadata for %s",
+  (scenario) => {
     const makeParent = (path: string) =>
       createEvidence(
         { path, format: "pe", sha256: "c".repeat(64) },
@@ -204,21 +204,29 @@ it.each([false, true])(
         },
       );
     const previous = makeParent("/old/fixture.exe");
-    const selected = makeParent("/selected/fixture.exe");
+    const selected =
+      scenario === "changed name"
+        ? rebindEvidenceToTargetPath(previous, {
+            ...fileSubjectTarget(previous.subject),
+            name: "selected display",
+          })
+        : makeParent("/selected/fixture.exe");
     expect(selected.evidence_id).toBe(previous.evidence_id);
     const ledger = new EvidenceLedger();
-    if (history) expect(ledger.record(previous).ok).toBe(true);
+    if (scenario !== "new observation")
+      expect(ledger.record(previous).ok).toBe(true);
     const summary = summarizeRetainedAnalysis(selected, {
       recordEvidence: (evidence) => ledger.record(evidence),
       evidenceById: (id) => ledger.forAnalysis(id),
     });
     if (!summary.ok) throw summary.error;
     expect(summary.value.evidence_links).toEqual([selected.evidence_id]);
-    expect(summary.value.subject?.local_path).toBe(
-      selected.subject?.local_path,
-    );
-    expect(ledger.get(selected.evidence_id)?.subject?.local_path).toBe(
-      history ? previous.subject?.local_path : selected.subject?.local_path,
+    expect(summary.value.subject).toEqual({
+      ...selected.subject,
+      name: scenario === "changed name" ? "selected display" : "fixture.exe",
+    });
+    expect(ledger.get(selected.evidence_id)?.subject).toEqual(
+      scenario === "new observation" ? selected.subject : previous.subject,
     );
   },
 );

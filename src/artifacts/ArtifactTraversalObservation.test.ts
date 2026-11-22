@@ -46,28 +46,13 @@ const drain = async (iterable: AsyncIterable<ArtifactEntry>) => {
 };
 
 describe("ArtifactTraversalObservation", () => {
-  it("is complete only when the reader declares complete coverage and finishes", async () => {
-    const traversal = new ArtifactTraversalObservation();
-    expect(
-      await drain(traversal.entries(reader("zip", complete), undefined)),
-    ).toEqual(["a", "b"]);
-    expect(traversal.snapshot()).toEqual(complete);
-  });
-
-  it("reports a reader that ends without declaring coverage as unknown", async () => {
-    const traversal = new ArtifactTraversalObservation();
-    await drain(traversal.entries(reader("ines", undefined), undefined));
-    expect(traversal.snapshot()).toEqual({
-      status: "unknown",
-      limitations: [
-        "The ines reader ended its traversal without declaring coverage; members it did not list are unknown.",
-      ],
-    });
-  });
-
   it("does not let one declared-complete traversal cover a silent one", async () => {
     const traversal = new ArtifactTraversalObservation();
-    await drain(traversal.entries(reader("directory", complete), undefined));
+    expect(
+      await drain(traversal.entries(reader("directory", complete), undefined)),
+    ).toEqual(["a", "b"]);
+    expect(traversal.snapshot()).toEqual(complete);
+
     await drain(traversal.entries(reader("asar", undefined), undefined));
     await drain(traversal.entries(reader("zip", complete), undefined));
     expect(traversal.snapshot()).toEqual({

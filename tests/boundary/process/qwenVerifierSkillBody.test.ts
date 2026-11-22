@@ -1,80 +1,121 @@
-import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
-it.each([
-  ["no skill tool", false],
-  ["user mention", false],
-  ["wrong id", false],
-  ["missing body", false],
-  ["split", false],
-  ["complete", true],
-  ["CRLF", true],
-  ["output missing result", false],
-  ["output missing marker", false],
-  ["output terminal failure", false],
-  ["output success", true],
-] as const)("binds Qwen skill evidence for %s", async (mode, loaded) => {
-  const state = await mkdtemp(join(tmpdir(), "rea-qwen-skill-"));
-  try {
-    await writeFile(
-      join(state, "commands.mjs"),
-      "import {mkdir,readFile,writeFile} from 'node:fs/promises';import {join} from 'node:path';\nexport async function createVerifierCommands(){return {async exec(command,args,options={}){\n if(args.includes('--version'))return {stdout:'fake',stderr:''};\n const profile=options.env.QWEN_HOME;const config=join(profile,'settings.json');\n if(args.includes('setup')&&args.includes('--dry-run'))return {stdout:JSON.stringify({plannedActions:[{target:config}]}),stderr:''};\n if(args.includes('setup')){\n  const original=await readFile(config,'utf8');await writeFile(config+'.rea.backup',original);\n  const value=JSON.parse(original);value.mcpServers.rea={command:'/fake/rea',args:['mcp']};await writeFile(config,JSON.stringify(value));\n  const skill=join(options.env.HOME,'.agents','skills','reverse-engineer-anything');await mkdir(skill,{recursive:true});\n  const source='---\\nname: reverse-engineer-anything\\n---\\nQwen \"authored\" body\\nKeep a \\\\ literal\\n';\n  await writeFile(join(skill,'SKILL.md'),process.env.MODE==='CRLF'?source.replaceAll('\\n','\\r\\n'):source);\n  return {stdout:'{}',stderr:''};\n }\n if(args.includes('doctor'))return {stdout:'{}',stderr:''};\n if(process.env.MODE.startsWith('output ')){await globalThis.fakeRequest({body:{messages:[]},tools:[],requestIndex:1});const {TOOL_CONTRACTS}=await import(process.env.CONTRACTS);const events=[{type:'system',subtype:'init',tools:TOOL_CONTRACTS.map(c=>'mcp__rea__'+c.name)}];const success={type:'result',subtype:'success',is_error:false,result:process.env.MODE==='output missing marker'?'': 'REA_CLIENT_COMPATIBILITY_OK'};if(process.env.MODE!=='output missing result')events.push(success);if(process.env.MODE==='output terminal failure')events.push({type:'result',subtype:'error_during_execution',is_error:true});return {stdout:events.map(e=>JSON.stringify(e)).join('\\n')+'\\n',stderr:''};}\n const skill=join(options.env.HOME,'.agents','skills','reverse-engineer-anything');\n const content='Base directory for this skill: '+skill+'\\nImportant: ALWAYS resolve absolute paths from this base directory when working with skills.\\n\\nQwen \"authored\" body\\nKeep a \\\\ literal\\n';\n const tools=[...(process.env.MODE==='no skill tool'?[]:[{name:'skill'}]),{name:'mcp__rea__analyze_javascript_application'}];\n const first=await globalThis.fakeRequest({body:{messages:[]},tools,requestIndex:1});const callId=first.tool_calls[0].id;\n let messages=(process.env.MODE==='user mention'||process.env.MODE==='no skill tool')?[{role:'user',content:'Unrelated '+skill}]:[{role:'tool',tool_call_id:process.env.MODE==='wrong id'?'other':callId,content:process.env.MODE==='missing body'?'Base directory for this skill: '+skill:content}];\n if(process.env.MODE==='split')messages=[{role:'tool',tool_call_id:callId,content:'Base directory for this skill: '+skill},{role:'tool',tool_call_id:'other',content}];\n const second=await globalThis.fakeRequest({body:{messages},tools,requestIndex:2});await writeFile(process.env.STATE+'/observed.json',JSON.stringify({first,second,messages}));throw Error('intentional stop before client output');\n},async close(){}};}\n",
+import {
+  createQwenSkillReadback,
+  hasQwenSuccessfulResult,
+  qwenPersistedOutput,
+  qwenSavedSkillPath,
+  qwenToolResponseText,
+} from "../../../scripts/verify/clients/qwen-evidence.mjs";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+it("binds Qwen skill text to the selected native tool reply", () => {
+  const skill = "Base directory for this skill: /owned/skill";
+  const body = "The complete authored skill body.";
+  const reply = { role: "tool", tool_call_id: "selected" };
+  const unrelated = [
+    { ...reply, role: "user", content: body },
+    { ...reply, tool_call_id: "other", content: body },
+    { ...reply, content: skill },
+  ];
+
+  expect(qwenToolResponseText(unrelated, undefined)).toBe("");
+  expect(qwenToolResponseText(unrelated, "selected")).toBe(skill);
+  expect(
+    qwenToolResponseText(
+      [{ ...reply, content: [{ text: skill }, { text: body }] }, ...unrelated],
+      "selected",
+    ),
+  ).toBe(`${skill}\n${body}`);
+});
+
+it("re-reads Qwen's clipped final line and verifies the complete skill", () => {
+  const expected =
+    "Base directory for this skill: /owned/skill\nKeep paths literal.\n";
+  const text = expected + "Next instruction.\n";
+  const digest = createHash("sha256").update(text).digest("hex");
+  const notice = `<persisted-output>
+Output too large (47 KB). Full output saved to: /owned/saved
+Full output sha256: ${digest}
+Preview (up to 2000 chars):
+${expected}
+</persisted-output>`;
+  expect(qwenPersistedOutput(notice)).toEqual({ path: "/owned/saved", digest });
+  expect(
+    qwenPersistedOutput(notice.replace("sha256:", "unknown:")),
+  ).toBeUndefined();
+  expect(qwenPersistedOutput(notice.slice(19))).toBeUndefined();
+
+  const readback = createQwenSkillReadback(digest, expected);
+  expect(readback.range).toEqual({});
+  const clipped =
+    "Showing lines 1-2 of 4 total lines.\n\n---\n\nBase directory for this skill: /owned/skill\nKeep";
+  expect(readback.receive(clipped)).toBe(false);
+  expect(readback.range).toEqual({ offset: 1, limit: 3 });
+  expect(() =>
+    readback.receive(
+      "Showing lines 3-4 of 4 total lines.\n\n---\n\nNext instruction.\n",
+    ),
+  ).toThrow("unexpected saved-skill page range");
+  expect(
+    readback.receive(
+      "Showing lines 2-4 of 4 total lines.\n\n---\n\nKeep paths literal.\nNext instruction.\n",
+    ),
+  ).toBe(true);
+  expect(createQwenSkillReadback(digest, expected).receive(text)).toBe(true);
+  expect(() =>
+    createQwenSkillReadback(digest, expected).receive(
+      text.replace("Next", "Other"),
+    ),
+  ).toThrow("did not return the complete saved skill");
+});
+
+it.skipIf(process.platform === "win32")(
+  "rejects a saved-skill alias outside the owned runtime",
+  async () => {
+    const parent = await createTestTempDirectory("rea-qwen-skill-path-");
+    const runtime = join(parent, "runtime");
+    const saved = join(runtime, "owned");
+    const foreign = join(parent, "foreign");
+    const alias = join(runtime, "alias");
+    await mkdir(runtime);
+    await Promise.all([
+      writeFile(saved, "owned"),
+      writeFile(foreign, "foreign"),
+    ]);
+    await symlink(foreign, alias);
+
+    await expect(qwenSavedSkillPath(saved, runtime)).resolves.toBe(
+      await realpath(saved),
     );
-    await writeFile(
-      join(state, "fixture.mjs"),
-      "export async function createOpenAiModelFixture({onRequest}){globalThis.fakeRequest=onRequest;return {baseUrl:'http://127.0.0.1:1',async close(){}};}\n",
+    await expect(qwenSavedSkillPath(alias, runtime)).rejects.toThrow(
+      "outside the verifier's runtime",
     );
-    await writeFile(
-      join(state, "hook.mjs"),
-      "import {registerHooks}from'node:module';import{pathToFileURL}from'node:url';registerHooks({resolve(specifier,context,next){if(context.parentURL?.endsWith('/scripts/verify-qwen-client.mjs')){let f;if(specifier==='./lib/verify-commands.mjs')f='commands.mjs';if(specifier==='./verify/clients/model-fixture.mjs')f='fixture.mjs';if(f)return{url:pathToFileURL(process.env.STATE+'/'+f).href,shortCircuit:true};}return next(specifier,context);}});\n",
-    );
-    const script = fileURLToPath(
-      new URL("../../../scripts/verify-qwen-client.mjs", import.meta.url),
-    );
-    const result = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        join(state, "hook.mjs"),
-        script,
-        ...(mode.startsWith("output ") ? ["chat"] : []),
-      ],
-      {
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          ...process.env,
-          STATE: state,
-          MODE: mode,
-          CONTRACTS: new URL(
-            "../../../dist/contracts/toolContracts.js",
-            import.meta.url,
-          ).href,
-          TMPDIR: state,
-          TMP: state,
-          TEMP: state,
-        },
-      },
-    );
-    if (mode.startsWith("output ")) {
-      // Authored stream result shape from Qwen's BaseJsonOutputAdapter at
-      // QwenLM/qwen-code c238beb56fa3c65a0f62ad7a3b2cd14db978b998.
-      expect(result.status, result.stderr).toBe(loaded ? 0 : 1);
-      const receipt = JSON.parse(result.stdout.trim().split("\n")[0] ?? "");
-      expect(receipt.finalSeen).toBe(loaded);
-      expect(receipt.passed).toBe(loaded);
-      return;
-    }
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("intentional stop before client output");
-    const receipt = JSON.parse(result.stdout.trim().split("\n")[0] ?? "");
-    expect(receipt.selectedSkillLoaded).toBe(loaded);
-    expect(receipt.passed).toBe(false);
-  } finally {
-    await rm(state, { recursive: true, force: true });
-  }
+  },
+);
+
+it("requires Qwen's last result to confirm the exact final answer", () => {
+  const init = { type: "system", subtype: "init" };
+  const success = {
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "answer",
+  };
+  const failed = {
+    type: "result",
+    subtype: "error_during_execution",
+    is_error: true,
+  };
+  expect(hasQwenSuccessfulResult([init, success], "answer")).toBe(true);
+  expect(hasQwenSuccessfulResult([init], "answer")).toBe(false);
+  expect(
+    hasQwenSuccessfulResult([init, { ...success, result: "" }], "answer"),
+  ).toBe(false);
+  expect(hasQwenSuccessfulResult([init, success, failed], "answer")).toBe(
+    false,
+  );
 });

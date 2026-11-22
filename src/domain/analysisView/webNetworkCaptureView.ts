@@ -5,7 +5,7 @@ import {
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -460,13 +460,15 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
-const captureParser = { safeParse: safeParseOwnedWebNetworkCapture };
+const readCaptureParent = createAnalysisViewResultReader({
+  safeParse: safeParseOwnedWebNetworkCapture,
+});
 
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(captureParser, parent);
+  const parsed = readCaptureParent(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = evidenceFileTarget(parent);
@@ -544,7 +546,8 @@ export const projectWebNetworkCaptureView = (
         "Decoding covers selected retained bodies only. Exhausting wire fields does not establish schema completeness or business meaning; compressed bodies and unsupported schema facets remain unknown.",
       ],
     });
-  if (view.kind === "summary")
+  if (view.kind === "summary") {
+    const protobufSummary = summarizeProtobuf(report.records);
     return ok({
       kind: "summary" as const,
       view,
@@ -559,15 +562,14 @@ export const projectWebNetworkCaptureView = (
         ...(report.protobuf_coverage === undefined
           ? {}
           : { protobuf_coverage: report.protobuf_coverage }),
-        ...(summarizeProtobuf(report.records) === undefined
-          ? {}
-          : { protobuf: summarizeProtobuf(report.records)! }),
+        ...(protobufSummary === undefined ? {} : { protobuf: protobufSummary }),
         ...(report.format === "qlog"
           ? { qlog: summarizeQlogCapture(report.qlog) }
           : {}),
       },
       coverage: completeWithinViewCoverage(report.records.length),
     });
+  }
   if (view.kind === "qlog") {
     if (report.format !== "qlog")
       return err(

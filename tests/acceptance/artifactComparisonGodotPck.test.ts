@@ -61,57 +61,45 @@ it("pairs a Godot PCK member across stored res:// spellings", async () => {
   expect(result.summary).toMatchObject({ unchanged: 1, unknown: 0 });
 });
 
-it("reports a Godot PCK member that becomes encrypted", async () => {
+it("compares encryption and declared MD5 without claiming content equality", async () => {
   const { inspect, compare } = await connectPackComparison();
   const script = { path: "res://scenes/main.gd", data: "extends Node\n" };
-  const plain = await inspect("plain.pck", script);
-  const encrypted = await inspect("encrypted.pck", { ...script, flags: 1 });
-  // REA does not decrypt members, so the encrypted member has no content.
-  expect(member(encrypted)).toMatchObject({
-    artifact_id: null,
-    encrypted: true,
-    hash_status: "unavailable",
-  });
-
-  // The encryption change is known; whether the script changed is not.
-  const result = await compare(plain, encrypted);
-  expect(
-    result.changes.filter(({ logical_path }) => logical_path !== "."),
-  ).toMatchObject([
-    {
-      logical_path: "scenes/main.gd",
-      classification: "unknown",
-      dimensions: ["metadata", "availability"],
-      left_occurrence_id: member(plain).occurrence_id,
-      right_occurrence_id: member(encrypted).occurrence_id,
-    },
-  ]);
-});
-
-it("compares encrypted Godot PCK members by their declared MD5", async () => {
-  const { inspect, compare } = await connectPackComparison();
-  // Godot hashes a member's unencrypted bytes, so every export of one script
-  // declares the same MD5 whatever its random IV.
-  const encrypted = (name: string, ciphertext: string, script: string) =>
+  const encrypted = (
+    name: string,
+    ciphertext: string,
+    plaintext = script.data,
+  ) =>
     inspect(name, {
-      path: "res://scenes/main.gd",
+      path: script.path,
       data: ciphertext,
       flags: 1,
-      md5: createHash("md5").update(script).digest(),
+      md5: createHash("md5").update(plaintext).digest(),
     });
-  const first = await encrypted("first.pck", "ciphertext A", "extends Node\n");
-  const again = await encrypted("again.pck", "ciphertext B", "extends Node\n");
-  const edited = await encrypted(
-    "edited.pck",
-    "ciphertext C",
-    "extends Sprite2D\n",
-  );
   const memberChanges = async (left: Evidence, right: Evidence) =>
     (await compare(left, right)).changes.filter(
       ({ logical_path }) => logical_path !== ".",
     );
+  const plain = await inspect("plain.pck", script);
+  const first = await encrypted("first.pck", "ciphertext A!");
+  const firstMember = member(first);
+  const plainMember = member(plain);
+  expect(firstMember).toMatchObject({
+    artifact_id: null,
+    encrypted: true,
+    hash_status: "unavailable",
+  });
+  expect(firstMember.occurrence_id).not.toBe(plainMember.occurrence_id);
+  expect(await memberChanges(plain, first)).toMatchObject([
+    {
+      logical_path: "scenes/main.gd",
+      classification: "unknown",
+      dimensions: ["metadata", "availability"],
+      left_occurrence_id: plainMember.occurrence_id,
+      right_occurrence_id: firstMember.occurrence_id,
+    },
+  ]);
 
-  // Equal claims are unverified, so they do not establish equality.
+  const again = await encrypted("again.pck", "ciphertext B!");
   expect(await memberChanges(first, again)).toMatchObject([
     {
       logical_path: "scenes/main.gd",
@@ -122,8 +110,8 @@ it("compares encrypted Godot PCK members by their declared MD5", async () => {
   // An all-zero MD5 is not a declared claim. The one-sided claim is the
   // metadata difference; the reader's note is not compared.
   const unclaimed = await inspect("unclaimed.pck", {
-    path: "res://scenes/main.gd",
-    data: "ciphertext D",
+    path: script.path,
+    data: "ciphertext D!",
     flags: 1,
     md5: Buffer.alloc(16),
   });
@@ -137,6 +125,11 @@ it("compares encrypted Godot PCK members by their declared MD5", async () => {
   ]);
   // Claims that differ declare different content, but REA cannot verify
   // them, so the difference is known and the content change is not.
+  const edited = await encrypted(
+    "edited.pck",
+    "ciphertext C!",
+    "extends Sprite2D\n",
+  );
   expect(await memberChanges(first, edited)).toMatchObject([
     {
       logical_path: "scenes/main.gd",

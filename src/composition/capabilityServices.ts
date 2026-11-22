@@ -1,3 +1,6 @@
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
@@ -5,7 +8,10 @@ import {
 } from "../pcap/PcapConfiguration.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
-import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
+import type {
+  CapabilityAvailabilityFacts,
+  OptionalAvailabilityFeatures,
+} from "../application/CapabilityAvailability.js";
 import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclarationId,
@@ -26,15 +32,18 @@ import {
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
 import { createV8CodeCacheService } from "./v8CodeCache.js";
+import { createMavenGradleMetadataService } from "./mavenGradleMetadata.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
+import { createNugetNupkgService } from "./nugetNupkg.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
 import { createWebModuleTraceService } from "./webModules.js";
@@ -76,6 +85,8 @@ import {
   createBinaryLayoutService,
   createDevicetreeService,
   createElfNotesService,
+  createDwarfUnitsService,
+  createElfDebugLinkService,
   createNativeInitializersService,
   createElfUnwindRangesService,
   createAppleIpsService,
@@ -96,8 +107,10 @@ import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
 import type { PythonPycService } from "../application/python/PythonPycService.js";
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { BeamService } from "../application/erlang/BeamService.js";
 import type { V8CodeCacheService } from "../application/v8CodeCache/V8CodeCacheService.js";
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
 import type { BrowserObservationPort } from "../ports/BrowserObservationPort.js";
@@ -135,10 +148,13 @@ export interface CapabilityServiceOptions {
   readonly il2cppMetadata?: Il2cppMetadataService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
+  readonly nugetNupkg?: NugetNupkgService;
   readonly erlangBeam?: BeamService;
   readonly v8CodeCache?: V8CodeCacheService;
+  readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -347,6 +363,7 @@ const modules = {
     ({ providerEnvironment, options }) =>
       new DesktopBuildComputers(
         providerEnvironment,
+        readHostFile,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
         options.desktopBuildStartTiming,
@@ -365,6 +382,10 @@ const modules = {
   v8CodeCache: service(
     ({ options }) => options.v8CodeCache ?? createV8CodeCacheService(),
   ),
+  mavenGradleMetadata: service(
+    ({ options }) =>
+      options.mavenGradleMetadata ?? createMavenGradleMetadataService(),
+  ),
   modelArtifact: service(() => createModelArtifactService()),
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
   il2cppMetadata: service(
@@ -374,6 +395,8 @@ const modules = {
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),
+  dwarfUnits: service(() => createDwarfUnitsService()),
+  elfDebugLink: service(() => createElfDebugLinkService()),
   nativeInitializers: service(() => createNativeInitializersService()),
   elfUnwindRanges: service(() => createElfUnwindRangesService()),
   appleIps: service(() => createAppleIpsService()),
@@ -393,6 +416,9 @@ const modules = {
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),
+  ),
+  nugetNupkg: service(
+    ({ options }) => options.nugetNupkg ?? createNugetNupkgService(),
   ),
   webNetworkCapture: service(
     ({ environment, options, settings }) =>
@@ -463,6 +489,12 @@ const modules = {
       },
     }),
   ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
+  ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>
       createGdbSessionManager(providerEnvironment, { platform }),
@@ -529,11 +561,12 @@ const modules = {
           tsharkHostSupported(platform),
         ),
       },
-      optionalFeatures: {
+      // Probe PATH only when `binary_session` queries default availability.
+      observeOptionalFeatures: () => ({
         packetCaptureEnabled:
           options.packetCapture !== undefined ||
           (tsharkHostSupported(platform) && tsharkLocatable(environment)),
-      },
+      }),
     }),
   ),
   signalRecording: service(
@@ -671,6 +704,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
   const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
+  const optionalFeatureObservers: (() => Partial<OptionalAvailabilityFeatures>)[] =
+    [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -695,6 +730,9 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
         instance.availability?.observeCommandProviderFailures;
       if (observeCommandFailure !== undefined)
         commandFailureObservers.push(observeCommandFailure);
+      const observeOptional = instance.availability?.observeOptionalFeatures;
+      if (observeOptional !== undefined)
+        optionalFeatureObservers.push(observeOptional);
       return [
         id,
         instance.ownership === "host"
@@ -711,6 +749,11 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    observeOptionalFeatures: (): Partial<OptionalAvailabilityFeatures> =>
+      Object.assign(
+        {},
+        ...optionalFeatureObservers.map((observe) => observe()),
+      ),
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();

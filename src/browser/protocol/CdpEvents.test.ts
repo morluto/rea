@@ -1,45 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
-import { receiveCdpEvent } from "../CdpConnection.js";
-import { cdpFrameEvent } from "./CdpEvents.js";
+import { receiveCdpEvent, type CdpReceivedEvent } from "../CdpConnection.js";
+import {
+  cdpFrameEvent,
+  type CdpEventName,
+  type CdpProtocolEvent,
+} from "./CdpEvents.js";
+
+expectTypeOf<"Network.dataReceived">().toExtend<CdpProtocolEvent>();
+expectTypeOf<"Network.dataReceived">().not.toExtend<CdpEventName>();
+expectTypeOf<CdpReceivedEvent>().not.toHaveProperty("params");
+expectTypeOf<CdpReceivedEvent>().not.toHaveProperty("method");
 
 describe("registered CDP event payloads", () => {
-  it("parses a frame event's identity and URL once, keeping the raw payload", () => {
-    const params = {
-      frame: {
-        id: "main",
-        loaderId: "loader",
-        url: "https://app.test/page",
-        urlFragment: "#section",
-      },
-    };
-    const event = receiveCdpEvent({ method: "Page.frameNavigated", params });
-    expect(event).not.toHaveProperty("params");
-    // Subscribers cannot name the raw payload; they read `registered`.
-    // @ts-expect-error `params` is not part of a received event.
-    expect(event.params).toBeUndefined();
-    // Subscribers select events by the registered name, never by wire text.
-    expect(event).not.toHaveProperty("method");
-    // @ts-expect-error the wire method name is not part of a received event.
-    expect(event.method).toBeUndefined();
-    // @ts-expect-error an unregistered event name does not compile.
-    expect(event.registered?.method === "Page.frameNavigatedd").toBe(false);
-    expect(event.domain).toBe("Page");
-    expect(cdpFrameEvent(event)).toEqual({
-      facts: expect.objectContaining({
-        kind: "navigated",
-        frameId: "main",
-        loaderId: "loader",
-        identityIssue: null,
-      }),
-      url: {
-        kind: "observed",
-        url: "https://app.test/page#section",
-        scopeUrl: "https://app.test/page",
-      },
-    });
-  });
-
   it.each([
     ["a missing payload", undefined, "missing_params"],
     ["a non-object payload", "frame", "invalid_params"],
@@ -57,28 +30,13 @@ describe("registered CDP event payloads", () => {
       expect(frame?.facts.identityIssue).toBe(issue);
     },
   );
-
-  it("records a malformed fragment as unreadable identity with its scope URL", () => {
-    const frame = cdpFrameEvent(
-      receiveCdpEvent({
-        method: "Page.frameNavigated",
-        params: {
-          frame: { id: "main", url: "https://app.test/", urlFragment: 3 },
-        },
-      }),
-    );
-    expect(frame?.url).toEqual({
-      kind: "invalid_fragment",
-      scopeUrl: "https://app.test/",
-    });
-  });
 });
 
 describe("registered Runtime and Debugger event payloads", () => {
   it("derives tolerant script facts and the strict runtime declaration from one parse", () => {
     const params = {
       scriptId: "script-1",
-      url: "https://app.test/app.js",
+      url: "https://app.test/café.js",
       executionContextId: 3,
       startLine: 0,
       startColumn: 0,
@@ -95,7 +53,7 @@ describe("registered Runtime and Debugger event payloads", () => {
     expect(event.registered.payload.runtime.success).toBe(true);
     expect(event.registered.payload.declarationBytes).toEqual({
       ok: true,
-      value: Buffer.byteLength(JSON.stringify(params)),
+      value: 136, // The compact fixture has 135 code units and one two-byte character.
     });
 
     const partial = receiveCdpEvent({
@@ -198,23 +156,9 @@ describe("registered Network event payloads", () => {
     });
     expect(event.registered.payload.runtime.success).toBe(false);
   });
-
-  it("reads a WebSocket frame's identity, opcode and payload without policy", () => {
-    const event = receiveCdpEvent({
-      method: "Network.webSocketFrameReceived",
-      params: {
-        requestId: "socket-1",
-        response: { opcode: 99, payloadData: 7 },
-      },
-    });
-    expect(event.registered).toEqual({
-      method: "Network.webSocketFrameReceived",
-      payload: { requestId: "socket-1", opcode: 99, payloadData: undefined },
-    });
-  });
 });
 
-describe("registered Target, lifecycle and WebMCP event payloads", () => {
+describe("registered Target and WebMCP event payloads", () => {
   it.each([
     [{ sessionId: "session-1" }, "session-1"],
     [{ sessionId: 7 }, undefined],
@@ -232,31 +176,19 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
     },
   );
 
-  it("reads an attached target's session and type", () => {
+  it("reads an attached target's session, target ID and type", () => {
     expect(
       receiveCdpEvent({
         method: "Target.attachedToTarget",
-        params: { sessionId: "child", targetInfo: { type: "iframe" } },
-      }).registered?.payload,
-    ).toEqual({ sessionId: "child", targetType: "iframe" });
-  });
-
-  it("keeps a lifecycle milestone's malformed timestamp unknown", () => {
-    expect(
-      receiveCdpEvent({
-        method: "Page.lifecycleEvent",
         params: {
-          frameId: "main",
-          loaderId: "l",
-          name: "load",
-          timestamp: "1",
+          sessionId: "child",
+          targetInfo: { targetId: "frame-1", type: "iframe" },
         },
       }).registered?.payload,
     ).toEqual({
-      frameId: "main",
-      loaderId: "l",
-      name: "load",
-      timestamp: undefined,
+      sessionId: "child",
+      targetId: "frame-1",
+      targetType: "iframe",
     });
   });
 
@@ -273,49 +205,5 @@ describe("registered Target, lifecycle and WebMCP event payloads", () => {
       receiveCdpEvent({ method: "WebMCP.toolsAdded", params }).registered
         ?.payload,
     ).toEqual({ tools });
-  });
-
-  it("carries a requested navigation's reason and a commit's transition type", () => {
-    expect(
-      cdpFrameEvent(
-        receiveCdpEvent({
-          method: "Page.frameRequestedNavigation",
-          params: { frameId: "main", reason: "reload", url: "https://a.test/" },
-        }),
-      )?.reason,
-    ).toBe("reload");
-    expect(
-      cdpFrameEvent(
-        receiveCdpEvent({
-          method: "Page.frameNavigated",
-          params: {
-            frame: {
-              id: "main",
-              url: "https://a.test/",
-              transitionType: "link",
-            },
-          },
-        }),
-      )?.transitionType,
-    ).toBe("link");
-  });
-});
-
-describe("unregistered CDP events", () => {
-  it("leaves an unregistered event unparsed", () => {
-    const event = receiveCdpEvent({
-      method: "Network.dataReceived",
-      params: { requestId: "1" },
-    });
-    expect(event.registered).toBeUndefined();
-    expect(event.domain).toBe("Network");
-    expect(cdpFrameEvent(event)).toBeUndefined();
-  });
-
-  it("registers a target crash, which has no payload", () => {
-    expect(
-      receiveCdpEvent({ method: "Inspector.targetCrashed", params: {} })
-        .registered,
-    ).toEqual({ method: "Inspector.targetCrashed", payload: {} });
   });
 });

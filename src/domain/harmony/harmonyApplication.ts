@@ -127,7 +127,7 @@ export const projectHarmonyInventory = (
         ]
       : []),
     "Manifest, module, resource, and signing semantics require a dedicated HarmonyOS provider; this projection reports exact inventory paths and hashes only.",
-    "The packaging model is a path-presence heuristic: a Stage model is claimed only from module.json and a FA model only from config.json; both can coexist with unusual layouts.",
+    "The packaging model is a path-presence heuristic: root module.json indicates Stage and root config.json indicates FA. Both declarations can coexist in unusual layouts.",
     "Runtime families are inferred from inventory formats and paths; filename suffixes do not establish valid Ark bytecode.",
     "The signing component lists META-INF certificate-entry suffixes only; signatures applied by the packaging tool live in the ZIP signing block rather than archive entries, so an empty signing list does not mean the package is unsigned.",
     "Bridge candidates are path-based hypotheses, not decoded N-API declarations or observed runtime calls.",
@@ -200,21 +200,24 @@ const harmonyRootFormat = (
 };
 
 /**
- * ZIP manifest names are case-sensitive. Classify each file path once for
- * both consumers; its model hint survives an unavailable content identity.
+ * Recognize exact ZIP root manifest names. The path hint survives an
+ * unavailable content identity.
  */
 const classifyManifests = (entries: readonly ProjectedInventoryEntry[]) => {
   const components: Component[] = [];
   let packagingModel: HarmonyApplicationProjectionResult["packaging_model"] =
     "unknown";
-  for (const { path, component } of entries) {
-    const name = /(?:^|\/)(module\.json|config\.json|pack\.info)$/u.exec(
-      path,
-    )?.[1];
-    if (name === undefined || isResourcePath(path)) continue;
+  for (const { path, sourcePath, component } of entries) {
+    if ((sourcePath ?? path) !== path) continue;
+    if (
+      path !== "module.json" &&
+      path !== "config.json" &&
+      path !== "pack.info"
+    )
+      continue;
     if (component !== undefined) components.push(component);
-    if (name === "module.json") packagingModel = "stage";
-    else if (name === "config.json" && packagingModel === "unknown")
+    if (path === "module.json") packagingModel = "stage";
+    else if (path === "config.json" && packagingModel === "unknown")
       packagingModel = "fa";
   }
   return { components, packagingModel };

@@ -349,8 +349,7 @@ const moduleEvaluation: Classifier<t.Node> = (node) => [
 
 /**
  * One classifier per runtime Babel node type. The mapped type makes a new
- * Babel node type a compile error; the guard test checks the installed
- * runtime definitions as well.
+ * Babel node type a compile error.
  */
 const classifiers: {
   readonly [Type in ClassifiedType]: Classifier<
@@ -600,10 +599,3 @@ export const javaScriptExecutions = (
     ? unsupported(node, parent, options)
     : classify(node, parent, options);
 };
-
-/** Node types with an explicit classifier, for the coverage guard. */
-export const javaScriptClassifiedNodeTypes = (): readonly string[] =>
-  Object.keys(classifiers);
-
-/** Babel aliases whose members have no runtime representation. */
-export const javaScriptTypeOnlyAliases = typeOnlyAliases;

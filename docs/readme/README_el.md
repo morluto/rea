@@ -8,20 +8,19 @@
 
 **Βρήκες μια λειτουργία που σου αρέσει; Μάθε πώς λειτουργεί, μέχρι το επίπεδο του δυαδικού κώδικα.**
 
-[![Έκδοση npm](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![Κατάλογος εργαλείων MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
-[![Απαιτήσεις Node.js](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#τι-μπορείς-να-αναλύσεις)
-[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
 [![Άδεια MIT](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
-[![Discord](https://img.shields.io/discord/1556595354999332884?logo=discord&logoColor=white&label=Discord&color=5865F2)](https://discord.gg/GkcryMnJDM)
-
-<a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 
 **[Ιστότοπος](https://rea.tools/) · [Οδηγοί](https://rea.tools/guides/) · [Μελέτες περίπτωσης](https://rea.tools/showcase/)**
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Έλα στην κοινότητα REA στο Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
+[Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
 
 <code>npx rea-agents setup</code>
 
@@ -66,15 +65,13 @@
 
 Η διαδικασία εγκατάστασης καταχωρίζει το REA στον agent σου και εγκαθιστά τις αντίστοιχες οδηγίες εργασίας. Για ανάλυση κώδικα μηχανής μπορείς να χρησιμοποιήσεις μια υπάρχουσα εγκατάσταση του Hopper, του Ghidra, του IDA ή του Kuna. Η διαδικασία εγκατάστασης μπορεί επίσης να εγκαταστήσει το Hopper, εφόσον το εγκρίνεις. Η στατική ανάλυση JavaScript δεν χρειάζεται μηχανή ανάλυσης κώδικα μηχανής.
 
-> **[Επισκέψου τον ιστότοπο του REA](https://rea.tools/)** για οδηγίες εγκατάστασης, εικονογραφημένους οδηγούς και πραγματικές μελέτες περίπτωσης.
-
 ## Γρήγορη εκκίνηση
 
-Στο Linux, η εκκίνηση Ghidra, JADX και εργαλείων firmware και η στατική ανάλυση JavaScript/Electron απαιτούν `ps` συμβατό με procps στο `PATH` του REA για έλεγχο ιδιοκτησίας διεργασιών. Δες την προϋπόθεση Linux.
+**[Γρήγορη εκκίνηση · rea.tools](https://rea.tools/el/get-started/)**
 
-### Ρύθμιση του agent σου
+### Ρύθμιση του agent σου (MCP)
 
-Αφού εγκαταστήσεις το Node.js και το npm, εκτέλεσε:
+Αφού εγκαταστήσεις [Node.js και npm](../reference/supported-targets.md), εκτέλεσε την εντολή από έναν έμπιστο κατάλογο έξω από το έργο που θα αναλύσεις.
 
 ```bash
 npx rea-agents setup
@@ -82,15 +79,9 @@ npx rea-agents setup
 
 Επίλεξε τους agents σου, έλεγξε τις προτεινόμενες αλλαγές και ενέκρινέ τες. Η διαδικασία προσθέτει τον MCP server του REA και τις αντίστοιχες οδηγίες εργασίας, κρατώντας αντίγραφα ασφαλείας των υφιστάμενων ρυθμίσεων. Στη συνέχεια, επανεκκίνησε τον agent σου.
 
-Υποστηρίζονται τα Claude Code, Codex, Cursor, Gemini CLI, Grok Build και [άλλοι agents](../getting-started/installation.md#supported-agents). Για τη ρύθμιση των παρόχων ανάλυσης και τη μη αυτόματη καταχώριση MCP, δες τον οδηγό [εγκατάστασης και ρύθμισης](../getting-started/installation.md).
+[εγκατάστασης και ρύθμισης](../getting-started/installation.md)
 
-Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Οι οδηγίες που παραλείπει ένα συμπαγές σχήμα ακολουθούν την περιγραφή του εργαλείου. Όλα τα εργαλεία και η κανονική επικύρωση διακομιστή παραμένουν ίδια· δες τον οδηγό συμβολαίων MCP.
-
-Η εγκατάσταση καταχωρίζει απευθείας τον επιλεγμένο runtime και το αρχικό script του REA. Αν χρησιμοποιείς package runner, διατήρησε την καταχώριση cache και τον runtime· απόκτησε το πακέτο από έμπιστο κατάλογο έξω από το έργο-στόχο. Δες τον οδηγό εγκατάστασης.
-
-Τα σχήματα εξόδου παραλείπονται από το `tools/list` από προεπιλογή: κανένα API μοντέλου δεν τα διαβάζει και το REA επικυρώνει μόνο του κάθε αποτέλεσμα. Όρισε `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` στην καταχώριση MCP για να ανακοινώνεται κάθε σχήμα εξόδου έως 4096 byte. Η επικύρωση του διακομιστή και τα δομημένα αποτελέσματα παραμένουν πλήρη σε κάθε ρύθμιση. Δες το «Output schemas» στον οδηγό συμβάσεων MCP.
-
-### Ζήτησε από τον agent σου
+Ζήτησε από τον agent σου:
 
 ```text
 Διερεύνησε πώς λειτουργεί η αναζήτηση στην εφαρμογή Notes, δείξε μου τα τεκμήρια και υλοποίησε μια παρόμοια λειτουργία για το έργο μου.
@@ -98,7 +89,7 @@ npx rea-agents setup
 
 Αντικατάστησε το Notes με την εφαρμογή που θέλεις να εξετάσεις και προσδιόρισε τη λειτουργία που θέλεις να κατανοήσεις.
 
-### Χρήση από το τερματικό
+### Χρήση από το τερματικό (CLI)
 
 Εξέτασε τον αποσυμπιεσμένο φάκελο μιας εφαρμογής JavaScript/Electron ή ένα αρχείο ASAR:
 
@@ -117,9 +108,9 @@ rea --help
 
 Για ανάλυση κώδικα μηχανής, ρύθμισε πρώτα έναν πάροχο ανάλυσης. Ο [οδηγός CLI και Evidence](../getting-started/cli.md) περιγράφει τις σχετικές εντολές, την επιλογή παρόχου, τα στιγμιότυπα και τη χρήση σε scripts.
 
-### Ενημέρωση του REA
+[Απαιτήσεις για Linux](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-Το REA εξελίσσεται γρήγορα και οι νέες εκδόσεις περιλαμβάνουν συχνές διορθώσεις σφαλμάτων. Διατήρησε την εγκατάστασή σου ενημερωμένη.
+### Ενημέρωση του REA
 
 Για CLI εγκατεστημένο με `npm install --global` ή `bun add --global`:
 
@@ -127,19 +118,44 @@ rea --help
 rea update
 ```
 
-Το `rea --update` είναι συνώνυμο του `rea update` με τις ίδιες καθολικές επιλογές εξόδου. Οι εντολές ενημέρωσης διατηρούν συνολικά έως 4 MiB stdout/stderr. Υπερμεγέθη μεταδεδομένα απορρίπτονται μετά την έξοδο· οι αναλυτικές εγκαταστάσεις κρατούν περιορισμένα διαγνωστικά. Η πρόοδος σέβεται την αντίθλιψη του τερματικού και περιμένει τις υποβληθείσες εγγραφές.
-
-Οι ενημερώσεις καθολικής εγκατάστασης με Bun απαιτούν Bun 1.2.17 ή νεότερο. Αν χρησιμοποιείς παλαιότερη έκδοση, αναβάθμισε το Bun χειροκίνητα πριν εκτελέσεις το `rea update`.
-
-Για να ανανεώσεις τις καταχωρίσεις των agents και το skill, εκτέλεσε την εντολή ρύθμισης που εμφανίζει η ενημέρωση.
-
 Αν χρησιμοποιείς `npx`, ενημέρωσε τη ρύθμιση του agent με:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Έλεγξε τις αλλαγές και επανεκκίνησε τον agent σου. Για μεμονωμένες εντολές CLI, χρησιμοποίησε `npx rea-agents@latest` και στη συνέχεια την εντολή που θέλεις. Με Bun, χρησιμοποίησε `bunx rea-agents@latest` αντί για `npx rea-agents@latest`.
+[Ενημέρωση και απεγκατάσταση](../getting-started/installation.md#diagnose-update-and-remove)
+
+## Μελέτες περίπτωσης
+
+<a href="https://rea.tools/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="Εικονογραφήσεις των μελετών περίπτωσης για τη στερεοφωνική τοποθέτηση ήχου στο DX-Ball, τη γέφυρα προχείρου του Notion και τον δακτύλιο βλημάτων του TH04" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: ανακατασκευή υπολογισμού στερεοφωνικής τοποθέτησης ήχου</h3>
+<p>Ακολούθησε μια κλήση ήχου μέχρι τη βοηθητική συνάρτηση που μετατρέπει τη θέση σε στερεοφωνική τοποθέτηση, εξέτασε τις εντολές και μετέτρεψε τον ελλιπή ψευδοκώδικα σε C. Η ανακατασκευή περνά 3.205 δοκιμές με τον αρχικό κώδικα x86 και αναπαράγει και τα 63 bytes της μεταγλωττισμένης συνάρτησης.</p>
+<p><a href="https://rea.tools/showcase/dx-ball/">Διάβασε τη μελέτη περίπτωσης</a> · <a href="https://github.com/N0zoM1z0/dx-ball">Αποθετήριο ανακατασκευής</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: ιχνηλάτηση της γέφυρας προχείρου στο Electron</h3>
+<p>Βρες το API προχείρου του renderer, ακολούθησέ το μέσω του preload και του IPC μέχρι την κύρια διεργασία και εξέτασε τη μορφή εμπλουτισμένου περιεχομένου του προχείρου.</p>
+<p><a href="https://rea.tools/showcase/notion/">Διάβασε τη μελέτη περίπτωσης</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: ανάκτηση υπολογισμού δακτυλίου βλημάτων σε DOS</h3>
+<p>Εξέτασε τις εντολές 16 bit του αρχικού παιχνιδιού για PC-98, ανέκτησε τους υπολογισμούς σταθερών γωνιών και γωνιών στόχευσης και σύγκρινε τον ανακατασκευασμένο κώδικα C++ με την έξοδο του μεταγλωττιστή της εποχής.</p>
+<p><a href="https://rea.tools/showcase/th04/">Διάβασε τη μελέτη περίπτωσης</a> · <a href="https://github.com/N0zoM1z0/th04">Αποθετήριο ανακατασκευής</a></p>
+</td></tr>
+</tbody>
+</table>
+
+Αν χρησιμοποίησες το REA για κάτι ενδιαφέρον, θα θέλαμε να το δούμε. Μοιράσου τη μελέτη σου σε ένα [issue](https://github.com/morluto/rea/issues) ή [pull request](https://github.com/morluto/rea/pulls), αναφέροντας τον στόχο, το ερώτημά σου, πώς βοήθησε το REA και τι ανακάλυψες.
 
 ## Πώς λειτουργεί το REA
 
@@ -153,140 +169,21 @@ npx rea-agents@latest setup
 
 ## Τι μπορείς να αναλύσεις
 
-Το REA απαιτεί Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ή 26+ (>=26.12.1), καθώς και npm. Τα πρόσθετα εργαλεία και τα υποστηριζόμενα συστήματα εξαρτώνται από τον στόχο:
+Δυαδικά αρχεία με κώδικα μηχανής · JavaScript / Electron · Ιστότοποι · Assemblies .NET · APK Android · Firmware · Συμπεριφορά διεργασιών
 
-| Στόχος                                 | Τι επιστρέφει το REA                                                                                                        | Απαιτήσεις και οδηγός                                                                                                                                         |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../guides/native/native-investigation.md)                                                                |
-| Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../guides/native/binary-diagnostics.md)                                           |
-| Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                                            |
-| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                                   |
-| PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
-| PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
-| Windows shortcuts                      | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                                                | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                     |
-| ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
-| ELF dependencies                       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
-| Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
-| Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
-| Linux kernel modules                   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
-| Erlang BEAM                            | IFF chunks, atoms, exports, and tables                                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                             |
-| Αρχείο WASM                            | Έλεγχο εγκυρότητας, ενότητες, ακριβείς μορφές εισαγωγών/εξαγωγών σε WAT και αποκωδικοποιημένο WAT                           | WABT 1.0.42 που παρέχει ο χρήστης· `inspect_wasm_artifact`                                                                                                    |
-| Bytecode EVM                           | Selectors επιλογής συνάρτησης, μετατοπίσεις σε bytes, εκτιμώμενα ορίσματα και δυνατότητα μεταβολής της κατάστασης           | Τοπική είσοδος σε ακατέργαστα bytes ή δεκαεξαδική μορφή σε Linux x64· [οδηγός EVM χωρίς εκτέλεση](../guides/evm/evm-bytecode.md)                              |
-| Βάσεις δεδομένων SQLite                | Πίνακες, στήλες, ευρετήρια, όψεις, triggers και επιλεγμένες γραμμές κανονικών πινάκων                                       | Τοπικό στιγμιότυπο βάσης δεδομένων/WAL· Node.js 24.x >=24.15 ή 26+ με εγγενή όρια SQLite                                                                      |
-| Καταγεγραμμένες καταρρεύσεις στο Linux | Ακατέργαστες εγγραφές notes, καταχωρητές/σήματα κάθε καταγεγραμμένου νήματος και προαιρετικές πιθανές αντιστοιχίσεις μνήμης | pwntools που παρέχει ο χρήστης σε Linux x64· προαιρετικά GDB/pwndbg· [καταγεγραμμένες καταρρεύσεις](../guides/native/recorded-crashes.md)                     |
-| Εγκαταστάσεις επιφάνειας εργασίας      | Υποψήφια περιβάλλοντα εκτέλεσης, αρχεία τεκμηρίωσης, στοιχεία και επόμενα βήματα                                            | Περιορισμένη επιθεώρηση καταλόγων και κεφαλίδων；[Εφαρμογές επιφάνειας εργασίας](../desktop-applications.md)                                                  |
-| JavaScript / Electron                  | Modules, εισαγωγές, source maps, διαδρομές, IPC και σχέσεις με πρόσθετα κώδικα μηχανής                                      | Node.js και npm· [ανάλυση εφαρμογών](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
-| Ιστότοποι                              | Δομή σελίδων, scripts, παρατηρήσεις δικτύου και ζητούμενα στιγμιότυπα οθόνης                                                | Πρόγραμμα περιήγησης της οικογένειας Chrome· [ανάλυση μέσω προγράμματος περιήγησης](../guides/web/browser-observation.md)                                     |
-| Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../guides/web/web-network-captures.md)                |
-| Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../guides/managed/managed-code-analysis.md)                                   |
-| PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
-| Deno compile binaries                  | Virtual files, entry point, recorded options, npm snapshot length                                                           | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                          |
-| APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../guides/android/android-analysis.md)                              |
-| Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../guides/android/adb-device-analysis.md)                                               |
-| Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../providers/jeb-analysis.md)                         |
-| Πόροι Android                          | Αποκωδικοποιημένο manifest, πίνακες συμβολοσειρών, τοπικές ρυθμίσεις και στοιχεία έκδοσης                                   | Launcher του Apktool που παρέχει ο χρήστης· [οδηγός πόρων](../guides/android/apktool-resource-analysis.md)                                                    |
-| Εφαρμογές Flutter                      | Hash του στιγμιότυπου Dart, ψηφιακά αποτυπώματα βιβλιοθηκών ανά ABI και στοιχεία προέλευσης του build της μηχανής           | Καμία πρόσθετη απαίτηση (στατική ανάλυση APK)· [οδηγός Flutter](../guides/android/flutter-analysis.md)                                                        |
-| Firmware                               | Περιοχές, αποτελέσματα εξαγωγής και παραπομπές για ανάλυση κώδικα μηχανής                                                   | Binwalk / Unblob σε Linux· [οδηγός firmware](../guides/firmware/firmware-analysis.md)                                                                         |
-| Καταγεγραμμένα πακέτα                  | Επιλεγμένα πεδία, επαναλαμβανόμενες τιμές, φίλτρα και κανόνες decode-as                                                     | Linux: TShark 4.x + prlimit· [οδηγός καταγραφών](../guides/data/packet-captures.md)                                                                           |
-| Σύνοψη πακέτων                         | Τερματικά σημεία, DNS, TLS SNI, κατανομή πρωτοκόλλων και αιτήματα HTTP                                                      | tshark και capinfos που παρέχει ο χρήστης (επαληθευμένα σε Linux)· [οδηγός pcap](../guides/data/pcap-analysis.md)                                             |
-| Καταγεγραμμένα λογικά σήματα           | Σχολιασμούς αποκωδικοποιητή, εύρη δειγμάτων και διαγνωστικά                                                                 | Linux: sigrok-cli 0.7.2 + prlimit· [καταγραφές σημάτων](../guides/signals/signal-recordings.md)                                                               |
-| Πακέτα και πόροι                       | Καταλόγους αρχείων, ψηφιακά αποτυπώματα, plists, δομή bundles της Apple και εξαγόμενους πόρους                              | [Οδηγός αρχείων και JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [εφαρμογές Apple](../guides/apple/apple-application-analysis.md) |
-| Συμπεριφορά διεργασιών                 | Έξοδο τερματικού, αλληλεπιδράσεις, παρατηρήσεις τερματισμού και συστήματος αρχείων, καθώς και συγκρίσεις εκτελέσεων         | Linux/macOS με εγγενές PTY· [καταγραφή διεργασιών](../guides/runtime/process-capture.md)                                                                      |
-| Αντικείμενα κώδικα GPU                 | Στόχοι CUDA/HIP, παράμετροι και πόροι επιλεγμένων kernels, διατηρημένο κείμενο PTX                                          | Ενσωματωμένη στατική επιθεώρηση ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                        |
-| Αρχεία μοντέλων                        | Μεταδεδομένα GGUF / safetensors, δηλώσεις tensors και παράγωγα σύνολα                                                       | Επιθεώρηση κεφαλίδων· προαιρετικό hash ολόκληρου αρχείου; [GGUF / safetensors](../model-artifacts.md)                                                         |
-| Μεταδεδομένα IL2CPP                    | Εικόνες assemblies Unity global-metadata.dat, ονόματα τύπων/μεθόδων και εύρη δεικτών                                        | Στατική αποκωδικοποίηση εκδόσεων 24, 27, 29, 31, 39· χωρίς Unity                                                                                              |
-| Godot PCK                              | Απογραφή και εξαγωγή αρχείου, αρχικές κεφαλίδες/κατάλογοι και ταυτότητες επιλεγμένου περιεχομένου                           | Στατικές μορφές 2, 3, 4· χωρίς Godot                                                                                                                          |
-| Υπογραφές APK                          | Υπογράφοντες v1/v2/v3/v3.1, αποτυπώματα πιστοποιητικών, εναλλαγή κλειδιών και εσωτερική συνέπεια digests                    | Ενσωματωμένη στατική επιθεώρηση; `inspect_apk_signature`                                                                                                      |
-
-Για εξέταση δυαδικών αρχείων με κώδικα μηχανής χωρίς εκτέλεση, το REA υποστηρίζει
-επίσης GNU objdump και Rizin που παρέχει ο χρήστης. Δες τον
-[οδηγό εργαλείων αντίστροφης μηχανικής](../reverse-engineering-tools.md)
-για τη ρύθμιση των παρόχων, τις εντολές CLI και τους περιορισμούς των Evidence.
-Το REA δεν εγκαθιστά ούτε ενημερώνει κανέναν από τους δύο παρόχους.
-
-Η στατική εξέταση JavaScript και .NET διαβάζει τα αρχεία που παρέχονται χωρίς να εκτελεί την εφαρμογή. Η καταγραφή κατά την εκτέλεση εκτελεί τον επιλεγμένο στόχο ή αλληλεπιδρά μαζί του με τα δικαιώματα του χρήστη σου. Κάθε σχετικός οδηγός περιγράφει τις επιπτώσεις της.
+[Υποστηριζόμενοι τύποι και απαιτήσεις](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Οι μορφές κώδικα μηχανής και τα υποστηριζόμενα συστήματα διαφέρουν ανά πάροχο ανάλυσης. Δες τη [ρύθμιση Hopper και Ghidra](../getting-started/installation.md#hopper), τον [οδηγό IDA](../providers/ida-provider.md) (που περιλαμβάνει προαιρετική γέφυρα MCP για κώδικα μηχανής), [Kuna](../kuna-provider.md) και την [πειραματική υποστήριξη Ghidra στα Windows](../providers/windows-ghidra-p0.md). Το Ghidra υποστηρίζει επίσης [ανάλυση DOS 16 bit](../providers/ghidra-dos.md). Για μεγάλα δυαδικά αρχεία, αύξησε το χρονικό όριο εκκίνησης του παρόχου με `REA_GHIDRA_STARTUP_TIMEOUT_MS` ή `REA_HOPPER_STARTUP_TIMEOUT_MS`. Για την επιλογή παρόχου, δες τον [οδηγό CLI](../getting-started/cli.md#choose-a-provider). Έλεγξε τη [διαθεσιμότητα ανά έκδοση](../getting-started/installation.md#released-package-and-main) για λειτουργίες που προστέθηκαν μετά την τελευταία έκδοση στο npm.
-
-## Μελέτες περίπτωσης
-
-<a href="https://rea.tools/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="Εικονογραφήσεις των μελετών περίπτωσης για τη στερεοφωνική τοποθέτηση ήχου στο DX-Ball, τη γέφυρα προχείρου του Notion και τον δακτύλιο βλημάτων του TH04" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: ανακατασκευή υπολογισμού στερεοφωνικής τοποθέτησης ήχου
-
-Ακολούθησε μια κλήση ήχου μέχρι τη βοηθητική συνάρτηση που μετατρέπει τη θέση σε στερεοφωνική τοποθέτηση, εξέτασε τις εντολές και μετέτρεψε τον ελλιπή ψευδοκώδικα σε C. Η ανακατασκευή περνά 3.205 δοκιμές με τον αρχικό κώδικα x86 και αναπαράγει και τα 63 bytes της μεταγλωττισμένης συνάρτησης.
-
-[Διάβασε τη μελέτη περίπτωσης](https://rea.tools/showcase/dx-ball/) · [Αποθετήριο ανακατασκευής](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: ιχνηλάτηση της γέφυρας προχείρου στο Electron
-
-Βρες το API προχείρου του renderer, ακολούθησέ το μέσω του preload και του IPC μέχρι την κύρια διεργασία και εξέτασε τη μορφή εμπλουτισμένου περιεχομένου του προχείρου.
-
-[Διάβασε τη μελέτη περίπτωσης](https://rea.tools/showcase/notion/)
-
-### TH04: ανάκτηση υπολογισμού δακτυλίου βλημάτων σε DOS
-
-Εξέτασε τις εντολές 16 bit του αρχικού παιχνιδιού για PC-98, ανέκτησε τους υπολογισμούς σταθερών γωνιών και γωνιών στόχευσης και σύγκρινε τον ανακατασκευασμένο κώδικα C++ με την έξοδο του μεταγλωττιστή της εποχής.
-
-[Διάβασε τη μελέτη περίπτωσης](https://rea.tools/showcase/th04/) · [Αποθετήριο ανακατασκευής](https://github.com/N0zoM1z0/th04)
-
-### Δημιουργία περιβαλλόντων RL με το REA
-
-Καταγράψτε μια συνεδρία εφαρμογής ιστού, μετατρέψτε το API της σε εργαλεία και εξαγάγετε ένα περιβάλλον για πράκτορα AI. Εκτελέστε το με το AgentEnv και προσθέστε εργασίες και ελέγχους ανταμοιβής για εκπαίδευση RL ή αξιολόγηση.
-
-[Οδηγός δημιουργίας περιβάλλοντος](https://rea.tools/guides/rl-environments/) ·
-[Δείτε το demo στο X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-Αν χρησιμοποίησες το REA για κάτι ενδιαφέρον, θα θέλαμε να το δούμε. Μοιράσου τη μελέτη σου σε ένα [issue](https://github.com/morluto/rea/issues) ή [pull request](https://github.com/morluto/rea/pulls), αναφέροντας τον στόχο, το ερώτημά σου, πώς βοήθησε το REA και τι ανακάλυψες.
+[Επιλογή παρόχου ανάλυσης](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## Δημιουργία περιβαλλόντων RL
 
-Δημιουργήστε ένα τοπικό περιβάλλον όπου ένας πράκτορας AI εξασκείται σε εργασίες όπως η εύρεση ενός issue ή η δημιουργία φακέλου, χωρίς να εκτελείται η αρχική εφαρμογή. Χρησιμοποιήστε το για ενισχυτική μάθηση (RL) ή για να ελέγξετε πόσο καλά ολοκληρώνει εργασίες ο πράκτορας.
+Δημιούργησε ένα τοπικό περιβάλλον από καταγεγραμμένη συνεδρία ιστού ή εφαρμογή επιφάνειας εργασίας Linux, ώστε ένας πράκτορας να μπορεί να εξασκείται σε μια εργασία και να ελέγχει το αποτέλεσμα.
 
-Το REA μετατρέπει καταγεγραμμένα αιτήματα και απαντήσεις API σε εργαλεία που μπορεί να καλεί ο πράκτορας. Το περιβάλλον χρησιμοποιεί τα καταγεγραμμένα δεδομένα και υποστηρίζει αλλαγές μόνο όταν η καταγραφή επιβεβαιώνει τα αποτελέσματά τους.
-
-Ρυθμίστε το REA στον πράκτορά σας και προσαρμόστε το URL και τις εργασίες φακέλων του παραδείγματος:
-
-```text
-Χρησιμοποίησε το REA για να δημιουργήσεις περιβάλλον RL από τη δοκιμαστική εφαρμογή μου:
-http://127.0.0.1:3000
-Κάλυψε προβολή, δημιουργία, μετονομασία και διαγραφή φακέλων. Μπορείς να δημιουργείς
-και να αφαιρείς δοκιμαστικούς φακέλους, αλλά μην αλλάξεις τα υπάρχοντα δεδομένα.
-Αποθήκευσέ το σε φάκελο my-env, έλεγξε τις διαθέσιμες λειτουργίες και πες μου πώς εκτελείται.
-```
-
-<details>
-<summary>Χρήση της γραμμής εντολών</summary>
-
-Χρησιμοποιήστε αυτές τις εντολές αν έχετε ήδη αρχείο με τα καταγεγραμμένα αιτήματα και τις απαντήσεις της εφαρμογής στο πρόγραμμα περιήγησης. Η εκτέλεση χρειάζεται επίσης AgentEnv και Docker.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-Το REA εξάγει ένα εκτελέσιμο περιβάλλον με μια βασική δοκιμή εκκίνησης και απόκρισης. Συνδέστε το στο πλαίσιο RL για να ορίσετε στόχους, να προσθέσετε ελέγχους ανταμοιβής και να εκτελέσετε εκπαίδευση.
-
-[Οδηγός δημιουργίας περιβάλλοντος](https://rea.tools/guides/rl-environments/) ·
-[Αναφορά περιβαλλόντων](../agent-environments.md) ·
-[Δείτε το demo στο X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### Περιβάλλοντα εφαρμογών επιφάνειας εργασίας
-
-Το REA μπορεί επίσης να δημιουργήσει περιβάλλον για μια εφαρμογή επιφάνειας εργασίας Linux, την οποία ο πράκτορας χρησιμοποιεί μέσω στιγμιότυπων οθόνης, ποντικιού και πληκτρολογίου. Από ένα αίτημα μίας γραμμής, όπως «Φτιάξε μου ένα περιβάλλον Gnote όπου ο πράκτορας προσθέτει ελαιόλαδο στη σημείωση με τη λίστα αγορών», ο πράκτοράς σας εγκαθιστά την εφαρμογή σε έναν τοπικό υπολογιστή κατασκευής, γράφει την εργασία, εξάγει το περιβάλλον και ελέγχει την εργασία σε έναν νέο υπολογιστή. Ο υπολογιστής που το κατασκευάζει χρειάζεται Linux σε amd64 ή arm64, Docker και την έκδοση του πλαισίου agentenv που ορίζει ο οδηγός.
-
-[Ρύθμιση περιβαλλόντων εφαρμογών επιφάνειας εργασίας](../desktop-build-computer.md)
+[Δημιουργία περιβαλλόντων RL](https://rea.tools/guides/rl-environments/)
 
 ## Συχνές ερωτήσεις
 
@@ -362,15 +259,24 @@ npx rea-agents@latest setup
 - [CLI και Evidence](../getting-started/cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
 - [Προδιαγραφές MCP](../reference/mcp-contracts.md) και [prompts για agents](../getting-started/mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
 - [Κατάλογος εργαλείων](../reference/mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
-- [Οδικός χάρτης](../development/roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
 
 Ανάφερε ευπάθειες ακολουθώντας το [SECURITY.md](../../SECURITY.md).
+
+## Κοινότητα και υποστήριξη
+
+- **Discord** — Κάνε ερωτήσεις και μοιράσου την έρευνά σου με περισσότερους από 50.000 ανθρώπους που αγαπούν την αντίστροφη μηχανική και δημιουργούν δικά τους έργα! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Ακολούθησε το [@reatools](https://x.com/reatools) για νέα.
+- **Σχόλια και ιδέες** — Θέλεις μια λειτουργία ή υποστήριξη για κάποιον τύπο αρχείου; Γράψε μας στο [GitHub](https://github.com/morluto/rea/issues) ή στο [Discord](https://discord.gg/GkcryMnJDM).
 
 ## Ιστορικό αστεριών
 
 🎉 **400.000 αστέρια στο GitHub — σας ευχαριστούμε!**
 
 Ευχαριστούμε όλους όσοι χρησιμοποιούν το REA, αναφέρουν σφάλματα, ζητούν νέες λειτουργίες, δοκιμάζουν builds και συνεισφέρουν διορθώσεις.
+
+<a href="https://rea.tools/el/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="Όσοι συνεισφέρουν στο REA" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -380,6 +286,12 @@ npx rea-agents@latest setup
   </picture>
 </a>
 
+## Συνεισφορά
+
+Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
+
+Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης.
+
 ## Αποποίηση ευθύνης
 
 Δες το [DISCLAIMER.md](../../DISCLAIMER.md) για οδηγίες υπεύθυνης χρήσης.
@@ -387,12 +299,6 @@ npx rea-agents@latest setup
 Η θέση του έργου σχετικά με την παράνομη ή μη εξουσιοδοτημένη χρήση ισχύει για όλες τις εκδόσεις του REA, τα κανάλια διανομής και τις πλατφόρμες. Κάθε αντίγραφο διατηρεί τις άδειες που το διέπουν.
 
 Το REA προορίζεται για νόμιμη έρευνα, εκπαίδευση, διαλειτουργικότητα, διατήρηση λογισμικού και ανάλυση λογισμικού που σου ανήκει ή για το οποίο έχεις άδεια εξέτασης.
-
-## Συνεισφορά
-
-Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
-
-Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture/architecture.mermaid) για τη δομή του έργου.
 
 ## Άδεια χρήσης
 

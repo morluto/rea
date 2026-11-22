@@ -10,11 +10,11 @@ import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
 import {
-  supportedClientRegistrationProfile,
   registrationWriteBlocker,
   supportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 // Host joins keep containment checks meaningful on POSIX test hosts too.
 const PROFILE = String.raw`C:\Users\a`;

@@ -16,6 +16,7 @@ import {
 } from "../filesystem/OwnedRegularFile.js";
 
 import { assertRegularFileActive } from "../filesystem/RegularFile.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import type {
   AnalysisProfileResolution,
@@ -26,11 +27,8 @@ import { createFunctionCoordinateContext } from "../domain/native/functionCoordi
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
-  isElfMetadataArchitecture,
   type BinaryArchitecture,
   type BinaryTarget,
-  type ElfMetadataArchitecture,
-  type HeaderArchitecture,
 } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCapabilityUnavailableError,
@@ -46,7 +44,8 @@ import {
   type MachoTargetSelection,
 } from "../domain/apple/machoTargetSelection.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { readFatMagicFormat } from "../domain/apple/machoContainer.js";
+import { machoContainerKindFromMagic } from "../domain/apple/machoContainer.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 import {
@@ -106,9 +105,18 @@ const resolveHopperAnalysisProfileInScope = async (
       options.signal,
     );
     if (!header.ok) return header;
-    const fatFormat = readFatMagicFormat(header.value);
-    machoContainer =
-      fatFormat === null ? "thin" : fatFormat.wide ? "fat64" : "fat32";
+    const observed = machoContainerKindFromMagic(header.value);
+    if (
+      observed === null ||
+      (observed === "thin") !== (target.format === "mach-o")
+    )
+      return err(
+        new BinaryTargetError(
+          target.path,
+          "The selected file's container signature disagrees with its admitted Mach-O format. Open the stable source again.",
+        ),
+      );
+    machoContainer = observed;
   }
   let preparedImage: HopperMachOImage | undefined;
   if (
@@ -207,20 +215,34 @@ const resolveHopperAnalysisProfileInScope = async (
   });
 };
 
-/** Families with no verified Hopper lane, declined before any loader selection. */
-export type HopperDeclinedArchitecture =
-  | ElfMetadataArchitecture
-  | "hexagon"
-  | "xtensa"
-  | "arm64_32";
+// Raw-only families keep the existing format refusal before loader selection.
+const HOPPER_ARCHITECTURE_FLAGS = {
+  x86: "--intel-32",
+  x86_64: "--intel-64",
+  arm: "--armv7",
+  arm64: "--aarch64",
+  arm64_32: null,
+  mips: null,
+  "6502": "raw-only",
+  riscv: null,
+  powerpc: null,
+  m68k: "raw-only",
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
+
+type HopperDeclinedArchitecture = {
+  [
+    Architecture in BinaryArchitecture
+  ]: (typeof HOPPER_ARCHITECTURE_FLAGS)[Architecture] extends null
+    ? Architecture
+    : never;
+}[BinaryArchitecture];
 
 export const isHopperDeclinedArchitecture = (
   architecture: BinaryArchitecture,
 ): architecture is HopperDeclinedArchitecture =>
-  isElfMetadataArchitecture(architecture) ||
-  architecture === "hexagon" ||
-  architecture === "xtensa" ||
-  architecture === "arm64_32";
+  HOPPER_ARCHITECTURE_FLAGS[architecture] === null;
 
 /**
  * Hopper states only what it owns: it does not admit the family. It routes the
@@ -256,7 +278,7 @@ export const hopperLoaderArgsForTarget = (
         hopperDeclinedArchitectureReason(architecture),
       ),
     );
-  const flag = hopperArchitectureFlag(architecture);
+  const flag = HOPPER_ARCHITECTURE_FLAGS[architecture];
   if (isMachOFormat(target.format)) {
     if (machoContainer === undefined)
       return err(
@@ -286,19 +308,6 @@ export const hopperLoaderArgsForTarget = (
   }
 };
 
-const hopperArchitectureFlag = (architecture: HeaderArchitecture): string => {
-  switch (architecture) {
-    case "x86":
-      return "--intel-32";
-    case "x86_64":
-      return "--intel-64";
-    case "arm":
-      return "--armv7";
-    case "arm64":
-      return "--aarch64";
-  }
-};
-
 const readMachoMagic = (
   path: string,
   resources: RetainedResourceScope,
@@ -310,24 +319,21 @@ const readMachoMagic = (
     signal,
     (options) =>
       withOwnedRegularFile(path, options, async ({ handle }) => {
-        const bytes = Buffer.alloc(4);
-        let length = 0;
-        while (length < bytes.length) {
-          assertRegularFileActive(signal);
-          const { bytesRead } = await handle.read(
-            bytes,
-            length,
-            bytes.length - length,
-            length,
+        const magicBytes = 4;
+        const bytes = await readFileHandleRange(
+          handle,
+          0,
+          magicBytes,
+          (read) => {
+            if (read < magicBytes) assertRegularFileActive(signal);
+          },
+        );
+        if (bytes.length < magicBytes)
+          throw new BinaryTargetError(
+            path,
+            "Mach-O header became truncated before Hopper loader selection",
           );
-          if (bytesRead === 0)
-            throw new BinaryTargetError(
-              path,
-              "Mach-O header became truncated before Hopper loader selection",
-            );
-          length += bytesRead;
-        }
-        return bytes.readUInt32BE(0);
+        return new BinaryReader(bytes, false, "Mach-O").u32(0);
       }),
   );
 

@@ -4,10 +4,8 @@ import { expect, it } from "vitest";
 
 import { readConfigurationFile } from "../../../src/application/ClientConfigurationFiles.js";
 import { readClientPolicyBlock } from "../../../src/application/GeminiClientSettings.js";
-import {
-  supportedClientRegistrationProfile,
-  type SetupClient,
-} from "../../../src/application/SupportedClients.js";
+import type { SetupClient } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const fixture = async () => {

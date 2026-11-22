@@ -26,6 +26,7 @@ import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "../../../src/process/ProcessOwnershipObservation.js";
+import { liveProcesses } from "../../../src/process/ProcessOwnershipProcessTree.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import { createDeferred } from "../../fixtures/binarySession.js";
 
@@ -573,9 +574,10 @@ it.skipIf(process.platform === "win32")(
       let remainsLive = true;
       const deadline = Date.now() + 2_000;
       while (remainsLive && Date.now() < deadline) {
-        remainsLive = (await systemProcessOwnershipHost.listProcesses()).some(
-          ({ pid }) => pid === descendantPid,
-        );
+        // The product's live view: an unreaped zombie row has already exited.
+        remainsLive = liveProcesses(
+          await systemProcessOwnershipHost.listProcesses(),
+        ).some(({ pid }) => pid === descendantPid);
         if (remainsLive) await delay(25);
       }
       expect(remainsLive).toBe(false);

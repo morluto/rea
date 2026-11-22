@@ -15,7 +15,11 @@ import { createServer } from "../../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { mcpTest, type TestMcp } from "../../../support/mcp/mcpFixture.js";
-import { fakeKunaCalls, writeFakeKuna } from "./fakeKuna.js";
+import {
+  fakeKunaCalls,
+  writeFakeKuna,
+  type FakeKunaBehavior,
+} from "./fakeKuna.js";
 import {
   MACHO_FUNCTIONS,
   MACHO_INVENTORY_ENTRIES,
@@ -37,12 +41,14 @@ const machoSession = async (
   mcp: TestMcp,
   prefix: string,
   image: Uint8Array = machoInventoryImage(),
+  behavior: FakeKunaBehavior = {},
 ) => {
   const root = await createTestTempDirectory(prefix);
   const kuna = await writeFakeKuna(root, {
     functions: MACHO_FUNCTIONS,
     inventoryEntries: MACHO_INVENTORY_ENTRIES,
     inventoryImports: false,
+    ...behavior,
   });
   const target = join(root, "program");
   await writeFile(target, image);
@@ -193,3 +199,195 @@ test("keeps an unreadable section table's caveat on direct answers", async ({
     ]);
   }
 });
+
+test("recovers only an explicitly selected, evidenced Mach-O call destination", async ({
+  mcp,
+}) => {
+  const destination = "0x1000004a4";
+  const control = "0x1000004a8";
+  const { client, kuna, observe } = await machoSession(
+    mcp,
+    "rea-kuna-call-destination-",
+    machoInventoryImage(),
+    {
+      standaloneFunctions: [
+        { name: "called", addr: destination },
+        { name: "would_decode_data", addr: control },
+      ],
+      incomingRows: {
+        [destination]: [
+          {
+            caller: 0x100000400,
+            from: 0x100000408,
+            kind: "call",
+            instruction: `bl ${destination}`,
+          },
+        ],
+        [control]: [
+          {
+            caller: 0x100000400,
+            from: 0x10000040c,
+            kind: "call",
+            instruction: "blr x8",
+          },
+          {
+            caller: 0x100000420,
+            from: 0x100000424,
+            kind: "call",
+            instruction: `bl ${control}`,
+          },
+          {
+            caller: 0x100000400,
+            from: 0x100000410,
+            kind: "data",
+            instruction: `bl ${control}`,
+          },
+        ],
+      },
+    },
+  );
+  const recover = () =>
+    observe("procedure_pseudo_code", {
+      procedure: destination,
+      analysis: "call_destination",
+    });
+  const first = await recover();
+  expect(first.normalized_result).toEqual(
+    expect.stringContaining("int called(void)"),
+  );
+  const bundle = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: {},
+  });
+  expect(bundle.structuredContent).toMatchObject({
+    result: {
+      records: expect.arrayContaining([
+        expect.objectContaining({
+          evidence_id: first.evidence_links[0],
+          operation: "kuna:direct-call-destination",
+        }),
+      ]),
+    },
+  });
+  expect(first.raw_result).toMatchObject({
+    source: { kind: "single-function" },
+    project_export: { state: "not-started" },
+    references: {
+      kind: "kuna-direct-call-destination",
+      section: "__TEXT,__const",
+      call: {
+        from_address: "0x100000408",
+        caller_address: "0x100000400",
+        to_address: destination,
+        instruction: `bl ${destination}`,
+      },
+      xrefs_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    },
+  });
+  expect(first.limitations.join(" ")).toContain(
+    "does not establish a discovered procedure",
+  );
+  for (const procedure of [control, "0x100008000", "main"]) {
+    expect(
+      (
+        await client.callTool({
+          name: "procedure_pseudo_code",
+          arguments: { procedure, analysis: "call_destination" },
+        })
+      ).isError,
+      procedure,
+    ).toBe(true);
+  }
+  expect(
+    (
+      await client.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { procedure: destination },
+      })
+    ).isError,
+  ).toBe(true);
+  await observe("procedure_assembly", { procedure: "main" });
+  const afterExport = await recover();
+  expect(afterExport.normalized_result).toEqual(first.normalized_result);
+  expect(afterExport.raw_result).toMatchObject({
+    source: { kind: "single-function" },
+  });
+  const listed = await observe("list_procedures", {});
+  expect(listed.normalized_result).not.toContainEqual(
+    expect.objectContaining({ address: destination }),
+  );
+  expect(
+    (await fakeKunaCalls(kuna))
+      .filter(({ argv }) => argv[0] === "decompile")
+      .map(({ argv }) => argv[2]),
+  ).toEqual([destination, destination]);
+});
+
+test.for([
+  { failure: "command failure", hang: false },
+  { failure: "timeout", hang: true },
+])(
+  "preserves the admitted direct call after a standalone $failure",
+  async ({ hang }, { mcp }) => {
+    const destination = "0x1000004a4";
+    const { client } = await machoSession(
+      mcp,
+      "rea-kuna-call-destination-failure-",
+      machoInventoryImage(),
+      {
+        ...(hang ? { decompile: "hang" } : {}),
+        incomingRows: {
+          [destination]: [
+            {
+              caller: 0x100000400,
+              from: 0x100000408,
+              kind: "call",
+              instruction: `bl ${destination}`,
+            },
+          ],
+        },
+      },
+    );
+    if (hang) {
+      for (const [name, arguments_] of [
+        ["list_procedures", {}],
+        ["xrefs", { address: destination }],
+      ] as const) {
+        expect(
+          (await client.callTool({ name, arguments: arguments_ })).isError,
+        ).not.toBe(true);
+      }
+      const updated = await client.callTool({
+        name: "update_analysis_settings",
+        arguments: {
+          changes: [
+            { setting: "kuna.function_timeout_ms", action: "set", value: 300 },
+          ],
+        },
+      });
+      expect(updated.isError).not.toBe(true);
+    }
+    const failed = await client.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: destination, analysis: "call_destination" },
+    });
+    expect(failed.isError).toBe(true);
+    const error = parseMcpToolError(failed).error;
+    if (hang) expect(error).toMatchObject({ code: "provider_timeout" });
+    else expect(error.message).toContain("no function at");
+    expect(error).toMatchObject({
+      details: {
+        partial_observation: {
+          operation: "kuna:direct-call-destination",
+          normalized_result: {
+            call: {
+              from_address: "0x100000408",
+              to_address: destination,
+            },
+            xrefs_sha256: expect.stringMatching(/^[0-9a-f]{64}$/u),
+          },
+        },
+      },
+    });
+  },
+);
