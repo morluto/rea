@@ -108,6 +108,7 @@
 * **setup:** keep MCP launchers usable after session cleanup ([#13185](https://github.com/morluto/rea/issues/13185)) ([1587b46](https://github.com/morluto/rea/commit/1587b46a9faa54b1fac925e0d4c827383e80b1ff))
 * **setup:** list supported clients instead of a suggestion for an empty client name ([244cb64](https://github.com/morluto/rea/commit/244cb646771dfe594b10e6031cc176df4f1ef560))
 * **setup:** preserve caller comments on detached DSH aliases ([#13032](https://github.com/morluto/rea/issues/13032)) ([270c3a6](https://github.com/morluto/rea/commit/270c3a6b285b30c71bcd2f57fad451417769840f))
+* **setup:** preserve Goose configuration root selection ([#13297](https://github.com/morluto/rea/issues/13297)) ([e726f89](https://github.com/morluto/rea/commit/e726f89bcb5d07af5699301856454aff9416d482))
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
 * **setup:** refuse Hermes profiles with an unreadable deletion marker ([#13296](https://github.com/morluto/rea/issues/13296)) ([625bd4b](https://github.com/morluto/rea/commit/625bd4b70aaf920623557e2639e8c2809604998a))
 * **setup:** register aube's bin shim instead of its versioned store path ([#5311](https://github.com/morluto/rea/issues/5311)) ([abba1f4](https://github.com/morluto/rea/commit/abba1f43bb08f71af584a1b4d26895f1e1ece90b))
@@ -136,6 +137,7 @@
 * **website:** refresh favicon links and serve a root icon ([b33b674](https://github.com/morluto/rea/commit/b33b6743d9bab514c7131d31e5b28ef645bb59ab))
 * **website:** restore shared theme script formatting ([#13117](https://github.com/morluto/rea/issues/13117)) ([a1c8f67](https://github.com/morluto/rea/commit/a1c8f67e9934efc0153b3bc2864c13370389b5d3))
 * **website:** use the blue REA wordmark for site icons ([2c4776d](https://github.com/morluto/rea/commit/2c4776d9aa9c1167da96f75a27645a23ef3a348e))
+* **website:** verify markdown fragments from parsed headings ([#13265](https://github.com/morluto/rea/issues/13265)) ([88d1d9b](https://github.com/morluto/rea/commit/88d1d9b8b5245ce25165f5da3a5eea19740f4886))
 
 
 ### Performance Improvements
