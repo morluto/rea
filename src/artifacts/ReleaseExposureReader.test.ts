@@ -44,6 +44,7 @@ import {
   MAX_RELEASE_EXPOSURE_INVENTORY_BYTES,
   MAX_RELEASE_EXPOSURE_INVENTORY_ENTRIES,
   MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES,
+  MAX_RELEASE_EXPOSURE_NATIVE_IMAGES,
   MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES,
   MAX_RELEASE_EXPOSURE_MAP_TARGET_BYTES,
   MAX_RELEASE_EXPOSURE_SCRIPT_TARGET_BYTES,
@@ -473,57 +474,57 @@ describe("ReleaseExposureReader", () => {
     expect(JSON.stringify(directory)).not.toContain(PLANTED_KEY);
   });
 
-  it("carries the inventoried digest of each native image", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-digest-");
-    const elf = Buffer.alloc(64);
-    writeMinimalElfHeader(elf);
-    await writeFile(join(root, "app"), elf);
-    const sha256 = createHash("sha256").update(elf).digest("hex");
-    expect((await inspect(root)).native_images).toEqual([
-      { path: join(root, "app"), format: "elf", sha256 },
-    ]);
-    expect((await inspect(join(root, "app"))).native_images).toEqual([
-      { path: join(root, "app"), format: "elf", sha256 },
-    ]);
-  });
-
-  it("registers native images larger than the text budget and parses PE debug records", async () => {
+  it("keeps exact native digests for sampling and attributes the PE debug record", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-native-");
-    const elf = Buffer.alloc(300 * 1024);
-    writeMinimalElfHeader(elf);
-    await writeFile(join(root, "app.elf"), elf);
-    const peImage = Buffer.concat([
-      pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }),
-      Buffer.alloc(300 * 1024),
-    ]);
-    await writeFile(join(root, "app.exe"), peImage);
-    const calls: string[] = [];
-    const real = stableRead.impl;
-    stableRead.impl = async (...args) => {
-      calls.push(args[0]);
-      if (real === undefined) throw new Error("missing stable read");
-      return real(...args);
-    };
-    try {
-      const scanned = await inspect(root);
-      expect(
-        scanned.native_images.some(
-          (image) => image.format === "elf" && image.path.endsWith("app.elf"),
-        ),
-      ).toBe(true);
-      expect(scanned.native_images).toContainEqual(
-        expect.objectContaining({ path: join(root, "app.exe"), format: "pe" }),
+    const makeElf = (index: number) => {
+      const bytes = Buffer.alloc(
+        index === 0 ? MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1 : 64,
+        index,
       );
-      expect(scanned.pdb).toMatchObject({
-        examined: 1,
-        failed: 0,
-        paths: ["app.pdb"],
+      writeMinimalElfHeader(bytes);
+      return { name: `native-${String(index)}.so`, format: "elf", bytes };
+    };
+    const pdbPath = "C:\\build\\app.pdb";
+    const images = [
+      {
+        name: "app.exe",
+        format: "pe",
+        bytes: Buffer.concat([
+          pe(0x8664, 64, 0x0002, false, { pdbPath }),
+          Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1),
+        ]),
+      },
+      ...Array.from(
+        { length: MAX_RELEASE_EXPOSURE_NATIVE_IMAGES },
+        (_, index) => makeElf(index),
+      ),
+    ];
+    const expected = [];
+    for (const { name, format, bytes } of images) {
+      const path = join(root, name);
+      await writeFile(path, bytes);
+      expected.push({
+        path,
+        format,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
       });
-      expect(calls.some((path) => path.endsWith("app.elf"))).toBe(false);
-      expect(calls.some((path) => path.endsWith("app.exe"))).toBe(true);
-    } finally {
-      stableRead.impl = real;
     }
+    const scanned = await inspect(root);
+    expect(scanned.native_images).toEqual(expected);
+    expect(scanned.text_members).toEqual({ scanned: 0, skipped: 0 });
+    expect(
+      scanned.omitted.some(({ subject }) => subject === "native images"),
+    ).toBe(false);
+    expect(scanned.pdb).toMatchObject({
+      examined: 1,
+      failed: 0,
+      paths: [pdbPath],
+      image_paths: [join(root, "app.exe")],
+    });
+    const selected = join(root, "native-0.so");
+    expect((await inspect(selected)).native_images).toEqual([
+      expected.find(({ path }) => path === selected),
+    ]);
   });
 });
 
@@ -817,33 +818,6 @@ describe("ReleaseExposureReader limits", () => {
       );
     },
   );
-
-  it("does not drop native images before the service samples them", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-natives-");
-    for (let index = 0; index < 5; index += 1) {
-      const elf = Buffer.alloc(64);
-      writeMinimalElfHeader(elf);
-      await writeFile(join(root, `lib${String(index)}.so`), elf);
-    }
-    const scanned = await inspect(root);
-    expect(scanned.native_images).toHaveLength(5);
-    expect(
-      scanned.omitted.some((item) => item.subject === "native images"),
-    ).toBe(false);
-  });
-
-  it("locates a CodeView path on the PE image that contains it", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-pdb-");
-    await writeFile(
-      join(root, "app.exe"),
-      pe(0x8664, 64, 0x0002, false, { pdbPath: "C:\\build\\app.pdb" }),
-    );
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\app.pdb");
-    expect(
-      scanned.pdb.image_paths?.some((path) => path.endsWith("app.exe")),
-    ).toBe(true);
-  });
 });
 
 describe("ReleaseExposureReader unpacked ASAR members", () => {
@@ -3477,25 +3451,40 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     );
   });
 
-  it("names the host file on every member location", async () => {
+  it("attributes unexpanded package text, source maps and debug records to their host", async () => {
+    const binaries = [
+      { name: "Small.dll", pdbPath: "C:\\build\\small.pdb" },
+      { name: "payload.json", pdbPath: "C:\\build\\payload.pdb" },
+    ];
     const root = await bundled([
       { path: "notes.txt", bytes: Buffer.from("plain\n") },
+      { path: "plain.json", bytes: Buffer.from('{"plain":true}') },
       { path: "app.js.map", bytes: embeddedSourceMap() },
+      { path: "App.pdb", bytes: Buffer.from("x") },
+      ...binaries.map(({ name, pdbPath }) => ({
+        path: name,
+        bytes: pe(0x8664, 64, 0x0002, false, { pdbPath }),
+      })),
     ]);
     const scanned = await inspect(root);
     const host = join(root, "app.dll");
-    expect(scanned.textLocations).toContain(`${host}/notes.txt`);
+    expect(scanned.native_images.map(({ path }) => path)).toEqual([host]);
+    expect(scanned.textLocations).toEqual([
+      `${host}/notes.txt`,
+      `${host}/plain.json`,
+      `${host}/app.js.map`,
+      `${host}/App.pdb`,
+    ]);
+    expect(scanned.text_members).toMatchObject({ skipped: 0 });
     expect(scanned.source_maps.embedded_paths).toEqual([`${host}/app.js.map`]);
     expect(scanned.extractable.samples).toContain(`${host}/notes.txt`);
-    expect(scanned.native_images.map((image) => image.path)).toEqual([host]);
-  });
-
-  it("reports a debug companion stored in the package under its host", async () => {
-    const root = await bundled([{ path: "App.pdb", bytes: Buffer.from("x") }]);
-    const scanned = await inspect(root);
-    expect(scanned.debug_companions.paths).toEqual([
-      `${join(root, "app.dll")}/App.pdb`,
-    ]);
+    expect(scanned.debug_companions.paths).toEqual([`${host}/App.pdb`]);
+    expect(scanned.pdb).toMatchObject({
+      examined: 3,
+      failed: 0,
+      paths: binaries.map(({ pdbPath }) => pdbPath),
+      image_paths: binaries.map(({ name }) => `${host}/${name}`),
+    });
   });
 
   it("leaves a PE too large to read undecided instead of absent", async () => {
@@ -3509,23 +3498,6 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     expect(scanned.pdb.paths).toEqual([]);
     expect(scanned.limitations.join("\n")).toContain("Large.dll");
     expect(scanned.extractable.unreadable_members).toBe(0);
-  });
-
-  it("reads CodeView paths from a small packaged PE without charging text", async () => {
-    const root = await bundled([
-      {
-        path: "Small.dll",
-        bytes: pe(0x8664, 64, 0x0002, false, {
-          pdbPath: "C:\\build\\small.pdb",
-        }),
-      },
-    ]);
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\small.pdb");
-    expect(scanned.pdb.image_paths).toEqual([
-      `${join(root, "app.dll")}/Small.dll`,
-    ]);
-    expect(scanned.text_members.skipped).toBe(0);
   });
 
   it("keeps a packaged PE header beyond the probe unresolved", async () => {
@@ -3721,26 +3693,6 @@ it("retains distinct decoded and opaque paths from same-name compressed PE membe
 });
 
 describe("ReleaseExposureReader unexpanded package PE reads", () => {
-  it("reads a native member by its bytes when its name says text", async () => {
-    const root = await bundled([
-      {
-        path: "payload.json",
-        bytes: pe(0x8664, 64, 0x0002, false, {
-          pdbPath: "C:\\build\\payload.pdb",
-        }),
-      },
-      { path: "plain.json", bytes: Buffer.from('{"plain":true}') },
-    ]);
-    const scanned = await inspect(root);
-    expect(scanned.pdb.paths).toContain("C:\\build\\payload.pdb");
-    expect(scanned.pdb.image_paths).toEqual([
-      `${join(root, "app.dll")}/payload.json`,
-    ]);
-    expect(scanned.textLocations).toEqual([
-      `${join(root, "app.dll")}/plain.json`,
-    ]);
-  });
-
   it.each(["payload.json", "payload.js.map"])(
     "keeps a nested ASAR named %s unknown",
     async (name) => {
