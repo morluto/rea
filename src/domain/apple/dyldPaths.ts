@@ -6,6 +6,8 @@ import type {
 import {
   machoArchitectureFamily,
   machoCpuSubtypeBase,
+  machoKnownArm64Subtype,
+  machoKnownX86_64Subtype,
 } from "./machoCpuIdentity.js";
 
 const MAX_SYMLINK_HOPS = 32;
@@ -150,6 +152,17 @@ const ARM32_SUBTYPE_PREFERENCES: Readonly<Record<number, readonly number[]>> = {
   12: [12],
 };
 
+/** A display-family fallback does not establish a raw subtype's identity. */
+const knownSubtype = (
+  slice: Pick<MachoSlice, "cpu_type" | "cpu_subtype">,
+): boolean => {
+  if (slice.cpu_type === 0x0100000c)
+    return machoKnownArm64Subtype(slice.cpu_subtype) !== undefined;
+  if (slice.cpu_type === 0x01000007)
+    return machoKnownX86_64Subtype(slice.cpu_subtype) !== undefined;
+  return true;
+};
+
 export const compatibleSlice = (
   slices: readonly MachoSlice[],
   process: Pick<MachoSlice, "architecture" | "cpu_type" | "cpu_subtype">,
@@ -174,12 +187,20 @@ export const compatibleSlice = (
     }
     return { kind: "missing" };
   }
+  const unknownSlices = slices.some(
+    (slice) => slice.cpu_type === process.cpu_type && !knownSubtype(slice),
+  );
+  if (!knownSubtype(process))
+    return slices.some((slice) => slice.cpu_type === process.cpu_type)
+      ? { kind: "unknown" }
+      : { kind: "missing" };
   const processFamily = machoArchitectureFamily(process.architecture);
   for (const architecture of COMPATIBLE_ARCHITECTURES[processFamily] ?? [
     processFamily,
   ]) {
     const slice = slices.find(
       (item) =>
+        knownSubtype(item) &&
         machoArchitectureFamily(item.architecture) === architecture &&
         (processFamily !== "arm64e" ||
           (item.cpu_type === process.cpu_type &&
@@ -188,5 +209,5 @@ export const compatibleSlice = (
     );
     if (slice !== undefined) return { kind: "selected", slice };
   }
-  return { kind: "missing" };
+  return { kind: unknownSlices ? "unknown" : "missing" };
 };
