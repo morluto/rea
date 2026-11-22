@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const count = z.number().int().nonnegative();
 
 /** One explicit local file; the format is detected, never assumed from the name. */
 export const inspectLabviewArtifactInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to a LabVIEW RSRC file (.vi, .ctl, .llb) or a LabVIEW-built PE",
   ),
 });
