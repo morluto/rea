@@ -3,11 +3,15 @@ import {
   processInspectionFailure,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { createHash } from "node:crypto";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
+import {
+  copyGhidraRegularFile,
+  ghidraFileDialect,
+} from "./GhidraFileArtifacts.js";
 import { copyExistingGhidraProject } from "./GhidraProjectSnapshot.js";
-import { hashGhidraPackedProgram } from "./GhidraCheckpoint.js";
-import { constants as fsConstants } from "node:fs";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
 import {
@@ -20,7 +24,7 @@ import type {
   GhidraRiscvLoadPreparation,
 } from "./GhidraRiscvProfile.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
-import { copyFile, mkdir, realpath } from "node:fs/promises";
+import { mkdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, posix, win32 } from "node:path";
 
 import { writeGhidraRuntimeFile } from "./GhidraRuntimeFile.js";
@@ -352,18 +356,27 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
       let packedProgramPath: string | undefined;
       if (session.packedProgram !== undefined) {
         packedProgramPath = join(session.runtimeRoot, "restored-program.gzf");
-        await copyFile(
-          session.packedProgram.path,
-          packedProgramPath,
-          fsConstants.COPYFILE_EXCL,
-        );
-        if (
-          (await hashGhidraPackedProgram(
+        const packedHash = createHash("sha256");
+        try {
+          await copyGhidraRegularFile(
+            session.packedProgram.path,
             packedProgramPath,
             options.resourceScope,
-            options.signal,
-          )) !== session.packedProgram.sha256
-        )
+            {
+              signal: options.signal,
+              hash: packedHash,
+            },
+          );
+        } catch (cause: unknown) {
+          if (cause instanceof AnalysisError) throw cause;
+          throw classifyProviderFailure(
+            cause,
+            ghidraFileDialect("open_binary", {
+              path: session.packedProgram.path,
+            }),
+          );
+        }
+        if (packedHash.digest("hex") !== session.packedProgram.sha256)
           throw new GhidraLaunchError(
             "Ghidra checkpoint changed before its private import; reopen the target.",
           );
@@ -1135,6 +1148,7 @@ export const ghidraHeadlessArguments = (
           options.disabledAnalyzers.join(","),
         ]),
     ...(existing !== undefined ||
+    options.packedProgramPath !== undefined ||
     (options.platform ?? HOST_PLATFORM.platform) === "win32"
       ? []
       : [

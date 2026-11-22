@@ -5,7 +5,7 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
-import { z } from "zod";
+import { isRecord } from "../kernel/isRecord.js";
 
 import type {
   AnalysisError,
@@ -564,18 +564,48 @@ export const invalidRegexPatternError = (
     [{ path: ["pattern"], reason: "invalid_format", message: reason }],
   );
 
-const replySchema = z.discriminatedUnion("status", [
-  z.strictObject({
-    status: z.literal("matched"),
-    indices: z.array(z.int().nonnegative()),
-  }),
-  z.strictObject({ status: z.literal("invalid_pattern"), reason: z.string() }),
-]);
+type WorkerReply =
+  | { readonly kind: "matched"; readonly indices: readonly number[] }
+  | { readonly kind: "invalid_pattern"; readonly reason: string }
+  | { readonly kind: "malformed" }
+  | { readonly kind: "invalid_indices" };
+
+const parseWorkerReply = (
+  message: unknown,
+  valueCount: number,
+): WorkerReply => {
+  if (!isRecord(message) || Object.keys(message).length !== 2)
+    return { kind: "malformed" };
+  if (message.status === "invalid_pattern") {
+    if (!Object.hasOwn(message, "reason") || typeof message.reason !== "string")
+      return { kind: "malformed" };
+    return { kind: "invalid_pattern", reason: message.reason };
+  }
+  if (
+    message.status !== "matched" ||
+    !Object.hasOwn(message, "indices") ||
+    !Array.isArray(message.indices)
+  )
+    return { kind: "malformed" };
+  const indices: unknown[] = message.indices;
+  let previous = -1;
+  let outOfOrderOrRange = false;
+  for (let position = 0; position < indices.length; position += 1) {
+    const index = indices[position];
+    if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0)
+      return { kind: "malformed" };
+    if (index >= valueCount || index <= previous) outOfOrderOrRange = true;
+    previous = index;
+  }
+  if (outOfOrderOrRange) return { kind: "invalid_indices" };
+  return { kind: "matched", indices: indices as number[] };
+};
 
 // Code is constant; caller patterns and target strings cross only workerData.
+// process.getBuiltinModule loads synchronously in both CJS and ESM workers
+// without async import overhead or ESM customization hook startup.
 const WORKER_SOURCE = String.raw`
-(async () => {
-const { parentPort, workerData } = await import("node:worker_threads");
+const { parentPort, workerData } = process.getBuiltinModule("node:worker_threads");
 let expression;
 try {
   expression = new RegExp(workerData.pattern, workerData.caseSensitive ? "u" : "iu");
@@ -583,12 +613,12 @@ try {
   parentPort.postMessage({ status: "invalid_pattern", reason: cause instanceof Error ? cause.message : String(cause) });
 }
 if (expression !== undefined) {
+  const { values } = workerData;
   const indices = [];
-  for (const [index, value] of workerData.values.entries())
-    if (expression.test(value)) indices.push(index);
+  for (let index = 0, length = values.length; index < length; index += 1)
+    if (expression.test(values[index])) indices.push(index);
   parentPort.postMessage({ status: "matched", indices });
 }
-})();
 `;
 
 export interface RegexConfigurationSnapshot {
@@ -674,36 +704,33 @@ export const matchRegexValues = async (input: {
       input.signal?.addEventListener("abort", onAbort, { once: true });
       if (input.signal?.aborted) onAbort();
       worker.once("message", (message: unknown) => {
-        const reply = replySchema.safeParse(message);
-        if (!reply.success)
-          return finish(
-            err(
-              new AnalysisOutputError(
-                input.operation,
-                "Regex worker reply is malformed",
+        const reply = parseWorkerReply(message, input.values.length);
+        switch (reply.kind) {
+          case "malformed":
+            return finish(
+              err(
+                new AnalysisOutputError(
+                  input.operation,
+                  "Regex worker reply is malformed",
+                ),
               ),
-            ),
-          );
-        if (reply.data.status === "invalid_pattern")
-          return finish(
-            err(invalidRegexPatternError(input.operation, reply.data.reason)),
-          );
-        if (
-          reply.data.indices.some(
-            (index, position, indices) =>
-              index >= input.values.length ||
-              (position > 0 && index <= (indices[position - 1] ?? -1)),
-          )
-        )
-          return finish(
-            err(
-              new AnalysisOutputError(
-                input.operation,
-                "Regex worker returned invalid inventory indices",
+            );
+          case "invalid_pattern":
+            return finish(
+              err(invalidRegexPatternError(input.operation, reply.reason)),
+            );
+          case "invalid_indices":
+            return finish(
+              err(
+                new AnalysisOutputError(
+                  input.operation,
+                  "Regex worker returned invalid inventory indices",
+                ),
               ),
-            ),
-          );
-        finish(ok(reply.data.indices));
+            );
+          case "matched":
+            return finish(ok(reply.indices));
+        }
       });
       worker.once("error", (cause: Error & { code?: string }) =>
         finish(

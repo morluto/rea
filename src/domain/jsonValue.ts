@@ -200,20 +200,24 @@ export function* jsonValueValidationSteps(
   }
 }
 
-const preserveJsonValue = (value: JsonValue): JsonValue => {
+const copyJsonValue = (
+  value: JsonValue,
+  borrowImmutable: boolean,
+): JsonValue => {
   const immutableCandidate: unknown = value;
-  if (isImmutableJsonSnapshot(immutableCandidate)) return value;
+  if (borrowImmutable && isImmutableJsonSnapshot(immutableCandidate))
+    return value;
   if (Array.isArray(value)) {
     const copy: JsonValue[] = [];
     for (let index = 0; index < value.length; index += 1)
-      copy.push(preserveJsonValue(value[index]!));
+      copy.push(copyJsonValue(value[index]!, borrowImmutable));
     return copy;
   }
   if (value !== null && typeof value === "object") {
     const copy: Record<string, JsonValue> = {};
     for (const key of ownEnumerableKeys(value))
       Object.defineProperty(copy, key, {
-        value: preserveJsonValue(value[key]!),
+        value: copyJsonValue(value[key]!, borrowImmutable),
         enumerable: true,
         configurable: true,
         writable: true,
@@ -222,6 +226,12 @@ const preserveJsonValue = (value: JsonValue): JsonValue => {
   }
   return value;
 };
+
+const preserveJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, true);
+
+const detachJsonValue = (value: JsonValue): JsonValue =>
+  copyJsonValue(value, false);
 
 const validatedJsonValue = z
   .unknown()
@@ -242,6 +252,14 @@ export const jsonValueSchema = z
   .transform(preserveJsonValue);
 jsonValueSchema._zod.toJSONSchema = () => ({});
 
+/** Parse bounded JSON into detached mutable copies, cloning sealed subtrees. */
+export const detachedJsonValueSchema = z
+  .unknown()
+  .nonoptional()
+  .pipe(validatedJsonValue)
+  .transform(detachJsonValue);
+detachedJsonValueSchema._zod.toJSONSchema = () => ({});
+
 /** Validate JSON that the current boundary exclusively owns, without a second full-tree copy. */
 export const ownedJsonValueSchema = z
   .unknown()
@@ -259,6 +277,11 @@ objectValidation._zod.toJSONSchema = objectProjection;
 /** JSON object boundary for caller-visible parameter maps. */
 export const jsonObjectSchema = jsonValueSchema.pipe(objectValidation);
 jsonObjectSchema._zod.toJSONSchema = objectProjection;
+
+/** Detached JSON object boundary for mutable caller exports. */
+export const detachedJsonObjectSchema =
+  detachedJsonValueSchema.pipe(objectValidation);
+detachedJsonObjectSchema._zod.toJSONSchema = objectProjection;
 
 /** Validate an exclusively owned JSON object while retaining its existing tree. */
 export const ownedJsonObjectSchema =

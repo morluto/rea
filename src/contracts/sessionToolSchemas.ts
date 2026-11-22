@@ -7,6 +7,7 @@ import { prefixedDigestSchema } from "./../domain/digests.js";
 import {
   EVIDENCE_LINK_INSPECTION_LIMIT,
   EVIDENCE_RECORD_SELECTION_LIMIT,
+  EVIDENCE_SUMMARY_SELECTION_LIMIT,
   evidenceLinkStatusFilterSchema,
   evidenceLinkTraversalSchema,
   evidenceRecordFiltersSchema,
@@ -23,23 +24,30 @@ export const getEvidenceBundleInputSchema = z.strictObject({
     .int()
     .nonnegative()
     .optional()
-    .describe("records or links: first matching row to return; default 0."),
+    .describe(
+      "summary, records or links: first matching row to return; default 0. Summary returns every match when neither offset nor limit is supplied.",
+    ),
   limit: z
     .int()
     .positive()
     .optional()
     .describe(
-      `records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
+      `summary: maximum metadata rows, default ${String(EVIDENCE_SUMMARY_SELECTION_LIMIT)} when paging is selected. records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
     ),
   traversal: evidenceLinkTraversalSchema
     .optional()
     .describe(
       "links only: direct (default) reads the selected records' own links; retained-closure also follows retained links.",
     ),
+  linked_evidence_id: prefixedDigestSchema("ev")
+    .optional()
+    .describe(
+      "links only: return direct links to this exact Evidence ID, including when that target is missing here. Source filters and outgoing traversal still select the examined records; this does not follow incoming links transitively.",
+    ),
   link_status: evidenceLinkStatusFilterSchema
     .optional()
     .describe(
-      "links only: rows to return, default missing. Counts always cover every inspected link.",
+      "links only: rows to return, default all with linked_evidence_id, otherwise missing. Counts cover target-matching links before this status filter.",
     ),
 });
 

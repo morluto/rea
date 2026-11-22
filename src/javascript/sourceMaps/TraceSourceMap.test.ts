@@ -364,3 +364,46 @@ it.each(["ggggggEAAA", "gggggggBAAA"])(
     ).toThrow(/32-bit/u);
   },
 );
+
+describe("binary search on dense single-line source maps", () => {
+  it("resolves exact, gap, tail, duplicate, and prior-line fallback positions", () => {
+    const denseMappings = `AAAA,${Array.from({ length: 1999 }, () => "EAAE").join(",")};UAAA`;
+    const denseMap = {
+      version: 3,
+      sources: ["dense.ts"],
+      names: [],
+      mappings: denseMappings,
+    };
+    expect(trace(denseMap, { line: 1, column: 2469 }).matches[0]).toMatchObject(
+      {
+        reported_source: "dense.ts",
+        original_position: { line: 1, column: 2468 },
+      },
+    );
+    expect(trace(denseMap, { line: 1, column: 5000 }).matches[0]).toMatchObject(
+      {
+        original_position: { line: 1, column: 3998 },
+      },
+    );
+    expect(trace(denseMap, { line: 2, column: 1 }).matches[0]).toMatchObject({
+      original_position: { line: 1, column: 3998 },
+    });
+    const duplicateColumnMap = {
+      version: 3,
+      sources: ["dup.ts"],
+      names: [],
+      mappings: "AAAA,AAEC,AAAC",
+    };
+    expect(
+      trace(duplicateColumnMap, { line: 1, column: 0 }).matches.map((m) =>
+        m.state === "mapped"
+          ? [m.original_position.line, m.original_position.column]
+          : null,
+      ),
+    ).toEqual([
+      [1, 0],
+      [3, 1],
+      [3, 2],
+    ]);
+  });
+});
