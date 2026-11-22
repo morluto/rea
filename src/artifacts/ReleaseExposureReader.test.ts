@@ -3580,6 +3580,48 @@ describe("ReleaseExposureReader unexpanded packages", () => {
     expect(scanned.extractable.unreadable_members).toBe(0);
   });
 
+  it("reads CodeView when a compressed PE exceeds only the embedded-probe allowance", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-pe-dual-allowance-",
+    );
+    const host = join(root, "app.dll");
+    const pdbPath = "C:\\build\\bounded.pdb";
+    const raw = Buffer.concat([
+      pe(0x8664, 64, 0x0002, false, { pdbPath }),
+      Buffer.alloc(8192),
+    ]);
+    const maxFileBytes = 4096;
+    const bundle = dotnetBundleFixture([
+      { path: "bounded.dll", bytes: raw, compressed: true },
+    ]).bytes;
+    expect(bundle.length).toBeLessThan(maxFileBytes);
+    await writeFile(host, bundle);
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: root, max_file_bytes: maxFileBytes },
+        undefined,
+        ignoreText,
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.coverage).toBe("unknown");
+      expect(result.value.omitted).toContainEqual(
+        expect.objectContaining({
+          subject: "embedded package probes",
+          count: 1,
+        }),
+      );
+      expect(result.value.pdb).toMatchObject({
+        examined: 2,
+        failed: 0,
+        paths: [pdbPath],
+        image_paths: [`${host}/bounded.dll`],
+      });
+    } finally {
+      await reader.close();
+    }
+  });
+
   it("keeps a packaged PE header beyond the probe unresolved", async () => {
     const original = pe(0x8664, 64, 0x0002, false, {
       pdbPath: "C:\\build\\delayed.pdb",

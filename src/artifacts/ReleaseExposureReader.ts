@@ -2540,11 +2540,13 @@ const examinePackagedBinary = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
+  let probedImage: Extract<MemberRead, { kind: "bytes" }> | null = null;
   if (native !== null) {
     state.packagedNative += 1;
-    await probePackagedImage(state, member, native, context);
+    probedImage = await probePackagedImage(state, member, native, context);
   } else await examineProbedText(state, member, probe, context);
   if (native !== "pe") return true;
+  if (context.signal?.aborted) throw cancelledBy(OPERATION, context.signal);
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);
     return true;
@@ -2553,7 +2555,8 @@ const examinePackagedBinary = async (
   const image =
     probe.kind === "bytes"
       ? probe
-      : await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES);
+      : (probedImage ??
+        (await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)));
   if (image.kind === "bytes") readPdb(state, image.bytes, member.location);
   else notePeNotExamined(state, member.location);
   return image.kind !== "unread";
@@ -2942,7 +2945,7 @@ const probePackagedImage = async (
   member: MemberView,
   nativeFormat: NativeFormat,
   context: ScanContext,
-): Promise<void> => {
+): Promise<Extract<MemberRead, { kind: "bytes" }> | null> => {
   const bytesReadBefore = state.memberBytesRead;
   const allowance = context.maxFileBytes - state.packagedProbeBytes;
   const image = allowance > 0 ? await member.read(allowance) : null;
@@ -2957,7 +2960,7 @@ const probePackagedImage = async (
       state,
       `Did not probe ${member.location} for an embedded package.`,
     );
-    return;
+    return null;
   }
   state.packagedProbeBytes += image.bytes.length;
   const probe = await embeddedPackageFormatOfBytes(
@@ -2970,6 +2973,10 @@ const probePackagedImage = async (
   if (probe.kind === "unreadable") noteUnexaminedPackage(state);
   else if (probe.kind === "package")
     noteNestedPackage(state, probe.format, member.location);
+  return nativeFormat === "pe" &&
+    image.bytes.length <= MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES
+    ? image
+    : null;
 };
 
 const scanEmbeddedPackage = async (
