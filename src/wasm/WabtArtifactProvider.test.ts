@@ -1680,6 +1680,7 @@ it.each([
     validation: "rejected-by-selected-profile",
   },
   { stage: "candidate admission", mode: "success", validation: "unknown" },
+  { stage: "candidate finalization", mode: "success", validation: "unknown" },
   { stage: "glue decoding", mode: "success", validation: "unknown" },
   { stage: "glue finalization", mode: "success", validation: "unknown" },
   { stage: "producer output", mode: "malformed-wat", validation: "valid" },
@@ -1691,7 +1692,17 @@ it.each([
     const fixture = await createWabtArtifactFixture();
     const candidate = join(fixture.selectedRoot, "candidate.wasm");
     const gluePath = join(fixture.selectedRoot, "glue.js");
-    const candidateBytes = Buffer.from("independent candidate bytes");
+    const candidateFailure = stage.startsWith("candidate");
+    const closingPath =
+      stage === "candidate finalization"
+        ? candidate
+        : stage === "glue finalization"
+          ? gluePath
+          : undefined;
+    const candidateBytes =
+      stage === "candidate finalization"
+        ? Buffer.alloc(1024 * 1024 + 29, 0xa5)
+        : Buffer.from("independent candidate bytes");
     await writeFile(candidate, candidateBytes);
     const missing = join(fixture.selectedRoot, "missing.wasm");
     const glueSource = 'fetch("./selected.wasm");';
@@ -1706,8 +1717,8 @@ it.each([
           controller: new AbortController(),
         }),
     );
-    if (stage === "glue finalization") {
-      fileCloseFailure.selectedPath = gluePath;
+    if (closingPath !== undefined) {
+      fileCloseFailure.selectedPath = closingPath;
       fileCloseFailure.attempts = 0;
       fileCloseFailure.failFirst = true;
     }
@@ -1719,34 +1730,25 @@ it.each([
             stage === "candidate admission"
               ? [fixture.path, candidate, candidate, missing, missing]
               : [candidate],
-          glue_paths: stage === "candidate admission" ? [] : [gluePath],
+          glue_paths: candidateFailure ? [] : [gluePath],
         },
         { commandTimeoutMs: 42000 },
       );
-      if (!result.ok) {
-        expect(result.error.partialObservation).toMatchObject({
-          parameters: expect.not.objectContaining({
-            command_timeout_ms: expect.anything(),
-          }),
-          normalized_result: { tool_profile: { timeout_ms: 42000 } },
-        });
-      }
       if (result.ok) throw new Error("Expected the selected failure stage");
       expect(result.error._tag).toBe(
-        validation === "rejected-by-selected-profile"
-          ? "AnalysisInputError"
-          : validation === "unknown"
-            ? "AnalysisInputError"
-            : "AnalysisOutputError",
+        validation === "valid" ? "AnalysisOutputError" : "AnalysisInputError",
       );
       expect(result.error.partialObservation).toMatchObject({
+        parameters: expect.not.objectContaining({
+          command_timeout_ms: expect.anything(),
+        }),
         normalized_result: {
           artifact: {
             path: fixture.path,
             sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
           },
           validation,
-          tool_profile: { release: "1.0.42" },
+          tool_profile: { release: "1.0.42", timeout_ms: 42000 },
           candidates: [
             { path: fixture.path },
             {
@@ -1755,34 +1757,33 @@ it.each([
               bytes: candidateBytes.length,
             },
           ],
-          glue:
-            stage === "candidate admission"
-              ? []
-              : [
-                  {
-                    artifact: {
-                      path: gluePath,
-                      sha256: createHash("sha256")
-                        .update(glueBytes)
-                        .digest("hex"),
-                    },
-                    parse_status:
-                      stage === "glue finalization"
-                        ? "not-performed"
-                        : stage === "glue decoding"
-                          ? "failed"
-                          : "complete",
-                    references:
-                      stage === "glue decoding" || stage === "glue finalization"
-                        ? []
-                        : [
-                            {
-                              value: "./selected.wasm",
-                              candidate_paths: [fixture.path],
-                            },
-                          ],
+          glue: candidateFailure
+            ? []
+            : [
+                {
+                  artifact: {
+                    path: gluePath,
+                    sha256: createHash("sha256")
+                      .update(glueBytes)
+                      .digest("hex"),
                   },
-                ],
+                  parse_status:
+                    stage === "glue finalization"
+                      ? "not-performed"
+                      : stage === "glue decoding"
+                        ? "failed"
+                        : "complete",
+                  references:
+                    stage === "glue decoding" || stage === "glue finalization"
+                      ? []
+                      : [
+                          {
+                            value: "./selected.wasm",
+                            candidate_paths: [fixture.path],
+                          },
+                        ],
+                },
+              ],
         },
       });
       if (validation === "rejected-by-selected-profile")
@@ -1792,19 +1793,31 @@ it.each([
             stderr: "module.wasm: invalid bytes\n",
           },
         });
-      if (stage === "candidate admission")
+      if (candidateFailure)
         expect(projectAnalysisError(result.error)).toMatchObject({
-          code: "invalid_request",
-          details: { issues: [{ path: ["candidate_paths", 3] }] },
+          code:
+            stage === "candidate finalization"
+              ? "cleanup_incomplete"
+              : "invalid_request",
+          details: {
+            issues: [
+              {
+                path: [
+                  "candidate_paths",
+                  stage === "candidate finalization" ? 0 : 3,
+                ],
+              },
+            ],
+          },
         });
       else if (validation === "unknown")
         expect(result.error).toMatchObject({
           issues: [{ path: ["glue_paths", 0] }],
         });
-      if (stage === "glue finalization") {
+      if (closingPath !== undefined) {
         expect(result.error).toMatchObject({
           cleanupIncomplete: true,
-          cleanupResources: [gluePath],
+          cleanupResources: [closingPath],
         });
         expect(fileCloseFailure.attempts).toBe(1);
         await provider.close();
