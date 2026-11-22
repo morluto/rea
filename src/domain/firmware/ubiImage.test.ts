@@ -1446,3 +1446,111 @@ it("falls back to the other volume table copy when an update marker is invalid",
     updateMarker: false,
   });
 });
+
+it("counts known LEB gaps even when an earlier refusal prevents extraction", () => {
+  const records: UbiFixtureVolumeRecord[] = [
+    { id: 0, name: "short-static", type: "static", reservedPebs: 3 },
+    { id: 1, name: "mismatched-dynamic", type: "dynamic", reservedPebs: 4 },
+    { id: 2, name: "overlarge-static", type: "static", reservedPebs: 3 },
+    { id: 3, name: "inconsistent-static", type: "static", reservedPebs: 4 },
+  ];
+  const bytes = ubiImage([
+    ...ubiLayoutPebs(records),
+    // Static volume with used_ebs 3 mapping LEBs 0 and 2 where LEB 0 is short.
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 0,
+      data: Buffer.from("short"),
+      sqnum: 2n,
+      volType: "static",
+      usedEbs: 3,
+    },
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 2,
+      data: Buffer.from("last"),
+      sqnum: 3n,
+      volType: "static",
+      usedEbs: 3,
+    },
+    // Dynamic volume with vid_record_mismatch and a gap at LEB 1.
+    {
+      kind: "leb",
+      volId: 1,
+      lnum: 0,
+      data: Buffer.from("wrong-type"),
+      sqnum: 4n,
+      volType: "static",
+      usedEbs: 1,
+    },
+    {
+      kind: "leb",
+      volId: 1,
+      lnum: 2,
+      data: ubiLebData(0x32),
+      sqnum: 5n,
+    },
+    // Over-large used_ebs is bounded by reservedPebs when counting gaps.
+    {
+      kind: "leb",
+      volId: 2,
+      lnum: 0,
+      data: ubiLebData(0x30),
+      sqnum: 6n,
+      volType: "static",
+      usedEbs: 100,
+    },
+    // Inconsistent used_ebs claims no gaps.
+    {
+      kind: "leb",
+      volId: 3,
+      lnum: 0,
+      data: ubiLebData(0x30),
+      sqnum: 7n,
+      volType: "static",
+      usedEbs: 3,
+    },
+    {
+      kind: "leb",
+      volId: 3,
+      lnum: 2,
+      data: Buffer.from("tail"),
+      sqnum: 8n,
+      volType: "static",
+      usedEbs: 4,
+    },
+  ]);
+  const [shortStatic, mismatchedDynamic, overlargeStatic, inconsistentStatic] =
+    image(bytes).volumes;
+  expect(shortStatic).toMatchObject({
+    extractRefusal: "invalid_static_size",
+    missingLebCount: 1,
+    firstMissingLeb: 1,
+    dataBytes: null,
+    ranges: [],
+  });
+  expect(mismatchedDynamic).toMatchObject({
+    extractRefusal: "vid_record_mismatch",
+    missingLebCount: 1,
+    firstMissingLeb: 1,
+    dataBytes: null,
+    ranges: [],
+  });
+  expect(overlargeStatic).toMatchObject({
+    extractRefusal: "invalid_static_size",
+    missingLebCount: 2,
+    firstMissingLeb: 1,
+    dataBytes: null,
+    ranges: [],
+  });
+  expect(inconsistentStatic).toMatchObject({
+    extractRefusal: "invalid_static_size",
+    usedEbs: null,
+    missingLebCount: 0,
+    firstMissingLeb: null,
+    dataBytes: null,
+    ranges: [],
+  });
+});

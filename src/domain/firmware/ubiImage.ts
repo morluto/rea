@@ -1100,17 +1100,19 @@ const assembleVolume = (
   const ranges: UbiLebRange[] = [];
   let missingLebCount = 0;
   let firstMissingLeb: number | null = null;
-  if (refusal === null) {
-    // Count gaps from the sorted mapped LEBs; contentLebs comes from on-disk
-    // fields and is not bounded by the eraseblocks examined.
-    let expected = 0;
-    for (const [lnum, leb] of inRange) {
-      if (lnum >= contentLebs) break;
-      if (lnum > expected) {
-        missingLebCount += lnum - expected;
-        firstMissingLeb ??= expected;
-      }
-      expected = lnum + 1;
+  // Count gaps from the sorted mapped LEBs regardless of earlier refusal;
+  // bound the span by reservedPebs so an over-large on-disk used_ebs cannot
+  // inflate it, and only collect ranges when extraction is still allowed.
+  const gapSpan = Math.min(contentLebs, record.reservedPebs);
+  let expected = 0;
+  for (const [lnum, leb] of inRange) {
+    if (lnum >= gapSpan) break;
+    if (lnum > expected) {
+      missingLebCount += lnum - expected;
+      firstMissingLeb ??= expected;
+    }
+    expected = lnum + 1;
+    if (refusal === null) {
       ranges.push({
         lnum,
         peb: leb.peb,
@@ -1118,10 +1120,10 @@ const assembleVolume = (
         length: record.type === "static" ? leb.vid.dataSize : usableLebSize,
       });
     }
-    if (expected < contentLebs) {
-      missingLebCount += contentLebs - expected;
-      firstMissingLeb ??= expected;
-    }
+  }
+  if (expected < gapSpan) {
+    missingLebCount += gapSpan - expected;
+    firstMissingLeb ??= expected;
   }
   if (refusal === null && missingLebCount > 0) refusal = "missing_lebs";
   const dataBytes =
