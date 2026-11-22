@@ -407,6 +407,7 @@
 * **mcp:** consolidate browser provider probe ownership checks ([#13166](https://github.com/morluto/rea/issues/13166)) ([96d88a6](https://github.com/morluto/rea/commit/96d88a67c31da87bf470629e9c90fcddb8d275fc))
 * **mcp:** consolidate browser source boundary checks ([#13234](https://github.com/morluto/rea/issues/13234)) ([2e83fbd](https://github.com/morluto/rea/commit/2e83fbd394fcae313b58767d4c028f23a4c33935))
 * **mcp:** consolidate debugger retirement evidence checks ([#13014](https://github.com/morluto/rea/issues/13014)) ([72a8ae0](https://github.com/morluto/rea/commit/72a8ae01a3cb006b8ff5320a92177d4841b801af))
+* **mcp:** consolidate default HTTP input capacity checks ([#13258](https://github.com/morluto/rea/issues/13258)) ([6dbd868](https://github.com/morluto/rea/commit/6dbd86847e589471dee822b5357d98ecc4746af4))
 * **mcp:** consolidate deferred runtime and recorder cleanup ([#13247](https://github.com/morluto/rea/issues/13247)) ([051658d](https://github.com/morluto/rea/commit/051658daa15aa2fd952692eaab1b64198c2f2591))
 * **mcp:** consolidate derived operation progress coverage ([#12778](https://github.com/morluto/rea/issues/12778)) ([3caa46f](https://github.com/morluto/rea/commit/3caa46f980bbc1d9ef9e1f25b4e046cfc0d03ca9))
 * **mcp:** consolidate HTTP admission and socket reuse checks ([#13252](https://github.com/morluto/rea/issues/13252)) ([333e6de](https://github.com/morluto/rea/commit/333e6de3111f8dcdb56aa6d17c499aa39c0c9f3e))
