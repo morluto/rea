@@ -403,6 +403,7 @@ export const auditdLogMetadataSchema = z.strictObject({
     .array(
       z.strictObject({
         event_id: z.string(),
+        node: z.string().nullable(),
         event_seconds: offset,
         event_millis: offset,
         serial: offset,

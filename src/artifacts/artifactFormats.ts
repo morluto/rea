@@ -512,7 +512,7 @@ const NON_ZIP_FORMATS = {
     ...plain,
     retainClassifiedSource: true,
     readerLimitation:
-      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity, with duplicate, out-of-order and malformed records counted. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
+      "auditd log inventory reports record and event totals, per-type counts and a bounded window of events joined on their full audit event identity (node, timestamp and serial), with duplicate, out-of-order and malformed records counted. Per-record identity is retained for a bounded window of recent events; events and records past it are counted in the totals but their duplicate and interleaving status is not established. Record key-value fields, hex and escaped values, argument ordering and decoded syscall or permission meanings are not interpreted; the log is not treated as complete or authentic.",
     createReader: (path, options) =>
       new AuditdLogArtifactReader(path, sourceOf(options)),
   }),

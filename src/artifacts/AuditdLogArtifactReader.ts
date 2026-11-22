@@ -1,5 +1,4 @@
 import type { Readable } from "node:stream";
-import { setImmediate } from "node:timers/promises";
 
 import {
   auditdLogMetadataSchema,
@@ -19,6 +18,7 @@ import {
   ArtifactResourceScope,
   assertArtifactReadActive,
   ArtifactFileSource,
+  yieldArtifactRead,
 } from "../resources/index.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
@@ -79,7 +79,9 @@ export class AuditdLogArtifactReader implements ArtifactReader {
         ? { status: "complete" as const, limitations: [] }
         : { status: "unknown" as const, limitations: [...this.#limitations] };
     options?.onCoverage?.(coverage);
-    await setImmediate();
+    // onCoverage may abort the supplied signal; cancellation queued during the
+    // await must resolve as cancelled rather than as a completed traversal.
+    await yieldArtifactRead(signal);
   }
 
   async open(entry: ArtifactEntry, _signal?: AbortSignal): Promise<Readable> {

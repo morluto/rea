@@ -10,7 +10,7 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 const record = (
   type: string,
   seconds: number,
-  millis: number,
+  millis: number | string,
   serial: number,
   body: string,
 ): string =>
@@ -171,15 +171,67 @@ it("keeps malformed lines as diagnostics without dropping valid events", async (
   );
 });
 
-it("names a node= prefix record as the same event as its plain peers", async () => {
+it("keeps the same event identity apart across different nodes", async () => {
   const metadata = await metadataOf(
     [
       record("SYSCALL", 1700000000, 123, 1000, "success=yes"),
       `node=host1 ${record("EXECVE", 1700000000, 123, 1000, "argc=1")}`,
+      `node=host2 ${record("SYSCALL", 1700000000, 123, 1000, "success=yes")}`,
     ].join("\n"),
   );
-  expect(metadata.event_count).toBe(1);
-  expect(metadata.events[0]?.record_count).toBe(2);
+  // An unqualified record and a node=host2 record share a timestamp and serial
+  // but belong to different hosts, so they must not be joined.
+  expect(metadata.event_count).toBe(3);
+  expect(metadata.events.map((event) => event.node)).toEqual([
+    null,
+    "host1",
+    "host2",
+  ]);
+  expect(metadata.events.every((event) => event.record_count === 1)).toBe(true);
+  expect(metadata.duplicate_record_count).toBe(0);
+});
+
+it("pads every event timestamp millis to three digits", async () => {
+  const metadata = await metadataOf(
+    [
+      record("SYSCALL", 1700000000, 7, 1000, "success=yes"),
+      record("EXECVE", 1700000000, "050", 1001, "argc=1"),
+    ].join("\n"),
+  );
+  expect(metadata.events.map((event) => event.event_id)).toEqual([
+    "1700000000.007:1000",
+    "1700000000.050:1001",
+  ]);
+});
+
+it("treats split EXECVE records as continuations, not duplicates", async () => {
+  const metadata = await metadataOf(
+    [
+      record("SYSCALL", 1700000000, 123, 1000, "items=0 syscall=59"),
+      record("EXECVE", 1700000000, 123, 1000, "argc=3 a0=10 a1=20"),
+      record("EXECVE", 1700000000, 123, 1000, "a2=30 a3=40"),
+      record("EXECVE", 1700000000, 123, 1000, "a4=50"),
+    ].join("\n"),
+  );
+  const [event] = metadata.events;
+  expect(event?.duplicate_record_count).toBe(0);
+  expect(event?.record_types).toEqual([
+    { type: "EXECVE", count: 3 },
+    { type: "SYSCALL", count: 1 },
+  ]);
+});
+
+it("still counts a byte-identical record as a duplicate", async () => {
+  const metadata = await metadataOf(
+    [
+      record("EXECVE", 1700000000, 123, 1000, "argc=1 a0=whoami"),
+      record("EXECVE", 1700000000, 123, 1000, "argc=1 a0=whoami"),
+    ].join("\n"),
+  );
+  expect(metadata.duplicate_record_count).toBe(1);
+  expect(metadata.events[0]?.record_types).toEqual([
+    { type: "EXECVE", count: 1 },
+  ]);
 });
 
 it("records trailing bytes when the last line has no newline", async () => {
@@ -211,6 +263,45 @@ it("refuses a file with no auditd record as malformed", async () => {
     }
   }).rejects.toBeInstanceOf(ArtifactReaderFailure);
   await reader.close();
+});
+
+it("bounds retained event state and reports the window in its limitations", async () => {
+  const lines = Array.from({ length: 5000 }, (_unused, index) =>
+    record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
+  );
+  const reader = new AuditdLogArtifactReader(
+    await writeLog("audit.log", `${lines.join("\n")}\n`),
+  );
+  try {
+    for await (const _entry of reader.entries()) {
+      // No members; the parse itself builds the inventory.
+    }
+    const metadata = reader.formatMetadata();
+    if (metadata?.kind !== "auditd-log")
+      throw new Error("Expected auditd-log metadata");
+    expect(metadata.event_count).toBe(5000);
+    expect(metadata.events).toHaveLength(32);
+    expect(metadata.omitted_events).toBe(4968);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("reports cancellation requested from the coverage callback", async () => {
+  const reader = new AuditdLogArtifactReader(
+    await writeLog("audit.log", `${EXECUTION_EVENT}\n`),
+  );
+  const controller = new AbortController();
+  try {
+    const entries = reader
+      .entries(controller.signal, {
+        onCoverage: () => controller.abort(),
+      })
+      [Symbol.asyncIterator]();
+    await expect(entries.next()).rejects.toMatchObject({ reason: "cancelled" });
+  } finally {
+    await reader.close();
+  }
 });
 
 it("reports no members to open", async () => {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { boundedList } from "../boundedList.js";
 import { ok, err, type Result } from "../result.js";
 import type {
@@ -19,6 +21,12 @@ export const AUDITD_INLINE_EVENT_LIMIT = 32;
 export const AUDITD_INLINE_DIAGNOSTIC_LIMIT = 16;
 /** Record types kept per inline event. */
 export const AUDITD_INLINE_EVENT_TYPE_LIMIT = 16;
+/**
+ * Events whose per-record identity is retained for duplicate and interleaving
+ * detection. A 4 GiB admission can hold millions of events, so state is kept
+ * for a bounded window; records past it are counted but not joined.
+ */
+export const AUDITD_RETAINED_EVENT_LIMIT = 4096;
 
 /** `type=... msg=audit(<sec>.<millis>:<serial>): <body>` — the auditd record header. */
 const RECORD_HEADER =
@@ -40,8 +48,10 @@ export interface AuditEventTypeCount {
 }
 
 export interface AuditEventSummary {
-  /** `<seconds>.<millis>:<serial>`, the identity records are joined on. */
+  /** `<node> <seconds>.<millis>:<serial>`, the identity records are joined on. */
   readonly event_id: string;
+  /** The `node=` host the event's records name, or `null` when unqualified. */
+  readonly node: string | null;
   readonly event_seconds: number;
   readonly event_millis: number;
   readonly serial: number;
@@ -77,11 +87,15 @@ export interface AuditdLogInventory {
 
 /** One event under construction; records are joined on its full identity. */
 interface PendingEvent {
+  readonly node: string | undefined;
+  /** Original millis spelling, so padded and unpadded records share a key. */
+  readonly millisText: string;
   readonly seconds: number;
   readonly millis: number;
   readonly serial: number;
   recordCount: number;
   readonly typeCounts: Map<string, number>;
+  /** Record digests already seen in this event; the retention window bounds it. */
   readonly seenRecords: Set<string>;
   firstLine: number;
   lastLine: number;
@@ -90,7 +104,7 @@ interface PendingEvent {
 }
 
 const eventId = (event: PendingEvent): string =>
-  `${String(event.seconds)}.${String(event.millis)}:${String(event.serial)}`;
+  `${event.node === undefined ? "" : `${event.node} `}${String(event.seconds)}.${event.millisText.padStart(3, "0")}:${String(event.serial)}`;
 
 const sortedCounts = (counts: Map<string, number>): AuditEventTypeCount[] =>
   [...counts]
@@ -115,18 +129,27 @@ class AuditdLogScanner {
   #pendingLine: Buffer[] = [];
   // not-an-allowance: pending bytes of the line being assembled, bounded by a fixed line ceiling rather than charged from a resource budget.
   #pendingBytes = 0;
+  // not-an-allowance: bytes of the line being assembled that were dropped after it overflowed the fixed line ceiling; only fed to the trailing-byte tally, never charged from a resource budget.
+  #pendingFlushedBytes = 0;
   #lineNumber = 0;
-  /** Bytes of a final line that ended without a newline. */
+  // not-an-allowance: bytes of a final line that ended without a newline, a tally of what the file held rather than a budget.
   #trailingBytes = 0;
   #recordCount = 0;
   readonly #typeCounts = new Map<string, number>();
   readonly #events = new Map<string, PendingEvent>();
-  readonly #eventOrder: string[] = [];
+  /** First-seen order of the retained events, bounded to the sample. */
+  readonly #sampleOrder: string[] = [];
+  // not-an-allowance: a tally of the events currently retained in the window, compared with the retention ceiling but never charged against a resource budget.
+  #windowEventCount = 0;
+  /** Events past the retained window; their totals stay exact, joins do not. */
+  #beyondWindowEventCount = 0;
   #malformedCount = 0;
   // sample-cap: the full malformed count is reported beside a sample of the lines.
   readonly #malformed: AuditRecordDiagnostic[] = [];
   #outOfOrderCount = 0;
   #duplicateCount = 0;
+  /** Records past the retained window, whose identity is not joined. */
+  #skippedRecordCount = 0;
   /** Lexicographically ordered event identity; a smaller one is out of order. */
   #maxIdentity: string | null = null;
   #lastEventKey: string | null = null;
@@ -150,8 +173,8 @@ class AuditdLogScanner {
   }
 
   finish(): Result<AuditdLogInventory, RegionDecodeFailure> {
-    if (this.#pendingBytes > 0) {
-      this.#trailingBytes = this.#pendingBytes;
+    if (this.#pendingBytes > 0 || this.#pendingFlushedBytes > 0) {
+      this.#trailingBytes = this.#pendingBytes + this.#pendingFlushedBytes;
       this.#finishLine();
     }
     if (this.#lineOverflow)
@@ -180,14 +203,17 @@ class AuditdLogScanner {
       );
     if (this.#duplicateCount > 0)
       limitations.push(
-        `${String(this.#duplicateCount)} record(s) repeat a record type and items index already seen in the same event; each occurrence is counted and only the first name is retained`,
+        `${String(this.#duplicateCount)} record(s) repeat a record already seen in the same event, byte for byte; each occurrence is counted and only the first name is retained`,
+      );
+    if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
+      limitations.push(
+        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; the other ${String(this.#beyondWindowEventCount)} events and ${String(this.#skippedRecordCount)} record(s) are counted in the totals but their duplicate and interleaving status is not established`,
       );
     limitations.push(
       "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
     );
 
-    const sampled = boundedList(this.#eventOrder, AUDITD_INLINE_EVENT_LIMIT);
-    const events = sampled.items.map((key) =>
+    const events = this.#sampleOrder.map((key) =>
       this.#summarize(this.#events.get(key)!),
     );
     return ok({
@@ -195,7 +221,7 @@ class AuditdLogScanner {
         kind: "auditd-log",
         line_count: this.#lineNumber,
         record_count: this.#recordCount,
-        event_count: this.#events.size,
+        event_count: this.#windowEventCount + this.#beyondWindowEventCount,
         event_type_counts: sortedCounts(this.#typeCounts),
         malformed_line_count: this.#malformedCount,
         malformed_lines: this.#malformed,
@@ -205,11 +231,12 @@ class AuditdLogScanner {
         ),
         out_of_order_record_count: this.#outOfOrderCount,
         duplicate_record_count: this.#duplicateCount,
-        interleaved_event_count: this.#eventOrder.filter(
+        interleaved_event_count: this.#sampleOrder.filter(
           (key) => this.#events.get(key)!.interleaved,
         ).length,
         events,
-        omitted_events: sampled.omitted,
+        omitted_events:
+          this.#windowEventCount + this.#beyondWindowEventCount - events.length,
         trailing_bytes: this.#trailingBytes,
       },
       limitations,
@@ -217,9 +244,14 @@ class AuditdLogScanner {
   }
 
   #acceptSegment(segment: Buffer): void {
-    if (this.#lineOverflow) return;
+    if (this.#lineOverflow) {
+      this.#pendingFlushedBytes += segment.length;
+      return;
+    }
     if (this.#pendingBytes + segment.length > MAX_RECORD_LINE_BYTES) {
       this.#lineOverflow = true;
+      this.#pendingFlushedBytes = this.#pendingBytes + segment.length;
+      this.#pendingBytes = 0;
       this.#pendingLine = [];
       return;
     }
@@ -231,6 +263,7 @@ class AuditdLogScanner {
     this.#lineNumber += 1;
     const lineBytes = Buffer.concat(this.#pendingLine);
     this.#pendingBytes = 0;
+    this.#pendingFlushedBytes = 0;
     this.#pendingLine = [];
 
     if (this.#lineOverflow) {
@@ -260,8 +293,10 @@ class AuditdLogScanner {
       return;
     }
     const seconds = Number(match.groups["sec"]);
-    const millis = Number(match.groups["millis"]);
+    const millisText = match.groups["millis"]!;
+    const millis = Number(millisText);
     const serial = Number(match.groups["serial"]);
+    const node = match.groups["node"];
     const type = match.groups["type"]!;
     if (![seconds, millis, serial].every(Number.isSafeInteger)) {
       this.#diagnose(
@@ -275,20 +310,31 @@ class AuditdLogScanner {
     this.#recordCount += 1;
     this.#typeCounts.set(type, (this.#typeCounts.get(type) ?? 0) + 1);
 
-    // The event identity is the whole join key: timestamp plus serial, never
-    // serial alone, because serials are reused across boots and wraparound.
-    const key = occurrenceKey(seconds, millis, serial);
-    const identity = `${String(seconds).padStart(12, "0")}.${String(millis).padStart(3, "0")}:${String(serial).padStart(12, "0")}`;
+    // The event identity is the whole join key: node, timestamp and serial.
+    // Serial and timestamp are only unique enough to join on within one host,
+    // so a centralized log's node= prefix has to stay part of the identity.
+    // Ordering stays temporal (timestamp then serial); node only splits events.
+    const key = occurrenceKey(node, seconds, millis, serial);
+    const identity = `${String(seconds).padStart(12, "0")}.${millisText.padStart(3, "0")}:${String(serial).padStart(12, "0")}`;
     if (this.#maxIdentity !== null && identity < this.#maxIdentity)
       this.#outOfOrderCount += 1;
     else this.#maxIdentity = identity;
 
     const existing = this.#events.get(key);
+    if (existing === undefined && this.#windowEventCount >= AUDITD_RETAINED_EVENT_LIMIT) {
+      this.#beyondWindowEventCount += 1;
+      this.#skippedRecordCount += 1;
+      this.#lastEventKey = key;
+      return;
+    }
+
     if (existing !== undefined && this.#lastEventKey !== key)
       existing.interleaved = true;
     const event =
       existing ??
       ({
+        node,
+        millisText,
         seconds,
         millis,
         serial,
@@ -302,11 +348,22 @@ class AuditdLogScanner {
       } satisfies PendingEvent);
     if (existing === undefined) {
       this.#events.set(key, event);
-      this.#eventOrder.push(key);
+      this.#windowEventCount += 1;
+      if (this.#sampleOrder.length < AUDITD_INLINE_EVENT_LIMIT)
+        this.#sampleOrder.push(key);
     }
     this.#lastEventKey = key;
 
-    const recordKey = `${type}\u0000${recordItemsIndex(match.groups["body"])}`;
+    // Duplicate detection is per record content, not per record type: a long
+    // execve argument list can span several EXECVE records with no item= index,
+    // and those are legitimate continuations, not repeats. The digest keeps
+    // retained state to one short key per record per event; the retention
+    // window bounds how many events hold those keys at once.
+    const recordKey = createHash("sha256")
+      .update(type)
+      .update("\u0000")
+      .update(match.groups["body"] ?? "")
+      .digest("base64");
     if (event.seenRecords.has(recordKey)) {
       event.duplicateCount += 1;
       this.#duplicateCount += 1;
@@ -327,6 +384,7 @@ class AuditdLogScanner {
   #summarize(event: PendingEvent): AuditEventSummary {
     return {
       event_id: eventId(event),
+      node: event.node ?? null,
       event_seconds: event.seconds,
       event_millis: event.millis,
       serial: event.serial,
@@ -343,19 +401,13 @@ class AuditdLogScanner {
   }
 }
 
-const occurrenceKey = (seconds: number, millis: number, serial: number) =>
-  `${String(seconds)}.${String(millis)}:${String(serial)}`;
-
-/**
- * `item=<n>` is the per-record index auditd gives repeated types. `items=` is
- * the path count on a SYSCALL record, not an index: reading it here made every
- * PATH record of a multi-path event share one key, so the second path was
- * reported as a duplicate and the per-event PATH count came out as one.
- */
-const recordItemsIndex = (body: string | undefined): string => {
-  const match = body === undefined ? null : /\bitem=(\d+)/u.exec(body);
-  return match === null ? "" : match[1]!;
-};
+const occurrenceKey = (
+  node: string | undefined,
+  seconds: number,
+  millis: number,
+  serial: number,
+) =>
+  `${node ?? ""}\u0000${String(seconds)}.${String(millis)}:${String(serial)}`;
 
 /**
  * An auditd log has no magic: recognition reads the first line and accepts it
