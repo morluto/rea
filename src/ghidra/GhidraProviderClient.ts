@@ -1,10 +1,7 @@
 import {
-  ghidraMissingProgramGuidance,
-  ghidraStartupTimeoutGuidance,
   projectSessionError,
   type GhidraProjection,
 } from "./GhidraSessionErrorProjection.js";
-export { ghidraMissingProgramGuidance, ghidraStartupTimeoutGuidance };
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
 import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
 import {
