@@ -18,6 +18,28 @@ export interface ElfSymbol extends ElfSymbolFields {
   readonly size: bigint;
 }
 
+const EXPORT_BINDINGS: Readonly<
+  Partial<Record<number, "global" | "weak" | "unique">>
+> = {
+  1: "global",
+  2: "weak",
+  10: "unique",
+};
+const EXPORT_VISIBILITIES: Readonly<
+  Partial<Record<number, "default" | "protected">>
+> = {
+  0: "default",
+  3: "protected",
+};
+
+/** Lookup eligibility of a dynamic symbol binding, independent of definition ownership. */
+export const elfSymbolExportBinding = (binding: number) =>
+  EXPORT_BINDINGS[binding];
+
+/** The low two bits of st_other encode visibility independently of processor flags. */
+export const elfSymbolExportVisibility = (other: number) =>
+  EXPORT_VISIBILITIES[other & 3];
+
 export const ELF_SYMBOL_TRUNCATED_MESSAGE = "ELF symbol record is truncated";
 
 const TRUNCATED_SYMBOL = Object.freeze(

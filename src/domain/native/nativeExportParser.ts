@@ -8,7 +8,12 @@ import {
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
+import {
+  elfSymbolExportBinding,
+  elfSymbolExportVisibility,
+  elfSymbolSize,
+  readElfSymbol,
+} from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromBufferCooperative,
@@ -342,16 +347,6 @@ const ELF_TYPES: Readonly<Record<number, ElfExport["type"]>> = {
   6: "tls",
   10: "ifunc",
 };
-const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
-  1: "global",
-  2: "weak",
-  10: "unique",
-};
-const ELF_VISIBILITIES: Readonly<Record<number, ElfExport["visibility"]>> = {
-  0: "default",
-  3: "protected",
-};
-
 const versionSectionData = (
   reader: BinaryReader,
   sections: readonly NativeSection[],
@@ -869,8 +864,8 @@ export function* parseElfExportsFromDirectorySteps(
         parsedSymbol.error.message,
       );
     const symbol = parsedSymbol.value;
-    const binding = ELF_BINDINGS[symbol.binding];
-    const visibility = ELF_VISIBILITIES[symbol.other & 3];
+    const binding = elfSymbolExportBinding(symbol.binding);
+    const visibility = elfSymbolExportVisibility(symbol.other);
     // Undefined, local and hidden/internal symbols are not exports.
     if (
       binding === undefined ||

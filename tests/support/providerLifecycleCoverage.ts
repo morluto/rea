@@ -402,7 +402,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/boundary/filesystem/flutterBuildProvider.test.ts",
-        "inspects a full synthetic AOT image end to end",
+        "projects each payload shape through the owned snapshot",
       ),
     ),
     covered(

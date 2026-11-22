@@ -42,8 +42,16 @@ export const aotFixtureImage = (
   ]);
 };
 
+interface FixtureElfSymbol {
+  readonly name: string;
+  readonly value: number;
+  readonly size: number;
+  readonly binding?: number;
+  readonly other?: number;
+}
+
 export const buildElf64Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
 ): Buffer => {
   const ELF_HEADER = 64;
   const PHENT = 56;
@@ -114,14 +122,15 @@ export const buildElf64Image = (
     image.writeBigUInt64LE(BigInt(symbol.value), base + 8);
     image.writeBigUInt64LE(BigInt(symbol.size), base + 16);
     image.writeUInt16LE(1, base + 6); // Defined export (not SHN_UNDEF).
-    image[base + 4] = 0x10; // GLOBAL FUNC
+    image[base + 4] = (symbol.binding ?? 1) << 4;
+    image[base + 5] = symbol.other ?? 0;
   });
   return image;
 };
 
 /** The ELF32 (ARM) counterpart of {@link buildElf64Image}, with the same layout roles. */
 export const buildElf32Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
 ): Buffer => {
   const ELF_HEADER = 52;
   const PHENT = 32;
@@ -169,7 +178,8 @@ export const buildElf32Image = (
     image.writeUInt32LE(strCursor - dynstrOff, base);
     image.writeUInt32LE(symbol.value, base + 4);
     image.writeUInt32LE(symbol.size, base + 8);
-    image[base + 0xc] = 0x10; // GLOBAL
+    image[base + 0xc] = (symbol.binding ?? 1) << 4;
+    image[base + 0xd] = symbol.other ?? 0;
     image.writeUInt16LE(1, base + 0xe); // Defined export.
     strCursor += symbol.name.length + 1;
   });
@@ -182,7 +192,7 @@ export const buildElf32Image = (
  * way release toolchains ship `libapp.so`.
  */
 export const buildStrippedElf64Image = (
-  symbols: ReadonlyArray<{ name: string; value: number; size: number }>,
+  symbols: readonly FixtureElfSymbol[],
   extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
 ): Buffer => {
   const ELF_HEADER = 64;
@@ -260,6 +270,8 @@ export const buildStrippedElf64Image = (
     image.writeUInt32LE(nameOffsets[index]!, base);
     image.writeBigUInt64LE(BigInt(symbol.value), base + 8);
     image.writeBigUInt64LE(BigInt(symbol.size), base + 16);
+    image[base + 4] = (symbol.binding ?? 1) << 4;
+    image[base + 5] = symbol.other ?? 0;
     image.writeUInt16LE(1, base + 6); // Defined even when section headers are stripped.
   });
   return image;

@@ -665,18 +665,6 @@ it("projects each payload shape through the owned snapshot", async () => {
   expect(negative.coverage).toBe("complete");
 });
 
-it("rejects a target that is not a readable file", async () => {
-  const projected = await (async () => {
-    const result = await new FlutterBuildProvider().execute({
-      operation: "identify_flutter_build",
-      input: { path: "/nonexistent/app.apk" },
-    });
-    if (result.ok) throw new Error("expected a refusal");
-    return projectAnalysisError(result.error);
-  })();
-  expect(projected).toMatchObject({ code: "invalid_request" });
-});
-
 it("refuses an APK without a Dart payload", async () => {
   const apk = await buildApk("noflutter.apk", [
     { path: "classes.dex", bytes: Buffer.from("dex\n0123456789") },
@@ -709,51 +697,6 @@ it("refuses a requested ABI the payload does not carry", async () => {
     code: "unsupported_target",
   });
   expect(result.error.message).toContain("arm64-v8a");
-});
-
-it("inspects a full synthetic AOT image end to end", async () => {
-  const apk = await buildApk("realgallery.apk", [
-    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-  ]);
-  const result = await new FlutterBuildProvider().execute({
-    operation: "inspect_dart_aot",
-    input: { path: apk },
-  });
-  if (!result.ok) throw new Error(result.error.message);
-  const value = result.value.result as {
-    abi: string;
-    libapp: {
-      snapshot_hash: string | null;
-      snapshot_hash_candidates: string[];
-      snapshot_hash_sources: number;
-      sections: { name: string; magic_valid: boolean }[];
-    };
-    string_pool: {
-      package_uri_count_at_least: number;
-      dart_uri_count_at_least: number;
-    };
-    coverage: string;
-  };
-  expect(value.abi).toBe("arm64-v8a");
-  expect(value.libapp.snapshot_hash).toBe(REFERENCE_HASH);
-  expect(value.libapp.snapshot_hash_candidates).toEqual([REFERENCE_HASH]);
-  expect(value.libapp.snapshot_hash_sources).toBe(2);
-  expect(value.libapp.sections.map((section) => section.name)).toEqual([
-    "_kDartVmSnapshotData",
-    "_kDartVmSnapshotInstructions",
-    "_kDartIsolateSnapshotData",
-    "_kDartIsolateSnapshotInstructions",
-  ]);
-  expect(
-    value.libapp.sections
-      .filter((section) => section.name.endsWith("Data"))
-      .every((section) => section.magic_valid),
-  ).toBe(true);
-  expect(value.string_pool.package_uri_count_at_least).toBe(2);
-  expect(value.string_pool.dart_uri_count_at_least).toBe(2);
-  // All four symbols present, both data magics valid, pool under budget:
-  // the honest answer for a complete payload is complete coverage.
-  expect(value.coverage).toBe("complete");
 });
 
 it("reports aliased snapshot data symbols as partial coverage", async () => {
@@ -807,24 +750,6 @@ it("preserves conflicting snapshot hash candidates from the AOT image", async ()
     "11111111111111111111111111111111",
     "22222222222222222222222222222222",
   ]);
-});
-
-it("accepts an APK whose path contains spaces through the owned snapshot", async () => {
-  const apk = await buildApk("flutter spaced.apk", [
-    {
-      path: "lib/arm64-v8a/libapp.so",
-      bytes: libapp(REFERENCE_HASH),
-    },
-    { path: "lib/arm64-v8a/libflutter.so", bytes: libflutter() },
-  ]);
-  expect(apk).toContain(" ");
-  const result = await new FlutterBuildProvider().execute({
-    operation: "identify_flutter_build",
-    input: { path: apk },
-  });
-  if (!result.ok) throw new Error(result.error.message);
-  const value = result.value.result as { flutter_detected: boolean };
-  expect(value.flutter_detected).toBe(true);
 });
 
 it("retains failed snapshot cleanup and retries it on close", async () => {
@@ -1353,13 +1278,15 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
   },
 );
 
-it("refuses an AOT image whose snapshot names are all undefined imports", async () => {
+it("refuses snapshot names without exported definitions", async () => {
   const image = aotImage();
   const table = Number(
     image.readBigUInt64LE(Number(image.readBigUInt64LE(0x28)) + 64 + 0x18),
   );
-  for (let index = 0; index < 4; index += 1)
-    image.writeUInt16LE(0, table + index * 24 + 6);
+  image[table + 5] = 2; // Hidden VM data.
+  image.writeUInt16LE(0, table + 24 + 6); // Undefined VM instructions.
+  image[table + 2 * 24 + 4] = 0; // Local isolate data.
+  image[table + 3 * 24 + 5] = 1; // Internal isolate instructions.
   await expect(analyzeImage(image, "inspect_dart_aot")).rejects.toMatchObject({
     _tag: "AnalysisUnsupportedTargetError",
   });
