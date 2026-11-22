@@ -189,6 +189,7 @@
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
+* **wasm:** report observed WABT diagnostic bytes ([#13436](https://github.com/morluto/rea/issues/13436)) ([c60cf4e](https://github.com/morluto/rea/commit/c60cf4e3b8683e3209e51693e02826f85a7e7761))
 * **web:** align scenario schema guidance with admitted inputs ([#13170](https://github.com/morluto/rea/issues/13170)) ([03b99c2](https://github.com/morluto/rea/commit/03b99c2bcf16463792ed9d096d57de8454ba5390))
 * **web:** keep unreadable cookie partitions incomplete ([#13187](https://github.com/morluto/rea/issues/13187)) ([c096373](https://github.com/morluto/rea/commit/c0963732a73415ee855fdcc0c923d6e77c0bb8de))
 * **web:** require root identity in CDP session and runtime captures ([#13186](https://github.com/morluto/rea/issues/13186)) ([4807b31](https://github.com/morluto/rea/commit/4807b31749e7882d3ca4a184174ebc1012ea23c0))
