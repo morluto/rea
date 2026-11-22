@@ -3036,6 +3036,7 @@ const scanEmbeddedPackage = async (
     probe.format,
     containers,
     state,
+    state.nativeDigests.get(filePath),
   );
 };
 

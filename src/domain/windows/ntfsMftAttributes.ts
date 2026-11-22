@@ -522,3 +522,151 @@ export const readMftAttributes = (
       complete && attributeIssue === null ? "complete" : "incomplete",
   };
 };
+
+export interface MftAttributeSummary {
+  readonly fileNameCount: number;
+  readonly fileNameCoverage: "complete" | "incomplete";
+  readonly attributeCoverage: "complete" | "incomplete";
+}
+
+/** Validate attribute framing and count `$FILE_NAME` entries without materializing full attribute objects. */
+export const summarizeMftAttributes = (
+  record: Buffer,
+  first: number,
+  usedBytes: number,
+  fileOffset: number,
+): MftAttributeSummary => {
+  const reader = attributeReader(record.subarray(0, usedBytes));
+  let complete = false;
+  let hasList = false;
+  let hasIssue = false;
+  let fileNameCount = 0;
+  for (let cursor = first; cursor + 4 <= usedBytes;) {
+    const type = reader.u32(cursor);
+    if (type === 0xffffffff) {
+      complete = true;
+      break;
+    }
+    if (cursor + 24 > usedBytes) {
+      hasIssue = true;
+      break;
+    }
+    const length = reader.u32(cursor + 4);
+    if (length < 24 || length % 8 !== 0 || length > usedBytes - cursor) {
+      hasIssue = true;
+      break;
+    }
+    const attribute = reader.range(cursor, length, "attribute record");
+    const attrReader = attributeReader(attribute);
+    const form = attribute[8];
+    const headerBytes = form === 0 ? 24 : 64;
+    if (form === undefined || form > 1 || attribute.length < headerBytes) {
+      hasIssue = true;
+      break;
+    }
+    const nameBytes = attribute[9]! * 2;
+    const nameOffset = attrReader.u16(10);
+    if (
+      nameBytes > 0 &&
+      (nameOffset < headerBytes ||
+        nameOffset % 2 !== 0 ||
+        nameOffset + nameBytes > attribute.length)
+    ) {
+      hasIssue = true;
+      break;
+    }
+    const nameEnd = nameBytes === 0 ? headerBytes : nameOffset + nameBytes;
+    if (form === 1 && (type === 0x10 || type === 0x30)) {
+      hasIssue = true;
+      break;
+    }
+    if (form === 0) {
+      const valueBytes = attrReader.u32(16);
+      const valueOffset = attrReader.u16(20);
+      if (
+        valueOffset < nameEnd ||
+        valueBytes > attribute.length - valueOffset
+      ) {
+        hasIssue = true;
+        break;
+      }
+      if (type === 0x10) {
+        if (valueBytes < 48) {
+          hasIssue = true;
+          break;
+        }
+      } else if (type === 0x30) {
+        const value = attrReader.range(
+          valueOffset,
+          valueBytes,
+          "resident attribute value",
+        );
+        if (value.length < 66) {
+          hasIssue = true;
+          break;
+        }
+        const nameChars = value[64]!;
+        const namespace = value[65]!;
+        if (namespace > 3 || 66 + nameChars * 2 > value.length) {
+          hasIssue = true;
+          break;
+        }
+        fileNameCount += 1;
+      } else if (type === 0x20) {
+        hasList = true;
+        const value = attrReader.range(
+          valueOffset,
+          valueBytes,
+          "resident attribute value",
+        );
+        const list = readList(
+          attributeReader(value),
+          fileOffset + cursor + valueOffset,
+        );
+        if (!list.ok) hasIssue = true;
+      }
+    } else {
+      const flags = attrReader.u16(12);
+      const lowestVcn = attrReader.word(16, 64);
+      const highestVcn = attrReader.word(24, 64);
+      const extended = (flags & 0x8001) !== 0 && lowestVcn === 0n;
+      const runsOffset = attrReader.u16(32);
+      if (
+        runsOffset < Math.max(nameEnd, extended ? 72 : 64) ||
+        runsOffset >= attribute.length ||
+        (extended && nameBytes > 0 && nameOffset < 72)
+      ) {
+        hasIssue = true;
+        break;
+      }
+      const empty = lowestVcn === 0n && highestVcn === 0xffffffffffffffffn;
+      if (highestVcn < lowestVcn && !empty) {
+        hasIssue = true;
+        break;
+      }
+      const runs = readRuns(
+        attribute.subarray(runsOffset),
+        empty ? 0n : highestVcn - lowestVcn + 1n,
+      );
+      if (runs === undefined) {
+        hasIssue = true;
+        break;
+      }
+      const dataBytes = attrReader.word(48, 64);
+      const initializedBytes = attrReader.word(56, 64);
+      if (lowestVcn === 0n && initializedBytes > dataBytes) {
+        hasIssue = true;
+        break;
+      }
+      if (type === 0x20) hasList = true;
+    }
+    cursor += length;
+  }
+  if (!complete) hasIssue = true;
+  return {
+    fileNameCount,
+    fileNameCoverage:
+      complete && !hasIssue && !hasList ? "complete" : "incomplete",
+    attributeCoverage: complete && !hasIssue ? "complete" : "incomplete",
+  };
+};
