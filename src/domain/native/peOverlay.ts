@@ -11,6 +11,10 @@ import {
   type PeSecurityDirectoryEntry,
 } from "../pe/peSecurityDirectory.js";
 
+const peSecurityDirectoryDefects = Object.keys(
+  PE_SECURITY_DIRECTORY_DEFECTS,
+) as PeSecurityDirectoryDefect[];
+
 const uint = z.number().int().min(0).max(0xffffffff);
 
 /** Hard ceiling on the caller-selected input read budget. */
@@ -57,7 +61,6 @@ export const PE_OVERLAY_LEADING_FORMATS = [
   "srec",
   "uf2",
   "dfuse",
-  "esp-flash-image",
   "esp-image",
   "fit",
   "ntfs-mft",
@@ -152,7 +155,7 @@ const rangeSchema = z.discriminatedUnion("role", [
 ]);
 
 /** Where the PE image ends on disk and which bytes follow it. */
-export const peOverlaySchema = z.strictObject({
+const peOverlayObjectSchema = z.strictObject({
   artifact: z.strictObject({
     path: z.string().min(1),
     sha256: digestSchema,
@@ -183,13 +186,13 @@ export const peOverlaySchema = z.strictObject({
       status: z.literal("malformed"),
       offset: uint,
       size: uint,
-      defect: z.enum(["empty-or-in-headers", "unaligned", "outside-artifact"]),
+      defect: z.enum(peSecurityDirectoryDefects),
     }),
   ]),
   ranges: z.array(rangeSchema).max(3),
   limitations: z.array(z.string().min(1)),
 });
-export type PeOverlay = z.infer<typeof peOverlaySchema>;
+export type PeOverlay = z.infer<typeof peOverlayObjectSchema>;
 export type PeOverlayRange = PeOverlay["ranges"][number];
 
 /** One COFF section the overlay calculation may extend or only list. */
@@ -238,19 +241,14 @@ const uint32 = (value: number): boolean =>
   Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
 
 /** Round a section raw pointer down the way the Windows loader maps files. */
-export const roundPeRawPointer = (pointer: number, alignment: number): number =>
+const roundPeRawPointer = (pointer: number, alignment: number): number =>
   pointer - (pointer % alignment);
-
-export const peSectionRawEnd = (
-  pointerToRawData: number,
-  sizeOfRawData: number,
-): number => pointerToRawData + sizeOfRawData;
 
 /**
  * A section extends the on-disk image only when it has raw bytes and is not
  * marked as uninitialized data alone among the content flags.
  */
-export const peSectionExtendsImage = (
+const peSectionExtendsImage = (
   sizeOfRawData: number,
   characteristics: number,
 ): boolean =>
@@ -260,15 +258,30 @@ export const peSectionExtendsImage = (
       (IMAGE_SCN_CNT_CODE | IMAGE_SCN_CNT_INITIALIZED_DATA)) !==
       0);
 
-/**
- * Validate one section and return its loader-rounded raw pointer. The
- * declared raw range must fit the file because it bounds the image end.
- */
+const sectionDiskLayout = (
+  pointer: number,
+  size: number,
+  characteristics: number,
+  alignment: number,
+) => {
+  const rounded = roundPeRawPointer(pointer, alignment);
+  const extendsImage = peSectionExtendsImage(size, characteristics);
+  return {
+    end: extendsImage ? pointer + size : 0,
+    fields: {
+      rounded_pointer_to_raw_data: rounded,
+      raw_pointer_rounded: rounded !== pointer,
+      extends_image: extendsImage,
+    },
+  };
+};
+
+/** A section's declared raw range must fit the file if it bounds the image end. */
 const admitSection = (
   section: PeOverlaySectionInput,
   fileSize: number,
-  alignment: number,
-): number => {
+  end: number,
+): void => {
   if (
     !uint32(section.pointerToRawData) ||
     !uint32(section.sizeOfRawData) ||
@@ -281,15 +294,7 @@ const admitSection = (
       `PE section index ${String(section.index)} has a raw field that is not a file dword.`,
       { field: `section[${String(section.index)}]` },
     );
-  const rounded = roundPeRawPointer(section.pointerToRawData, alignment);
-  const extendsImage = peSectionExtendsImage(
-    section.sizeOfRawData,
-    section.characteristics,
-  );
-  if (
-    extendsImage &&
-    peSectionRawEnd(section.pointerToRawData, section.sizeOfRawData) > fileSize
-  )
+  if (end > fileSize)
     throw truncatedInput(
       "pe",
       `PE section index ${String(section.index)} raw range ${String(section.pointerToRawData)} + ${String(section.sizeOfRawData)} leaves the artifact.`,
@@ -298,27 +303,6 @@ const admitSection = (
         field: `section[${String(section.index)}].PointerToRawData`,
       },
     );
-  return rounded;
-};
-
-const sectionRecord = (
-  section: PeOverlaySectionInput,
-  rounded: number,
-): PeOverlay["sections"][number] => {
-  const extendsImage = peSectionExtendsImage(
-    section.sizeOfRawData,
-    section.characteristics,
-  );
-  return {
-    index: section.index,
-    name: section.name,
-    pointer_to_raw_data: section.pointerToRawData,
-    rounded_pointer_to_raw_data: rounded,
-    size_of_raw_data: section.sizeOfRawData,
-    characteristics: section.characteristics,
-    raw_pointer_rounded: rounded !== section.pointerToRawData,
-    extends_image: extendsImage,
-  };
 };
 
 const overlayRanges = (
@@ -351,12 +335,11 @@ const overlayRanges = (
   return ranges;
 };
 
-export const peOverlayDirectoryLayout = (
+const peOverlayDirectoryLayout = (
   securityDirectory: PeSecurityDirectoryEntry | undefined,
   sizeOfHeaders: number,
   imageEnd: number,
   fileSize: number,
-  coverage: PeOverlay["section_coverage"],
 ) => {
   const security = admitPeSecurityDirectory(
     securityDirectory,
@@ -376,16 +359,7 @@ export const peOverlayDirectoryLayout = (
       fileSize,
       security.status === "table" && !straddles ? security : null,
     ),
-    limitations: [
-      ...PE_OVERLAY_LIMITATIONS,
-      ...(security.status === "malformed"
-        ? [PE_OVERLAY_MALFORMED_SECURITY_LIMITATIONS[security.defect]]
-        : []),
-      ...(straddles ? [PE_OVERLAY_STRADDLING_SECURITY_LIMITATION] : []),
-      ...(coverage.status === "partial"
-        ? [peOverlaySectionBudgetLimitation(coverage.declared)]
-        : []),
-    ],
+    straddles,
   };
 };
 
@@ -423,16 +397,23 @@ export const computePeOverlay = (
   let declared = 0;
   for (const section of headers.sections) {
     declared += 1;
-    const rounded = admitSection(section, fileSize, alignment);
-    if (sections.length < PE_OVERLAY_MAX_REPORTED_SECTIONS)
-      sections.push(sectionRecord(section, rounded));
-    if (!peSectionExtendsImage(section.sizeOfRawData, section.characteristics))
-      continue;
-    const end = peSectionRawEnd(
+    const { end, fields } = sectionDiskLayout(
       section.pointerToRawData,
       section.sizeOfRawData,
+      section.characteristics,
+      alignment,
     );
-    if (end > imageEnd) imageEnd = end;
+    admitSection(section, fileSize, end);
+    if (sections.length < PE_OVERLAY_MAX_REPORTED_SECTIONS)
+      sections.push({
+        index: section.index,
+        name: section.name,
+        pointer_to_raw_data: section.pointerToRawData,
+        size_of_raw_data: section.sizeOfRawData,
+        characteristics: section.characteristics,
+        ...fields,
+      });
+    imageEnd = Math.max(imageEnd, end);
   }
   const partial = declared > sections.length;
   const coverage: PeOverlay["section_coverage"] = {
@@ -440,6 +421,12 @@ export const computePeOverlay = (
     declared,
     reported: sections.length,
   };
+  const { security_directory, ranges, straddles } = peOverlayDirectoryLayout(
+    securityDirectory,
+    headers.sizeOfHeaders,
+    imageEnd,
+    fileSize,
+  );
   return {
     size_of_headers: headers.sizeOfHeaders,
     raw_pointer_rounding: { alignment, direction: "down" },
@@ -448,12 +435,103 @@ export const computePeOverlay = (
     present: imageEnd < fileSize,
     sections,
     section_coverage: coverage,
-    ...peOverlayDirectoryLayout(
-      securityDirectory,
-      headers.sizeOfHeaders,
-      imageEnd,
-      fileSize,
-      coverage,
-    ),
+    security_directory,
+    ranges,
+    limitations: [
+      ...PE_OVERLAY_LIMITATIONS,
+      ...(security_directory.status === "malformed"
+        ? [PE_OVERLAY_MALFORMED_SECURITY_LIMITATIONS[security_directory.defect]]
+        : []),
+      ...(straddles ? [PE_OVERLAY_STRADDLING_SECURITY_LIMITATION] : []),
+      ...(partial ? [peOverlaySectionBudgetLimitation(declared)] : []),
+    ],
   };
 };
+
+/** Complete coverage lists every section; partial lists exactly the budget. */
+const coverageMatches = ({ sections, section_coverage }: PeOverlay): boolean =>
+  section_coverage.reported === sections.length &&
+  (section_coverage.status === "complete"
+    ? section_coverage.declared === sections.length
+    : sections.length === PE_OVERLAY_MAX_REPORTED_SECTIONS &&
+      section_coverage.declared > sections.length);
+
+const sectionsMatch = (report: PeOverlay): boolean => {
+  if (!coverageMatches(report)) return false;
+  let imageEnd = report.size_of_headers;
+  for (const [index, section] of report.sections.entries()) {
+    const { end, fields } = sectionDiskLayout(
+      section.pointer_to_raw_data,
+      section.size_of_raw_data,
+      section.characteristics,
+      report.raw_pointer_rounding.alignment,
+    );
+    if (
+      section.index !== index ||
+      section.rounded_pointer_to_raw_data !==
+        fields.rounded_pointer_to_raw_data ||
+      section.raw_pointer_rounded !== fields.raw_pointer_rounded ||
+      section.extends_image !== fields.extends_image
+    )
+      return false;
+    imageEnd = Math.max(imageEnd, end);
+  }
+  // Unlisted sections may still move the image end past the listed ones.
+  const endMatches =
+    report.section_coverage.status === "complete"
+      ? imageEnd === report.image_end
+      : imageEnd <= report.image_end;
+  return endMatches && report.image_end >= report.size_of_headers;
+};
+
+const directoryLayoutMatches = (report: PeOverlay): boolean => {
+  const directory = report.security_directory;
+  const expected = peOverlayDirectoryLayout(
+    directory.status === "absent"
+      ? undefined
+      : { address: directory.offset, size: directory.size },
+    report.size_of_headers,
+    report.image_end,
+    report.file_size,
+  );
+  if (
+    directory.status !== expected.security_directory.status ||
+    (directory.status === "malformed" &&
+      expected.security_directory.status === "malformed" &&
+      directory.defect !== expected.security_directory.defect) ||
+    report.ranges.length !== expected.ranges.length
+  )
+    return false;
+  for (const [index, range] of report.ranges.entries()) {
+    const span = expected.ranges[index];
+    if (
+      !span ||
+      range.role !== span.role ||
+      range.offset !== span.offset ||
+      range.size !== span.size
+    )
+      return false;
+    if (range.role === "other") {
+      const sampled = Math.min(range.size, PE_OVERLAY_ENTROPY_WINDOW_BYTES);
+      const prefixBytes = Math.min(range.size, PE_OVERLAY_PREFIX_BYTES);
+      if (
+        range.entropy.sampled_bytes !== sampled ||
+        range.prefix_hex.length !== prefixBytes * 2
+      )
+        return false;
+    }
+  }
+  return true;
+};
+
+/** Validate structured layout invariants while preserving the provider's diagnostics. */
+export const peOverlaySchema = peOverlayObjectSchema.refine(
+  (report) =>
+    report.file_size === report.artifact.bytes &&
+    report.size_of_headers <= report.file_size &&
+    report.image_end <= report.file_size &&
+    report.present === report.image_end < report.file_size &&
+    sectionsMatch(report) &&
+    directoryLayoutMatches(report),
+  "PE overlay layout is inconsistent with its reported headers or artifact extent.",
+);

@@ -34,16 +34,18 @@ splits it into a `certificate_table` range and the surrounding `other` ranges,
 in file order. A table that sits wholly inside the mapped image stays out of
 the split. A table that starts inside the image and ends in the overlay keeps
 the overlay span: its bytes stay in one `other` range and a limitation names the
-overlap. A security
-directory that fails the checks `inspect_pe_certificates` applies (zero size,
-an offset inside the headers, an offset not aligned to eight bytes, or a range
-that leaves the file) adds a limitation naming the defect, and its bytes stay
-in ordinary `other` ranges. Each `other` range
-includes its offset, size, SHA-256, a Shannon entropy sample of at most the
-first 4096 bytes, the first 16 bytes as hex, and a `leading_format` that is
-`unrecognized` unless an existing recognizer names the range's format. Markers
-such as 7z, CAB, NSIS, and Inno stay `unrecognized`. A `certificate_table`
-range carries only its offset and size; its entries are not decoded.
+overlap. The shared directory checks require an eight-byte-aligned offset
+outside the headers, a size that can hold a certificate entry header and is a
+multiple of eight bytes, and a range inside the file. If a check fails, a
+limitation names the defect and the bytes stay in ordinary `other` ranges.
+Each `other` range includes its offset, size, SHA-256, a Shannon entropy
+sample of at most the first 4096 bytes, and the first 16 bytes as hex.
+`leading_format` uses the shared probes for bounded prefixes and trailers,
+including binary and XML plist signatures. Formats that need more context,
+including nested native executables and ESP flash layouts, and markers without
+a probe, such as 7z, CAB, NSIS, and Inno, stay `unrecognized`. A
+`certificate_table` range carries the admitted directory offset and size;
+use `inspect_pe_certificates` to check the entry framing and inspect the entries.
 
 This inspection does not identify packers and does not treat an overlay as a
 packed payload. It does not verify Authenticode signatures, certificate chains,

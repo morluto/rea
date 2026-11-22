@@ -392,13 +392,15 @@ it("fails truncated WIN_CERTIFICATE payloads without partial success", () => {
   );
 });
 
-it("rejects a short security table instead of reporting it complete", () => {
+it("rejects short and unaligned security directory sizes instead of reporting it complete", () => {
   for (const size of [4, 7]) {
     const bytes = peCertificateFixture();
     const tableOffset = bytes.readUInt32LE(securityDirectoryAt);
     bytes.writeUInt32LE(size, securityDirectoryAt + 4);
     bytes.fill(0, tableOffset, tableOffset + size);
-    expect(() => parse(bytes)).toThrow(/header is truncated/u);
+    expect(() => parse(bytes)).toThrow(
+      /size must fit a WIN_CERTIFICATE header and be a multiple of eight bytes/u,
+    );
   }
   const bytes = peCertificateFixture();
   const tableOffset = bytes.readUInt32LE(securityDirectoryAt);
@@ -406,7 +408,9 @@ it("rejects a short security table instead of reporting it complete", () => {
   const extended = Buffer.concat([bytes, Buffer.alloc(4)]);
   extended.writeUInt32LE(tableSize + 4, securityDirectoryAt + 4);
   expect(extended.readUInt32LE(tableOffset)).toBeGreaterThan(0);
-  expect(() => parse(extended)).toThrow(/header is truncated/u);
+  expect(() => parse(extended)).toThrow(
+    /size must fit a WIN_CERTIFICATE header and be a multiple of eight bytes/u,
+  );
 });
 
 it("fails PKCS#7 payloads that are not signedData", () => {

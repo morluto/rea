@@ -71,6 +71,9 @@ const absent = (): PeOverlay => ({
 /** 100 declared sections; only the budget is listed, the last one ends the image. */
 const budgeted = (): PeOverlay => ({
   ...absent(),
+  artifact: { ...absent().artifact, bytes: 0x500 },
+  image_end: 0x500,
+  file_size: 0x500,
   sections: Array.from({ length: PE_OVERLAY_MAX_REPORTED_SECTIONS }, (_, i) =>
     section({ index: i }),
   ),
@@ -183,14 +186,16 @@ it("retains a security directory across the image end as ordinary ranges", async
   const report: PeOverlay = {
     ...appended(),
     security_directory: { status: "table", offset: 0x3f0, size: 0x20 },
-    limitations: [...limitations(), PE_OVERLAY_STRADDLING_SECURITY_LIMITATION],
+    limitations: [
+      "The provider retained an additional diagnostic.",
+      PE_OVERLAY_STRADDLING_SECURITY_LIMITATION,
+      ...limitations(),
+    ],
   };
   const result = await service(report).inspect({ path: report.artifact.path });
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(report);
-  expect(result.value.limitations).toContain(
-    PE_OVERLAY_STRADDLING_SECURITY_LIMITATION,
-  );
+  expect(result.value.limitations).toEqual(report.limitations);
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: report.artifact.path },
     { kind: "file-offset-range", start: 0x400, end: 0x600 },
@@ -241,10 +246,6 @@ it("rejects input and cancellation before reading", async () => {
 it.each([
   { ...signed(), security_directory: { status: "absent" as const } },
   { ...signed(), ranges: [other(0x200, 0x100)] },
-  {
-    ...appended(),
-    security_directory: { status: "table" as const, offset: 0x3f0, size: 0x20 },
-  },
   { ...appended(), present: false },
   { ...appended(), ranges: [] },
   { ...appended(), ranges: [other(0x400, 0x100), other(0x500, 0x100)] },
@@ -296,8 +297,6 @@ it.each([
     ...appended(),
     ranges: [other(0x400, 0x200, { prefix_hex: "00" })],
   },
-  { ...absent(), limitations: [...limitations(), "extra"] },
-  { ...budgeted(), limitations: limitations() },
   {
     ...budgeted(),
     section_coverage: {
@@ -313,32 +312,9 @@ it.each([
   },
   {
     ...signed(),
-    limitations: [
-      ...limitations(),
-      PE_OVERLAY_MALFORMED_SECURITY_LIMITATIONS.unaligned,
-    ],
-  },
-  {
-    ...signed(),
     ranges: [
       { role: "certificate_table" as const, offset: 0x200, size: 0x80 },
       { role: "certificate_table" as const, offset: 0x280, size: 0x80 },
-    ],
-  },
-  {
-    ...signed(),
-    limitations: [...limitations(), PE_OVERLAY_STRADDLING_SECURITY_LIMITATION],
-  },
-  {
-    ...absent(),
-    limitations: [...limitations(), PE_OVERLAY_STRADDLING_SECURITY_LIMITATION],
-  },
-  {
-    ...appended(),
-    limitations: [
-      ...limitations(),
-      PE_OVERLAY_MALFORMED_SECURITY_LIMITATIONS.unaligned,
-      PE_OVERLAY_STRADDLING_SECURITY_LIMITATION,
     ],
   },
 ])("rejects inconsistent provider output", async (value) => {

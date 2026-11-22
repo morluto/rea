@@ -1,8 +1,13 @@
+export const WIN_CERTIFICATE_HEADER_BYTES = 8;
+export const WIN_CERTIFICATE_ALIGNMENT = 8;
+
 /** Why IMAGE_DIRECTORY_ENTRY_SECURITY cannot name a certificate table. */
 export const PE_SECURITY_DIRECTORY_DEFECTS = {
   "empty-or-in-headers":
     "PE certificate table offset overlaps headers or has zero size.",
   unaligned: "PE certificate table offset must be aligned to eight bytes.",
+  "invalid-size":
+    "PE certificate table size must fit a WIN_CERTIFICATE header and be a multiple of eight bytes.",
   "outside-artifact": "PE certificate table range leaves the artifact.",
 } as const;
 export type PeSecurityDirectoryDefect =
@@ -49,7 +54,7 @@ export const admitPeSecurityDirectory = (
   });
   if (size === 0 || offset < headerSize)
     return malformed("empty-or-in-headers");
-  if (offset % 8 !== 0) return malformed("unaligned");
+  if (offset % WIN_CERTIFICATE_ALIGNMENT !== 0) return malformed("unaligned");
   if (
     !Number.isSafeInteger(offset) ||
     !Number.isSafeInteger(size) ||
@@ -58,5 +63,10 @@ export const admitPeSecurityDirectory = (
     offset > fileSize - size
   )
     return malformed("outside-artifact");
+  if (
+    size < WIN_CERTIFICATE_HEADER_BYTES ||
+    size % WIN_CERTIFICATE_ALIGNMENT !== 0
+  )
+    return malformed("invalid-size");
   return { status: "table", offset, size };
 };

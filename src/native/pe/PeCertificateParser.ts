@@ -18,6 +18,8 @@ import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
 import {
   admitPeSecurityDirectory,
   PE_SECURITY_DIRECTORY_DEFECTS,
+  WIN_CERTIFICATE_ALIGNMENT,
+  WIN_CERTIFICATE_HEADER_BYTES,
 } from "../../domain/pe/peSecurityDirectory.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
@@ -34,7 +36,8 @@ const readCertificateImageHeaders = (bytes: Buffer) => {
   }
 };
 
-const align8 = (value: number): number => Math.ceil(value / 8) * 8;
+const align8 = (value: number): number =>
+  Math.ceil(value / WIN_CERTIFICATE_ALIGNMENT) * WIN_CERTIFICATE_ALIGNMENT;
 
 const LIMITATIONS = [
   "This workflow does not verify signatures, certificate chains, timestamps, or Authenticode digest coverage of image bytes.",
@@ -87,19 +90,15 @@ export const parsePeCertificates = (
   let teletexStringCompatibilityUsed = false;
   let unsignedAttributesPresent = false;
   while (at < table.length) {
-    // Alignment padding sits inside the gap before the next 8-byte boundary.
-    // Bytes that remain after that boundary are a short header, including
-    // zeros at the start of the table.
-    if (table.length - at < 8) fail("WIN_CERTIFICATE header is truncated.");
+    // Both the table size and each entry start are aligned, so every
+    // remaining span contains at least one complete entry header.
     const length = reader.u32(at);
-    if (length < 8)
+    if (length < WIN_CERTIFICATE_HEADER_BYTES)
       fail("WIN_CERTIFICATE dwLength is shorter than its header.");
     const entryEnd = at + length;
     if (entryEnd > table.length)
       fail("WIN_CERTIFICATE dwLength exceeds the certificate table.");
     const next = align8(entryEnd);
-    if (next > table.length)
-      fail("WIN_CERTIFICATE alignment padding is truncated.");
     examined += 1;
     if (examined > input.max_entries)
       throw new ArtifactReaderFailure(
@@ -109,7 +108,10 @@ export const parsePeCertificates = (
       );
     const revision = reader.u16(at + 4);
     const certificateType = reader.u16(at + 6);
-    const entryPayload = table.subarray(at + 8, entryEnd);
+    const entryPayload = table.subarray(
+      at + WIN_CERTIFICATE_HEADER_BYTES,
+      entryEnd,
+    );
     let payload = entryPayload;
     let pkcs7: PeCertificates["entries"][number]["pkcs7"] = null;
     if (peCertificateTypeName(certificateType) === "pkcs7") {
@@ -120,10 +122,11 @@ export const parsePeCertificates = (
         // trailing data.
         const root = readAsn1(entryPayload);
         const paddingBytes = entryPayload.length - root.end;
-        const alignedLength = align8(8 + root.end);
+        const alignedLength = align8(WIN_CERTIFICATE_HEADER_BYTES + root.end);
         if (
           paddingBytes !== 0 &&
-          (8 + entryPayload.length !== alignedLength ||
+          (WIN_CERTIFICATE_HEADER_BYTES + entryPayload.length !==
+            alignedLength ||
             !entryPayload.subarray(root.end).every((byte) => byte === 0))
         )
           fail("WIN_CERTIFICATE has invalid PKCS#7 alignment padding.");
@@ -140,7 +143,11 @@ export const parsePeCertificates = (
           digest_algorithm_oids: [...parsed.digest_algorithm_oids],
           certificates: parsed.certificates.map((certificate) => ({
             location: {
-              offset: tableOffset + at + 8 + certificate.start,
+              offset:
+                tableOffset +
+                at +
+                WIN_CERTIFICATE_HEADER_BYTES +
+                certificate.start,
               bytes: certificate.end - certificate.start,
             },
             der_sha256: sha256Hex(
@@ -202,7 +209,10 @@ export const parsePeCertificates = (
       certificate_type: certificateType,
       certificate_type_name: peCertificateTypeName(certificateType),
       payload: {
-        location: { offset: tableOffset + at + 8, bytes: payload.length },
+        location: {
+          offset: tableOffset + at + WIN_CERTIFICATE_HEADER_BYTES,
+          bytes: payload.length,
+        },
         bytes: payload.length,
         sha256: sha256Hex(payload),
       },

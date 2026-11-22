@@ -38,7 +38,7 @@ cliTest(
     for (const { bytes, message } of [
       { bytes: valid },
       { bytes: badLength, message: "dwLength exceeds" },
-      { bytes: badAlignment, message: "alignment padding is truncated" },
+      { bytes: badAlignment, message: "be a multiple of eight bytes" },
     ]) {
       const expectedError =
         message === undefined

@@ -1,9 +1,9 @@
-import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import { recognizeBoundedArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import { DFUSE_SUFFIX_BYTES } from "../../domain/firmware/dfuse.js";
 import { computeBlockEntropy } from "../../domain/native/byteEntropy.js";
 import {
   computePeOverlay,
   PE_OVERLAY_ENTROPY_WINDOW_BYTES,
-  PE_OVERLAY_LEADING_FORMATS,
   PE_OVERLAY_PREFIX_BYTES,
   type PeOverlay,
   type PeOverlayHeaderFacts,
@@ -16,37 +16,18 @@ import {
   readPeImageHeaders,
   requirePeRange,
 } from "../../domain/pe/peImageHeaders.js";
-import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
+import {
+  PE_SECTION_HEADER_BYTES,
+  readPeSectionHeader,
+} from "../../domain/peSectionHeader.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
-const isLeadingFormat = (format: string): format is PeOverlayLeadingFormat =>
-  (PE_OVERLAY_LEADING_FORMATS as readonly string[]).includes(format);
-
-/**
- * Name a leading format only when a recognizer accepts the overlay slice.
- * `needs-input` is skipped: an ESP flash layout is not scanned, so a missing
- * layout must not hide a later recognizer or invent `esp-flash-image`.
- */
-const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat => {
-  const prefix = bytes.subarray(
-    0,
-    Math.min(bytes.length, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
-  );
-  const suffix = bytes.subarray(Math.max(0, bytes.length - 16));
-  const input = { prefix, fileSize: bytes.length, suffix };
-  let from = 0;
-  for (let steps = 0; steps < PE_OVERLAY_LEADING_FORMATS.length; steps += 1) {
-    const recognition = recognizeArtifactFormat(input, from);
-    if (recognition === undefined || recognition.index < from)
-      return "unrecognized";
-    if (recognition.state === "recognized")
-      return isLeadingFormat(recognition.format)
-        ? recognition.format
-        : "unrecognized";
-    from = recognition.index + 1;
-  }
-  return "unrecognized";
-};
+const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat =>
+  recognizeBoundedArtifactFormat({
+    prefix: bytes.subarray(0, PE_OVERLAY_ENTROPY_WINDOW_BYTES),
+    fileSize: bytes.length,
+    suffix: bytes.subarray(Math.max(0, bytes.length - DFUSE_SUFFIX_BYTES)),
+  }) ?? "unrecognized";
 
 /**
  * Decode the section table one header at a time. computePeOverlay validates
@@ -56,10 +37,14 @@ const recognizeLeadingFormat = (bytes: Buffer): PeOverlayLeadingFormat => {
 function* readSections(
   sectionTable: Buffer,
 ): Generator<PeOverlaySectionInput, void, undefined> {
-  for (let index = 0; index < sectionTable.length; index += 40) {
-    const sectionIndex = index / 40;
+  for (
+    let index = 0;
+    index < sectionTable.length;
+    index += PE_SECTION_HEADER_BYTES
+  ) {
+    const sectionIndex = index / PE_SECTION_HEADER_BYTES;
     const header = readPeSectionHeader(
-      sectionTable.subarray(index, index + 40),
+      sectionTable.subarray(index, index + PE_SECTION_HEADER_BYTES),
     );
     if (!header.ok)
       throw malformedInput("pe", header.error.message, {

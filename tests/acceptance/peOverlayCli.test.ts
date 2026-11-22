@@ -119,3 +119,88 @@ cliTest("reports PE overlay ranges through the CLI", async ({ cli }) => {
   });
   expect(JSON.stringify(past.json)).toContain("section index 1");
 });
+
+cliTest.for([1, 9])(
+  "keeps the full overlay when the security directory declares %i bytes",
+  async (size, { cli }) => {
+    const root = await createTestTempDirectory("rea-pe-overlay-size-");
+    const path = join(root, "archive.exe");
+    await writeFile(
+      path,
+      peOverlayImage({
+        trailing: ZIP_LOCAL_HEADER,
+        security: { offset: 0x400, size },
+      }),
+    );
+
+    const overlay = await cli.run({
+      arguments: ["inspect-pe-overlay", path, "--json"],
+    });
+    expect(overlay.exitCode, overlay.stderr).toBe(0);
+    const { normalized_result: report } = toolContract(
+      "inspect_pe_overlay",
+    ).outputSchema.parse(overlay.json);
+    expect(report.security_directory).toEqual({
+      status: "malformed",
+      defect: "invalid-size",
+      offset: 0x400,
+      size,
+    });
+    expect(report.ranges).toEqual([
+      expect.objectContaining({
+        role: "other",
+        offset: 0x400,
+        size: ZIP_LOCAL_HEADER.length,
+        sha256: sha256Hex(ZIP_LOCAL_HEADER),
+        leading_format: "zip",
+      }),
+    ]);
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("be a multiple of eight bytes"),
+    );
+
+    const certificates = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(certificates.exitCode).toBe(1);
+    expect(certificates.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            reason: "invalid_format",
+            message: expect.stringContaining("be a multiple of eight bytes"),
+          }),
+        ],
+      },
+    });
+  },
+);
+
+cliTest("recognizes a leading XML plist in the overlay", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-pe-overlay-plist-");
+  const path = join(root, "preferences.exe");
+  const trailing = Buffer.from(
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict/></plist>',
+    ].join("\n"),
+  );
+  await writeFile(path, peOverlayImage({ trailing }));
+  const overlay = await cli.run({
+    arguments: ["inspect-pe-overlay", path, "--json"],
+  });
+  expect(overlay.exitCode, overlay.stderr).toBe(0);
+  const { normalized_result: report } = toolContract(
+    "inspect_pe_overlay",
+  ).outputSchema.parse(overlay.json);
+  expect(report.ranges).toEqual([
+    expect.objectContaining({
+      role: "other",
+      offset: 0x400,
+      size: trailing.length,
+      leading_format: "plist",
+    }),
+  ]);
+});

@@ -1,5 +1,5 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { recognizeArtifactFormat } from "../../domain/artifactFormatRecognition.js";
+import { recognizeBoundedArtifactFormat } from "../../domain/artifactFormatRecognition.js";
 import type { ArtifactClassificationEvidence } from "../ArtifactClassificationProbe.js";
 import {
   hasDestinationPath,
@@ -8,10 +8,7 @@ import {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
-import {
-  hasBinaryPlistSignature,
-  hasXmlPlistSignature,
-} from "../../domain/apple/appleArchiveFormat.js";
+import { hasBinaryPlistSignature } from "../../domain/apple/appleArchiveFormat.js";
 import {
   artifactEdgeId,
   artifactIdForNode,
@@ -616,24 +613,12 @@ export const classifyArtifactBytes = (
 ): ArtifactNode["format"] => {
   const { prefix, suffix, mzWindowsHeaderSignature, mzWindowsHeaderRecord } =
     evidence;
-  // A refused claim falls through: a header-only iNES region, for example,
-  // has the signature but not the declared cartridge extent, so it stays a
-  // file instead of becoming another container. A claim that needs more
-  // bytes falls through too: the scan holds a bounded prefix and the trailer,
-  // so it cannot locate an ESP flash partition table, and a flash dump is
-  // classified by its first image.
-  const input = { prefix, fileSize, suffix };
-  for (
-    let recognition = recognizeArtifactFormat(input);
-    recognition !== undefined;
-    recognition = recognizeArtifactFormat(input, recognition.index + 1)
-  )
-    if (
-      recognition.state === "recognized" &&
-      recognition.format !== "esp-flash-image"
-    )
-      return recognition.format;
-  if (hasXmlPlistSignature(prefix)) return "plist";
+  const recognized = recognizeBoundedArtifactFormat({
+    prefix,
+    fileSize,
+    suffix,
+  });
+  if (recognized !== undefined) return recognized;
   const fatFormat = classifyFatArtifact(evidence, fileSize);
   if (fatFormat !== null) return fatFormat;
   // Admit ELF and thin Mach-O as target resolution does: a magic number

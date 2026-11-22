@@ -5,15 +5,7 @@ import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   inspectPeOverlayInputSchema,
-  PE_OVERLAY_ENTROPY_WINDOW_BYTES,
-  PE_OVERLAY_MAX_REPORTED_SECTIONS,
-  PE_OVERLAY_PREFIX_BYTES,
-  peOverlayDirectoryLayout,
   peOverlaySchema,
-  peSectionExtendsImage,
-  peSectionRawEnd,
-  roundPeRawPointer,
-  type PeOverlay,
 } from "../../domain/native/peOverlay.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import { err, type Result } from "../../domain/result.js";
@@ -47,7 +39,7 @@ export class PeOverlayService {
     if (
       !report.success ||
       report.data.artifact.path !== input.value.path ||
-      !validReport(report.data, input.value)
+      report.data.artifact.bytes > input.value.max_file_bytes
     )
       return err(
         new AnalysisOutputError(
@@ -87,103 +79,3 @@ export class PeOverlayService {
     );
   }
 }
-
-/** Complete coverage lists every section; partial lists exactly the budget. */
-const coverageMatches = ({ sections, section_coverage }: PeOverlay): boolean =>
-  section_coverage.reported === sections.length &&
-  (section_coverage.status === "complete"
-    ? section_coverage.declared === sections.length
-    : sections.length === PE_OVERLAY_MAX_REPORTED_SECTIONS &&
-      section_coverage.declared > sections.length);
-
-const sectionsMatch = (report: PeOverlay): boolean => {
-  if (!coverageMatches(report)) return false;
-  let imageEnd = report.size_of_headers;
-  for (const [index, section] of report.sections.entries()) {
-    const rounded = roundPeRawPointer(
-      section.pointer_to_raw_data,
-      report.raw_pointer_rounding.alignment,
-    );
-    const extendsImage = peSectionExtendsImage(
-      section.size_of_raw_data,
-      section.characteristics,
-    );
-    if (
-      section.index !== index ||
-      section.rounded_pointer_to_raw_data !== rounded ||
-      section.raw_pointer_rounded !==
-        (rounded !== section.pointer_to_raw_data) ||
-      section.extends_image !== extendsImage
-    )
-      return false;
-    if (!extendsImage) continue;
-    const end = peSectionRawEnd(
-      section.pointer_to_raw_data,
-      section.size_of_raw_data,
-    );
-    if (end > imageEnd) imageEnd = end;
-  }
-  // Unlisted sections may still move the image end past the listed ones.
-  const endMatches =
-    report.section_coverage.status === "complete"
-      ? imageEnd === report.image_end
-      : imageEnd <= report.image_end;
-  return endMatches && report.image_end >= report.size_of_headers;
-};
-
-const directoryLayoutMatches = (report: PeOverlay): boolean => {
-  const directory = report.security_directory;
-  const expected = peOverlayDirectoryLayout(
-    directory.status === "absent"
-      ? undefined
-      : { address: directory.offset, size: directory.size },
-    report.size_of_headers,
-    report.image_end,
-    report.file_size,
-    report.section_coverage,
-  );
-  if (
-    directory.status !== expected.security_directory.status ||
-    (directory.status === "malformed" &&
-      expected.security_directory.status === "malformed" &&
-      directory.defect !== expected.security_directory.defect) ||
-    report.limitations.length !== expected.limitations.length ||
-    !expected.limitations.every(
-      (note, index) => note === report.limitations[index],
-    ) ||
-    report.ranges.length !== expected.ranges.length
-  )
-    return false;
-  for (const [index, range] of report.ranges.entries()) {
-    const span = expected.ranges[index];
-    if (
-      !span ||
-      range.role !== span.role ||
-      range.offset !== span.offset ||
-      range.size !== span.size
-    )
-      return false;
-    if (range.role === "other") {
-      const sampled = Math.min(range.size, PE_OVERLAY_ENTROPY_WINDOW_BYTES);
-      const prefixBytes = Math.min(range.size, PE_OVERLAY_PREFIX_BYTES);
-      if (
-        range.entropy.sampled_bytes !== sampled ||
-        range.prefix_hex.length !== prefixBytes * 2
-      )
-        return false;
-    }
-  }
-  return true;
-};
-
-const validReport = (
-  report: PeOverlay,
-  input: { max_file_bytes: number },
-): boolean =>
-  report.artifact.bytes <= input.max_file_bytes &&
-  report.file_size === report.artifact.bytes &&
-  report.size_of_headers <= report.file_size &&
-  report.image_end <= report.file_size &&
-  report.present === report.image_end < report.file_size &&
-  sectionsMatch(report) &&
-  directoryLayoutMatches(report);
