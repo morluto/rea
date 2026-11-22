@@ -103,6 +103,7 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
       end: 0x2200,
       fileOffset: 0x1700,
       section: ".text",
+      dataSection: ".data",
     },
     {
       layout: "file and zero-fill",
@@ -110,6 +111,7 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
       end: 0x2280,
       fileOffset: null,
       section: ".text",
+      dataSection: ".data",
     },
     {
       layout: "zero-fill only",
@@ -117,6 +119,7 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
       end: 0x2300,
       fileOffset: null,
       section: ".text",
+      dataSection: ".data",
     },
     {
       layout: "crossing two sections with the same name",
@@ -124,19 +127,21 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
       end: 0x2080,
       fileOffset: 0x1580,
       section: null,
+      dataSection: ".text",
     },
   ] as const)(
     "retains only established TLS template locations for $layout",
-    async ({ layout, start, end, fileOffset, section }) => {
+    async ({ start, end, fileOffset, section, dataSection }) => {
       const bytes = peLoadConfigImage({
         bits,
         zeroFillCallback: true,
         rawDataRange: [start, end],
       });
-      if (layout === "crossing two sections with the same name") {
+      if (dataSection !== ".data") {
         const header = bytes.readUInt32LE(60);
         const firstSection = header + 24 + bytes.readUInt16LE(header + 20);
-        bytes.copy(bytes, firstSection, firstSection + 40, firstSection + 48);
+        bytes.fill(0, firstSection, firstSection + 8);
+        bytes.write(dataSection, firstSection, "ascii");
       }
       const base = bits === 64 ? 0x180000000n : 0x10000000n;
       const report = await parseBytes(bytes);
@@ -147,6 +152,7 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
         raw_data_file_offset: fileOffset,
         raw_data_section: section,
       });
+      expect(report.tls?.address_of_index.section).toBe(dataSection);
       expect(report.tls?.callbacks).toMatchObject([
         { rva: 0x2200, file_offset: null, section: ".text" },
       ]);
