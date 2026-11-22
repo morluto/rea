@@ -227,23 +227,20 @@ export const scanNodeSeaFuse = async (
   const overlap = FUSE_LENGTH - 1;
   const chunkSize = 64 * 1024;
   const scratch = Buffer.allocUnsafe(overlap + chunkSize);
-  const checkAborted = (): void => {
-    if (signal?.aborted === true) throw signal;
-  };
   let carryLength = 0;
   let position = 0;
   while (position < fileSize) {
     const length = Math.min(chunkSize, fileSize - position);
     let filled = 0;
     while (filled < length) {
-      checkAborted();
+      abortIfNeeded(signal);
       const observed = await handle.read(
         scratch,
         carryLength + filled,
         length - filled,
         position + filled,
       );
-      checkAborted();
+      abortIfNeeded(signal);
       if (observed.bytesRead === 0)
         throw new ArtifactReaderFailure(
           "integrity",
