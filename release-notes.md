@@ -67,6 +67,7 @@
 * **capture:** keep credential checks independent of body filters ([#13215](https://github.com/morluto/rea/issues/13215)) ([587cca5](https://github.com/morluto/rea/commit/587cca5c5c82fbb4bb86307670fe79638ff82003))
 * **capture:** retain credential checks across MIME conflicts ([#13209](https://github.com/morluto/rea/issues/13209)) ([6152c02](https://github.com/morluto/rea/commit/6152c02f3f384723f6fac2470b380b682e1c6387))
 * **capture:** surface unsupported decoder requirements ([#13203](https://github.com/morluto/rea/issues/13203)) ([088bc68](https://github.com/morluto/rea/commit/088bc68b1cbddb11b7432e7541ba66f47409abf2))
+* **ci/tests:** bound untyped oxlint threads and fail fast on terminal POSIX poll errors ([#13447](https://github.com/morluto/rea/issues/13447)) ([07df0f1](https://github.com/morluto/rea/commit/07df0f1c04779a54f0a2b84233a3e3b9638fca4d))
 * **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
 * **ci:** retry release history reads after transport disconnects ([dcb36f6](https://github.com/morluto/rea/commit/dcb36f66c7ae28b9fd7ea529a914eeea3d37cbaa))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
