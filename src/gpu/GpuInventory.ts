@@ -443,42 +443,39 @@ export class GpuInventory {
         // any target directives after a malformed entry are still preserved.
         const tracker =
           standalonePtx === undefined ? createPtxTargetTracker() : undefined;
-        let parsed: {
-          kernel: GpuKernel;
-          coverage: "complete" | "partial";
-        }[];
-        try {
-          parsed = [...readPtxKernels(text, row.id, tracker)];
-        } catch (cause) {
-          if (tracker !== undefined) {
-            const fallbackTarget = readPtxTarget(text);
-            this.#target(row, {
-              value: fallbackTarget.target,
-              key: fallbackTarget.target,
-              scope: "exact",
-              ...(fallbackTarget.limitation === null
-                ? {}
-                : { limitation: fallbackTarget.limitation }),
-            });
+        const firstKernel = this.kernels.length;
+        const finishTarget = (target: ReturnType<typeof readPtxTarget>) => {
+          const limitation = this.#target(row, {
+            value: target.target,
+            key: target.target,
+            scope: "exact",
+            ...(target.limitation === null
+              ? {}
+              : { limitation: target.limitation }),
+          });
+          if (limitation === undefined) return;
+          coverage = "partial";
+          for (let index = firstKernel; index < this.kernels.length; index++) {
+            this.#retain([limitation]);
+            this.kernels[index]!.limitations.push(limitation);
           }
+        };
+        try {
+          for (const { kernel, coverage: kernelCoverage } of readPtxKernels(
+            text,
+            row.id,
+            tracker,
+          )) {
+            this.#retain(kernel);
+            this.kernels.push(kernel);
+            if (kernelCoverage === "partial") coverage = "partial";
+          }
+        } catch (cause) {
+          if (!(cause instanceof GpuReportCapacityFailure))
+            finishTarget(standalonePtx?.targetFacts ?? readPtxTarget(text));
           throw cause;
         }
-        const target = standalonePtx?.targetFacts ?? tracker!.facts();
-        const conflict = this.#target(row, {
-          value: target.target,
-          key: target.target,
-          scope: "exact",
-          ...(target.limitation === null
-            ? {}
-            : { limitation: target.limitation }),
-        });
-        if (conflict !== undefined) coverage = "partial";
-        for (const { kernel, coverage: kernelCoverage } of parsed) {
-          if (conflict !== undefined) kernel.limitations.push(conflict);
-          if (kernelCoverage === "partial") coverage = "partial";
-          this.#retain(kernel);
-          this.kernels.push(kernel);
-        }
+        finishTarget(standalonePtx?.targetFacts ?? tracker!.facts());
       } else if (row.kind === "cubin" || row.kind === "amdgpu") {
         if (row.kind === "amdgpu" && isLlvmBitcode(bytes))
           throw new BinaryFormatFailure("unsupported", LLVM_BITCODE_LIMITATION);
