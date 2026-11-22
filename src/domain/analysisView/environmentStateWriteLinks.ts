@@ -306,101 +306,65 @@ export const linkedCreate = (input: {
   const post = records[first]!;
   const ids = new Set(input.respondedIds(post.ordinal));
   if (ids.size === 0) return undefined;
-  let beforeReads:
-    | readonly {
-        readonly record: StateRecordFacts;
-        readonly view: StateView | undefined;
-        readonly lastSegment: string;
-        readonly normalizedCollection: string;
-        readonly normalizedRecordPath: string;
-      }[]
-    | undefined;
-  let entityIdsByType: Map<string, Set<string>> | undefined;
-  const getBeforeReads = () => {
-    if (beforeReads === undefined) {
-      const list: {
-        readonly record: StateRecordFacts;
-        readonly view: StateView | undefined;
-        readonly lastSegment: string;
-        readonly normalizedCollection: string;
-        readonly normalizedRecordPath: string;
-      }[] = [];
-      for (let earlierIndex = 0; earlierIndex < first; earlierIndex++) {
-        const earlier = records[earlierIndex]!;
-        if (
-          earlier.method !== "GET" ||
-          !succeeded(earlier) ||
-          !input.chronology.completedBefore(earlier, post)
-        )
-          continue;
-        list.push({
-          record: earlier,
-          view: input.viewOf(earlier.ordinal),
-          lastSegment: lastSegmentValue(earlier.path),
-          normalizedCollection: normalizedPath(collectionPathOf(earlier, true)),
-          normalizedRecordPath: normalizedPath(earlier.path),
-        });
-      }
-      beforeReads = list;
-    }
-    return beforeReads;
-  };
-  const hasEntity = (type: string, id: string): boolean => {
-    if (entityIdsByType === undefined) {
-      entityIdsByType = new Map();
-      for (const entity of input.entities) {
-        const set = entityIdsByType.get(entity.type);
-        if (set === undefined)
-          entityIdsByType.set(entity.type, new Set([entity.id]));
-        else set.add(entity.id);
-      }
-    }
-    return entityIdsByType.get(type)?.has(id) ?? false;
-  };
   for (let index = first + 1; index < records.length; index++) {
     const record = records[index]!;
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
     const view = input.viewOf(record.ordinal);
     // A read naming the id but showing no entity, such as JSON null, says nothing of where the call created.
-    const id = lastSegmentValue(record.path);
     if (
       record.method !== "GET" ||
       !succeeded(record) ||
       view?.shape !== "item" ||
-      !ids.has(id) ||
-      !input.showsItem(record.ordinal, id)
+      !ids.has(lastSegmentValue(record.path)) ||
+      !input.showsItem(record.ordinal, lastSegmentValue(record.path))
     )
       continue;
+    const id = lastSegmentValue(record.path);
     const collection = collectionPathOf(record, true);
-    const normalizedCollection = normalizedPath(collection);
     // Only reads finished before the call began can show that the candidate already existed.
-    const before = getBeforeReads();
+    const before = records
+      .slice(0, first)
+      .filter((earlier) => input.chronology.completedBefore(earlier, post));
     // An earlier read of the id under another type or collection names another entity.
-    const readBefore = before.some(
-      (earlier) =>
-        earlier.lastSegment === id &&
-        ((earlier.view?.shape === "item" && earlier.view.type === view.type) ||
-          earlier.normalizedCollection === normalizedCollection) &&
-        input.showsItem(earlier.record.ordinal, id),
-    );
+    const readBefore = before.some((earlier) => {
+      const read = input.viewOf(earlier.ordinal);
+      return (
+        earlier.method === "GET" &&
+        succeeded(earlier) &&
+        lastSegmentValue(earlier.path) === id &&
+        ((read?.shape === "item" && read.type === view.type) ||
+          normalizedPath(collectionPathOf(earlier, true)) ===
+            normalizedPath(collection)) &&
+        input.showsItem(earlier.ordinal, id)
+      );
+    });
     const held =
       readBefore ||
-      hasEntity(view.type, id) ||
-      before.some(
-        (earlier) =>
-          ((earlier.view?.shape === "list" &&
-            earlier.view.type === view.type) ||
-            earlier.normalizedRecordPath === normalizedCollection) &&
-          input.shownIds(earlier.record.ordinal).has(id),
-      );
+      input.entities.some(
+        (entity) => entity.type === view.type && entity.id === id,
+      ) ||
+      before.some((earlier) => {
+        const read = input.viewOf(earlier.ordinal);
+        return (
+          earlier.method === "GET" &&
+          succeeded(earlier) &&
+          ((read?.shape === "list" && read.type === view.type) ||
+            normalizedPath(earlier.path) === normalizedPath(collection)) &&
+          input.shownIds(earlier.ordinal).has(id)
+        );
+      });
     const unseen =
       id.length < MIN_ID_LENGTH &&
-      !before.some(
-        (earlier) =>
-          (earlier.view?.shape === "item" || earlier.view?.shape === "list") &&
-          earlier.view.type === view.type,
-      );
+      !before.some((earlier) => {
+        const read = input.viewOf(earlier.ordinal);
+        return (
+          earlier.method === "GET" &&
+          succeeded(earlier) &&
+          (read?.shape === "item" || read?.shape === "list") &&
+          read.type === view.type
+        );
+      });
     return held || unseen ? undefined : { type: view.type, collection };
   }
   return undefined;

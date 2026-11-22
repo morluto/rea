@@ -1,3 +1,4 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -218,13 +219,18 @@ export class EnvironmentStateWriteSimulation {
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
-    for (const document of input.documents)
-      if (!this.#documentsByTool.has(document.tool))
-        this.#documentsByTool.set(document.tool, document);
+    for (const document of input.documents) {
+      if (this.#documentsByTool.has(document.tool)) continue;
+      input.io.retain(ENTRY_BYTES);
+      this.#documentsByTool.set(document.tool, document);
+    }
     for (const entity of input.entities) {
       const list = this.#entitiesByType.get(entity.type);
-      if (list === undefined) this.#entitiesByType.set(entity.type, [entity]);
-      else list.push(entity);
+      input.io.retain(ENTRY_BYTES);
+      if (list === undefined) {
+        input.io.retain(ENTRY_BYTES);
+        this.#entitiesByType.set(entity.type, [entity]);
+      } else list.push(entity);
     }
     this.#writeCompletion = new CapturedWriteCompletion(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
@@ -443,10 +449,12 @@ export class EnvironmentStateWriteSimulation {
       laterFields: (type) => {
         let cached = this.#laterFieldsByType.get(type);
         if (cached === undefined) {
+          this.#input.io.retain(ENTRY_BYTES);
           cached = laterItemFields(
             this.#input.views.values(),
             this.#input.entities,
             type,
+            this.#input.io.retain,
           );
           this.#laterFieldsByType.set(type, cached);
         }
