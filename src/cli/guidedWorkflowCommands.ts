@@ -39,7 +39,10 @@ export const registerGuidedWorkflowCommands = (
     async (input) => {
       const { accessGuidedWorkflows } =
         await import("../application/GuidedWorkflowAccess.js");
-      const result = accessGuidedWorkflows(input);
+      const result = accessGuidedWorkflows(input, {
+        listRemediation:
+          "Run `rea guided-workflows` to list workflow identifiers and their argument requirements.",
+      });
       return result.ok ? result.value : projectAnalysisError(result.error);
     },
   );
