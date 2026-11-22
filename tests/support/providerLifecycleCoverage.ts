@@ -1833,7 +1833,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/composition/reverseEngineeringCancellation.test.ts",
-          "waits for a cancelled Rizin process to exit before returning",
+          "waits for a Rizin process cancelled during its %s to exit before returning",
         ),
       ),
       cleanup: covered(
