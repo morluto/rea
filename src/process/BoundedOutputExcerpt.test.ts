@@ -106,11 +106,37 @@ describe("bounded output ring buffer", () => {
     );
     for (const chunk of chunks) excerpt.append(chunk);
     const full = Buffer.concat(chunks);
-    const expected = new BoundedOutputExcerpt(limit);
-    expected.append(full);
+    const expectedHead = full.subarray(0, headLimit).toString("utf8");
+    const expectedTail = full
+      .subarray(full.length - tailLimit)
+      .toString("utf8");
+    expect(expectedHead).toBe("🙂0_1__2");
+    expect(expectedTail).toBe("8_🙂119");
     expect(excerpt.truncated).toBe(true);
     expect(full.length).toBeGreaterThan(headLimit + tailLimit);
-    expect(excerpt.text).toBe(expected.text);
+    expect(excerpt.text).toBe(
+      `${expectedHead} … [output omitted] … ${expectedTail}`,
+    );
+  });
+
+  it("drops split UTF-8 bytes at a wrapped ring tail boundary", () => {
+    const limit = 13;
+    const headLimit = Math.ceil(limit / 2);
+    const tailLimit = limit - headLimit;
+    const excerpt = new BoundedOutputExcerpt(limit);
+    const chunks = Array.from({ length: 120 }, (_, index) =>
+      Buffer.from(index % 7 === 0 ? `🙂${index}` : `_${index}_`),
+    );
+    for (const chunk of chunks) excerpt.append(chunk);
+    const full = Buffer.concat(chunks);
+    const rawHead = full.subarray(0, headLimit);
+    const rawTail = full.subarray(full.length - tailLimit);
+    expect(rawHead.toString("utf8")).toBe("🙂0_1");
+    // The 6-byte tail starts inside the 4-byte "🙂" before "119".
+    expect([...rawTail.subarray(0, 3)]).toEqual([0x9f, 0x99, 0x82]);
+    expect(rawTail.subarray(3).toString("utf8")).toBe("119");
+    expect(excerpt.truncated).toBe(true);
+    expect(excerpt.text).toBe("🙂0_1 … [output omitted] … 119");
   });
 
   it("handles zero budget and oversized tail replacement after partial writes", () => {
