@@ -6222,3 +6222,61 @@ it("marks coverage partial when available Ghidra command execution fails", async
     await provider.close();
   }
 });
+
+it("keeps machine width unknown for native-OS encoded machine override without managed proof", () => {
+  // 0xc020 is 0x8664 ^ 0x4644 (Apple OS override for x86_64)
+  const teOverrideBuf = Buffer.alloc(16);
+  teOverrideBuf[0] = 0x56; // 'V'
+  teOverrideBuf[1] = 0x5a; // 'Z'
+  teOverrideBuf.writeUInt16LE(0xc020, 2); // Machine: 0xc020
+  expect(detectPeTeMachineWidth(teOverrideBuf)).toBe("unknown");
+});
+
+it("preserves inner cancellation partial observation when outer directory reader finalizes", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-inner-cancel-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  vi.spyOn(PrivateRuntimeRoot.prototype, "close").mockImplementation(
+    async function (this: PrivateRuntimeRoot) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during inner tempRoot release");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});

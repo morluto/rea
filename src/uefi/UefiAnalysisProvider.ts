@@ -215,7 +215,7 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
 
     if (candidateMachine !== undefined) {
       const decoded = decodePeMachine(candidateMachine);
-      if (decoded !== undefined) {
+      if (decoded !== undefined && !decoded.nativeOsOverride) {
         return decoded.architecture === "x86_64" ||
           decoded.architecture === "arm64"
           ? "64"
@@ -3357,6 +3357,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             cleanupError,
             "decompile_uefi_firmware",
           );
+        }
+
+        if (primaryError !== undefined) {
+          if (terminationError instanceof AnalysisCancelledError) {
+            throw analysisErrorWithCancellation(primaryError, terminationError);
+          }
+          primaryError.retainSecondaryFailure(terminationError);
+          throw primaryError;
         }
         throw terminationError;
       }
