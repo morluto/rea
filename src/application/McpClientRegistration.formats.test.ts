@@ -186,6 +186,11 @@ it.each([
     text: '{"mcp":{"rea":{"type":"local","command":["old"],"enabled":false,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
     native: true,
   },
+  {
+    name: "V1 disabled fallback migrated into native V2",
+    text: '{"mcp":{"rea":{"type":"local","command":["old"],"disabled":true,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
+    native: true,
+  },
 ])(
   "retains OpenCode activation policy from $name",
   async ({ text, native, ...control }) => {
