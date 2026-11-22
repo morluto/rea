@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaRawObservation } from "./IdaOperationRunner.js";
 
@@ -75,7 +75,11 @@ export const hexRaysCloseSchema = z.object({
 export type HexRaysCloseReceipt = z.infer<typeof hexRaysCloseSchema>;
 
 const executionSchema = z
-  .object({ result: jsonValueSchema, stdout: z.string(), stderr: z.string() })
+  .object({
+    result: ownedJsonValueSchema,
+    stdout: z.string(),
+    stderr: z.string(),
+  })
   .passthrough();
 
 let querySource: { readonly code: string; readonly sha256: string } | undefined;

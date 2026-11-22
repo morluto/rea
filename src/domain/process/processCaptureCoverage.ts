@@ -33,7 +33,7 @@ export const filesystemCoverageSchema = z.strictObject({
     ]),
   ),
   enumeration_omissions: z.array(
-    z.union([
+    z.discriminatedUnion("reason", [
       z.strictObject({
         path: z.string(),
         reason: enumerationOmissionReasonSchema,
