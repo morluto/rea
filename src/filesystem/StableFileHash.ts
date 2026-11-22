@@ -136,7 +136,7 @@ export const hashStableRegularFileDescriptor = async (
       `Regular file size cannot be represented safely: ${path}`,
     );
   const hash = createHash("sha256");
-  const chunk = Buffer.allocUnsafe(256 * 1024);
+  const chunk = Buffer.allocUnsafe(64 * 1024);
   const prefix = Buffer.alloc(Math.min(options.prefixBytes ?? 0, initial.size));
   let position = 0;
   while (position <= initial.size) {
