@@ -95,11 +95,14 @@ const fileSubjectSchema = z.strictObject({
 });
 /** A debugger session whose launch file is validated like a file subject. */
 const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
-  target: z.union([subjectIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    subjectIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
 /** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
 const nonFileSubjectSchema = z.strictObject({
-  identity: z.union([
+  identity: z.discriminatedUnion("kind", [
     nonFileTargetIdentitySchema,
     sessionSubjectIdentitySchema,
   ]),
@@ -248,6 +251,9 @@ const immutableResultSchema = z
     if (issue !== undefined)
       context.addIssue({ code: "custom", message: issue });
   });
+const immutableResultEvidenceSchema = evidenceSchema.safeExtend({
+  normalized_result: immutableResultSchema,
+});
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Candidate local artifact identity validated by the Evidence subject schema. */
@@ -672,7 +678,7 @@ const normalizeEvidenceObservation = (
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    ? immutableResultEvidenceSchema
     : evidenceSchema;
   const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only

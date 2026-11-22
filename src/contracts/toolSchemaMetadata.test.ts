@@ -1,8 +1,17 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
+import {
+  analysisSettingDefinition,
+  analysisSettingIds,
+} from "../domain/analysisSettingDefinitions.js";
+import { ADVERTISED_INPUT_SCHEMA_MAX_BYTES } from "./advertisedDialect.js";
+import { ANALYSIS_SETTINGS_TOOL_CONTRACTS } from "./analysisSettingsContracts.js";
+import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
 import {
+  advertisedInputJsonSchema,
   toolInputSchemaWithMetadata,
   toolOutputSchemaWithMetadata,
 } from "./toolSchemaMetadata.js";
@@ -45,4 +54,37 @@ it("declares an object root only on the advertised output of an object union", (
   expect(advertised).toHaveProperty("oneOf");
   // The canonical projection keeps only what parsing enforces.
   expect(z.toJSONSchema(contract.outputSchema)).not.toHaveProperty("type");
+});
+
+it("keeps update_analysis_settings compact advertised input inline under the depth cap", () => {
+  const contract = ANALYSIS_SETTINGS_TOOL_CONTRACTS.find(
+    ({ name }) => name === "update_analysis_settings",
+  );
+  if (contract === undefined)
+    throw new Error("Missing update_analysis_settings contract");
+  const canonical = advertisedInputJsonSchema(contract);
+  const compacted = compactAdvertisedInputSchema(
+    canonical,
+    ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
+  );
+  expect(compacted.presentation).toBe("inline");
+  const validate = new Ajv2020({ strict: false }).compile(compacted.schema);
+  for (const setting of analysisSettingIds) {
+    const { minimum } = analysisSettingDefinition(setting);
+    expect(
+      validate({ changes: [{ setting, action: "set", value: minimum }] }),
+      `set ${setting}`,
+    ).toBe(true);
+    expect(
+      validate({ changes: [{ setting, action: "reset" }] }),
+      `reset ${setting}`,
+    ).toBe(true);
+    expect(
+      validate({ changes: [{ setting, action: "set", value: "invalid" }] }),
+      `set ${setting} with a string`,
+    ).toBe(false);
+  }
+  expect(
+    validate({ changes: [{ setting: "unknown.setting", action: "reset" }] }),
+  ).toBe(false);
 });
