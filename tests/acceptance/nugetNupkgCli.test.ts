@@ -190,7 +190,7 @@ cliTest("refuses a non-ZIP file through the public CLI", async ({ cli }) => {
   const result = await cli.run({
     arguments: ["inspect-nuget-nupkg", path, "--json"],
   });
-  expect(result.exitCode).not.toBe(0);
+  expect(result.exitCode, result.stderr).toBe(1);
   expect(result.json).toMatchObject({
     code: "invalid_request",
     category: "invalid_input",
