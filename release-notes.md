@@ -407,6 +407,7 @@
 * **mcp:** consolidate deferred runtime and recorder cleanup ([#13247](https://github.com/morluto/rea/issues/13247)) ([051658d](https://github.com/morluto/rea/commit/051658daa15aa2fd952692eaab1b64198c2f2591))
 * **mcp:** consolidate derived operation progress coverage ([#12778](https://github.com/morluto/rea/issues/12778)) ([3caa46f](https://github.com/morluto/rea/commit/3caa46f980bbc1d9ef9e1f25b4e046cfc0d03ca9))
 * **mcp:** consolidate JavaScript Evidence transport checks ([#13055](https://github.com/morluto/rea/issues/13055)) ([9a388af](https://github.com/morluto/rea/commit/9a388afdfca3acbb7a4dc849b047e5c5faf4e906))
+* **mcp:** consolidate progressive catalog wire checks ([#13248](https://github.com/morluto/rea/issues/13248)) ([00974e5](https://github.com/morluto/rea/commit/00974e5a613d6df669c5a7f0ef7f143d03254154))
 * **mcp:** consolidate reduced output schema proof at the SDK boundary ([#12823](https://github.com/morluto/rea/issues/12823)) ([40c6dad](https://github.com/morluto/rea/commit/40c6dade8eb608141ec62dd90a8ee4195d52fbd8))
 * **mcp:** consolidate result delivery and capture checks ([#12836](https://github.com/morluto/rea/issues/12836)) ([11c9512](https://github.com/morluto/rea/commit/11c951228c6ae466c8391a0871164ab11d89aa5e))
 * **mcp:** consolidate runtime shutdown and retry checks ([4edb900](https://github.com/morluto/rea/commit/4edb900bdd1211f76390b95cabc4a2c898198438))
