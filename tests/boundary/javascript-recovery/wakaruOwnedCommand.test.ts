@@ -118,5 +118,4 @@ it.skipIf(process.platform === "win32").each([
       }
     }
   },
-  15_000,
 );

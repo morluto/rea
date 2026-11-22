@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "../../../src/ghidra/GhidraLiteralSearch.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { silentLogger } from "../../../src/logger.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -24,6 +26,7 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { createServer } from "../../../src/server/createServer.js";
 import { waitForExit } from "../../support/process/processFixture.js";
 import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("delivers a complete Ghidra inventory within the existing MCP response budget", async () => {
   const items = Array.from({ length: 30_000 }, (_, index) => ({
@@ -292,7 +295,10 @@ it("searches bytes through MCP and the socket bridge with pagination and skipped
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "byte-search", version: "1" });
+  const client = new Client(
+    { name: "byte-search", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -397,8 +403,8 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     expect(reply.isError).not.toBe(true);
     const evidence = sessionEvidence(harness.session, reply.structuredContent);
     expect(evidence.normalized_result).toEqual([]);
-    expect(evidence.analysis_profile?.parameters.pdb_observations).toBe(
-      "program-info-v5",
+    expect(evidence.analysis_profile?.parameters.producer).toEqual(
+      ghidraProducerIdentity(),
     );
     const limitation = evidence.limitations.find((value) =>
       value.includes(pdb.file),
@@ -453,7 +459,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       );
       expect(evidence.normalized_result).toEqual([]);
       expect(evidence.analysis_profile?.parameters).toMatchObject({
-        string_inventory_evidence: "defined-data-coverage-v1",
+        producer: ghidraProducerIdentity(),
       });
       const coverage = evidence.limitations.find((limitation) =>
         /Only Ghidra-defined string Data.*empty search does not establish/u.test(
@@ -654,7 +660,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     ...(matched_aliases === undefined ? {} : { matched_aliases }),
   });
   let output = jsonValueSchema.parse([
-    row("0x1012a0", "audit_alias", ["audit_primary"]),
+    row("0x1012a0", "source_item_alias", ["source_item_primary"]),
   ]);
   const requests: unknown[] = [];
   const harness = await connectGhidraMcp(
@@ -677,44 +683,79 @@ it("returns a procedure once with the exact-entry names its search matched", asy
   try {
     // The bridge owns exact and regex matching over its entry symbols.
     const exact = await search({
-      pattern: "audit_primary",
+      pattern: "source_item_primary",
       case_sensitive: true,
     });
     expect(exact.normalized_result).toEqual(output);
     expect(exact.raw_result).toBeNull();
     expect(exact.analysis_profile?.parameters).toMatchObject({
-      procedure_search: "primary-and-exact-entry-symbol-names-v1",
+      producer: ghidraProducerIdentity(),
     });
 
     // Node owns Unicode folding: the bridge's non-ASCII candidates are kept
     // only when they match, for secondary names as for primary names.
     output = jsonValueSchema.parse([
-      row("0x1012a0", "audit_alias", ["audit_primary", "Äudit_label"]),
-      row("0x101300", "ÄUDIT_only", ["ünrelated"]),
-      row("0x101340", "FUN_00101340", ["AUDİT_x", "AUDIT_label"]),
-      row("0x101380", "Audit_plain"),
+      row("0x1012a0", "source_item_alias", [
+        "source_item_primary",
+        "Śource_item_label",
+      ]),
+      row("0x101300", "ŚOURCE_ITEM_only", ["ünrelated"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_İTEM_x", "SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
     ]);
-    const folded = await search({ pattern: "audit" });
+    const folded = await search({ pattern: "source_item" });
     expect(folded.normalized_result).toEqual([
-      row("0x1012a0", "audit_alias", ["audit_primary"]),
-      row("0x101340", "FUN_00101340", ["AUDIT_label"]),
-      row("0x101380", "Audit_plain"),
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
     ]);
     expect(folded.raw_result).toEqual(output);
+    expect(folded.limitations).toContain(GHIDRA_LITERAL_CANDIDATES_LIMITATION);
+    expect(exact.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
     expect(requests).toEqual([
-      expect.objectContaining({ pattern: "audit_primary" }),
-      expect.objectContaining({ pattern: "audit", case_sensitive: false }),
+      expect.objectContaining({ pattern: "source_item_primary" }),
+      expect.objectContaining({
+        pattern: "source_item",
+        case_sensitive: false,
+      }),
     ]);
 
-    // An empty alias list is not a match report.
-    output = jsonValueSchema.parse([row("0x1012a0", "audit_alias", [])]);
-    const malformed = await harness.mcp.callTool({
-      name: "search_procedures",
-      arguments: { pattern: "audit_", mode: "regex" },
+    output = jsonValueSchema.parse([row("0x101380", "ſource_item_plain")]);
+    const regex = await search({
+      pattern: "^ſource_item_plain$",
+      mode: "regex",
     });
-    expect(parseMcpToolError(malformed)).toMatchObject({
-      error: { code: "unreadable_output" },
-    });
+    expect(regex.normalized_result).toEqual(output);
+    expect(regex.raw_result).toBeNull();
+    expect(regex.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
+    const invalidRows = [
+      {
+        arguments: { pattern: "source_", mode: "regex" },
+        value: row("0x1012a0", "source_item_alias", []),
+      },
+      {
+        arguments: { pattern: "source_item" },
+        value: {
+          ...row("0x101440", "unrelated"),
+          procedure: { external: null },
+        },
+      },
+    ];
+    for (const invalid of invalidRows) {
+      output = jsonValueSchema.parse([invalid.value]);
+      const malformed = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: invalid.arguments,
+      });
+      expect(parseMcpToolError(malformed)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+    }
   } finally {
     await harness.close();
   }

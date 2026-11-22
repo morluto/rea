@@ -2,15 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   HEX_RECORD_MAX_FILE_BYTES,
-  HEX_RECORD_MAX_RUNS,
   createHexRecordDecoder,
   detectHexRecordEncoding,
 } from "./hexRecords.js";
-import {
-  INTEL_HEX_MAX_LINE_CHARS,
-  SREC_MAX_LINE_CHARS,
-  type HexRecordEncoding,
-} from "./hexRecordSyntax.js";
+import type { HexRecordEncoding } from "./hexRecordSyntax.js";
 import {
   INTEL_HEX_I16,
   INTEL_HEX_I32_GAP,
@@ -18,6 +13,7 @@ import {
   SREC_S19,
   SREC_S37,
   SREC_WIKIPEDIA,
+  intelHexInterleavedRuns,
   intelHexRecord,
   srecRecord,
 } from "./hexRecords.fixture.js";
@@ -142,7 +138,9 @@ describe("Intel HEX decoding", () => {
       },
     });
   });
+});
 
+describe("Intel HEX malformed records", () => {
   it.each([
     [
       "checksum",
@@ -166,6 +164,16 @@ describe("Intel HEX decoding", () => {
       "fixed length",
       `${intelHexRecord(4, 0, [8])}\n`,
       /line 1.*04.*2 data bytes.*1/iu,
+    ],
+    [
+      "segment start with a reserved offset",
+      `${intelHexRecord(3, 0x1234, [0, 0, 0, 1])}\n`,
+      /line 1.*03.*0x0000.*0x1234/iu,
+    ],
+    [
+      "linear start with a reserved offset",
+      `${intelHexRecord(5, 0x1234, [0, 0, 0, 1])}\n`,
+      /line 1.*05.*0x0000.*0x1234/iu,
     ],
     [
       "extended address with a non-zero address field",
@@ -233,9 +241,9 @@ describe("Intel HEX lines, termination and limits", () => {
       0,
       Array.from({ length: 255 }, () => 1),
     );
-    expect(longest).toHaveLength(INTEL_HEX_MAX_LINE_CHARS);
+    expect(longest).toHaveLength(521);
     expect(image(`${longest}\r\n:00000001FF\n`).metadata.data_bytes).toBe(255);
-    const decoded = decode(`${longest}0\n`);
+    const decoded = decode(`${longest} \n:00000001FF\n`);
     expect(decoded).toMatchObject({
       ok: false,
       error: {
@@ -245,27 +253,19 @@ describe("Intel HEX lines, termination and limits", () => {
     });
   });
 
-  it("bounds address runs before creating another", () => {
-    const records = (count: number): string => {
-      const rows: string[] = [];
-      for (let index = 0; index < count; index += 1) {
-        const address = index * 2;
-        if (address % 0x1_0000 === 0)
-          rows.push(
-            intelHexRecord(4, 0, [address >>> 24, (address >>> 16) & 0xff]),
-          );
-        rows.push(intelHexRecord(0, address & 0xffff, [index & 0xff]));
-      }
-      return `${rows.join("\n")}\n:00000001FF\n`;
-    };
-    expect(image(records(HEX_RECORD_MAX_RUNS)).regions).toHaveLength(
-      HEX_RECORD_MAX_RUNS,
-    );
-    const over = decode(records(HEX_RECORD_MAX_RUNS + 1), "intel-hex", 65_536);
-    expect(over).toMatchObject({
-      ok: false,
-      error: { kind: "limit", boundary: "capacity" },
+  it("merges the full physical run allowance into one exact address range", () => {
+    const decoded = image(intelHexInterleavedRuns());
+    expect(decoded.metadata).toMatchObject({
+      data_record_count: 65_536,
+      region_count: 1,
+      data_bytes: 65_536,
     });
+    expect(decoded.regions).toMatchObject([
+      { start: 0, end: 0xffff, recordCount: 65_536 },
+    ]);
+    expect([...decoded.regions[0]!.bytes.subarray(-4)]).toEqual([
+      252, 253, 254, 255,
+    ]);
   });
 
   it("refuses a file over the fixed size ceiling before allocation", () => {
@@ -376,9 +376,15 @@ describe("S-record decoding", () => {
       0,
       Array.from({ length: 252 }, () => 1),
     );
-    expect(longest).toHaveLength(SREC_MAX_LINE_CHARS);
-    expect(image(`${longest}\n`, "srec").metadata.data_bytes).toBe(252);
-    expect(decode(`${longest} 0\n`, "srec").ok).toBe(false);
+    expect(longest).toHaveLength(514);
+    expect(image(`${longest}\r\n`, "srec").metadata.data_bytes).toBe(252);
+    expect(decode(`${longest} \n`, "srec")).toMatchObject({
+      ok: false,
+      error: {
+        kind: "format",
+        message: expect.stringMatching(/line 1.*514.*S-record/iu),
+      },
+    });
   });
 });
 

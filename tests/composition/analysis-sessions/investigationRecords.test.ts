@@ -1,8 +1,13 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { BinarySession } from "../../../src/application/binary/BinarySession.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
+import { immutableAnalysisSnapshot } from "../../../src/domain/analysisSnapshot.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { createImmutableEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
+import { ok } from "../../../src/domain/result.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { recordUnknownInputSchema } from "../../../src/domain/residualUnknown.js";
 import {
   createBinarySessionTargets,
@@ -43,7 +48,7 @@ it("uses the composed record owner and preserves best-effort post-commit notific
     throw new Error("Synthetic async observer failure");
   });
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     { operation: "independent-app", parameters: {}, result: true },
   );
@@ -159,4 +164,128 @@ it("notifies an Unknown-only bundle change even when no new Evidence is added", 
     },
   });
   expect(revisions).toEqual([1]);
+});
+
+it("detaches exported snapshot payloads after sealed bundle or snapshot import while keeping internal reads shared", async () => {
+  const [first] = await createBinarySessionTargets();
+  const session = createSession();
+  expect((await session.open(first)).ok).toBe(true);
+  const target = session.activeTarget();
+  if (target === undefined) throw new Error("Missing open target");
+  const evidence = createEvidence(
+    target,
+    { id: "fixture", name: "Fixture analysis provider", version: "1" },
+    {
+      operation: "address_name",
+      parameters: { address: "0x1000", nested: { flag: true } },
+      result: { nested: ["observed"] },
+      rawResult: { raw: ["payload"] },
+    },
+  );
+  const sealedBundle = createImmutableEvidenceBundle([evidence]);
+  expect(session.importEvidenceBundle(sealedBundle).ok).toBe(true);
+
+  const exported = session.exportAnalysisSnapshot();
+  if (!exported.ok) throw exported.error;
+  const exportedRecord = exported.value.evidence_bundle.records.find(
+    (record) => record.evidence_id === evidence.evidence_id,
+  );
+  if (exportedRecord === undefined)
+    throw new Error("Missing exported Evidence record");
+  expect(Object.isFrozen(exportedRecord.normalized_result)).toBe(false);
+  expect(Object.isFrozen(exportedRecord.raw_result)).toBe(false);
+  expect(Object.isFrozen(exportedRecord.parameters)).toBe(false);
+  const normalized = exportedRecord.normalized_result as {
+    nested: string[];
+    added?: string;
+  };
+  normalized.added = "edited";
+  normalized.nested.push("edited-item");
+  const raw = exportedRecord.raw_result as { raw: string[]; edited?: boolean };
+  raw.edited = true;
+  raw.raw.push("edited-raw");
+  expect(exportedRecord.normalized_result).toEqual({
+    nested: ["observed", "edited-item"],
+    added: "edited",
+  });
+  expect(exportedRecord.raw_result).toEqual({
+    raw: ["payload", "edited-raw"],
+    edited: true,
+  });
+
+  // Internal reads still share the sealed immutable snapshot untouched.
+  const borrowedRecord = session.evidenceForAnalysis(evidence.evidence_id);
+  const borrowedBundle = session.immutableEvidenceBundle();
+  expect(borrowedRecord).toBe(sealedBundle.records[0]);
+  expect(borrowedBundle.records[0]).toBe(borrowedRecord);
+  expect(Object.isFrozen(borrowedRecord)).toBe(true);
+  expect(Object.isFrozen(borrowedRecord?.normalized_result)).toBe(true);
+  expect(Object.isFrozen(borrowedRecord?.raw_result)).toBe(true);
+  expect(borrowedRecord).toEqual(evidence);
+
+  // Imported sealed AnalysisSnapshot entries are also detached on export.
+  const baseProvider = createCacheProvider([]);
+  const source = ownSession(
+    createTestBinarySession({
+      ...baseProvider,
+      createClient: () => ({
+        execute: () =>
+          Promise.resolve(
+            ok(
+              createAnalysisExecution(
+                { nested: ["entry-observed"] },
+                baseProvider.identity(),
+                { rawResult: { raw: ["entry-raw"] } },
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(ok(null)),
+      }),
+    }),
+  );
+  expect((await source.open(first)).ok).toBe(true);
+  expect(
+    (
+      await source.execute("address_name", {
+        address: "0x1000",
+        document: "fixture",
+      })
+    ).ok,
+  ).toBe(true);
+  const sourceSnapshot = source.exportAnalysisSnapshot();
+  if (!sourceSnapshot.ok) throw sourceSnapshot.error;
+  const sealedSnapshot = immutableAnalysisSnapshot(sourceSnapshot.value);
+  const recipient = createSession();
+  expect((await recipient.open(first)).ok).toBe(true);
+  expect(recipient.importAnalysisSnapshot(sealedSnapshot).ok).toBe(true);
+  const reExported = recipient.exportAnalysisSnapshot();
+  if (!reExported.ok) throw reExported.error;
+  const reExportedEntry = reExported.value.entries[0];
+  if (reExportedEntry === undefined)
+    throw new Error("Missing re-exported snapshot entry");
+  expect(Object.isFrozen(reExportedEntry.execution.result)).toBe(false);
+  expect(Object.isFrozen(reExportedEntry.execution.raw_result)).toBe(false);
+  expect(Object.isFrozen(reExportedEntry.parameters)).toBe(false);
+  (
+    reExportedEntry.execution.result as { nested: string[]; edited?: boolean }
+  ).edited = true;
+  (reExportedEntry.execution.result as { nested: string[] }).nested.push(
+    "edited-entry",
+  );
+  (
+    reExportedEntry.execution.raw_result as { raw: string[]; edited?: boolean }
+  ).edited = true;
+  expect(reExportedEntry.execution.result).toEqual({
+    nested: ["entry-observed", "edited-entry"],
+    edited: true,
+  });
+  expect(
+    (reExportedEntry.execution.raw_result as { edited?: boolean }).edited,
+  ).toBe(true);
+  const recipientRecord = recipient.immutableEvidenceBundle().records[0];
+  expect(Object.isFrozen(recipientRecord)).toBe(true);
+  expect(Object.isFrozen(recipientRecord?.normalized_result)).toBe(true);
+  expect(recipientRecord?.normalized_result).toEqual({
+    nested: ["entry-observed"],
+  });
 });

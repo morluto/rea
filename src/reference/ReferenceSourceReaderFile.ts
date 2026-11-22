@@ -9,7 +9,7 @@ import {
   openRegularFile,
 } from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/index.js";
 import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 
 import {
@@ -22,10 +22,8 @@ import {
   sameFile,
   validateDirectory,
 } from "./ReferenceSourceReaderValidate.js";
-import type {
-  ReferenceSourceEntry,
-  StableFileRequest,
-} from "./ReferenceSourceReaderTypes.js";
+import type { ReferenceSourceEntry } from "./ReferenceSourceReaderTypes.js";
+import type { StableFileRequest } from "./ReferenceSourceReaderTraversal.js";
 
 const READ_CHUNK_BYTES = 64 * 1024;
 
@@ -283,7 +281,8 @@ const readStableFileEntry = async (
       total: contents.total,
       ...(signal === undefined ? {} : { signal }),
     });
-  } catch (cause: unknown) {
+  } catch (caught: unknown) {
+    let cause = caught;
     if (cause instanceof RegularFileAdmissionFailure) {
       retain(cause.owner);
       cause = cause.cause;

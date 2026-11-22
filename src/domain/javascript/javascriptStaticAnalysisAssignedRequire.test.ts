@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 it.each([
   [
@@ -268,7 +268,7 @@ it.each([true, false])(
       expect.objectContaining({ kind: "require", specifier: null }),
     ]);
     expect(
-      analysis.analysis_coverage?.examination.semantic_resource_limits,
+      analysis.analysis_coverage.examination.semantic_resource_limits,
     ).toContain("alias-selections");
   },
 );
@@ -289,7 +289,7 @@ it.each(["defineProperty", "assign"])(
       expect.objectContaining({ kind: "require", specifier: null }),
     ]);
     expect(
-      analysis.analysis_coverage?.examination.semantic_resource_limits,
+      analysis.analysis_coverage.examination.semantic_resource_limits,
     ).toContain("alias-selections");
   },
 );
@@ -306,7 +306,7 @@ it.each(["(flag?process.foo:r)", "(flag?r:process.foo)"])(
       expect.objectContaining({ kind: "require", specifier: null }),
     ]);
     expect(
-      analysis.analysis_coverage?.examination.semantic_resource_limits,
+      analysis.analysis_coverage.examination.semantic_resource_limits,
     ).toContain("alias-selections");
   },
 );

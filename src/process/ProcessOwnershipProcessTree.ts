@@ -1,6 +1,6 @@
 import type { ProcessTableEntry } from "./ProcessOwnership.js";
 
-/** Exclude process-table entries that the operating system has already reaped. */
+/** Exclude exited processes whose zombie rows remain until reaping. */
 export const liveProcesses = (
   members: readonly ProcessTableEntry[],
 ): readonly ProcessTableEntry[] =>
@@ -24,7 +24,8 @@ export const descendantsOf = (
     if (visited.has(process.pid)) continue;
     visited.add(process.pid);
     descendants.push(process);
-    pending.push(...(childrenByParent.get(process.pid) ?? []));
+    for (const child of childrenByParent.get(process.pid) ?? [])
+      pending.push(child);
   }
   return descendants;
 };

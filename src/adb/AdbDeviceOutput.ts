@@ -275,7 +275,7 @@ export interface AdbPackagePathEntry {
  */
 export const parsePmPathOutput = (
   stdout: string,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): {
   paths: readonly AdbPackagePathEntry[];
   rejectedPaths: readonly {

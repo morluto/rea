@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,7 +37,7 @@ cliTest.for([
     bytes[8] = version;
     await writeFile(path, bytes);
     const hash = createHash("sha256").update(bytes).digest("hex");
-    const output = await cli.sharedCliRun!({
+    const output = await cli.run({
       arguments: ["inspect-elf-notes", path, "--json"],
     });
     expect(output.exitCode, output.stderr).toBe(0);
@@ -46,7 +47,7 @@ cliTest.for([
     const schema = toolContract("inspect_elf_notes").outputSchema;
     for (const raw of [output.json, response.structuredContent]) {
       const evidence = schema.parse(raw);
-      expect(evidence.subject?.digest.sha256).toBe(hash);
+      expect(fileIdentity(evidence.subject).sha256).toBe(hash);
       const report = evidence.normalized_result;
       expect(report.coverage).toMatchObject({
         status: "complete",

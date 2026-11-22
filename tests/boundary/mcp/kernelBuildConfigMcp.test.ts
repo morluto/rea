@@ -94,7 +94,7 @@ mcpTest("reports a truncated IKCFG member as incomplete", async ({ mcp }) => {
     const evidence = contract.outputSchema.parse(response.structuredContent);
     expect(evidence.normalized_result).toMatchObject({
       config: { status: "incomplete", reason: "config_gzip_truncated" },
-      coverage: { status: "incomplete" },
+      coverage: { status: "partial" },
     });
   } finally {
     await session.close();

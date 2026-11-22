@@ -1,6 +1,6 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Cli } from "incur";
 import pino from "pino";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -10,11 +10,11 @@ import {
   type AnalysisClient,
   type AnalysisOperationPort,
   type AnalysisProvider,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { runDirectAnalysis } from "../../../src/application/DirectAnalysis.js";
 import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
-import { CLEANUP_STOPPED_VALUE_TRACE } from "../../../src/application/native/NativeValueTrace.js";
 import {
+  EXPECTED_CLEANUP_STOPPED_TRACE,
   failingValueTraceReads,
   valueTraceDiamond,
   valueTraceProvider,
@@ -85,7 +85,7 @@ const serveTraceCli = async (
     createNativeBinarySession: createSession,
     createManagedBinarySession: createSession,
   };
-  const cli = Cli.create("rea-value-trace-cli-test", { sync: false });
+  const cli = createCommandCli();
   registerCoreNativeCommands(
     cli,
     pino({ enabled: false }),
@@ -254,7 +254,7 @@ it.each([
     expect(admitted.unknowns).toContainEqual({
       procedure: "0x2000",
       address: null,
-      reason: CLEANUP_STOPPED_VALUE_TRACE,
+      reason: EXPECTED_CLEANUP_STOPPED_TRACE,
     });
   },
 );

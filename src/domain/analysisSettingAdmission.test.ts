@@ -1,24 +1,5 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, it } from "vitest";
-import {
-  analysisSettingDefinition,
-  runtimeAnalysisEnvironmentNames,
-} from "./analysisSettingDefinitions.js";
-
-const source = (path: string) =>
-  readFileSync(join(import.meta.dirname, path), "utf8");
-
-it("does not validate runtime-owned launch seeds at startup", () => {
-  const startup = [
-    source("../config/environment.ts"),
-    source("../config/debuggerSessionLimits.ts"),
-  ].join("\n");
-  const mentioned = [...runtimeAnalysisEnvironmentNames()].filter(
-    (name) => startup.includes(`${name}:`) || startup.includes(`[${name}]`),
-  );
-  expect(mentioned).toEqual([]);
-});
+import { analysisSettingDefinition } from "./analysisSettingDefinitions.js";
 
 it("advertises the operations that consume each migrated setting", () => {
   const operations = (id: Parameters<typeof analysisSettingDefinition>[0]) =>

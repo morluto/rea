@@ -25,6 +25,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { waitForExit } from "../../support/process/processFixture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const fixturePath = fileURLToPath(
   new URL("../../fixtures/fakeGhidra.mjs", import.meta.url),
@@ -103,15 +104,15 @@ class FixtureLauncher implements GhidraLauncher {
 const installationHost: GhidraInstallationHost = {
   platform: "linux",
   architecture: "x64",
-  readText: () => "application.version=12.1.4\napplication.java.min=21\n",
+  readText: () => "application.version=12.2\napplication.java.min=25\n",
   executable: () => true,
   probeJava: () =>
     javaProbeOk<GhidraJavaObservation>({
       osArch: "amd64",
       osName: "Linux",
-      version: "21.0.11",
-      major: 21,
-      home: "/fixture/jdk-21",
+      version: "25.0.1",
+      major: 25,
+      home: "/fixture/jdk-25",
       bits: 64,
       runtime: "jdk",
     }),
@@ -125,7 +126,7 @@ const connectGhidra = async () => {
   const source = elf(2, 1, 62);
   await writeFile(target, source);
   const config = parseConfig({
-    GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.1.4_PUBLIC",
+    GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.2_PUBLIC",
   });
   if (!config.ok) throw config.error;
   const launcher = new FixtureLauncher();
@@ -169,7 +170,10 @@ const connectGhidra = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const mcp = new Client({ name: "ghidra-reopen", version: "1.0.0" });
+  const mcp = new Client(
+    { name: "ghidra-reopen", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const close = async () => {

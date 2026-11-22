@@ -1,6 +1,8 @@
 import { once } from "node:events";
 import type { Server } from "node:http";
 
+import { isAbortOf } from "../../process/SignalAbort.js";
+
 /** Cancel DNS/bind through Node's listener owner without coupling later shutdown to the startup signal. */
 export const listenHttpServer = async (
   server: Server,
@@ -17,11 +19,9 @@ export const listenHttpServer = async (
     await once(server, "listening", { signal: startup.signal });
     startup.signal.throwIfAborted();
   } catch (cause: unknown) {
-    if (
-      startup.signal.aborted &&
-      (cause === startup.signal.reason ||
-        (cause instanceof Error && cause.name === "AbortError"))
-    ) {
+    // Only startup's own abort is the caller's cancellation; another failure,
+    // including an abort error with another reason, is reported as itself.
+    if (isAbortOf(cause, startup.signal)) {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => {
           if (

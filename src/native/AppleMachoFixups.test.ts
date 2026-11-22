@@ -1,8 +1,12 @@
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { describe, expect, it, vi } from "vitest";
 
-import { decodeChainedPointer } from "./AppleMachoFixups.js";
+import {
+  chainedImportNames,
+  decodeChainedPointer,
+} from "../domain/apple/appleMachoFixups.js";
 import { parsePointerFixups } from "./AppleMachoFixups.fixture.js";
-import type { Segment } from "./AppleMachoSelection.js";
+import type { Segment } from "../domain/apple/appleMachoSelection.js";
 
 const BASE = 0x100000000n;
 const IMPORTS = [
@@ -146,6 +150,28 @@ const chainedData = (format: 1 | 2 | 3): Buffer => {
   data.writeBigUInt64LE(1n | field(1n, 63), 0x4008);
   return data;
 };
+
+describe("chained import names", () => {
+  it.each([1, 2, 3] as const)(
+    "reads format %i import-table names without resolving libraries",
+    (format) => {
+      // Ordinals 1 and 2 name dependencies that this reader does not need.
+      expect(chainedImportNames(chainedData(format))).toEqual([
+        "_OBJC_CLASS_$_NSObject",
+        "_free",
+      ]);
+    },
+  );
+
+  it("rejects a malformed import table", () => {
+    const data = chainedData(1);
+    data.writeUInt32LE(4, 20);
+    expect(() => chainedImportNames(data)).toThrow(ParseFailureError);
+    expect(() => chainedImportNames(Buffer.alloc(0))).toThrow(
+      ParseFailureError,
+    );
+  });
+});
 
 const SEGMENTS: Segment[] = [
   { address: BASE, size: 0x4000n, offset: 0, executable: true },
@@ -451,6 +477,36 @@ const legacyRebaseInput = (stream: Buffer) => {
     ),
   };
 };
+
+it("charges a padded rebase operand that exhausts the work budget", () => {
+  // Work is bounded by twice the source bytes (0x20000). Each padded
+  // SET_SEGMENT_AND_OFFSET_ULEB stream charges ~51 KiB, so the third exhausts
+  // the budget and a later valid stream must not run on uncharged work.
+  const data = Buffer.alloc(0x10000);
+  const padding = 0xc800;
+  const padded = Buffer.concat([
+    Buffer.from([0x11, 0x20]),
+    Buffer.alloc(padding, 0x80),
+    Buffer.from([0, 0]),
+  ]);
+  padded.copy(data, 0x2000);
+  const valid = Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0]);
+  valid.copy(data, 0xf000);
+  const stream = { offset: 0x2000, size: padded.length };
+  const fixups = parsePointerFixups(
+    data,
+    {
+      chained: null,
+      binds: [],
+      rebases: [stream, stream, stream, { offset: 0xf000, size: valid.length }],
+      dylibs: [],
+    },
+    [{ address: BASE, size: 0x2000n, offset: 0, executable: false }],
+    BASE,
+  );
+  expect(fixups).toMatchObject({ examined: 4, decoded: 2 });
+  expect(fixups.issues).toHaveLength(2);
+});
 
 it("marks only opcode-selected pointer slots rebased, including target zero", () => {
   // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
@@ -2076,4 +2132,34 @@ it("preserves classic special ordinals and returns unsupported at invalid bind l
     kind: "unsupported",
     reason: `Dylib ordinal ${oversized} exceeds the safe integer range`,
   });
+});
+
+it("keeps the full signed addend in a format-3 import", () => {
+  const data = chainedData(3);
+  const secondImport = data.readUInt32LE(8) + 16;
+  const addend = -0x123456789abcdefn;
+  data.writeBigInt64LE(addend, secondImport + 8);
+  const fixups = parsePointerFixups(
+    data,
+    {
+      chained: { offset: 0, size: 180 },
+      binds: [],
+      rebases: [],
+      dylibs: ["/a", "/b"],
+    },
+    SEGMENTS,
+    BASE,
+  );
+  expect(
+    fixups.decode(BASE + 0x4008n, data.readBigUInt64LE(0x4008)),
+  ).toMatchObject({
+    kind: "bind",
+    symbol: "_free",
+    library: "/b",
+    addend,
+  });
+  const end = data.readUInt32LE(12);
+  expect(() => chainedImportNames(data.subarray(0, end - 1))).toThrow(
+    ParseFailureError,
+  );
 });

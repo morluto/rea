@@ -106,6 +106,16 @@ const cases: readonly AcceptanceCase[] = [
     diagnostics: [],
   },
   {
+    name: "rejects test-owned wait deadlines through the repository plugin",
+    filename: testSource,
+    source: `
+      import { expect } from "vitest";
+      await expect.poll(() => true, { timeout: 5_000 }).toBe(true);
+    `,
+    exitCode: 1,
+    diagnostics: [{ code: "rea(project-wait-deadline)", severity: "error" }],
+  },
+  {
     name: "rejects an unreturned promise callback containing assertions",
     filename: testSource,
     source: `
@@ -249,7 +259,6 @@ for (const scenario of cases) {
       ],
       {
         cwd: project,
-        timeoutMs: 15_000,
       },
     );
     expect(result.signal, result.stderr).toBeNull();
@@ -294,7 +303,7 @@ export const unnecessary = /\!/;
         "--fix",
         applicationSource,
       ],
-      { cwd: project, timeoutMs: 15_000 },
+      { cwd: project },
     );
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr || result.stdout).toBe(0);

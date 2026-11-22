@@ -1,11 +1,11 @@
 /** Compare binary hardening rows with host toolchains when they exist. */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture, onceConfirmed } from "./lib/verifier-fixture.mjs";
 
 const { readElfHardening } = await importVerifierSource(
   "../src/native/hardening/ElfHardening.ts",
@@ -99,10 +99,11 @@ const versionLine = async (command, args = ["--version"]) => {
 const statesOf = (rows) =>
   Object.fromEntries(rows.map((row) => [row.property, row.state]));
 
-// The root holds every compiled image. Remove it only after the owned
-// commands have settled, and keep it when their cleanup failed.
+// The root holds every compiled image. The fixture removes it only after the
+// owned commands have settled, and keeps it when their cleanup failed.
+const closeCommands = onceConfirmed(() => commands.close());
+let rootFixture;
 let root;
-let commandsClosed = false;
 await withVerifierCleanup(async () => {
   const report = {
     host: `${process.platform} ${process.arch}`,
@@ -144,20 +145,21 @@ await withVerifierCleanup(async () => {
   }
   `;
 
-  root = await mkdtemp(join(tmpdir(), "rea-binary-hardening-"));
+  rootFixture = await VerifierFixture.open({
+    prefix: "rea-binary-hardening-",
+    private: false,
+  });
+  rootFixture.releaseAfter(closeCommands);
+  root = rootFixture.path;
   const cFile = join(root, "sample.c");
   await writeFile(cFile, source);
   await verifyElf(root, cFile, report);
   await verifyMacho(root, cFile, report);
   console.log(JSON.stringify(report, null, 2));
 }, [
+  closeCommands,
   async () => {
-    await commands.close();
-    commandsClosed = true;
-  },
-  async () => {
-    if (commandsClosed && root !== undefined)
-      await rm(root, { recursive: true, force: true });
+    await rootFixture?.release();
   },
   async () => {
     process.off("SIGINT", interrupt);

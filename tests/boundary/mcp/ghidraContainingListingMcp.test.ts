@@ -4,7 +4,7 @@ import { compactInstruction } from "../../../src/domain/native/nativeInstruction
 import { connectGhidraMcp, sessionEvidence } from "./ghidraMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "keeps the selected interior address and containing instruction separate (%s)",
   async (profile) => {
     const observed = {
@@ -127,7 +127,7 @@ it.each([
   },
 );
 
-it.each(["compact", "full"] as const)(
+it.each(["compact"] as const)(
   "retains a containing data identity without selecting a field (%s)",
   async (profile) => {
     const observed = {

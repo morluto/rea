@@ -8,8 +8,8 @@ import {
   type DesktopPathState,
   type DesktopWalk,
 } from "../../domain/desktop/desktopStateDiff.js";
-import type { DesktopContentStore } from "../../desktop/DesktopContentStore.js";
-import { walkHomeState } from "../../desktop/HomeStateWalker.js";
+import type { CaptureContentStore } from "../../ports/CaptureContentStore.js";
+import type { DesktopCaptureProvider } from "../../ports/DesktopApplicationSession.js";
 
 /** Where each checkpoint walks and which paths count as application state. */
 export interface CheckpointScope {
@@ -61,7 +61,8 @@ export class CheckpointRecorder {
 
   constructor(
     readonly scope: CheckpointScope,
-    readonly store: DesktopContentStore,
+    readonly store: CaptureContentStore,
+    readonly walkHome: DesktopCaptureProvider["walkHome"],
   ) {}
 
   async #retain(
@@ -118,9 +119,9 @@ export class CheckpointRecorder {
     trigger: DesktopCheckpoint["trigger"],
     atMs: number,
     signal?: AbortSignal,
-  ): Promise<void> {
+  ): Promise<DesktopCheckpoint> {
     const { roots, excluded, maxEntries, contentRoots } = this.scope;
-    const walk = await walkHomeState(roots, excluded, maxEntries, signal);
+    const walk = await this.walkHome(roots, excluded, maxEntries, signal);
     for (const mountPoint of walk.mountPoints) this.mountPoints.add(mountPoint);
     const retained: DesktopCheckpoint["retained"] = [];
     let changes: DesktopCheckpoint["changes"] = [];
@@ -135,7 +136,7 @@ export class CheckpointRecorder {
     } else
       ({ changes, unconfirmed } = await this.#changes(walk, retained, signal));
     this.#previous = walk;
-    this.checkpoints.push({
+    const checkpoint: DesktopCheckpoint = {
       name,
       trigger,
       at_ms: atMs,
@@ -146,6 +147,8 @@ export class CheckpointRecorder {
       unconfirmed_changes: unconfirmed,
       changes,
       retained,
-    });
+    };
+    this.checkpoints.push(checkpoint);
+    return checkpoint;
   }
 }

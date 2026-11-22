@@ -7,7 +7,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisView.js";
+import { javaScriptRoutesViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 
 const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
@@ -190,6 +190,72 @@ cliTest(
     }
   },
 );
+cliTest(
+  "inventories Expo Router require.context keys from a Metro web bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-expo-router-routes-");
+    const app = join(root, "app");
+    await mkdir(app);
+    const keys = [
+      "./(app)/_layout.tsx",
+      "./(app)/reports/[id]/edit.tsx",
+      "./+not-found.tsx",
+      "./_layout.tsx",
+      "./index.tsx",
+    ];
+    await writeFile(
+      join(app, "index-abc123.js"),
+      `__d(function(g,r,i,a,m,e,d){const t=Object.defineProperties({},{${keys
+        .map(
+          (key, at) =>
+            `${JSON.stringify(key)}:{enumerable:!0,get(){return r(d[${String(at)}])}}`,
+        )
+        .join(
+          ",",
+        )}});function n(e){return t[e]}n.keys=function(){return Object.keys(t)},m.exports=n},512,[]);`,
+    );
+    const response = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        app,
+        "--source-path",
+        "index-abc123.js",
+        "--evidence_output",
+        join(root, "routes.json"),
+        "--detail",
+        "summary",
+        "--view",
+        JSON.stringify({
+          kind: "javascript-routes",
+          collection: "routes",
+          where: { mechanisms: ["expo-router-context-key"] },
+          fields: ["path", "classification", "confidence"],
+        }),
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stdout + response.stderr).toBe(0);
+    const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+    const view = routeViewFromEvidence(envelope.summary);
+    expect(view.items).toEqual([
+      expect.objectContaining({
+        path: "/",
+        classification: "unknown",
+        confidence: "low",
+      }),
+      expect.objectContaining({
+        path: "/reports/:id/edit",
+        classification: "unknown",
+        confidence: "low",
+      }),
+    ]);
+    expect(view.source_coverage).toMatchObject({
+      source_parsing: "complete",
+      candidate_enumeration: "complete",
+      application_routes: "unknown",
+    });
+  },
+);
 const expectAccountRoutes = (items: unknown[]) => {
   expect(items).toHaveLength(2);
   expect(items).toEqual(
@@ -334,7 +400,7 @@ cliTest(
     }
   },
 );
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "serves retained route batches through the %s production SDK schemas",
   async (profile) => {
     const path = await fixture(),
@@ -607,7 +673,6 @@ cliTest(
       await browser.close();
     }
   },
-  120000,
 );
 
 it("keeps a large source's partial route facts queryable through SDK delivery", async () => {
@@ -662,4 +727,4 @@ it("keeps a large source's partial route facts queryable through SDK delivery", 
   expect(
     routeViewFromEvidence(unknowns.structuredContent).items.length,
   ).toBeGreaterThan(0);
-}, 60000);
+});

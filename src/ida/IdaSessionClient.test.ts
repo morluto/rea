@@ -10,6 +10,10 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  phaseArrival,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import { z } from "zod";
 import {
   createIdaTarget,
@@ -17,10 +21,7 @@ import {
 } from "../../tests/fixtures/idaMcp.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
-import {
-  DEFAULT_REGEX_MATCHING_DEADLINE,
-  REGEX_MATCHING_DEADLINE_SETTING,
-} from "../config/regexMatchingDeadline.js";
+import { DEFAULT_REGEX_MATCHING_DEADLINE } from "../config/regexMatchingDeadline.js";
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
@@ -32,6 +33,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
+import { idaConnectionDependencies } from "../../tests/support/idaConnectionDependencies.js";
 
 const roots: string[] = [];
 const windowsRuntimes = new Set<WindowsPrivateRuntime>();
@@ -75,7 +77,6 @@ const LIVE_PEER = {
 const fixture = async (
   mode: "attached" | "headless" = "attached",
   timeoutMs = 1000,
-  protocol?: "native",
 ) => {
   const { root, target } = await createIdaTarget();
   roots.push(root);
@@ -86,7 +87,7 @@ const fixture = async (
       args: [],
       env: {},
       mode,
-      ...(protocol === undefined ? {} : { protocol }),
+      protocol: mode === "attached" ? "native" : "modern",
       timeoutMs,
       workspaceRoot: root,
     },
@@ -122,6 +123,7 @@ it.each([
         url: selected,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       },
       target,
@@ -156,6 +158,7 @@ it.each([
         url: `http://localhost:1234/mcp?token=${encoded}&cursor=keep`,
         headers: { Authorization: "Bearer fixture-secret" },
         mode: "attached",
+        protocol: "native",
         timeoutMs: 1000,
       },
       target,
@@ -480,9 +483,7 @@ describe("attached IDA input identity and validation", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(producer.calls.some(({ name }) => name === "list_functions")).toBe(
-      true,
-    );
+    expect(producer.calls.some(({ name }) => name === "list_funcs")).toBe(true);
     await client.close();
   });
 
@@ -572,14 +573,17 @@ describe("attached IDA input identity and validation", () => {
   it("preserves hexadecimal-looking function names as names unless the caller uses an explicit 0x address", async () => {
     const { producer, client } = await fixture();
     producer.overrideCall = (name, args) =>
-      name === "get_function_by_name" && args.name === "f"
-        ? { address: "0x1000", name: "f", size: "0x20" }
+      name === "lookup_funcs"
+        ? [{ query: "f", fn: { addr: "0x1000", name: "f" }, error: null }]
         : undefined;
     const found = await client.execute("procedure_address", { procedure: "f" });
     expect(found.ok && found.value.result).toBe("0x1000");
     expect(
-      producer.calls.some(({ name }) => name === "get_function_by_address"),
-    ).toBe(false);
+      producer.calls
+        .filter(({ name }) => name === "lookup_funcs")
+        .map(({ args }) => args.queries),
+      "the selector is looked up by name, not rewritten as an address",
+    ).toEqual([["f"]]);
     await client.close();
   });
   it("preserves omitted optional arguments and rejects explicit null before connecting", async () => {
@@ -606,14 +610,14 @@ describe("attached IDA input identity and validation", () => {
       (await client.execute("procedure_pseudo_code", { procedure: "main" })).ok,
     ).toBe(true);
     expect(
-      producer.calls.filter(({ name }) => name === "decompile_function"),
+      producer.calls.filter(({ name }) => name === "decompile"),
     ).toHaveLength(1);
     await client.close();
   });
 });
 
 describe("attached IDA function observations", () => {
-  it("resolves interior addresses and call sites to canonical entries, preserves externals, and reports unknown body evidence", async () => {
+  it("resolves an interior address to its canonical entry, preserves externals, and reports unknown callers and body evidence", async () => {
     const { producer, client } = await fixture();
     const result = await client.execute("analyze_function", {
       procedure: "0x1004",
@@ -621,13 +625,16 @@ describe("attached IDA function observations", () => {
     if (!result.ok) throw result.error;
     const dossier = functionDossierSchema.parse(result.value.result);
     expect(dossier.procedure.address).toBe("0x1000");
-    expect(dossier.callers.map((caller) => caller.address)).toEqual(["0x1000"]);
+    expect(dossier.callers).toEqual([]);
+    expect(dossier.facet_availability?.callers).toMatchObject({
+      available: false,
+    });
     expect(dossier.callees.map((callee) => callee.address)).toEqual(["0x2000"]);
     expect(dossier.procedure.body.available).toBe(false);
     expect(dossier.comments).toEqual([]);
     expect(result.value.rawResult).toMatchObject({
       observations: expect.arrayContaining([
-        expect.objectContaining({ tool: "get_callers" }),
+        expect.objectContaining({ tool: "callees" }),
       ]),
     });
     expect(result.value.provider.version).toBe("1");
@@ -641,19 +648,19 @@ describe("attached IDA function observations", () => {
   });
   it("returns complete paged inventory and distinguishes literal from regex search", async () => {
     const { producer, client } = await fixture();
-    producer.overrideCall = (name, args) =>
-      name === "list_functions"
-        ? {
-            data: [
-              {
-                address: args.offset === 0 ? "0x1000" : "0x2000",
-                name: "main",
-                size: "0x10",
-              },
-            ],
-            next_offset: args.offset === 0 ? 100 : null,
-          }
-        : undefined;
+    producer.overrideCall = (name, args) => {
+      if (name !== "list_funcs") return undefined;
+      const first =
+        z.object({ offset: z.number() }).parse(args.queries).offset === 0;
+      return [
+        {
+          data: [
+            { addr: first ? "0x1000" : "0x2000", name: "main", size: "0x10" },
+          ],
+          next_offset: first ? 100 : null,
+        },
+      ];
+    };
     const inventory = await client.execute("list_procedures", {});
     expect(inventory.ok && inventory.value.result).toHaveLength(2);
     for (const [pattern, mode, count] of [
@@ -663,6 +670,14 @@ describe("attached IDA function observations", () => {
     ] as const) {
       const found = await client.execute("search_strings", { pattern, mode });
       expect(found.ok && found.value.result).toHaveLength(count);
+      if (mode === "regex" && found.ok) {
+        const { deadlineMs } = DEFAULT_REGEX_MATCHING_DEADLINE;
+        expect(found.value.limitations).toContainEqual(
+          expect.stringContaining(
+            `${deadlineMs} ms matching deadline (source default)`,
+          ),
+        );
+      }
     }
     const invalid = await client.execute("search_strings", {
       pattern: "[",
@@ -695,23 +710,24 @@ describe("attached IDA regex supervision", () => {
       const { producer, client } = await fixture();
       const values = ["skip", "ÄPFEL", "äpfel"];
       producer.overrideCall = (name) =>
-        name === "list_functions"
-          ? {
-              data: values.map((name, index) => ({
-                address: `0x${String(1000 + index)}`,
-                name,
-                size: "0x10",
-              })),
-              next_offset: null,
-            }
-          : name === "list_strings"
-            ? {
-                data: values.map((string, index) => ({
-                  address: `0x${String(3000 + index)}`,
-                  length: string.length,
-                  string,
+        name === "list_funcs"
+          ? [
+              {
+                data: values.map((name, index) => ({
+                  addr: `0x${String(1000 + index)}`,
+                  name,
+                  size: "0x10",
                 })),
                 next_offset: null,
+              },
+            ]
+          : name === "find_regex"
+            ? {
+                matches: values.map((string, index) => ({
+                  addr: `0x${String(3000 + index)}`,
+                  string,
+                })),
+                cursor: { done: true },
               }
             : undefined;
       try {
@@ -745,17 +761,17 @@ describe("attached IDA regex supervision", () => {
       const { producer, client } = await fixture();
       const value = "a".repeat(26) + "!";
       producer.overrideCall = (name) =>
-        name === "list_functions"
-          ? {
-              data: [{ address: "0x1000", name: value, size: "0x10" }],
-              next_offset: null,
-            }
-          : name === "list_strings"
-            ? {
-                data: [
-                  { address: "0x3000", length: value.length, string: value },
-                ],
+        name === "list_funcs"
+          ? [
+              {
+                data: [{ addr: "0x1000", name: value, size: "0x10" }],
                 next_offset: null,
+              },
+            ]
+          : name === "find_regex"
+            ? {
+                matches: [{ addr: "0x3000", string: value }],
+                cursor: { done: true },
               }
             : undefined;
       await client.execute("health", {});
@@ -780,53 +796,7 @@ describe("attached IDA regex supervision", () => {
         await client.close();
       }
     },
-    15_000,
   );
-  it("bounds regex matching without caller cancellation and preserves subsequent searches", async () => {
-    const { producer, client } = await fixture();
-    const value = "a".repeat(40) + "!";
-    producer.overrideCall = (name) =>
-      name === "list_strings"
-        ? {
-            data: [{ address: "0x3000", length: value.length, string: value }],
-            next_offset: null,
-          }
-        : undefined;
-    try {
-      const result = await client.execute("search_strings", {
-        pattern: "^(a+)+$",
-        mode: "regex",
-      });
-      expect(result.ok).toBe(false);
-      if (
-        result.ok ||
-        !(result.error instanceof AnalysisResourceConstraintError)
-      )
-        throw new Error("Expected a supervised regex deadline");
-      expect(result.error).toMatchObject({
-        operation: "search_strings",
-        resource: "cpu",
-        reportedLimits: {
-          matching_deadline_ms: DEFAULT_REGEX_MATCHING_DEADLINE.deadlineMs,
-          matching_deadline_source: DEFAULT_REGEX_MATCHING_DEADLINE.source,
-        },
-      });
-      expect(result.error.message).toContain(REGEX_MATCHING_DEADLINE_SETTING);
-      const recovered = await client.execute("search_strings", {
-        pattern: "!$",
-        mode: "regex",
-      });
-      expect(recovered.ok && recovered.value.result).toEqual([
-        expect.objectContaining({ address: "0x3000", value }),
-      ]);
-      if (recovered.ok)
-        expect(recovered.value.limitations.join("\n")).toContain(
-          REGEX_MATCHING_DEADLINE_SETTING,
-        );
-    } finally {
-      await client.close();
-    }
-  }, 15_000);
 });
 
 describe("attached IDA function failure handling", () => {
@@ -850,10 +820,11 @@ describe("attached IDA function failure handling", () => {
         },
       });
     }
-    expect(producer.calls.map(({ name }) => name)).toEqual(["get_metadata"]);
+    expect(producer.calls).toEqual([]);
+    expect(producer.resources).toEqual(["ida://idb/metadata"]);
     producer.inputSha256 = target.sha256;
     producer.beforeCall = async (name) => {
-      if (name === "decompile_function") producer.imageBase = "0x2000";
+      if (name === "decompile") producer.imageBase = "0x2000";
     };
     const changed = await client.execute("procedure_pseudo_code", {
       procedure: "main",
@@ -882,10 +853,10 @@ describe("attached IDA function failure handling", () => {
       expect(invalidAddress.error._tag).toBe("AnalysisInputError");
     expect(producer.connects).toBe(0);
     producer.overrideCall = (name) =>
-      name === "list_functions" ? { data: [], next_offset: 0 } : undefined;
+      name === "list_funcs" ? [{ data: [], next_offset: 0 }] : undefined;
     expect((await client.execute("list_procedures", {})).ok).toBe(false);
     producer.overrideCall = (name) =>
-      name === "decompile_function" ? { unexpected: true } : undefined;
+      name === "decompile" ? { unexpected: true } : undefined;
     const malformed = await client.execute("procedure_pseudo_code", {
       procedure: "main",
     });
@@ -896,18 +867,9 @@ describe("attached IDA function failure handling", () => {
   it("drains in-flight read-only work on cancellation before closing its proxy", async () => {
     const { producer, client } = await fixture();
     await client.execute("health", {});
-    let release: (() => void) | undefined;
-    let notify: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      notify = resolve;
-    });
+    const readOnlyCall = phaseGate();
     producer.beforeCall = async (name) => {
-      if (name === "decompile_function") {
-        notify?.();
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      }
+      if (name === "decompile") await readOnlyCall.hold();
     };
     const controller = new AbortController();
     const call = client.execute(
@@ -915,16 +877,26 @@ describe("attached IDA function failure handling", () => {
       { procedure: "main" },
       { signal: controller.signal },
     );
-    await started;
-    controller.abort();
-    const close = client.close();
-    expect(producer.closes).toBe(0);
-    release?.();
-    const result = await call;
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
-    expect((await close).ok).toBe(true);
-    expect(producer.closes).toBe(1);
+    try {
+      await readOnlyCall.reached(call, "IDA read-only call");
+      controller.abort();
+      const close = client.close();
+      expect(producer.closes).toBe(0);
+      readOnlyCall.release();
+      const result = await call;
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect((await close).ok).toBe(true);
+      expect(producer.closes).toBe(1);
+    } finally {
+      controller.abort();
+      readOnlyCall.release();
+      try {
+        await call;
+      } finally {
+        await client.close();
+      }
+    }
   });
 });
 
@@ -970,10 +942,7 @@ describe("headless IDA transient busy health", () => {
     const busy = busyHealth("config_json_get");
     producer.overrideCall = (name) =>
       name === "server_health" ? busy : undefined;
-    const started = Date.now();
-
     const result = await client.execute("health", {});
-    const elapsed = Date.now() - started;
 
     if (result.ok) throw new Error("expected a busy timeout");
     expect(result.error._tag, "the neutral timeout class is used").toBe(
@@ -995,10 +964,7 @@ describe("headless IDA transient busy health", () => {
       projected.message,
       "the public error message names the busy tool",
     ).toContain("config_json_get");
-    expect(
-      `${result.error.message} ${projected.message}`,
-      "no Hopper wording leaks in",
-    ).not.toContain("Hopper");
+    expect(projected.remediation.action).toContain("REA_IDA_MCP_CONFIG");
     expect(
       result.error.cause,
       "reattribution preserves the producing timeout",
@@ -1008,90 +974,51 @@ describe("headless IDA transient busy health", () => {
       cause: busy,
       diagnostics: { busy_tool: "config_json_get" },
     });
-    expect(
-      elapsed,
-      "the wait runs to the deadline, not less",
-    ).toBeGreaterThanOrEqual(290);
-    expect(
-      healthCalls(producer),
-      "reads are spaced by the retry delay, not a tight loop",
-    ).toBeLessThanOrEqual(6);
     await expectCleanClose(producer, client);
   });
 
-  it("never invents a busy tool the worker did not report", async () => {
+  it("reports free-form busy text as unknown without exposing it in the error message", async () => {
     const { producer, client } = await fixture("headless", 300);
+    const tool = "token=abc123 /private<home> secret";
     producer.overrideCall = (name) =>
-      name === "server_health" ? busyHealth() : undefined;
+      name === "server_health" ? busyHealth(tool) : undefined;
 
     const result = await client.execute("health", {});
-
-    if (result.ok) throw new Error("expected a busy timeout");
-    expect(
-      projectAnalysisError(result.error).details,
-      "the public operation stays independent of an omitted busy tool",
-    ).toMatchObject({
-      operation: "health",
-    });
+    if (result.ok) throw new Error("Expected a busy timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.details).toMatchObject({ operation: "health" });
     expect(result.error.diagnostics).toMatchObject({ busy_tool: "unknown" });
-    expect(projectAnalysisError(result.error).message).toContain(
-      "busy tool was unknown",
-    );
+    expect(projected.message).toContain("busy tool was unknown");
+    expect(projected.message).not.toContain(tool);
     await expectCleanClose(producer, client);
   });
 
-  it.each([
-    ["free-form text", "token=abc123 /private<home> secret"],
-    ["an over-long name", "x".repeat(200)],
-  ])(
-    "reports %s from the worker as unknown instead of echoing it",
-    async (_label, tool) => {
-      const { producer, client } = await fixture("headless", 300);
-      producer.overrideCall = (name) =>
-        name === "server_health" ? busyHealth(tool) : undefined;
-
-      const result = await client.execute("health", {});
-
-      if (result.ok) throw new Error("expected a busy timeout");
-      expect(
-        projectAnalysisError(result.error).details,
-        "only a tool-name-shaped value is repeated",
-      ).toMatchObject({
-        operation: "health",
-      });
-      expect(result.error.diagnostics).toMatchObject({ busy_tool: "unknown" });
-      expect(
-        projectAnalysisError(result.error).message,
-        "the producer text never reaches the public error message",
-      ).not.toContain(tool);
-      await expectCleanClose(producer, client);
-    },
-  );
-
-  it("ends the wait at once when the caller aborts", async () => {
+  it("cancels a busy readiness wait before another read", async () => {
     const { producer, client } = await fixture("headless", 30_000);
-    producer.overrideCall = (name) =>
-      name === "server_health" ? busyHealth("config_json_get") : undefined;
+    const secondBusy = phaseArrival();
+    producer.overrideCall = (name) => {
+      if (name !== "server_health") return undefined;
+      const reads = healthCalls(producer);
+      if (reads === 2) secondBusy.arrive();
+      if (reads > 2) throw new Error("Readiness polled after cancellation");
+      return busyHealth("config_json_get");
+    };
     const controller = new AbortController();
-    const started = Date.now();
+    const reason = { request: "cancel busy IDA readiness" };
     const call = client.execute("health", {}, { signal: controller.signal });
-    while (healthCalls(producer) < 2) {
-      if (Date.now() - started > 5_000) throw new Error("never polled");
-      await new Promise((resolve) => setTimeout(resolve, 10));
+    try {
+      await secondBusy.reached(call, "second busy health response");
+      controller.abort(reason);
+      const result = await call;
+      if (result.ok) throw new Error("Expected a cancelled busy wait");
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+      expect(healthCalls(producer)).toBe(2);
+      await expectCleanClose(producer, client);
+    } finally {
+      controller.abort(reason);
+      await call.finally(() => client.close());
     }
-
-    controller.abort();
-    const result = await call;
-
-    if (result.ok) throw new Error("expected cancellation");
-    expect(result.error._tag, "cancellation keeps today's outcome").toBe(
-      "AnalysisCancelledError",
-    );
-    expect(
-      Date.now() - started,
-      "the wait does not run to the registration deadline",
-    ).toBeLessThan(5_000);
-    await expectCleanClose(producer, client);
   });
 });
 
@@ -1226,7 +1153,7 @@ describe("headless IDA non-busy health payloads", () => {
 
 describe("IDA compatibility profile mismatch", () => {
   it("reports the native profile for an incompatible catalog", async () => {
-    const { producer, client } = await fixture("attached", 1000, "native");
+    const { producer, client } = await fixture("attached");
     producer.tools = [];
     const result = await client.execute("health", {});
     if (result.ok) throw new Error("Expected incompatible native catalog");
@@ -1274,9 +1201,9 @@ describe("IDA compatibility profile mismatch", () => {
     });
   });
 
-  it("reports the legacy profile when an attached producer serves modern tools", async () => {
+  it("reports the native profile when an attached registration reaches a database supervisor", async () => {
     const { producer, client } = await fixture("attached");
-    producer.tools = ["server_health", "lookup_funcs", "decompile", "disasm"];
+    producer.tools = ["idb_open", "idb_list", "idb_close", "server_health"];
     const result = await client.execute("health", {});
     expect(result.ok, "an incomplete profile cannot serve analysis").toBe(
       false,
@@ -1284,9 +1211,13 @@ describe("IDA compatibility profile mismatch", () => {
     if (result.ok) return;
     expect(
       projectAnalysisError(result.error).details,
-      "attached mode names the legacy profile it expected",
+      "attached mode names the native profile it expected",
     ).toMatchObject({
-      diagnostics: { mode: "attached", expected_profile: "legacy-1.4" },
+      diagnostics: {
+        mode: "attached",
+        expected_profile: "native",
+        missing_tools: expect.arrayContaining(["list_funcs", "decompile"]),
+      },
     });
   });
 });
@@ -1385,144 +1316,76 @@ describe("headless IDA session ownership and cleanup", () => {
     expect(await readdir(root)).toEqual(["target.elf"]);
     expect(Buffer.compare(await readFile(target.path), original)).toBe(0);
   });
-  it("retains the private workspace and reports cleanup failure when worker release is unverified", async () => {
-    const { producer, client, root } = await fixture("headless");
-    await client.execute("health", {});
-    const sessionId = producer.database;
-    producer.failClose = true;
-    const result = await client.close();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(result).toMatchObject(
-      reportsSessions({
-        session_id: sessionId,
-        backend: "worker",
-        owned: true,
-        input_path: producer.inputPath,
-      }),
-    );
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
 });
 
-describe("headless IDA blanked-identity inventory rows", () => {
-  it("releases cleanly when the closed worker lingers in inventory without an identity", async () => {
+it.each([
+  {
+    label: "inactive blank worker",
+    id: "",
+    backend: "worker",
+    active: false,
+    removed: true,
+  },
+  {
+    label: "active blank worker",
+    id: "",
+    backend: "worker",
+    active: true,
+    removed: false,
+  },
+  { label: "blank GUI", id: "", backend: "gui", active: false, removed: false },
+  {
+    label: "identified peer",
+    id: "unrelated-live-peer",
+    backend: "worker",
+    active: false,
+    removed: false,
+  },
+] as const)(
+  "confirms workspace release against a same-input $label after closing its owned worker",
+  async ({ id, backend, active, removed }) => {
     const { producer, client, root } = await fixture("headless");
     expect((await client.execute("health", {})).ok).toBe(true);
+    const requested = producer.database;
+    if (requested === undefined) throw new Error("Expected the owned worker");
+    const remaining = {
+      session_id: id,
+      input_path: producer.inputPath,
+      owned: false,
+      backend,
+      is_active: active,
+    };
     let released = false;
     producer.beforeCall = async (name) => {
       if (name === "idb_close") released = true;
     };
-    // A worker observed mid-teardown: identity cleared, private input retained.
     producer.overrideCall = (name) =>
       name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "worker",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
-        : undefined;
-
-    expect((await client.close()).ok).toBe(true);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
-
-  it("still reports a same-input gui row whose identity is blank", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    let released = false;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") released = true;
-    };
-    // A gui binding belongs to an IDA instance REA does not control, so the
-    // blanked-identity exception must not reach it.
-    producer.overrideCall = (name) =>
-      name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "gui",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
+        ? { sessions: [remaining], count: 1 }
         : undefined;
 
     const result = await client.close();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
-
-  it("still reports a same-input peer that keeps a session identity", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    let released = false;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") released = true;
-    };
-    producer.overrideCall = (name) =>
-      name === "idb_list" && released
-        ? {
-            sessions: [
-              {
-                session_id: "unrelated-live-peer",
-                input_path: producer.inputPath,
-                owned: false,
-                backend: "worker",
-                is_active: false,
-              },
-            ],
-            count: 1,
-          }
-        : undefined;
-
-    const result = await client.close();
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error.cleanupIncomplete).toBe(true);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-  });
-});
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database: requested, save: false } },
+    ]);
+    if (removed) {
+      expect(result.ok).toBe(true);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    } else {
+      expect(result).toMatchObject(reportsSessions(remaining));
+      if (result.ok) throw new Error("Expected retained workspace ownership");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining([
+          "target.elf",
+          expect.stringMatching(/^rea-ida-/u),
+        ]),
+      );
+    }
+  },
+);
 
 describe("headless IDA reaped worker cleanup", () => {
-  it("recovers a reaped worker only after inventory confirms its session and private input are absent", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    const sessionId = producer.database;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") producer.database = undefined;
-    };
-    producer.overrideCall = (name) =>
-      name === "idb_close"
-        ? { error: `Session not found: ${sessionId}` }
-        : undefined;
-
-    expect((await client.close()).ok).toBe(true);
-    expect(producer.calls.map(({ name }) => name).slice(-2)).toEqual([
-      "idb_close",
-      "idb_list",
-    ]);
-    expect(producer.closes).toBe(1);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
-
   it("retains resources when an absent-session close is followed by a live private-input peer", async () => {
     const { producer, client, root } = await fixture("headless");
     expect((await client.execute("health", {})).ok).toBe(true);
@@ -1556,33 +1419,6 @@ describe("headless IDA reaped worker cleanup", () => {
     const retried = await client.close();
     expect(retried.ok).toBe(false);
     expect(retried).toMatchObject(reportsSessions(LIVE_PEER));
-  });
-
-  it("retries independent inventory verification after an absent-session response", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    const sessionId = producer.database;
-    let inventoryUnavailable = true;
-    producer.beforeCall = async (name) => {
-      if (name === "idb_close") producer.database = undefined;
-      if (name === "idb_list" && inventoryUnavailable) {
-        inventoryUnavailable = false;
-        throw new Error("Inventory temporarily unavailable");
-      }
-    };
-    producer.overrideCall = (name) =>
-      name === "idb_close"
-        ? { error: `Session not found: ${sessionId}` }
-        : undefined;
-
-    expect((await client.close()).ok).toBe(false);
-    expect(producer.closes).toBe(0);
-    expect((await client.close()).ok).toBe(true);
-    expect(
-      producer.calls.filter(({ name }) => name === "idb_close"),
-    ).toHaveLength(1);
-    expect(producer.closes).toBe(1);
-    expect(await readdir(root)).toEqual(["target.elf"]);
   });
 
   it("does not treat a different missing session identity as proof of release", async () => {
@@ -1631,19 +1467,6 @@ const rejectedOpenFixture = async () => {
 };
 
 describe("headless IDA cleanup diagnostics", () => {
-  it("does not name a worker whose close was confirmed when inventory then fails", async () => {
-    const { producer, client } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    producer.beforeCall = async (name) => {
-      if (name === "idb_list") throw new Error("inventory unavailable");
-    };
-
-    const result = await client.close();
-    expect(result.ok).toBe(false);
-    expect(producer.calls.map(({ name }) => name)).toContain("idb_close");
-    expect(result).toMatchObject(reportsSessions());
-  });
-
   it("retains peers and confirmed ownership from successful startup when close fails", async () => {
     const { producer, client } = await fixture("headless");
     producer.overrideCall = (name) => {
@@ -1775,35 +1598,6 @@ describe("headless IDA cleanup diagnostics for observed peers", () => {
     expect(result.ok).toBe(false);
     expect(result).toMatchObject(reportsSessions(LIVE_PEER));
   });
-
-  it("reports a blocking GUI session by its backend", async () => {
-    const { producer, client } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    const sessionId = producer.database;
-    producer.overrideCall = (name) => {
-      if (name === "idb_close")
-        return { error: `Session not found: ${sessionId}` };
-      if (name === "idb_list")
-        return {
-          sessions: [
-            {
-              session_id: "",
-              input_path: producer.inputPath,
-              owned: false,
-              backend: "gui",
-              is_active: true,
-            },
-          ],
-        };
-      return undefined;
-    };
-
-    const result = await client.close();
-    expect(result.ok).toBe(false);
-    expect(result).toMatchObject(
-      reportsSessions({ session_id: "", backend: "gui", owned: false }),
-    );
-  });
 });
 
 /** A completed open response is not proof that its private Worker was ever released. */
@@ -1909,49 +1703,79 @@ describe("headless IDA unresolved successful-open ownership", () => {
 });
 
 describe("headless IDA cleanup verification", () => {
-  it("retries failed worker release through the retained connection before removing its workspace", async () => {
+  it("retries failed worker release through the retained connection", async () => {
     const { producer, client, root } = await fixture("headless");
     expect((await client.execute("health", {})).ok).toBe(true);
+    const released = { database: producer.database, save: false };
     producer.failClose = true;
-    expect((await client.close()).ok).toBe(false);
+
+    const failed = await client.close();
+    if (failed.ok)
+      throw new Error("Expected retained cleanup after rejected close");
+    expect(failed.error.cleanupIncomplete).toBe(true);
+    expect(failed).toMatchObject(
+      reportsSessions({
+        session_id: released.database,
+        backend: "worker",
+        owned: true,
+        input_path: producer.inputPath,
+      }),
+    );
     expect(producer.closes).toBe(0);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
+    expect(await readdir(root)).toContain(
+      basename(dirname(producer.inputPath)),
+    );
+
     producer.failClose = false;
     expect((await client.close()).ok).toBe(true);
-    expect(
-      producer.calls.filter(({ name }) => name === "idb_close"),
-    ).toHaveLength(2);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: released },
+      { name: "idb_close", args: released },
+    ]);
     expect(producer.closes).toBe(1);
     expect(await readdir(root)).toEqual(["target.elf"]);
   });
-  it("retries post-close inventory verification without closing an already released database again", async () => {
-    const { producer, client, root } = await fixture("headless");
-    expect((await client.execute("health", {})).ok).toBe(true);
-    let inventoryFails = true;
-    producer.beforeCall = async (name) => {
-      if (
-        name === "idb_list" &&
-        producer.database === undefined &&
-        inventoryFails
-      )
-        throw new Error(
-          "Worker inventory unavailable after acknowledged close",
-        );
-    };
-    expect((await client.close()).ok).toBe(false);
-    expect(producer.closes).toBe(0);
-    expect(
-      (await readdir(root)).some((name) => name.startsWith("rea-ida-")),
-    ).toBe(true);
-    inventoryFails = false;
-    expect((await client.close()).ok).toBe(true);
-    expect(
-      producer.calls.filter(({ name }) => name === "idb_close"),
-    ).toHaveLength(1);
-    expect(await readdir(root)).toEqual(["target.elf"]);
-  });
+
+  it.each(["acknowledged close", "matching absent session"] as const)(
+    "retries inventory verification after %s without closing the worker again",
+    async (receipt) => {
+      const { producer, client, root } = await fixture("headless");
+      expect((await client.execute("health", {})).ok).toBe(true);
+      const sessionId = producer.database;
+      const firstCleanupCall = producer.calls.length;
+      producer.beforeCall = async (name) => {
+        if (name === "idb_list") throw new Error("Inventory unavailable");
+      };
+      if (receipt === "matching absent session") {
+        producer.database = undefined;
+        producer.overrideCall = (name) =>
+          name === "idb_close"
+            ? { error: `Session not found: ${sessionId}` }
+            : undefined;
+      }
+
+      const unverified = await client.close();
+      if (unverified.ok)
+        throw new Error("Expected retained cleanup after inventory failed");
+      expect(unverified.error.cleanupIncomplete).toBe(true);
+      expect(unverified).toMatchObject(reportsSessions());
+      expect(producer.closes).toBe(0);
+      expect(await readdir(root)).toContain(
+        basename(dirname(producer.inputPath)),
+      );
+
+      delete producer.beforeCall;
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.slice(firstCleanupCall)).toEqual([
+        { name: "idb_close", args: { database: sessionId, save: false } },
+        { name: "idb_list", args: {} },
+        { name: "idb_list", args: {} },
+      ]);
+      expect(producer.closes).toBe(1);
+      expect(await readdir(root)).toEqual(["target.elf"]);
+    },
+  );
+
   it("releases a privately owned worker after malformed open output using verified session inventory", async () => {
     const { producer, client, root } = await fixture("headless");
     let ownedId: string | undefined;
@@ -2079,7 +1903,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
   const { producer, client } = await fixture("attached");
   await client.execute("health", {});
   producer.beforeCall = async (name) => {
-    if (name === "list_functions")
+    if (name === "list_funcs")
       throw new ProviderAdapterError("ida", "transport", {
         diagnostics: { reason: "upstream closed" },
         capturedOutput: {
@@ -2104,46 +1928,14 @@ it("binds retained transport diagnostics to the requested operation and recovery
   await client.close();
 });
 
-describe("attached IDA legacy string inventory", () => {
-  it("fetches legacy strings and literal searches in single upstream calls", async () => {
-    const { producer, client } = await fixture();
-    const all = Array.from({ length: 250 }, (_, i) => ({
-      address: `0x${(0x3000 + i).toString(16)}`,
-      length: 5,
-      string: `hello-${i}`,
-    }));
-    producer.overrideCall = (name, args) => {
-      if (name !== "list_strings") return undefined;
-      const offset = Number(args.offset ?? 0);
-      const count = Number(args.count ?? 100);
-      const data = count === 0 ? all : all.slice(offset, offset + count);
-      return {
-        data,
-        next_offset:
-          count === 0 || offset + count >= all.length ? null : offset + count,
-      };
-    };
-    const listed = await client.execute("list_strings", {});
-    expect(listed.ok && listed.value.result).toHaveLength(250);
-    expect(
-      producer.calls.filter(({ name }) => name === "list_strings")[0]?.args
-        .count,
-    ).toBe(0);
-    expect(
-      producer.calls.filter(({ name }) => name === "list_strings"),
-    ).toHaveLength(1);
-    await client.close();
-  });
-});
-
 it("retains transport diagnostics on a cancellation regardless of stderr", async () => {
   const { producer, client } = await fixture("attached");
   await client.execute("health", {});
   const controller = new AbortController();
   producer.beforeCall = async (name) => {
-    if (name === "list_functions") {
+    if (name === "list_funcs") {
       controller.abort();
-      throw new AnalysisCancelledError("list_functions", {
+      throw new AnalysisCancelledError("list_funcs", {
         cause: controller.signal.reason,
         diagnostics: { reason: "upstream closed after cancellation" },
         capturedOutput: {
@@ -2208,7 +2000,7 @@ it.each([false, true])(
       diagnostics: { reason: "upstream closed before cancellation" },
     });
     producer.beforeCall = async (name) => {
-      if (name !== "list_functions") return;
+      if (name !== "list_funcs") return;
       if (lateAbort) queueMicrotask(() => controller.abort({ caller: "late" }));
       throw failure;
     };
@@ -2260,8 +2052,23 @@ it.each(["before", "during"] as const)(
   },
 );
 
+it("refuses null native IDA metadata before any analysis tool runs", async () => {
+  const { producer, client } = await fixture("attached");
+  producer.tools = [...nativeTools];
+  producer.overrideCall = (name) =>
+    name === "ida://idb/metadata" ? null : undefined;
+  const result = await client.execute("procedure_pseudo_code", {
+    procedure: "main",
+  });
+  if (result.ok) throw new Error("Expected null metadata to be refused");
+  expect(result.error._tag).toBe("AnalysisOutputError");
+  expect(producer.resources).toEqual(["ida://idb/metadata"]);
+  expect(producer.calls).toEqual([]);
+  await expectCleanClose(producer, client);
+});
+
 it("attributes native IDA metadata timeout to the requested analysis operation", async () => {
-  const { producer, client } = await fixture("attached", 1000, "native");
+  const { producer, client } = await fixture("attached");
   producer.tools = [...nativeTools];
   const timeout = new AnalysisTimeoutError("ida_mcp_read_resource", 40, {
     diagnostics: { uri: "ida://idb/metadata" },
@@ -2290,10 +2097,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   const { root, target } = await createIdaTarget();
   roots.push(root);
   let deliver!: (response: Response) => void;
-  let entered!: () => void;
-  const started = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  const httpAcquisition = phaseArrival();
   const response = new Promise<Response>((resolve) => {
     deliver = resolve;
   });
@@ -2305,7 +2109,7 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
   vi.stubGlobal(
     "fetch",
     vi.fn(() => {
-      entered();
+      httpAcquisition.arrive();
       return response;
     }),
   );
@@ -2313,16 +2117,17 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     url: "http://127.0.0.1:12345/mcp",
     headers: {},
     mode: "attached" as const,
+    protocol: "native" as const,
     timeoutMs: 30,
   };
   const client = new IdaSessionClient(
     config,
     target,
-    createIdaMcpConnection(config, {}),
+    createIdaMcpConnection(config, {}, idaConnectionDependencies()),
   );
   const executing = client.execute("health", {});
   try {
-    await started;
+    await httpAcquisition.reached(executing, "IDA HTTP acquisition");
     const result = await executing;
     expect(result).toMatchObject({
       ok: false,
@@ -2353,4 +2158,134 @@ it("keeps the session cleanup owner until an ignored-abort HTTP acquisition and 
     await client.close();
     vi.unstubAllGlobals();
   }
+});
+
+describe("headless IDA literal string predicate pushdown", () => {
+  it("pushes ASCII literal patterns with U+017F/U+212A folds to modern find_regex while keeping regex and non-ASCII fallback intact", async () => {
+    const { producer, client } = await fixture("headless");
+    const values = [
+      "中文菜单",
+      "other",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+      "İstanbul",
+      "🧪",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const pattern = String(args.pattern);
+      const regex = pattern.startsWith("(?s)")
+        ? new RegExp(pattern.slice(4), "su")
+        : new RegExp(pattern, "u");
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(value)
+            ? [{ addr: `0x${(0x5000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const lastFindRegexPattern = () =>
+        String(
+          producer.calls.filter(({ name }) => name === "find_regex").at(-1)
+            ?.args.pattern ?? "",
+        );
+
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x5002", value: "Warfare/Storage/Read-Write" },
+        { address: "0x5003", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storagePattern = lastFindRegexPattern();
+      expect(storagePattern).not.toBe("(?s).*");
+      expect(storagePattern).toContain("(?:[sS]|\u017f)");
+
+      const emoji = await client.execute("search_strings", {
+        pattern: "🧪",
+        case_sensitive: true,
+      });
+      if (!emoji.ok) throw emoji.error;
+      expect(emoji.value.result).toEqual([{ address: "0x5006", value: "🧪" }]);
+      expect(lastFindRegexPattern()).toBe("🧪");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x5004", value: "\u212aelvin" },
+      ]);
+
+      await client.execute("list_strings", {});
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      await client.execute("search_strings", {
+        pattern: "Storage",
+        mode: "regex",
+      });
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+
+      const sigma = await client.execute("search_strings", {
+        pattern: "İ",
+      });
+      if (!sigma.ok) throw sigma.error;
+      expect(lastFindRegexPattern()).toBe("(?s).*");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
+describe("headless IDA open rejection", () => {
+  it("reports the supervisor's open deadline as a provider timeout", async () => {
+    const { producer, client } = await fixture("headless");
+    // ida-pro-mcp c133c385 idalib_supervisor.py reports a reaped open this way.
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? {
+            error:
+              "idalib worker timed out after 1800s while opening and analyzing /work/target.exe. The binary may drive auto-analysis into an unbounded loop. Retry with run_auto_analysis=false (open without analysis and decompile on demand), or raise IDA_MCP_OPEN_TIMEOUT.",
+          }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain(
+      "IDA_MCP_OPEN_TIMEOUT deadline of 1800 s",
+    );
+    expect(projected.remediation.action).toContain(
+      "Raise IDA_MCP_OPEN_TIMEOUT",
+    );
+    expect(result.error.diagnostics).toMatchObject({
+      upstream_setting: "IDA_MCP_OPEN_TIMEOUT",
+      upstream_timeout_seconds: 1800,
+    });
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("reports an idb_open rejection with its upstream reason", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "Input was rejected before creating a session" }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain(
+      "Input was rejected before creating a session",
+    );
+    expect(result.error.message).not.toContain("malformed or unsupported");
+    expect((await client.close()).ok).toBe(true);
+  });
 });

@@ -1,7 +1,8 @@
-import { assertArtifactSelectedSource } from "./ArtifactSelectedSource.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { constants, createWriteStream, type Stats } from "node:fs";
 import {
   lstat,
@@ -24,16 +25,16 @@ import {
   sameArtifactEntry,
   type ArtifactEntry,
   type ArtifactReader,
-} from "./ArtifactReader.js";
-import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
-import {
+  type ArtifactTraversalOptions,
+  readArtifactFileChunks,
+  assertArtifactSelectedSource,
   admitAsarHeader,
   readAsarHeader,
   type AsarHeaderExtents,
-} from "./AsarHeader.js";
+} from "../resources/index.js";
+import { closeAsarHandle, readValidatedAsarEntry } from "./AsarEntryStream.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { FileHandleChunkStream } from "../filesystem/readFileHandleChunks.js";
-import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
 import {
   assertAsarReadActive,
   asarCancellationFailure,
@@ -57,13 +58,18 @@ export class AsarArtifactReader implements ArtifactReader {
   #snapshot: { readonly path: string; readonly sha256: string } | undefined;
   #snapshotRoot: string | undefined;
   #snapshotOperation: Promise<void> = Promise.resolve();
+  #snapshotGeneration = 0;
 
   constructor(
     private readonly path: string,
     private readonly options: AsarArtifactReaderOptions = {},
   ) {}
 
-  async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
+  async *entries(
+    signal?: AbortSignal,
+    options?: ArtifactTraversalOptions,
+  ): AsyncIterable<ArtifactEntry> {
+    const generation = this.#snapshotGeneration;
     let paths: readonly AsarListedEntry[];
     try {
       await this.prepareContainer(undefined, signal);
@@ -99,10 +105,12 @@ export class AsarArtifactReader implements ArtifactReader {
         }
       }, signal);
     } catch (cause: unknown) {
+      // A typed analysis failure already owns its public classification.
+      if (cause instanceof AnalysisError) throw cause;
       throw asarFailure(this.path, "inventory", cause);
     }
     for (const facts of paths) {
-      assertAsarReadActive(signal);
+      this.#assertInventoryActive(generation, signal);
       const { path, kind } = facts;
       const providerPath = path.split("/").join(sep);
       const entry: ArtifactEntry = {
@@ -130,6 +138,18 @@ export class AsarArtifactReader implements ArtifactReader {
         });
       yield entry;
     }
+    this.#assertInventoryActive(generation, signal);
+    // The listing names every member record the header declares.
+    options?.onCoverage?.({ status: "complete", limitations: [] });
+  }
+
+  #assertInventoryActive(generation: number, signal?: AbortSignal): void {
+    assertAsarReadActive(signal);
+    if (generation !== this.#snapshotGeneration)
+      throw new ArtifactReaderFailure(
+        "unavailable",
+        "ASAR inventory snapshot was closed",
+      );
   }
 
   async #admitHeader(snapshotPath: string, signal?: AbortSignal) {
@@ -197,11 +217,13 @@ export class AsarArtifactReader implements ArtifactReader {
       throw new ArtifactReaderFailure(
         "integrity",
         `ASAR entry was not produced by this reader: ${entry.path}`,
+        { integrityCheck: "foreign-entry" },
       );
     if (!sameArtifactEntry(entry, state.entry))
       throw new ArtifactReaderFailure(
         "integrity",
         `ASAR entry metadata changed since inventory: ${state.entry.path}`,
+        { integrityCheck: "entry-metadata" },
       );
     if (state.entry.unpacked)
       return this.#openUnpackedStream(state.entry, signal);
@@ -257,6 +279,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR container changed before read: ${producedEntry.path}`,
+          { integrityCheck: "container-identity" },
         );
       if (facts.size === 0) {
         handle = undefined;
@@ -322,6 +345,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR container changed before interpretation: ${this.path}`,
+          { integrityCheck: "container-identity" },
         );
     }, signal);
   }
@@ -341,6 +365,7 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
+    this.#snapshotGeneration += 1;
     await this.#withSnapshotOperation(() => this.#closeSnapshot());
   }
 
@@ -448,10 +473,12 @@ export class AsarArtifactReader implements ArtifactReader {
   }
 
   #snapshotPath(): string {
+    // Preparation captured a snapshot; only a close queued between preparation
+    // and this operation removes it, as `#assertInventoryActive` reports.
     if (this.#snapshot === undefined)
       throw new ArtifactReaderFailure(
-        "integrity",
-        "ASAR snapshot is not available",
+        "unavailable",
+        "ASAR snapshot was closed",
       );
     return this.#snapshot.path;
   }
@@ -474,6 +501,14 @@ export class AsarArtifactReader implements ArtifactReader {
     entry: ArtifactEntry,
     signal?: AbortSignal,
   ): Promise<Readable> {
+    // Header names retain UTF-16 identity; filesystem encoding may replace
+    // unpaired surrogates and select a different companion. Packed members
+    // need no filesystem name and remain readable under their original names.
+    if (!localPathStringSchema.safeParse(entry.adapterKey).success)
+      throw new ArtifactEntryContentUnavailable(
+        `ASAR unpacked member path cannot be represented without replacement: ${JSON.stringify(entry.path)}`,
+        "ASAR unpacked member path cannot be represented without replacement on the local filesystem; companion bytes were not read and no content hash or child artifact was produced.",
+      );
     const unpackedRoot = `${this.options.selectedPath ?? this.path}.unpacked`;
     let handle: SharedAsarFileHandle | undefined;
     try {
@@ -518,7 +553,7 @@ export class AsarArtifactReader implements ArtifactReader {
         throw new ArtifactReaderFailure(
           "integrity",
           `ASAR unpacked entry changed before read: ${entry.path}`,
-          {},
+          { integrityCheck: "unpacked-entry-identity" },
           artifactIntegrityDetails(
             entry.path,
             entry.declaredIntegrity,
@@ -615,7 +650,9 @@ export class AsarArtifactReader implements ArtifactReader {
     const source = readArtifactFileChunks(handle, readOptions);
     const owned = this.#ownedHandles.get(handle);
     if (owned === undefined)
-      throw new ArtifactReaderFailure("integrity", "ASAR handle has no owner");
+      throw new ArtifactReaderFailure("integrity", "ASAR handle has no owner", {
+        integrityCheck: "reader-ownership",
+      });
     owned.source = source;
     owned.output = source;
     if (releaseOnClose !== false)

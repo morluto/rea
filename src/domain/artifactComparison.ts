@@ -8,6 +8,7 @@ import {
   type ArtifactOccurrence,
 } from "./artifactGraph.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
+import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import {
   ArtifactInventoryCarrierError,
   hasCompleteInventoryCoverage,
@@ -74,23 +75,44 @@ const artifactChangeSchema = z.object({
 });
 
 /** Deterministic artifact comparison with every change returned inline. */
-export const artifactComparisonResultSchema = z.object({
-  status: comparisonStatusSchema,
-  left_manifest_id: prefixedDigestSchema("agm"),
-  right_manifest_id: prefixedDigestSchema("agm"),
-  summary: z.object({
-    unchanged: z.int().min(0),
-    added: z.int().min(0),
-    removed: z.int().min(0),
-    changed: z.int().min(0),
-    unknown: z.int().min(0),
-    contradiction: z.int().min(0).default(0),
-  }),
-  changes: z.array(artifactChangeSchema),
-  // Absent on legacy records; absence does not identify a contradicting side.
-  integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
-  limitations: z.array(z.string()),
-});
+export const artifactComparisonResultSchema = z
+  .object({
+    status: comparisonStatusSchema,
+    left_manifest_id: prefixedDigestSchema("agm"),
+    right_manifest_id: prefixedDigestSchema("agm"),
+    summary: z.object({
+      unchanged: z.int().min(0),
+      added: z.int().min(0),
+      removed: z.int().min(0),
+      changed: z.int().min(0),
+      unknown: z.int().min(0),
+      contradiction: z.int().min(0).default(0),
+    }),
+    changes: z.array(artifactChangeSchema),
+    // Absent on legacy records; absence does not identify a contradicting side.
+    integrity_mismatch_evidence_ids: z.array(evidenceIdSchema).optional(),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    if (
+      result.status === "unchanged" &&
+      (result.changes.length > 0 ||
+        result.summary.added > 0 ||
+        result.summary.removed > 0 ||
+        result.summary.changed > 0 ||
+        result.summary.unknown > 0 ||
+        result.summary.contradiction > 0 ||
+        // optional-fact-default: an unchanged result may not retain any mismatch IDs.
+        (result.integrity_mismatch_evidence_ids?.length ?? 0) > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["status"],
+        message:
+          "An unchanged artifact comparison cannot retain changes, non-zero change counts, or integrity mismatches.",
+        params: { constraint: "unchanged-has-no-changes" },
+      });
+  });
 
 export type ArtifactComparisonResult = z.infer<
   typeof artifactComparisonResultSchema
@@ -98,7 +120,7 @@ export type ArtifactComparisonResult = z.infer<
 type ArtifactChange = z.infer<typeof artifactChangeSchema>;
 
 /** Comparison limitation when a path's format declarations cannot be compared. */
-export const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
+const FORMAT_DECLARATION_UNKNOWN_LIMITATION =
   "Format metadata declarations are missing on one side or differ in kind for matching paths; omitted metadata may be a legacy or non-container observation and leaves the complete declaration unavailable.";
 
 const comparisonInventory = (input: unknown, side: "left" | "right") => {
@@ -123,33 +145,12 @@ export const compareArtifacts = (
   const right = comparisonInventory(rightEvidence, "right");
   const leftComplete = left.inventory.complete;
   const rightComplete = right.inventory.complete;
-  const sameScope =
-    left.inventory.coverage.scope === right.inventory.coverage.scope;
-  const rootCoverageComplete =
-    sameScope &&
-    left.inventory.complete &&
-    right.inventory.complete &&
-    left.inventory.coverage.status === "complete" &&
-    right.inventory.coverage.status === "complete";
-  const entryCoverageComplete =
-    rootCoverageComplete &&
-    left.inventory.coverage.scope === "container-entries";
-  const leftCovered =
-    sameScope &&
-    hasCompleteInventoryCoverage(left.inventory, left.inventory.coverage.scope);
-  const rightCovered =
-    sameScope &&
-    hasCompleteInventoryCoverage(
-      right.inventory,
-      right.inventory.coverage.scope,
-    );
-  const fullyCovered =
-    leftCovered &&
-    rightCovered &&
-    (entryCoverageComplete ||
-      (rootCoverageComplete &&
-        left.inventory.manifest.occurrence_count === 1 &&
-        right.inventory.manifest.occurrence_count === 1));
+  const {
+    sameScope,
+    rootCoverageComplete,
+    entryCoverageComplete,
+    fullyCovered,
+  } = comparisonCoverage(left.inventory, right.inventory);
   const leftOccurrencesByPath = occurrencesByPath(left.inventory.occurrences);
   const rightOccurrencesByPath = occurrencesByPath(right.inventory.occurrences);
   const comparison = compareOccurrences(
@@ -238,6 +239,107 @@ export const compareArtifacts = (
     ].sort(compareUnicodeCodePoints),
     limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   });
+};
+
+/**
+ * Coverage that decides whether a path absent from the change rows was
+ * affirmatively compared as unchanged.
+ */
+const comparisonCoverage = (left: InventorySet, right: InventorySet) => {
+  const sameScope = left.coverage.scope === right.coverage.scope;
+  const rootCoverageComplete =
+    sameScope &&
+    left.complete &&
+    right.complete &&
+    left.coverage.status === "complete" &&
+    right.coverage.status === "complete";
+  const entryCoverageComplete =
+    rootCoverageComplete && left.coverage.scope === "container-entries";
+  const fullyCovered =
+    sameScope &&
+    hasCompleteInventoryCoverage(left, left.coverage.scope) &&
+    hasCompleteInventoryCoverage(right, right.coverage.scope) &&
+    (entryCoverageComplete ||
+      (rootCoverageComplete &&
+        left.manifest.occurrence_count === 1 &&
+        right.manifest.occurrence_count === 1));
+  return {
+    sameScope,
+    rootCoverageComplete,
+    entryCoverageComplete,
+    fullyCovered,
+  };
+};
+
+/** Status of one logical path that has no row in `changes`. */
+export type UnreportedArtifactPathStatus =
+  | { readonly status: "unchanged" }
+  | { readonly status: "unknown"; readonly limitation: string }
+  | { readonly status: "unobserved" };
+
+/** Classifier for paths a comparison omitted from `changes`. */
+export type UnreportedArtifactPathClassifier = (
+  logicalPath: string,
+) => UnreportedArtifactPathStatus;
+
+/**
+ * Validate the exact inventories a comparison cited once, then classify any
+ * number of paths it omitted from `changes`. Only a path observed once on each
+ * side of a fully covered comparison is unchanged; this matches the paths
+ * counted in `summary.unchanged`. A path neither inventory observed is not
+ * evidence of equality: it is unobserved under complete coverage and unknown
+ * otherwise.
+ */
+export const prepareUnreportedArtifactPaths = (
+  result: ArtifactComparisonResult,
+  sources: { readonly left: unknown; readonly right: unknown },
+): UnreportedArtifactPathClassifier => {
+  const left = retainedComparisonInventory(sources.left);
+  const right = retainedComparisonInventory(sources.right);
+  if (
+    left.manifest.manifest_id !== result.left_manifest_id ||
+    right.manifest.manifest_id !== result.right_manifest_id
+  )
+    throw new EvidenceIntegrityError(
+      "Artifact comparison source inventories disagree with its manifests",
+    );
+  const { fullyCovered } = comparisonCoverage(left, right);
+  const leftByPath = occurrencesByPath(left.occurrences);
+  const rightByPath = occurrencesByPath(right.occurrences);
+  return (logicalPath) => {
+    // The index holds only observed paths. Absence on both sides proves the
+    // selector names no compared member only when coverage is complete;
+    // otherwise the path may lie where the comparison never reached.
+    const leftMatches = leftByPath.get(logicalPath);
+    const rightMatches = rightByPath.get(logicalPath);
+    if (leftMatches === undefined && rightMatches === undefined)
+      return fullyCovered
+        ? { status: "unobserved" }
+        : {
+            status: "unknown",
+            limitation:
+              "The selected artifact path was not observed in either inventory, and the comparison does not have complete coverage; it may name a member the comparison never reached.",
+          };
+    if (fullyCovered && leftMatches?.length === 1 && rightMatches?.length === 1)
+      return { status: "unchanged" };
+    return {
+      status: "unknown",
+      limitation:
+        "The selected artifact path matched across inventories without complete comparison coverage; it is not established as unchanged.",
+    };
+  };
+};
+
+const retainedComparisonInventory = (input: unknown): InventorySet => {
+  try {
+    return parseArtifactInventoryEvidence(input).inventory;
+  } catch (cause: unknown) {
+    if (!(cause instanceof ArtifactInventoryCarrierError)) throw cause;
+    throw new EvidenceIntegrityError(cause.message, {
+      cause,
+      userMessage: cause.message,
+    });
+  }
 };
 
 const compareOccurrences = (

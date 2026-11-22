@@ -56,9 +56,9 @@ const isNonViewCell = (
 export const projectNibViewHierarchy = (
   objects: NibArchiveDocument["objects"],
   retainedIds: ReadonlySet<number>,
-  reserveNode: () => boolean = () => true,
-  maxNodes = 20_000,
-  reportUnknownRegistry: (description: string) => void = () => {},
+  reserveNode: () => boolean,
+  maxNodes: number,
+  reportUnknownRegistry: (description: string) => void,
 ) => {
   const byId = new Map(objects.map((object) => [object.id, object]));
   const parents = new Map<number, number | null>();

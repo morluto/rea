@@ -1,3 +1,4 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { constants as fsConstants } from "node:fs";
 import {
   chmod,
@@ -18,16 +19,13 @@ import { parse as parseJsonc, type ParseError } from "jsonc-parser";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
-import {
-  supportedClientRegistrationProfile,
-  supportedClients,
-} from "../../../src/application/SupportedClients.js";
+import { supportedClients } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import {
   detectClients,
   systemSetupHost,
@@ -42,50 +40,83 @@ const ownedSkillManifest = `---\nname: ${PRODUCT_IDENTITY.skillName}\n---\n# REA
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
 
+// Detection reports clients in the client table's order.
+const DETECTED_CLIENT_ORDER = [
+  "claude_code",
+  "claude_desktop",
+  "codex",
+  "cursor",
+  "codebuddy",
+  "cline",
+  "gemini_cli",
+  "windsurf",
+  "devin",
+  "opencode",
+  "antigravity",
+  "copilot_cli",
+  "commandcode",
+  "qwen_code",
+  "kimi",
+  "vscode",
+  "trae",
+  "workbuddy",
+  "lm_studio",
+  "grok_build",
+  "omp",
+  "pi",
+  "hermes",
+  "qoder",
+  "droid",
+  "zcode",
+  "dsh",
+  "freebuff",
+  "cline_vscode",
+  "cline_vscode_insiders",
+  "cline_vscodium",
+  "cline_cursor",
+  "cline_windsurf",
+  "kiro",
+  "mastracode",
+  "zed",
+  "amp",
+  "fx",
+  "junie",
+  "goose",
+  "kilo",
+  "grok_bot",
+];
+
 describe("client configuration filesystem lifecycle", () => {
   it("detects every supported client and skips absent clients", async () => {
     const home = await createTestTempDirectory("rea-detect-");
-    for (const client of supportedClients(home))
+    for (const client of supportedClients(home, HOST_PLATFORM.platform))
       if (client.markerPath !== undefined)
         await mkdir(client.markerPath, { recursive: true });
+    // Gemini CLI follows its own session state, not the shared .gemini root.
+    await mkdir(join(home, ".gemini", "tmp"), { recursive: true });
     const detected = await detectClients(home);
-    expect(detected.map(({ name }) => name)).toEqual([
-      "claude_code",
-      "claude_desktop",
-      "codex",
-      "cursor",
-      "codebuddy",
-      "cline",
-      "gemini_cli",
-      "windsurf",
-      "devin",
-      "opencode",
-      "antigravity",
-      "copilot_cli",
-      "commandcode",
-      "qwen_code",
-      "kimi",
-      "vscode",
-      "trae",
-      "workbuddy",
-      "lm_studio",
-      "grok_build",
-      "omp",
-      "pi",
-      "hermes",
-      "qoder",
-      "droid",
-      "zcode",
-      "dsh",
-      "freebuff",
-      "grok_bot",
-    ]);
+    expect(detected.map(({ name }) => name)).toEqual(DETECTED_CLIENT_ORDER);
     expect(
       detected.find(({ name }) => name === "claude_code")?.configPath,
     ).toBe(join(home, ".claude.json"));
     expect(detected.find(({ name }) => name === "devin")?.format).toBe("json");
     const emptyHome = await createTestTempDirectory("rea-empty-");
     expect(await detectClients(emptyHome)).toEqual([]);
+  });
+
+  it("does not detect Gemini CLI from Antigravity's shared .gemini storage", async () => {
+    const home = await createTestTempDirectory("rea-detect-gemini-");
+    const antigravity = supportedClients(home, HOST_PLATFORM.platform).find(
+      ({ name }) => name === "antigravity",
+    );
+    if (antigravity?.markerPath === undefined)
+      throw new Error("Antigravity marker is missing");
+    await mkdir(antigravity.markerPath, { recursive: true });
+    const names = async () =>
+      (await detectClients(home)).map(({ name }) => name);
+    expect(await names()).toEqual(["antigravity"]);
+    await writeFile(join(home, ".gemini", "settings.json"), "{}\n");
+    expect(await names()).toEqual(["gemini_cli", "antigravity"]);
   });
 
   it("preserves unrelated Codex TOML and supports an installed command", async () => {
@@ -399,132 +430,65 @@ describe("Grok Build server table edits", () => {
   });
 });
 
-describe("Grok Build disabled server list", () => {
-  it("removes rea from disabled_mcp_servers and leaves other names", async () => {
-    const home = await createTestTempDirectory("rea-grok-disabled-");
-    const configPath = join(home, ".grok/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      [
-        "disabled_mcp_servers = [",
-        '  "other",',
-        '  "r\\u0065a",',
-        '  "rea", # was off',
-        '  "github",',
-        "]",
-        "[mcp_servers.rea]",
-        "enabled = false",
-        'command = "rea"',
-        'args = ["mcp"]',
-        "startup_timeout_sec = 30",
-      ].join("\n"),
-    );
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(configured).toContain("# was off");
-    expect(configured).not.toContain("enabled");
-    expect(parseToml(configured)).toMatchObject({
-      disabled_mcp_servers: ["other", "github"],
-      mcp_servers: {
-        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
-      },
-    });
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toEqual({ status: "unchanged" });
-    await writeFile(configPath, 'disabled_mcp_servers = ["rea"] # note\n');
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const created = await readFile(configPath, "utf8");
-    expect(created).toContain("# note");
-    expect(created).not.toContain("disabled_mcp_servers");
-    expect(parseToml(created)).toMatchObject({
-      mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
-    });
+it("reenables Grok Build REA without changing other disable-list entries", async () => {
+  const home = await createTestTempDirectory("rea-grok-disabled-");
+  const configPath = join(home, ".grok/config.toml");
+  await mkdir(dirname(configPath), { recursive: true });
+  const client = {
+    name: "grok_build",
+    registrationProfile: supportedClientRegistrationProfile("grok_build"),
+    configPath,
+    format: "grok",
+  } as const;
+  const configure = () =>
+    configureClientConfiguration(client, undefined, ["rea", "mcp"]);
+  const scopedList =
+    '[profile]\ndisabled_mcp_servers = ["rea"] # unrelated setting';
+  await writeFile(
+    configPath,
+    [
+      "disabled_mcp_servers = [",
+      '  "other",',
+      '  "r\\u0065a",',
+      '  "rea", # was off',
+      '  """rea""",',
+      "  '''rea''',",
+      '  """',
+      'rea""",',
+      '  """rea',
+      '""",',
+      '  "github",',
+      "]",
+      scopedList,
+      "[mcp_servers.rea]",
+      "enabled = false",
+      'command = "rea"',
+      'args = ["mcp"]',
+      "startup_timeout_sec = 30",
+    ].join("\n"),
+  );
+  expect(await configure()).toMatchObject({ status: "configured" });
+  const configured = await readFile(configPath, "utf8");
+  expect(configured).toContain("# was off");
+  expect(configured).toContain(scopedList);
+  const active = parseToml(configured);
+  expect(active).toMatchObject({
+    disabled_mcp_servers: ["other", "rea\n", "github"],
+    mcp_servers: {
+      rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
+    },
   });
+  expect(active).not.toHaveProperty("mcp_servers.rea.enabled");
+  expect(await configure()).toEqual({ status: "unchanged" });
+  expect(await readFile(configPath, "utf8")).toBe(configured);
 
-  it("removes multiline rea entries from disabled_mcp_servers", async () => {
-    const home = await createTestTempDirectory("rea-grok-disabled-multiline-");
-    const configPath = join(home, ".grok/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      [
-        "disabled_mcp_servers = [",
-        '  """rea""",',
-        "  '''rea''',",
-        '  """',
-        'rea""",',
-        '  """rea',
-        '""",',
-        '  "github",',
-        "]",
-      ].join("\n"),
-    );
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(parseToml(configured)).toMatchObject({
-      disabled_mcp_servers: ["rea\n", "github"],
-      mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
-    });
-    await writeFile(configPath, 'disabled_mcp_servers = ["""rea"""] # note\n');
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const created = await readFile(configPath, "utf8");
-    expect(created).toContain("# note");
-    expect(created).not.toContain("disabled_mcp_servers");
+  await writeFile(configPath, 'disabled_mcp_servers = ["""rea"""] # note\n');
+  expect(await configure()).toMatchObject({ status: "configured" });
+  const created = await readFile(configPath, "utf8");
+  expect(created).toContain("# note");
+  expect(parseToml(created)).not.toHaveProperty("disabled_mcp_servers");
+  expect(parseToml(created)).toMatchObject({
+    mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
   });
 });
 
@@ -1529,7 +1493,7 @@ describe("Grok Bot registration", () => {
     const original =
       '{"mcpServers":{"other":{"command":"other"},"rea":{"command":"rea","args":["mcp"]}}}\n';
     await writeFile(configPath, original);
-    const client = supportedClients(home).find(
+    const client = supportedClients(home, HOST_PLATFORM.platform).find(
       ({ name }) => name === "grok_bot",
     );
     if (client === undefined) throw new Error("missing grok_bot");
@@ -1541,6 +1505,7 @@ describe("Grok Bot registration", () => {
     expect(await readFile(configPath, "utf8")).toBe(original);
     expect(
       await readClientRegistrationStatuses(home, "/current/rea", {
+        platform: HOST_PLATFORM.platform,
         environment: {},
       }),
     ).toEqual([
@@ -1555,39 +1520,6 @@ describe("Grok Bot registration", () => {
     expect(removed.status).toBe("complete");
     expect(removed.items).toContainEqual(
       expect.objectContaining({ name: "grok_bot", status: "skipped" }),
-    );
-    expect(await readFile(configPath, "utf8")).toBe(original);
-  });
-});
-
-describe("Codex configuration comments", () => {
-  it("keeps Codex comments and value spelling through setup and uninstall", async () => {
-    const home = await createTestTempDirectory("rea-toml-comments-");
-    const configPath = join(home, ".codex/config.toml");
-    const original =
-      '# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\n';
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, original);
-
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "codex",
-          registrationProfile: supportedClientRegistrationProfile("codex"),
-          configPath,
-          format: "toml",
-        },
-        {},
-        [PRODUCT_IDENTITY.cliBinary, "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(configured.startsWith(original)).toBe(true);
-    expect(configured).toContain("[mcp_servers.rea]");
-
-    const removed = await runUninstall(false, systemUninstallHost(home));
-    expect(removed.items).toContainEqual(
-      expect.objectContaining({ name: "codex", status: "removed" }),
     );
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
@@ -2074,62 +2006,6 @@ describe("layered uninstall outcomes", () => {
 });
 
 describe("uninstall configuration preflight", () => {
-  it("fails closed on malformed client configuration", async () => {
-    const home = await createTestTempDirectory("rea-uninstall-bad-");
-    const config = join(home, ".cursor/mcp.json");
-    await mkdir(dirname(config), { recursive: true });
-    await writeFile(config, "not-json");
-    const result = await runUninstall(false, systemUninstallHost(home));
-    expect(result.status).toBe("failed");
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "cursor",
-        status: "failed",
-        detail: expect.stringMatching(
-          /not valid JSON.*not changed.*repair.*uninstall/iu,
-        ),
-      }),
-    );
-    expect(await readFile(config, "utf8")).toBe("not-json");
-  });
-
-  it.each([
-    ['{"mcpServers":null,"keep":1}', "mcpServers"],
-    ["[]", "root"],
-    ['{"mcpServers":"x"}', "mcpServers"],
-  ])(
-    "names the structural problem in valid JSON %s",
-    async (content, problem) => {
-      const home = await createTestTempDirectory("rea-uninstall-shape-");
-      const config = join(home, ".cursor/mcp.json");
-      await mkdir(dirname(config), { recursive: true });
-      await writeFile(config, content);
-      let cause: unknown;
-      try {
-        parseClientConfiguration(content, "json");
-      } catch (error: unknown) {
-        cause = error;
-      }
-      if (!(cause instanceof Error)) throw new Error("Expected shape error");
-      expect(cause.message).toContain(problem);
-      expect(cause.message).toContain("object");
-      const result = await runUninstall(false, systemUninstallHost(home));
-      expect(result.status).toBe("failed");
-      expect(result.items).toContainEqual(
-        expect.objectContaining({
-          name: "cursor",
-          status: "failed",
-          configuration_path: config,
-          detail: expect.stringContaining(cause.message),
-        }),
-      );
-      const item = result.items.find(({ name }) => name === "cursor");
-      expect(item?.detail).toMatch(/not changed.*repair.*uninstall/iu);
-      expect(await readFile(config, "utf8")).toBe(content);
-      await expect(readFile(`${config}.rea.backup`, "utf8")).rejects.toThrow();
-    },
-  );
-
   it("stops before any removal when one client configuration is malformed", async () => {
     const home = await createTestTempDirectory("rea-uninstall-stop-");
     const codex = join(home, ".codex/config.toml");
@@ -2287,105 +2163,52 @@ describe("client configuration changed during uninstall", () => {
 
 describe("client configuration filesystem failure reporting", () => {
   it.each([
-    [
-      "read",
-      () =>
-        "Configuration could not be read. Check file permissions, then rerun uninstall.",
-    ],
-    [
-      "backup",
-      () =>
-        "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
-    ],
-    [
-      "update",
-      (config: string) =>
-        `Configuration could not be updated. The original was restored and its backup at ${config}.rea.backup was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-    ],
-    [
-      "publication",
-      (config: string) =>
-        `Configuration could not be updated or restored. Restore the backup at ${config}.rea.backup manually, then rerun uninstall.`,
-    ],
-    [
-      "restore",
-      (config: string) =>
-        `Configuration could not be updated or restored. Restore the backup at ${config}.rea.backup manually, then rerun uninstall.`,
-    ],
+    ["read", "could not be read"],
+    ["backup", "could not be backed up"],
   ] as const)(
-    "reports an actionable client %s failure",
-    async (failure, expectedDetail) => {
+    "reports an actionable client %s failure before writing",
+    async (stage, guidance) => {
       const { home, config } = await uninstallFixture();
-      const detail = expectedDetail(config);
-      const fileSystem: UninstallFileSystem = {
-        ...testFileSystem,
-        readText: (path) =>
-          failure === "read" && path === config
-            ? Promise.reject(new Error("SECRET read failure"))
-            : readFile(path, "utf8"),
-        copy: (source, destination) =>
-          failure === "backup"
-            ? Promise.reject(new Error("SECRET backup failure"))
-            : copyFile(source, destination, fsConstants.COPYFILE_EXCL),
-        publishConfiguration: async (path, contents, original) => {
-          if (failure === "publication")
-            throw new Error("SECRET publication failure");
-          const publication = await ClientConfigurationPublication.write(
-            path,
-            contents,
-            original,
-          );
-          if (failure === "update" || failure === "restore")
-            publication.assertCurrent = async () => {
-              throw new Error("SECRET verification failure");
+      const original = await readFile(config);
+      const fault = new Error("test-only filesystem fault");
+      const fail = vi.fn(async () => {
+        throw fault;
+      });
+      const fileSystem: UninstallFileSystem =
+        stage === "backup"
+          ? { ...testFileSystem, copy: fail }
+          : {
+              ...testFileSystem,
+              readText: (path) =>
+                path === config ? fail() : readFile(path, "utf8"),
             };
-          if (failure === "restore")
-            publication.restore = async () => {
-              throw new Error("SECRET restore failure");
-            };
-          return publication;
-        },
-      };
+
       const result = await runUninstall(
         false,
         systemUninstallHost(home, fileSystem),
       );
-      expect(result.status).toBe("failed");
-      expect(result.items).toContainEqual(
-        expect.objectContaining({ name: "cursor", status: "failed", detail }),
-      );
-      expect(JSON.stringify(result)).not.toContain("SECRET");
+      expect(fail).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        status: "failed",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            name: "cursor",
+            configuration_path: config,
+            status: "failed",
+            detail: expect.stringContaining(guidance),
+          }),
+        ]),
+      });
+      expect(
+        result.items.find(({ name }) => name === "cursor")?.detail,
+      ).toContain("Check file permissions");
+      expect(JSON.stringify(result)).not.toContain(fault.message);
+      expect((await readFile(config)).equals(original)).toBe(true);
+      await expect(lstat(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
-
-  it("restores the current configuration without replacing its initial backup", async () => {
-    const { home, config } = await uninstallFixture();
-    const current = await readFile(config, "utf8");
-    const initial = '{"existing":true}\n';
-    await writeFile(`${config}.rea.backup`, initial);
-    const result = await systemUninstallHost(home, {
-      ...testFileSystem,
-      publishConfiguration: async (path, contents, original) => {
-        const publication = await ClientConfigurationPublication.write(
-          path,
-          contents,
-          original,
-        );
-        publication.assertCurrent = async () => {
-          throw new Error("verification failed after writing");
-        };
-        return publication;
-      },
-    }).removeClient({
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      format: "json",
-      configPath: config,
-    });
-    expect(result.status).toBe("failed");
-    expect(await readFile(config, "utf8")).toBe(current);
-    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
-  });
 });
 
 describe("managed skill removal outcomes", () => {

@@ -1,5 +1,5 @@
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
-import { readManagedPeLayout } from "../../src/dotnet/ManagedPeReader.js";
+import { readManagedPeLayout } from "../../src/domain/managed/managedPeReader.js";
 
 const align4 = (size: number): number => Math.ceil(size / 4) * 4;
 

@@ -77,11 +77,17 @@ import {
   pythonPycViewItemsSchema,
   pythonPycSummarySchema,
 } from "./pythonPycView.js";
+import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
 import {
   nativeExportsViewRequestSchema,
   nativeExportsViewItemsSchema,
   nativeExportsSummarySchema,
 } from "./nativeExportsView.js";
+import {
+  elfDependenciesViewRequestSchema,
+  elfDependenciesViewItemsSchema,
+  elfDependenciesSummarySchema,
+} from "./elfDependenciesView.js";
 import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
 import { byteEntropySummarySchema } from "./byteEntropyView.js";
 import {
@@ -90,6 +96,7 @@ import {
   javaScriptRoutesViewSummarySchema,
 } from "./javascriptRoutesView.js";
 import {
+  webBundleViewSourceUnknownsSchema,
   webBundleViewRequestSchema,
   webBundleViewItemsSchema,
   webBundleSummarySchema,
@@ -158,6 +165,11 @@ import {
   rustBinaryViewContextSchema,
 } from "./rustBinaryView.js";
 import {
+  cycloneDxDocumentSchema,
+  cycloneDxSourceCoverageSchema,
+  cycloneDxViewRequestSchema,
+} from "./cyclonedxView.js";
+import {
   nativeFunctionMatchingViewRequestSchema,
   nativeFunctionMatchingViewItemsSchema,
 } from "./nativeFunctionMatchingView.js";
@@ -177,6 +189,7 @@ import {
   nativeInventoryOperationSchema,
 } from "../native/nativeInventory.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import {
   browserScenarioSummarySchema,
   browserScenarioViewContextSchema,
@@ -213,10 +226,7 @@ import {
   artifactGraphManifestSchema,
   artifactInventoryCoverageSchema,
 } from "../artifactGraph.js";
-import {
-  apiSurfaceFields,
-  apiSurfaceViewSchema,
-} from "./webNetworkApiSurfaceView.js";
+import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import {
   evmViewRequestSchema,
   evmViewItemSchema,
@@ -261,10 +271,8 @@ import {
   captureViewItemsSchema,
   captureSummarySchema,
 } from "./webNetworkCaptureView.js";
-import {
-  environmentManifestFields,
-  environmentManifestViewRequestSchema,
-} from "./environmentManifestView.js";
+import { environmentManifestFields } from "./environmentManifestSchema.js";
+import { environmentManifestViewRequestSchema } from "./environmentManifestView.js";
 import {
   environmentStateFields,
   environmentStateViewRequestSchema,
@@ -286,13 +294,15 @@ import {
 import {
   androidPackageSummarySchema,
   androidManifestViewItemSchema,
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
   androidComponentViewRowSchema,
   androidComponentViewContextSchema,
   androidComponentSummarySchema,
 } from "./androidPackageView.js";
+import {
+  androidManifestViewRequestSchema,
+  androidComponentsViewRequestSchema,
+  androidComponentSummaryViewRequestSchema,
+} from "../android/androidPackageQuery.js";
 import {
   androidClassSummarySchema,
   androidMethodSummarySchema,
@@ -366,10 +376,12 @@ const viewResultBase = {
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
+    "inspect_nuget_nupkg",
     "inspect_erlang_beam",
     "inspect_devicetree",
     "inspect_byte_entropy",
     "inspect_native_exports",
+    "inspect_elf_dependencies",
     "inspect_binary_layout",
     "inspect_go_binary",
     "gdb_console",
@@ -541,6 +553,12 @@ export const byteEntropySummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_byte_entropy"),
 });
 
+export const elfDependenciesSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_elf_dependencies"),
+  summary: elfDependenciesSummarySchema,
+});
+
 export const nativeExportsSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_native_exports"),
@@ -571,6 +589,12 @@ export const pythonPycSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_python_pyc"),
   summary: pythonPycSummarySchema,
+});
+
+export const nugetNupkgSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_nuget_nupkg"),
+  summary: nugetNupkgSummarySchema,
 });
 
 export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
@@ -632,6 +656,16 @@ export const rustBinaryPageViewResultSchema = z.strictObject({
   view: rustBinaryViewRequestSchema,
   rust: rustBinarySummarySchema,
   page: rustBinaryViewPageSchema,
+});
+
+/** One CycloneDX 1.6 document. This view does not page. */
+export const cycloneDxViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("cyclonedx"),
+  parent_operation: z.enum(["inspect_go_binary", "inspect_rust_binary"]),
+  view: cycloneDxViewRequestSchema,
+  source_coverage: cycloneDxSourceCoverageSchema,
+  document: cycloneDxDocumentSchema,
 });
 
 /** Summary `inspect_binary_layout` detail returns; no other view kind. */
@@ -777,11 +811,11 @@ export const androidMethodSummaryViewResultSchema = z.strictObject({
   summary: androidMethodSummarySchema,
 });
 
-/** Legacy manifest views keep their original shape; new facets are explicit. */
+/** One page of the retained manifest text. */
 export const androidManifestViewResultSchema = z.strictObject({
   ...viewResultBase,
   kind: z.literal("android"),
-  facet: z.literal("manifest").optional(),
+  facet: z.literal("manifest"),
   view: androidManifestViewRequestSchema,
   item: androidManifestViewItemSchema,
   parent_operation: z.literal("inspect_android_package"),
@@ -850,8 +884,8 @@ export const webBundleSummaryViewResultSchema = z.strictObject({
   artifact: artifactSchema.nullable(),
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  target_origin: recordedBrowserOriginSchema.nullable(),
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   summary: webBundleSummarySchema,
 });
 
@@ -861,8 +895,8 @@ export const webBundlePageViewResultSchema = z.strictObject({
   kind: z.literal("web-bundle"),
   parent_operation: z.literal("analyze_web_bundle"),
   target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable().optional(),
-  source_unknowns: webBundleAnalysisSchema.shape.unknowns,
+  target_origin: recordedBrowserOriginSchema.nullable(),
+  source_unknowns: webBundleViewSourceUnknownsSchema,
   view: webBundleViewRequestSchema,
   completeness: webBundleAnalysisSchema.shape.completeness,
   items: webBundleViewItemsSchema,
@@ -1068,8 +1102,9 @@ export const nativeFunctionSummarySchema = z.strictObject({
     available: z.boolean(),
     truncated: z
       .boolean()
+      .nullable()
       .describe(
-        "True only when value-flow is available and the provider truncated it; false when value-flow is unavailable (see available).",
+        "Whether the provider truncated available value-flow; null when value-flow is unavailable (see available).",
       ),
   }),
   facet_availability: functionFacetAvailabilitySchema
@@ -1090,6 +1125,7 @@ export const nativeFunctionSummarySchema = z.strictObject({
     referenced_names: declaredFacetCountSchema,
     swift_string_literals: recordedFacetCountSchema,
     swift_string_literal_omissions: recordedFacetCountSchema,
+    prototype_conflicts: recordedFacetCountSchema.optional(),
     value_flow_operations: valueFlowFacetCountSchema,
     value_flow_def_use: valueFlowFacetCountSchema,
     value_flow_effects: valueFlowFacetCountSchema,
@@ -1374,6 +1410,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     devicetreeSummaryViewResultSchema,
     pythonPycSummaryViewResultSchema,
     nativeExportsSummaryViewResultSchema,
+    elfDependenciesSummaryViewResultSchema,
     byteEntropySummaryViewResultSchema,
     gdbCommandSummaryViewResultSchema,
     objdumpSummaryViewResultSchema,
@@ -1415,6 +1452,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     featureTraceSummaryViewResultSchema,
     batchDecompileSummaryViewResultSchema,
     webBundleSummaryViewResultSchema,
+    nugetNupkgSummaryViewResultSchema,
   ]),
   z.strictObject({
     ...viewResultBase,
@@ -1435,6 +1473,14 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     view: nativeExportsViewRequestSchema,
     exports: nativeExportsSummarySchema,
     items: nativeExportsViewItemsSchema,
+  }),
+  z.strictObject({
+    ...viewResultBase,
+    kind: z.literal("elf-dependencies"),
+    parent_operation: z.literal("inspect_elf_dependencies"),
+    view: elfDependenciesViewRequestSchema,
+    dependencies: elfDependenciesSummarySchema,
+    items: elfDependenciesViewItemsSchema,
   }),
   z.strictObject({
     ...viewResultBase,
@@ -1495,7 +1541,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     kind: z.literal("pcap"),
     view: pcapViewRequestSchema,
     page: pcapViewPageSchema,
-    source_coverage: z.enum(["complete", "partial"]),
+    source_coverage: knownCoverageStatusSchema,
     ...viewResultBase,
     parent_operation: z.literal("inspect_pcap_capture"),
   }),
@@ -1515,6 +1561,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     page: goBinaryViewPageSchema,
   }),
   rustBinaryPageViewResultSchema,
+  cycloneDxViewResultSchema,
   z.strictObject({
     kind: z.literal("item"),
     view: itemViewSchema,

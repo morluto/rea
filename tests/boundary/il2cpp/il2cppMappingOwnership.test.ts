@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import {
+  isExecutable,
   isMapped,
   openImageSteps,
   readPointer,
@@ -23,7 +24,7 @@ const { metadata, link: facts } = readIl2cppMetadataForLinking(
   createLinkedIl2cppMetadataFixture().bytes,
 );
 const link = (bytes: Buffer) => linkIl2cppBinary(bytes, metadata, facts);
-const open = (bytes: Buffer) => drain(openImageSteps(bytes, undefined));
+const open = (bytes: Buffer) => drain(openImageSteps(bytes));
 
 /** Replace PT_LOAD declarations, keeping the original PT_DYNAMIC and payload. */
 const withLoadRanges = (
@@ -299,12 +300,13 @@ it("reads both halves of a relocated word without changing a physical alias's UI
     { offset: 0, size: original.length },
     { offset: 0x304, size: 16, address: FIXTURE_BINARY_BASE + 0x2000n },
   ]);
+  const snapshot = Buffer.from(bytes);
   const image = open(bytes);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(0x200);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2004n)).toBe(0);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x2008n)).toBe(0);
-  expect(image.bytes.equals(bytes)).toBe(true);
+  expect(bytes.equals(snapshot)).toBe(true);
 });
 
 it.each([183, 62])(
@@ -327,6 +329,7 @@ it.each([183, 62])(
       { offset: 0, size: original.length },
       { offset: 0x308, size: 8, address: FIXTURE_BINARY_BASE + 0x2000n },
     ]);
+    const snapshot = Buffer.from(bytes);
     const image = open(bytes);
     expect(readSlot(image, FIXTURE_BINARY_BASE + 0x308n)).toBe(
       FIXTURE_BINARY_BASE + 0x200n,
@@ -334,7 +337,7 @@ it.each([183, 62])(
     expect(readSlot(image, FIXTURE_BINARY_BASE + 0x2000n)).toBe(
       FIXTURE_BINARY_BASE + 0x333n,
     );
-    expect(image.bytes.equals(bytes)).toBe(true);
+    expect(bytes.equals(snapshot)).toBe(true);
   },
 );
 
@@ -366,4 +369,75 @@ it("composes a UInt32 crossing a known relocation edge with unchanged source byt
   // bytes are followed by the original dd cc bytes at 0x310.
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30en)).toBe(0xccdd0000);
   expect(readUInt32(image, FIXTURE_BINARY_BASE + 0x30cn)).toBe(1);
+});
+
+it("reuses indexed executable mappings without rescanning container ranges", () => {
+  const image = open(createIl2cppBinaryFixture());
+  const execMappings = image.container.executable_mappings ?? [];
+  const iteratorSpy = vi.spyOn(execMappings, Symbol.iterator);
+  try {
+    for (let index = 0; index < 32; index++) {
+      expect(isExecutable(image, FIXTURE_BINARY_BASE + 0x200n)).toBe(true);
+      expect(isExecutable(image, FIXTURE_BINARY_BASE + 0x400n)).toBe(true);
+      expect(isExecutable(image, FIXTURE_BINARY_BASE + 0x5000n)).toBe(false);
+    }
+    expect(iteratorSpy).not.toHaveBeenCalled();
+  } finally {
+    iteratorSpy.mockRestore();
+  }
+});
+
+it("keeps mapping verification before module-name matching and spans above 4 GiB", () => {
+  // Ambiguous mapping covering a duplicate module record's 8-byte name slot
+  // must skip that slot via readPointer rather than throwing malformed-container.
+  const ambiguousMacho = createIl2cppBinaryFixture();
+  ambiguousMacho.copy(ambiguousMacho, 0x480, 0x400, 0x418);
+  ambiguousMacho.writeUInt32LE(2, 16);
+  ambiguousMacho.writeUInt32LE(144, 20);
+  const seg2 = 32 + 72;
+  ambiguousMacho.writeUInt32LE(0x19, seg2);
+  ambiguousMacho.writeUInt32LE(72, seg2 + 4);
+  ambiguousMacho.write("__ALIAS", seg2 + 8, "latin1");
+  ambiguousMacho.writeBigUInt64LE(FIXTURE_BINARY_BASE + 0x480n, seg2 + 24);
+  ambiguousMacho.writeBigUInt64LE(8n, seg2 + 32);
+  ambiguousMacho.writeBigUInt64LE(0x10n, seg2 + 40);
+  ambiguousMacho.writeBigUInt64LE(8n, seg2 + 48);
+  ambiguousMacho.writeUInt32LE(1, seg2 + 56);
+  ambiguousMacho.writeUInt32LE(1, seg2 + 60);
+  expect(link(ambiguousMacho)).toEqual(link(createIl2cppBinaryFixture()));
+
+  // Move module 0's name string into a second Mach-O segment in another 4 GiB
+  // window (0x2_0000_0000) while module 1 stays in 0x1_0000_0000, exercising
+  // multi-high-32-bit lane pre-screening in findModules and findTypeTableByCode.
+  const baseMacho = createIl2cppBinaryFixture({
+    metadataRegistration: false,
+    adrpAdd: [[0xc20, 0x900]],
+  });
+  const remoteBase = 0x2_0000_1000n;
+  const nameText = Buffer.from("Assembly-CSharp.dll\0", "utf8");
+  const extraPage = Buffer.alloc(0x1000);
+  nameText.copy(extraPage, 0);
+  baseMacho.writeBigUInt64LE(remoteBase, 0x400);
+  baseMacho.fill(0, 0x100, 0x100 + nameText.length);
+  baseMacho.writeUInt32LE(2, 16);
+  baseMacho.writeUInt32LE(144, 20);
+  baseMacho.writeUInt32LE(0x19, seg2);
+  baseMacho.writeUInt32LE(72, seg2 + 4);
+  baseMacho.write("__REMOTE", seg2 + 8, "latin1");
+  baseMacho.writeBigUInt64LE(remoteBase, seg2 + 24);
+  baseMacho.writeBigUInt64LE(BigInt(extraPage.length), seg2 + 32);
+  baseMacho.writeBigUInt64LE(BigInt(baseMacho.length), seg2 + 40);
+  baseMacho.writeBigUInt64LE(BigInt(extraPage.length), seg2 + 48);
+  baseMacho.writeUInt32LE(1, seg2 + 56);
+  baseMacho.writeUInt32LE(1, seg2 + 60);
+  const full = Buffer.concat([baseMacho, extraPage]);
+  const linked = linkIl2cppBinary(full, metadata, {
+    ...facts,
+    returnTypes: Int32Array.from(facts.returnTypes, () => 3),
+  });
+  expect(linked.types_field).toBeNull();
+  expect(linked.types_count).toBe(4);
+  expect(linked.code_gen_modules[0]?.address).toBe(
+    FIXTURE_BINARY_BASE + 0x400n,
+  );
 });

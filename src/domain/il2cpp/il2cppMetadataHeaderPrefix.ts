@@ -1,4 +1,7 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { IL2CPP_METADATA_MAGIC } from "./il2cppMetadata.js";
+
+export const IL2CPP_METADATA_PREFIX_BYTES = 8;
 
 /** Parsed identity facts available before the complete IL2CPP header exists. */
 export type Il2cppMetadataHeaderPrefix =
@@ -34,8 +37,14 @@ export const observeIl2cppMetadataHeaderPrefix = (
       rawVersion: null,
       version: null,
     };
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const magic = view.getUint32(0, true);
+  const reader = new BinaryReader(
+    Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    "il2cpp-metadata",
+  );
+  const magic = reader.u32(0);
   if (magic !== IL2CPP_METADATA_MAGIC)
     return {
       kind: "other-magic",
@@ -43,17 +52,18 @@ export const observeIl2cppMetadataHeaderPrefix = (
       rawVersion: null,
       version: null,
     };
-  if (bytes.byteLength < 8)
+  if (bytes.byteLength < IL2CPP_METADATA_PREFIX_BYTES)
     return {
       kind: "il2cpp",
       magic: IL2CPP_METADATA_MAGIC,
       rawVersion: null,
       version: null,
     };
+  const rawVersion = reader.u32(4);
   return {
     kind: "il2cpp",
     magic: IL2CPP_METADATA_MAGIC,
-    rawVersion: view.getUint32(4, true),
-    version: view.getInt32(4, true),
+    rawVersion,
+    version: rawVersion | 0,
   };
 };

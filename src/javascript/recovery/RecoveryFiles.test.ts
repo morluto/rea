@@ -15,7 +15,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactFileCleanupFailure } from "../../resources/ArtifactFileOperation.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   openRegularFile,

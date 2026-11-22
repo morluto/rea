@@ -1,4 +1,8 @@
 import {
+  environmentCollectionKey,
+  environmentEntityKey,
+} from "../../domain/analysisView/environmentStateIdentity.js";
+import {
   markedDeleted,
   type StateEntity,
   type StateType,
@@ -8,10 +12,10 @@ import {
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { Budget } from "../../domain/budget.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { jsonByteLength } from "../../domain/jsonSerialization.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import { ENVIRONMENT_SERVE_OPERATION } from "./environmentSource.js";
 import type { EnvironmentState } from "./environmentState.js";
 import {
@@ -22,7 +26,7 @@ import {
 } from "./environmentStateDocument.js";
 
 /** Maximum logical budget for collection spellings added by served creates since reset/load. */
-export const ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES = 1024 * 1024;
+const ENVIRONMENT_COLLECTION_HISTORY_LIMIT_BYTES = 1024 * 1024;
 
 const collectionHistoryCost = (
   state: EnvironmentState,
@@ -130,7 +134,7 @@ export class EnvironmentStateStore {
   /** Entities served deletes kept for an application that still answers a deleted record by id, oldest first. */
   readonly #deleted = new Map<string, StateEntity>();
   /** Their UTF-8 bytes, kept within what `data/add` loads by dropping the oldest. */
-  #deletedBytes = 0;
+  readonly #deletedBytes = new Budget(STATE_INTAKE_LIMIT_BYTES);
 
   constructor(readonly state: EnvironmentState) {
     this.#types = new Map(
@@ -222,7 +226,7 @@ export class EnvironmentStateStore {
     this.#knownCollections.clear();
     this.#collectionHistoryBytes = 0;
     this.#deleted.clear();
-    this.#deletedBytes = 0;
+    this.#deletedBytes.restore(0);
     for (const [type, collections] of this.#typeCollections)
       for (const collection of collections)
         this.#rememberCollection(type, collection);
@@ -259,7 +263,7 @@ export class EnvironmentStateStore {
     entity: StateEntity,
     index: number,
   ): Result<void, AnalysisResourceConstraintError> {
-    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    const key = environmentEntityKey(entity.type, entity.collection, entity.id);
     const replaced = this.#storedDeleted.get(key);
     const entities =
       replaced === undefined
@@ -339,7 +343,7 @@ export class EnvironmentStateStore {
     const replaced = new Map<StateEntity, StateEntity>();
     for (const entity of entities) {
       const held = this.#entities.get(
-        compositeKey([entity.type, entity.collection, entity.id]),
+        environmentEntityKey(entity.type, entity.collection, entity.id),
       );
       if (held !== undefined) replaced.set(held, entity);
     }
@@ -351,7 +355,7 @@ export class EnvironmentStateStore {
     const bytes = this.#grown(delta);
     if (!bytes.ok) return bytes;
     const key = (entity: StateEntity) =>
-      compositeKey([entity.type, entity.collection, entity.id]);
+      environmentEntityKey(entity.type, entity.collection, entity.id);
     const placed = new Set(order.map(key));
     let next = 0;
     this.#install(
@@ -377,7 +381,7 @@ export class EnvironmentStateStore {
     const held = new Set(
       entities.flatMap((entity) => {
         const found = this.#entities.get(
-          compositeKey([entity.type, entity.collection, entity.id]),
+          environmentEntityKey(entity.type, entity.collection, entity.id),
         );
         return found === undefined ? [] : [found];
       }),
@@ -400,26 +404,29 @@ export class EnvironmentStateStore {
     collection: string,
     id: string,
   ): StateEntity | undefined {
-    const key = compositeKey([type, collection, id]);
+    const key = environmentEntityKey(type, collection, id);
     return this.#entities.has(key)
       ? undefined
       : (this.#storedDeleted.get(key) ?? this.#deleted.get(key));
   }
 
   #keepDeleted(entity: StateEntity): void {
-    const key = compositeKey([entity.type, entity.collection, entity.id]);
+    const key = environmentEntityKey(entity.type, entity.collection, entity.id);
     const earlier = this.#deleted.get(key);
     if (earlier !== undefined) {
       this.#deleted.delete(key);
-      this.#deletedBytes -= jsonByteLength(earlier);
+      this.#deletedBytes.refund(jsonByteLength(earlier));
     }
-    this.#deleted.set(key, entity);
-    this.#deletedBytes += jsonByteLength(entity);
-    for (const [oldest, dropped] of this.#deleted) {
-      if (this.#deletedBytes <= STATE_INTAKE_LIMIT_BYTES) break;
-      this.#deleted.delete(oldest);
-      this.#deletedBytes -= jsonByteLength(dropped);
-    }
+    const kept = this.#deletedBytes.chargeEvicting(
+      jsonByteLength(entity),
+      () => {
+        const oldest = this.#deleted.entries().next();
+        if (oldest.done === true) return undefined;
+        this.#deleted.delete(oldest.value[0]);
+        return jsonByteLength(oldest.value[1]);
+      },
+    );
+    if (kept) this.#deleted.set(key, entity);
   }
 
   /** Set a held document's value, unless the state would outgrow what `data/add` loads; a value that is not the Evidence's cites no record. */
@@ -472,12 +479,14 @@ export class EnvironmentStateStore {
     collection: string,
     id: string,
   ): StateEntity | undefined {
-    return this.#entities.get(compositeKey([type, collection, id]));
+    return this.#entities.get(environmentEntityKey(type, collection, id));
   }
 
   /** One collection's entities in state order. */
   inCollection(type: string, collection: string): readonly StateEntity[] {
-    return this.#collections.get(compositeKey([type, collection])) ?? [];
+    return (
+      this.#collections.get(environmentCollectionKey(type, collection)) ?? []
+    );
   }
 
   /** The collections holding entities of one type, in state order of their first entity. */
@@ -529,7 +538,7 @@ export class EnvironmentStateStore {
     for (const entity of content.entities) {
       if (markedDeleted(entity.fields)) {
         storedDeleted.set(
-          compositeKey([entity.type, entity.collection, entity.id]),
+          environmentEntityKey(entity.type, entity.collection, entity.id),
           entity,
         );
         const named = typeCollections.get(entity.type) ?? [];
@@ -538,10 +547,10 @@ export class EnvironmentStateStore {
         continue;
       }
       entities.set(
-        compositeKey([entity.type, entity.collection, entity.id]),
+        environmentEntityKey(entity.type, entity.collection, entity.id),
         entity,
       );
-      const key = compositeKey([entity.type, entity.collection]);
+      const key = environmentCollectionKey(entity.type, entity.collection);
       const members = collections.get(key);
       if (members !== undefined) {
         members.push(entity);

@@ -14,7 +14,7 @@ import {
   peImportNameAtRva,
   peWithoutImportTableFixture,
 } from "../../../tests/fixtures/binaryDiagnostics/peImports.js";
-import { parsePeImports, PeImportLimitFailure } from "./PeImportParser.js";
+import { parsePeImports } from "./PeImportParser.js";
 
 const input = inspectPeImportsInputSchema.parse({
   path: "/artifacts/app.exe",
@@ -151,6 +151,55 @@ it.each([
   },
 );
 
+it.each([4096, 4097])(
+  "reports a %i-byte DLL name at the fixed read boundary",
+  async (length) => {
+    const name = "n".repeat(length);
+    const report = await parse(
+      peImportImage({
+        sectionBytes: 8192,
+        dlls: [{ name, functions: [] }],
+      }),
+    );
+    if (length === 4096) {
+      expect(report.imports[0]?.name).toBe(name);
+      expect(report.coverage.status).toBe("complete");
+    } else {
+      expect(report.imports[0]?.name).toBeNull();
+      expect(report.coverage.status).toBe("partial");
+      expect(report.issues).toContainEqual(
+        expect.objectContaining({
+          code: "name_unreadable",
+          message: expect.stringContaining("4096-byte read allowance"),
+        }),
+      );
+    }
+  },
+);
+
+it("retains later imports when a function name exceeds the read allowance", async () => {
+  const report = await parse(
+    peImportImage({
+      sectionBytes: 8192,
+      dlls: [
+        {
+          name: "example.dll",
+          functions: [{ name: "n".repeat(4097) }, { name: "kept" }],
+        },
+      ],
+    }),
+  );
+  expect(report.imports[0]?.functions).toMatchObject([{ name: "kept" }]);
+  expect(report.coverage.status).toBe("partial");
+  expect(report.issues).toContainEqual(
+    expect.objectContaining({
+      code: "name_unreadable",
+      message: expect.stringContaining("4096-byte read allowance"),
+    }),
+  );
+  expect(report.imphash.md5).toBeNull();
+});
+
 it("does not consume a DLL name past the uint32 RVA end", async () => {
   const report = await parse(peImportNameAtRva(0xfffffff8));
   expect(report.imports[0]?.name).toBeNull();
@@ -209,6 +258,55 @@ it("withholds the hash beyond pefile's section parser capacity", async () => {
   expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
 });
 
+it("hashes a sub-page-aligned section pefile reads at its unrounded offset", async () => {
+  // SectionAlignment == FileAlignment == 0x80 with .idata at RVA 0x300 == file offset 0x300:
+  // pefile 2024.8.26 keeps PointerToRawData unrounded when it equals VirtualAddress
+  // (LdrpWx86FormatVirtualImage), so both readers see the same bytes and the hash is provable.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x300,
+        sectionOffset: 0x300,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.imports[0]?.functions.map((row) => row.name)).toEqual([
+    "GetProcAddress",
+    "ExitProcess",
+  ]);
+  expect(report.coverage.status).toBe("complete");
+  expect(report.issues).toEqual([]);
+  expect(report.imphash.reason).toBeNull();
+  expect(report.imphash.md5).toBe(
+    createHash("md5")
+      .update("kernel32.getprocaddress,kernel32.exitprocess", "utf8")
+      .digest("hex"),
+  );
+});
+
+it("still withholds the hash when a sub-page section rounds to a different offset", async () => {
+  // Same sub-page alignment, but PointerToRawData 0x380 differs from VirtualAddress 0x400, so
+  // pefile does round it and the native mapping is not the one pefile reads.
+  const report = await parse(
+    peImportImage({
+      bits: 64,
+      layout: {
+        sectionRva: 0x400,
+        sectionOffset: 0x380,
+        headerBytes: 0x200,
+        sectionAlignment: 0x80,
+        fileAlignment: 0x80,
+      },
+    }),
+  );
+  expect(report.coverage.status).toBe("complete");
+  expect(report.imphash.md5).toBeNull();
+  expect(report.imphash.reason).toMatch(/mapping|compatibility/u);
+});
 it.each([false, true])(
   "withholds the hash when pefile stops at an earlier section (suspicious: %s)",
   async (suspicious) => {
@@ -509,7 +607,11 @@ it("fails closed when the DLL budget is exhausted", async () => {
       }),
     ),
   ).rejects.toThrow(
-    expect.objectContaining({ limit: "dlls", maximum_bytes: 1 }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: { name: "dlls", maximum: 1 },
+      }),
+    }),
   );
 });
 
@@ -532,7 +634,11 @@ it("fails closed when the function budget is exhausted", async () => {
       }),
     ),
   ).rejects.toThrow(
-    expect.objectContaining({ limit: "functions", maximum_bytes: 1 }),
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        limit: { name: "functions", maximum: 1 },
+      }),
+    }),
   );
 });
 
@@ -548,13 +654,12 @@ it("fails closed with a structured tag when retained name text is exhausted", as
     ],
   });
   const failure = parse(bytes);
-  await expect(failure).rejects.toThrow(PeImportLimitFailure);
-  await expect(failure).rejects.toThrow(
-    expect.objectContaining({
-      limit: "retained_text",
-      maximum_bytes: 16 * 1024 * 1024,
-    }),
-  );
+  await expect(failure).rejects.toMatchObject({
+    failure: {
+      kind: "limit",
+      limit: { name: "retained_text", maximum: 16 * 1024 * 1024 },
+    },
+  });
 });
 
 it("computes a pefile import hash for oleaut32 ordinal names", async () => {
