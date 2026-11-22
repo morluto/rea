@@ -255,7 +255,11 @@ const registrationFailure = async (
   },
 ): Promise<ConfigurationError> => {
   const { backupPath, configured } = progress;
-  if (cause instanceof ConfigurationError) return cause;
+  if (cause instanceof ConfigurationError) {
+    if (backupPath !== undefined)
+      cause.retainPrimaryDiagnostics({ backup_path: backupPath });
+    return cause;
+  }
   const cleanup = isClientConfigurationCleanupFailure(cause)
     ? await retryClientConfigurationCleanup(cause, resources)
     : undefined;
