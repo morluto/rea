@@ -15,7 +15,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import {
   analysisEvidenceDeliveryOptions,
   cliEvidenceDeliveryInputError,
-} from "./analysisEvidenceDelivery.js";
+} from "./analysisEvidenceDeliveryOptions.js";
 import { parseCliJsonOption } from "./cliJsonOption.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { cliJsonCallerPathSchema } from "./cliJsonInput.js";

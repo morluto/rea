@@ -214,13 +214,15 @@ const callerSpellings = (
  */
 export const inspectWithService =
   (
-    service: () => EvidenceInspectionService,
+    service: () =>
+      | EvidenceInspectionService
+      | Promise<EvidenceInspectionService>,
     providerId: string,
     primary = "path",
   ) =>
-  (input: unknown, context: ContractCommandContext) => {
+  async (input: unknown, context: ContractCommandContext) => {
     const spellings = callerSpellings(context, primary);
-    const owned = service();
+    const owned = await service();
     return finishCliEvidenceCommand(
       spellings.path,
       () => owned.inspect(input, { signal: context.signal }),
@@ -498,13 +500,18 @@ export const analyzeWithService =
  * path.
  */
 export const deliverWithService =
-  (service: () => EvidenceInspectionService, providerId: string) =>
-  (input: unknown, context: ContractCommandContext) => {
+  (
+    service: () =>
+      | EvidenceInspectionService
+      | Promise<EvidenceInspectionService>,
+    providerId: string,
+  ) =>
+  async (input: unknown, context: ContractCommandContext) => {
     const spellings = callerSpellings(context);
     const { delivery } = context;
     if (delivery === undefined)
       throw new Error(`${context.operation} does not declare evidenceDelivery`);
-    const owned = service();
+    const owned = await service();
     return deliverCliAnalysisEvidence({
       callerInputPath: spellings.path,
       ...(spellings.others === undefined
