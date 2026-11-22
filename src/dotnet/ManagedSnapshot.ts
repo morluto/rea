@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { invariantViolation } from "../domain/internalInvariant.js";
-import type { BigIntStats, Stats } from "node:fs";
+import type { Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 import { MANAGED_STATIC_PROVIDER } from "../domain/investigationProviders.js";
@@ -25,11 +25,7 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspectionLimits.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import {
-  RegularFileChangedError,
-  assertStableRegularFileIdentity,
-  sameRegularFileState,
-} from "../filesystem/RegularFile.js";
+import { RegularFileChangedError } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { classifyBinaryTargetFilesystemFailure } from "../domain/binaryTargetFilesystemFailure.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -38,23 +34,15 @@ interface ManagedSourceObservation {
   readonly byteLength: number;
   readonly sha256: string;
   readonly bytes?: Buffer;
-  readonly state: BigIntStats;
 }
 
 interface ManagedSnapshot extends ManagedSourceObservation {
   readonly bytes: Buffer;
-  readonly state: BigIntStats;
 }
 
 interface ManagedSnapshotReadOptions extends RegularFileReadOptions {
   readonly expectedSha256?: string;
   readonly maxBytes?: number;
-  /** When present and unchanged on the opened descriptor, reuse the verified digest without re-hashing. */
-  readonly cached?: {
-    readonly state: BigIntStats;
-    readonly sha256: string;
-    readonly byteLength: number;
-  };
 }
 
 /** Admit one observed source digest before any parser or cache consumes its bytes. */
@@ -118,16 +106,14 @@ export const readManagedSnapshot = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      const state = await handle.stat({ bigint: true });
       const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
       if (bytes === undefined)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      await assertManagedFileState(handle, path, state, options);
+      signal?.throwIfAborted();
       return {
         byteLength: bytes.length,
         sha256: sha256Hex(bytes),
         bytes,
-        state,
       };
     },
     options,
@@ -147,19 +133,6 @@ export const hashManagedSource = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      const state = await handle.stat({ bigint: true });
-      signal?.throwIfAborted();
-      if (
-        options.cached !== undefined &&
-        sameRegularFileState(options.cached.state, state)
-      ) {
-        await assertManagedFileState(handle, path, state, options);
-        return {
-          byteLength: options.cached.byteLength,
-          sha256: options.cached.sha256,
-          state,
-        };
-      }
       const digest = createHash("sha256");
       let byteLength = 0;
       const chunk = Buffer.allocUnsafe(256 * 1024);
@@ -178,23 +151,11 @@ export const hashManagedSource = async (
         byteLength += bytesRead;
         digest.update(chunk.subarray(0, bytesRead));
       }
-      await assertManagedFileState(handle, path, state, options);
-      return { byteLength, sha256: digest.digest("hex"), state };
+      return { byteLength, sha256: digest.digest("hex") };
     },
     options,
   );
 };
-
-const assertManagedFileState = (
-  handle: FileHandle,
-  path: string,
-  state: BigIntStats,
-  options: ManagedSnapshotReadOptions,
-): Promise<void> =>
-  assertStableRegularFileIdentity(handle, path, state, {
-    symlinks: options.symlinks ?? "follow",
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
 
 const snapshotBudget = (options: ManagedSnapshotReadOptions): number => {
   const maxBytes = options.maxBytes ?? DEFAULT_MANAGED_SNAPSHOT_BYTES;

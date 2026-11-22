@@ -1,4 +1,4 @@
-import { open, utimes, writeFile, type FileHandle } from "node:fs/promises";
+import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -30,7 +30,6 @@ it.each([
     const client = new ManagedStaticProvider().createClient(parsed.value);
     const initial = await client.execute("inspect_managed_artifact", {});
     if (!initial.ok) throw initial.error;
-    await utimes(path, new Date(0), new Date(0));
 
     const admitted = await open(path, "r");
     const prototype = Object.getPrototypeOf(admitted) as FileHandle;
@@ -132,39 +131,6 @@ it.each([
   },
 );
 
-it("rehashes touched managed bytes once, then reuses the refreshed descriptor state", async () => {
-  const root = await createTestTempDirectory("rea-managed-digest-refresh-");
-  const path = join(root, "fixture.exe");
-  await writeFile(path, buildManagedPeFixture());
-  const parsed = await parseBinaryTarget(path);
-  if (!parsed.ok) throw parsed.error;
-  const client = new ManagedStaticProvider().createClient(parsed.value);
-  const handle = await open(path, "r");
-  const prototype = Object.getPrototypeOf(handle) as FileHandle;
-  await handle.close();
-  const read = vi.spyOn(prototype, "read");
-  try {
-    expect(await client.execute("inspect_managed_artifact", {})).toMatchObject({
-      ok: true,
-    });
-    await utimes(path, new Date(0), new Date(0));
-    read.mockClear();
-    expect(await client.execute("inspect_managed_members", {})).toMatchObject({
-      ok: true,
-    });
-    expect(read).toHaveBeenCalled();
-    read.mockClear();
-    expect(await client.execute("inspect_managed_members", {})).toMatchObject({
-      ok: true,
-      value: { subject: { sha256: parsed.value.sha256 } },
-    });
-    expect(read).not.toHaveBeenCalled();
-  } finally {
-    read.mockRestore();
-    expect(await client.close()).toMatchObject({ ok: true });
-  }
-});
-
 it("preserves an independent read failure when cancellation races with it", async () => {
   const directory = await createTestTempDirectory(
     "rea-managed-hash-read-failure-",
@@ -176,7 +142,6 @@ it("preserves an independent read failure when cancellation races with it", asyn
   const client = new ManagedStaticProvider().createClient(parsed.value);
   const initial = await client.execute("inspect_managed_artifact", {});
   if (!initial.ok) throw initial.error;
-  await utimes(path, new Date(0), new Date(0));
   const admitted = await open(path, "r");
   const prototype = Object.getPrototypeOf(admitted) as FileHandle;
   await admitted.close();
