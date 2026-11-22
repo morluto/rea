@@ -1,6 +1,7 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { boundedList } from "../boundedList.js";
 import {
   evmInterfaceSchema,
   inspectEvmInterfaceInputSchema,
@@ -43,6 +44,30 @@ export const evmViewItemSchema = z.union([
   analysisTextPageItemSchema,
 ]);
 
+// A carrier within the node cap can hold tens of thousands of diagnostic rows.
+const DIAGNOSTIC_PREVIEW_ROWS = 16;
+
+const diagnosticSummary = (
+  diagnostics: NonNullable<SolcArtifact["diagnostics"]>,
+) => {
+  const rows = diagnostics.map(({ json_pointer, severity, source_range }) => ({
+    json_pointer,
+    severity,
+    source_range,
+  }));
+  const errors = rows.filter((row) => row.severity === "error");
+  const { items, omitted } = boundedList(
+    [...errors, ...rows.filter((row) => row.severity !== "error")],
+    DIAGNOSTIC_PREVIEW_ROWS,
+  );
+  return {
+    total: rows.length,
+    error_count: errors.length,
+    preview: [...items],
+    preview_omitted: omitted,
+  };
+};
+
 /** Selected compiler facts without duplicate bytecode, raw metadata, settings or diagnostic JSON. */
 const {
   object: _objectSchema,
@@ -51,15 +76,22 @@ const {
 } = solcArtifactSchema.shape;
 const compilerArtifactSummarySchema = z.strictObject({
   ...compilerFactsShape,
-  // Coordinates and severity locate each diagnostic; exact JSON stays in the parent Evidence.
+  // Counts plus a bounded, errors-first preview; every exact row stays in the parent Evidence.
   diagnostics: z
-    .array(
-      z.strictObject({
-        json_pointer: z.string(),
-        severity: z.string().nullable(),
-        source_range: solcSourceRangeSchema,
-      }),
-    )
+    .strictObject({
+      total: z.number().int().nonnegative(),
+      error_count: z.number().int().nonnegative(),
+      preview: z
+        .array(
+          z.strictObject({
+            json_pointer: z.string(),
+            severity: z.string().nullable(),
+            source_range: solcSourceRangeSchema,
+          }),
+        )
+        .max(DIAGNOSTIC_PREVIEW_ROWS),
+      preview_omitted: z.number().int().nonnegative(),
+    })
     .nullable(),
   object_code_units: z.number().int().nonnegative().nullable(),
   metadata: solcArtifactSchema.shape.metadata
@@ -75,12 +107,7 @@ const compilerArtifactSummary = (artifact: SolcArtifact) => {
   const { raw, settings_json: settings, ...metadataFacts } = metadata;
   return {
     ...facts,
-    diagnostics:
-      diagnostics?.map(({ json_pointer, severity, source_range }) => ({
-        json_pointer,
-        severity,
-        source_range,
-      })) ?? null,
+    diagnostics: diagnostics === null ? null : diagnosticSummary(diagnostics),
     object_code_units: object?.length ?? null,
     metadata: {
       ...metadataFacts,

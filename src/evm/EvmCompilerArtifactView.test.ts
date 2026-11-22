@@ -97,6 +97,39 @@ const compilerParent = (
   };
 };
 
+it("bounds summary diagnostics to an errors-first preview with exact totals", () => {
+  const errors = [
+    ...Array.from({ length: 40 }, () => ({ severity: "warning" })),
+    { severity: "error", message: "late failure" },
+    ...Array.from({ length: 40 }, () => ({})),
+  ];
+  const result = projectAnalysisView(compilerParent("6001", { errors }), {
+    kind: "summary",
+  });
+  if (!result.ok) throw result.error;
+  const { diagnostics } = (
+    result.value as {
+      summary: {
+        compiler_artifact: {
+          diagnostics: {
+            total: number;
+            error_count: number;
+            preview: { json_pointer: string }[];
+            preview_omitted: number;
+          };
+        };
+      };
+    }
+  ).summary.compiler_artifact;
+  expect(diagnostics).toMatchObject({
+    total: 81,
+    error_count: 1,
+    preview_omitted: 65,
+  });
+  expect(diagnostics.preview).toHaveLength(16);
+  expect(diagnostics.preview[0]?.json_pointer).toBe("/errors/40");
+});
+
 it.each([
   undefined,
   "__$" + "a".repeat(34) + "$__",
@@ -130,13 +163,18 @@ it.each([
             raw_code_units: expect.any(Number),
             settings_code_units: expect.any(Number),
           },
-          diagnostics: [
-            {
-              severity: "error",
-              json_pointer: "/errors/0",
-              source_range: expect.anything(),
-            },
-          ],
+          diagnostics: {
+            total: 1,
+            error_count: 1,
+            preview: [
+              {
+                severity: "error",
+                json_pointer: "/errors/0",
+                source_range: expect.anything(),
+              },
+            ],
+            preview_omitted: 0,
+          },
         },
       },
     });
