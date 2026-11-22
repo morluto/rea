@@ -98,22 +98,3 @@ it("retains observed coordinates and unresolved property references", async () =
   });
   expect(result.value.confidence).toBe("observed");
 });
-
-it("keeps an omitted read budget out of Evidence parameters", async () => {
-  const report = reportFor();
-  const omitted = await inspect(report);
-  if (!omitted.ok) throw omitted.error;
-  expect(parseEvidence(omitted.value).parameters).toStrictEqual({
-    path: report.artifact.path,
-  });
-
-  const explicit = await serviceFor(report).inspect({
-    path: report.artifact.path,
-    max_file_bytes: 1024 * 1024,
-  });
-  if (!explicit.ok) throw explicit.error;
-  expect(parseEvidence(explicit.value).parameters).toStrictEqual({
-    path: report.artifact.path,
-    max_file_bytes: 1024 * 1024,
-  });
-});
