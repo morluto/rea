@@ -56,6 +56,7 @@ export const resolveProcessScenarioRuntimePaths = async (
     workingDirectory,
     snapshotEnvironment(scenario.environment, platform).PATH ??
       snapshotEnvironment(environment, platform).PATH,
+    platform,
   );
   const observationPaths = scenario.filesystem_observation_paths.map((path) =>
     absoluteCallerPath(path, { cwd: workingDirectory }),
@@ -80,11 +81,13 @@ const resolveExecutable = async (
   command: string,
   workingDirectory: string,
   searchPath: string | undefined,
+  platform: NodeJS.Platform,
 ): Promise<string> => {
   const lookup = await lookupExecutable(
     command,
     () => workingDirectory,
     searchPath,
+    { platform },
   );
   if (lookup.status === "found") return lookup.path;
   if (lookup.status === "denied")

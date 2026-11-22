@@ -7,6 +7,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { posixPathCandidates } from "./executableSearch.js";
 import { fileDeadline } from "./FileDeadline.js";
 
@@ -69,6 +70,8 @@ export interface ExecutableLookupBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly access?: (path: string, mode: number) => Promise<void>;
+  /** The host whose native search the lookup follows; defaults to this one. */
+  readonly platform?: NodeJS.Platform;
 }
 
 /**
@@ -97,13 +100,20 @@ export const lookupExecutable = async (
   searchPath: string | undefined,
   bounds: ExecutableLookupBounds = {},
 ): Promise<ExecutableLookup> => {
-  const { signal, timeoutMs, stat = statPath, access = accessPath } = bounds;
+  const {
+    signal,
+    timeoutMs,
+    stat = statPath,
+    access = accessPath,
+    platform = HOST_PLATFORM.platform,
+  } = bounds;
+  const pathMax = PATH_MAX[platform];
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());
   // Windows resolves even an absolute path against the working directory's
   // drive.
   const located = (path: string): string =>
-    process.platform !== "win32" && isAbsolute(path)
+    platform !== "win32" && isAbsolute(path)
       ? absoluteCallerPath(path)
       : absoluteCallerPath(path, { cwd: readCwd() });
   const explicit =
@@ -151,7 +161,7 @@ export const lookupExecutable = async (
       if (candidate === undefined)
         return { status: "no-working-directory", cause: unnamed.cause };
       const entryBytes = Buffer.byteLength(entry);
-      if (!explicit && PATH_MAX !== undefined && entryBytes >= PATH_MAX) {
+      if (!explicit && pathMax !== undefined && entryBytes >= pathMax) {
         checked.push(`a PATH entry of ${entryBytes} bytes (skipped)`);
         continue;
       }
@@ -273,9 +283,10 @@ export const searchesDiffer = (code: string | undefined): boolean =>
  * libuv on macOS. A shorter entry with an over-long component still fails
  * with ENAMETOOLONG. Elsewhere, as on Android, nothing is skipped by length.
  */
-const PATH_MAX = (
-  { linux: 4096, darwin: 1024 } as Partial<Record<NodeJS.Platform, number>>
-)[process.platform];
+const PATH_MAX: Partial<Record<NodeJS.Platform, number>> = {
+  linux: 4096,
+  darwin: 1024,
+};
 
 const systemErrorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&
