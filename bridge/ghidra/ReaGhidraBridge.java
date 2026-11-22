@@ -2686,6 +2686,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private StreamingResult search(JsonObject params, boolean procedureSearch) throws Exception {
         Set<String> keys = new HashSet<>(Set.of("pattern", "mode", "case_sensitive", "document"));
         if (params.has("literal_ascii_candidate")) keys.add("literal_ascii_candidate");
+        if (params.has("literal_ascii_substring")) keys.add("literal_ascii_substring");
         requireKeys(params, keys);
         requireDocument(params);
         String expression = requireString(params, "pattern");
@@ -2698,9 +2699,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (mode.equals("literal") && !caseSensitive) {
             if (!params.has("literal_ascii_candidate"))
                 throw new RequestFailure("invalid_request", "Insensitive literal search requires an ASCII candidate");
-            matcher = literalCandidateMatcher(optionalString(params, "literal_ascii_candidate"));
+            matcher = literalCandidateMatcher(
+                optionalString(params, "literal_ascii_candidate"),
+                optionalString(params, "literal_ascii_substring")
+            );
         } else {
-            if (params.has("literal_ascii_candidate"))
+            if (params.has("literal_ascii_candidate") || params.has("literal_ascii_substring"))
                 throw new RequestFailure("invalid_request", "ASCII candidate applies only to insensitive literals");
             matcher = mode.equals("literal")
                 ? literalMatcher(expression)
@@ -6083,50 +6087,68 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return nonLeafMatcher(value -> value.contains(pattern));
     }
 
-    // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
-    // Unicode code points, only U+017F (ſ -> s) and U+212A (K -> k) fold to
-    // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
-    // an ASCII fold, so only source strings containing non-ASCII stay eligible.
-    private static ValueMatcher literalCandidateMatcher(String asciiPattern) {
-        if (asciiPattern == null) {
-            return nonLeafMatcher(value -> {
-                for (int index = 0; index < value.length(); index++) {
-                    if (value.charAt(index) > 127) return true;
-                }
-                return false;
-            });
+    private static boolean containsNonAscii(String value) {
+        for (int index = 0; index < value.length(); index++) {
+            if (value.charAt(index) > 127) return true;
         }
-        int patternLength = asciiPattern.length();
-        for (int index = 0; index < patternLength; index++) {
+        return false;
+    }
+
+    private static void requireAsciiCandidate(String asciiPattern) {
+        for (int index = 0; index < asciiPattern.length(); index++) {
             if (asciiPattern.charAt(index) > 127) {
                 throw new RequestFailure("invalid_request", "ASCII candidate contains a non-ASCII character");
             }
         }
+    }
+
+    private static boolean containsFoldedAscii(String value, String asciiPattern) {
+        int patternLength = asciiPattern.length();
         if (patternLength == 0) {
-            return nonLeafMatcher(value -> true);
+            return true;
+        }
+        int valueLength = value.length();
+        if (valueLength < patternLength) {
+            return false;
         }
         char firstTarget = asciiPattern.charAt(0);
-        return nonLeafMatcher(value -> {
-            int valueLength = value.length();
-            if (valueLength < patternLength) {
-                return false;
+        int limit = valueLength - patternLength;
+        for (int index = 0; index <= limit; index++) {
+            if (foldAsciiCandidateChar(value.charAt(index)) != firstTarget) {
+                continue;
             }
-            int limit = valueLength - patternLength;
-            for (int index = 0; index <= limit; index++) {
-                if (foldAsciiCandidateChar(value.charAt(index)) != firstTarget) {
-                    continue;
-                }
-                int matched = 1;
-                while (matched < patternLength &&
-                       foldAsciiCandidateChar(value.charAt(index + matched)) == asciiPattern.charAt(matched)) {
-                    matched++;
-                }
-                if (matched == patternLength) {
-                    return true;
-                }
+            int matched = 1;
+            while (matched < patternLength &&
+                   foldAsciiCandidateChar(value.charAt(index + matched)) == asciiPattern.charAt(matched)) {
+                matched++;
             }
-            return false;
-        });
+            if (matched == patternLength) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
+    // Unicode code points, only U+017F (ſ -> s) and U+212A (K -> k) fold to
+    // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
+    // an ASCII fold, so only source strings containing non-ASCII (and any
+    // required ASCII-foldable substring) stay eligible.
+    private static ValueMatcher literalCandidateMatcher(String asciiPattern, String asciiSubstring) {
+        if (asciiPattern == null) {
+            if (asciiSubstring == null || asciiSubstring.isEmpty()) {
+                return nonLeafMatcher(value -> containsNonAscii(value));
+            }
+            requireAsciiCandidate(asciiSubstring);
+            return nonLeafMatcher(value ->
+                containsFoldedAscii(value, asciiSubstring) && containsNonAscii(value)
+            );
+        }
+        requireAsciiCandidate(asciiPattern);
+        if (asciiPattern.isEmpty()) {
+            return nonLeafMatcher(value -> true);
+        }
+        return nonLeafMatcher(value -> containsFoldedAscii(value, asciiPattern));
     }
 
     private interface StringCheck {
