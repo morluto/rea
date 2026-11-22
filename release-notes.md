@@ -337,6 +337,7 @@
 * **native:** eliminate quadratic lookups, comparator Zod/stringify churn, and redundant clones across native workflows ([#13306](https://github.com/morluto/rea/issues/13306)) ([6cc7de3](https://github.com/morluto/rea/commit/6cc7de3005e42457fc05240d0e8b6d364f7843f7))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **native:** pre-screen IL2CPP slots and reuse ObjC/PE indices ([#13314](https://github.com/morluto/rea/issues/13314)) ([ac4f655](https://github.com/morluto/rea/commit/ac4f65585846fc8542234ce1366b8a251336a790))
+* **parsers:** eliminate JNI exception-driven scans, IB JSON round-trips, Node SEA chunk copies, and O(N*F) Apple root scans ([#13608](https://github.com/morluto/rea/issues/13608)) ([5391e40](https://github.com/morluto/rea/commit/5391e40ddef966bf107265526925bc72b8f6caa7))
 * **parsers:** index PE RVA lookups and remove per-item parser allocations ([#13602](https://github.com/morluto/rea/issues/13602)) ([3699755](https://github.com/morluto/rea/commit/36997555d26a874ce6cd4c90b67ca06e7cf7f881))
 * **parsers:** single-pass XML plist Base64 table, cached TextDecoders, and fused KeyedArchive/Protobuf/JNI/P-Invoke hot paths ([#13594](https://github.com/morluto/rea/issues/13594)) ([e8d8803](https://github.com/morluto/rea/commit/e8d8803898d5f76f11a98805deb7549568d8becc))
 * **pcap/pwntools:** eliminate redundant parsing, linear scans, and quadratic allocations ([#13359](https://github.com/morluto/rea/issues/13359)) ([18f5b7b](https://github.com/morluto/rea/commit/18f5b7b4db6b24789084ebb1c81ad552893bc48a))
@@ -359,12 +360,14 @@
 * **search/kuna:** optimize regex worker dispatch and Kuna inventory validation ([#13320](https://github.com/morluto/rea/issues/13320)) ([2f171fa](https://github.com/morluto/rea/commit/2f171faa9f2a1ad8fa934ea7b769843e6f205fd0))
 * **server:** measure MCP tool result parts in a single zero-allocation scan ([#13598](https://github.com/morluto/rea/issues/13598)) ([09a5ea1](https://github.com/morluto/rea/commit/09a5ea1abcfb3b623d4d43e440ea44f1fc15182c))
 * **setup:** index YAML alias bindings in document order ([#13295](https://github.com/morluto/rea/issues/13295)) ([560e2ef](https://github.com/morluto/rea/commit/560e2ef267229e2a133879a1d3d663c1e88d5bbb))
+* **snapshots:** borrow immutable payloads and avoid double profile clone in AnalysisSnapshotCache.lookup ([#13620](https://github.com/morluto/rea/issues/13620)) ([5468605](https://github.com/morluto/rea/commit/54686057aeefeddbad36f220da37a93742d6c1fd))
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
 * **wasm:** parallelize WABT tool admission, stat-verify unchanged binaries, and halve snapshot re-hashing ([#13470](https://github.com/morluto/rea/issues/13470)) ([99c42dd](https://github.com/morluto/rea/commit/99c42ddc46bb725626bee9e579f936df00d0344d))
 * **wasm:** stream digest-only inspection reads ([#13440](https://github.com/morluto/rea/issues/13440)) ([093af33](https://github.com/morluto/rea/commit/093af33e5c1d7e3812d7ee80d4fa629445be3c47))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 * **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
+* **windows/artifacts:** add lightweight NTFS MFT attribute accounting and pass cached digest in ReleaseExposureReader ([#13623](https://github.com/morluto/rea/issues/13623)) ([7c13e1c](https://github.com/morluto/rea/commit/7c13e1cb34fc1be3413d94217d4737e0848d63cf))
 
 
 ### Code Refactoring
@@ -824,6 +827,7 @@
 * **sqlite:** consolidate inventory column capacity checks ([#12798](https://github.com/morluto/rea/issues/12798)) ([d21636a](https://github.com/morluto/rea/commit/d21636ae071d6cd9223150a72e6a59d930ce9673))
 * **sqlite:** consolidate inventory column capacity coverage ([d21636a](https://github.com/morluto/rea/commit/d21636ae071d6cd9223150a72e6a59d930ce9673))
 * **sqlite:** consolidate retained views and journal coverage ([#12876](https://github.com/morluto/rea/issues/12876)) ([b38438b](https://github.com/morluto/rea/commit/b38438bab4ecac3b85bb7808e8af53a138c10d52))
+* **uefi:** consolidate extraction publication contracts ([#13627](https://github.com/morluto/rea/issues/13627)) ([9e0d132](https://github.com/morluto/rea/commit/9e0d132ef3c16649333a9dfd8c43f5ddd335fa80))
 * **v8:** consolidate code cache parser and recovery coverage ([#12784](https://github.com/morluto/rea/issues/12784)) ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate code-cache parser and recovery coverage ([8af645c](https://github.com/morluto/rea/commit/8af645c25c7f36f6be74d4baff4aee6d8b422d75))
 * **v8:** consolidate relative CLI and source-byte checks ([#12867](https://github.com/morluto/rea/issues/12867)) ([aa16513](https://github.com/morluto/rea/commit/aa1651311d27a4a0a224d00f427eaee9c4fd1387))
