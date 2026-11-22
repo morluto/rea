@@ -37,12 +37,12 @@ it.each([
   ["captured", "{}", "bad", "captured = {};"],
 ] as const)(
   "leaves bindings after %s matched against %s unproven",
-  (value, pattern, key = "bad", afterCapture = "") => {
+  (value, pattern, key = "bad", afterCapture?: string) => {
     const inspect = projection(`
     const aliasedNull = null;
     let captured = null;
     const model = { bad: ${value}, mode: "one" };
-    ${afterCapture}
+    ${afterCapture ?? ""}
     const { mode: before, ${key}: ${pattern}, mode: selected } = model;
   `);
     expect(inspect("before")).toMatchObject({
