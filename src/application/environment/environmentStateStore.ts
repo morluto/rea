@@ -535,15 +535,27 @@ export class EnvironmentStateStore {
     const storedDeleted = new Map<string, StateEntity>();
     const collections = new Map<string, StateEntity[]>();
     const typeCollections = new Map<string, string[]>();
+    const typeCollectionSets = new Map<string, Set<string>>();
+    const recordTypeCollection = (type: string, collection: string): void => {
+      let seen = typeCollectionSets.get(type);
+      if (seen === undefined) {
+        seen = new Set([collection]);
+        typeCollectionSets.set(type, seen);
+        typeCollections.set(type, [collection]);
+        return;
+      }
+      if (!seen.has(collection)) {
+        seen.add(collection);
+        typeCollections.get(type)!.push(collection);
+      }
+    };
     for (const entity of content.entities) {
       if (markedDeleted(entity.fields)) {
         storedDeleted.set(
           environmentEntityKey(entity.type, entity.collection, entity.id),
           entity,
         );
-        const named = typeCollections.get(entity.type) ?? [];
-        if (!named.includes(entity.collection)) named.push(entity.collection);
-        typeCollections.set(entity.type, named);
+        recordTypeCollection(entity.type, entity.collection);
         continue;
       }
       entities.set(
@@ -557,11 +569,7 @@ export class EnvironmentStateStore {
         continue;
       }
       collections.set(key, [entity]);
-      const named = typeCollections.get(entity.type);
-      if (named === undefined)
-        typeCollections.set(entity.type, [entity.collection]);
-      else if (!named.includes(entity.collection))
-        named.push(entity.collection);
+      recordTypeCollection(entity.type, entity.collection);
     }
     this.#entities = entities;
     this.#storedDeleted = storedDeleted;
