@@ -81,6 +81,13 @@ class FilesystemTreeView implements DylibTreeView {
     return pending;
   }
 
+  /** Seed an already-verified Mach-O parse so follow-up resolution skips re-opening the file. */
+  seedImage(path: string, facts: MachoImageFacts, identity: BigIntStats): void {
+    if (this.#images.has(path)) return;
+    this.#images.set(path, Promise.resolve(facts));
+    this.#identities.set(path, identity);
+  }
+
   /** Identity of the file whose header bytes `image()` parsed. */
   identity(path: string): BigIntStats | undefined {
     return this.#identities.get(path);
@@ -201,11 +208,16 @@ export const traceDylibResolution = async (options: {
       });
       // Each digest must describe the same file whose headers were parsed.
       const digests = new Map<string, string>();
-      for (const { path } of trace.images)
-        digests.set(
-          path,
-          await files.sha256(view.hostPath(path), view.identity(path)),
-        );
+      await consumeWithOrderedReads(
+        (async function* () {
+          yield* trace.images;
+        })(),
+        MAGIC_READ_CONCURRENCY,
+        ({ path }) => files.sha256(view.hostPath(path), view.identity(path)),
+        async ({ path }, digest) => {
+          digests.set(path, digest);
+        },
+      );
       const targetDigest =
         digests.get(target) ??
         (await files.sha256(join(root, target), undefined));
@@ -272,12 +284,13 @@ const executableRoots = async (
           firstSymlink ??= entry.path;
         }
         return entry.kind === "file"
-          ? files.startsWithMachoMagic(entry)
+          ? files.readMachoIfMagic(entry)
           : undefined;
       },
-      async (entry, macho) => {
-        if (!macho) return;
-        const facts = await view.image(entry.path);
+      async (entry, observed) => {
+        if (observed === undefined) return;
+        view.seedImage(entry.path, observed.facts, observed.identity);
+        const { facts } = observed;
         if (facts.status === "malformed" || facts.status === "unsupported")
           unclassified.push(entry.path);
         else if (

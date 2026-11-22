@@ -43,6 +43,45 @@ export class DylibFileAccess {
     });
   }
 
+  /**
+   * Check the 4-byte Mach-O magic and, on a match, parse the image headers on
+   * the same open descriptor so root discovery avoids a second open/stat cycle.
+   */
+  readMachoIfMagic(entry: ArtifactEntry): Promise<
+    | {
+        readonly facts: Awaited<ReturnType<typeof readMachoImage>>;
+        readonly identity: BigIntStats;
+      }
+    | undefined
+  > {
+    return this.#read(entry.adapterKey, async (file, initial) => {
+      if (!sameArtifactSourceIdentity(entry.sourceIdentity, initial))
+        throw changed(entry.adapterKey);
+      const magic = await readFileHandleRange(file, 0, 4, () =>
+        assertArtifactReadActive(this.signal),
+      );
+      assertArtifactReadActive(this.signal);
+      if (!hasMachoMagic(magic)) return undefined;
+      const size = Number(initial.size);
+      if (!Number.isSafeInteger(size))
+        throw new ArtifactReaderFailure(
+          "limit",
+          `Mach-O file extent is not safely addressable: ${entry.adapterKey}`,
+        );
+      const facts = await readMachoImage(async (offset, length) => {
+        const clamped = Math.max(0, Math.min(length, size - offset));
+        if (offset === 0 && clamped <= magic.length)
+          return magic.subarray(0, clamped);
+        const bytes = await readFileHandleRange(file, offset, clamped, () =>
+          assertArtifactReadActive(this.signal),
+        );
+        assertArtifactReadActive(this.signal);
+        return bytes;
+      }, size);
+      return { facts, identity: initial };
+    });
+  }
+
   image(path: string) {
     return this.#read(path, async (file, identity) => {
       const size = Number(identity.size);
