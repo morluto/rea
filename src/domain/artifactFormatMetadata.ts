@@ -382,6 +382,13 @@ export const auditdLogMetadataSchema = z.strictObject({
   line_count: offset,
   record_count: offset,
   event_count: offset,
+  /**
+   * False when every event stayed inside the retained window, so `event_count`
+   * is exact. Past the window an event's records are no longer joined, and an
+   * interleaved one can be counted more than once; the totals are then lower
+   * bounds and the limitations say so.
+   */
+  event_count_lower_bound: z.boolean(),
   event_type_counts: z.array(
     z.strictObject({ type: z.string(), count: offset }),
   ),

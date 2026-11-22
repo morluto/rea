@@ -79,7 +79,20 @@ export interface AuditdLogInventory {
     readonly duplicate_record_count: number;
     readonly interleaved_event_count: number;
     readonly events: readonly AuditEventSummary[];
+    /**
+     * Events the retained window did not hold. Past the retention limit a
+     * record's siblings are not joined, so an interleaved event there can be
+     * counted more than once; `event_count_lower_bound` says whether that could
+     * have happened.
+     */
     readonly omitted_events: number;
+    /**
+     * True once an event fell past the retained window and its records were no
+     * longer joined: `event_count` and `omitted_events` are then lower bounds,
+     * because an interleaved event there can be counted once per run of its
+     * records rather than once.
+     */
+    readonly event_count_lower_bound: boolean;
     readonly trailing_bytes: number;
   };
   readonly limitations: readonly string[];
@@ -141,7 +154,12 @@ class AuditdLogScanner {
   readonly #sampleOrder: string[] = [];
   // not-an-allowance: a tally of the events currently retained in the window, compared with the retention ceiling but never charged against a resource budget.
   #windowEventCount = 0;
-  /** Events past the retained window; their totals stay exact, joins do not. */
+  /**
+   * Events past the retained window. Their identity is not joined, so only a
+   * record that does not share the previous record's identity can be shown to
+   * start one. This is an exact count for a log whose records are contiguous
+   * and a lower bound for an interleaved one, so it is reported as such.
+   */
   #beyondWindowEventCount = 0;
   #malformedCount = 0;
   // sample-cap: the full malformed count is reported beside a sample of the lines.
@@ -209,7 +227,7 @@ class AuditdLogScanner {
       );
     if (this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0)
       limitations.push(
-        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; the other ${String(this.#beyondWindowEventCount)} events and ${String(this.#skippedRecordCount)} record(s) are counted in the totals but their duplicate and interleaving status is not established`,
+        `per-record identity is retained for the most recent ${String(AUDITD_RETAINED_EVENT_LIMIT)} events; at least ${String(this.#beyondWindowEventCount)} further events and ${String(this.#skippedRecordCount)} record(s) past that window are counted in the totals, but their duplicate, interleaving and event-start status is not established, so event_count and omitted_events are lower bounds`,
       );
     limitations.push(
       "records are inventoried by header and record type: key-value fields, hex/escaped values, argument ordering and decoded syscall or permission meanings are not interpreted",
@@ -224,6 +242,8 @@ class AuditdLogScanner {
         line_count: this.#lineNumber,
         record_count: this.#recordCount,
         event_count: this.#windowEventCount + this.#beyondWindowEventCount,
+        event_count_lower_bound:
+          this.#beyondWindowEventCount > 0 || this.#skippedRecordCount > 0,
         event_type_counts: sortedCounts(this.#typeCounts),
         malformed_line_count: this.#malformedCount,
         malformed_lines: this.#malformed,
@@ -275,10 +295,15 @@ class AuditdLogScanner {
       );
       return;
     }
-    this.#acceptLine(lineBytes.toString("utf8"));
+    this.#acceptLine(lineBytes);
   }
 
-  #acceptLine(line: string): void {
+  #acceptLine(lineBytes: Buffer): void {
+    // Header bytes are printable ASCII, so the decoded string is a faithful
+    // identity. The body can hold bytes UTF-8 cannot represent, which decode
+    // to the same U+FFFD, so duplicate detection hashes the line's raw bytes
+    // rather than that lossy text.
+    const line = lineBytes.toString("utf8");
     if (line.trim() === "") return;
     const match = RECORD_HEADER.exec(line);
     if (match?.groups === undefined) {
@@ -325,7 +350,11 @@ class AuditdLogScanner {
       existing === undefined &&
       this.#windowEventCount >= AUDITD_RETAINED_EVENT_LIMIT
     ) {
-      this.#beyondWindowEventCount += 1;
+      // The event's identity was not retained, so only a record that does not
+      // share the previous record's identity can be shown to start one. The
+      // same run of records is not recounted, which keeps a contiguous tail
+      // exact and makes an interleaved one a lower bound.
+      if (this.#lastEventKey !== key) this.#beyondWindowEventCount += 1;
       this.#skippedRecordCount += 1;
       this.#lastEventKey = key;
       return;
@@ -361,13 +390,13 @@ class AuditdLogScanner {
 
     // Duplicate detection is per record content, not per record type: a long
     // execve argument list can span several EXECVE records with no item= index,
-    // and those are legitimate continuations, not repeats. The digest keeps
-    // retained state to one short key per record per event; the retention
-    // window bounds how many events hold those keys at once.
+    // and those are legitimate continuations, not repeats. The line's raw bytes
+    // are hashed, so two records that differ only in bytes UTF-8 cannot
+    // represent stay distinct instead of decoding to the same U+FFFD. The
+    // digest keeps retained state to one short key per record per event; the
+    // retention window bounds how many events hold those keys at once.
     const recordKey = createHash("sha256")
-      .update(type)
-      .update("\u0000")
-      .update(match.groups["body"] ?? "")
+      .update(lineBytes)
       .digest("base64");
     if (event.seenRecords.has(recordKey)) {
       event.duplicateCount += 1;

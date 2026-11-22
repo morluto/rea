@@ -251,6 +251,50 @@ it("still counts a byte-identical record as a duplicate", async () => {
   ]);
 });
 
+const NON_UTF8 = Buffer.from([
+  ...Buffer.from(record("USER", 1700000000, 123, 1000, "pid=1 msg=")),
+  0x80,
+  0x0a,
+  ...Buffer.from(record("USER", 1700000000, 123, 1000, "pid=1 msg=")),
+  0x81,
+  0x0a,
+]);
+
+it("keeps records with distinct non-UTF-8 bodies apart", async () => {
+  const directory = await createTestTempDirectory("rea-auditd-");
+  const path = join(directory, "audit.log");
+  await writeFile(path, NON_UTF8);
+  const reader = new AuditdLogArtifactReader(path);
+  try {
+    for await (const _entry of reader.entries()) {
+      // The log declares no members; the root occurrence is the inventory.
+    }
+    const metadata = reader.formatMetadata();
+    if (metadata?.kind !== "auditd-log")
+      throw new Error("Expected auditd-log metadata");
+    const [event] = metadata.events;
+    expect(event?.duplicate_record_count).toBe(0);
+    expect(event?.record_types).toEqual([{ type: "USER", count: 2 }]);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("does not recount a multi-record event once it is past the retained window", async () => {
+  const lines = Array.from({ length: 4096 }, (_unused, index) =>
+    record("SYSCALL", 1700000000, 100, 1000 + index, "success=yes"),
+  );
+  lines.push(
+    record("SYSCALL", 1700000000, 200, 5000, "success=yes"),
+    record("EXECVE", 1700000000, 200, 5000, "argc=1 a0=whoami"),
+    record("PATH", 1700000000, 200, 5000, 'item=0 name="/usr/bin/whoami"'),
+  );
+  const metadata = await metadataOf(`${lines.join("\n")}\n`);
+  expect(metadata.event_count).toBe(4097);
+  expect(metadata.omitted_events).toBe(4097 - 32);
+  expect(metadata.event_count_lower_bound).toBe(true);
+});
+
 it("records trailing bytes when the last line has no newline", async () => {
   const metadata = await metadataOf(
     `line one\n${record("SYSCALL", 1700000000, 123, 1000, "success=yes")}`,
