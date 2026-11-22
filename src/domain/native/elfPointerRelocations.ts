@@ -1028,7 +1028,7 @@ export function* readElfRelocationWritesSteps(
 export interface ElfVirtualPointerWrites {
   readonly hasWrites: (address: bigint, size: number) => boolean;
   /** Sorted, coalesced mapping-relative `[start, end)` byte intervals overlapping loader writes. */
-  readonly writeIntervalsIn?: (
+  readonly writeIntervalsIn: (
     address: bigint,
     size: number,
   ) => readonly { readonly start: number; readonly end: number }[];
@@ -1325,6 +1325,7 @@ export function* readElfPointerValuesSteps(
   const { originalValueAt } = next.value;
   return {
     hasWrites: facts.hasWrites,
+    writeIntervalsIn: facts.writeIntervalsIn,
     unsignedAt: (address, width) => {
       if (!facts.hasWrites(address, width)) return undefined;
       return facts.unsignedAt(

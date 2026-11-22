@@ -50,11 +50,6 @@ const createFastRawOverlay = (
     return null;
   const overlay = image.elfPointerOverlay;
   if (overlay === undefined) return NO_OVERLAY_WRITES;
-  if (overlay.writeIntervalsIn === undefined) {
-    return overlay.hasWrites(mapping.address, mapping.size)
-      ? null
-      : NO_OVERLAY_WRITES;
-  }
   const intervals = overlay.writeIntervalsIn(mapping.address, mapping.size);
   if (intervals.length === 0) return NO_OVERLAY_WRITES;
   let cursor = 0;
