@@ -1068,31 +1068,29 @@ export const parseAndroidOtaPayload = (
   };
   const partitions: AndroidOtaPartition[] = manifest.value.partitions.map(
     (partition, index) => {
-      const operations: AndroidOtaInstallOperation[] = partition.operations.map(
-        (operation) => ({
+      const sourceOps = partition.operations;
+      const operations = new Array<AndroidOtaInstallOperation>(
+        sourceOps.length,
+      );
+      let needsBlob = false;
+      let blobFits = true;
+      for (let opIndex = 0; opIndex < sourceOps.length; opIndex += 1) {
+        const operation = sourceOps[opIndex]!;
+        if (operation.dataLength > 0) {
+          needsBlob = true;
+          if (operation.dataOffset + operation.dataLength > blobAvailable)
+            blobFits = false;
+        }
+        operations[opIndex] = {
           typeCode: operation.typeCode,
           typeName: INSTALL_OPERATION_NAMES[operation.typeCode] ?? "unknown",
           dataOffset: operation.dataOffset,
           dataLength: operation.dataLength,
           dataHashHex: operation.dataHashHex,
-          srcExtents: operation.srcExtents.map((extent) => ({
-            startBlock: extent.startBlock,
-            numBlocks: extent.numBlocks,
-          })),
-          dstExtents: operation.dstExtents.map((extent) => ({
-            startBlock: extent.startBlock,
-            numBlocks: extent.numBlocks,
-          })),
-        }),
-      );
-      const needsBlob = operations.some(
-        (operation) => operation.dataLength > 0,
-      );
-      const blobFits = operations.every(
-        (operation) =>
-          operation.dataLength === 0 ||
-          operation.dataOffset + operation.dataLength <= blobAvailable,
-      );
+          srcExtents: operation.srcExtents,
+          dstExtents: operation.dstExtents,
+        };
+      }
       const size = partition.newPartitionInfo.size;
       const extractRefusal: AndroidOtaExtractRefusal | null = !isExtractable(
         partition.operations,
