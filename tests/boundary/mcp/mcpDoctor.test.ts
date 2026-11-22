@@ -502,15 +502,6 @@ describe("production MCP doctor output", () => {
     ]);
 
     expect([json.exitCode, jsonl.exitCode]).toEqual([1, 1]);
-    const parseable = [json.stdout, jsonl.stdout].map((output) => {
-      try {
-        JSON.parse(output);
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    expect(parseable).toEqual([true, true]);
     expect(JSON.parse(json.stdout)).toMatchObject({
       healthy: false,
       inventory: {
@@ -741,32 +732,14 @@ describe("production MCP doctor child lifecycle", () => {
     });
   });
 
-  it("retains only the stderr prefix while draining and counting the full child stream", async () => {
-    const result = await runNoisyDoctorChild(`
-      for (let index = 0; index < 64; index += 1) {
-        await new Promise((resolve, reject) => {
-          process.stderr.write(Buffer.alloc(65_536, 0x78), (error) =>
-            error ? reject(error) : resolve(),
-          );
-        });
-      }
-      process.exitCode = 1;
-    `);
-
-    expect(result.healthy).toBe(false);
-    expect(result.diagnostics).toEqual({
-      stderr: "x".repeat(MCP_STARTUP_POLICY.doctorStderrBytes),
-      stderr_bytes: 4 * 1024 * 1024,
-      stderr_truncated: true,
-    });
-  });
-
-  it("does not manufacture a replacement character when the retained prefix ends inside UTF-8", async () => {
+  it("drains the complete child stderr and withholds a code point split by the byte limit", async () => {
     const prefixBytes = MCP_STARTUP_POLICY.doctorStderrBytes - 1;
+    const trailingBytes = 4 * 1024 * 1024;
     const result = await runNoisyDoctorChild(`
       for (const chunk of [
         Buffer.alloc(${prefixBytes}, 0x78),
         Buffer.from([0xe2, 0x82, 0xac]),
+        Buffer.alloc(${trailingBytes}, 0x79),
       ]) {
         await new Promise((resolve, reject) => {
           process.stderr.write(chunk, (error) =>
@@ -777,10 +750,13 @@ describe("production MCP doctor child lifecycle", () => {
       process.exitCode = 1;
     `);
 
-    expect(result.diagnostics).toEqual({
-      stderr: "x".repeat(prefixBytes),
-      stderr_bytes: prefixBytes + 3,
-      stderr_truncated: true,
+    expect(result).toMatchObject({
+      healthy: false,
+      diagnostics: {
+        stderr: "x".repeat(prefixBytes),
+        stderr_bytes: prefixBytes + 3 + trailingBytes,
+        stderr_truncated: true,
+      },
     });
   });
 
@@ -833,30 +809,31 @@ describe("production MCP doctor child lifecycle", () => {
 });
 
 describe("production MCP doctor child ownership", () => {
-  it("does not hand an ambient target variable to the diagnostic child", async () => {
-    const root = await createTestTempDirectory("rea-mcp-doctor-target-free-");
-    const seenPath = join(root, "env.json");
-    const result = await runCachedMcpDoctor({
-      command: process.execPath,
-      args: [resolve("tests/fixtures/mcpDoctorEnvironment.mjs")],
-      cwd: root,
-      environment: {
-        ...process.env,
-        HOPPER_TARGET_PATH: "/tmp/ambient-target",
-        HOPPER_TARGET_KIND: "hop",
-        REA_MCP_DOCTOR_SEEN_PATH: seenPath,
-        REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+  it("omits inherited target selection using the host's environment key identity", async () => {
+    const result = await runNoisyDoctorChild(
+      `process.stderr.write(JSON.stringify({
+        pathPresent: process.env.HOPPER_TARGET_PATH !== undefined,
+        kindPresent: process.env.HOPPER_TARGET_KIND !== undefined,
+        loaderArgsPresent: process.env.HOPPER_LOADER_ARGS_JSON !== undefined,
+        caseAliasPresent: process.env.hopper_target_kind !== undefined,
+        callerSetting: process.env.REA_MCP_DOCTOR_FIXTURE_SENTINEL,
+      }));`,
+      {
+        HOPPER_TARGET_PATH: "/fixture/ambient-target",
+        HOPPER_TARGET_KIND: "database",
+        HOPPER_LOADER_ARGS_JSON: '["fixture-loader"]',
+        hopper_target_kind: "caller-case-alias",
+        REA_MCP_DOCTOR_FIXTURE_SENTINEL: "preserved",
       },
-    });
+    );
     expect(result.healthy).toBe(false);
-    const seen = JSON.parse(await readFile(seenPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    expect(seen).not.toHaveProperty("HOPPER_TARGET_PATH");
-    expect(seen).not.toHaveProperty("HOPPER_TARGET_KIND");
-    // The rest of the caller's environment still reaches the child.
-    expect(seen.REA_MCP_DOCTOR_SEEN_PATH).toBe(seenPath);
+    expect(JSON.parse(result.diagnostics.stderr)).toEqual({
+      pathPresent: false,
+      kindPresent: false,
+      loaderArgsPresent: false,
+      caseAliasPresent: process.platform !== "win32",
+      callerSetting: "preserved",
+    });
   });
 
   it.each([
@@ -985,7 +962,10 @@ describe("production MCP doctor request-flow deadline", () => {
   });
 });
 
-const runNoisyDoctorChild = async (body: string) => {
+const runNoisyDoctorChild = async (
+  body: string,
+  environment: NodeJS.ProcessEnv = {},
+) => {
   const root = await createTestTempDirectory("rea-mcp-doctor-stderr-");
   const scriptPath = join(root, "noisy.mjs");
   await writeFile(scriptPath, body);
@@ -993,7 +973,11 @@ const runNoisyDoctorChild = async (body: string) => {
     command: process.execPath,
     args: [scriptPath],
     cwd: root,
-    environment: { ...process.env, REA_MCP_DOCTOR_DEADLINE_MS: "5000" },
+    environment: {
+      ...process.env,
+      REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+      ...environment,
+    },
   });
 };
 
