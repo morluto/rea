@@ -2,13 +2,18 @@ import { constants } from "node:fs";
 import { access, opendir, realpath, stat } from "node:fs/promises";
 import { posix } from "node:path";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { readStableFileBytes } from "../filesystem/readStableFileBytes.js";
 import {
   ArtifactFileCleanupFailure,
   ArtifactResourceScope,
+  bindArtifactFileCleanup,
   withArtifactRegularFile,
 } from "../resources/index.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { ghidraFileDialect } from "./GhidraFileArtifacts.js";
 import type { GhidraInstallationFileOptions } from "./GhidraInstallationProperties.js";
 import {
   ghidraJavaMajorAccepted,
@@ -222,7 +227,29 @@ const jdkVersion = async (
     const versions = [...text.matchAll(/^JAVA_VERSION="([^"\r\n]+)"\r?$/gmu)];
     return versions.length === 1 ? versions[0]?.[1] : undefined;
   } catch (cause: unknown) {
-    if (cause instanceof ArtifactFileCleanupFailure) throw cause;
+    if (cause instanceof ArtifactFileCleanupFailure)
+      throw classifyProviderFailure(cause, {
+        ...ghidraFileDialect("doctor", { path: cause.fileCleanupFailure.path }),
+        readCleanup: (read, primary) => {
+          const cleanup = new ProviderCleanupError(
+            "ghidra",
+            read.cleanup.resources,
+            { phase: "jdk-release-discovery" },
+            {
+              operation: "doctor",
+              cause:
+                read instanceof ArtifactFileCleanupFailure
+                  ? read.fileCleanupFailure.cleanupCause
+                  : read,
+              cleanup: read.cleanup,
+            },
+          );
+          bindArtifactFileCleanup(read, cleanup);
+          return primary === undefined
+            ? cleanup
+            : analysisErrorWithCleanupDependencies(primary, cleanup, "doctor");
+        },
+      });
     if (options.signal?.aborted)
       throw cancelledBy("ghidra:doctor", options.signal);
     return undefined;
