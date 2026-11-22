@@ -9,10 +9,12 @@
 
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
+* **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
 * **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
 * **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
+* **web:** report value-free header names in the api-surface view ([#9504](https://github.com/morluto/rea/issues/9504)) ([fd9cbef](https://github.com/morluto/rea/commit/fd9cbeff743cc5a685917daafc937060ee45d7a5))
 * **website:** publish page-specific previews with the original REA blue ([1dd25d8](https://github.com/morluto/rea/commit/1dd25d87c7ba440b6256c644a556901eac1b3bbb))
 * **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
 
