@@ -660,12 +660,18 @@ describe("managed member comparison path workflow", () => {
     expect(comparison.coverage.status).toBe("partial");
     expect(comparison.matching.structural_method_shape).toBe(0);
     expect(comparison.methods).toHaveLength(2);
-    expect(
-      comparison.methods.every(
-        ({ status, match }) =>
-          status === "unknown" && match.status === "unmatched",
-      ),
-    ).toBe(true);
+    for (const method of comparison.methods) {
+      expect(method).toMatchObject({
+        status: "unknown",
+        match: { status: "unmatched" },
+        limitations: expect.arrayContaining([
+          {
+            code: "signature-not-decoded",
+            message: expect.stringMatching(/\S/u),
+          },
+        ]),
+      });
+    }
   });
 });
 
