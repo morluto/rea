@@ -94,6 +94,39 @@ describe("DWARF abbreviation tables", () => {
     expect(tables.get(0)).toEqual(first);
   });
 
+  it("refreshes reused tables and evicts only the least recently used table", () => {
+    const table = (entries: number) =>
+      abbrevTable(
+        Array.from({ length: entries }, (_, index) => ({
+          code: index + 1,
+          tag: 0x11,
+          children: false,
+          attributes: [],
+        })),
+      );
+    const first = table(1);
+    const second = table(MAX_DWARF_ABBREV_ENTRIES - 1);
+    const third = table(1);
+    const secondOffset = first.length;
+    const thirdOffset = secondOffset + second.length;
+    const tables = cache(Buffer.concat([first, second, third]));
+
+    const hot = tables.get(0);
+    const cold = tables.get(secondOffset);
+    expect(hot.kind).toBe("ok");
+    expect(cold.kind).toBe("ok");
+    expect(tables.get(0)).toBe(hot);
+
+    const inserted = tables.get(thirdOffset);
+    expect(inserted.kind).toBe("ok");
+    expect(tables.get(0)).toBe(hot);
+    expect(tables.get(thirdOffset)).toBe(inserted);
+
+    const reloaded = tables.get(secondOffset);
+    expect(reloaded).not.toBe(cold);
+    expect(reloaded).toEqual(cold);
+  });
+
   it("recognizes a section that holds exactly one table", () => {
     const table = abbrevTable([
       { code: 1, tag: 0x11, children: false, attributes: [] },
