@@ -2,7 +2,10 @@ import type {
   OwnedProviderSetting,
   RecordedProviderSettings,
 } from "../ports/DesktopBuildHost.js";
-import { validateRegistrationEnvironment } from "./RegistrationEnvironmentValidation.js";
+import {
+  validateRegistrationEnvironment,
+  type ValidatedRegistrationEnvironment,
+} from "./RegistrationEnvironmentValidation.js";
 import {
   clientRegistrationSource,
   gooseEnvironmentField,
@@ -10,7 +13,6 @@ import {
 import type { SetupClient } from "./SupportedClients.js";
 
 import { launchAnalysisSetting } from "../config/analysisSettings.js";
-import type { Environment } from "../config/environment.js";
 import {
   DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
   DEFAULT_HOPPER_STARTUP_TIMEOUT_MS,
@@ -24,10 +26,7 @@ import {
 } from "./ClientConfigurationDocument.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import {
-  mergeEnvironmentOverrides,
-  snapshotEnvironment,
-} from "../process/snapshotEnvironment.js";
+import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
@@ -51,6 +50,8 @@ export interface ProviderRequestBudgetResolver {
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
+  /** The platform-admitted keys used for launch setting and budget lookup. */
+  readonly runtimeEnvironment: Readonly<Record<string, string>>;
   readonly configHomeFallbackApplied?: true;
   readonly unresolvedSettings: ReadonlySet<string>;
   readonly timeoutInputs: McpToolTimeoutInputs | undefined;
@@ -145,13 +146,7 @@ export const clientRegistrationEnvironmentDetails = (
       platform,
     );
     if (!environment.ok) return environment;
-    return ok(
-      environmentDetails(
-        environment.value.values,
-        environment.value.configuration,
-        environment.value.unresolvedSettings,
-      ),
-    );
+    return ok(environmentDetails(environment.value.values, environment.value));
   }
   const key = parsed?.environmentKey ?? "env";
   const registration =
@@ -229,34 +224,24 @@ export const recordedProviderSettings = (
     "fragment",
   );
   if (!details.ok) return { unrecorded: [], differing: [], unresolved: names };
-  const recorded = snapshotEnvironment(details.value.values, platform);
-  // Expression names fold like every other environment name on this platform.
-  const expressions = snapshotEnvironment(
-    Object.fromEntries(
-      [...details.value.unresolvedSettings].map((name) => [name, ""]),
-    ),
-    platform,
-  );
+  const { runtimeEnvironment: recorded, unresolvedSettings } = details.value;
+  const isUnresolved = (name: string): boolean =>
+    unresolvedSettings.has(identity(name));
   for (const name of names) {
     const value = recorded[identity(name)];
-    if (value !== undefined && expressions[identity(name)] === undefined)
-      observe?.(name, value);
+    if (value !== undefined && !isUnresolved(name)) observe?.(name, value);
   }
   const facts = {
     unrecorded: names.filter(
-      (name) =>
-        recorded[identity(name)] === undefined &&
-        expressions[identity(name)] === undefined,
+      (name) => recorded[identity(name)] === undefined && !isUnresolved(name),
     ),
     differing: names.filter(
       (name) =>
-        expressions[identity(name)] === undefined &&
+        !isUnresolved(name) &&
         recorded[identity(name)] !== undefined &&
         recorded[identity(name)] !== selection[name],
     ),
-    unresolved: names.filter(
-      (name) => expressions[identity(name)] !== undefined,
-    ),
+    unresolved: names.filter(isUnresolved),
   };
   const owned = names.filter((name) => {
     const value = recorded[identity(name)];
@@ -293,17 +278,13 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   // The budget gate stays fail-closed: settings the resolver may read must be
   // literals, and an undeclared read set keeps every unresolved expression
   // blocking, because an unreadable budget cannot be treated as absent.
-  const { timeoutInputs, values } = details.value;
-  const environment =
-    resolveProviderRequestBudget === undefined
-      ? values
-      : snapshotEnvironment(values, platform);
+  const { timeoutInputs, runtimeEnvironment } = details.value;
   const budgetSettings =
     timeoutInputs === undefined
       ? undefined
       : resolveProviderRequestBudget?.budgetSettings?.(
           timeoutInputs.analysisProvider,
-          environment,
+          runtimeEnvironment,
         );
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
@@ -327,7 +308,7 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
     );
   const resolved = { ...details.value, timeoutInputs };
   if (resolveProviderRequestBudget === undefined) return ok(resolved);
-  return validatedBudget(resolved, resolveProviderRequestBudget, environment);
+  return validatedBudget(resolved, resolveProviderRequestBudget);
 };
 
 const validatedDetails = (
@@ -343,13 +324,7 @@ const validatedDetails = (
     platform,
   );
   return validated.ok
-    ? ok(
-        environmentDetails(
-          environment,
-          validated.value.configuration,
-          validated.value.unresolvedSettings,
-        ),
-      )
+    ? ok(environmentDetails(environment, validated.value))
     : validated;
 };
 
@@ -405,14 +380,18 @@ const registrationTimeoutInputs = (
 
 const environmentDetails = (
   environment: Readonly<Record<string, string>>,
-  configuration: Environment,
-  unresolvedSettings: ReadonlySet<string>,
+  {
+    configuration,
+    runtimeEnvironment,
+    unresolvedSettings,
+  }: ValidatedRegistrationEnvironment,
 ): ClientRegistrationEnvironmentDetails => ({
   values: Object.fromEntries(
     Object.entries(environment).sort(([left], [right]) =>
       compareUnicodeCodePoints(left, right),
     ),
   ),
+  runtimeEnvironment,
   unresolvedSettings,
   timeoutInputs: [...unresolvedSettings].some((setting) =>
     TIMEOUT_INPUT_SETTINGS.has(setting),
@@ -420,20 +399,19 @@ const environmentDetails = (
     ? undefined
     : {
         analysisProvider: configuration.REA_ANALYSIS_PROVIDER,
-        ...registrationTimeoutInputs(environment),
+        ...registrationTimeoutInputs(runtimeEnvironment),
       },
 });
 
 const validatedBudget = async (
   details: ResolvedClientRegistrationEnvironmentDetails,
   resolveProviderRequestBudget: ProviderRequestBudgetResolver,
-  environment: Readonly<Record<string, string>>,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const providerBudget = await resolveProviderRequestBudget(
     details.timeoutInputs.analysisProvider,
-    environment,
+    details.runtimeEnvironment,
   );
   if (!providerBudget.ok) return providerBudget;
   return ok({
