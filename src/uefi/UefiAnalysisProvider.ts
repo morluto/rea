@@ -53,6 +53,10 @@ import {
   type GhidraInstallationOptions,
 } from "../ghidra/GhidraInstallation.js";
 import {
+  ghidraKnownProviderDefectLimitations,
+  unverifiedGhidraBuildLimitation,
+} from "../ghidra/GhidraReleasePolicy.js";
+import {
   createAnalysisExecution,
   type AnalysisExecution,
   type ExecutionOptions,
@@ -166,8 +170,9 @@ export type UefiMachineWidth = "32" | "64" | "unknown";
 
 export const sanitizeCComment = (text: string): string =>
   text
+    .replace(/\0/g, " ")
     .replace(/\*\//g, "* /")
-    .replace(/[\r\n]+/g, " ")
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
     .trim();
 
 export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
@@ -380,6 +385,21 @@ export const buildUefiEntryPointScaffolding = (
         "    (void)ImageHandle;",
         "    (void)MmSystemTable;",
         "    return Status;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (normType === undefined && phase === "MISC") {
+    return {
+      typedefs: [],
+      prototype: `void EFIAPI ${identifier}EntryPoint(void);`,
+      functionDefinition: [
+        `void EFIAPI ${identifier}EntryPoint(`,
+        ") {",
+        `    // Reconstructed EntryPoint scaffolding for unclassified payload ${safeName}`,
+        `    // Unknown ABI: unclassified module with no phase directory or manifest type`,
+        `    // Size: ${byteLength} bytes`,
         "}",
       ].join("\n"),
     };
@@ -1209,11 +1229,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     let ghidraEngineUsed = false;
 
     if (
-      process.env.GHIDRA_INSTALL_DIR &&
-      ghidraInspection?.status === "unavailable"
+      ghidraInspection?.status === "unavailable" &&
+      (Boolean(process.env.GHIDRA_INSTALL_DIR) ||
+        ghidraInspection.installDir !== null)
     ) {
+      const sourceLabel = process.env.GHIDRA_INSTALL_DIR
+        ? "Configured Ghidra installation"
+        : "Discovered Ghidra installation";
       effectiveLimitations.push(
-        `Configured Ghidra installation is unavailable: ${ghidraInspection.rejection.reason}`,
+        `${sourceLabel} is unavailable: ${ghidraInspection.rejection.reason}`,
       );
     }
 
@@ -2064,6 +2088,24 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             }
           } catch {
             // Ignore scratch unlink error
+          }
+        }
+      }
+
+      if (ghidraEngineUsed && ghidraVersion !== null) {
+        const releaseLimitation =
+          unverifiedGhidraBuildLimitation(ghidraVersion);
+        if (
+          releaseLimitation !== undefined &&
+          !effectiveLimitations.includes(releaseLimitation)
+        ) {
+          effectiveLimitations.push(releaseLimitation);
+        }
+        for (const defectLim of ghidraKnownProviderDefectLimitations(
+          ghidraVersion,
+        )) {
+          if (!effectiveLimitations.includes(defectLim)) {
+            effectiveLimitations.push(defectLim);
           }
         }
       }
@@ -2932,9 +2974,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           if (nameMatch && nameMatch[1]) {
             guid = nameMatch[1].toLowerCase();
           } else {
-            const pathMatch = foldedLookupKey.match(embeddedGuidRegex);
-            if (pathMatch && pathMatch[1]) {
-              guid = pathMatch[1].toLowerCase();
+            const parentDirName = basename(dirname(fullPath));
+            const parentMatch = parentDirName.match(embeddedGuidRegex);
+            if (parentMatch && parentMatch[1]) {
+              guid = parentMatch[1].toLowerCase();
             }
           }
         }

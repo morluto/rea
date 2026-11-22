@@ -54,6 +54,28 @@ public class ReaDecompileToC extends GhidraScript {
         }
     }
 
+    private static long utf8ByteLength(CharSequence sequence, long limit) {
+        long count = 0;
+        int len = sequence.length();
+        for (int i = 0; i < len; i++) {
+            char ch = sequence.charAt(i);
+            if (ch <= 0x7F) {
+                count++;
+            } else if (ch <= 0x7FF) {
+                count += 2;
+            } else if (Character.isHighSurrogate(ch)) {
+                count += 4;
+                i++;
+            } else {
+                count += 3;
+            }
+            if (count > limit) {
+                return count;
+            }
+        }
+        return count;
+    }
+
     @Override
     public void run() throws Exception {
         if (currentProgram == null) {
@@ -108,8 +130,28 @@ public class ReaDecompileToC extends GhidraScript {
 
                 FunctionIterator iter = currentProgram.getListing().getFunctions(true);
                 while (iter.hasNext() && !monitor.isCancelled()) {
+                    if (bytesWritten >= maxOutputBytes) {
+                        limitExceeded = true;
+                        break;
+                    }
                     Function function = iter.next();
                     if (function.isExternal() || function.getBody().isEmpty()) {
+                        continue;
+                    }
+                    long bodyNumAddresses = function.getBody().getNumAddresses();
+                    String safeFunc = function.getName().replace("*/", "* /").replace("\r", " ").replace("\n", " ");
+                    String safeEntry = String.valueOf(function.getEntryPoint()).replace("*/", "* /");
+                    if (bodyNumAddresses > maxOutputBytes) {
+                        failedCount++;
+                        String warning = "/* WARNING: Function " + safeFunc + " at " + safeEntry + " body size (" + bodyNumAddresses + " addresses) exceeds output limit (" + maxOutputBytes + " bytes) */\n\n";
+                        long remaining = maxOutputBytes - bytesWritten;
+                        long warnBytes = utf8ByteLength(warning, remaining);
+                        if (bytesWritten + warnBytes > maxOutputBytes) {
+                            limitExceeded = true;
+                            break;
+                        }
+                        writer.write(warning);
+                        bytesWritten += warnBytes;
                         continue;
                     }
                     DecompileResults results = decompiler.decompileFunction(function, 30, monitor);
@@ -118,14 +160,15 @@ public class ReaDecompileToC extends GhidraScript {
                         if (decompFunc != null) {
                             String cCode = decompFunc.getC();
                             if (cCode != null && !cCode.trim().isEmpty()) {
-                                byte[] codeBytes = (cCode + "\n\n").getBytes(StandardCharsets.UTF_8);
-                                if (bytesWritten + codeBytes.length > maxOutputBytes) {
+                                long remaining = maxOutputBytes - bytesWritten;
+                                long cBytes = utf8ByteLength(cCode, remaining);
+                                if (bytesWritten + cBytes + 2 > maxOutputBytes) {
                                     limitExceeded = true;
                                     break;
                                 }
                                 writer.write(cCode);
                                 writer.write("\n\n");
-                                bytesWritten += codeBytes.length;
+                                bytesWritten += cBytes + 2;
                                 decompiledCount++;
                                 continue;
                             }
@@ -136,17 +179,16 @@ public class ReaDecompileToC extends GhidraScript {
                     if (errMsg == null || errMsg.trim().isEmpty()) {
                         errMsg = "decompilation incomplete or timed out";
                     }
-                    String safeFunc = function.getName().replace("*/", "* /").replace("\r", " ").replace("\n", " ");
-                    String safeEntry = String.valueOf(function.getEntryPoint()).replace("*/", "* /");
                     String safeErr = errMsg.replace("*/", "* /").replace("\r", " ").replace("\n", " ");
                     String warning = "/* WARNING: Failed to decompile function " + safeFunc + " at " + safeEntry + ": " + safeErr + " */\n\n";
-                    byte[] warnBytes = warning.getBytes(StandardCharsets.UTF_8);
-                    if (bytesWritten + warnBytes.length > maxOutputBytes) {
+                    long remaining = maxOutputBytes - bytesWritten;
+                    long warnBytes = utf8ByteLength(warning, remaining);
+                    if (bytesWritten + warnBytes > maxOutputBytes) {
                         limitExceeded = true;
                         break;
                     }
                     writer.write(warning);
-                    bytesWritten += warnBytes.length;
+                    bytesWritten += warnBytes;
                 }
                 writer.flush();
                 if (limitExceeded) {

@@ -28,6 +28,7 @@ import * as ExecFileOutputModule from "../process/ExecFileOutput.js";
 import * as OwnedCommandModule from "../process/OwnedCommand.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
+import type { GhidraInstallationHost } from "../ghidra/GhidraInstallation.js";
 import {
   ghidraProfileInstallationHost,
   verifiedGhidraJavaObservation,
@@ -5468,6 +5469,125 @@ it("checks Ghidra exporter outcome and reports aggregate budget when effective c
     } else {
       delete process.env.GHIDRA_INSTALL_DIR;
     }
+    await provider.close();
+  }
+});
+
+it("strips NUL bytes and control characters from C comment sanitization", () => {
+  expect(sanitizeCComment("Hello\0World")).toBe("Hello World");
+  expect(sanitizeCComment("A\x00B\x07C*/D\r\nE")).toBe("A B C* /D E");
+  expect(sanitizeCComment("Module\x1fName\x7fTest")).toBe("Module Name Test");
+});
+
+it("scaffolds unclassified MISC module with unknown neutral entry point ABI", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "UnclassifiedPayload",
+    "unclassified.bin",
+    2048,
+    "MISC",
+    undefined,
+    "64",
+  );
+  expect(scaffold.prototype).toBe(
+    "void EFIAPI UnclassifiedPayloadEntryPoint(void);",
+  );
+  expect(scaffold.functionDefinition).toContain(
+    "void EFIAPI UnclassifiedPayloadEntryPoint(",
+  );
+  expect(scaffold.functionDefinition).toContain("Unknown ABI");
+  expect(scaffold.typedefs).toEqual([]);
+});
+
+it("treats caller abort as cancellation when caller aborts request before execution", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-caller-abort-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const controller = new AbortController();
+    controller.abort(new Error("caller stopped waiting"));
+
+    const result = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+    const err = expectErr(result).error;
+    expect(err).toBeInstanceOf(AnalysisCancelledError);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports limitation for discovered but unavailable Ghidra installation on PATH", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-path-unavail-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  delete process.env.GHIDRA_INSTALL_DIR;
+
+  const mockHost: GhidraInstallationHost = {
+    ...ghidraProfileInstallationHost,
+    discoverInstallDirOnPath: () => "/opt/mock-ghidra-path",
+    readText: () => "application.version=11.0\napplication.name=Ghidra\n",
+  };
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: mockHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some((l) =>
+        l.startsWith("Discovered Ghidra installation is unavailable:"),
+      ),
+    ).toBe(true);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});
+
+it("does not substitute outer container GUID for nested module without GUID", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-nested-guid-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const containerDir = join(
+    inDir,
+    "volume-0",
+    "11111111-2222-3333-4444-555555555555",
+    "section-0",
+  );
+  await mkdir(containerDir, { recursive: true });
+  await writeFile(join(containerDir, "payload.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules.length).toBe(1);
+    expect(result.modules[0]?.guid).toBeNull();
+  } finally {
     await provider.close();
   }
 });

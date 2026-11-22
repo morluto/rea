@@ -488,9 +488,9 @@ export const PROVIDER_DEPENDENCIES = Object.freeze([
   Object.freeze({
     from: "uefi",
     to: "ghidra",
-    files: Object.freeze(["GhidraInstallation.ts"]),
+    files: Object.freeze(["GhidraInstallation.ts", "GhidraReleasePolicy.ts"]),
     reason:
-      "UEFI decompiler reuses the authoritative Ghidra installation observation for headless decompile-to-C admission",
+      "UEFI decompiler reuses the authoritative Ghidra installation observation and release defect policies for headless decompile-to-C admission and reporting",
   }),
 ]);
 
