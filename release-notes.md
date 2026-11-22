@@ -419,6 +419,7 @@
 * **ci:** consolidate NativeAOT verifier restore and publish checks ([#12815](https://github.com/morluto/rea/issues/12815)) ([b9bcfa4](https://github.com/morluto/rea/commit/b9bcfa4041d01746534974dbb4c8658920906a7a))
 * **ci:** consolidate project deadline policy checks ([#12777](https://github.com/morluto/rea/issues/12777)) ([ec533c6](https://github.com/morluto/rea/commit/ec533c6e648aa63fd0f0d10e985abbaa497a8df7))
 * **ci:** consolidate project discovery and isolation checks ([#12842](https://github.com/morluto/rea/issues/12842)) ([21795b1](https://github.com/morluto/rea/commit/21795b199d1bc94f3ee17688e45403e689cbc966))
+* **ci:** consolidate required lane gate coverage ([#13515](https://github.com/morluto/rea/issues/13515)) ([77c5e6b](https://github.com/morluto/rea/commit/77c5e6bf82bf4bceb4a4cffcd2e4b517d3ffb51a))
 * **ci:** make test selection and provider report refusals observable ([#12782](https://github.com/morluto/rea/issues/12782)) ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
 * **ci:** verify selected shard and provider report refusals ([21051b9](https://github.com/morluto/rea/commit/21051b9d06f82d9da0a932d328cae8db87644f77))
 * **cli:** consolidate Amp launcher registration coverage ([#12940](https://github.com/morluto/rea/issues/12940)) ([a31b80a](https://github.com/morluto/rea/commit/a31b80a4128502bcffda98d88e764db0a3544dc3))
