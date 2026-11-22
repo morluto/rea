@@ -32,6 +32,18 @@ interface Quantifier {
   readonly nextIndex: number;
 }
 
+interface GroupIndex {
+  readonly groupEnd: Int32Array;
+  readonly groupHasAlt: Uint8Array;
+  readonly topLevelHasAlt: boolean;
+}
+
+interface GroupFrame {
+  readonly bodyEnd: number;
+  readonly afterGroupIndex: number;
+  readonly inline: boolean;
+}
+
 const isHexDigit = (code: number): boolean =>
   (code >= 0x30 && code <= 0x39) ||
   (code >= 0x41 && code <= 0x46) ||
@@ -63,39 +75,45 @@ const skipCharClass = (pattern: string, start: number, end: number): number => {
   return end;
 };
 
-const findGroupEnd = (
-  pattern: string,
-  start: number,
-  end: number,
-): { readonly bodyEnd: number; readonly hasAlternation: boolean } => {
-  let depth = 0;
-  let hasAlternation = false;
-  let index = start;
-  while (index < end) {
+const analyzeRegexGroups = (pattern: string): GroupIndex => {
+  const length = pattern.length;
+  const groupEnd = new Int32Array(length).fill(-1);
+  const groupHasAlt = new Uint8Array(length);
+  const stack: number[] = [];
+  let index = 0;
+  while (index < length) {
     const ch = pattern[index];
     if (ch === "\\") {
       index += 2;
       continue;
     }
     if (ch === "[") {
-      index = skipCharClass(pattern, index + 1, end);
+      index = skipCharClass(pattern, index + 1, length);
       continue;
     }
     if (ch === "(") {
-      depth += 1;
+      stack.push(index);
+      index += 1;
+      continue;
+    }
+    if (ch === "|") {
+      const top = stack.at(-1);
+      if (top === undefined) {
+        return { groupEnd, groupHasAlt, topLevelHasAlt: true };
+      }
+      groupHasAlt[top] = 1;
       index += 1;
       continue;
     }
     if (ch === ")") {
-      if (depth === 0) return { bodyEnd: index, hasAlternation };
-      depth -= 1;
+      const open = stack.pop();
+      if (open !== undefined) groupEnd[open] = index;
       index += 1;
       continue;
     }
-    if (ch === "|" && depth === 0) hasAlternation = true;
     index += 1;
   }
-  return { bodyEnd: end, hasAlternation };
+  return { groupEnd, groupHasAlt, topLevelHasAlt: false };
 };
 
 const consumeLazyModifier = (
@@ -258,85 +276,78 @@ const parseGroupHeader = (
   return { bodyStart: afterOpen + 1, extractable: false };
 };
 
-const scanSegment = (
+const collectRequiredRuns = (
   pattern: string,
-  start: number,
-  end: number,
+  groups: GroupIndex,
   caseSensitive: boolean,
-  runs: string[],
-  initialCurrent = "",
-): string | undefined => {
-  let current = initialCurrent;
+): readonly string[] => {
+  const runs: string[] = [];
+  const frames: GroupFrame[] = [];
+  let current = "";
   const flush = (): void => {
     if (current.length > 0) {
       runs.push(current);
       current = "";
     }
   };
-  let index = start;
-  while (index < end) {
+  let index = 0;
+  while (true) {
+    const top = frames.at(-1);
+    const limit = top === undefined ? pattern.length : top.bodyEnd;
+    if (index >= limit) {
+      if (top === undefined) break;
+      frames.pop();
+      if (!top.inline) flush();
+      index = top.afterGroupIndex;
+      continue;
+    }
     const ch = pattern[index]!;
-    if (ch === "|") return undefined;
     if (ch === "^" || ch === "$" || ch === ".") {
       flush();
-      index = parseQuantifier(pattern, index + 1, end).nextIndex;
+      index = parseQuantifier(pattern, index + 1, limit).nextIndex;
       continue;
     }
     if (ch === "[") {
       flush();
-      const classEnd = skipCharClass(pattern, index + 1, end);
-      index = parseQuantifier(pattern, classEnd, end).nextIndex;
+      const classEnd = skipCharClass(pattern, index + 1, limit);
+      index = parseQuantifier(pattern, classEnd, limit).nextIndex;
       continue;
     }
     if (ch === "(") {
-      const { bodyStart, extractable } = parseGroupHeader(pattern, index, end);
-      const { bodyEnd, hasAlternation } = findGroupEnd(pattern, bodyStart, end);
-      const quantifier = parseQuantifier(pattern, bodyEnd + 1, end);
-      index = quantifier.nextIndex;
-      if (!extractable || hasAlternation || quantifier.min === 0) {
+      const bodyEnd = groups.groupEnd[index]!;
+      const { bodyStart, extractable } = parseGroupHeader(
+        pattern,
+        index,
+        bodyEnd,
+      );
+      const quantifier = parseQuantifier(pattern, bodyEnd + 1, limit);
+      if (
+        !extractable ||
+        groups.groupHasAlt[index] === 1 ||
+        quantifier.min === 0
+      ) {
         flush();
+        index = quantifier.nextIndex;
         continue;
       }
-      if (quantifier.min === 1 && quantifier.max === 1) {
-        const inner = scanSegment(
-          pattern,
-          bodyStart,
-          bodyEnd,
-          caseSensitive,
-          runs,
-          current,
-        );
-        if (inner === undefined) {
-          flush();
-        } else {
-          current = inner;
-        }
-      } else {
-        flush();
-        const inner = scanSegment(
-          pattern,
-          bodyStart,
-          bodyEnd,
-          caseSensitive,
-          runs,
-          "",
-        );
-        if (inner !== undefined && inner.length > 0) runs.push(inner);
-      }
+      const inline = quantifier.min === 1 && quantifier.max === 1;
+      if (!inline) flush();
+      frames.push({ bodyEnd, afterGroupIndex: quantifier.nextIndex, inline });
+      index = bodyStart;
       continue;
     }
 
     let codePoint: number | undefined;
     let atomEnd: number;
     if (ch === "\\") {
-      const escaped = parseEscape(pattern, index, end);
+      const escaped = parseEscape(pattern, index, limit);
       codePoint = escaped.codePoint;
       atomEnd = escaped.nextIndex;
     } else {
       codePoint = pattern.codePointAt(index)!;
       atomEnd = index + (codePoint > 0xffff ? 2 : 1);
     }
-    const quantifier = parseQuantifier(pattern, atomEnd, end);
+    const quantifier = parseQuantifier(pattern, atomEnd, limit);
     index = quantifier.nextIndex;
     if (
       codePoint === undefined ||
@@ -349,19 +360,23 @@ const scanSegment = (
     const literal = String.fromCodePoint(codePoint);
     if (quantifier.min === 1 && quantifier.max === 1) {
       current += literal;
-    } else if (quantifier.min === quantifier.max) {
-      current += literal.repeat(
+    } else if (
+      quantifier.min === quantifier.max &&
+      quantifier.min <= MAX_QUANTIFIED_REPEAT
+    ) {
+      current += literal.repeat(quantifier.min);
+    } else {
+      // Break the run whenever characters may vary or repeats exceed the cap so
+      // prefix and suffix are never joined across omitted characters.
+      const capped = literal.repeat(
         Math.min(quantifier.min, MAX_QUANTIFIED_REPEAT),
       );
-    } else {
-      runs.push(
-        current +
-          literal.repeat(Math.min(quantifier.min, MAX_QUANTIFIED_REPEAT)),
-      );
-      current = literal;
+      runs.push(current + capped);
+      current = capped;
     }
   }
-  return current;
+  flush();
+  return runs;
 };
 
 /**
@@ -379,11 +394,11 @@ export const extractRequiredRegexLiteral = (
   } catch {
     return undefined;
   }
-  const runs: string[] = [];
-  const trailing = scanSegment(pattern, 0, pattern.length, caseSensitive, runs);
-  if (trailing === undefined) return undefined;
-  if (trailing.length > 0) runs.push(trailing);
+  const groups = analyzeRegexGroups(pattern);
+  if (groups.topLevelHasAlt) return undefined;
   let longest = "";
-  for (const run of runs) if (run.length > longest.length) longest = run;
+  for (const run of collectRequiredRuns(pattern, groups, caseSensitive)) {
+    if (run.length > longest.length) longest = run;
+  }
   return longest.length > 0 ? longest : undefined;
 };
