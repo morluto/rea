@@ -126,9 +126,14 @@ export const parseCaptureJson = (
           append(new LosslessNumber(text.slice(offset, offset + length)));
         // jsonc-parser 3.3.1 builds an escaped string fragment by fragment,
         // which V8 keeps as a rope several times larger than its text.
-        // JSON.parse of the same accepted token returns one flat string.
+        // JSON.parse of the same accepted token returns one flat string, while
+        // an unescaped token (length === decoded + 2 quotes) is already sliced flat.
         else if (typeof value === "string")
-          append(JSON.parse(text.slice(offset, offset + length)));
+          append(
+            value.length === length - 2
+              ? value
+              : JSON.parse(text.slice(offset, offset + length)),
+          );
         else if (value === null || typeof value === "boolean") append(value);
         else
           throw new TypeError("JSON visitor emitted an unsupported literal.");

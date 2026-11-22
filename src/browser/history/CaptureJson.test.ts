@@ -1,4 +1,4 @@
-import { expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 
 import { createTestProcessRegistry } from "../../../tests/support/process/processFixture.js";
 import { selectedWebNetworkCaptureBudgets } from "../../domain/webNetworkCapture.js";
@@ -49,4 +49,12 @@ it("retains escape-heavy strings within a heap near their decoded size", async (
   ]);
 
   expect(child.exitCode, child.stderr).toBe(0);
+});
+
+describe("capture JSON unescaped string fast path", () => {
+  it("preserves empty strings, unescaped Unicode text, and escaped sequences", () => {
+    const raw =
+      '["","plain ascii","https://example.test/雪?a=1&b=2","escaped\\nline\\t\\u0041","pair😀\\ud83d\\ude80"]';
+    expect(parseCaptureJson(raw, "HAR")).toEqual(JSON.parse(raw));
+  });
 });
