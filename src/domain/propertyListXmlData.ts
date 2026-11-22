@@ -87,5 +87,7 @@ export const decodeXmlPlistData = (
       if (padding === 0) bytes[offset++] = quartet;
     }
   }
-  return ok(offset === bytes.length ? bytes : bytes.subarray(0, offset));
+  // A small decoded value must not retain a large ignored source literal.
+  if (offset < bytes.length / 2) return ok(bytes.slice(0, offset));
+  return ok(bytes.subarray(0, offset));
 };
