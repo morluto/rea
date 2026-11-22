@@ -3,6 +3,7 @@ import {
   open,
   readFile,
   rename,
+  rm,
   symlink,
   unlink,
   utimes,
@@ -11,7 +12,7 @@ import {
 import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import type { StableArtifactFileSystem } from "../../../src/resources/readStableArtifact.js";
 import { captureSqliteDatabaseSnapshot } from "../../../src/sqlite/SqliteDatabaseSnapshot.js";
@@ -341,3 +342,78 @@ it.each(["-wal", "-journal"] as const)(
     expect(created).toBe(true);
   },
 );
+
+describe("SQLite snapshot streaming copy and destination isolation", () => {
+  it("streams multi-megabyte DB and WAL files byte-for-byte", async () => {
+    const workspace = await createTestWorkspace("rea-sqlite-large-stream-");
+    const resourceScope = new ArtifactResourceScope();
+    const dbPath = `${workspace.root}/large.db`;
+    const db = new DatabaseSync(dbPath);
+    onTestFinished(async () => {
+      db.close();
+      await resourceScope.close();
+      await removeTestWorkspace(workspace.root);
+    });
+    db.exec("PRAGMA journal_mode = WAL;");
+    db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, payload TEXT);");
+    const insert = db.prepare("INSERT INTO items (payload) VALUES (?);");
+    const bigRow = "x".repeat(4096);
+    db.exec("BEGIN;");
+    for (let i = 0; i < 650; i += 1) insert.run(bigRow);
+    db.exec("COMMIT;");
+    // Force a checkpoint so the DB file exceeds 1 MiB, then grow the WAL > 1.2 MiB too.
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+    db.exec("BEGIN;");
+    for (let i = 0; i < 400; i += 1) insert.run(bigRow);
+    db.exec("COMMIT;");
+
+    const sourceDb = await readFile(dbPath);
+    const sourceWal = await readFile(`${dbPath}-wal`);
+    expect(sourceDb.length).toBeGreaterThan(1_048_576);
+    expect(sourceWal.length).toBeGreaterThan(1_048_576);
+
+    const snapshotDir = await workspace.mkdir("snap-large");
+    const snapshot = await captureSqliteDatabaseSnapshot(
+      dbPath,
+      snapshotDir,
+      resourceScope,
+    );
+    expect(snapshot.wal?.path).toBe(`${dbPath}-wal`);
+    expect(
+      Buffer.compare(await readFile(snapshot.snapshotPath), sourceDb),
+    ).toBe(0);
+    expect(
+      Buffer.compare(await readFile(`${snapshot.snapshotPath}-wal`), sourceWal),
+    ).toBe(0);
+  });
+
+  it("preserves a 0-byte WAL file via lazy destination open", async () => {
+    const { database, root, capture } = await fixture(true);
+    await writeFile(database.walPath, Buffer.alloc(0));
+    const result = await capture();
+    expect(result.wal?.path).toBe(database.walPath);
+    expect((await readFile(`${root}/database.snapshot-wal`)).length).toBe(0);
+  });
+
+  it("isolates destination ENOENT from source container-identity attribution", async () => {
+    const { database, root, capture } = await fixture();
+    const fileSystem: StableArtifactFileSystem = {
+      lstat: (path) => lstat(path, { bigint: true }),
+      open: async (path, flags) => {
+        const handle = await open(path, flags);
+        if (path === database.path) {
+          // Removing privateRoot after source admission triggers ENOENT on destination
+          // open; duringAcquisition must not blame the source path as container-identity.
+          await rm(root, { recursive: true, force: true });
+        }
+        return handle;
+      },
+    };
+    const error = await capture(fileSystem).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({
+      code: "ENOENT",
+      path: `${root}/database.snapshot`,
+    });
+  });
+});

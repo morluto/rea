@@ -103,6 +103,10 @@ const afterValidation = async <T>(
   }
 };
 
+const DEFAULT_STREAM_CHUNK_BYTES = 65536;
+const SNAPSHOT_READ_CHUNK_BYTES = 1048576;
+const EOF_PROBE_BYTES = 4096;
+
 /**
  * Read one bounded regular file and reject replacement or in-place changes.
  * The optional observer receives verified state before descriptor finalization;
@@ -116,19 +120,20 @@ export const readStableArtifact = (
   resourceScope?: ArtifactResourceScope,
   onValidatedState?: (state: BigIntStats) => void,
 ): Promise<StableArtifactSnapshot> =>
-  readStableArtifactChunks(
+  readStableArtifactChunks({
     path,
     maximumBytes,
+    chunkBytes: SNAPSHOT_READ_CHUNK_BYTES,
     signal,
     fileSystem,
     resourceScope,
-    (size) => size,
-    undefined,
-    (bytes, sha256, _size, state) => {
+    retainBytes: (size) => size,
+    onChunk: undefined,
+    complete: (bytes, sha256, _size, state) => {
       onValidatedState?.(state);
       return { bytes, sha256 };
     },
-  );
+  });
 
 /** Whole-file identity of one streamed stable read and its retained prefix. */
 export interface StableArtifactStream {
@@ -144,9 +149,11 @@ export interface StableArtifactStreamOptions {
   readonly retainBytes: (size: number) => number;
   /**
    * Observe every physical chunk in file order. The buffer may be reused after
-   * the callback returns, so it must be consumed synchronously.
+   * the callback settles, so callers must consume or copy it before resolving.
    */
-  readonly onChunk: (chunk: Buffer) => void;
+  readonly onChunk: (chunk: Buffer) => void | Promise<void>;
+  /** Maximum read chunk size in bytes; defaults to 65536. */
+  readonly chunkBytes?: number | undefined;
   readonly signal?: AbortSignal | undefined;
   readonly fileSystem?: StableArtifactFileSystem;
   readonly resourceScope?: ArtifactResourceScope | undefined;
@@ -157,37 +164,57 @@ export interface StableArtifactStreamOptions {
  * freshness, cancellation, and descriptor-ownership checks as
  * {@link readStableArtifact}, retaining only a caller-sized prefix.
  */
-export const streamStableArtifact = (
+export const streamStableArtifact = async (
   path: string,
   maximumBytes: number,
   options: StableArtifactStreamOptions,
-): Promise<StableArtifactStream> =>
-  readStableArtifactChunks(
+): Promise<StableArtifactStream> => {
+  const chunkBytes = options.chunkBytes ?? DEFAULT_STREAM_CHUNK_BYTES;
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0)
+    throw new ArtifactReaderFailure(
+      "format",
+      `Artifact read chunk size must be a positive integer: ${String(chunkBytes)}`,
+    );
+  return readStableArtifactChunks({
     path,
     maximumBytes,
-    options.signal,
-    options.fileSystem ?? FILE_SYSTEM,
-    options.resourceScope,
-    options.retainBytes,
-    options.onChunk,
-    (prefix, sha256, size) => ({ sha256, size, prefix }),
-  );
+    chunkBytes,
+    signal: options.signal,
+    fileSystem: options.fileSystem ?? FILE_SYSTEM,
+    resourceScope: options.resourceScope,
+    retainBytes: options.retainBytes,
+    onChunk: options.onChunk,
+    complete: (prefix, sha256, size) => ({ sha256, size, prefix }),
+  });
+};
 
-const readStableArtifactChunks = async <Value>(
-  path: string,
-  maximumBytes: number,
-  signal: AbortSignal | undefined,
-  fileSystem: StableArtifactFileSystem,
-  resourceScope: ArtifactResourceScope | undefined,
-  retainBytes: (size: number) => number,
-  onChunk: ((chunk: Buffer) => void) | undefined,
-  complete: (
+const readStableArtifactChunks = async <Value>(options: {
+  readonly path: string;
+  readonly maximumBytes: number;
+  readonly chunkBytes: number;
+  readonly signal: AbortSignal | undefined;
+  readonly fileSystem: StableArtifactFileSystem;
+  readonly resourceScope: ArtifactResourceScope | undefined;
+  readonly retainBytes: (size: number) => number;
+  readonly onChunk: ((chunk: Buffer) => void | Promise<void>) | undefined;
+  readonly complete: (
     retained: Buffer,
     sha256: string,
     size: number,
     state: BigIntStats,
-  ) => Value,
-): Promise<Value> => {
+  ) => Value;
+}): Promise<Value> => {
+  const {
+    path,
+    maximumBytes,
+    chunkBytes,
+    signal,
+    fileSystem,
+    resourceScope,
+    retainBytes,
+    onChunk,
+    complete,
+  } = options;
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
   if (!before.isFile() || before.isSymbolicLink())
@@ -238,15 +265,36 @@ const readStableArtifactChunks = async <Value>(
       const bytes = Buffer.allocUnsafe(
         Math.max(0, Math.min(admitted, retainBytes(admitted))),
       );
-      const overflow = Buffer.allocUnsafe(65536);
+      let overflow: Buffer | undefined;
+      let eofProbe: Buffer | undefined;
       const hash = createHash("sha256");
       let count = 0;
       for (;;) {
         assertArtifactReadActive(signal);
         const inside = count < bytes.length;
-        const target = inside ? bytes : overflow;
-        const offset = inside ? count : 0;
-        const wanted = Math.min(65536, target.length - offset);
+        let target: Buffer;
+        let offset: number;
+        if (inside) {
+          target = bytes;
+          offset = count;
+        } else {
+          offset = 0;
+          if (overflow !== undefined) {
+            target = overflow;
+          } else if (count < admitted) {
+            overflow = Buffer.allocUnsafe(
+              Math.min(chunkBytes, Math.max(EOF_PROBE_BYTES, admitted - count)),
+            );
+            target = overflow;
+          } else {
+            // Full-file snapshots expect EOF here; probe without allocating a full chunk.
+            eofProbe ??= Buffer.allocUnsafe(
+              Math.min(chunkBytes, EOF_PROBE_BYTES),
+            );
+            target = eofProbe;
+          }
+        }
+        const wanted = Math.min(chunkBytes, target.length - offset);
         const { bytesRead } = await file.read(target, offset, wanted, count);
         // EOF still passes through the original final metadata/cancellation
         // checks. A rejected physical read remains primary over cancellation.
@@ -272,7 +320,7 @@ const readStableArtifactChunks = async <Value>(
         // read failures and byte-budget refusal ahead of final integrity checks.
         const chunk = target.subarray(offset, offset + bytesRead);
         hash.update(chunk);
-        onChunk?.(chunk);
+        if (onChunk !== undefined) await onChunk(chunk);
       }
       const after = await file.stat({ bigint: true });
       const current = await afterValidation(path, "during read", () =>

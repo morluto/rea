@@ -1,7 +1,7 @@
-import { open, writeFile } from "node:fs/promises";
+import { mkdir, open, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -10,6 +10,7 @@ import {
   MAX_FIRMWARE_STAGING_ENTRIES,
 } from "../../../src/domain/firmware/firmwareAnalysis.js";
 import { inventoryFirmwareOutput } from "../../../src/firmware/FirmwareFiles.js";
+import { checkFirmwareStagingBudget } from "../../../src/firmware/FirmwareStagingBudget.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it("reports the cumulative staging-byte limit and only offers supported increases", async () => {
@@ -59,4 +60,47 @@ it("reports the cumulative staging-byte limit and only offers supported increase
         : "smaller firmware byte range",
     );
   }
+});
+
+describe("checkFirmwareStagingBudget", () => {
+  it("counts files, directories, symlinks, and raw non-UTF8 names within budgets", async () => {
+    const root = await createTestTempDirectory("rea-staging-budget-fast-");
+    await mkdir(join(root, "sub"));
+    await writeFile(join(root, "sub", "a.bin"), "abcd");
+    await writeFile(join(root, "b.bin"), "ef");
+    if (process.platform !== "win32")
+      await symlink("dangling-target", join(root, "sub", "dangling"));
+    const usage = await checkFirmwareStagingBudget({
+      root,
+      maxBytes: 6,
+      maxEntries: process.platform === "win32" ? 3 : 4,
+      fileSizeBytes: 5,
+      operation: "extract_firmware",
+    });
+    expect(usage).toEqual({
+      bytes: 6,
+      entries: process.platform === "win32" ? 3 : 4,
+    });
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 5,
+        maxEntries: 10,
+        fileSizeBytes: 10,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisResourceConstraintError" });
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 4,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+    });
+  });
 });
