@@ -694,6 +694,12 @@ const mapStableFileRead = async function* (
     })) {
       abortIfNeeded(signal);
       bytes += BigInt(chunk.length);
+      if (bytes > expectedBytes) {
+        // Count the probe for validation without delivering bytes beyond the admitted range.
+        const admitted = chunk.length - Number(bytes - expectedBytes);
+        if (admitted > 0) yield chunk.subarray(0, admitted);
+        break;
+      }
       yield chunk;
     }
     abortIfNeeded(signal);

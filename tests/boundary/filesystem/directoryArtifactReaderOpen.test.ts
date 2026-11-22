@@ -1,11 +1,13 @@
-import { lstat, rename, utimes, writeFile } from "node:fs/promises";
+import { appendFile, lstat, rename, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
+import { finished } from "node:stream/promises";
 
 import { describe, expect, it } from "vitest";
 
 import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const sampleEntry = async (
@@ -94,43 +96,51 @@ describe("DirectoryArtifactReader.open", () => {
     },
   );
 
-  it.each(["truncate", "grow"])(
-    "rejects a same-file %s between streamed chunks within the captured byte bound",
-    async (mutation) => {
+  it.each([
+    { mutation: "truncate", tail: 0 },
+    { mutation: "grow", tail: 0 },
+    { mutation: "grow", tail: 3 },
+  ] as const)(
+    "rejects a same-file $mutation within the captured byte bound (final partial bytes: $tail)",
+    async ({ mutation, tail }) => {
       const root = await createTestTempDirectory("rea-dir-reader-mutate-");
       const path = join(root, "sample.txt");
-      const originalBytes = 1024 * 1024;
+      const originalBytes = 1024 * 1024 + tail;
       await writeFile(path, Buffer.alloc(originalBytes, 0x61));
       const reader = new DirectoryArtifactReader(root);
       try {
         const entry = await sampleEntry(reader);
         const stream = await reader.open(entry);
-        const iterator = stream[Symbol.asyncIterator]();
-        const first = await iterator.next();
-        expect(first.done).toBe(false);
-        let observedBytes =
-          first.value === undefined ? 0 : Buffer.byteLength(first.value);
-        await writeFile(
-          path,
-          mutation === "truncate"
-            ? "short replacement\n"
-            : Buffer.alloc(2 * originalBytes, 0x62),
+        const firstChunk = phaseGate();
+        const consumed = finished(stream, { cleanup: true }).catch(
+          (cause: unknown) => cause,
         );
-        let failure: unknown;
-        try {
-          for (;;) {
-            const next = await iterator.next();
-            if (next.done) break;
-            observedBytes += Buffer.byteLength(next.value);
+        let observedBytes = 0;
+        stream.on("data", (chunk: Buffer) => {
+          if (observedBytes === 0) {
+            stream.pause();
+            void firstChunk.hold();
           }
-        } catch (cause: unknown) {
-          failure = cause;
-        }
-        expect(failure).toMatchObject({
-          reason: "integrity",
-          integrityCheck: "member-identity",
+          observedBytes += chunk.length;
         });
-        expect(observedBytes).toBeLessThanOrEqual(originalBytes + 1);
+        try {
+          await firstChunk.reached(consumed, "first directory artifact chunk");
+          if (mutation === "truncate")
+            await writeFile(path, "short replacement\n");
+          else await appendFile(path, Buffer.alloc(originalBytes, 0x62));
+          firstChunk.release();
+          stream.resume();
+          expect(await consumed).toMatchObject({
+            reason: "integrity",
+            integrityCheck: "member-identity",
+          });
+          if (mutation === "grow") expect(observedBytes).toBe(originalBytes);
+          else expect(observedBytes).toBeLessThanOrEqual(originalBytes);
+        } finally {
+          firstChunk.release();
+          stream.destroy();
+          await consumed;
+        }
       } finally {
         await reader.close();
       }
