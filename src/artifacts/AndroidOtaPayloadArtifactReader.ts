@@ -162,7 +162,7 @@ export class AndroidOtaPayloadArtifactReader implements ArtifactReader {
         new ArtifactReaderFailure("cancelled", `${LABEL} read cancelled`, {
           cause: reason,
         });
-      const image = Buffer.from(reconstructed.value);
+      const image = reconstructed.value;
       const source =
         image.length === 0 ? Readable.from([]) : Readable.from([image]);
       const output = this.#memberStream(stored, image.length, signal);

@@ -157,7 +157,7 @@ const formatDocument = (
   value: unknown,
   format: "toon" | "json" | "yaml" | "jsonl",
 ): string => {
-  if (value === null || value === undefined) return "";
+  if (value === undefined) return "";
   switch (format) {
     case "json":
       return formatJson(value);
@@ -486,7 +486,7 @@ const formatMarkdown = (
   value: unknown,
   path: readonly string[] = [],
 ): string => {
-  if (value == null && path.length === 0) return "";
+  if (value === undefined) return "";
   if (isScalar(value)) {
     if (path.length === 0) return escapeMarkdownText(String(value));
     return `${markdownHeading(path)}${escapeMarkdownText(String(value))}`;

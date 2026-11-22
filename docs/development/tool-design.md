@@ -663,6 +663,47 @@ returning a failure `Result` leaves the partial inline, as does a partial that
 is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
 member alone does not establish Evidence validity or retention.
 
+### Design hot paths for single-pass work and zero redundant copies
+
+Apply these general patterns when implementing providers, bridges, adapters,
+and shared application workflows so performance is built into the owning
+boundary rather than patched downstream:
+
+- **Validate once at the trust boundary; avoid full-tree deep-clones on owned
+  payloads.** Use `ownedJsonValueSchema` / `ownedJsonObjectSchema` (in-place
+  validation without cloning) for freshly constructed, exclusively owned
+  objects instead of `jsonValueSchema.parse` / `jsonObjectSchema.parse`. Keep
+  cloning only when a downstream consumer mutates or freezes shared input
+  (such as `freezeJsonSnapshot`). When an upstream decoder has already
+  validated a large payload schema (for example `binaryLayoutPayloadSchema` or
+  `recordedCrashPayloadSchema`), validate only the added envelope fields and
+  cross-field invariants rather than re-parsing the full payload tree. Hoist
+  Zod schemas, regular expressions, and constant lookup `Set`s to module scope;
+  never construct `z.object(...)` inside per-record or per-field loops.
+- **Derive classifications, counts, and pruning summaries in a single pass.**
+  Fuse independent `.filter()`, `.some()`, and `.flatMap()` passes over the
+  same inventory or stream into one loop, and count matches with a loop rather
+  than allocating `.filter(...).length` intermediate arrays. Compute tiny
+  derived existence summaries during pass 1 (such as whether any packet uses a
+  protocol or whether any managed directory exists) to short-circuit expensive
+  secondary subprocesses or scans when no matching records exist.
+- **Use hash joins and reuse existing indexes instead of nested-loop scans.**
+  Before calling `.find()`, `.includes()`, or `.indexOf()` inside a loop over
+  another collection, reuse an existing `Map`/`Set` index on the context or
+  build one once outside the loop. In bridges (Java/Python), index tables,
+  procedures, and tokens by address or type path during analysis/loading (using
+  `putIfAbsent` when first-match precedence matters) and gate expensive engine
+  queries (such as SLEIGH p-code or flow resolution) behind cheap control-flow
+  checks.
+- **Bound I/O and cache freshness without breaking cancellation or cleanup
+  contracts.** Prefer single-pass streaming reads/hashes and pass
+  `expectedSize` to `readBoundedFileBytes` for regular files so reads avoid
+  double-allocation copies. When caching external tool digests or PATH probes
+  with `(dev, ino, size, mtimeNs, ctimeNs)` stat verification, bypass the fast
+  path when a caller or test injects a custom `artifactReader`, and never skip
+  a read whose contract requires observing mid-read cancellation or access
+  errors on every call.
+
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,
 serialization expansion, and temporary-file growth separately. Derive facet

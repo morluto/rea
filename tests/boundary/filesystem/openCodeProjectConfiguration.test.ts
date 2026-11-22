@@ -116,10 +116,18 @@ it("loads OpenCode V2 ancestors beyond Git and layers all direct files before .o
   const directOnly = await read();
   if (!directOnly.ok) throw Error(directOnly.error.detail);
   expect(directOnly.value.configPath).toBe(direct);
+  expect(readReaServer(directOnly.value.document)).toEqual({
+    ...localServer("direct"),
+    disabled: true,
+  });
   await unlink(direct);
   const aboveRepository = await read();
   if (!aboveRepository.ok) throw Error(aboveRepository.error.detail);
   expect(aboveRepository.value.configPath).toBe(outer);
+  expect(readReaServer(aboveRepository.value.document)).toEqual({
+    ...localServer("outer"),
+    environment: { OUTER: "retain only when selected" },
+  });
 });
 
 it.each(["legacy", "native"] as const)(
@@ -167,6 +175,31 @@ it.each(["legacy", "native"] as const)(
     });
   },
 );
+
+it("attributes a dotted environment key to its effective OpenCode source", async () => {
+  const { client, projectDirectory, read } = await fixture();
+  const upper = join(projectDirectory, "opencode.json");
+  const key = "CALLER.VALUE";
+  await writeConfiguration(client.configPath, {
+    mcp: { rea: { ...localServer("user"), environment: { [key]: 17 } } },
+  });
+  await writeConfiguration(upper, {
+    mcp: {
+      rea: { ...localServer("project"), environment: { VALUE: "unrelated" } },
+    },
+  });
+  const result = await read();
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      path: client.configPath,
+      detail: expect.stringContaining("environment.CALLER.VALUE"),
+    },
+  });
+  if (result.ok) throw new Error("Expected invalid environment");
+  expect(result.error.scope).toBeUndefined();
+});
 
 it("keeps OpenCode activation tied to the authored row dialect", async () => {
   const { client, projectDirectory, read } = await fixture();

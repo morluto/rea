@@ -24,7 +24,14 @@ const hasLegacyMachoFixups = (image: NativeImage): boolean =>
   image.machoPointerFixups !== undefined &&
   image.machoPointerFixups.kind !== "none";
 
-const canFastRawMapping = (
+interface FastRawOverlay {
+  /** Monotonic O(1)-amortized check whether `[relStart, relStart + width)` overlaps an ELF write. */
+  readonly hasWrite: (relStart: number, width: number) => boolean;
+}
+
+const NO_OVERLAY_WRITES: FastRawOverlay = { hasWrite: () => false };
+
+const createFastRawOverlay = (
   image: NativeImage,
   mapping: {
     readonly address: bigint;
@@ -33,16 +40,27 @@ const canFastRawMapping = (
   },
   legacyFixups: boolean,
   rawBytesLength: number,
-): boolean => {
-  const loaded =
-    image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) === true;
-  return (
-    !loaded &&
-    !legacyFixups &&
-    image.stored.little &&
-    mapping.offset >= 0 &&
-    mapping.offset + mapping.size <= rawBytesLength
-  );
+): FastRawOverlay | null => {
+  if (
+    legacyFixups ||
+    !image.stored.little ||
+    mapping.offset < 0 ||
+    mapping.offset + mapping.size > rawBytesLength
+  )
+    return null;
+  const overlay = image.elfPointerOverlay;
+  if (overlay === undefined) return NO_OVERLAY_WRITES;
+  const intervals = overlay.writeIntervalsIn(mapping.address, mapping.size);
+  if (intervals.length === 0) return NO_OVERLAY_WRITES;
+  let cursor = 0;
+  return {
+    hasWrite(relStart: number, width: number): boolean {
+      const relEnd = relStart + width;
+      while (cursor < intervals.length && intervals[cursor]!.end <= relStart)
+        cursor += 1;
+      return cursor < intervals.length && intervals[cursor]!.start < relEnd;
+    },
+  };
 };
 
 /** Unsigned 32-bit little-endian lane without Buffer.readUInt32LE or BigInt allocation. */
@@ -288,7 +306,7 @@ export function* findModules(
   const nameFilter = createAddressLaneFilter(names.keys());
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
-    const fastRaw = canFastRawMapping(
+    const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
@@ -297,7 +315,11 @@ export function* findModules(
     for (let at = start; at + 24 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
-      if (fastRaw && !matchesAddressLane(nameFilter, rawBytes, offset))
+      if (
+        fastRaw !== null &&
+        !fastRaw.hasWrite(at, 8) &&
+        !matchesAddressLane(nameFilter, rawBytes, offset)
+      )
         continue;
       const address = mapping.address + BigInt(at);
       const raw = image.stored.word(offset, 64);
@@ -436,7 +458,7 @@ export function* findCodeRegistration(
   const expectedCount = modules.length;
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
-    const fastRaw = canFastRawMapping(
+    const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
@@ -445,7 +467,8 @@ export function* findCodeRegistration(
     for (let at = start; at + 16 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       if (
-        fastRaw &&
+        fastRaw !== null &&
+        !fastRaw.hasWrite(at, 4) &&
         rawUInt32LE(rawBytes, mapping.offset + at) !== expectedCount
       )
         continue;
@@ -539,7 +562,7 @@ function* findModuleArrayByCode(
   for (const candidate of expected) expectedXor ^= candidate;
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
-    const fastRaw = canFastRawMapping(
+    const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
@@ -555,7 +578,11 @@ function* findModuleArrayByCode(
     for (let at = start; at + 8 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       const offset = mapping.offset + at;
-      if (fastRaw && !matchesAddressLane(expectedFilter, rawBytes, offset)) {
+      if (
+        fastRaw !== null &&
+        !fastRaw.hasWrite(at, 8) &&
+        !matchesAddressLane(expectedFilter, rawBytes, offset)
+      ) {
         if (possible.size !== 0) {
           possible.clear();
           occurrences.clear();
@@ -814,7 +841,7 @@ export function* findMetadataRegistration(
   const legacyFixups = hasLegacyMachoFixups(image);
   for (const mapping of image.container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
-    const fastRaw = canFastRawMapping(
+    const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
@@ -824,7 +851,7 @@ export function* findMetadataRegistration(
     // must still have loader coverage, including any declared zero-fill tail.
     for (let at = start; at + 112 <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
-      if (fastRaw) {
+      if (fastRaw !== null && !fastRaw.hasWrite(at + 80, 20)) {
         const off = mapping.offset + at;
         if (
           rawUInt32LE(rawBytes, off + 80) !== typeDefinitions ||
@@ -1034,7 +1061,7 @@ function* findTypeTableByCode(
   };
   for (const mapping of container.mappings) {
     const start = Number((8n - (mapping.address % 8n)) % 8n);
-    const fastRaw = canFastRawMapping(
+    const fastRaw = createFastRawOverlay(
       image,
       mapping,
       legacyFixups,
@@ -1047,8 +1074,9 @@ function* findTypeTableByCode(
     for (let at = start; at <= mapping.size; at += 8) {
       if ((at & 0xffff) < 8) yield;
       if (
-        fastRaw &&
+        fastRaw !== null &&
         at + 8 <= mapping.size &&
+        !fastRaw.hasWrite(at, 8) &&
         !isPossibleTypePointer(mapping.offset + at)
       ) {
         possibleLength = 0;

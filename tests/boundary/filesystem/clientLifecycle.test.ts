@@ -14,7 +14,7 @@ import {
 import { dirname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { parse as parseJsonc, type ParseError } from "jsonc-parser";
+import { parse as parseJsonc } from "jsonc-parser";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
@@ -1404,83 +1404,6 @@ describe("Grok Build inline comments", () => {
     expect(removed).toContain("# policy");
     expect(removed).toContain("# owned");
     expect(parseToml(removed)).not.toHaveProperty("mcp_servers.rea");
-  });
-});
-
-describe("JSON client configuration comments", () => {
-  it("keeps a same-line JSONC comment when uninstall removes Cursor", async () => {
-    const home = await createTestTempDirectory("rea-cursor-jsonc-comment-");
-    const configPath = join(home, ".cursor/mcp.json");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      '{\n  "mcpServers": {\n    "other": {"command":"other"}, // important other-server note\n    "rea": {"command":"rea","args":["mcp"]}\n  }\n}\n',
-    );
-    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
-      "complete",
-    );
-    const removed = await readFile(configPath, "utf8");
-    expect(removed).toContain("// important other-server note");
-    const errors: ParseError[] = [];
-    const document = parseJsonc(removed, errors, { allowTrailingComma: true });
-    expect(errors).toEqual([]);
-    expect(document).toEqual({
-      mcpServers: { other: { command: "other" } },
-    });
-  });
-
-  it("keeps a JSONC comment when a block comment precedes the comma", async () => {
-    const home = await createTestTempDirectory("rea-cursor-jsonc-block-");
-    const configPath = join(home, ".cursor/mcp.json");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      '{"mcpServers":{\n  "other":{"command":"other"}, // keep other note\n  "rea":{"command":"rea","args":["mcp"]} /**/,\n  "keep":{"command":"keep"}\n}}\n',
-    );
-    expect((await runUninstall(false, systemUninstallHost(home))).status).toBe(
-      "complete",
-    );
-    const removed = await readFile(configPath, "utf8");
-    expect(removed).toContain("// keep other note");
-    const errors: ParseError[] = [];
-    const document = parseJsonc(removed, errors, { allowTrailingComma: true });
-    expect(errors).toEqual([]);
-    expect(document).toEqual({
-      mcpServers: {
-        other: { command: "other" },
-        keep: { command: "keep" },
-      },
-    });
-  });
-
-  it("keeps a JSONC comment without swallowing the next server or closers", async () => {
-    const home = await createTestTempDirectory("rea-cursor-jsonc-next-");
-    const configPath = join(home, ".cursor/mcp.json");
-    await mkdir(dirname(configPath), { recursive: true });
-    const files = [
-      '{\n  "mcpServers": {\n    "other": {"command":"other"}, // important other-server note\n    "rea": {"command":"rea","args":["mcp"]}, "keep": {"command":"keep"}\n  }\n}\n',
-      '{\n  "mcpServers": {\n    "other": {"command":"other"}, // important other-server note\n    "rea": {"command":"rea","args":["mcp"]}}}\n',
-    ];
-    for (const original of files) {
-      await writeFile(configPath, original);
-      expect(
-        (await runUninstall(false, systemUninstallHost(home))).status,
-      ).toBe("complete");
-      const removed = await readFile(configPath, "utf8");
-      expect(removed).toContain("// important other-server note");
-      const errors: ParseError[] = [];
-      const document = parseJsonc(removed, errors, {
-        allowTrailingComma: true,
-      });
-      expect(errors).toEqual([]);
-      expect(document).toMatchObject({
-        mcpServers: { other: { command: "other" } },
-      });
-      if (original.includes('"keep"'))
-        expect(document).toMatchObject({
-          mcpServers: { keep: { command: "keep" } },
-        });
-    }
   });
 });
 

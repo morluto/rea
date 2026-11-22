@@ -90,7 +90,7 @@ import {
   providerRetryAction,
   type ProviderOperationHealth,
 } from "../domain/providerOperationHealth.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -146,13 +146,16 @@ import {
   ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
-  ghidraFunctionSeedRecovery,
   ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
+import {
+  ghidraMachoMainEntryCandidate,
+  isGhidraMainSelector,
+} from "./GhidraMachoEntryHint.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
@@ -196,6 +199,7 @@ export type GhidraProviderClientFactory = (
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
+      | "readTargetSnapshotRanges"
       | "hashTargetSnapshot"
       | "hashTargetSnapshotRanges"
       | "attestDosTargetSnapshot"
@@ -827,6 +831,56 @@ export const createGhidraProviderClient = (input: {
     riscvLoadPreparation !== undefined;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
+  // Only a thin image REA imported itself has Ghidra's import at the declared
+  // vmaddrs; universal slices and caller projects are not established here.
+  const machoMainEntryHint = async (
+    failure: GhidraSessionError,
+    request: Readonly<Record<string, JsonValue>>,
+    signal: AbortSignal | undefined,
+  ): Promise<{
+    readonly hint?: string;
+    readonly cleanupFailure?: AnalysisError;
+  }> => {
+    if (
+      target.format !== "mach-o" ||
+      projection.source === "existing-project" ||
+      failure.kind !== "remote" ||
+      failure.remoteCode !== "procedure_not_found" ||
+      !isGhidraMainSelector(request.procedure) ||
+      client.readTargetSnapshotRanges === undefined
+    )
+      return {};
+    const read = await client.readTargetSnapshotRanges(
+      ghidraMachoMainEntryCandidate,
+      signal,
+    );
+    if (!read.ok)
+      return read.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: read.error.cleanupFailure };
+    if (read.value === undefined) return {};
+    const { address, fileOffset } = read.value;
+    const observed = await client.callTool(
+      "procedure_address",
+      {
+        procedure: address,
+        ...(request.document === undefined
+          ? {}
+          : { document: request.document }),
+      },
+      signal === undefined ? undefined : { signal },
+    );
+    if (!observed.ok)
+      return observed.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: observed.error.cleanupFailure };
+    // This lookup can also resolve a containing function. Only its exact
+    // entry can substantiate the candidate derived from LC_MAIN.
+    if (observed.value !== address) return {};
+    return {
+      hint: `Retry the same operation at Ghidra procedure address ${address} (Mach-O LC_MAIN file offset ${fileOffset}). For CLI decompile, use --procedure ${address}. For MCP, set procedure to "${address}".`,
+    };
+  };
   let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
     operation: AnalysisOperation,
@@ -1078,7 +1132,7 @@ export const createGhidraProviderClient = (input: {
       ? ok(
           projectExecution(
             operation,
-            jsonValueSchema.parse(attested.value),
+            ownedJsonValueSchema.parse(attested.value),
             observation,
           ),
         )
@@ -1167,16 +1221,30 @@ export const createGhidraProviderClient = (input: {
       if (called.ok) providerStarted = true;
       if (operation === "list_documents" || operation === "list_procedures")
         return inventoryExecution(operation, called);
-      if (!called.ok)
-        return err(
-          projectSessionError(
-            operation,
-            called.error,
-            projection,
-            lostProviderHealth(),
-            input.value,
-          ),
+      if (!called.ok) {
+        const entry = await machoMainEntryHint(
+          called.error,
+          input.value,
+          options?.signal,
         );
+        const projected = projectSessionError(
+          operation,
+          called.error,
+          projection,
+          lostProviderHealth(),
+          input.value,
+          entry.hint,
+        );
+        return err(
+          entry.cleanupFailure === undefined
+            ? projected
+            : analysisErrorWithCleanupDependencies(
+                projected,
+                entry.cleanupFailure,
+                operation,
+              ),
+        );
+      }
       if (operation === "inspect_native_load_image")
         return loadImageExecution(called.value, options?.signal);
       const result = isGhidraFunctionOperation(operation)
@@ -1260,7 +1328,7 @@ export const createGhidraProviderClient = (input: {
               ...executionMetadata,
               rawResult: called.value,
             };
-            normalized = jsonValueSchema.parse({
+            normalized = ownedJsonValueSchema.parse({
               ...normalized,
               metadata_recovery: metadata,
             });
@@ -1416,6 +1484,7 @@ const projectSessionError = (
   projection: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
@@ -1423,6 +1492,7 @@ const projectSessionError = (
     projection,
     health,
     request,
+    entryHint,
   );
   return failure.cleanupFailure === undefined
     ? primary
@@ -1439,6 +1509,7 @@ const projectPrimarySessionError = (
   { limits, programName, source }: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const context = {
     cause: failure,
@@ -1593,11 +1664,11 @@ const projectPrimarySessionError = (
         break;
       default:
         recovery =
-          "Use list_procedures or search_procedures to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
+          (entryHint === undefined ? "" : `${entryHint} `) +
+          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
           (source === "existing-project"
-            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
-            : "") +
-          ` ${ghidraFunctionSeedRecovery(source)}`;
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
+            : "");
         relatedOperations = ["list_procedures", "search_procedures"];
     }
     return new AnalysisInputError(
