@@ -44,6 +44,7 @@
 * **capture:** keep credential checks independent of body filters ([#13215](https://github.com/morluto/rea/issues/13215)) ([587cca5](https://github.com/morluto/rea/commit/587cca5c5c82fbb4bb86307670fe79638ff82003))
 * **capture:** retain credential checks across MIME conflicts ([#13209](https://github.com/morluto/rea/issues/13209)) ([6152c02](https://github.com/morluto/rea/commit/6152c02f3f384723f6fac2470b380b682e1c6387))
 * **capture:** surface unsupported decoder requirements ([#13203](https://github.com/morluto/rea/issues/13203)) ([088bc68](https://github.com/morluto/rea/commit/088bc68b1cbddb11b7432e7541ba66f47409abf2))
+* **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
