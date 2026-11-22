@@ -352,3 +352,38 @@ it("requires the Swift ABI type-reference kind on every conformance", () => {
   expect(field.safeParse(0).success).toBe(true);
   expect(field.safeParse(undefined).success).toBe(false);
 });
+
+describe("dispatch implementation composite-key ordering parity", () => {
+  it("orders quotes, punctuation, null addresses, and categories identically regardless of inventory order", () => {
+    const entries = [
+      { address: "0x1000", name: '-[Class"A sel:]' },
+      { address: "0x1000", name: "-[Class!A sel:]" },
+      { address: "0x1000", name: "-[ClassA(Cat) sel:]" },
+      { address: "0x2000", name: "-[ClassA sel:]" },
+      { address: "", name: "-[ClassA sel:]" },
+      { address: "0x1000", name: "-[Class\\A sel:]" },
+    ];
+    const forward = inspectNativeDispatchMetadata(entries, entries.length);
+    const reversed = inspectNativeDispatchMetadata(
+      [...entries].reverse(),
+      entries.length,
+    );
+    expect(
+      reversed.objc_dispatch_implementations.map(
+        ({ class_name, category, implementation_address }) => [
+          class_name,
+          category ?? null,
+          implementation_address,
+        ],
+      ),
+    ).toEqual(
+      forward.objc_dispatch_implementations.map(
+        ({ class_name, category, implementation_address }) => [
+          class_name,
+          category ?? null,
+          implementation_address,
+        ],
+      ),
+    );
+  });
+});
