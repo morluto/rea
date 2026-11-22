@@ -117,6 +117,7 @@ export const PROVIDER_CAPABILITY_CONFORMANCE: Readonly<
   },
   kernelModule: { cases: ["tests/acceptance/kernelModuleCli.test.ts"] },
   kuna: { cases: ["tests/boundary/mcp/kunaCloseRetryMcp.test.ts"] },
+  labviewArtifact: { cases: ["tests/boundary/cli/labviewRsrcCli.test.ts"] },
   managedStatic: { cases: ["tests/acceptance/managedCliOutput.test.ts"] },
   managedWorkflow: {
     cases: ["tests/boundary/mcp/managedWorkflowUnknownIdentityMcp.test.ts"],
