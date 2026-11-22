@@ -9,7 +9,6 @@ import {
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
-
 import {
   isManagedSkillManifest,
   MANAGED_SKILL_FILES,
