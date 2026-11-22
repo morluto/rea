@@ -642,13 +642,8 @@ it("reports source loss during target hashing as a changed input", async () => {
   ) {
     const result = await originalRead.call(this, ...args);
     const readArguments: readonly unknown[] = args;
-    const [buffer, , , position] = readArguments;
-    if (
-      Buffer.isBuffer(buffer) &&
-      buffer.byteLength === 64 * 1024 &&
-      position === bytes.length &&
-      result.bytesRead === 0
-    ) {
+    const [, , , position] = readArguments;
+    if (position === 0 && result.bytesRead === bytes.length) {
       faultInjected = true;
       await unlink(path);
     }
