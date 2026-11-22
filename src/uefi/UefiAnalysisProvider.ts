@@ -23,6 +23,7 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
@@ -292,19 +293,27 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     signal: AbortSignal,
     checkpoint: () => void,
   ): Promise<AnalysisExecution> {
+    const retainObservation = (
+      failure: AnalysisError,
+      value: AnalysisExecution,
+    ): AnalysisError =>
+      failure.retainPartialObservation({
+        kind: "uefi",
+        result: value.result,
+        provenance: jsonValueSchema.parse(value.subject),
+      });
     const finishObservation = (value: AnalysisExecution): AnalysisExecution => {
       try {
         checkpoint();
         return value;
       } catch (cause: unknown) {
-        throw classifyProviderFailure(
-          cause,
-          uefiFailureDialect(request.operation, request.input.path),
-        ).retainPartialObservation({
-          kind: "uefi",
-          result: value.result,
-          provenance: jsonValueSchema.parse(value.subject),
-        });
+        throw retainObservation(
+          classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          ),
+          value,
+        );
       }
     };
     return this.#resources.run(async () => {
@@ -328,6 +337,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
       const scanKey = `${snapshot.sha256}:${String(request.input.max_depth)}:${String(request.input.max_volumes)}:${String(request.input.max_files)}`;
       let scan: UefiImageScanSummary;
+      let completedInspection: AnalysisExecution | undefined;
       if (this.#lastScan?.key === scanKey) {
         scan = this.#lastScan.summary;
       } else {
@@ -362,11 +372,46 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           await lzmaSession.close(primary);
           throw primary;
         }
-        await lzmaSession.close();
         this.#lastScan = { key: scanKey, summary: scan };
+        if (request.operation === "inspect_uefi_firmware") {
+          completedInspection = this.#inspect(request, snapshot.sha256, scan);
+        }
+        try {
+          await lzmaSession.close();
+        } catch (cause: unknown) {
+          let cleanupFailure = classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          );
+          let interruption: AnalysisError | undefined;
+          try {
+            checkpoint();
+          } catch (abortCause: unknown) {
+            interruption = classifyProviderFailure(
+              abortCause,
+              uefiFailureDialect(request.operation, request.input.path),
+            );
+          }
+          if (interruption !== undefined) {
+            if (completedInspection !== undefined) {
+              interruption = retainObservation(
+                interruption,
+                completedInspection,
+              );
+            }
+            cleanupFailure = analysisErrorWithCleanupDependencies(
+              interruption,
+              cleanupFailure,
+              request.operation,
+            );
+          }
+          throw completedInspection === undefined
+            ? cleanupFailure
+            : retainObservation(cleanupFailure, completedInspection);
+        }
       }
-      checkpoint();
       if (request.operation === "extract_uefi_firmware") {
+        checkpoint();
         return this.#extract(
           request,
           snapshot.sha256,
@@ -375,7 +420,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           checkpoint,
         );
       }
-      return finishObservation(this.#inspect(request, snapshot.sha256, scan));
+      return finishObservation(
+        completedInspection ?? this.#inspect(request, snapshot.sha256, scan),
+      );
     });
   }
 

@@ -715,6 +715,19 @@ it.skipIf(!lzmaWorkerAvailable)(
       expect(result.error.cleanupResources).toEqual(
         expect.arrayContaining([root.path, `pid:${String(workerPid)}`]),
       );
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "uefi",
+        result: {
+          firmware_volumes: [
+            expect.objectContaining({
+              ffs_files: [expect.objectContaining({ guid: GUID_DRIVER })],
+            }),
+          ],
+        },
+        provenance: {
+          path: imagePath,
+        },
+      });
       await expect(provider.close()).rejects.toThrow(
         /cleanup remains incomplete/i,
       );
@@ -738,6 +751,60 @@ it.skipIf(!lzmaWorkerAvailable)(
       creating.mockRestore();
       stopping.mockRestore();
       closingRoot.mockRestore();
+      await provider.close();
+    }
+  },
+  45_000,
+);
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "retains the completed inspection when cancellation arrives during pooled worker shutdown",
+  async () => {
+    const driver = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(Buffer.from("worker output"))),
+      ),
+    });
+    const directory = await createTestTempDirectory(
+      "rea-uefi-late-worker-close-",
+    );
+    const imagePath = join(directory, "image.fi");
+    await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
+    const controller = new AbortController();
+    const stopProcess = ProviderProcessSupervisor.prototype.stop;
+    const stopping = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementationOnce(async function (this: ProviderProcessSupervisor) {
+        controller.abort("cancelled during worker close");
+        return stopProcess.call(this);
+      });
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    try {
+      const result = await provider.execute(inspectRequest(imagePath), {
+        signal: controller.signal,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.partialObservation).toMatchObject({
+          kind: "uefi",
+          result: {
+            firmware_volumes: [
+              expect.objectContaining({
+                ffs_files: [expect.objectContaining({ guid: GUID_DRIVER })],
+              }),
+            ],
+          },
+          provenance: {
+            path: imagePath,
+          },
+        });
+      }
+    } finally {
+      stopping.mockRestore();
       await provider.close();
     }
   },
