@@ -1412,6 +1412,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         number,
         { cPath: string; outcomePath: string }
       >();
+      const successfullyStagedInputs = new Set<number>();
 
       let ghidraBatchFailed = false;
       if (
@@ -1529,6 +1530,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 }
               }
               await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
+              successfullyStagedInputs.add(1);
               ghidraArgs = [
                 tempRoot.path,
                 "UefiDecomp_1",
@@ -1593,6 +1595,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 totalBatchStagedInputBytes += contentBytes.length;
                 const efiFile = join(ghidraBatchInputDir, `mod_${seq}.efi`);
                 await writeFile(efiFile, contentBytes);
+                successfullyStagedInputs.add(seq);
                 const outC = join(ghidraBatchOutputDir, `mod_${seq}.efi.c`);
                 ghidraBatchOutcomeMap.set(seq, {
                   cPath: outC,
@@ -1761,9 +1764,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           const stagedEfi = isMultiModuleBatch
             ? join(ghidraBatchInputDir, `mod_${moduleSeq}.efi`)
             : join(tempRoot.path, "mod_1.efi");
-          if (existsSync(stagedEfi)) {
-            modBytes = await readFile(stagedEfi);
-          } else if (mod.entry || mod.sourcePath) {
+          if (
+            successfullyStagedInputs.has(moduleSeq) &&
+            existsSync(stagedEfi)
+          ) {
+            const candidateBytes = await readFile(stagedEfi);
+            const candidateSha = sha256Hex(candidateBytes);
+            if (
+              mod.expectedSha256 === undefined ||
+              candidateSha === mod.expectedSha256
+            ) {
+              modBytes = candidateBytes;
+            }
+          }
+          if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
             let freshBytes: Buffer;
             if (reader !== undefined && mod.entry !== undefined) {
               freshBytes = await buffer(await reader.open(mod.entry, signal));

@@ -5,6 +5,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -6943,9 +6944,13 @@ it("bounds Ghidra batch input materialization to 128 MiB aggregate staging budge
   const outDir = join(directory, "out");
   await mkdir(inDir, { recursive: true });
 
-  const peBuffer = createMinimalPeBuffer();
-  await writeFile(join(inDir, "mod1.efi"), peBuffer);
-  await writeFile(join(inDir, "mod2.efi"), peBuffer);
+  // Over-budget batch: 5 modules of 28 MiB each = 140 MiB > 128 MiB staging allowance.
+  // Modules 1-4 total 112 MiB (fit under 128 MiB); Module 5 would push total to 140 MiB.
+  const moduleSize = 28 * 1024 * 1024;
+  for (let i = 1; i <= 5; i++) {
+    const pe = createMinimalPeBuffer(0x8664, 1, moduleSize);
+    await writeFile(join(inDir, `Module_${i}.efi`), pe);
+  }
 
   const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
   const mockGhidraDir = join(directory, "mock_ghidra");
@@ -6961,10 +6966,19 @@ it("bounds Ghidra batch input materialization to 128 MiB aggregate staging budge
   process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
 
   let capturedArgs: string[] = [];
+  let filesReachingGhidra: string[] = [];
   const spy = vi
     .spyOn(ExecFileOutputModule, "execFileOutput")
     .mockImplementation(async (_command, args) => {
       capturedArgs = [...args];
+      const importIdx = args.indexOf("-import");
+      if (importIdx !== -1 && args[importIdx + 1]) {
+        try {
+          filesReachingGhidra = (await readdir(args[importIdx + 1]!)).sort();
+        } catch {
+          // Ignore readdir error in mock
+        }
+      }
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     });
 
@@ -6981,7 +6995,151 @@ it("bounds Ghidra batch input materialization to 128 MiB aggregate staging budge
     expect(capturedArgs).toContain("UefiDecompBatch");
     expect(capturedArgs).toContain(String(4 * 1024 * 1024));
     expect(capturedArgs).toContain(String(64 * 1024 * 1024));
+
+    // Exactly the 4 modules that fit under 128 MiB were staged to Ghidra's batch input directory;
+    // Module 5 exceeded the 128 MiB budget and was omitted from Ghidra staging.
+    expect(filesReachingGhidra).toEqual([
+      "mod_1.efi",
+      "mod_2.efi",
+      "mod_3.efi",
+      "mod_4.efi",
+    ]);
+    expect(filesReachingGhidra).not.toContain("mod_5.efi");
+
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes(
+          "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget",
+        ),
+      ),
+    ).toBe(true);
+
+    // Module 5 falls back to entry point scaffolding because it was omitted from Ghidra batch
+    expect(result.modules).toHaveLength(5);
+    expect(result.modules[4]?.c_generator).toBe("scaffold");
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("stages all modules to Ghidra batch when total input is under the 128 MiB budget", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-batch-under-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // Under-budget control: 2 modules well under 128 MiB
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let filesReachingGhidra: string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      const importIdx = args.indexOf("-import");
+      if (importIdx !== -1 && args[importIdx + 1]) {
+        filesReachingGhidra = (await readdir(args[importIdx + 1]!)).sort();
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(filesReachingGhidra).toEqual(["mod_1.efi", "mod_2.efi"]);
     expect(result.modules).toHaveLength(2);
+    expect(
+      result.limitations.some((l) =>
+        l.includes("Batch decompilation input staging truncated"),
+      ),
+    ).toBe(false);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("rejects corrupted or truncated scratch inputs and verifies digest before accepting", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-corrupt-scratch-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      // Corrupt the single staged input mod_1.efi while Ghidra is running
+      const efiPath = args[args.indexOf("-import") + 1];
+      if (efiPath && existsSync(efiPath)) {
+        await writeFile(efiPath, Buffer.from("TRUNCATED_BAD_INPUT"));
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // Source identity is preserved because the corrupted scratch file was rejected and authentic bytes re-read
+    expect(result.modules[0]?.code_bytes).toBe(peBuffer.length);
+    const expectedSha = createHash("sha256").update(peBuffer).digest("hex");
+    expect(result.modules[0]?.payload_sha256).toBe(expectedSha);
   } finally {
     if (originalGhidra !== undefined) {
       process.env.GHIDRA_INSTALL_DIR = originalGhidra;
