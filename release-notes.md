@@ -112,6 +112,7 @@
 * **ida:** report an idb_open rejection with its upstream reason ([0cf7483](https://github.com/morluto/rea/commit/0cf7483322e0499cec72cc3df06d761871a75929)), closes [#13286](https://github.com/morluto/rea/issues/13286)
 * **ida:** report the supervisor's open deadline as provider_timeout ([ddf2cd9](https://github.com/morluto/rea/commit/ddf2cd9102ddcc6da901aa37f752223de61b289d)), closes [#13286](https://github.com/morluto/rea/issues/13286)
 * **java:** classify Maven BOM imports by declaration scope ([#13393](https://github.com/morluto/rea/issues/13393)) ([0482135](https://github.com/morluto/rea/commit/048213525a661f213387f9ad8811383f5fb87540))
+* **java:** enforce format-specific metadata reports at the Evidence boundary ([#13400](https://github.com/morluto/rea/issues/13400)) ([103e1a7](https://github.com/morluto/rea/commit/103e1a71f24c7566d3d05d00409b652cc2874bd1))
 * **java:** preserve Gradle declaration spelling in Evidence ([#13397](https://github.com/morluto/rea/issues/13397)) ([d0f3a48](https://github.com/morluto/rea/commit/d0f3a4858e43ccb80ecbd3d27c0b82405a7c1a31))
 * **java:** refuse nested XML in Maven text declarations ([#13398](https://github.com/morluto/rea/issues/13398)) ([232bd11](https://github.com/morluto/rea/commit/232bd1181cf5b730ac83e406581927d76403d02c))
 * **javascript:** account for active nullish pattern defaults ([c1943f1](https://github.com/morluto/rea/commit/c1943f196cde8d232029e184648bf0a1356b685a))
