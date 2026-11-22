@@ -1147,9 +1147,11 @@ it.each(["objdump", "rizin"] as const)(
       expect(result.value.limitations).not.toContain(
         POST_RUN_ARTIFACT_UNREADABLE,
       );
-      expect(postRunArtifactDigestDeadline(provider, 1_500)).toContain(
-        "Increase command_timeout_ms above 1500",
-      );
+      // The limitation names the setting that stopped the hash, its value
+      // and the error, so the caller can raise that setting.
+      const deadline = postRunArtifactDigestDeadline(provider, 1_500);
+      for (const fact of ["command_timeout_ms", "1500", "ETIMEDOUT"])
+        expect(deadline).toContain(fact);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
