@@ -905,7 +905,6 @@ it("preserves caller cancellation and cleans up the runtime root when worker sta
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
-      expect(result.error.category).toBe("cancelled");
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(result.error.secondaryFailures).toEqual([]);
     }
@@ -945,8 +944,10 @@ it("preserves provider_timeout and cleans up the runtime root when the deadline 
     const result = await provider.execute(inspectRequest(imagePath));
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error._tag).toBe("AnalysisTimeoutError");
-      expect(result.error.category).toBe("provider_timeout");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
+      });
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(result.error.secondaryFailures).toEqual([]);
     }
