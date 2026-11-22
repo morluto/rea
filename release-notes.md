@@ -8,6 +8,7 @@
 ### Features
 
 * **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
+* **browser:** accept mitmproxy 12.3.1 for native capture decode ([#8088](https://github.com/morluto/rea/issues/8088)) ([4f43d74](https://github.com/morluto/rea/commit/4f43d7422f5b4666a12570105ff5e25a6df7ec6c))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
 * **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
@@ -129,6 +130,7 @@
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
 * **process:** name the fixed finalization delivery grace ([ab47c97](https://github.com/morluto/rea/commit/ab47c970a7bdbcda8df9e54242c05fce8b068d02))
 * **process:** record PTY session-leader SIGHUP limitation in Evidence ([95dfbae](https://github.com/morluto/rea/commit/95dfbae68e31a01901deab358db572c472866bcf))
+* **process:** retain synchronous command launch failures ([#13350](https://github.com/morluto/rea/issues/13350)) ([3a36311](https://github.com/morluto/rea/commit/3a3631100480109a7d2ef8b9ac8ff1f58df5904e))
 * **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **pwntools:** release each PLT emulator so CET binaries keep their PLT map ([#13213](https://github.com/morluto/rea/issues/13213)) ([6357f77](https://github.com/morluto/rea/commit/6357f775a01f623b96603cf6237951a5c57a0a93))
 * **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
@@ -405,8 +407,10 @@
 * **evidence:** verify request admission and retained display ownership ([#13053](https://github.com/morluto/rea/issues/13053)) ([0c3e1d6](https://github.com/morluto/rea/commit/0c3e1d69aa862e66f032959dcbf80cae2e8ceed6))
 * **filesystem:** consolidate stable hash and descriptor ownership checks ([#12879](https://github.com/morluto/rea/issues/12879)) ([79bd830](https://github.com/morluto/rea/commit/79bd830f4e4514e3cabf4af7fa9b2b26076d080a))
 * **filesystem:** verify commit cancellation closes its parent descriptor ([#12814](https://github.com/morluto/rea/issues/12814)) ([84ee3c1](https://github.com/morluto/rea/commit/84ee3c1edc7930360d6004d33baab0a4ebe7c5f7))
+* **firmware:** consolidate extraction report ownership checks ([#13351](https://github.com/morluto/rea/issues/13351)) ([734ef0f](https://github.com/morluto/rea/commit/734ef0f9b2a450514a56ed9f2b2945878d37f98c))
 * **firmware:** consolidate parsing and process-limit checks ([#12844](https://github.com/morluto/rea/issues/12844)) ([67a55ea](https://github.com/morluto/rea/commit/67a55ea8e15e8a774cba46d69fe8c6f151cba489))
 * **firmware:** consolidate split OTA partition order coverage ([68ed9b0](https://github.com/morluto/rea/commit/68ed9b0e67573c1dd0f4bca83977f1240fef682e))
+* **firmware:** consolidate staging and resource recovery checks ([#13358](https://github.com/morluto/rea/issues/13358)) ([2209acc](https://github.com/morluto/rea/commit/2209acc82424bee01512419bee02e9613aa3392c))
 * **formats:** consolidate BEAM and DOL boundary checks ([#12832](https://github.com/morluto/rea/issues/12832)) ([c9caa0a](https://github.com/morluto/rea/commit/c9caa0aa5b60e049ac5284b7f9efaad4d793c3ff))
 * **gdb:** consolidate inferior terminal admission checks ([#13011](https://github.com/morluto/rea/issues/13011)) ([c235b61](https://github.com/morluto/rea/commit/c235b6160ee25704926fac30f137dcb503a58f2a))
 * **gdb:** consolidate MI inventory and field projection checks ([#13009](https://github.com/morluto/rea/issues/13009)) ([d93a199](https://github.com/morluto/rea/commit/d93a199629c2a2837e9d6d19bb92b36bcdc6f514))
