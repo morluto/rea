@@ -142,14 +142,13 @@ import {
   ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
-  ghidraFunctionSeedRecovery,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
-  ghidraMachoMainEntryHint,
+  ghidraMachoMainEntryCandidate,
   isGhidraMainSelector,
 } from "./GhidraMachoEntryHint.js";
 import {
@@ -810,13 +809,35 @@ export const createGhidraProviderClient = (input: {
     )
       return {};
     const read = await client.readTargetSnapshotRanges(
-      ghidraMachoMainEntryHint,
+      ghidraMachoMainEntryCandidate,
       signal,
     );
-    if (read.ok) return read.value === undefined ? {} : { hint: read.value };
-    return read.error.cleanupFailure === undefined
-      ? {}
-      : { cleanupFailure: read.error.cleanupFailure };
+    if (!read.ok)
+      return read.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: read.error.cleanupFailure };
+    if (read.value === undefined) return {};
+    const { address, fileOffset } = read.value;
+    const observed = await client.callTool(
+      "procedure_address",
+      {
+        procedure: address,
+        ...(request.document === undefined
+          ? {}
+          : { document: request.document }),
+      },
+      signal === undefined ? undefined : { signal },
+    );
+    if (!observed.ok)
+      return observed.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: observed.error.cleanupFailure };
+    // This lookup can also resolve a containing function. Only its exact
+    // entry can substantiate the candidate derived from LC_MAIN.
+    if (observed.value !== address) return {};
+    return {
+      hint: `Retry the same operation at Ghidra procedure address ${address} (Mach-O LC_MAIN file offset ${fileOffset}). For CLI decompile, use --procedure ${address}. For MCP, set procedure to "${address}".`,
+    };
   };
   let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
@@ -1585,12 +1606,11 @@ const projectPrimarySessionError = (
         break;
       default:
         recovery =
-          "Use list_procedures or search_procedures to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
+          (entryHint === undefined ? "" : `${entryHint} `) +
+          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
           (source === "existing-project"
-            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
-            : "") +
-          ` ${ghidraFunctionSeedRecovery(source)}` +
-          (entryHint === undefined ? "" : ` ${entryHint}`);
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
+            : "");
         relatedOperations = ["list_procedures", "search_procedures"];
     }
     return new AnalysisInputError(

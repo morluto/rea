@@ -18,13 +18,12 @@ import {
   TEXT_SEGMENT,
 } from "./GhidraMachoEntryHint.fixture.js";
 import {
-  ghidraMachoMainEntryHint,
+  ghidraMachoMainEntryCandidate,
   isGhidraMainSelector,
   type GhidraSnapshotRangeReader,
 } from "./GhidraMachoEntryHint.js";
 
-const HINT =
-  "This Mach-O declares its entry point with LC_MAIN at file offset 0x460, analysis address 0x100000460; stripped binaries often have no main symbol, and Ghidra often names that function entry. Request 0x100000460 explicitly to read it.";
+const CANDIDATE = { fileOffset: "0x460", address: "0x100000460" };
 
 /** In-memory reader that records each requested range. */
 const recordingReader = (bytes: Uint8Array) => {
@@ -37,7 +36,7 @@ const recordingReader = (bytes: Uint8Array) => {
 };
 
 const hintFor = (bytes: Uint8Array) =>
-  ghidraMachoMainEntryHint(recordingReader(bytes).read, bytes.byteLength);
+  ghidraMachoMainEntryCandidate(recordingReader(bytes).read, bytes.byteLength);
 
 const NO_HINT_IMAGES: readonly {
   readonly name: string;
@@ -71,6 +70,13 @@ const NO_HINT_IMAGES: readonly {
   {
     name: "an entry past the end of the file inside a declared segment",
     image: machoImage({ commands: [TEXT_SEGMENT, mainCommand(0x460n)] }),
+  },
+  {
+    name: "an entry offset of zero, which Ghidra ignores",
+    image: paddedTo(
+      machoImage({ commands: [TEXT_SEGMENT, mainCommand(0n)] }),
+      0x4000,
+    ),
   },
   {
     name: "a containing segment whose file range exceeds the file",
@@ -166,21 +172,21 @@ describe("isGhidraMainSelector", () => {
   );
 });
 
-describe("ghidraMachoMainEntryHint", () => {
+describe("ghidraMachoMainEntryCandidate", () => {
   it("names the LC_MAIN entry after reading only the header and load commands", async () => {
     const image = strippedMachoWithMain();
     const commandsEnd = 32 + new DataView(image.buffer).getUint32(20, true);
     const { read, reads } = recordingReader(image);
     await expect(
-      ghidraMachoMainEntryHint(read, image.byteLength),
-    ).resolves.toBe(HINT);
+      ghidraMachoMainEntryCandidate(read, image.byteLength),
+    ).resolves.toEqual(CANDIDATE);
     expect(reads).toEqual([
       { position: 0, length: 32 },
       { position: 0, length: commandsEnd },
     ]);
   });
 
-  it("maps the entry through the segment whose file range contains it", async () => {
+  it("rejects a file mapping outside the __TEXT entry range used by Ghidra", async () => {
     const image = paddedTo(
       machoImage({
         commands: [
@@ -196,16 +202,14 @@ describe("ghidraMachoMainEntryHint", () => {
       }),
       0x5000,
     );
-    await expect(hintFor(image)).resolves.toContain(
-      "file offset 0x4010, analysis address 0x200000010;",
-    );
+    await expect(hintFor(image)).resolves.toBeUndefined();
   });
 
   it("gives no hint for a FAT container", async () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: strippedMachoWithMain() }]);
     const { read, reads } = recordingReader(fat);
     await expect(
-      ghidraMachoMainEntryHint(read, fat.byteLength),
+      ghidraMachoMainEntryCandidate(read, fat.byteLength),
     ).resolves.toBeUndefined();
     expect(reads).toEqual([{ position: 0, length: 32 }]);
   });
@@ -225,7 +229,9 @@ describe("ghidraMachoMainEntryHint", () => {
       return bytes;
     };
     expect((await handle.stat()).size).toBe(size);
-    await expect(ghidraMachoMainEntryHint(read, size)).resolves.toBe(HINT);
+    await expect(ghidraMachoMainEntryCandidate(read, size)).resolves.toEqual(
+      CANDIDATE,
+    );
     expect(bytesRead).toBeLessThan(1024);
   });
 

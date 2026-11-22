@@ -1,3 +1,4 @@
+import { decodeMachoFixedName } from "../domain/apple/appleMachoNames.js";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { MAX_LOAD_COMMAND_BYTES } from "../domain/apple/machoLoadCommandReader.js";
 import { readMachoLoadCommandTableHeader } from "../domain/apple/machoLoadCommands.js";
@@ -36,17 +37,15 @@ const readExactly = async (
 };
 
 /**
- * Recovery sentence naming the LC_MAIN entry of a thin Mach-O executable, or
- * `undefined` when the bytes do not establish one mapped address. Reads only
- * the Mach-O header and its declared load commands; a FAT container is not a
- * thin header and gets no hint. The
- * address assumes Ghidra loaded each segment at its declared vmaddr, which
- * holds for REA's own imports but not for a rebased project.
+ * Artifact-derived candidate for Ghidra's LC_MAIN lookup. The caller must
+ * confirm the exact procedure in the loaded program before advising a retry.
  */
-export const ghidraMachoMainEntryHint = async (
+export const ghidraMachoMainEntryCandidate = async (
   read: GhidraSnapshotRangeReader,
   fileSize: number,
-): Promise<string | undefined> => {
+): Promise<
+  { readonly fileOffset: string; readonly address: string } | undefined
+> => {
   const header = await readExactly(
     read,
     0,
@@ -87,6 +86,7 @@ export const ghidraMachoMainEntryHint = async (
   if (
     entrypoints.length !== 1 ||
     entryOffset === undefined ||
+    entryOffset === 0n ||
     entryOffset >= BigInt(fileSize)
   )
     return undefined;
@@ -100,7 +100,10 @@ export const ghidraMachoMainEntryHint = async (
   const [command] = containing;
   if (
     containing.length !== 1 ||
-    command?.segment === undefined ||
+    command?.segmentName === undefined ||
+    decodeMachoFixedName(Buffer.from(command.segmentName)) !== "__TEXT" ||
+    command.segment === undefined ||
+    command.segment.fileOffset !== 0n ||
     command.sections === undefined
   )
     return undefined;
@@ -114,10 +117,15 @@ export const ghidraMachoMainEntryHint = async (
     parsed.header.wide ? 64 : 32,
     fileSize,
   );
-  // A file-only segment (no VM size, no protection) owns no analysis address.
-  if (!admitted.ok || admitted.value.unmapped) return undefined;
-  const mapped =
-    admitted.value.fileAddress + (entryOffset - command.segment.fileOffset);
-  const address = hex(mapped);
-  return `This Mach-O declares its entry point with LC_MAIN at file offset ${hex(entryOffset)}, analysis address ${address}; stripped binaries often have no main symbol, and Ghidra often names that function entry. Request ${address} explicitly to read it.`;
+  // Ghidra uses __TEXT.vmaddr + entryoff. Require the file mapping to agree.
+  if (
+    !admitted.ok ||
+    admitted.value.unmapped ||
+    admitted.value.fileAddress !== command.segment.address
+  )
+    return undefined;
+  return {
+    fileOffset: hex(entryOffset),
+    address: hex(command.segment.address + entryOffset),
+  };
 };
