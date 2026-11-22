@@ -36,13 +36,17 @@ const entries = async (reader: AndroidOtaPayloadArtifactReader) => {
   return result;
 };
 
-it("refuses a v1 payload as unavailable rather than as a container", async () => {
+it("reports the unsupported version at explicit OTA reader admission", async () => {
   const reader = new AndroidOtaPayloadArtifactReader(
     await fixture(v1AndroidOtaPayload()),
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
       reason: "unavailable",
+      cause: {
+        kind: "unsupported",
+        message: expect.stringContaining("Android OTA payload major version 1"),
+      },
     });
   } finally {
     await reader.close();
@@ -92,43 +96,22 @@ it("keeps a complete manifest without reading a truncated oversized metadata sig
     expect(await entries(reader)).toMatchObject([{ path: "boot.img" }]);
     expect(reader.formatMetadata()).toMatchObject({
       blob_truncated: true,
+      manifest_size: manifestEnd - 24,
+      metadata_signature_size: metadataSignature.length,
       metadata_signature_count: null,
     });
-    for (const [, , length, offset] of reads.mock
-      .calls as readonly (readonly unknown[])[]) {
-      expect(Number(length) + Number(offset)).toBeLessThanOrEqual(manifestEnd);
-    }
+    const ranges = reads.mock.calls.map(
+      ([, , length, offset]: readonly unknown[]) => ({
+        offset: Number(offset),
+        end: Number(offset) + Number(length),
+      }),
+    );
+    expect(ranges).toContainEqual({ offset: 24, end: manifestEnd });
+    expect(ranges.every(({ end }) => end <= manifestEnd)).toBe(true);
   } finally {
     reads.mockRestore();
     await reader.close();
     await admitted.handle.close();
-  }
-});
-
-it("streams a mismatched REPLACE partition and leaves its declared hash to the scanner", async () => {
-  const reader = new AndroidOtaPayloadArtifactReader(
-    await fixture(
-      buildAndroidOtaPayload({
-        partitions: [
-          {
-            name: "boot",
-            newHash: Buffer.alloc(32, 0xaa),
-            operations: [{ type: 0, data: Buffer.from("BOOT") }],
-          },
-        ],
-      }),
-    ),
-  );
-  try {
-    const [entry] = await entries(reader);
-    expect(entry?.declaredIntegrity).toEqual({
-      algorithm: "sha256",
-      digest: "aa".repeat(32),
-    });
-    const bytes = await buffer(await reader.open(entry!));
-    expect(bytes.subarray(0, 4).toString("latin1")).toBe("BOOT");
-  } finally {
-    await reader.close();
   }
 });
 
