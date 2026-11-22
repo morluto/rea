@@ -1268,6 +1268,8 @@ it("reports a present subject with an unknown media type", async () => {
   const root = await createTestTempDirectory("rea-oci-unknown-subject-");
   await writeOciImageLayoutFixture(root);
   const subject = await putOciBlob(root, "opaque-subject");
+  // The opaque subject is not walked, so a blob it may name stays unknown.
+  const child = await putOciBlob(root, "opaque-subject-child");
   const indexPath = join(root, "index.json");
   const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
     string,
@@ -1289,6 +1291,39 @@ it("reports a present subject with an unknown media type", async () => {
   expect(
     report.blobs.find((entry) => entry.digest === subject)?.referenced,
   ).toBe(true);
+  expect(
+    report.blobs.find((entry) => entry.digest === child)?.referenced,
+  ).toBeNull();
+  expect(report.coverage.status).not.toBe("complete");
+});
+
+it("keeps blobs unknown under a present subject with an unsupported digest", async () => {
+  const root = await createTestTempDirectory("rea-oci-sha1-subject-");
+  await writeOciImageLayoutFixture(root);
+  const hex = "b".repeat(40);
+  const subjectJson = JSON.stringify({ schemaVersion: 2, layers: [] });
+  await mkdir(join(root, "blobs", "sha1"), { recursive: true });
+  await writeFile(join(root, "blobs", "sha1", hex), subjectJson);
+  const child = await putOciBlob(root, "sha1-subject-child");
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  index.subject = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: `sha1:${hex}`,
+    size: Buffer.byteLength(subjectJson),
+  };
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  expect(
+    report.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    report.blobs.find((entry) => entry.digest === child)?.referenced,
+  ).toBeNull();
+  expect(report.coverage.status).not.toBe("complete");
 });
 
 it("does not report a subject that is absent from the layout", async () => {

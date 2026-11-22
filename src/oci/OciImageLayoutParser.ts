@@ -1344,6 +1344,9 @@ const inventoryOciImageLayout = async (
     if (lookup.state !== "listed") return;
     remember(descriptor.digest, descriptor.media_type, descriptor.size);
     if (!isOciKnownMediaType(descriptor.media_type)) {
+      // A present opaque subject is not walked, so whatever it references is
+      // unknown and no blob can be called unreferenced.
+      referenceGraphTruncated = true;
       recordFinding(
         findings,
         "unknown_media_type",
@@ -1353,8 +1356,16 @@ const inventoryOciImageLayout = async (
       return;
     }
     // A digest this parser cannot verify is not read; the blob pass reports
-    // the unsupported algorithm.
-    if (parsed === undefined) return;
+    // the unsupported algorithm. An unread index or manifest subject may
+    // still name further blobs.
+    if (parsed === undefined) {
+      if (
+        isOciIndexMediaType(descriptor.media_type) ||
+        isOciManifestMediaType(descriptor.media_type)
+      )
+        referenceGraphTruncated = true;
+      return;
+    }
     if (isOciIndexMediaType(descriptor.media_type))
       enqueueIndex(descriptor.digest, descriptor.media_type, ownerDepth + 1);
     else if (isOciManifestMediaType(descriptor.media_type))
