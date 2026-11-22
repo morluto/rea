@@ -163,11 +163,14 @@
 ### Performance Improvements
 
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
+* **browser:** precompile redaction markers, eliminate quadratic secret scans, and scope HAR validation ([#13267](https://github.com/morluto/rea/issues/13267)) ([2afc34e](https://github.com/morluto/rea/commit/2afc34ec6eb2aee43c87a60eee9636db38d22c37))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
+* **cli:** keep single-command discovery lazy and skip throwaway Zod parses ([#13254](https://github.com/morluto/rea/issues/13254)) ([38bc4fe](https://github.com/morluto/rea/commit/38bc4fe907973800c1f6469c3d8ad46f1476f51c))
 * **cli:** parse valid strict client settings once ([#13271](https://github.com/morluto/rea/issues/13271)) ([82cd526](https://github.com/morluto/rea/commit/82cd526a8115445e04c5edd3c8c5054ee4a17f4e))
 * **desktop:** bound retained text lines while counting full files ([#10207](https://github.com/morluto/rea/issues/10207)) ([71a7e0d](https://github.com/morluto/rea/commit/71a7e0d9ff20cfd79b90ff94d57b6380eb5fec4f))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
+* **evidence:** eliminate redundant bundle re-validation, cloning, and nested generator yields ([#13257](https://github.com/morluto/rea/issues/13257)) ([9e379c9](https://github.com/morluto/rea/commit/9e379c958951ed245ba6bdadd9ed56bd1f2b5857))
 * **evidence:** reuse parsed source inventories across correlation mappings ([a486423](https://github.com/morluto/rea/commit/a486423e0e9e933c78875eadf33d85e15e1efb77))
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **ida:** push literal patterns down to find_regex on all protocols and drop catch-all non-ASCII wildcard ([#13291](https://github.com/morluto/rea/issues/13291)) ([dff9b47](https://github.com/morluto/rea/commit/dff9b479ed3228a27bc49037c03ea970123f5a43))
