@@ -49,9 +49,12 @@ such as `org.opencontainers.image.ref.name`.
 layers (media type, compressed size, digest, whether the blob is present).
 
 `blobs` lists referenced and unreferenced blob files under `blobs/`. Present
-referenced blobs are hashed with SHA-256 always, and SHA-512 when the declared
-algorithm is SHA-512, streamed under `max_blob_bytes` (default 64 MiB, maximum
-512 MiB).
+referenced blobs with a `sha256` or `sha512` digest are hashed with SHA-256
+always, and SHA-512 when the declared algorithm is SHA-512, streamed under
+`max_blob_bytes` (default 64 MiB, maximum 512 MiB). A referenced blob whose
+digest uses any other algorithm (for example `sha1`) is not hashed at all: its
+row reports presence and observed size with `hashed: false` and `sha256` and
+`sha512` set to `null`, alongside an `unsupported_digest_algorithm` finding.
 
 `findings` records missing blobs, digest mismatches, size mismatches,
 unreferenced blobs, unknown media types, unsupported digest algorithms, symlink

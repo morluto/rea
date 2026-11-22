@@ -1694,6 +1694,8 @@ it("reports an unsupported layer digest without claiming the blob is missing", a
     kind: "file",
     present: true,
     hashed: false,
+    sha256: null,
+    sha512: null,
     observed_size: 5,
   });
   expect(
