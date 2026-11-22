@@ -1973,6 +1973,13 @@ describe("what a write's effect keeps", () => {
 });
 
 describe("what an unmodelled write explains", () => {
+  const startExport: TimedCaptureRow = [
+    "POST",
+    "/api/exports",
+    { queued: true },
+    202,
+    { format: "csv" },
+  ];
   it("weighs an unmodelled write against a tool's call on the entity a read checks, not its latest call elsewhere", () => {
     const tagged = (id: number, name: string, tag: string) => ({
       id,
@@ -1983,16 +1990,17 @@ describe("what an unmodelled write explains", () => {
       ["GET", "/api/books", [tagged(1, "A", "x"), tagged(2, "B", "x")]],
       ["GET", "/api/books/1", tagged(1, "A", "x")],
       ["GET", "/api/books/2", tagged(2, "B", "x")],
+      startExport,
       ["PATCH", "/api/books/1", tagged(1, "A2", "x"), 200, { name: "A2" }],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      startExport,
       ["PATCH", "/api/books/2", tagged(2, "B2", "x"), 200, { name: "B2" }],
-      // The export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
+      // The second export came after book 1's rename, so it may explain the changed tag; the rename itself shows.
       ["GET", "/api/books/1", tagged(1, "A2", "y")],
     ];
     expect(gated(rows, "patch_books_by_id")).toMatchObject({
       served: true,
       contradicted_by: null,
-      checked_record_ordinals: [6],
+      checked_record_ordinals: [7],
     });
   });
 
@@ -2003,7 +2011,7 @@ describe("what an unmodelled write explains", () => {
       ["GET", "/api/books/1", FIRST_BOOK],
       ["GET", "/api/books/2", SECOND_BOOK],
       ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      startExport,
       ["POST", "/api/books", fourth, 201, { name: "Fourth Book" }],
       ["GET", "/api/books/4", fourth],
       // The export came after the third book was made, so it may explain the third book's other name.
@@ -2019,51 +2027,46 @@ describe("what an unmodelled write explains", () => {
     });
   });
 
-  it("weighs no unmodelled write against a call whose effect a later write overwrote", () => {
-    const named = (id: number, name: string) => ({
-      ...book(id, name, bookClock(0)),
-      id,
-    });
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", [named(1, "A"), named(2, "B")]],
-      ["GET", "/api/books/1", named(1, "A")],
-      ["GET", "/api/books/2", named(2, "B")],
-      ["PATCH", "/api/books/1", named(1, "A2"), 200, { name: "A2" }],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
-      // The PUT overwrites the patch's only change on book 1.
-      ["PUT", "/api/books/1", named(1, "A3"), 200, { name: "A3" }],
-      ["PATCH", "/api/books/2", named(2, "B2"), 200, { name: "B2" }],
-      ["GET", "/api/books/2", named(2, "B2")],
-      // The export came before book 2's patch, which the list shows undone.
-      ["GET", "/api/books", [named(1, "A3"), named(2, "B")]],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: false,
-      contradicted_by: 8,
-    });
-  });
-
-  it("contradicts by a list a write made after an unmodelled one, though the tool's earlier change elsewhere came before it", () => {
-    const named = (id: number, name: string) => ({
-      ...book(id, name, bookClock(0)),
-      id,
-    });
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", [named(1, "A"), named(2, "B")]],
-      ["GET", "/api/books/1", named(1, "A")],
-      ["GET", "/api/books/2", named(2, "B")],
-      ["PATCH", "/api/books/1", named(1, "A2"), 200, { name: "A2" }],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
-      ["PATCH", "/api/books/2", named(2, "B2"), 200, { name: "B2" }],
-      ["GET", "/api/books/2", named(2, "B2")],
-      // Only book 2 differs, and its patch came after the export.
-      ["GET", "/api/books", [named(1, "A2"), named(2, "B")]],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: false,
-      contradicted_by: 7,
-    });
-  });
+  it.each([
+    ["a later patch of book 2 differs", false, "A2", "B", 7],
+    [
+      "only book 1 differs and its earlier patch survives",
+      false,
+      "Retitled",
+      "B2",
+      null,
+    ],
+    [
+      "only book 1 differs and a PUT erased its earlier patch",
+      true,
+      "Retitled",
+      "B2",
+      8,
+    ],
+  ] as const)(
+    "attributes a captured list after an export when %s",
+    (_, overwritten, first, second, contradictedBy) => {
+      const named = (id: number, name: string) => book(id, name, bookClock(0));
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", [named(1, "A"), named(2, "B")]],
+        ["GET", "/api/books/1", named(1, "A")],
+        ["GET", "/api/books/2", named(2, "B")],
+        ["PATCH", "/api/books/1", named(1, "A2"), 200, { name: "A2" }],
+      ];
+      if (overwritten)
+        rows.push(["PUT", "/api/books/1", named(1, "A3"), 200, { name: "A3" }]);
+      rows.push(
+        startExport,
+        ["PATCH", "/api/books/2", named(2, "B2"), 200, { name: "B2" }],
+        ["GET", "/api/books/2", named(2, "B2")],
+        ["GET", "/api/books", [named(1, first), named(2, second)]],
+      );
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: contradictedBy === null,
+        contradicted_by: contradictedBy,
+      });
+    },
+  );
 
   it("contradicts a write made after an unmodelled one, though an earlier pending write came before it", () => {
     const summary = (name: string) => [
@@ -2081,7 +2084,7 @@ describe("what an unmodelled write explains", () => {
       ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
       ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
       ["GET", "/api/books", summary("A")],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+      startExport,
       [
         "PUT",
         "/api/books/1",
