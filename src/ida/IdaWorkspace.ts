@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 
+import type { BigIntStats } from "node:fs";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { open, realpath, stat, type FileHandle } from "node:fs/promises";
+import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, normalize } from "node:path";
 import {
@@ -51,9 +52,20 @@ export const resolveIdaWorkspaceParent = async (
  * original. An IDA database target is copied whole, so the worker unpacks and
  * releases only the copy; the selected database is never opened for writing.
  */
+interface InputFileStat {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+const COPY_BUFFER_BYTES = 256 * 1024;
+
 export class IdaWorkspace {
   readonly sessionId = `rea-${randomUUID()}`;
   #inputSha256: string | undefined;
+  #inputStat: InputFileStat | undefined;
   readonly #files = new ArtifactResourceScope();
   private constructor(
     private readonly runtime: PrivateRuntimeRoot,
@@ -152,7 +164,7 @@ export class IdaWorkspace {
         : undefined;
     const sourceHash = createHash("sha256");
     const inputHash = createHash("sha256");
-    const chunk = Buffer.allocUnsafe(64 * 1024);
+    const chunk = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
     let position = 0;
     for (;;) {
       assertArtifactReadActive(signal);
@@ -194,7 +206,43 @@ export class IdaWorkspace {
       throw new AnalysisProtocolError(
         "IDA target changed between admission and the private input copy; reopen the target.",
       );
+    const observed = await input.stat({ bigint: true });
     this.#inputSha256 = inputHash.digest("hex");
+    this.#inputStat = {
+      dev: observed.dev,
+      ino: observed.ino,
+      size: observed.size,
+      mtimeNs: observed.mtimeNs,
+      ctimeNs: observed.ctimeNs,
+    };
+  }
+
+  /**
+   * Confirm the private input still matches the bytes copyInput admitted.
+   * Avoids re-streaming large binaries through SHA-256 on every IDA RPC when
+   * the private file's stat identity is unchanged; falls back to a full digest
+   * whenever metadata differs or is unavailable.
+   */
+  async verifyInputUnchanged(): Promise<boolean> {
+    if (this.#inputSha256 === undefined) return false;
+    const expected = this.#inputStat;
+    if (expected !== undefined) {
+      const observed: BigIntStats | undefined = await lstat(this.inputPath, {
+        bigint: true,
+      }).catch(() => undefined);
+      if (
+        observed !== undefined &&
+        observed.isFile() &&
+        !observed.isSymbolicLink() &&
+        observed.dev === expected.dev &&
+        observed.ino === expected.ino &&
+        observed.size === expected.size &&
+        observed.mtimeNs === expected.mtimeNs &&
+        observed.ctimeNs === expected.ctimeNs
+      )
+        return true;
+    }
+    return (await idaFileDigest(this.inputPath)) === this.#inputSha256;
   }
 
   /** Delete only this object's privately allocated directory after worker cleanup. */

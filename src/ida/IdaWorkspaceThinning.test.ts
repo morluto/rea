@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { open, readFile, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -256,5 +256,26 @@ describe("IDA workspace admission identity", () => {
     const open = producer.calls.find(({ name }) => name === "idb_open");
     expect(String(open?.args.input_path)).toContain("universal");
     expect((await client.close()).ok).toBe(true);
+  });
+
+  it("verifies unchanged private inputs via stat and falls back to digest on metadata or content change", async () => {
+    const { root, target } = await createIdaTarget("arm64");
+    roots.push(root);
+    const workspace = await IdaWorkspace.allocate(target);
+    roots.push(workspace.directory);
+    expect(await workspace.verifyInputUnchanged()).toBe(false);
+    await workspace.copyInput();
+    expect(await workspace.verifyInputUnchanged()).toBe(true);
+    // Touching timestamps forces the fallback full-file digest, which still passes on identical bytes.
+    const bumped = new Date(Date.now() + 5_000);
+    await utimes(workspace.inputPath, bumped, bumped);
+    expect(await workspace.verifyInputUnchanged()).toBe(true);
+    // Modifying the private input bytes is detected and refused.
+    const original = await readFile(workspace.inputPath);
+    const tampered = Buffer.from(original);
+    tampered[tampered.length - 1] = (tampered[tampered.length - 1]! ^ 0xff) & 0xff;
+    await writeFile(workspace.inputPath, tampered);
+    expect(await workspace.verifyInputUnchanged()).toBe(false);
+    await workspace.remove();
   });
 });
