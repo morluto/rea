@@ -247,9 +247,7 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  const constant = createManagedFieldConstantReader(bytes, layout, issues, {
-    selected: selected !== null,
-  });
+  const constant = createManagedFieldConstantReader(bytes, layout, issues);
   const rowCount = layout.table(4)?.rowCount ?? 0;
   const context: DecodeFieldContext = {
     bytes,

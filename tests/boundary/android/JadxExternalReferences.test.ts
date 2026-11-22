@@ -3,11 +3,12 @@ import {
   analyzeJadxRequest,
   type JadxToolPort,
 } from "../../../src/android/JadxAnalysis.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 
 const engine = {
   name: "jadx",
-  version: "0.7.1",
+  version: JADX_RELEASE.version,
   artifact_sha256: "a".repeat(64),
   source_revision: null,
   worker_count: 1,

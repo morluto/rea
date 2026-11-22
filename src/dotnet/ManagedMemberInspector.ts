@@ -179,7 +179,7 @@ const withoutUserStrings = (
     ({ code, scope }) =>
       code === failure.issue.code && scope === failure.issue.scope,
   )
-    ? inspection
+    ? managedMemberInspectionSchema.parse(inspection)
     : managedMemberInspectionSchema.parse({
         ...inspection,
         user_strings: {
@@ -478,55 +478,52 @@ export const inspectManagedMembersBytes = (
     const coverageIssues = uniqueManagedParseIssues(issues);
     // Admit the member projection before reading #US literals so an overflow
     // in #US preserves the already-decoded members without re-decoding them.
-    const baseInspection = managedMemberInspectionSchema.parse(
-      admitManagedProjection(
-        {
-          ...envelope,
-          metadata: {
-            ...envelope.metadata,
-            status: issues.length === 0 ? "complete" : "partial",
-          },
-          assembly: inventory.assembly,
-          types,
-          signature_resolution: "type-names-v2",
-          nesting_read: parsedTypes.nesting.complete,
-          exported_types: exportedTypes.exportedTypes,
-          fields: fields.fields,
-          methods: resolvedMethods,
-          member_refs: memberRefs.refs,
-          call_edges: related.callEdges,
-          field_accesses: related.fieldAccesses,
-          user_strings: null,
-          selection,
-          method_rows: methodRows,
-          unresolved_definitions: {
-            rows: parsedTypes.unresolvedDefinitions.concat(
-              methods.unresolvedDefinitions,
-            ),
-            method_names_examined: true,
-          },
-          coverage: {
-            state:
-              issues.length === 0 && !incompleteMembers
-                ? "complete"
-                : "partial",
-            issues: coverageIssues,
-          },
-          limitations: [
-            ...typeIdentityLimitations,
-            "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
-            "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
-            "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
-            "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
-            "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
-            "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
-            ...selectionLimitations,
-          ],
+    const baseInspection = admitManagedProjection(
+      {
+        ...envelope,
+        metadata: {
+          ...envelope.metadata,
+          status: issues.length === 0 ? "complete" : "partial",
         },
-        budget,
-      ),
+        assembly: inventory.assembly,
+        types,
+        signature_resolution: "type-names-v2",
+        nesting_read: parsedTypes.nesting.complete,
+        exported_types: exportedTypes.exportedTypes,
+        fields: fields.fields,
+        methods: resolvedMethods,
+        member_refs: memberRefs.refs,
+        call_edges: related.callEdges,
+        field_accesses: related.fieldAccesses,
+        user_strings: null,
+        selection,
+        method_rows: methodRows,
+        unresolved_definitions: {
+          rows: parsedTypes.unresolvedDefinitions.concat(
+            methods.unresolvedDefinitions,
+          ),
+          method_names_examined: true,
+        },
+        coverage: {
+          state:
+            issues.length === 0 && !incompleteMembers ? "complete" : "partial",
+          issues: coverageIssues,
+        },
+        limitations: [
+          ...typeIdentityLimitations,
+          "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
+          "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
+          "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
+          "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
+          "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
+          "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
+          ...selectionLimitations,
+        ],
+      },
+      budget,
     );
-    if (!readUserStrings) return baseInspection;
+    if (!readUserStrings)
+      return managedMemberInspectionSchema.parse(baseInspection);
     let userStrings: ManagedMemberInspection["user_strings"];
     try {
       // #US literals sit beside the member inventory and carry their own

@@ -26,14 +26,16 @@ type Projection = Pick<
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
 >;
 
+const validateHarDocument = (raw: unknown) =>
+  createHarValidator()(projectHar(raw, [], "validation").reported);
+
 /** Decode a retained HAR, validating a disposable projection of source facts. */
 export const decodeHarCapture = (
   text: string,
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
-  const validation = projectHar(raw, [], "validation");
-  const adaptations = createHarValidator()(validation.reported);
+  const adaptations = validateHarDocument(raw);
   const ipv6Adaptation = adaptations.bracketedIpv6;
   const timingAdaptation = adaptations.failedRequests;
   const failedRequests = new Set(timingAdaptation?.entries);
