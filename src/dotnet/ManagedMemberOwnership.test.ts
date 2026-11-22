@@ -3,24 +3,24 @@ import { describe, expect, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
-import * as ownershipProducer from "../domain/managed/managedMemberOwnership.js";
+import {
+  attachManagedDecodeBudget,
+  ManagedDecodeBudget,
+  ManagedRepresentationFailure,
+} from "../domain/managed/managedDecodeBudget.js";
+import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
 import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
 import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
 } from "../domain/managed/managedMetadataLayout.js";
-import { buildManagedMemberSelectionCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
-
-const { memberDeclaringTypeRowLookup } = ownershipProducer;
 import {
   buildManagedMemberPointerFixture,
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
-import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 
 const metadataLayout = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);
@@ -65,6 +65,8 @@ describe("managed declaring type ownership", () => {
       const target = managedPeFixtureTarget(bytes);
       const members = inspectManagedMembersBytes(bytes, target);
       const artifact = inspectManagedArtifactBytes(bytes, target);
+      const ownerNames = ["<Module>", "Fixture.A", "Fixture.B"];
+      let expectedAttributeOwner: string | null | undefined;
       for (const [table, starts] of [
         ["fields", fields],
         ["methods", methods],
@@ -80,15 +82,16 @@ describe("managed declaring type ownership", () => {
               break;
             }
           }
-          return owner === null ? null : members.types[owner]?.full_name;
+          return owner === null ? null : ownerNames[owner];
         });
         expect(members[table].map((member) => member.declaring_type)).toEqual(
           expected,
         );
+        if (table === "methods") expectedAttributeOwner = expected[0];
       }
-      expect(artifact.attributes[0]?.type_name).toBe(
-        members.methods[0]?.declaring_type,
-      );
+      expect(artifact.attributes[0]).toMatchObject({
+        type_name: expectedAttributeOwner,
+      });
     },
   );
 
@@ -126,16 +129,8 @@ describe("managed declaring type ownership", () => {
     const bytes = buildManagedPeFixture();
     const layout = metadataLayout(bytes);
     const facts = readTypeMemberListFacts(bytes, layout);
-    const budget = managedDecodeBudget(layout);
-    const capacityFailure = new ManagedReaderFailure({
-      code: "resource-limit",
-      scope: "metadata.representation",
-      offset: layout.table(2)?.offset ?? null,
-      detail: "No remaining ownership index capacity",
-    });
-    const admission = vi.spyOn(budget, "reserve").mockImplementation(() => {
-      throw capacityFailure;
-    });
+    attachManagedDecodeBudget(layout, new ManagedDecodeBudget(1));
+    const lookup = () => memberDeclaringTypeRowLookup(bytes, layout, 6, facts);
     let allocations = 0;
     vi.stubGlobal(
       "Uint32Array",
@@ -147,41 +142,57 @@ describe("managed declaring type ownership", () => {
       }),
     );
     try {
-      expect(() =>
-        memberDeclaringTypeRowLookup(bytes, layout, 6, facts),
-      ).toThrow(capacityFailure);
-      expect(() =>
-        memberDeclaringTypeRowLookup(bytes, layout, 6, facts),
-      ).toThrow(capacityFailure);
-      expect(admission).toHaveBeenCalledTimes(1);
+      const [first, retry] = [0, 1].map(() => {
+        try {
+          return lookup();
+        } catch (cause: unknown) {
+          return cause;
+        }
+      });
+      expect(first).toBeInstanceOf(ManagedRepresentationFailure);
+      expect(first).toMatchObject({
+        issue: {
+          scope: "metadata.representation",
+          offset: layout.table(2)?.offset,
+        },
+      });
+      expect(retry).toBe(first);
       expect(allocations).toBe(0);
     } finally {
       vi.unstubAllGlobals();
-      admission.mockRestore();
     }
   });
 });
 
 describe("selected FieldList and MethodList interval iteration", () => {
-  it("skips building full-table owner lookups when monotonic intervals apply", () => {
-    const bytes = buildManagedMemberSelectionCapacityFixture(200);
-    const target = managedPeFixtureTarget(bytes);
-    const spy = vi.spyOn(ownershipProducer, "memberDeclaringTypeRowLookup");
-    try {
-      const selected = inspectManagedMembersBytes(bytes, target, {
+  it("completes one selected field and method within the caller's representation budget", () => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 2,
+      fieldRowCount: 4096,
+      methodRowCount: 4096,
+      distinctMemberNames: true,
+      firstTypeFieldRowCount: 1,
+      firstTypeMethodRowCount: 1,
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      {
         typeNames: ["Fixture.Empty0"],
-      });
-      expect(spy).not.toHaveBeenCalled();
-      expect(selected.coverage).toEqual({ state: "complete", issues: [] });
-      expect(selected.fields).toMatchObject([
-        { name: "Field0", declaring_type: "Fixture.Empty0" },
-      ]);
-      expect(selected.methods).toMatchObject([
-        { name: "Method0", declaring_type: "Fixture.Empty0" },
-      ]);
-    } finally {
-      spy.mockRestore();
-    }
+        maxRepresentationBytes: 48 * 1024,
+      },
+    );
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    expect(result.fields).toMatchObject([
+      { token: "0x04000001", name: "Field0", declaring_type: "Fixture.Empty0" },
+    ]);
+    expect(result.methods).toMatchObject([
+      {
+        token: "0x06000001",
+        name: "Method0",
+        declaring_type: "Fixture.Empty0",
+      },
+    ]);
   });
 
   it("falls back cleanly when FieldList or MethodList pointers decrease", () => {
@@ -205,31 +216,32 @@ describe("selected FieldList and MethodList interval iteration", () => {
     bytes.writeUInt16LE(3, row3 + methodColOffset);
     bytes.writeUInt16LE(2, row4 + methodColOffset);
 
-    const spy = vi.spyOn(ownershipProducer, "memberDeclaringTypeRowLookup");
-    try {
-      const result = inspectManagedMembersBytes(
-        bytes,
-        managedPeFixtureTarget(bytes),
-        { typeNames: ["Fixture.Empty0", "Fixture.Empty1"] },
-      );
-      expect(spy).toHaveBeenCalled();
-      expect(result.coverage.state).toBe("partial");
-      expect(result.coverage.issues).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            code: "invalid-row",
-            detail: expect.stringContaining("FieldList start 2 decreases"),
-          }),
-          expect.objectContaining({
-            code: "invalid-row",
-            detail: expect.stringContaining("MethodList start 2 decreases"),
-          }),
-        ]),
-      );
-      expect(result.fields.map(({ name }) => name)).toEqual(["Field0"]);
-      expect(result.methods.map(({ name }) => name)).toEqual(["Method0"]);
-    } finally {
-      spy.mockRestore();
-    }
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Empty0", "Fixture.Empty1"] },
+    );
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          code: "invalid-row",
+          offset: row4 + fieldColOffset,
+          detail: expect.stringContaining("FieldList start 2 decreases"),
+        }),
+        expect.objectContaining({
+          code: "invalid-row",
+          offset: row4 + methodColOffset,
+          detail: expect.stringContaining("MethodList start 2 decreases"),
+        }),
+      ]),
+    });
+    expect(result.fields.map(({ name }) => name)).toEqual(["Field0"]);
+    expect(result.methods.map(({ name }) => name)).toEqual(["Method0"]);
+    expect(result.user_strings).toEqual({
+      state: "partial",
+      literals: [],
+      issues: [],
+    });
   });
 });

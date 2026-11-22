@@ -288,32 +288,55 @@ describe("draftTaskFiles for structured views", () => {
       { kind: "row_count", file, table: "notes", equals: 4 },
     ]);
   });
+});
 
-  it("suggests a created file's presence and a deleted file's absence, and skips files that end as they began", () => {
-    const same = path("document", "text", text("a"), text("a"));
-    same.versions[1] = {
-      ...same.versions[1]!,
-      sha256: same.versions[0]!.sha256,
-    };
-    const files = draft({
-      "Documents/new.txt": path("document", "text", null, text("milk")),
-      "Documents/old.txt": path("document", "text", text("x"), null),
-      "Documents/same.txt": same,
-    });
+it("suggests changes from known presence or comparable views", () => {
+  const milk = text("milk");
+  const created = path("document", "text", null, milk);
+  const converted = path("document", "text", null, milk);
+  converted.versions[0] = version(0, "json", { text: "milk" });
+  const unchanged = path("document", "text", milk, milk);
+  unchanged.versions[1] = {
+    ...unchanged.versions[1]!,
+    sha256: unchanged.versions[0]!.sha256,
+  };
+  const files = draft({
+    "Documents/created.txt": created,
+    "Documents/deleted.txt": path("document", "text", milk, null),
+    "Documents/converted.txt": converted,
+    "Documents/unchanged.txt": unchanged,
+  });
 
-    expect(files.map(({ file, suggested }) => [file, suggested])).toEqual([
-      [
-        "Documents/new.txt",
-        [
-          { kind: "file_present", file: "Documents/new.txt" },
-          { kind: "lines_present", file: "Documents/new.txt", lines: ["milk"] },
-        ],
+  expect(
+    files.map(({ file, change, suggested }) => ({ file, change, suggested })),
+  ).toEqual([
+    {
+      file: "Documents/converted.txt",
+      change: { kind: "format" },
+      suggested: [],
+    },
+    {
+      file: "Documents/created.txt",
+      change: { kind: "created" },
+      suggested: [
+        { kind: "file_present", file: "Documents/created.txt" },
+        {
+          kind: "lines_present",
+          file: "Documents/created.txt",
+          lines: ["milk"],
+        },
       ],
-      [
-        "Documents/old.txt",
-        [{ kind: "file_absent", file: "Documents/old.txt" }],
-      ],
-    ]);
+    },
+    {
+      file: "Documents/deleted.txt",
+      change: { kind: "deleted" },
+      suggested: [{ kind: "file_absent", file: "Documents/deleted.txt" }],
+    },
+  ]);
+  expect(files[0]).toMatchObject({
+    values: [],
+    guards: [],
+    notes: [{ code: "unreadable_view", file: "Documents/converted.txt" }],
   });
 });
 
@@ -407,142 +430,99 @@ describe("draftTaskFiles for an AbiWord document", () => {
   });
 });
 
+const meetingParagraph =
+  "/root/children/[name=section][@xid=1]/children/[name=p][@xid=6]";
+const meetingNote = (paragraph: JsonValue[]): JsonValue => ({
+  root: xmlElement("abiword", {}, [
+    xmlElement("section", { xid: "1" }, [
+      xmlElement("p", { style: "Normal", xid: "5" }, ["Agenda"]),
+      xmlElement("p", { style: "Normal", xid: "6" }, paragraph),
+    ]),
+  ]),
+  truncated: false,
+});
+const abiWordRun = (text: string) =>
+  xmlElement("c", { props: "lang:en-US" }, [text]);
+
 describe("draftTaskFiles for text split into runs", () => {
-  it("suggests a paragraph's text, not a run's, wherever an edit leaves it, and the check holds however a later save splits it", () => {
-    const run = (text: string) =>
-      xmlElement("c", { props: "lang:en-US" }, [text]);
-    const note = (sixth: JsonValue[]): JsonValue => ({
-      root: xmlElement("abiword", {}, [
-        xmlElement("section", { xid: "1" }, [
-          xmlElement("p", { style: "Normal", xid: "5" }, ["Agenda"]),
-          xmlElement("p", { style: "Normal", xid: "6" }, sixth),
-        ]),
-      ]),
-      truncated: false,
-    });
-    const sixth =
-      "/root/children/[name=section][@xid=1]/children/[name=p][@xid=6]";
-    const edits: readonly (readonly [JsonValue[], JsonValue[], string])[] = [
-      // Text replaced by a run, as AbiWord types into a reopened document.
-      [["Meeting at 2:00"], [run("Meeting at 3:30")], "Meeting at 3:30"],
-      // Text edited inside the paragraph's only run.
-      [[run("Meeting at 2:00")], [run("Meeting at 3:30")], "Meeting at 3:30"],
-      // Text edited inside a run among the paragraph's own text.
+  it("checks the paragraph's edit across different run boundaries", () => {
+    const file = "Documents/note.abw";
+    const edits: readonly (readonly [JsonValue[], JsonValue[]])[] = [
+      [["Meeting at 2:00"], [abiWordRun("Meeting at 3:30")]],
+      [[abiWordRun("Meeting at 2:00")], [abiWordRun("Meeting at 3:30")]],
       [
-        ["Meeting at ", run("2:00")],
-        ["Meeting at ", run("3:30")],
-        "Meeting at 3:30",
+        ["Meeting at ", abiWordRun("2:00")],
+        ["Meeting at ", abiWordRun("3:30")],
       ],
     ];
-
-    for (const [old, edited, text] of edits) {
-      const [file] = draft({
-        "Documents/note.abw": path("document", "xml", note(old), note(edited)),
+    for (const [old, edited] of edits) {
+      const [document] = draft({
+        [file]: path("document", "xml", meetingNote(old), meetingNote(edited)),
       });
-
-      expect(file?.suggested).toEqual([
+      const checks = document?.suggested;
+      expect(checks).toEqual([
         {
           kind: "text_equals",
-          file: "Documents/note.abw",
-          pointer: sixth,
-          value: text,
+          file,
+          pointer: meetingParagraph,
+          value: "Meeting at 3:30",
         },
       ]);
-      const checks = (file?.suggested ?? []).map((check, index) => ({
-        ...check,
-        id: `c${String(index)}`,
-      })) as DesktopTaskCheck[];
-      for (const saved of [
-        edited,
-        [run("Meeting at "), run("3"), ":", run("30")],
-      ])
-        expect(
-          evaluateTaskChecks(
-            checks,
-            new Map([
-              ["Documents/note.abw", { format: "xml", view: note(saved) }],
-            ]),
-          ).map(({ passed }) => passed),
-        ).toEqual([true]);
+      expect(passing(file, checks, meetingNote(edited))).toEqual([true]);
+      expect(
+        passing(
+          file,
+          checks,
+          meetingNote([
+            abiWordRun("Meeting at "),
+            abiWordRun("3"),
+            ":",
+            abiWordRun("30"),
+          ]),
+        ),
+      ).toEqual([true]);
+      expect(passing(file, checks, meetingNote(old))).toEqual([false]);
     }
   });
 
-  it("suggests the paragraph's text in an archive when an edit turned its text into runs", () => {
-    const run = (text: string) =>
+  it("checks a rewritten archive paragraph and ignores formatting-only changes beside it", () => {
+    const file = "Documents/list.odt";
+    const span = (text: string) =>
       xmlElement("text:span", { "text:style-name": "T1" }, [text]);
-    const list = (paragraph: JsonValue[]) =>
+    const list = (paragraph: JsonValue[], whitespace: string[]) =>
       listing([
         zipEntry("content.xml", "xml", {
           root: xmlElement("office:text", {}, [
             xmlElement("text:p", { "text:style-name": "Body" }, paragraph),
+            xmlElement("text:list", {}, [
+              xmlElement("text:list-item"),
+              ...whitespace,
+            ]),
           ]),
           truncated: false,
         }),
       ]);
-
-    const [file] = draft({
-      "Documents/list.odt": path(
-        "document",
-        "zip",
-        list(["Buy bread"]),
-        list([run("Buy "), run("oat milk")]),
-      ),
+    const before = list(["Buy bread"], ["\n"]);
+    const after = list(
+      [span("Buy "), span("oat"), " ", span("milk")],
+      ["\n", "\n"],
+    );
+    const [document] = draft({
+      [file]: path("document", "zip", before, after),
     });
-
-    expect(file?.suggested).toEqual([
+    const checks = document?.suggested;
+    expect(checks).toEqual([
       {
         kind: "text_equals",
-        file: "Documents/list.odt",
+        file,
         pointer: "/entries/[name=content.xml]/view/root/children/[name=text:p]",
         value: "Buy oat milk",
       },
     ]);
-  });
-
-  it("suggests the text of a paragraph in an archive and none of its runs, and nothing where only whitespace changed", () => {
-    const run = (text: string) =>
-      xmlElement("text:span", { "text:style-name": "T1" }, [text]);
-    const list = (paragraph: JsonValue[], formatting: JsonValue[]) =>
-      listing([
-        zipEntry("content.xml", "xml", {
-          root: xmlElement("office:text", {}, [
-            xmlElement("text:p", { "text:style-name": "Body" }, paragraph),
-            xmlElement("text:list", {}, formatting),
-          ]),
-          truncated: false,
-        }),
-      ]);
-
-    const [file] = draft({
-      "Documents/list.odt": path(
-        "document",
-        "zip",
-        list(["Buy bread"], [xmlElement("text:list-item"), "\n"]),
-        list(
-          ["Buy ", run("oat"), " ", run("milk")],
-          [xmlElement("text:list-item"), "\n", "\n"],
-        ),
-      ),
-    });
-
-    const paragraph =
-      "/entries/[name=content.xml]/view/root/children/[name=text:p]";
     expect(
-      file?.suggested.filter(({ kind }) => kind === "text_equals"),
-    ).toEqual([
-      {
-        kind: "text_equals",
-        file: "Documents/list.odt",
-        pointer: paragraph,
-        value: "Buy oat milk",
-      },
-    ]);
-    expect(
-      file?.suggested.filter(
-        (check) =>
-          "pointer" in check && check.pointer.startsWith(`${paragraph}/`),
-      ),
-    ).toEqual([]);
+      passing(file, checks, list(["Buy oat milk"], ["\n"]), "zip"),
+    ).toEqual([true]);
+    expect(passing(file, checks, before, "zip")).toEqual([false]);
   });
 });
 
@@ -602,37 +582,31 @@ const passing = (
 
 describe("draftTaskFiles for runs added or removed whole", () => {
   it("suggests the paragraph's text where an edit adds or removes a run holding text, which other text in the run fails", () => {
-    const run = (text: string) =>
-      xmlElement("c", { props: "lang:en-US" }, [text]);
-    const note = (sixth: JsonValue[]): JsonValue => ({
-      root: xmlElement("abiword", {}, [
-        xmlElement("section", { xid: "1" }, [
-          xmlElement("p", { style: "Normal", xid: "5" }, ["Agenda"]),
-          xmlElement("p", { style: "Normal", xid: "6" }, sixth),
-        ]),
-      ]),
-      truncated: false,
-    });
     const edits = [
       {
         old: ["Meeting at "],
-        edited: ["Meeting at ", run("3:30")],
+        edited: ["Meeting at ", abiWordRun("3:30")],
         text: "Meeting at 3:30",
-        split: [run("Meeting at 3"), ":30"],
-        wrong: ["Meeting at ", run("13:30")],
+        split: [abiWordRun("Meeting at 3"), ":30"],
+        wrong: ["Meeting at ", abiWordRun("13:30")],
       },
       {
-        old: ["Meeting at ", run("3:30")],
+        old: ["Meeting at ", abiWordRun("3:30")],
         edited: ["Meeting at "],
         text: "Meeting at ",
-        split: [run("Meeting "), "at "],
-        wrong: ["Meeting at ", run("3:30")],
+        split: [abiWordRun("Meeting "), "at "],
+        wrong: ["Meeting at ", abiWordRun("3:30")],
       },
     ];
 
     for (const { old, edited, text, split, wrong } of edits) {
       const [file] = draft({
-        "Documents/note.abw": path("document", "xml", note(old), note(edited)),
+        "Documents/note.abw": path(
+          "document",
+          "xml",
+          meetingNote(old),
+          meetingNote(edited),
+        ),
       });
 
       expect(file?.suggested).toEqual([
@@ -646,7 +620,7 @@ describe("draftTaskFiles for runs added or removed whole", () => {
       ]);
       expect(
         [edited, split, wrong].map((saved) =>
-          passing("Documents/note.abw", file?.suggested, note(saved)),
+          passing("Documents/note.abw", file?.suggested, meetingNote(saved)),
         ),
       ).toEqual([[true], [true], [false]]);
     }
@@ -1023,17 +997,6 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
 
   it("checks an image or break added or removed in an XML paragraph whose text changed, while a run holding text stays covered", () => {
     const file = "Documents/note.abw";
-    const note = (sixth: JsonValue[]): JsonValue => ({
-      root: xmlElement("abiword", {}, [
-        xmlElement("section", { xid: "1" }, [
-          xmlElement("p", { xid: "5" }, ["Agenda"]),
-          xmlElement("p", { xid: "6" }, sixth),
-        ]),
-      ]),
-      truncated: false,
-    });
-    const sixth =
-      "/root/children/[name=section][@xid=1]/children/[name=p][@xid=6]";
     const image = xmlElement("image", { dataid: "image_1" });
     const brk = xmlElement("br");
     const edits = [
@@ -1043,7 +1006,7 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
         others: [
           {
             kind: "value_equals",
-            pointer: `${sixth}/children/[name=image]/name`,
+            pointer: `${meetingParagraph}/children/[name=image]/name`,
             value: "image",
           },
         ],
@@ -1053,7 +1016,10 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
         old: ["Meeting at 2:00", brk],
         edited: ["Meeting at 3:30"],
         others: [
-          { kind: "value_absent", pointer: `${sixth}/children/[name=br]` },
+          {
+            kind: "value_absent",
+            pointer: `${meetingParagraph}/children/[name=br]`,
+          },
         ],
         textOnly: ["Meeting at 3:30", brk],
       },
@@ -1063,7 +1029,7 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
         others: [
           {
             kind: "value_equals",
-            pointer: `${sixth}/children/[name=br]/name`,
+            pointer: `${meetingParagraph}/children/[name=br]/name`,
             value: "br",
           },
         ],
@@ -1073,21 +1039,21 @@ describe("draftTaskFiles for elements without text beside a text edit", () => {
 
     for (const { old, edited, others, textOnly } of edits) {
       const [draftFile] = draft({
-        [file]: path("document", "xml", note(old), note(edited)),
+        [file]: path("document", "xml", meetingNote(old), meetingNote(edited)),
       });
 
       expect(draftFile?.suggested).toEqual([
         {
           kind: "text_equals",
           file,
-          pointer: sixth,
+          pointer: meetingParagraph,
           value: "Meeting at 3:30",
         },
         ...others.map((check) => ({ ...check, file })),
       ]);
       expect(
         [edited, textOnly].map((saved) =>
-          passing(file, draftFile?.suggested, note(saved)),
+          passing(file, draftFile?.suggested, meetingNote(saved)),
         ),
       ).toEqual([
         [true, true],
@@ -1246,22 +1212,14 @@ describe("draftTaskFiles with unkeyed row conditions", () => {
         equals: 2,
       },
     ]);
-    const checks = (database?.suggested ?? []).map((check, index) => ({
-      ...check,
-      id: String(index),
-    }));
-    expect(
-      evaluateTaskChecks(
-        checks,
-        new Map([[file, { format: "sqlite", view: after }]]),
-      ).map((outcome) => outcome.passed),
-    ).toEqual([true, true]);
-    expect(
-      evaluateTaskChecks(
-        checks,
-        new Map([[file, { format: "sqlite", view: before }]]),
-      ).map((outcome) => outcome.passed),
-    ).toEqual([false, false]);
+    expect(passing(file, database?.suggested, after, "sqlite")).toEqual([
+      true,
+      true,
+    ]);
+    expect(passing(file, database?.suggested, before, "sqlite")).toEqual([
+      false,
+      false,
+    ]);
   });
 
   it.each([
@@ -1313,20 +1271,12 @@ describe("draftTaskFiles with unkeyed row conditions", () => {
       expect(database?.suggested).toEqual(
         expected.map((check) => ({ ...check, file, table: "items" })),
       );
-      const checks = (database?.suggested ?? []).map((check, index) => ({
-        ...check,
-        id: String(index),
-      }));
-      for (const [view, passed] of [
-        [final, true],
-        [baseline, false],
-      ] as const)
-        expect(
-          evaluateTaskChecks(
-            checks,
-            new Map([[file, { format: "sqlite", view }]]),
-          ).map((outcome) => outcome.passed),
-        ).toEqual(checks.map(() => passed));
+      expect(passing(file, database?.suggested, final, "sqlite")).toEqual(
+        expected.map(() => true),
+      );
+      expect(passing(file, database?.suggested, baseline, "sqlite")).toEqual(
+        expected.map(() => false),
+      );
     }
   });
 });

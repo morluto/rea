@@ -614,6 +614,11 @@ const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
   return max;
 };
 
+const SEGMENT_NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
+
 const readSegmentSpan = (
   body: Uint8Array,
   wide: boolean,
@@ -624,7 +629,7 @@ const readSegmentSpan = (
   const end = nameBytes.indexOf(0);
   return {
     // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
-    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+    name: SEGMENT_NAME_DECODER.decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,

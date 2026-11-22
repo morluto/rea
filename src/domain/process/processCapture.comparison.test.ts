@@ -552,9 +552,166 @@ it("preserves independently observed file changes alongside an unknown effect", 
       expect(compareFullyObserved(a, b, options)).toMatchObject({
         filesystem: "changed",
         status: "changed",
+        terminal: "unchanged",
+        interaction: "unchanged",
+        exit: "unchanged",
+        process: "unchanged",
         first_divergence: { status: "unknown" },
       });
   }
+});
+
+const captureWithFileHashBudget = (
+  sha256: string,
+  omitDigest: boolean,
+  conflictingDigest?: string,
+) => {
+  const base = emptyCapture();
+  const known = {
+    path: "root_0:known.txt",
+    type: "file" as const,
+    mode: 0o644,
+    size: 4,
+    sha256,
+    symlink_target: null,
+  };
+  const large = {
+    ...known,
+    path: "root_0:large.bin",
+    size: 4096,
+    sha256: omitDigest ? null : "c".repeat(64),
+  };
+  const files = [
+    known,
+    ...(conflictingDigest === undefined
+      ? []
+      : [{ ...known, sha256: conflictingDigest }]),
+    large,
+  ];
+  const hashedBytes =
+    known.size +
+    (omitDigest ? 0 : large.size) +
+    (conflictingDigest === undefined ? 0 : known.size);
+  const coverage = {
+    ...base.truncation_details.filesystem_before,
+    hash_budget_bytes: hashedBytes,
+    hashed_bytes: hashedBytes,
+    hash_omissions: omitDigest
+      ? [
+          {
+            path: large.path,
+            size_bytes: large.size,
+            remaining_budget_bytes: 0,
+            reason: "file_bytes_budget" as const,
+            system_code: null,
+          },
+        ]
+      : [],
+  };
+  return {
+    ...base,
+    files_before: files,
+    files_after: files,
+    filesystem_checkpoints: base.filesystem_checkpoints.map((checkpoint) => ({
+      ...checkpoint,
+      files,
+      truncated: omitDigest,
+    })),
+    truncated: omitDigest,
+    residual_unknowns: omitDigest
+      ? [
+          {
+            scope: "filesystem" as const,
+            reason: "Whole-file digest omitted.",
+          },
+        ]
+      : [],
+    truncation_details: {
+      ...base.truncation_details,
+      filesystem_before: coverage,
+      filesystem_after: coverage,
+    },
+  };
+};
+
+it("preserves digest differences when another file exceeds the hash budget", () => {
+  const left = captureWithFileHashBudget("a".repeat(64), true);
+  const right = captureWithFileHashBudget("b".repeat(64), true);
+  const completeLeft = captureWithFileHashBudget("a".repeat(64), false);
+  const completeRight = captureWithFileHashBudget("b".repeat(64), false);
+
+  for (const [a, b] of [
+    [left, left],
+    [left, completeLeft],
+    [completeLeft, left],
+  ] as const)
+    expect(compareProcessCaptures(a, b)).toMatchObject({
+      status: "unknown",
+      filesystem: "unknown",
+      first_divergence: { status: "unknown" },
+    });
+  expect(compareProcessCaptures(completeLeft, completeRight)).toMatchObject({
+    status: "changed",
+    filesystem: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "filesystem",
+      fields: ["files[0].sha256"],
+    },
+  });
+  for (const [a, b] of [
+    [left, right],
+    [right, left],
+    [left, completeRight],
+    [completeRight, left],
+  ] as const)
+    expect(compareProcessCaptures(a, b)).toMatchObject({
+      status: "changed",
+      filesystem: "changed",
+      first_divergence: { status: "unknown" },
+    });
+});
+
+it("keeps conflicting digests for one path unknown under partial coverage", () => {
+  const known = captureWithFileHashBudget("a".repeat(64), true);
+  const ambiguous = captureWithFileHashBudget(
+    "a".repeat(64),
+    true,
+    "b".repeat(64),
+  );
+  for (const [left, right] of [
+    [ambiguous, ambiguous],
+    [known, ambiguous],
+    [ambiguous, known],
+  ] as const)
+    expect(compareProcessCaptures(left, right)).toMatchObject({
+      status: "unknown",
+      filesystem: "unknown",
+      first_divergence: { status: "unknown" },
+    });
+});
+
+it("keeps partial file differences unknown when legacy normalization differs", () => {
+  const left = captureWithFileHashBudget("a".repeat(64), true);
+  const right = captureWithFileHashBudget("b".repeat(64), true);
+  const normalization = {
+    ...right.normalization,
+    time_bucket_ms: right.normalization.time_bucket_ms + 1,
+  };
+  expect(
+    compareProcessCaptures(left, {
+      ...right,
+      normalization,
+      manifest: {
+        ...right.manifest,
+        normalization_sha256: digestProcessCommitment(normalization),
+      },
+    }),
+  ).toMatchObject({
+    status: "unknown",
+    filesystem: "unknown",
+    first_divergence: { status: "unknown" },
+  });
 });
 
 it("compares exact symlink bytes beside an unrelated unknown effect", () => {
@@ -1118,10 +1275,14 @@ it("keeps filesystem comparison unknown without coverage and reports observed ch
       { scope: "filesystem" as const, reason: "watcher unavailable" },
     ],
   };
-  expect(compareFullyObserved(incomplete, incomplete)).toMatchObject({
-    filesystem: "unknown",
-    status: "unknown",
-  });
+  for (const [left, right] of [
+    [capture, incomplete],
+    [incomplete, capture],
+  ] as const)
+    expect(compareFullyObserved(left, right)).toMatchObject({
+      filesystem: "unknown",
+      status: "unknown",
+    });
 
   const finalFile = {
     path: "root_0:created.txt",

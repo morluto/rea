@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import {
   androidMethodSelectorSchema,
@@ -92,7 +92,7 @@ const jadxClassPageSchema = z
     limit: count,
     items: z.array(z.string()),
   })
-  .catchall(jsonValueSchema);
+  .catchall(ownedJsonValueSchema);
 export type JadxClassPage = z.infer<typeof jadxClassPageSchema>;
 
 /** Validate a decoded page without dropping observed JSON members such as __proto__. */
@@ -211,11 +211,11 @@ const toolResponse = z
     content: z.tuple([
       z
         .object({ type: z.literal("text"), text: z.string() })
-        .catchall(jsonValueSchema),
+        .catchall(ownedJsonValueSchema),
     ]),
     isError: z.boolean().exactOptional(),
   })
-  .catchall(jsonValueSchema);
+  .catchall(ownedJsonValueSchema);
 
 /** Parse the upstream text-only envelope, preserving errors at the producing boundary. */
 export const parseJadxEnvelope = (
@@ -236,7 +236,7 @@ export const parseJadxEnvelope = (
 export const parseJadxJson = (
   text: string,
   operation: AndroidOperation,
-): z.infer<typeof jsonValueSchema> => {
+): z.infer<typeof ownedJsonValueSchema> => {
   const decoded = parseJsonWithDuplicatePolicy(text, "reject");
   if (!decoded.ok) {
     if (decoded.duplicate !== undefined)
@@ -251,7 +251,7 @@ export const parseJadxJson = (
     );
   }
   try {
-    return jsonValueSchema.parse(decoded.value);
+    return ownedJsonValueSchema.parse(decoded.value);
   } catch (cause) {
     throw new AnalysisOutputError(
       operation,

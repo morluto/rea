@@ -479,6 +479,31 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
   });
 });
 
+it("reads bounded positional ranges of the snapshot without capturing the file", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const bytes = readFileSync(fixturePath);
+  const result = await client.readTargetSnapshotRanges(async (range, size) => ({
+    size,
+    head: Buffer.from(await range(0, 4)),
+    middle: Buffer.from(await range(2, 3)),
+    pastEnd: Buffer.from(await range(bytes.length - 2, 16)),
+  }));
+  expect(result).toEqual({
+    ok: true,
+    value: {
+      size: bytes.length,
+      head: bytes.subarray(0, 4),
+      middle: bytes.subarray(2, 5),
+      pastEnd: bytes.subarray(bytes.length - 2),
+    },
+  });
+});
+
 it("reports snapshot descriptor cleanup immediately and resolves its exact error on retry", async () => {
   const client = clientFor(new FixtureLauncher());
   const started = await client.start();

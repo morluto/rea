@@ -255,7 +255,7 @@ const MIN_PACKAGE_OUTPUT_BYTES = JSON.stringify({
   source: "a",
   kind: null,
   dependencies: [],
-  features: null,
+  features: [],
   root: true,
 }).length;
 const MIN_EDGE_OUTPUT_BYTES = JSON.stringify({
@@ -290,32 +290,26 @@ const admitGraphExpansion = (value: unknown, maxOutputBytes: number): void => {
   admit();
   for (const pkg of packages) {
     // Shape and index validity remain owned by documentSchema/rootIndex.
-    if (
-      typeof pkg === "object" &&
-      pkg !== null &&
-      "features" in pkg &&
-      Array.isArray(pkg.features) &&
-      pkg.features.every((feature) => typeof feature === "string")
+    if (typeof pkg !== "object" || pkg === null) continue;
+    // An explicit empty array is the smallest feature record. Omission
+    // becomes null; valid explicit arrays only add to the initial bound.
+    const features = "features" in pkg ? pkg.features : undefined;
+    if (features === undefined) {
+      minimumBytes += 2; // "null" is two bytes longer than "[]".
+    } else if (
+      Array.isArray(features) &&
+      features.every((feature) => typeof feature === "string")
     ) {
       const featureBudget =
-        maxOutputBytes - minimumBytes - currentEdgeBytes() + 4;
-      const featureBytes = jsonValueByteLength(
-        pkg.features as string[],
-        featureBudget,
-      );
-      minimumBytes += featureBytes - 4;
-      admit();
+        maxOutputBytes - minimumBytes - currentEdgeBytes() + 2;
+      minimumBytes +=
+        jsonValueByteLength(features as string[], featureBudget) - 2;
     }
-    if (
-      typeof pkg !== "object" ||
-      pkg === null ||
-      !("dependencies" in pkg) ||
-      !Array.isArray(pkg.dependencies)
-    )
-      continue;
-    const count = pkg.dependencies.length;
-    edges += count;
-    minimumBytes += Math.max(0, count * 2 - 1);
+    if ("dependencies" in pkg && Array.isArray(pkg.dependencies)) {
+      const count = pkg.dependencies.length;
+      edges += count;
+      minimumBytes += Math.max(0, count * 2 - 1);
+    }
     admit();
   }
 };

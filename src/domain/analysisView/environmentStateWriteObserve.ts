@@ -246,16 +246,15 @@ export const laterObservation = (
     ) => boolean;
   },
 ): Observed | undefined => {
-  const source = search.records[search.from]!;
+  const { records } = search;
+  const source = records[search.from]!;
   if (search.overlapsWrite(source, source.ordinal)) return undefined;
-  for (const record of search.records.slice(search.from + 1)) {
+  for (let index = search.from + 1; index < records.length; index++) {
+    const record = records[index]!;
     if (target.isWrite(record)) return undefined;
     // The same overlap the check path ignores: the write was still running when this read began.
     if (
-      !search.chronology.completedBefore(
-        search.records[search.from]!,
-        record,
-      ) ||
+      !search.chronology.completedBefore(source, record) ||
       search.overlapsWrite(record)
     )
       continue;

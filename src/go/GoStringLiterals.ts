@@ -138,11 +138,6 @@ export const recoverGoStringLiterals = (
       const target = targets[targetIndex] as FileMapping;
       if (ptr + rawLen > target.address + BigInt(target.size)) continue;
 
-      if (rawLen > BigInt(budgets.max_string_literal_bytes)) {
-        limitsReached.add("max_string_literal_bytes");
-        budgetTruncated = true;
-        continue;
-      }
       const byteLen = Number(rawLen);
       const sliceOffset = target.offset + Number(ptr - target.address);
       if (
@@ -150,6 +145,12 @@ export const recoverGoStringLiterals = (
         sliceOffset < headerOffset + wordBytes * 2
       )
         continue;
+
+      if (byteLen > budgets.max_string_literal_bytes) {
+        limitsReached.add("max_string_literal_bytes");
+        budgetTruncated = true;
+        continue;
+      }
 
       const key = `${String(sliceOffset)}:${String(byteLen)}`;
       const existing = accepted.get(key);
@@ -161,11 +162,6 @@ export const recoverGoStringLiterals = (
       }
       if (rejected.has(key)) continue;
 
-      if (candidates.length >= budgets.max_string_candidates) {
-        limitsReached.add("max_string_candidates");
-        budgetTruncated = true;
-        break outer;
-      }
       if (remainingBudget < byteLen) {
         limitsReached.add("max_string_header_scan_bytes");
         budgetTruncated = true;
@@ -178,6 +174,11 @@ export const recoverGoStringLiterals = (
         if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
         rejected.add(key);
         continue;
+      }
+      if (candidates.length >= budgets.max_string_candidates) {
+        limitsReached.add("max_string_candidates");
+        budgetTruncated = true;
+        break outer;
       }
       const entry: CandidateLiteral = {
         offset: sliceOffset,

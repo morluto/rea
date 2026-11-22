@@ -18,6 +18,7 @@ import {
   type StableArtifactSnapshot,
   type StableArtifactStream,
   artifactFilePrimaryFacts,
+  artifactFileCompletion,
   type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
@@ -27,6 +28,7 @@ import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   MAX_ELF_DEBUG_CANDIDATE_BYTES,
   MAX_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   MAX_INSPECT_ELF_DEBUG_LINK_FILE_BYTES,
@@ -199,7 +201,7 @@ const unverifiedCandidateObservation = (
   },
   limitations: [
     ...report.limitations,
-    "The candidate read completed. Its ELF comparison did not complete.",
+    ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
   ],
 });
 
@@ -226,7 +228,9 @@ const candidatePhaseObservation = (
       ],
     };
   const file = candidateFile(phase, completed, crc32);
-  // A stream whose close failed can still supply a complete comparison.
+  if (artifactFileCompletion(cause)?.cancellation !== undefined)
+    return unverifiedCandidateObservation(phase.report, file);
+  // A close failure alone can retain a complete comparison.
   try {
     return verifyElfDebugCandidate(phase.report, file, input);
   } catch {

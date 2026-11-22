@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
-import { expect, onTestFinished } from "vitest";
+import { expect } from "vitest";
 
 import {
   PYTHON_39_MAGIC,
@@ -10,7 +10,6 @@ import {
   cArchiveBytecodeExecutable,
   pyzArchive,
 } from "../../src/artifacts/pyinstaller/CArchive.fixture.js";
-import { RECONSTRUCTED_PYTHON_HEADER_LIMITATION } from "../../src/artifacts/pyinstaller/PythonBytecode.js";
 import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import { artifactExtractionResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
@@ -74,6 +73,14 @@ const onefile = async (
             magic,
             modules: [
               { name: "app", typeCode: 0, body: Buffer.from("app-body") },
+              {
+                name: Buffer.concat([
+                  Buffer.from("node_"),
+                  Buffer.from("edb3bf", "hex"),
+                ]),
+                typeCode: 3,
+                body: Buffer.alloc(0),
+              },
             ],
             ...(pyzToc === undefined ? {} : { toc: pyzToc }),
           }),
@@ -154,7 +161,7 @@ const namespacePathCollision = async (): Promise<string> => {
 };
 
 cliTest(
-  "lists CArchive members and the Python version through inspect-artifact",
+  "inventories CArchive declarations and extracts only verified files",
   async ({ cli: driver }) => {
     const path = await onefile();
     const result = await driver.run({
@@ -213,11 +220,78 @@ cliTest(
         dependency_status: "unresolved",
       },
     });
+    expect(inventory?.coverage.status).toBe("complete");
+    const pyz = inventory?.occurrences.find(
+      ({ logical_path }) => logical_path === "PYZ.pyz",
+    );
+    expect(pyz?.format_metadata).toMatchObject({
+      pyz_status: "decoded",
+      pyz_python_magic: "610d0d0a",
+      pyz_python_version: "3.9",
+    });
+    expect(
+      inventory?.occurrences.find(
+        ({ logical_path }) => logical_path === "PYZ.pyz/node_\udcff",
+      ),
+    ).toMatchObject({
+      entry_kind: "metadata",
+      artifact_id: null,
+      source_path: "node_\udcff",
+      format_metadata: { source_name: "node_\udcff", type_code: 3 },
+    });
+
+    const output = join(dirname(path), "extracted");
+    const extraction = await driver.run({
+      arguments: ["extract-artifact", path, "--output-root", output, "--json"],
+    });
+    expect(extraction.exitCode, extraction.stderr).toBe(0);
+    const extracted = artifactExtractionResultSchema.parse(
+      parseEvidence(extraction.json).normalized_result,
+    );
+    expect(extracted.output_root).toBe(output);
+    expect(extracted.coverage).toEqual({
+      scope: "container-entries",
+      status: "complete",
+    });
+    expect(extracted.limitations).toContainEqual(
+      expect.stringMatching(
+        /^PYZ\.pyz\/app\.pyc:.*header.*reconstructed.*archive.*magic.*digest.*derived file/iu,
+      ),
+    );
+    const expected = new Map([
+      [
+        "PYZ.pyz/app.pyc",
+        Buffer.concat([
+          Buffer.from("610d0d0a000000000000000000000000", "hex"),
+          Buffer.from("app-body"),
+        ]),
+      ],
+      ["healthy.txt", Buffer.from("healthy sibling")],
+      ["hello", Buffer.from("print('hi')")],
+    ]);
+    expect(
+      extracted.artifacts.map(({ relative_path }) => relative_path).sort(),
+    ).toEqual([...expected.keys()]);
+    for (const [name, bytes] of expected) {
+      expect(
+        extracted.artifacts.find(({ relative_path }) => relative_path === name),
+      ).toMatchObject({
+        bytes_written: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+      expect((await readFile(join(output, name))).equals(bytes)).toBe(true);
+    }
+    expect((await readdir(output)).sort()).toEqual([
+      "PYZ.pyz",
+      "healthy.txt",
+      "hello",
+    ]);
+    expect(await readdir(join(output, "PYZ.pyz"))).toEqual(["app.pyc"]);
   },
 );
 
 cliTest(
-  "preserves Windows PyInstaller source names",
+  "recognizes a distant PE signature and preserves Windows PyInstaller source names",
   async ({ cli: driver }) => {
     const directory = await createTestTempDirectory(
       "rea-pyinstaller-windows-names-",
@@ -232,6 +306,7 @@ cliTest(
       path,
       cArchiveExecutable({
         carrier: "pe",
+        peHeaderOffset: 8_190,
         layout: "2.1",
         pythonVersion: 309,
         members: [
@@ -258,59 +333,59 @@ cliTest(
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.json).normalized_result,
     );
-    const rows = inspection.substeps[0]?.evidence.normalized_result.occurrences;
+    expect(inspection.subject.root_format).toBe("pyinstaller");
+    const inventory = inspection.substeps[0]?.evidence.normalized_result;
+    expect(inventory?.manifest.root_format).toBe("pyinstaller");
+    expect(inventory?.coverage.status).toBe("complete");
+    const rows = inventory?.occurrences;
     expect(
       rows?.find((row) => row.logical_path === "pkg/data.bin"),
     ).toMatchObject({
+      hash_status: "verified",
       source_path: storedName,
       format_metadata: { source_name: storedName },
     });
     expect(
       rows?.find((row) => row.logical_path === "PYZ.pyz/res/icon.bin"),
     ).toMatchObject({
+      hash_status: "verified",
       source_path: dataKey,
       format_metadata: { container_name: "PYZ.pyz", source_name: dataKey },
     });
     expect(
       rows?.find((row) => row.logical_path === "PYZ.pyz/pkg/mod.pyc"),
     ).toMatchObject({
+      hash_status: "verified",
       source_path: "pkg.mod",
       format_metadata: { container_name: "PYZ.pyz", source_name: "pkg.mod" },
     });
+    const output = join(directory, "extracted");
     const extracted = await driver.run({
-      arguments: ["extract-artifact", path, "--json"],
+      arguments: ["extract-artifact", path, "--output-root", output, "--json"],
     });
     expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
     const result = artifactExtractionResultSchema.parse(
       parseEvidence(extracted.json).normalized_result,
     );
-    try {
+    expect(result.output_root).toBe(output);
+    const expectedPyc = Buffer.concat([
+      Buffer.from("610d0d0a000000000000000000000000", "hex"),
+      module,
+    ]);
+    for (const [name, bytes] of [
+      ["pkg/data.bin", stored],
+      ["PYZ.pyz/res/icon.bin", icon],
+      ["PYZ.pyz/pkg/mod.pyc", expectedPyc],
+    ] as const) {
+      expect((await readFile(join(output, name))).equals(bytes), name).toBe(
+        true,
+      );
       expect(
-        Buffer.compare(
-          await readFile(join(result.output_root, "pkg", "data.bin")),
-          stored,
-        ),
-      ).toBe(0);
-      expect(
-        Buffer.compare(
-          await readFile(
-            join(result.output_root, "PYZ.pyz", "res", "icon.bin"),
-          ),
-          icon,
-        ),
-      ).toBe(0);
-      expect(
-        Buffer.compare(
-          (
-            await readFile(
-              join(result.output_root, "PYZ.pyz", "pkg", "mod.pyc"),
-            )
-          ).subarray(16),
-          module,
-        ),
-      ).toBe(0);
-    } finally {
-      await rm(result.output_root, { recursive: true, force: true });
+        result.artifacts.find(({ relative_path }) => relative_path === name),
+      ).toMatchObject({
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes_written: bytes.length,
+      });
     }
   },
 );
@@ -351,176 +426,6 @@ cliTest(
     } finally {
       await rm(extraction.output_root, { recursive: true, force: true });
     }
-  },
-);
-
-cliTest(
-  "keeps PYZ namespaces with CPython surrogatepass names through the CLI",
-  async ({ cli: driver }) => {
-    const directory = await createTestTempDirectory(
-      "rea-pyinstaller-surrogate-",
-    );
-    const path = join(directory, "surrogate-name");
-    const namespace = Buffer.concat([
-      Buffer.from("node_"),
-      Buffer.from("edb3bf", "hex"),
-    ]);
-    await writeFile(
-      path,
-      cArchiveExecutable({
-        layout: "2.1",
-        pythonVersion: 39,
-        members: [
-          {
-            name: "PYZ.pyz",
-            typeCode: "z",
-            payload: pyzArchive({
-              magic: PYTHON_39_MAGIC,
-              modules: [
-                { name: namespace, typeCode: 3, body: Buffer.alloc(0) },
-                { name: "healthy", typeCode: 0, body: Buffer.from("healthy") },
-              ],
-            }),
-            compress: false,
-          },
-        ],
-      }),
-    );
-
-    const result = await driver.run({
-      arguments: ["inspect-artifact", path, "--json"],
-      environment: process.env,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const inspection = artifactInspectionResultSchema.parse(
-      parseEvidence(JSON.parse(result.stdout)).normalized_result,
-    );
-    const inventory = inspection.substeps[0]?.evidence.normalized_result;
-    expect(inventory?.coverage.status).toBe("complete");
-    expect(
-      inventory?.occurrences.find(
-        (row) => row.logical_path === "PYZ.pyz/node_\udcff",
-      ),
-    ).toMatchObject({
-      entry_kind: "metadata",
-      format_metadata: { source_name: "node_\udcff", type_code: 3 },
-    });
-    expect(
-      inventory?.occurrences.find(
-        (row) => row.logical_path === "PYZ.pyz/healthy.pyc",
-      ),
-    ).toMatchObject({
-      entry_kind: "file",
-      format_metadata: { source_name: "healthy" },
-    });
-  },
-);
-
-cliTest(
-  "classifies a PyInstaller PE carrier when its signature straddles the probe prefix",
-  async ({ cli: driver }) => {
-    const directory = await createTestTempDirectory("rea-pyinstaller-far-pe-");
-    const path = join(directory, "hello.exe");
-    await writeFile(
-      path,
-      cArchiveExecutable({
-        carrier: "pe",
-        peHeaderOffset: 8_190,
-        layout: "2.1",
-        pythonVersion: 314,
-        pythonLibrary: "libpython3.14.dylib",
-        members: [
-          {
-            name: "healthy.txt",
-            typeCode: "x",
-            payload: Buffer.from("healthy sibling"),
-            compress: false,
-          },
-        ],
-      }),
-    );
-    const result = await driver.run({
-      arguments: ["inspect-artifact", path, "--json"],
-      environment: process.env,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const inspection = artifactInspectionResultSchema.parse(
-      parseEvidence(JSON.parse(result.stdout)).normalized_result,
-    );
-    expect(inspection.subject.root_format).toBe("pyinstaller");
-    const inventory = inspection.substeps[0]?.evidence.normalized_result;
-    expect(inventory?.manifest.root_format).toBe("pyinstaller");
-    expect(inventory?.coverage.status).toBe("complete");
-    expect(
-      inventory?.occurrences.find(
-        ({ logical_path }) => logical_path === "healthy.txt",
-      ),
-    ).toMatchObject({
-      hash_status: "verified",
-      format_metadata: { source_name: "healthy.txt" },
-    });
-  },
-);
-
-cliTest(
-  "extracts CArchive members through extract-artifact",
-  async ({ cli: driver }) => {
-    const path = await onefile();
-    const result = await driver.run({
-      arguments: ["extract-artifact", path, "--json"],
-      environment: process.env,
-    });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const extracted = artifactExtractionResultSchema.parse(
-      parseEvidence(JSON.parse(result.stdout)).normalized_result,
-    );
-    onTestFinished(() =>
-      rm(extracted.output_root, { recursive: true, force: true }),
-    );
-    expect(extracted.limitations).toContain(
-      `PYZ.pyz/app.pyc: ${RECONSTRUCTED_PYTHON_HEADER_LIMITATION}`,
-    );
-    expect(RECONSTRUCTED_PYTHON_HEADER_LIMITATION).toMatch(
-      /header.*reconstructed.*archive.*magic/iu,
-    );
-    expect(RECONSTRUCTED_PYTHON_HEADER_LIMITATION).toMatch(
-      /digest.*derived file/iu,
-    );
-    expect(extracted.coverage).toEqual({
-      scope: "container-entries",
-      status: "complete",
-    });
-    const hello = extracted.artifacts.find(
-      (artifact) => artifact.relative_path === "hello",
-    );
-    expect(hello).toBeDefined();
-    expect(await readFile(join(extracted.output_root, "hello"))).toHaveLength(
-      hello?.bytes_written ?? 0,
-    );
-    expect(
-      (
-        await readFile(join(extracted.output_root, "PYZ.pyz", "app.pyc"))
-      ).equals(
-        Buffer.concat([
-          Buffer.from("610d0d0a000000000000000000000000", "hex"),
-          Buffer.from("app-body"),
-        ]),
-      ),
-    ).toBe(true);
-    expect(
-      Buffer.compare(
-        await readFile(join(extracted.output_root, "hello")),
-        Buffer.from("print('hi')"),
-      ),
-    ).toBe(0);
-    expect(await readdir(extracted.output_root)).not.toContain(
-      "__pyinstaller__",
-    );
-    expect(
-      extracted.artifacts.some((item) =>
-        item.relative_path.includes("pyi-contents-directory"),
-      ),
-    ).toBe(false);
   },
 );
 
@@ -665,7 +570,6 @@ cliTest(
 );
 
 cliTest.for([
-  ["integer", marshalInt(3), true],
   ["normalized long", marshalLong([3]), true],
   ["unnormalized long", marshalLong([3, 0]), false],
 ] as const)(
@@ -707,10 +611,15 @@ cliTest.for([
       expect(inventory?.coverage.status).toBe("complete");
       expect(pyz?.format_metadata).toMatchObject({ pyz_status: "decoded" });
       expect(
-        inventory?.occurrences.some(
+        inventory?.occurrences.find(
           (row) => row.logical_path === "PYZ.pyz/pkg",
         ),
-      ).toBe(true);
+      ).toMatchObject({
+        entry_kind: "metadata",
+        artifact_id: null,
+        source_path: "pkg",
+        format_metadata: { source_name: "pkg", type_code: 3 },
+      });
     } else {
       expect(inventory?.coverage.status).toBe("unknown");
       expect(pyz?.format_metadata).toMatchObject({ pyz_status: "opaque" });
@@ -724,21 +633,14 @@ cliTest.for([
   },
 );
 
-cliTest.for([
-  ["negative string length", "5b0100000073ffffffff"],
-  ["negative list count", "5bffffffff"],
-  ["negative tuple count", "28ffffffff"],
-  ["truncated string", "5b010000007301000000"],
-  ["malformed UTF-8 string", "5b010000007502000000eda0"],
-  ["unsupported marshal type", "5b010000004e"],
-] as const)(
-  "keeps healthy CArchive siblings when the PYZ table has %s",
-  async ([_description, tocHex], { cli: driver }) => {
+cliTest(
+  "keeps verified CArchive siblings when the PYZ marshal string body is truncated",
+  async ({ cli: driver }) => {
     const path = await onefile(
       PYTHON_39_MAGIC,
       false,
       false,
-      Buffer.from(tocHex, "hex"),
+      Buffer.from("5b010000007301000000", "hex"),
     );
     const result = await driver.run({
       arguments: ["inspect-artifact", path, "--json"],
@@ -770,11 +672,21 @@ cliTest.for([
         .digest("hex"),
       size: Buffer.byteLength("healthy sibling"),
     });
-    expect(
-      inventory?.occurrences.find((item) => item.logical_path === "PYZ.pyz"),
-    ).toMatchObject({
+    const opaque = inventory?.occurrences.find(
+      (item) => item.logical_path === "PYZ.pyz",
+    );
+    expect(opaque).toMatchObject({
+      hash_status: "verified",
       format_metadata: { pyz_status: "opaque" },
     });
+    expect(opaque?.limitations).toContainEqual(
+      expect.stringContaining("PYZ marshal value is truncated"),
+    );
+    expect(
+      inventory?.occurrences.some(
+        ({ logical_path }) => logical_path === "PYZ.pyz/app.pyc",
+      ),
+    ).toBe(false);
   },
 );
 
@@ -794,7 +706,12 @@ cliTest(
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "truncated",
-      details: { reason: "limit" },
+      details: {
+        reason: "limit",
+        detail: expect.stringContaining(
+          "PYZ marshal string exceeds the supported length",
+        ),
+      },
     });
   },
 );

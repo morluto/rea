@@ -199,7 +199,6 @@ export const parseGhidraSessionInfo = (
         expected.expectedCompilerSpecId) ||
     (expected.expectedImageBase !== undefined &&
       parsed.data.target.image_base !== expected.expectedImageBase) ||
-    new Set(parsed.data.capabilities).size !== expectedCapabilities.length ||
     expectedCapabilities.some(
       (capability) => !parsed.data.capabilities.includes(capability),
     ) ||

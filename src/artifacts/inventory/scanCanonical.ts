@@ -284,6 +284,7 @@ const scanCanonical = async (
       rootSource !== undefined &&
       (isZipPackageFormat(rootFormat) ||
         rootFormat === "ines" ||
+        rootFormat === "asar" ||
         (readerAdmission !== undefined && "kind" in readerAdmission))
         ? "transfer"
         : "release",
