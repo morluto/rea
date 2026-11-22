@@ -31,8 +31,11 @@ export type PositionalArtifactEntry = ArtifactEntry & {
 };
 
 /** The entries one preparation established and the coverage to report. */
-export interface PositionalArtifactEntries<Metadata = never> {
-  readonly entries: readonly PositionalArtifactEntry[];
+export interface PositionalArtifactEntries<
+  Metadata = never,
+  Entry extends ArtifactEntry = PositionalArtifactEntry,
+> {
+  readonly entries: readonly Entry[];
   /** The coverage the preparation established, including complete coverage. */
   readonly coverage: ArtifactReaderTraversal;
   readonly formatMetadata?: Metadata;
@@ -46,16 +49,18 @@ export interface PositionalArtifactEntries<Metadata = never> {
  */
 export abstract class PositionalArtifactReader<
   Metadata extends ArtifactFormatMetadata = never,
+  Entry extends ArtifactEntry = PositionalArtifactEntry,
 > implements ArtifactReader {
   abstract readonly format: ArtifactReader["format"];
   readonly #scope = new ArtifactResourceScope();
   readonly #lifecycle: ArtifactStreamLifecycle;
   readonly #label: string;
   readonly #source: ArtifactFileSource;
+  readonly #verifySelectedPath: boolean;
   readonly #preparation = new ArtifactPreparation();
   #prepared:
     | {
-        readonly entries: ReadonlyMap<string, PositionalArtifactEntry>;
+        readonly entries: ReadonlyMap<string, Entry>;
         readonly coverage: ArtifactReaderTraversal;
         readonly formatMetadata: Metadata | undefined;
       }
@@ -65,17 +70,30 @@ export abstract class PositionalArtifactReader<
     path: string,
     label: string,
     admitted?: StableRegularFileDescriptor,
-    sourceLabel = label,
+    sourceOptions:
+      | string
+      | {
+          readonly sourceLabel?: string;
+          readonly verifySelectedPath?: boolean;
+        } = label,
   ) {
     this.#label = label;
     this.#lifecycle = new ArtifactStreamLifecycle(label);
+    const sourceLabel =
+      typeof sourceOptions === "string"
+        ? sourceOptions
+        : (sourceOptions.sourceLabel ?? label);
+    this.#verifySelectedPath =
+      typeof sourceOptions === "string"
+        ? false
+        : (sourceOptions.verifySelectedPath ?? false);
     this.#source = new ArtifactFileSource(path, sourceLabel, admitted);
   }
 
   /** Read the carrier once and describe its entries. */
   protected abstract prepareEntries(
     signal?: AbortSignal,
-  ): Promise<PositionalArtifactEntries<Metadata>>;
+  ): Promise<PositionalArtifactEntries<Metadata, Entry>>;
 
   /** Metadata from the same validated preparation that established entries and coverage. */
   protected get preparedFormatMetadata(): Metadata | undefined {
@@ -88,7 +106,9 @@ export abstract class PositionalArtifactReader<
   ): Promise<void> {
     await this.#scope.run(async () => {
       this.assertOpen(signal);
-      await this.#source.bindSha256(expectedSha256, signal);
+      if (this.#verifySelectedPath)
+        await this.#source.bindSelectedPathSha256(expectedSha256, signal);
+      else await this.#source.bindSha256(expectedSha256, signal);
     });
   }
 
@@ -100,7 +120,7 @@ export abstract class PositionalArtifactReader<
       this.assertOpen(signal);
       // The first preparation validates before publishing; cached traversals
       // still need their own freshness admission.
-      if (this.#prepared !== undefined) await this.#source.read(signal);
+      if (this.#prepared !== undefined) await this.verifyCarrier(signal);
       await this.#preparation.run(
         signal,
         () => this.#prepare(signal),
@@ -141,8 +161,10 @@ export abstract class PositionalArtifactReader<
           "unavailable",
           `Encrypted ${this.#label} member is unsupported: ${stored.path}`,
         );
-      const { handle } = await this.#source.read(signal);
+      const { handle } = await this.verifyCarrier(signal);
       this.assertOpen(signal);
+      if (stored.byteOffset === null || stored.declaredSize === null)
+        throw this.noPhysicalRange(stored);
       const lifecycle = this.#lifecycle.member(signal);
       const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
@@ -181,7 +203,9 @@ export abstract class PositionalArtifactReader<
   protected verifyCarrier(
     signal?: AbortSignal,
   ): Promise<StableRegularFileDescriptor> {
-    return this.#source.read(signal);
+    return this.#verifySelectedPath
+      ? this.#source.readSelectedPath(signal)
+      : this.#source.read(signal);
   }
 
   /** Refuse work once the caller cancels or close begins. */
@@ -199,7 +223,7 @@ export abstract class PositionalArtifactReader<
     const entries = new Map(
       prepared.entries.map((entry) => [entry.adapterKey, entry] as const),
     );
-    await this.#source.read(signal);
+    await this.verifyCarrier(signal);
     this.assertOpen(signal);
     this.#prepared = {
       entries,
@@ -208,10 +232,16 @@ export abstract class PositionalArtifactReader<
     };
   }
 
+  /** Format-specific failure when an entry without a physical byte range is opened. */
+  protected noPhysicalRange(entry: Entry): ArtifactReaderFailure {
+    return new ArtifactReaderFailure(
+      "format",
+      `${this.#label} member has no physical byte range: ${entry.path}`,
+    );
+  }
+
   /** Format-specific failure when a member stream ends before its declared byte count. */
-  protected entryEndedEarly(
-    entry: PositionalArtifactEntry,
-  ): ArtifactReaderFailure {
+  protected entryEndedEarly(entry: Entry): ArtifactReaderFailure {
     return new ArtifactReaderFailure(
       "integrity",
       `${this.#label} entry ended early: ${entry.path}`,
@@ -219,15 +249,12 @@ export abstract class PositionalArtifactReader<
     );
   }
 
-  #entryStream(
-    entry: PositionalArtifactEntry,
-    lifecycle: ArtifactMemberLifecycle,
-  ): Transform {
+  #entryStream(entry: Entry, lifecycle: ArtifactMemberLifecycle): Transform {
     const label = this.#label;
     let bytes = 0;
     const check = async (): Promise<void> => {
       if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
-      await lifecycle.verify((signal) => this.#source.read(signal));
+      await lifecycle.verify((signal) => this.verifyCarrier(signal));
     };
     return new Transform({
       transform(chunk: Buffer, _encoding, callback) {
