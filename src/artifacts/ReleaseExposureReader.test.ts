@@ -4299,42 +4299,53 @@ describe("ReleaseExposureReader member identity", () => {
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
   });
 
-  it.each([
-    ["app.js", "debug.json", { embedded: 1, skipped: 0 }],
-    ["z.js", "a.json", { embedded: 0, skipped: 1 }],
-  ])(
-    "follows %s through a file: URL to the inventoried member %s",
-    async (script, map, expected) => {
+  it.for([
+    ["file URL", "app.js", "debug.json", true],
+    ["file URL", "z.js", "a.json", false],
+    ["Windows absolute path", "app.js", "debug.json", true],
+  ] as const)(
+    "resolves a %s from %s to inventoried %s",
+    async ([spelling, script, map, parsed], { skip }) => {
+      const native = spelling === "Windows absolute path";
+      if (native && process.platform !== "win32")
+        skip("Windows path semantics");
       const root = await createTestTempDirectory("rea-release-file-url-map-");
-      const url = pathToFileURL(join(root, map)).href;
+      const target = join(root, map);
+      const url = pathToFileURL(target);
+      const reference = native ? url.pathname.slice(1) : url.href;
       await writeFile(
         join(root, script),
-        `const value = 1;\n//# sourceMappingURL=${url}\n`,
+        "//# sourceMappingURL=" + reference + "\n",
       );
-      await writeFile(join(root, map), embeddedSourceMap());
-      const scanned = await inspect(root);
-      expect(scanned.source_maps).toMatchObject(expected);
+      await writeFile(target, embeddedSourceMap());
+      expect((await inspect(root)).source_maps).toMatchObject(
+        parsed
+          ? { embedded: 1, embedded_paths: [target], skipped: 0 }
+          : { embedded: 0, skipped: 1 },
+      );
     },
   );
 
-  it.each(["debug.json", "debug.js.map"])(
-    "counts a file: URL to %s outside the installation as skipped",
-    async (map) => {
-      const root = await createTestTempDirectory("rea-release-file-url-gone-");
-      const outside = await createTestTempDirectory(
-        "rea-release-file-url-out-",
-      );
-      const url = pathToFileURL(join(outside, map)).href;
-      await writeFile(
-        join(root, "app.js"),
-        `const value = 1;\n//# sourceMappingURL=${url}\n`,
-      );
-      const scanned = await inspect(root);
-      expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
-    },
-  );
+  it("keeps a shipped file: map outside the selected directory unexamined", async () => {
+    const [root, outside] = await Promise.all([
+      createTestTempDirectory("rea-release-file-url-gone-"),
+      createTestTempDirectory("rea-release-file-url-out-"),
+    ]);
+    const map = join(outside, "debug.js.map");
+    await writeFile(map, embeddedSourceMap());
+    await writeFile(
+      join(root, "app.js"),
+      "const value = 1;\n//# sourceMappingURL=" +
+        pathToFileURL(map).href +
+        "\n",
+    );
+    expect((await inspect(root)).source_maps).toMatchObject({
+      embedded: 0,
+      skipped: 1,
+    });
+  });
 
-  it("counts a malformed file: URL as skipped and ignores a remote map", async () => {
+  it("skips a malformed file: URL and ignores scheme-qualified remote maps", async () => {
     const root = await createTestTempDirectory("rea-release-file-url-bad-");
     await writeFile(
       join(root, "bad.js"),
@@ -4344,6 +4355,12 @@ describe("ReleaseExposureReader member identity", () => {
       join(root, "remote.js"),
       "const value = 2;\n//# sourceMappingURL=https://example.com/debug.json\n",
     );
+    await writeFile(
+      join(root, "short.js"),
+      "//# sourceMappingURL=x:decoy.data\n",
+    );
+    if (process.platform !== "win32")
+      await writeFile(join(root, "x:decoy.data"), embeddedSourceMap());
     const scanned = await inspect(root);
     expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
   });
