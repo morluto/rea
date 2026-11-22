@@ -205,15 +205,29 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
   }
 });
 
-it.each(["\\kilo.json", "/kilo.json"])(
-  "refuses a drive-less Windows KILO_CONFIG %s that follows Kilo's current drive",
-  (value) => {
-    const row = supportedClients("C:\\Users\\x", "win32", {
-      KILO_CONFIG: value,
-    }).find(({ name }) => name === "kilo");
-    expect(row?.configPathError).toContain("has no drive");
-  },
-);
+it("keeps incomplete Windows paths unresolved for Kilo's file and roots", () => {
+  const path = "\\\\kilo-config";
+  const home = "C:\\Users\\x";
+  for (const [label, selectedHome, env] of [
+    ["KILO_CONFIG", home, { KILO_CONFIG: path }],
+    ["XDG_CONFIG_HOME", home, { XDG_CONFIG_HOME: path }],
+    ["home", path, {}],
+    [
+      "home below an explicit XDG root",
+      path,
+      { XDG_CONFIG_HOME: "D:\\config" },
+    ],
+  ] as const) {
+    const row = supportedClients(selectedHome, "win32", env).find(
+      ({ name }) => name === "kilo",
+    );
+    expect(row, label).toMatchObject({
+      configPath: path,
+      configPathError: expect.stringContaining("has no drive"),
+    });
+    expect(row, label).not.toHaveProperty("markerPath");
+  }
+});
 
 it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
   const home = await createTestTempDirectory("rea-kilo-lifecycle-");

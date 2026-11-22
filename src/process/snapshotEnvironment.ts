@@ -14,6 +14,17 @@ export const mergeEnvironmentOverrides = <T>(
   return Object.freeze(Object.fromEntries(selected.values()));
 };
 
+/** Drop settings a downstream client should inherit from its own defaults. */
+export const omitEnvironmentSettings = <T>(
+  environment: Readonly<Record<string, T>>,
+  settings: ReadonlySet<string> | undefined,
+): Readonly<Record<string, T>> =>
+  settings === undefined || settings.size === 0
+    ? environment
+    : Object.fromEntries(
+        Object.entries(environment).filter(([name]) => !settings.has(name)),
+      );
+
 /** Snapshot selected variables while preserving platform and caller precedence. */
 export const snapshotEnvironment = <T extends string | undefined>(
   environment: Readonly<Record<string, T>>,

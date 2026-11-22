@@ -708,35 +708,67 @@ it("redacts actual authentication fields and explicit binary values while preser
   });
 });
 
-it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
+it("rejects absolute HAR request spellings that would change when parsed", () => {
   const fixture = historicalHar();
-  const first = fixture.log.entries[0];
-  if (first === undefined) throw new Error("fixture missing");
-  const log = {
-    ...fixture.log,
-    creator: { name: "mitmproxy", version: "12.2.3" },
-    entries: [
-      {
-        ...first,
-        request: {
-          ...first.request,
-          postData: { mimeType: "text/plain", text: null },
-        },
-      },
-    ],
-  };
-  expect(
-    decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
-  ).toMatchObject({ request: { postData: { text: null } } });
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { ...log, creator: { name: "other", version: "1" } },
+  const entry = fixture.log.entries[0]!;
+  for (const url of [
+    "http:\\\\user:pass@host.test/",
+    "https://host.test/a\tb",
+    "https://host.test/a b",
+  ]) {
+    expect(
+      () =>
+        decodeHarCapture(
+          JSON.stringify({
+            log: {
+              ...fixture.log,
+              entries: [{ ...entry, request: { ...entry.request, url } }],
+            },
+          }),
+          [],
+        ),
+      url,
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        pointer: "/log/entries/0/request/url",
       }),
-      [],
-    ),
-  ).toThrow("HAR schema validation failed");
+    );
+  }
 });
+
+it.each(["12.2.3", "12.3.1"])(
+  "preserves observed SaveHar null post-data for mitmproxy %s without broadening arbitrary HAR producers",
+  (version) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("fixture missing");
+    const log = {
+      ...fixture.log,
+      creator: { name: "mitmproxy", version },
+      entries: [
+        {
+          ...first,
+          request: {
+            ...first.request,
+            postData: { mimeType: "text/plain", text: null },
+          },
+        },
+      ],
+    };
+    expect(
+      decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
+    ).toMatchObject({ request: { postData: { text: null } } });
+    expect(() =>
+      decodeHarCapture(
+        JSON.stringify({
+          log: { ...log, creator: { name: "other", version: "1" } },
+        }),
+        [],
+      ),
+    ).toThrow("HAR schema validation failed");
+  },
+);
 
 it.each([
   {

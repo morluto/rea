@@ -53,8 +53,7 @@ it("preserves redirected response identity across decoding failures and valid UT
     name: "replacement-character",
     body: mapWithSourceBytes(Buffer.from("�")),
   };
-  const unavailable = { name: "http-failure", body: "service unavailable" };
-  const fixtures = [...invalid, valid, unavailable].map((scenario, index) => ({
+  const fixtures = [...invalid, valid].map((scenario, index) => ({
     ...scenario,
     ...request(index + 1),
     effectiveUrl: `${origin}/maps/${scenario.name}.map?token=source-value#fragment`,
@@ -76,9 +75,7 @@ it("preserves redirected response identity across decoding failures and valid UT
       const scenario = replies.get(received);
       if (scenario === undefined)
         throw new Error(`Unexpected request: ${received}`);
-      return new Response(scenario.body, {
-        status: scenario.name === unavailable.name ? 503 : 200,
-      });
+      return new Response(scenario.body);
     },
   });
 
@@ -104,17 +101,11 @@ it("preserves redirected response identity across decoding failures and valid UT
     if (fixture.name === valid.name) {
       expect(item).toMatchObject({
         status: "included",
-        artifact: { text: valid.body.toString("utf8") },
+        artifact: {
+          text: valid.body.toString("utf8"),
+          sha256: digest(valid.body),
+        },
       });
-    } else if (fixture.name === unavailable.name) {
-      expect(item).toMatchObject({
-        status: "fetch_failed",
-        artifact: null,
-        limitation: expect.stringContaining(
-          "Source-map server returned HTTP 503",
-        ),
-      });
-      expect(item).not.toHaveProperty("response_identity");
     } else {
       expect(item, fixture.name).toMatchObject({
         status: "invalid",

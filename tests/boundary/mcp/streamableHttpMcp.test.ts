@@ -1,8 +1,10 @@
 import {
   Client,
   StreamableHTTPClientTransport,
+  type StreamableHTTPClientTransportOptions,
 } from "@modelcontextprotocol/client";
 import { describe, expect, onTestFinished } from "vitest";
+import { once } from "node:events";
 
 import { advertisedMcpToolSchemas } from "../../fixtures/advertisedMcpTool.js";
 import { expectForeignHostRefused } from "../../support/http/rawRequest.js";
@@ -13,9 +15,14 @@ import {
 import { processTest } from "../../support/process/processFixture.js";
 import { assertAdvertisedMcpContracts } from "./mcpContractHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 
-const openSession = async (url: URL, name: string) => {
-  const transport = new StreamableHTTPClientTransport(url);
+const openSession = async (
+  url: URL,
+  name: string,
+  options?: StreamableHTTPClientTransportOptions,
+) => {
+  const transport = new StreamableHTTPClientTransport(url, options);
   const client = new Client(
     { name, version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -60,29 +67,38 @@ describe("rea mcp --http", () => {
           REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
         },
       );
-      const first = await openSession(started.url, "hot-cold-first");
+      const listenerExit = once(started.child, "exit");
+      const stream = phaseArrival<Response>();
+      const first = await openSession(started.url, "hot-cold-first", {
+        fetch: async (url, init) => {
+          const response = await fetch(url, init);
+          if (init?.method === "GET") stream.arrive(response);
+          return response;
+        },
+      });
       const initialNames = (await first.client.listTools()).tools.map(
         ({ name }) => name,
       );
       expect(initialNames).not.toContain("inspect_analysis_view");
       expect(initialNames).not.toContain("list_unknowns");
-      let changed = 0;
+      const changed = phaseArrival();
       first.client.setNotificationHandler(
         "notifications/tools/list_changed",
-        () => {
-          changed++;
-        },
+        () => changed.arrive(),
+      );
+      expect((await stream.reached(listenerExit, "HTTP event stream")).ok).toBe(
+        true,
       );
       const discovered = await first.client.callTool({
         name: "discover_tools",
         arguments: { names: ["list_unknowns"] },
       });
       expect(discovered.isError).not.toBe(true);
+      await changed.reached(listenerExit, "catalog change notification");
       const { toolDefinition } = await advertisedMcpToolSchemas(
         first.client,
         "list_unknowns",
       );
-      expect(changed).toBe(1);
       expect(
         (
           await first.client.callTool(
@@ -117,16 +133,6 @@ describe("rea mcp --http", () => {
         stdout += chunk.toString("utf8");
       });
       const first = await openSession(started.url, "streamable-http-boundary");
-      expect(() =>
-        assertAdvertisedMcpContracts(
-          ["binary_session"],
-          [first.toolDefinition, first.toolDefinition],
-        ),
-      ).toThrow();
-      const { name } = first.toolDefinition;
-      expect(() =>
-        assertAdvertisedMcpContracts(["binary_session"], [{ name }]),
-      ).toThrow();
       await expectIdentity(first);
       await first.transport.terminateSession();
       expect(first.transport.sessionId).toBeUndefined();

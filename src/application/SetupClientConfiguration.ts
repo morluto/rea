@@ -32,6 +32,7 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
+import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
@@ -1404,6 +1405,12 @@ const clientConfigurationDesired = async (
     platform,
   );
   if (!validated.ok) throw validated.error;
+  // Decide the fallback from the effective layers, then edit only the target.
+  // A lower layer's locator still applies when the target has no value of its own.
+  const writeEnvironment =
+    validated.value.configHomeFallbackApplied === true
+      ? providerEnvironment
+      : registrationEnvironmentProposal(providerEnvironment).overrides;
   // Preserve explicitly configured server settings, never the ambient process
   // environment. The effective layered view validates precedence and supplies
   // timeout facts; the target file's fragment remains the value being written.
@@ -1411,7 +1418,7 @@ const clientConfigurationDesired = async (
     parsed,
     client,
     platform,
-    providerEnvironment,
+    writeEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
@@ -1435,7 +1442,7 @@ const clientConfigurationDesired = async (
     parsed,
     sources,
     effective,
-    providerEnvironment,
+    writeEnvironment,
     platform,
   );
 };

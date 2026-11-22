@@ -20,6 +20,11 @@ import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
 import { ExportResources } from "./exportResources.js";
+import {
+  compareProcedureAddresses,
+  selectProcedures,
+  validateDecompileBounds,
+} from "./selection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
@@ -32,6 +37,7 @@ import {
   DECOMPILE_DIRECTORY_INDEX_NAME,
   DECOMPILE_DIRECTORY_JOURNAL_NAME,
   decompileDirectoryIndexSchema,
+  decompileDirectoryInputSchema,
   decompileJournalLineSchema,
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
@@ -2571,4 +2577,41 @@ it("keeps a settled null failure but starts no independent retry after caller ab
   expect(index.functions[0]?.limitations ?? []).not.toContain(
     "Independent retry was not attempted because the provider did not report a function failure for this observation.",
   );
+});
+
+describe("procedure address comparator parity", () => {
+  it("matches selectProcedures and compareProcedureAddresses across spaced, padded, and unparsed rows", () => {
+    const rows = [
+      { address: "unresolved:b", name: "unparsed_b" },
+      { address: "ram:0x20", name: "ram_20" },
+      { address: "0x0010", name: "z_padded" },
+      { address: "0X10", name: "uppercase_unobserved" },
+      { address: "0x10", name: "a_plain" },
+      { address: "0x2", name: "low" },
+      { address: "ram:0x10", name: "ram_10" },
+      { address: "unresolved:a", name: "unparsed_a" },
+    ];
+    const input = decompileDirectoryInputSchema.parse({
+      output_directory: "/tmp/out",
+    });
+    const bounds = validateDecompileBounds(input);
+    if (!bounds.ok) throw bounds.error;
+    const selection = selectProcedures(rows, input, bounds.value);
+    const directSorted = [...rows].sort(
+      (left, right) =>
+        compareProcedureAddresses(left.address, right.address) ||
+        left.name.localeCompare(right.name),
+    );
+    expect(selection.procedures).toEqual(directSorted);
+    expect(selection.procedures.map(({ address }) => address)).toEqual([
+      "0x2",
+      "0x10",
+      "0x0010",
+      "ram:0x10",
+      "ram:0x20",
+      "0X10",
+      "unresolved:a",
+      "unresolved:b",
+    ]);
+  });
 });

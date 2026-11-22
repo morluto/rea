@@ -4,8 +4,7 @@ import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
-import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
+import { webBundleWorkerScript as makeScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
@@ -43,26 +42,6 @@ import {
   javaScriptMemberMutationRefusal,
 } from "../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
-
-const makeScript = (text: string): IncludedScript => ({
-  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-  frame_id: "frame-1",
-  url: "https://app.example.test/app.js",
-  origin: "https://app.example.test",
-  cdp_hash: null,
-  length: Buffer.byteLength(text),
-  is_module: false,
-  language: "JavaScript",
-  source_map_url: null,
-  resource_reconciliation: {
-    status: "unmatched",
-    reason: "no_exact_sanitized_url",
-  },
-  source: {
-    included: true,
-    artifact: createWebTextArtifact(text, "application/javascript"),
-  },
-});
 
 const sourceWorkerProgram = (
   hangMarker?: string,
@@ -377,83 +356,67 @@ it.each(["reason", "normalized-exec"] as const)(
   },
 );
 
-it("retains ownership-helper cleanup until worker close retries it", async () => {
-  const controller = new AbortController();
-  const reason = { caller: "cancel" };
-  const cleanup = new ProviderCleanupError(
-    "process-ownership",
-    ["helper-root"],
-    {},
-    { operation: "prepare_owned_process" },
-  );
-  const owner = {
-    close: vi.fn(async () => {
-      releaseOwnedCleanup(cleanup);
-    }),
-  };
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockImplementation(async () => {
-      controller.abort(reason);
-      throw new DarwinProcessOwnershipInspectionError("helper cleanup failed", {
-        cancellation: { reason },
-        cleanupFailure: cleanup,
-        cleanupOwner: owner,
-      });
-    });
-  const worker = new WebBundleAnalysisWorker();
-  try {
-    const result = await worker.analyze(
-      makeScript("0"),
-      5_000,
-      controller.signal,
+it.each([false, true])(
+  "retains the ownership helper through exact cleanup retry (caller cancelled: %s)",
+  async (cancelled) => {
+    const controller = new AbortController();
+    const reason = { caller: "cancel" };
+    const cleanup = new ProviderCleanupError(
+      "process-ownership",
+      ["helper-root"],
+      {},
+      { operation: "prepare_owned_process" },
     );
-    const error = failureOf(result);
-    expect(error.cleanupIncomplete).toBe(true);
-    expect(error.cleanupResources).toContain("helper-root");
-    await worker.close();
-    expect(owner.close).toHaveBeenCalledOnce();
-    expect(error.cleanupIncomplete).toBe(false);
-  } finally {
-    prepare.mockRestore();
-    await worker.close();
-  }
-});
-
-it("retains failed helper cleanup without caller cancellation", async () => {
-  const cleanup = new ProviderCleanupError(
-    "process-ownership",
-    ["helper-root"],
-    {},
-    { operation: "prepare_owned_process" },
-  );
-  const owner = {
-    close: vi.fn(async () => {
-      releaseOwnedCleanup(cleanup);
-    }),
-  };
-  const physical = new DarwinProcessOwnershipInspectionError(
-    "inspection failed",
-    { cleanupFailure: cleanup, cleanupOwner: owner },
-  );
-  const prepare = vi
-    .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
-    .mockRejectedValue(physical);
-  const worker = new WebBundleAnalysisWorker();
-  try {
-    const result = await worker.analyze(makeScript("0"), 5_000);
-    const error = failureOf(result);
-    expect(primaryAnalysisError(error).cause).toBe(physical);
-    expect(error.cleanupIncomplete).toBe(true);
-    expect(error.cleanupResources).toContain("helper-root");
-    await worker.close();
-    expect(owner.close).toHaveBeenCalledOnce();
-    expect(error.cleanupIncomplete).toBe(false);
-  } finally {
-    prepare.mockRestore();
-    await worker.close();
-  }
-});
+    let closes = 0;
+    const failure = new DarwinProcessOwnershipInspectionError(
+      "helper cleanup failed",
+      {
+        ...(cancelled ? { cancellation: { reason } } : {}),
+        cleanupFailure: cleanup,
+        cleanupOwner: {
+          close: async () => {
+            closes++;
+            releaseOwnedCleanup(cleanup);
+          },
+        },
+      },
+    );
+    const prepare = vi
+      .spyOn(ownershipObservation, "prepareProcessOwnershipInspection")
+      .mockImplementation(async () => {
+        if (cancelled) controller.abort(reason);
+        throw failure;
+      });
+    const worker = new WebBundleAnalysisWorker();
+    try {
+      const error = failureOf(
+        await worker.analyze(makeScript("0"), 5_000, controller.signal),
+      );
+      const primary = primaryAnalysisError(error);
+      if (cancelled) {
+        expect(primary).toBeInstanceOf(AnalysisCancelledError);
+        expect(primary.cause).toBe(reason);
+      } else expect(primary.cause).toBe(failure);
+      expect(error).toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: ["helper-root"],
+      });
+      expect(closes).toBe(0);
+      await worker.close();
+      expect(error).toMatchObject({
+        cleanupIncomplete: false,
+        cleanupResources: [],
+      });
+      expect(closes).toBe(1);
+    } finally {
+      try {
+        await worker.close();
+      } finally {
+        prepare.mockRestore();
+      }
+    }
+  },
+);
 
 it("keeps a refused script's syntax facts and states the allowance the host sent", async () => {
   // Four conditional self-selections before one member write (#8294); the
