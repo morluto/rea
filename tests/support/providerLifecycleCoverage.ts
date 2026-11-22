@@ -1298,7 +1298,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfDebugLinkCli.test.ts",
-        "verifies a matching debug file from absolute and relative paths",
+        "verifies a debug file while preserving both relative caller paths",
       ),
     ),
     covered(
@@ -1307,8 +1307,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "returns typed resource and cancellation failures",
       ),
       test(
-        "src/native/elf/ElfDebugLinkProvider.test.ts",
-        "keeps a completed candidate stream's identity when cancellation arrives during close",
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "retains streamed candidate Evidence when cancelled during %s",
       ),
     ),
   ),
