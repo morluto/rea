@@ -1,4 +1,4 @@
-import { open } from "node:fs/promises";
+import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -12,12 +12,13 @@ import {
 import { inventoryFirmwareOutput } from "../../../src/firmware/FirmwareFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("reports the selected staging-byte limit and only offers supported increases", async () => {
+it("reports the cumulative staging-byte limit and only offers supported increases", async () => {
   const root = await createTestTempDirectory("rea-firmware-ceiling-bytes-");
-  // Reuse the sparse extent for the two adjacent budget selections.
-  const sparse = await open(join(root, "oversized.bin"), "w");
+  // Each file fits either budget. Together they exceed even the ceiling.
+  await writeFile(join(root, "first.bin"), "12");
+  const sparse = await open(join(root, "second.bin"), "w");
   try {
-    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES + 1);
+    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES - 1);
   } finally {
     await sparse.close();
   }
