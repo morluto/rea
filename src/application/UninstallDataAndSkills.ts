@@ -1,21 +1,4 @@
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import {
-  ClientConfigurationShapeError,
-  clientConfigurationServersKey,
-  clientConfigurationSyntaxName,
-  parseClientConfiguration,
-  serializeClientConfiguration,
-  clientServerPath,
-  effectiveClientServer,
-  legacyClientServerPath,
-  shadowedClientServers,
-  withClientServers,
-  type ClientConfigurationDocument,
-} from "./ClientConfigurationDocument.js";
-import { ConfigurationError } from "../domain/configurationErrors.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { copyFile, lstat, realpath, rm, rmdir } from "node:fs/promises";
-import { isDeepStrictEqual } from "node:util";
 import { basename, dirname } from "node:path";
 import {
   defaultKunaCacheDirectory,
@@ -26,38 +9,12 @@ import {
 import { defaultDarwinHelperCacheDirectory } from "../process/DarwinHelperCache.js";
 import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
 
-import {
-  effectiveClientConfiguration,
-  readEffectiveClientRegistrationConfiguration,
-  type ClientConfigurationSource,
-} from "./ClientConfigurationFiles.js";
 
 import {
   isManagedSkillManifest,
   MANAGED_SKILL_FILES,
   skillDestinationSelection,
 } from "./SetupSkill.js";
-import {
-  isAbsentClientConfigPath,
-  resolveClientConfigTransactionPath,
-} from "./ClientConfigPath.js";
-import { preservePrivateRecoveryBackup } from "./ClientRegistrationBackup.js";
-import {
-  InvalidUtf8FileError,
-  readRegularFileText,
-  bindRegularFileCleanup,
-} from "../process/RegularFileRead.js";
-import {
-  appDataRedirection,
-  clientOwnershipEvidencePaths,
-  clientProjectConfigurationPaths,
-  clientSharedRegistrationPaths,
-  manualRegistrationRemediation,
-  registrationWriteBlocker,
-  resolveSupportedClients,
-  type ClientSystemPaths,
-  type SetupClient,
-} from "./SupportedClients.js";
 
 import {
   isMissing,
@@ -65,7 +22,7 @@ import {
   type ManagedPathStats,
   type UninstallFileSystem,
   type UninstallItem,
-} from "./Uninstall.js";
+} from "./UninstallShared.js";
 
 /** Purge the same default cache namespaces selected by their producers. */
 export const purgeSelectedData = async (

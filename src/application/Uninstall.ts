@@ -1,4 +1,11 @@
 import {
+  isMissing,
+  item,
+  type UninstallAction,
+  type UninstallFileSystem,
+  type UninstallItem,
+} from "./UninstallShared.js";
+import {
   inspectManagedSkill,
   purgeSelectedData,
   removeManagedSkills,
@@ -35,11 +42,7 @@ import { constants as fsConstants } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { dirname } from "node:path";
-import {
-  hasParentTraversal,
-  withinLexicalDirectory,
-} from "../filesystem/cacheDirectory.js";
-import { linuxHopperReleaseCacheDirectory } from "./LinuxHopperCacheDirectory.js";
+import { withinLexicalDirectory } from "../filesystem/cacheDirectory.js";
 
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import {
@@ -53,11 +56,7 @@ import {
 } from "./ClientRegistration.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import {
-  MANAGED_SKILL_FILES,
-  readSkillFile,
-  skillDestinationSelection,
-} from "./SetupSkill.js";
+import { readSkillFile, skillDestinationSelection } from "./SetupSkill.js";
 import { dshDocument } from "./DshCordisPatch.js";
 import {
   isAbsentClientConfigPath,
@@ -94,35 +93,12 @@ import {
   type MsixPackageView,
 } from "./MsixPackageStorage.js";
 
-export interface ManagedPathStats {
-  readonly uid?: number;
-  isFile?(): boolean;
-  isDirectory?(): boolean;
-  isSymbolicLink(): boolean;
-}
-
-/** Injectable filesystem operations used to prove uninstall failure recovery. */
-export interface UninstallFileSystem {
-  readText(path: string): Promise<string>;
-  readRegularText?(path: string): Promise<string>;
-  /** Preserve the first backup; reject an existing destination with EEXIST. */
-  copy(source: string, destination: string): Promise<void>;
-  publishConfiguration(
-    path: string,
-    contents: string,
-    original: string,
-  ): Promise<
-    Pick<
-      ClientConfigurationPublication,
-      "path" | "verify" | "assertCurrent" | "restore"
-    >
-  >;
-  stat(path: string): Promise<ManagedPathStats>;
-  realpath?(path: string): Promise<string>;
-  remove(path: string, recursive?: boolean): Promise<void>;
-  /** Remove a directory only if it is empty; a non-empty one is kept. */
-  removeEmptyDirectory?(path: string): Promise<void>;
-}
+export type {
+  ManagedPathStats,
+  UninstallAction,
+  UninstallFileSystem,
+  UninstallItem,
+} from "./UninstallShared.js";
 
 const systemFileSystem = (
   resources: ArtifactResourceScope,
@@ -138,19 +114,6 @@ const systemFileSystem = (
   remove: (path, recursive = true) => rm(path, { recursive }),
   removeEmptyDirectory: (path) => rmdir(path),
 });
-
-/** One completed or refused action, preserving its candidate configuration path. */
-export interface UninstallAction {
-  readonly status: "removed" | "retained" | "skipped" | "failed";
-  readonly detail: string;
-  readonly configuration_path?: string;
-}
-
-/** One client summary with its constituent actions when multiple paths apply. */
-export interface UninstallItem extends UninstallAction {
-  readonly name: string;
-  readonly actions?: readonly UninstallAction[];
-}
 
 /** Structured, idempotent result of removing REA-owned state. */
 export interface UninstallResult {
@@ -1851,12 +1814,6 @@ const resolveUninstallConfigPath = async (
   );
 };
 
-export const item = (
-  name: string,
-  status: UninstallItem["status"],
-  detail: string,
-): UninstallItem => ({ name, status, detail });
-
 /**
  * Layered clients are removed file by file, but callers look up one status by
  * client name. Aggregate status does not invalidate any constituent outcome.
@@ -1913,5 +1870,3 @@ const uninstallStatusPriority = (status: UninstallItem["status"]): number => {
     }
   }
 };
-export const isMissing = (cause: unknown): boolean =>
-  cause instanceof Error && "code" in cause && cause.code === "ENOENT";
