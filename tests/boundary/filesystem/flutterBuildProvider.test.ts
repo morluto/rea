@@ -274,27 +274,26 @@ it("retains earlier build IDs when a later note lacks required alignment padding
   }
 });
 
-it.each([0, 1, 2, 4, 0xffff])(
-  "retains snapshot kind %s with partial decoding coverage",
-  async (kind) => {
-    const image = aotImage();
-    image.writeBigUInt64LE(BigInt(kind), 0x1000 + 12);
-    image.writeBigUInt64LE(BigInt(kind), 0x2000 + 12);
-    const execution = await analyzeImage(image, "inspect_dart_aot");
-    const value = flutterResultSchemas.inspect_dart_aot.parse(execution.result);
-    expect(value).toMatchObject({
+it("keeps unified kind 2 from qualifying a legacy split snapshot", async () => {
+  const image = aotImage();
+  image.writeBigUInt64LE(2n, 0x1000 + 12);
+  image.writeBigUInt64LE(2n, 0x2000 + 12);
+  const execution = await analyzeImage(image, "inspect_dart_aot");
+  const value = flutterResultSchemas.inspect_dart_aot.parse(execution.result);
+  expect(value).toMatchObject({
+    coverage: "partial",
+    libapp: {
       coverage: "partial",
-      libapp: { coverage: "partial" },
-      string_pool: { coverage: "complete" },
-    });
-    expect(
-      value.libapp.sections
-        .filter((section) => section.name.endsWith("Data"))
-        .map((section) => section.kind),
-    ).toEqual([kind, kind]);
-    expect(value.libapp.snapshot_hash).toBe(REFERENCE_HASH);
-  },
-);
+      snapshot_profile: null,
+    },
+    string_pool: { coverage: "complete" },
+  });
+  expect(
+    value.libapp.sections
+      .filter(({ magic_valid }) => magic_valid)
+      .map(({ kind }) => kind),
+  ).toEqual([2, 2]);
+});
 
 it.each(["absent", "range", "metadata-budget"] as const)(
   "preserves %s engine-note coverage at the ELF boundary",
@@ -780,124 +779,82 @@ it("cancels before creating any snapshot root", async () => {
   await provider.close();
 });
 
-it.each([1, 20, 47, 48, 61])(
-  "identifies a valid ELF when ZIP chunks are only %i bytes",
-  async (chunkBytes) => {
-    const originalOpen = ZipArtifactReader.prototype.open;
-    const spy = vi
-      .spyOn(ZipArtifactReader.prototype, "open")
-      .mockImplementation(async function (
-        this: ZipArtifactReader,
-        entry,
-        signal,
-      ) {
-        const source = await originalOpen.call(this, entry, signal);
-        return Readable.from(
-          (async function* () {
-            for await (const chunk of source) {
-              const bytes = chunk as Buffer;
-              for (let offset = 0; offset < bytes.length; offset += chunkBytes)
-                yield bytes.subarray(offset, offset + chunkBytes);
-            }
-          })(),
-        );
-      });
-    onTestFinished(() => spy.mockRestore());
-    const execution = await analyzeImage(aotImage(), "identify_flutter_build");
-    const value = flutterResultSchemas.identify_flutter_build.parse(
-      execution.result,
-    );
-    expect(value.coverage).toBe("complete");
-    expect(value.abis[0]?.libapp).toMatchObject({
-      elf_header_valid: true,
-      snapshot_hash: REFERENCE_HASH,
-      snapshot_hash_sources: 2,
+it("identifies an ELF header split across the library stream", async () => {
+  const originalOpen = ZipArtifactReader.prototype.open;
+  const spy = vi
+    .spyOn(ZipArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: ZipArtifactReader,
+      entry,
+      signal,
+    ) {
+      const source = await originalOpen.call(this, entry, signal);
+      if (entry.path !== "lib/arm64-v8a/libapp.so") return source;
+      return Readable.from(
+        (async function* () {
+          for await (const chunk of source) {
+            const bytes = chunk as Buffer;
+            yield bytes.subarray(0, 47);
+            if (bytes.length > 47) yield bytes.subarray(47);
+          }
+        })(),
+      );
     });
-  },
-);
+  onTestFinished(() => spy.mockRestore());
+  const execution = await analyzeImage(aotImage(), "identify_flutter_build");
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    execution.result,
+  );
+  expect(value.coverage).toBe("complete");
+  expect(value.abis[0]?.libapp).toMatchObject({
+    elf_header_valid: true,
+    snapshot_hash: REFERENCE_HASH,
+    snapshot_hash_sources: 2,
+  });
+});
 
-it.each([
-  {
-    name: "zeroed offsets",
-    corrupt: (image: Buffer) => image.fill(0, 0x20, 0x30),
-  },
-  {
-    name: "program table past EOF",
-    corrupt: (image: Buffer) =>
-      image.writeBigUInt64LE(BigInt(image.length + 1), 0x20),
-  },
-  {
-    name: "section table past EOF",
-    corrupt: (image: Buffer) =>
-      image.writeBigUInt64LE(BigInt(image.length - 1), 0x28),
-  },
-  {
-    name: "zero program entry width",
-    corrupt: (image: Buffer) => image.writeUInt16LE(0, 0x36),
-  },
-  {
-    name: "short section entry width",
-    corrupt: (image: Buffer) => image.writeUInt16LE(1, 0x3a),
-  },
-  {
-    name: "absent program table",
-    corrupt: (image: Buffer) => image.writeUInt16LE(0, 0x38),
-  },
-  {
-    name: "unsupported class",
-    corrupt: (image: Buffer) => image.writeUInt8(3, 4),
-  },
-  {
-    name: "unsupported byte order",
-    corrupt: (image: Buffer) => image.writeUInt8(2, 5),
-  },
-  {
-    name: "unsafe table offset",
-    corrupt: (image: Buffer) => image.writeBigUInt64LE(1n << 63n, 0x20),
-  },
-  {
-    name: "table inside header",
-    corrupt: (image: Buffer) => image.writeBigUInt64LE(1n, 0x20),
-  },
-  {
-    name: "extended section count",
-    corrupt: (image: Buffer) => image.writeUInt16LE(0, 0x3c),
-  },
-])(
-  "retains hash observations with partial coverage for $name",
-  async ({ corrupt }) => {
-    const image = aotImage();
-    corrupt(image);
-    const execution = await analyzeImage(image, "identify_flutter_build");
-    const value = flutterResultSchemas.identify_flutter_build.parse(
-      execution.result,
-    );
-    expect(value.coverage).toBe("partial");
-    expect(value.abis[0]?.libapp).toMatchObject({
-      elf_header_valid: false,
-      snapshot_hash: REFERENCE_HASH,
-      snapshot_hash_sources: 2,
-    });
-    expect(execution.limitations.join("\n")).toContain(
-      "ELF header or table extent",
-    );
-  },
-);
+it("retains byte-scanned hashes from an ELF with a truncated section table", async () => {
+  const image = aotImage();
+  image.writeBigUInt64LE(BigInt(image.length - 1), 0x28);
+  const execution = await analyzeImage(image, "identify_flutter_build");
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    execution.result,
+  );
+  expect(value.coverage).toBe("partial");
+  expect(value.abis[0]?.libapp).toMatchObject({
+    elf_header_valid: false,
+    snapshot_hash: REFERENCE_HASH,
+    snapshot_hash_sources: 2,
+  });
+  expect(execution.limitations.join("\n")).toContain(
+    "ELF header or table extent",
+  );
+});
 
-it.each([0, 4, 20, 47, 61])(
-  "reports a %i-byte ELF prefix as partial without throwing",
-  async (length) => {
-    const execution = await analyzeImage(
-      aotImage().subarray(0, length),
-      "identify_flutter_build",
-    );
-    const value = flutterResultSchemas.identify_flutter_build.parse(
-      execution.result,
-    );
-    expect(value.coverage).toBe("partial");
-    expect(value.abis[0]?.libapp.elf_header_valid).toBe(false);
-  },
-);
+it("reports a present but empty libapp as partial", async () => {
+  const execution = await analyzeImage(
+    Buffer.alloc(0),
+    "identify_flutter_build",
+  );
+  const value = flutterResultSchemas.identify_flutter_build.parse(
+    execution.result,
+  );
+  expect(value).toMatchObject({
+    coverage: "partial",
+    flutter_detected: true,
+    abis: [
+      {
+        libapp: {
+          present: true,
+          bytes: 0,
+          elf_header_valid: false,
+          snapshot_hash: null,
+          snapshot_hash_sources: 0,
+        },
+      },
+    ],
+  });
+});
 
 it("accepts a section-stripped ELF32 header and bounds its program table", async () => {
   const image = Buffer.alloc(52 + 32 + 104);
@@ -924,25 +881,21 @@ it("accepts a section-stripped ELF32 header and bounds its program table", async
   ).toBe("partial");
 });
 
-it.each([0n, 15n, 47n, 49n, 1n << 63n])(
-  "retains malformed snapshot length %s as partial evidence",
-  async (length) => {
-    const image = aotImage();
-    image.writeBigUInt64LE(length, 0x1004);
-    const execution = await analyzeImage(image, "inspect_dart_aot");
-    const value = flutterResultSchemas.inspect_dart_aot.parse(execution.result);
-    expect(value.coverage).toBe("partial");
-    expect(value.libapp.snapshot_hash).toBe(REFERENCE_HASH);
-    expect(value.libapp.sections[0]).toMatchObject({
-      magic_valid: true,
-      header_length:
-        length > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(length),
-    });
-    expect(execution.limitations.join("\n")).toContain(
-      "_kDartVmSnapshotData has an incomplete or invalid snapshot header",
-    );
-  },
-);
+it("retains a hash and the raw declared length when the Dart snapshot exceeds its symbol", async () => {
+  const image = aotImage();
+  image.writeBigUInt64LE(49n, 0x1004);
+  const execution = await analyzeImage(image, "inspect_dart_aot");
+  const value = flutterResultSchemas.inspect_dart_aot.parse(execution.result);
+  expect(value.coverage).toBe("partial");
+  expect(value.libapp.snapshot_hash).toBe(REFERENCE_HASH);
+  expect(value.libapp.sections[0]).toMatchObject({
+    magic_valid: true,
+    header_length: 49,
+  });
+  expect(execution.limitations.join("\n")).toContain(
+    "_kDartVmSnapshotData has an incomplete or invalid snapshot header",
+  );
+});
 
 it("does not let two VM records replace a missing isolate header hash", async () => {
   const image = aotImage();

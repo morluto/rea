@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { withElf64DirectSectionCount } from "../native/elf/ElfNotes.fixture.js";
-import { readElfSymbols, readSnapshotHeader } from "./DartElf.js";
+import {
+  readElfHeader,
+  readElfSymbols,
+  readSnapshotHeader,
+} from "./DartElf.js";
 import {
   REFERENCE_HASH,
   buildElf32Image,
@@ -25,11 +29,12 @@ const readElfSymbol = async (bytes: Buffer, name: string) => {
  */
 const GALLERY_HASH = REFERENCE_HASH;
 
-const imageWithSections = (): Buffer => {
-  const elf = buildElf64Image([
-    { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
-    { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
-  ]);
+const snapshotSymbols = [
+  { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
+  { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
+];
+
+const withSnapshotSections = (elf: Buffer): Buffer => {
   const section = snapshotSection(GALLERY_HASH);
   return Buffer.concat([
     elf,
@@ -40,38 +45,30 @@ const imageWithSections = (): Buffer => {
   ]);
 };
 
-/** The same layout without section headers: symbols live in PT_DYNAMIC. */
+const imageWithSections = (): Buffer =>
+  withSnapshotSections(buildElf64Image(snapshotSymbols));
+
 const strippedImageWithSections = (
   extraDynamicEntries: ReadonlyArray<readonly [number, bigint]> = [],
-): Buffer => {
-  const elf = buildStrippedElf64Image(
-    [
-      { name: "_kDartVmSnapshotData", value: 0x400, size: 52 },
-      { name: "_kDartIsolateSnapshotData", value: 0x800, size: 52 },
-    ],
-    extraDynamicEntries,
+): Buffer =>
+  withSnapshotSections(
+    buildStrippedElf64Image(snapshotSymbols, extraDynamicEntries),
   );
-  const section = snapshotSection(GALLERY_HASH);
-  return Buffer.concat([
-    elf,
-    Buffer.alloc(0x400 - elf.length),
-    section,
-    Buffer.alloc(0x800 - 0x400 - section.length),
-    section,
-  ]);
-};
 
 describe("readElfSymbol", () => {
-  it("locates snapshot symbols in a synthetic ELF64 image", async () => {
-    const image = imageWithSections();
-    const isolateData = await readElfSymbol(image, "_kDartIsolateSnapshotData");
-    if ("failure" in isolateData) throw new Error(isolateData.failure.reason);
-    expect(isolateData.symbol.offset).toBe(0x800);
-    expect(isolateData.symbol.size).toBe(52);
-    const header = readSnapshotHeader(image, isolateData.symbol.offset);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
-  });
+  it.each([
+    ["section table", imageWithSections],
+    ["dynamic segment", strippedImageWithSections],
+  ] as const)(
+    "locates an exact ELF64 snapshot range through a %s",
+    async (_, image) => {
+      const name = "_kDartIsolateSnapshotData";
+      expect(await readElfSymbols(image(), [name])).toEqual({
+        symbols: [{ name, offset: 0x800, size: 52 }],
+        failures: [],
+      });
+    },
+  );
 
   it("refuses to read snapshot symbols through a reserved direct section count", async () => {
     const image = withElf64DirectSectionCount(imageWithSections(), 0xff00);
@@ -88,17 +85,6 @@ describe("readElfSymbol", () => {
     expect("failure" in result && result.failure.reason).toBe(
       "not an ELF image",
     );
-  });
-
-  it("locates snapshot symbols in a section-stripped ET_DYN image", async () => {
-    const image = strippedImageWithSections();
-    const isolateData = await readElfSymbol(image, "_kDartIsolateSnapshotData");
-    if ("failure" in isolateData) throw new Error(isolateData.failure.reason);
-    expect(isolateData.symbol.offset).toBe(0x800);
-    expect(isolateData.symbol.size).toBe(52);
-    const header = readSnapshotHeader(image, isolateData.symbol.offset);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
   });
 
   it.each([
@@ -504,17 +490,68 @@ describe.each(Object.entries(ELF_CLASSES))(
   },
 );
 
-describe("readSnapshotHeader", () => {
-  it("reads a synthesized data header", async () => {
-    const header = readSnapshotHeader(snapshotSection(GALLERY_HASH), 0);
-    expect(header.magicValid).toBe(true);
-    expect(header.kind).toBe(3);
+it("checks declared ELF table bounds from a prefix of the real image", () => {
+  const original = buildElf64Image([]);
+  const eof = BigInt(original.length);
+  const admission = (bytes: Buffer) =>
+    readElfHeader(bytes.subarray(0, 64), bytes.length);
+  expect(admission(original).header).toMatchObject({
+    e_phoff: 64,
+    e_shoff: 120,
   });
+  expect(
+    readElfHeader(original.subarray(0, 63), original.length).header,
+  ).toBeUndefined();
+  for (const [at, value, reason] of [
+    [0x28, 0n, /section table is missing/],
+    [0x20, eof + 1n, /program header table/],
+    [0x28, eof - 1n, /section header table/],
+    [0x20, 1n, /program header table/],
+  ] as const) {
+    const bytes = Buffer.from(original);
+    bytes.writeBigUInt64LE(value, at);
+    expect(admission(bytes).failure?.reason ?? "", `field at ${at}`).toMatch(
+      reason,
+    );
+  }
+  for (const [at, value, reason] of [
+    [0x36, 0, /program header table/],
+    [0x38, 0, /program header table/],
+    [0x3a, 1, /section header table/],
+    [0x3c, 0, /section header table/],
+  ] as const) {
+    const bytes = Buffer.from(original);
+    bytes.writeUInt16LE(value, at);
+    expect(admission(bytes).failure?.reason ?? "", `field at ${at}`).toMatch(
+      reason,
+    );
+  }
+});
 
-  it("reports invalid magic for offsets outside a complete byte-aligned prefix", () => {
+it("rejects an unsupported class and admitted big-endian fixed fields", () => {
+  const bytes = buildElf64Image([]);
+  bytes[4] = 3;
+  expect(readElfHeader(bytes).failure?.reason).toMatch(/unsupported ELF class/);
+  bytes[4] = 2;
+  bytes[5] = 2;
+  bytes.writeUInt16BE(3, 16);
+  bytes.writeUInt32BE(1, 20);
+  bytes.writeUInt16BE(64, 52);
+  expect(readElfHeader(bytes).failure?.reason).toMatch(
+    /unsupported ELF byte order/,
+  );
+});
+
+describe("readSnapshotHeader", () => {
+  it("cannot read a snapshot with invalid magic or an unusable offset", () => {
     const bytes = snapshotSection(GALLERY_HASH);
-    for (const offset of [-1, 0.5, bytes.length - 3])
-      expect(readSnapshotHeader(bytes, offset)).toEqual({
+    for (const [buffer, offset] of [
+      [Buffer.alloc(8), 0],
+      [bytes, -1],
+      [bytes, 0.5],
+      [bytes, bytes.length - 3],
+    ] as const)
+      expect(readSnapshotHeader(buffer, offset)).toEqual({
         magicValid: false,
         kind: null,
         headerLength: null,
@@ -522,6 +559,22 @@ describe("readSnapshotHeader", () => {
         complete: false,
       });
   });
+
+  it.each([0n, 15n, 47n, 48n, 49n, 1n << 63n])(
+    "retains the observed hash and checks declared length %s",
+    (length) => {
+      const bytes = snapshotSection(GALLERY_HASH, 0);
+      bytes.writeBigUInt64LE(length, 4);
+      expect(readSnapshotHeader(bytes, 0)).toEqual({
+        magicValid: true,
+        kind: 0,
+        headerLength:
+          length > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(length),
+        hash: GALLERY_HASH,
+        complete: length === 48n,
+      });
+    },
+  );
 
   it("retains a backed length when the kind is truncated or unrepresentable", () => {
     const bytes = snapshotSection(GALLERY_HASH);
@@ -542,17 +595,6 @@ describe("readSnapshotHeader", () => {
         complete: false,
       });
     }
-  });
-
-  it("reports nulls for sections without the data magic", async () => {
-    const header = readSnapshotHeader(Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]), 0);
-    expect(header).toEqual({
-      magicValid: false,
-      kind: null,
-      headerLength: null,
-      hash: null,
-      complete: false,
-    });
   });
 });
 
