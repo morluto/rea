@@ -31,7 +31,11 @@ import {
   requireMcpOutput,
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  completeVerifierRun,
+  createVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
@@ -217,8 +221,7 @@ try {
   await workspaceFixture.closeEarly([() => commands.close()]);
 }
 const verifierRun = await completeVerifierRun(run);
-assert.equal(verifierRun.process_lineage.status, "verified");
-assert.deepEqual(verifierRun.process_lineage.descendants, []);
+assertVerifierCleanupComplete(verifierRun.process_lineage);
 // Every owned process has stopped, so the workspace can go; a failure above
 // leaves it in place for diagnosis.
 await workspaceFixture.release();
