@@ -9,6 +9,7 @@ import {
   unownedChangedFolders,
   unownedFoldersLimitation,
   unretainedOpenedLimitation,
+  unreadDconfLimitation,
 } from "./appExportUnowned.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
@@ -51,6 +52,42 @@ const file = (
           complete: true,
         },
       ],
+});
+
+it("gives recovery for missing dconf bytes separately from a selected reader failure", () => {
+  const path = ".config/dconf/user";
+  const retained = {
+    ...version(1),
+    format: "dconf",
+    sha256: "a".repeat(64),
+    view_error: "selected reader exited",
+    view_failure: {
+      kind: "exited",
+      code: null,
+      exit_code: 17,
+      command: "fixture-dconf",
+      stderr: "selected reader exited",
+    },
+  } as const;
+  for (const [snapshot, recovery] of [
+    [
+      retained,
+      "Review the reported dconf read failure before exporting again.",
+    ],
+    [
+      { ...version(1), view_error: "content not retained" },
+      "Capture again with the changed dconf database retained.",
+    ],
+  ] as const) {
+    const database = {
+      ...file("shared_desktop"),
+      versions: [version(0), snapshot],
+    };
+    const limitation = unreadDconfLimitation(new Map([[path, database]]), 1);
+    expect(limitation).toContain(snapshot.view_error);
+    expect(limitation).toContain(recovery);
+    expect(limitation).not.toContain("where dconf-cli is installed");
+  }
 });
 
 describe("unownedChangedFolders", () => {
