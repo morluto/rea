@@ -10,7 +10,10 @@ import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
 import { describe, expect, it } from "vitest";
 import { findCodeRegistration } from "../../../src/il2cpp/Il2cppBinaryRegistration.js";
-import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
+import {
+  linkIl2cppBinarySteps,
+  type Il2cppCodeGenModule,
+} from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   drain,
   linkIl2cppBinary,
@@ -2364,16 +2367,18 @@ describe("executable reference scan fast paths", () => {
       zero_fills: [],
       symbols: [],
     };
-    const open = openImageSteps(bytes, container);
-    let step: IteratorResult<
-      void,
-      ReturnType<typeof openImageSteps> extends Generator<void, infer T>
-        ? T
-        : never
-    >;
-    while (!(step = open.next()).done);
-    return { bytes, base, image: step.value };
+    return { bytes, base, image: drain(openImageSteps(bytes, container)) };
   };
+
+  const createCodeGenModules = (
+    addresses: readonly bigint[],
+  ): Il2cppCodeGenModule[] =>
+    addresses.map((address, image) => ({
+      image,
+      address,
+      method_pointer_count: 1,
+      method_pointers: 0n,
+    }));
 
   it("matches x86-64 REX.W+R mov/lea with negative displacement and ignores non-matching bytes", () => {
     const fix = buildExecScanFixture("amd64");
@@ -2383,23 +2388,14 @@ describe("executable reference scan fast paths", () => {
     const insnAt = 0x2000;
     fix.bytes.set([0x4c, 0x8b, 0x0d], insnAt); // REX.W|REX.R (0x4c), MOV (0x8b), mod=0 rm=5 reg=1 (0x0d)
     fix.bytes.writeInt32LE(0x1000 - (insnAt + 7), insnAt + 3);
-    const g = findCodeRegistration(fix.image, [
-      {
-        imageName: "A",
-        address: fix.base + 0x1100n,
-        methodPointers: 1,
-        methodsAddress: 0n,
-      } as never,
-      {
-        imageName: "B",
-        address: fix.base + 0x1140n,
-        methodPointers: 1,
-        methodsAddress: 0n,
-      } as never,
-    ]);
-    let s;
-    while (!(s = g.next()).done);
-    expect(s.value).toEqual({ field: null, array: fix.base + 0x1000n });
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
   });
 
   it("rejects arm64 register 31 / mismatched registers and matches negative ADRP+ADD page deltas", () => {
@@ -2422,23 +2418,14 @@ describe("executable reference scan fast paths", () => {
       0x2020,
     );
     fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2024);
-    const g = findCodeRegistration(fix.image, [
-      {
-        imageName: "A",
-        address: fix.base + 0x1200n,
-        methodPointers: 1,
-        methodsAddress: 0n,
-      } as never,
-      {
-        imageName: "B",
-        address: fix.base + 0x1240n,
-        methodPointers: 1,
-        methodsAddress: 0n,
-      } as never,
-    ]);
-    let s;
-    while (!(s = g.next()).done);
-    expect(s.value).toEqual({ field: null, array: fix.base + 0x1000n });
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1200n, fix.base + 0x1240n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
   });
 
   it("clamps scan bounds cleanly when an executable mapping exceeds buffer length", () => {
@@ -2457,23 +2444,14 @@ describe("executable reference scan fast paths", () => {
         );
         fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2004);
       }
-      const g = findCodeRegistration(fix.image, [
-        {
-          imageName: "A",
-          address: fix.base + 0x1100n,
-          methodPointers: 1,
-          methodsAddress: 0n,
-        } as never,
-        {
-          imageName: "B",
-          address: fix.base + 0x1140n,
-          methodPointers: 1,
-          methodsAddress: 0n,
-        } as never,
-      ]);
-      let s;
-      while (!(s = g.next()).done);
-      expect(s.value).toEqual({ field: null, array: fix.base + 0x1000n });
+      expect(
+        drain(
+          findCodeRegistration(
+            fix.image,
+            createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+          ),
+        ),
+      ).toEqual({ field: null, array: fix.base + 0x1000n });
     }
   });
 });
