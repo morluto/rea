@@ -14,9 +14,8 @@ export const ghidraExtensionFailure = (
   results: readonly GhidraExtensionResult[],
   operation: string,
 ): AnalysisError | undefined => {
-  const reports = results;
-  const invalid = validateGhidraExtensionResults(extensions, reports);
-  const failed = reports.find(
+  const invalid = validateGhidraExtensionResults(extensions, results);
+  const failed = results.find(
     (value) => value.status === "unsupported" || value.status === "failed",
   );
   if (invalid === null && failed === undefined) return undefined;
@@ -24,12 +23,16 @@ export const ghidraExtensionFailure = (
     ? new AnalysisCapabilityUnavailableError(
         "ghidra",
         operation,
-        `${failed.id}: ${failed.reason}. Omit REA_GHIDRA_NATIVEAOT_JAR to continue ordinary native analysis.`,
+        `${failed.id}: ${failed.reason}`,
+        {
+          remediationAction:
+            "Omit REA_GHIDRA_NATIVEAOT_JAR to continue ordinary native analysis.",
+        },
       )
     : new ProviderAdapterError("ghidra", operation, {
         diagnostics: {
           reason: invalid ?? failed?.reason ?? "Ghidra extension failed",
-          analysis_extensions: jsonValueSchema.parse(reports),
+          analysis_extensions: jsonValueSchema.parse(results),
         },
       });
 };

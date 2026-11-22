@@ -23,17 +23,12 @@ it.each(["physical", "caller", "node-wrapper", "default-abort"] as const)(
         code: "ABORT_ERR",
       },
     );
-    let thrown: unknown;
-    vi.stubGlobal("fetch", async () => {
+    vi.stubGlobal("fetch", async (_url: string, options: RequestInit) => {
       if (kind === "default-abort") controller.abort();
       else controller.abort(reason);
-      thrown =
-        kind === "physical"
-          ? physical
-          : kind === "node-wrapper"
-            ? wrapped
-            : controller.signal.reason;
-      throw thrown;
+      if (kind === "physical") throw physical;
+      if (kind === "node-wrapper") throw wrapped;
+      throw options.signal?.reason;
     });
     const download = downloadHopperPackage("https://fixture.invalid/archive", {
       signal: controller.signal,
@@ -43,7 +38,10 @@ it.each(["physical", "caller", "node-wrapper", "default-abort"] as const)(
         ok: false,
         error: { kind: "network", detail: physical.message },
       });
-    else await expect(download).rejects.toBe(thrown);
+    else
+      await expect(download).rejects.toBe(
+        kind === "node-wrapper" ? wrapped : controller.signal.reason,
+      );
   },
 );
 

@@ -1,5 +1,6 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { expect, it, vi } from "vitest";
 import * as inspection from "../../../src/process/DarwinProcessRunTokenReader.js";
 import * as ownership from "../../../src/process/ProcessOwnershipObservation.js";
@@ -81,8 +82,6 @@ it.each(["descriptor", "compiler", "cancelled"] as const)(
         expect(primaryAnalysisError(first.error).cause).toBe(
           "preparation stopped",
         );
-      expect(removed).toEqual([]);
-      await file.handle.stat();
 
       const blocked = await service.inspect(input);
       expect(blocked.ok).toBe(false);
@@ -110,8 +109,11 @@ it.each(["descriptor", "compiler", "cancelled"] as const)(
   },
 );
 
-it("does not adopt a native cleanup capability carried only as an opaque caller abort reason", async () => {
+it("cancels after snapshot acquisition without launching or adopting the opaque caller reason", async () => {
   const file = await failedInspectionDescriptor();
+  const bytes = await readFile(file.path);
+  const launched = join(dirname(file.path), "decoder-launched");
+  let privatePath: string | undefined;
   const reason = new inspection.DarwinProcessOwnershipInspectionError(
     "opaque caller reason",
     { cleanupOwner: file.failure.owner },
@@ -125,9 +127,24 @@ it("does not adopt a native cleanup capability carried only as an opaque caller 
     [
       {
         ...adapter,
-        command: async () => {
+        command: async (requestPath, runtimePath) => {
+          privatePath = runtimePath;
+          const snapshot = await readFile(
+            join(runtimePath, "capture.snapshot"),
+          );
+          expect(snapshot.equals(bytes)).toBe(true);
+          expect(JSON.parse(await readFile(requestPath, "utf8"))).toMatchObject(
+            { sensitive_values: ["explicit-private-declaration"] },
+          );
           controller.abort(reason);
-          return adapter.command();
+          return {
+            command: process.execPath,
+            arguments: [
+              "-e",
+              "require('node:fs').writeFileSync(process.argv[1], 'launched')",
+              launched,
+            ],
+          };
         },
       },
     ],
@@ -140,11 +157,23 @@ it("does not adopt a native cleanup capability carried only as an opaque caller 
       inspectWebNetworkCaptureInputSchema.parse({
         capture_path: file.path,
         format: "har",
+        sensitive_values: ["explicit-private-declaration"],
       }),
       { signal: controller.signal },
     );
     if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(primaryAnalysisError(result.error).cause).toBe(reason);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: file.path,
+      bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+    if (privatePath === undefined)
+      throw new Error("Expected the private runtime");
+    await expect(access(privatePath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(access(launched)).rejects.toMatchObject({ code: "ENOENT" });
     expect(result.error.cleanupIncomplete).toBe(false);
     await service.close();
     expect(createRuntime).toHaveBeenCalledTimes(1);

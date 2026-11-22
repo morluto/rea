@@ -51,14 +51,6 @@ export const MAVEN_GRADLE_METADATA_UNRESOLVED_RECORDS = 65_536;
  */
 export const MAVEN_GRADLE_METADATA_XML_NODES = 1_048_576;
 
-/** Detected metadata document; classification is from content, not the suffix. */
-export const MAVEN_GRADLE_METADATA_FORMATS = [
-  "maven-pom",
-  "gradle-module",
-] as const;
-export type MavenGradleMetadataFormat =
-  (typeof MAVEN_GRADLE_METADATA_FORMATS)[number];
-
 const nullableText = z.string().min(1).nullable();
 
 /**
@@ -173,16 +165,19 @@ const dependencySchema = z.strictObject({
   optional_spelling: nullableText,
   classifier: nullableText,
   exclusions: z.array(exclusionSchema),
-  origin: z.enum([
-    "dependencies",
-    "dependencyManagement",
-    "variant-dependencies",
-    "variant-constraints",
-  ]),
   variant: nullableText,
   bom_import: z.boolean(),
   platform: z.boolean(),
 });
+
+type DependencyOrigin =
+  | "dependencies"
+  | "dependencyManagement"
+  | "variant-dependencies"
+  | "variant-constraints";
+
+const dependencyFrom = <Origin extends DependencyOrigin>(origin: Origin) =>
+  dependencySchema.extend({ origin: z.literal(origin) });
 
 const unresolvedSchema = z.strictObject({
   kind: z.enum(["property", "parent-coordinate", "missing-coordinate"]),
@@ -224,21 +219,13 @@ const gradleVariantSchema = z.strictObject({
   constraint_count: uint,
 });
 
-/** Observed Maven POM or Gradle module metadata; unresolved references stay explicit. */
-export const mavenGradleMetadataSchema = z.strictObject({
+const metadataFacts = z.strictObject({
   artifact: z.strictObject({
     path: z.string().min(1),
     sha256: digestSchema,
     bytes: uint,
   }),
-  format: z.enum(MAVEN_GRADLE_METADATA_FORMATS),
   coordinates: coordinateSchema,
-  parent: coordinateSchema
-    .extend({
-      relative_path: nullableText,
-      relative_path_declared: z.boolean(),
-    })
-    .nullable(),
   properties: z.array(
     z.strictObject({
       name: z.string().min(1),
@@ -246,15 +233,6 @@ export const mavenGradleMetadataSchema = z.strictObject({
       value_credentials_redacted: z.boolean(),
     }),
   ),
-  dependencies: z.array(dependencySchema),
-  dependency_management: z.array(dependencySchema),
-  gradle: z
-    .strictObject({
-      format_version: nullableText,
-      created_by_gradle: nullableText,
-      variants: z.array(gradleVariantSchema),
-    })
-    .nullable(),
   unresolved: z.array(unresolvedSchema),
   coverage: z.strictObject({
     status: z.literal("complete"),
@@ -263,9 +241,39 @@ export const mavenGradleMetadataSchema = z.strictObject({
   limitations: z.array(z.string().min(1)).min(1),
 });
 
+/** The report format owns both its format-specific payload and row provenance. */
+export const mavenGradleMetadataSchema = z.discriminatedUnion("format", [
+  metadataFacts.extend({
+    format: z.literal("maven-pom"),
+    parent: coordinateSchema
+      .extend({
+        relative_path: nullableText,
+        relative_path_declared: z.boolean(),
+      })
+      .nullable(),
+    dependencies: z.array(dependencyFrom("dependencies")),
+    dependency_management: z.array(dependencyFrom("dependencyManagement")),
+    gradle: z.null(),
+  }),
+  metadataFacts.extend({
+    format: z.literal("gradle-module"),
+    parent: z.null(),
+    dependencies: z.array(dependencyFrom("variant-dependencies")),
+    dependency_management: z.array(dependencyFrom("variant-constraints")),
+    gradle: z.strictObject({
+      format_version: z.string().min(1),
+      created_by_gradle: nullableText,
+      variants: z.array(gradleVariantSchema),
+    }),
+  }),
+]);
+
 export type MavenGradleMetadata = z.infer<typeof mavenGradleMetadataSchema>;
+export type MavenGradleMetadataFormat = MavenGradleMetadata["format"];
 export type InspectMavenGradleMetadataInput = z.infer<
   typeof inspectMavenGradleMetadataInputSchema
 >;
-export type MavenGradleDependency = MavenGradleMetadata["dependencies"][number];
+export type MavenGradleDependency<
+  Origin extends DependencyOrigin = DependencyOrigin,
+> = z.infer<typeof dependencySchema> & { origin: Origin };
 export type MavenGradleUnresolved = MavenGradleMetadata["unresolved"][number];

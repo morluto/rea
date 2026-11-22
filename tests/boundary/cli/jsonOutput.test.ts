@@ -1,4 +1,8 @@
-import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import {
+  cliCommandForOperation,
+  cliCommands,
+  registerCliCommand,
+} from "../../../src/cli/commandRegistry.js";
 import { createCommandCli } from "../../support/cli/commandCli.js";
 import { constants } from "node:buffer";
 import { createHash } from "node:crypto";
@@ -521,6 +525,7 @@ describe("full-output token counts", () => {
         [],
         ["--full-output"],
         ["--filter-output", "missing"],
+        ["--filter-output", "raw_result"],
         ["--format", "jsonl"],
       ]) {
         const argv = ["fixture", "--json", ...flags];
@@ -541,7 +546,10 @@ describe("full-output token counts", () => {
             destination,
           );
           if (output === undefined) throw new Error("Missing output surface");
-          await output.write({ rows: ["hello", "雪😀"] }, metadata);
+          await output.write(
+            { rows: ["hello", "雪😀"], raw_result: null },
+            metadata,
+          );
           return Buffer.concat(chunks).toString("utf8");
         };
         const document = await render(false);
@@ -784,4 +792,22 @@ describe("streamed CLI filtered selections", () => {
       else expect(text).toBe(expected);
     },
   );
+});
+
+it("refreshes the operation lookup after registering another command", () => {
+  const cli = createCommandCli();
+  registerCliCommand(cli, "existing", { run: () => undefined });
+  const commands = cliCommands(cli);
+  const lookup = () =>
+    cliCommandForOperation("fixture_late_operation", commands, "rea");
+  expect(lookup()).toBeUndefined();
+  registerCliCommand(
+    cli,
+    "fixture-late-operation",
+    { run: () => undefined },
+    {
+      operations: [{ name: "fixture_late_operation", flags: {} }],
+    },
+  );
+  expect(lookup()).toBe("rea fixture-late-operation");
 });

@@ -530,7 +530,7 @@ const readPlistSourceBytes = async (
 };
 
 /**
- * Bytes examined for leading markup when `file` reports only text.
+ * Bytes examined for leading markup when `file` does not name the format.
  * This is a probe window, not a document cap, and has no runtime override.
  */
 const PLIST_MARKUP_PROBE_BYTES = 4096;
@@ -543,7 +543,8 @@ export const plistSourceFormat = (
   if (/binary property list/iu.test(description)) return "binary";
   if (/\bXML\b/iu.test(description)) return "xml";
   if (/\bJSON\b/iu.test(description)) return "json";
-  if (!/\btext\b/iu.test(description)) return "unknown";
+  // `file` reports `data` for XML containing a control character or NUL byte,
+  // which CoreFoundation can still read, so the source decides the label.
   const head = source.subarray(0, PLIST_MARKUP_PROBE_BYTES);
   const encoding =
     head[0] === 0xff && head[1] === 0xfe

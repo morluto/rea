@@ -61,6 +61,7 @@ it("limits the shared Babel child expansion exception to its owner", async () =>
     process.execPath,
     [
       resolve("node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
       "-c",
       config,
       "--format",

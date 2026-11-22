@@ -1,4 +1,3 @@
-import { sha256Hex } from "../kernel/sha256Hex.js";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -61,22 +60,45 @@ export const publishUefiFiles = async (context: {
   try {
     context.checkpoint();
     tree = await SafeOutputTree.create(context.outputDirectory);
-    for (const entry of context.entries) {
-      context.checkpoint();
-      const sha256 = sha256Hex(entry.bytes);
-      const written = await tree.write(
-        entry.relativePath,
-        Readable.from([entry.bytes]),
-        { sha256, bytes: entry.bytes.length },
-        context.signal,
-      );
-      files.push({
-        ...entry.facts,
-        relative_path: written.relativePath,
-        path: join(tree.outputRoot, written.relativePath),
-        size: written.bytesWritten,
-        sha256: written.sha256,
-      });
+    const activeTree = tree;
+    const slots = new Array<UefiPublishedFile | undefined>(
+      context.entries.length,
+    );
+    let cursor = 0;
+    let firstFailure: unknown;
+    const publishWorker = async (): Promise<void> => {
+      while (firstFailure === undefined) {
+        const index = cursor++;
+        const entry = context.entries[index];
+        if (entry === undefined) return;
+        try {
+          context.checkpoint();
+          const written = await activeTree.write(
+            entry.relativePath,
+            Readable.from([entry.bytes]),
+            { bytes: entry.bytes.length },
+            context.signal,
+          );
+          slots[index] = {
+            ...entry.facts,
+            relative_path: written.relativePath,
+            path: join(activeTree.outputRoot, written.relativePath),
+            size: written.bytesWritten,
+            sha256: written.sha256,
+          };
+        } catch (cause: unknown) {
+          firstFailure ??= cause;
+          return;
+        }
+      }
+    };
+    const workerCount = Math.min(8, context.entries.length);
+    await Promise.allSettled(
+      Array.from({ length: workerCount }, () => publishWorker()),
+    );
+    if (firstFailure !== undefined) throw firstFailure;
+    for (const item of slots) {
+      if (item !== undefined) files.push(item);
     }
     result = context.buildResult(tree.outputRoot, files);
     context.checkpoint();

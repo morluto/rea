@@ -1,5 +1,4 @@
 import {
-  decodeZstandardFrames,
   decodeZstandardFramesCooperative,
   type ZstandardFrameFailure,
   type ZstandardFramePause,
@@ -359,7 +358,8 @@ const asSafeInt = (value: bigint | string | number): number | null => {
   return Number(numeric);
 };
 
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
+const hex = (bytes: Uint8Array): string =>
+  Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("hex");
 
 const protobufFailure = (cause: unknown): AndroidOtaPayloadParseError =>
   malformed(
@@ -509,8 +509,7 @@ interface ManifestDraft {
   signaturesSize: number | null;
   minorVersion: number;
   partitions: PartitionDraft[];
-  maxTimestamp: number | null;
-  maxTimestampOutOfRange: boolean;
+  maxTimestamp: bigint | string | null;
   partialUpdate: boolean | null;
   securityPatchLevel: string | null;
   groups: GroupDraft[];
@@ -870,7 +869,6 @@ const decodeManifest = (
     minorVersion: 0,
     partitions: [],
     maxTimestamp: null,
-    maxTimestampOutOfRange: false,
     partialUpdate: null,
     securityPatchLevel: null,
     groups: [],
@@ -918,9 +916,8 @@ const decodeManifest = (
       return;
     }
     if (field === 14 && wire === WireType.Varint) {
-      const timestamp = asSafeInt(reader.int64());
-      if (timestamp === null) draft.maxTimestampOutOfRange = true;
-      else draft.maxTimestamp = timestamp;
+      // Protobuf singular scalars keep the last occurrence.
+      draft.maxTimestamp = reader.int64();
       return;
     }
     if (field === 15 && wire === WireType.LengthDelimited) {
@@ -1071,31 +1068,29 @@ export const parseAndroidOtaPayload = (
   };
   const partitions: AndroidOtaPartition[] = manifest.value.partitions.map(
     (partition, index) => {
-      const operations: AndroidOtaInstallOperation[] = partition.operations.map(
-        (operation) => ({
+      const sourceOps = partition.operations;
+      const operations = new Array<AndroidOtaInstallOperation>(
+        sourceOps.length,
+      );
+      let needsBlob = false;
+      let blobFits = true;
+      for (let opIndex = 0; opIndex < sourceOps.length; opIndex += 1) {
+        const operation = sourceOps[opIndex]!;
+        if (operation.dataLength > 0) {
+          needsBlob = true;
+          if (operation.dataOffset + operation.dataLength > blobAvailable)
+            blobFits = false;
+        }
+        operations[opIndex] = {
           typeCode: operation.typeCode,
           typeName: INSTALL_OPERATION_NAMES[operation.typeCode] ?? "unknown",
           dataOffset: operation.dataOffset,
           dataLength: operation.dataLength,
           dataHashHex: operation.dataHashHex,
-          srcExtents: operation.srcExtents.map((extent) => ({
-            startBlock: extent.startBlock,
-            numBlocks: extent.numBlocks,
-          })),
-          dstExtents: operation.dstExtents.map((extent) => ({
-            startBlock: extent.startBlock,
-            numBlocks: extent.numBlocks,
-          })),
-        }),
-      );
-      const needsBlob = operations.some(
-        (operation) => operation.dataLength > 0,
-      );
-      const blobFits = operations.every(
-        (operation) =>
-          operation.dataLength === 0 ||
-          operation.dataOffset + operation.dataLength <= blobAvailable,
-      );
+          srcExtents: operation.srcExtents,
+          dstExtents: operation.dstExtents,
+        };
+      }
       const size = partition.newPartitionInfo.size;
       const extractRefusal: AndroidOtaExtractRefusal | null = !isExtractable(
         partition.operations,
@@ -1153,7 +1148,9 @@ export const parseAndroidOtaPayload = (
     ),
   ))
     limitations.push(androidOtaExtractRefusalLimitation(refusal));
-  if (manifest.value.maxTimestampOutOfRange)
+  const rawTimestamp = manifest.value.maxTimestamp;
+  const maxTimestamp = rawTimestamp === null ? null : asSafeInt(rawTimestamp);
+  if (rawTimestamp !== null && maxTimestamp === null)
     limitations.push(
       "max_timestamp is outside the exact integer range this reader reports.",
     );
@@ -1164,7 +1161,7 @@ export const parseAndroidOtaPayload = (
     blockSize: manifest.value.blockSize,
     minorVersion: manifest.value.minorVersion,
     payloadKind: manifest.value.minorVersion === 0 ? "full" : "delta",
-    maxTimestamp: manifest.value.maxTimestamp,
+    maxTimestamp,
     partialUpdate: manifest.value.partialUpdate,
     securityPatchLevel: manifest.value.securityPatchLevel,
     signaturesOffset: manifest.value.signaturesOffset,
@@ -1435,7 +1432,7 @@ function* reconstructAndroidOtaPartitionSteps(
   options: { readonly verifyDeclaredHash?: boolean } = {},
 ): Generator<
   { readonly raw: Uint8Array; readonly maxOutputLength: number },
-  Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+  Result<Buffer, AndroidOtaPayloadReconstructError>,
   ZstandardFrameResult
 > {
   const refused = androidOtaExtractRefusalError(partition);
@@ -1551,75 +1548,30 @@ function* reconstructAndroidOtaPartitionSteps(
   return ok(image);
 }
 
-const driveAndroidOtaReconstruction = (
-  steps: Generator<
-    { readonly raw: Uint8Array; readonly maxOutputLength: number },
-    Result<Uint8Array, AndroidOtaPayloadReconstructError>,
-    ZstandardFrameResult
-  >,
-  decode: (
-    raw: Uint8Array,
-    maxOutputLength: number,
-  ) => ZstandardFrameResult | Promise<ZstandardFrameResult>,
-): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> => {
-  const run = async (): Promise<
-    Result<Uint8Array, AndroidOtaPayloadReconstructError>
-  > => {
-    let next = steps.next();
-    while (!next.done)
-      next = steps.next(
-        await decode(next.value.raw, next.value.maxOutputLength),
-      );
-    return next.value;
-  };
-  return run();
-};
-
 /**
- * Rebuild a full-payload partition image after checking declared blob hashes.
- * A partition image hash mismatch fails unless `verifyDeclaredHash` is false,
- * which leaves that decision to a caller applying its own integrity policy.
+ * Rebuild the image using the production asynchronous decoder. Keep caller
+ * cancellation at the Zstandard boundary, outside reconstruction error mapping.
+ * A caller applying a shared integrity policy can defer the final image hash.
  */
-export const reconstructAndroidOtaPartition = (
+export const reconstructAndroidOtaPartitionCooperative = async (
   partition: AndroidOtaPartition,
   blockSize: number,
   readBlob: (offset: number, length: number) => Uint8Array,
+  pause: ZstandardFramePause,
   options: { readonly verifyDeclaredHash?: boolean } = {},
-): Result<Uint8Array, AndroidOtaPayloadReconstructError> => {
+): Promise<Result<Buffer, AndroidOtaPayloadReconstructError>> => {
   const steps = reconstructAndroidOtaPartitionSteps(
     partition,
     blockSize,
     readBlob,
     options,
   );
-  let next = steps.next();
-  while (!next.done)
-    next = steps.next(
-      decodeZstandardFrames(next.value.raw, {
-        maxOutputLength: next.value.maxOutputLength,
-      }),
+  let step = steps.next();
+  while (!step.done) {
+    const { raw, maxOutputLength } = step.value;
+    step = steps.next(
+      await decodeZstandardFramesCooperative(raw, { maxOutputLength }, pause),
     );
-  return next.value;
+  }
+  return step.value;
 };
-
-/**
- * Same reconstruction as {@link reconstructAndroidOtaPartition}. REPLACE_ZSTD
- * frames yield through `pause` so the caller's abort signal can land.
- */
-export const reconstructAndroidOtaPartitionCooperative = (
-  partition: AndroidOtaPartition,
-  blockSize: number,
-  readBlob: (offset: number, length: number) => Uint8Array,
-  pause: ZstandardFramePause,
-  options: { readonly verifyDeclaredHash?: boolean } = {},
-): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> =>
-  driveAndroidOtaReconstruction(
-    reconstructAndroidOtaPartitionSteps(
-      partition,
-      blockSize,
-      readBlob,
-      options,
-    ),
-    (raw, maxOutputLength) =>
-      decodeZstandardFramesCooperative(raw, { maxOutputLength }, pause),
-  );

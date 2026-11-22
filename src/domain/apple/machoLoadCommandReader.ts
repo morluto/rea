@@ -47,7 +47,7 @@ import {
   type FatSliceDeclaration,
   type FatSliceRangeIssue,
 } from "./machoContainer.js";
-import { strictUtf8Decoder } from "../strictUtf8.js";
+import { decodeStrictUtf8 } from "../strictUtf8.js";
 
 /** Read `length` bytes at `offset`; shorter results mean end of file. */
 export type ReadAt = (offset: number, length: number) => Promise<Uint8Array>;
@@ -614,6 +614,11 @@ const maximumVmOffset = (segments: readonly SegmentSpan[]): bigint => {
   return max;
 };
 
+const SEGMENT_NAME_DECODER = new TextDecoder("utf-8", {
+  fatal: false,
+  ignoreBOM: true,
+});
+
 const readSegmentSpan = (
   body: Uint8Array,
   wide: boolean,
@@ -624,7 +629,7 @@ const readSegmentSpan = (
   const end = nameBytes.indexOf(0);
   return {
     // Segment names are fixed-width Mach-O data; a leading BOM is literal name bytes.
-    name: new TextDecoder("utf-8", { fatal: false, ignoreBOM: true }).decode(
+    name: SEGMENT_NAME_DECODER.decode(
       end < 0 ? nameBytes : nameBytes.subarray(0, end),
     ),
     vmaddr,
@@ -754,14 +759,14 @@ const decodeCommand = (
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    const reader = machoWordReader(body, true);
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
       throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }
@@ -1037,7 +1042,7 @@ const payloadString = (
   chargeLazyString(work, end - offset + 1);
   let text: string;
   try {
-    text = strictUtf8Decoder("preserve").decode(payload.subarray(offset, end));
+    text = decodeStrictUtf8(payload.subarray(offset, end), "preserve");
   } catch {
     throw machoIssue(
       "malformed",
@@ -1109,7 +1114,7 @@ const throwCommandStringIssue = (
 const decodeCommandString = (bytes: Uint8Array, index: number): string => {
   try {
     // lc_str contains name/path data, so a leading U+FEFF is part of its identity.
-    return strictUtf8Decoder("preserve").decode(bytes);
+    return decodeStrictUtf8(bytes, "preserve");
   } catch {
     throw machoIssue(
       "malformed",
@@ -1141,6 +1146,3 @@ const fileTypeName = (fileType: number): MachoSlice["file_type"] =>
 
 const version = (value: number): string =>
   `${value >>> 16}.${(value >>> 8) & 0xff}.${value & 0xff}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

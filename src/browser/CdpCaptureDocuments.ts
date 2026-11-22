@@ -1,4 +1,3 @@
-import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpFrameTree, CdpResourceTree } from "./protocol/CdpFrameTree.js";
@@ -226,7 +225,6 @@ interface PendingDomMetadata {
 export function* captureDom(
   root: CdpCommandResult<"DOMSnapshot.captureSnapshot">,
   allowedOrigins: ReadonlySet<string>,
-  input: InspectWebPageInput,
   completeness?: CdpCaptureCompleteness,
 ): Generator<
   readonly DomSvgNodeQuery[],
@@ -286,7 +284,8 @@ export function* captureDom(
       const { nodeType, nodeName, nodeValue, parent, attributes } =
         admitted.value;
       const nodeIndex = baseIndex + index;
-      const attributeNames = [...new Set(attributes.map(([name]) => name))];
+      const attributeSet = new Set(attributes.map(([name]) => name));
+      const attributeNames = [...attributeSet];
       const domElement = domXmlElement(ancestry, index);
       const htmlTagName = domHtmlTagName(nodeName, domElement);
       if (domElement.xmlDocument === undefined)
@@ -295,8 +294,8 @@ export function* captureDom(
       if (
         domElement.xmlDocument === false &&
         nodeType === 1 &&
-        attributeNames.includes("xlink:href") &&
-        !attributeNames.includes("href")
+        attributeSet.has("xlink:href") &&
+        !attributeSet.has("href")
       ) {
         const backendNodeId = backendNodeIds[index];
         svgQuery =
