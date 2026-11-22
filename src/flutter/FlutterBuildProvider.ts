@@ -17,6 +17,7 @@ import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellati
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -124,6 +125,37 @@ const FLUTTER_ALLOWANCES = {
     { limit: MAX_SNAPSHOT_HASH_CANDIDATES, unit: "candidates" },
   ),
 } as const;
+
+/**
+ * Stream a local file digest without retaining large files in memory.
+ * Aborts between chunks so a cancellation cannot run a digest to completion.
+ */
+const sha256File = async (
+  operation: string,
+  path: string,
+  signal: AbortSignal | undefined,
+): Promise<string> => {
+  assertArtifactReadActive(signal);
+  const hash = createHash("sha256");
+  const owner = new AbortController();
+  const marker = {};
+  const abort = () => owner.abort(marker);
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const stream = createReadStream(path, { signal: owner.signal });
+    for await (const chunk of stream) {
+      if (signal?.aborted === true) throw cancelledBy(operation, signal);
+      hash.update(chunk as Buffer);
+    }
+    return hash.digest("hex");
+  } catch (cause) {
+    if (isAbortWithReason(cause, marker))
+      throw cancelledBy(operation, carriedReason(signal?.reason));
+    throw cause;
+  } finally {
+    signal?.removeEventListener("abort", abort);
+  }
+};
 
 /** One owned snapshot root: a read-only copy of the admitted input. */
 interface OwnedSnapshot {
@@ -487,7 +519,6 @@ export class FlutterBuildProvider {
         new OwnedFileHandle(await openFile(snapshotPath, "wx")),
       );
       const chunk = Buffer.alloc(64 * 1024);
-      const digest = createHash("sha256");
       let copiedBytes = 0;
       while (copiedBytes <= Number(before.size)) {
         assertArtifactReadActive(signal);
@@ -508,9 +539,7 @@ export class FlutterBuildProvider {
             path,
             "Selected file grew during snapshotting",
           );
-        const slice = chunk.subarray(0, bytesRead);
-        digest.update(slice);
-        await output.handle.writeFile(slice);
+        await output.handle.writeFile(chunk.subarray(0, bytesRead));
       }
       await this.releaseResource(root, output);
       const [after, currentPath] = await Promise.all([
@@ -542,12 +571,9 @@ export class FlutterBuildProvider {
         );
       await this.releaseResource(root, source);
       await chmod(snapshotPath, 0o400);
-      return {
-        root,
-        path: snapshotPath,
-        bytes: copiedBytes,
-        sha256: digest.digest("hex"),
-      };
+      const info = await stat(snapshotPath);
+      const sha256 = await sha256File(operation, snapshotPath, signal);
+      return { root, path: snapshotPath, bytes: info.size, sha256 };
     } catch (cause) {
       const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
