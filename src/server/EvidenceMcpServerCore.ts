@@ -39,7 +39,6 @@ import {
 import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
 import {
   hasGuaranteedObjectOutputRoot,
-  cacheAdvertisedOutputJsonSchema,
   omitAdvertisedOutputJsonSchema,
   transformAdvertisedInputJsonSchema,
 } from "../contracts/toolSchemaMetadata.js";
@@ -454,12 +453,11 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const advertised = this.advertisesTool(name);
     const presented = advertised ? this.presentInput(name, config) : config;
     const outputSchema =
-      config.outputSchema === undefined
-        ? undefined
-        : this.presentation.output === undefined &&
-            hasGuaranteedObjectOutputRoot(config.outputSchema)
-          ? omitAdvertisedOutputJsonSchema(config.outputSchema)
-          : cacheAdvertisedOutputJsonSchema(config.outputSchema);
+      this.presentation.output === undefined &&
+      config.outputSchema !== undefined &&
+      hasGuaranteedObjectOutputRoot(config.outputSchema)
+        ? omitAdvertisedOutputJsonSchema(config.outputSchema)
+        : config.outputSchema;
     const registeredConfig = advertised
       ? {
           ...config,

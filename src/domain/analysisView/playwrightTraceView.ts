@@ -154,75 +154,39 @@ const eventFields = (
   };
 };
 
-interface PlaywrightTraceIndex {
-  readonly eventsById: ReadonlyMap<string, readonly number[]>;
-  readonly eventsByStream: ReadonlyMap<string, readonly number[]>;
-  readonly eventsByKind: ReadonlyMap<string, readonly number[]>;
-  readonly eventsByCall: ReadonlyMap<string, readonly number[]>;
-  readonly membersById: ReadonlyMap<string, readonly number[]>;
-  readonly membersByPath: ReadonlyMap<string, readonly number[]>;
-  readonly streamsById: ReadonlyMap<string, readonly number[]>;
-  readonly diagnosticsByCode: ReadonlyMap<string, readonly number[]>;
-}
+type TraceRowIndex = ReadonlyMap<string, readonly number[]>;
+const traceIndexes = new WeakMap<
+  readonly object[],
+  Map<string, TraceRowIndex>
+>();
 
-const traceIndexes = new WeakMap<object, PlaywrightTraceIndex>();
-
-const pushBucket = (
-  map: Map<string, number[]>,
-  key: string | null | undefined,
-  index: number,
-): void => {
-  if (key === null || key === undefined) return;
-  let bucket = map.get(key);
-  if (bucket === undefined) {
-    bucket = [];
-    map.set(key, bucket);
-  }
-  bucket.push(index);
-};
-
-const getPlaywrightTraceIndex = (
+const candidateIndices = <Row extends object>(
   report: PlaywrightTrace,
-): PlaywrightTraceIndex | undefined => {
+  rows: readonly Row[],
+  key: keyof Row & string,
+  filter: ReadonlySet<string>,
+): number[] | undefined => {
   if (!isImmutableJsonSnapshot(report)) return undefined;
-  let cached = traceIndexes.get(report);
-  if (cached !== undefined) return cached;
-  const eventsById = new Map<string, number[]>();
-  const eventsByStream = new Map<string, number[]>();
-  const eventsByKind = new Map<string, number[]>();
-  const eventsByCall = new Map<string, number[]>();
-  for (let index = 0; index < report.events.length; index += 1) {
-    const row = report.events[index]!;
-    pushBucket(eventsById, row.event_id, index);
-    pushBucket(eventsByStream, row.stream_id, index);
-    pushBucket(eventsByKind, row.kind, index);
-    pushBucket(eventsByCall, row.call_id, index);
+  if (filter.size === 0) return [];
+  let indexes = traceIndexes.get(rows);
+  if (indexes === undefined) {
+    indexes = new Map();
+    traceIndexes.set(rows, indexes);
   }
-  const membersById = new Map<string, number[]>();
-  const membersByPath = new Map<string, number[]>();
-  for (let index = 0; index < report.members.length; index += 1) {
-    const row = report.members[index]!;
-    pushBucket(membersById, row.member_id, index);
-    pushBucket(membersByPath, row.path, index);
+  let index = indexes.get(key);
+  if (index === undefined) {
+    const built = new Map<string, number[]>();
+    for (let i = 0; i < rows.length; i += 1) {
+      const value = rows[i]?.[key];
+      if (typeof value !== "string") continue;
+      const bucket = built.get(value);
+      if (bucket === undefined) built.set(value, [i]);
+      else bucket.push(i);
+    }
+    index = built;
+    indexes.set(key, index);
   }
-  const streamsById = new Map<string, number[]>();
-  for (let index = 0; index < report.streams.length; index += 1)
-    pushBucket(streamsById, report.streams[index]!.stream_id, index);
-  const diagnosticsByCode = new Map<string, number[]>();
-  for (let index = 0; index < report.diagnostics.length; index += 1)
-    pushBucket(diagnosticsByCode, report.diagnostics[index]!.code, index);
-  cached = {
-    eventsById,
-    eventsByStream,
-    eventsByKind,
-    eventsByCall,
-    membersById,
-    membersByPath,
-    streamsById,
-    diagnosticsByCode,
-  };
-  traceIndexes.set(report, cached);
-  return cached;
+  return collectCandidateIndices(index, filter);
 };
 
 const collectCandidateIndices = (
@@ -285,16 +249,15 @@ const selectRows = (
       kinds !== undefined ||
       calls !== undefined
     ) {
-      const idx = getPlaywrightTraceIndex(report);
-      if (idx !== undefined) {
-        const candidates =
-          ids !== undefined
-            ? collectCandidateIndices(idx.eventsById, ids)
-            : calls !== undefined
-              ? collectCandidateIndices(idx.eventsByCall, calls)
-              : streams !== undefined
-                ? collectCandidateIndices(idx.eventsByStream, streams)
-                : collectCandidateIndices(idx.eventsByKind, kinds!);
+      const candidates =
+        ids !== undefined
+          ? candidateIndices(report, report.events, "event_id", ids)
+          : calls !== undefined
+            ? candidateIndices(report, report.events, "call_id", calls)
+            : streams !== undefined
+              ? candidateIndices(report, report.events, "stream_id", streams)
+              : candidateIndices(report, report.events, "kind", kinds!);
+      if (candidates !== undefined) {
         return selectCandidateRows(
           report.events,
           candidates,
@@ -325,12 +288,11 @@ const selectRows = (
       limitations: row.limitations,
     });
     if (ids !== undefined || paths !== undefined) {
-      const idx = getPlaywrightTraceIndex(report);
-      if (idx !== undefined) {
-        const candidates =
-          ids !== undefined
-            ? collectCandidateIndices(idx.membersById, ids)
-            : collectCandidateIndices(idx.membersByPath, paths!);
+      const candidates =
+        ids !== undefined
+          ? candidateIndices(report, report.members, "member_id", ids)
+          : candidateIndices(report, report.members, "path", paths!);
+      if (candidates !== undefined) {
         return selectCandidateRows(
           report.members,
           candidates,
@@ -355,11 +317,16 @@ const selectRows = (
       state: row.state,
     });
     if (ids !== undefined) {
-      const idx = getPlaywrightTraceIndex(report);
-      if (idx !== undefined)
+      const candidates = candidateIndices(
+        report,
+        report.streams,
+        "stream_id",
+        ids,
+      );
+      if (candidates !== undefined)
         return selectCandidateRows(
           report.streams,
-          collectCandidateIndices(idx.streamsById, ids),
+          candidates,
           view,
           matchStream,
           projectStream,
@@ -379,11 +346,16 @@ const selectRows = (
     code: row.code,
   });
   if (codes !== undefined) {
-    const idx = getPlaywrightTraceIndex(report);
-    if (idx !== undefined)
+    const candidates = candidateIndices(
+      report,
+      report.diagnostics,
+      "code",
+      codes,
+    );
+    if (candidates !== undefined)
       return selectCandidateRows(
         report.diagnostics,
-        collectCandidateIndices(idx.diagnosticsByCode, codes),
+        candidates,
         view,
         matchDiagnostic,
         projectDiagnostic,
