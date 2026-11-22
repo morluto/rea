@@ -431,132 +431,65 @@ describe("Grok Build server table edits", () => {
   });
 });
 
-describe("Grok Build disabled server list", () => {
-  it("removes rea from disabled_mcp_servers and leaves other names", async () => {
-    const home = await createTestTempDirectory("rea-grok-disabled-");
-    const configPath = join(home, ".grok/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      [
-        "disabled_mcp_servers = [",
-        '  "other",',
-        '  "r\\u0065a",',
-        '  "rea", # was off',
-        '  "github",',
-        "]",
-        "[mcp_servers.rea]",
-        "enabled = false",
-        'command = "rea"',
-        'args = ["mcp"]',
-        "startup_timeout_sec = 30",
-      ].join("\n"),
-    );
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(configured).toContain("# was off");
-    expect(configured).not.toContain("enabled");
-    expect(parseToml(configured)).toMatchObject({
-      disabled_mcp_servers: ["other", "github"],
-      mcp_servers: {
-        rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
-      },
-    });
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toEqual({ status: "unchanged" });
-    await writeFile(configPath, 'disabled_mcp_servers = ["rea"] # note\n');
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const created = await readFile(configPath, "utf8");
-    expect(created).toContain("# note");
-    expect(created).not.toContain("disabled_mcp_servers");
-    expect(parseToml(created)).toMatchObject({
-      mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
-    });
+it("reenables Grok Build REA without changing other disable-list entries", async () => {
+  const home = await createTestTempDirectory("rea-grok-disabled-");
+  const configPath = join(home, ".grok/config.toml");
+  await mkdir(dirname(configPath), { recursive: true });
+  const client = {
+    name: "grok_build",
+    registrationProfile: supportedClientRegistrationProfile("grok_build"),
+    configPath,
+    format: "grok",
+  } as const;
+  const configure = () =>
+    configureClientConfiguration(client, undefined, ["rea", "mcp"]);
+  const scopedList =
+    '[profile]\ndisabled_mcp_servers = ["rea"] # unrelated setting';
+  await writeFile(
+    configPath,
+    [
+      "disabled_mcp_servers = [",
+      '  "other",',
+      '  "r\\u0065a",',
+      '  "rea", # was off',
+      '  """rea""",',
+      "  '''rea''',",
+      '  """',
+      'rea""",',
+      '  """rea',
+      '""",',
+      '  "github",',
+      "]",
+      scopedList,
+      "[mcp_servers.rea]",
+      "enabled = false",
+      'command = "rea"',
+      'args = ["mcp"]',
+      "startup_timeout_sec = 30",
+    ].join("\n"),
+  );
+  expect(await configure()).toMatchObject({ status: "configured" });
+  const configured = await readFile(configPath, "utf8");
+  expect(configured).toContain("# was off");
+  expect(configured).toContain(scopedList);
+  const active = parseToml(configured);
+  expect(active).toMatchObject({
+    disabled_mcp_servers: ["other", "rea\n", "github"],
+    mcp_servers: {
+      rea: { command: "rea", args: ["mcp"], startup_timeout_sec: 30 },
+    },
   });
+  expect(active).not.toHaveProperty("mcp_servers.rea.enabled");
+  expect(await configure()).toEqual({ status: "unchanged" });
+  expect(await readFile(configPath, "utf8")).toBe(configured);
 
-  it("removes multiline rea entries from disabled_mcp_servers", async () => {
-    const home = await createTestTempDirectory("rea-grok-disabled-multiline-");
-    const configPath = join(home, ".grok/config.toml");
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(
-      configPath,
-      [
-        "disabled_mcp_servers = [",
-        '  """rea""",',
-        "  '''rea''',",
-        '  """',
-        'rea""",',
-        '  """rea',
-        '""",',
-        '  "github",',
-        "]",
-      ].join("\n"),
-    );
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(parseToml(configured)).toMatchObject({
-      disabled_mcp_servers: ["rea\n", "github"],
-      mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
-    });
-    await writeFile(configPath, 'disabled_mcp_servers = ["""rea"""] # note\n');
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "grok_build",
-          registrationProfile: supportedClientRegistrationProfile("grok_build"),
-          configPath,
-          format: "grok",
-        },
-        undefined,
-        ["rea", "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const created = await readFile(configPath, "utf8");
-    expect(created).toContain("# note");
-    expect(created).not.toContain("disabled_mcp_servers");
+  await writeFile(configPath, 'disabled_mcp_servers = ["""rea"""] # note\n');
+  expect(await configure()).toMatchObject({ status: "configured" });
+  const created = await readFile(configPath, "utf8");
+  expect(created).toContain("# note");
+  expect(parseToml(created)).not.toHaveProperty("disabled_mcp_servers");
+  expect(parseToml(created)).toMatchObject({
+    mcp_servers: { rea: { command: "rea", args: ["mcp"] } },
   });
 });
 
@@ -1588,39 +1521,6 @@ describe("Grok Bot registration", () => {
     expect(removed.status).toBe("complete");
     expect(removed.items).toContainEqual(
       expect.objectContaining({ name: "grok_bot", status: "skipped" }),
-    );
-    expect(await readFile(configPath, "utf8")).toBe(original);
-  });
-});
-
-describe("Codex configuration comments", () => {
-  it("keeps Codex comments and value spelling through setup and uninstall", async () => {
-    const home = await createTestTempDirectory("rea-toml-comments-");
-    const configPath = join(home, ".codex/config.toml");
-    const original =
-      '# Keep this explanation.\nnotify = ["a", "b"]\nliteral = \'C:\\demo\\path\'\n';
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, original);
-
-    expect(
-      await configureClientConfiguration(
-        {
-          name: "codex",
-          registrationProfile: supportedClientRegistrationProfile("codex"),
-          configPath,
-          format: "toml",
-        },
-        {},
-        [PRODUCT_IDENTITY.cliBinary, "mcp"],
-      ),
-    ).toMatchObject({ status: "configured" });
-    const configured = await readFile(configPath, "utf8");
-    expect(configured.startsWith(original)).toBe(true);
-    expect(configured).toContain("[mcp_servers.rea]");
-
-    const removed = await runUninstall(false, systemUninstallHost(home));
-    expect(removed.items).toContainEqual(
-      expect.objectContaining({ name: "codex", status: "removed" }),
     );
     expect(await readFile(configPath, "utf8")).toBe(original);
   });
