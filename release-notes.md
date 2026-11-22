@@ -155,6 +155,7 @@
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **kuna:** avoid per-line Buffer.concat allocations in KunaProjectFiles.scanLines ([#13270](https://github.com/morluto/rea/issues/13270)) ([f7355b1](https://github.com/morluto/rea/commit/f7355b1b61cf01098ce3bf1bc8d67bd659418e25))
 * **mcp:** filter prompt completions before sorting ([#13251](https://github.com/morluto/rea/issues/13251)) ([0299413](https://github.com/morluto/rea/commit/0299413e86660456f5abd4f0c46921a16cbb1102))
+* **mcp:** index tool contracts, skip unadvertised projection, parallelize status probes, and stream tool result sizing ([#13263](https://github.com/morluto/rea/issues/13263)) ([7a2e8da](https://github.com/morluto/rea/commit/7a2e8da4959d73f88365aec6de48859dd6a6346e))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **setup:** index YAML alias bindings in document order ([#13295](https://github.com/morluto/rea/issues/13295)) ([560e2ef](https://github.com/morluto/rea/commit/560e2ef267229e2a133879a1d3d663c1e88d5bbb))
