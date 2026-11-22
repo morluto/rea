@@ -603,6 +603,30 @@ export const immutableEvidence = (input: unknown): Evidence => {
   );
 };
 
+/**
+ * Authenticate a record already validated and exclusively owned by
+ * `evidenceSchema`, avoiding a second schema parse and deep clone.
+ */
+export const authenticateParsedEvidence = (
+  record: Evidence,
+  seal: boolean,
+): Evidence => {
+  const immutable = immutableEvidenceSnapshots.get(record);
+  if (immutable !== undefined) return immutable;
+  admitEvidenceRecordFormat(record);
+  const { evidence_id: evidenceId, ...withoutId } = record;
+  if (computeEvidenceId(withoutId) !== evidenceId)
+    throw new z.ZodError([
+      {
+        code: "custom",
+        path: ["evidence_id"],
+        message: "Evidence semantic identifier does not match its record",
+      },
+    ]);
+  if (!seal) return record;
+  return rememberImmutableEvidence(freezeOwnedJsonTreeSnapshot(record));
+};
+
 /** Rebind display path metadata when an authenticated record names this target. */
 export const rebindEvidenceToTargetPath = (
   evidence: Evidence,

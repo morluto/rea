@@ -48,21 +48,47 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, ...names: string[]): Element[] =>
-  childElements(element).filter(
-    (child) =>
-      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
+const childrenNamed = (element: Element, ...names: string[]): Element[] => {
+  const ns = element.namespaceURI ?? "";
+  const matches: Element[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
+      (child.namespaceURI ?? "") === ns &&
       child.localName !== null &&
-      names.includes(child.localName),
-  );
+      names.includes(child.localName)
+    )
+      matches.push(child);
+  }
+  return matches;
+};
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
-  const matches = childrenNamed(element, local);
-  if (matches.length <= 1) return matches[0];
-  throw malformedInput(
-    MAVEN_GRADLE_METADATA_FORMAT,
-    `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
-  );
+  const ns = element.namespaceURI ?? "";
+  let found: Element | undefined;
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
+      (child.namespaceURI ?? "") === ns &&
+      child.localName === local
+    ) {
+      if (found !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+        );
+      found = child;
+    }
+  }
+  return found;
 };
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";

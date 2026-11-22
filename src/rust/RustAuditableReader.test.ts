@@ -382,6 +382,38 @@ it("rejects the first malformed package before schema issues accumulate", () => 
   );
 });
 
+it("admits an explicit empty feature list at its exact normalized graph size", () => {
+  const pkg = {
+    name: "a",
+    version: "1",
+    source: "s",
+    features: [],
+    root: true,
+  };
+  const expected = { ...pkg, kind: null, dependencies: [] };
+  const maxOutputBytes = Buffer.byteLength(JSON.stringify(expected));
+  const payload = deflateSync(
+    Buffer.from(JSON.stringify({ format: 0, packages: [pkg] })),
+  );
+  expect(
+    readAuditableSection(".dep-v0", 0, payload, { maxOutputBytes }).packages,
+  ).toEqual([expected]);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, payload, {
+      maxOutputBytes: maxOutputBytes - 1,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "dependency graph output bytes",
+          maximum: maxOutputBytes - 1,
+        }),
+      }),
+    }),
+  );
+});
 it("admits dependency expansion before allocating normalized or reverse edges", () => {
   const document = {
     packages: [

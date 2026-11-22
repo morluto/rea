@@ -1611,7 +1611,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
-        { callerTarget: active.target },
+        { callerTarget: active.target, immutable: true },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1635,7 +1635,7 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
-          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
+          evidence: authenticated ?? evidence,
         });
       return ok(retained);
     }

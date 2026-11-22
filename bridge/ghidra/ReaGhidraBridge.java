@@ -73,6 +73,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -206,6 +207,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<ProcedureEntry> procedureInventory;
     private Map<String, Object> procedureNameIndex;
     private List<StringEntry> stringInventory;
+    private Boolean swiftProgramCached;
     private DecompInterface decompiler;
     private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
@@ -3211,33 +3213,38 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
         if (recoveredJumpTables.length > 0) {
-            List<ClangNode> caseTokens = new ArrayList<>();
-            ClangNode markup = decompilation.getCCodeMarkup();
-            if (markup != null) {
-                collectCaseTokens(markup, caseTokens);
-            }
+            Map<Address, List<ClangCaseToken>> caseTokensByTarget =
+                indexCaseTokens(decompilation.getCCodeMarkup());
             for (int index = 0; index < recoveredJumpTables.length; index += 1) {
-                jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokens));
+                jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokensByTarget));
             }
         }
         return result;
     }
 
-    private static void collectCaseTokens(ClangNode root, List<ClangNode> caseTokens) {
+    private Map<Address, List<ClangCaseToken>> indexCaseTokens(ClangNode root)
+        throws Exception {
+        Map<Address, List<ClangCaseToken>> casesByTarget = new HashMap<>();
+        if (root == null) return casesByTarget;
         ArrayDeque<ClangNode> stack = new ArrayDeque<>();
         stack.push(root);
         while (!stack.isEmpty()) {
+            monitor.checkCancelled();
             ClangNode node = stack.pop();
-            if (node instanceof ClangCaseToken) {
-                caseTokens.add(node);
+            if (node instanceof ClangCaseToken token) {
+                PcodeOp operation = token.getPcodeOp();
+                if (operation != null && operation.getParent() != null) {
+                    casesByTarget
+                        .computeIfAbsent(operation.getParent().getStart(), ignored -> new ArrayList<>())
+                        .add(token);
+                }
             }
             for (int index = node.numChildren() - 1; index >= 0; index -= 1) {
                 ClangNode child = node.Child(index);
-                if (child != null) {
-                    stack.push(child);
-                }
+                if (child != null) stack.push(child);
             }
         }
+        return casesByTarget;
     }
 
     private JsonArray prototypeConflicts(
@@ -3567,7 +3574,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonObject inferredJumpTable(
         JumpTable jumpTable,
-        List<ClangNode> caseTokens
+        Map<Address, List<ClangCaseToken>> caseTokensByTarget
     ) throws Exception {
         JsonObject result = new JsonObject();
         result.addProperty(
@@ -3685,7 +3692,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         result.add("data_sources", dataSources);
         Address[] targets = jumpTable.getCases();
-        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokens);
+        TypedJumpTableCases typedCases = typedJumpTableCases(jumpTable, caseTokensByTarget);
         // Table indices identify the register bounded by CMP. Typed labels may
         // instead identify a selector before normalization (for example, SUB
         // index, selector, #10). Do not merge those distinct value identities.
@@ -3858,72 +3865,73 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private TypedJumpTableCases typedJumpTableCases(
         JumpTable jumpTable,
-        List<ClangNode> tokens
+        Map<Address, List<ClangCaseToken>> tokensByTarget
     ) throws Exception {
         TypedJumpTableCases result = new TypedJumpTableCases();
-        Set<Address> targets = new HashSet<>();
-        for (Address target : jumpTable.getCases()) targets.add(target);
-        for (ClangNode node : tokens) {
-            monitor.checkCancelled();
-            if (!(node instanceof ClangCaseToken token)) continue;
-            PcodeOp operation = token.getPcodeOp();
-            if (operation == null || operation.getParent() == null) continue;
-            PcodeBlockBasic block = operation.getParent();
-            Address target = block.getStart();
-            if (!targets.contains(target)) continue;
-            PcodeOp dispatch = null;
-            boolean ambiguousDispatch = false;
-            boolean includesDispatch = false;
-            for (int index = 0; index < block.getInSize(); index += 1) {
-                PcodeBlock predecessor = block.getIn(index);
-                if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
-                PcodeOp last = basic.getLastOp();
-                if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
-                if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
-                    includesDispatch = true;
+        Set<Address> seenTargets = new HashSet<>();
+        for (Address target : jumpTable.getCases()) {
+            if (!seenTargets.add(target)) continue;
+            List<ClangCaseToken> bucket = tokensByTarget.get(target);
+            if (bucket == null) continue;
+            for (ClangCaseToken token : bucket) {
+                monitor.checkCancelled();
+                PcodeOp operation = token.getPcodeOp();
+                if (operation == null || operation.getParent() == null) continue;
+                PcodeBlockBasic block = operation.getParent();
+                PcodeOp dispatch = null;
+                boolean ambiguousDispatch = false;
+                boolean includesDispatch = false;
+                for (int index = 0; index < block.getInSize(); index += 1) {
+                    PcodeBlock predecessor = block.getIn(index);
+                    if (!(predecessor instanceof PcodeBlockBasic basic)) continue;
+                    PcodeOp last = basic.getLastOp();
+                    if (last == null || last.getOpcode() != PcodeOp.BRANCHIND) continue;
+                    if (last.getSeqnum().getTarget().equals(jumpTable.getSwitchAddress())) {
+                        includesDispatch = true;
+                    }
+                    if (dispatch != null && dispatch != last) ambiguousDispatch = true;
+                    dispatch = last;
                 }
-                if (dispatch != null && dispatch != last) ambiguousDispatch = true;
-                dispatch = last;
-            }
-            if (!includesDispatch) continue;
-            if (ambiguousDispatch) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
-                );
-                continue;
-            }
-            // Default is a typed label role, not an OFF sentinel: Ghidra can
-            // encode a default token with an ordinary in-range case value.
-            if ("default".equals(token.getText())) {
-                result.defaults.add(target);
-                continue;
-            }
-            Long value = exactTypedCaseValue(token);
-            if (value == null) {
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed case label " + token.getText() +
-                    " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
-                    " at recovered target " + canonicalAddress(target) +
-                    " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
-                    "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
-                );
-                continue;
-            }
-            if (result.ambiguousValues.contains(value)) {
-                result.unknownTargets.add(target);
-                continue;
-            }
-            Address previous = result.cases.putIfAbsent(value, target);
-            if (previous != null && !previous.equals(target)) {
-                result.cases.remove(value);
-                result.ambiguousValues.add(value);
-                result.unknownTargets.add(previous);
-                result.unknownTargets.add(target);
-                result.limitations.add(
-                    "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
-                );
+                if (!includesDispatch) continue;
+                if (ambiguousDispatch) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "A typed case/default block has multiple indirect dispatch predecessors; REA cannot attribute its label to one switch."
+                    );
+                    continue;
+                }
+                // Default is a typed label role, not an OFF sentinel: Ghidra can
+                // encode a default token with an ordinary in-range case value.
+                if ("default".equals(token.getText())) {
+                    result.defaults.add(target);
+                    continue;
+                }
+                Long value = exactTypedCaseValue(token);
+                if (value == null) {
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed case label " + token.getText() +
+                        " has encoded unsigned magnitude " + Long.toUnsignedString(token.getValue()) +
+                        " at recovered target " + canonicalAddress(target) +
+                        " for dispatch " + canonicalAddress(jumpTable.getSwitchAddress()) +
+                        "; the label is nonliteral, inconsistent with its encoded magnitude, or outside the exact JSON integer range, so its numeric case value remains unknown."
+                    );
+                    continue;
+                }
+                if (result.ambiguousValues.contains(value)) {
+                    result.unknownTargets.add(target);
+                    continue;
+                }
+                Address previous = result.cases.putIfAbsent(value, target);
+                if (previous != null && !previous.equals(target)) {
+                    result.cases.remove(value);
+                    result.ambiguousValues.add(value);
+                    result.unknownTargets.add(previous);
+                    result.unknownTargets.add(target);
+                    result.limitations.add(
+                        "Typed tokens assign one case value to different recovered destinations; that case remains unknown."
+                    );
+                }
             }
         }
         return result;
@@ -5309,10 +5317,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private boolean swiftProgram() {
+        if (swiftProgramCached != null) return swiftProgramCached;
         for (MemoryBlock block : currentProgram.getMemory().getBlocks()) {
             String name = block.getName();
-            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) return true;
+            if (name.startsWith("__swift5_") || name.startsWith("swift5_")) {
+                swiftProgramCached = Boolean.TRUE;
+                return true;
+            }
         }
+        swiftProgramCached = Boolean.FALSE;
         return false;
     }
 
@@ -5346,9 +5359,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 // Returning true ends only the current flow, so every queued flow checks the shared stop.
                 if ((monitor != null && monitor.isCancelled()) || budget.stopped()) return true;
                 FlowType flow = instruction.getFlowType();
-                Address[] flowTargets = instruction.getFlows();
-                boolean unresolvedJump = flow.isJump() && !flow.isConditional() && flowTargets.length == 0;
-                for (Register[] pair : swiftStringPairs(function, instruction, registers)) {
+                boolean unconditionalJump = flow.isJump() && !flow.isConditional();
+                Address[] flowTargets = unconditionalJump ? instruction.getFlows() : null;
+                boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+                for (Register[] pair : swiftStringPairs(function, instruction, registers, flow, unconditionalJump, flowTargets)) {
                     Long word = registerConstant(context, pair[0]);
                     Long object = registerConstant(context, pair[1]);
                     if (word == null || object == null) continue;
@@ -5425,31 +5439,46 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static List<Register[]> swiftStringPairs(
         Function function,
         Instruction instruction,
-        Register[] registers
+        Register[] registers,
+        FlowType flow,
+        boolean unconditionalJump,
+        Address[] flowTargets
     ) {
-        List<Register[]> pairs = new ArrayList<>();
         if (instruction.getMnemonicString().equals("stp")) {
             Register first = instruction.getRegister(0);
             Register second = instruction.getRegister(1);
             if (first != null && second != null && first.getBitLength() == 64 && second.getBitLength() == 64) {
-                pairs.add(new Register[] {first, second});
+                return List.<Register[]>of(new Register[] {first, second});
             }
-            return pairs;
+            return List.of();
         }
-        FlowType flow = instruction.getFlowType();
         boolean returns = false;
-        for (PcodeOp operation : instruction.getPcode()) {
-            if (operation.getOpcode() == PcodeOp.RETURN) returns = true;
+        if (flow.isTerminal()) {
+            for (PcodeOp operation : instruction.getPcode()) {
+                if (operation.getOpcode() == PcodeOp.RETURN) {
+                    returns = true;
+                    break;
+                }
+            }
         }
         // A jump is a proven tail call only when it has resolved targets and all leave the
         // body. For unresolved targetless jumps, candidate literals remain unknown omissions.
-        Address[] targets = instruction.getFlows();
-        boolean tailCall = flow.isJump() && !flow.isConditional() && targets.length > 0 &&
-            Arrays.stream(targets).allMatch(target -> !function.getBody().contains(target));
-        boolean unresolvedJump = flow.isJump() && !flow.isConditional() && targets.length == 0;
-        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return pairs;
+        boolean tailCall = false;
+        if (unconditionalJump && flowTargets.length > 0) {
+            tailCall = true;
+            AddressSetView body = function.getBody();
+            for (Address target : flowTargets) {
+                if (body.contains(target)) {
+                    tailCall = false;
+                    break;
+                }
+            }
+        }
+        boolean unresolvedJump = unconditionalJump && flowTargets.length == 0;
+        if (!flow.isCall() && !returns && !tailCall && !unresolvedJump) return List.of();
         // A String occupies two consecutive registers among x0-x7, or x0 and x1 when returned.
         int lastFirstRegister = returns ? 0 : 6;
+        List<Register[]> pairs = new ArrayList<>(lastFirstRegister + 1);
         for (int index = 0; index <= lastFirstRegister; index++) {
             pairs.add(new Register[] {registers[index], registers[index + 1]});
         }

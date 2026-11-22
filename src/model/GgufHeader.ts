@@ -73,7 +73,12 @@ export class GgufHeader {
   }
 
   async #unsigned(width: 4 | 8): Promise<bigint> {
-    return (await this.#field(width)).word(0, width === 4 ? 32 : 64);
+    const fields = new BinaryReader(
+      await this.reader.take(width),
+      this.#little,
+      "gguf",
+    );
+    return fields.word(0, width === 4 ? 32 : 64);
   }
 
   async #text(
@@ -175,12 +180,14 @@ export class GgufHeader {
           break;
         }
         const keep = retain && index < MODEL_ARRAY_PREVIEW;
-        const value = await this.#value(
-          element,
-          keep,
-          (count - index - 1) * minimum + requiredAfter,
-          frames,
-        );
+        const remaining = (count - index - 1) * minimum + requiredAfter;
+        if (element === 8) {
+          this.reader.guarantee(minimum + remaining);
+          const text = await this.#text(keep, remaining);
+          if (keep) preview.push(text);
+          continue;
+        }
+        const value = await this.#value(element, keep, remaining, frames);
         if (keep)
           preview.push(
             element === 9

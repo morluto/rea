@@ -81,6 +81,7 @@ export class EvidenceLedger {
   #unknownRevisions = new Map<string, ResidualUnknown>();
   #unknownHeads = new Map<string, ResidualUnknown>();
   #recordBytes = new Map<string, number>();
+  #cachedImmutableBundle: EvidenceBundle | undefined;
   readonly #retained: Budget;
   constructor(
     private readonly retentionPolicy: InvestigationRetentionPolicy = {},
@@ -296,10 +297,11 @@ export class EvidenceLedger {
 
   /** Borrow an authenticated immutable bundle without copying its records. */
   immutableBundle(): EvidenceBundle {
-    return createImmutableEvidenceBundle(
+    this.#cachedImmutableBundle ??= createImmutableEvidenceBundle(
       [...this.#records.values()],
       [...this.#unknownRevisions.values()],
     );
+    return this.#cachedImmutableBundle;
   }
 
   /** Borrow immutable source records without constructing or hashing a bundle. */
@@ -542,6 +544,7 @@ export class EvidenceLedger {
   clear(): void {
     this.#records.clear();
     this.#unknownRevisions.clear();
+    this.#cachedImmutableBundle = undefined;
     this.#unknownHeads.clear();
     this.#retained.restore(0);
     this.#recordBytes.clear();
@@ -747,6 +750,7 @@ export class EvidenceLedger {
   }
 
   #commitAccounting(changes: RetentionChanges): void {
+    this.#cachedImmutableBundle = undefined;
     for (const [id, bytes] of changes.recordBytes)
       this.#recordBytes.set(id, bytes);
     // #admitChanges admitted the delta against the same, unchanged allowance.

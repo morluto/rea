@@ -321,15 +321,15 @@ const listed = ({ count, sample }: ApkDuplicateNameSample): string => {
 const plural = (count: number): string =>
   `${String(count)} ${count === 1 ? "name" : "names"}`;
 
-/** Why apksig would reject the v1 signature of an archive with duplicate names. */
-const duplicateEntriesLimitation = (
+/** What apksig can read and which duplicate names affect its v1 inspection. */
+const v1DirectoryLimitation = (
   duplicates: ApkDuplicateNames,
 ): string | null => {
   const { count, records, apksigRecords, unread } = duplicates;
-  if (count === 0 && unread.count === 0) return null;
   const partial = apksigRecords < records;
+  if (!partial && count === 0 && unread.count === 0) return null;
   const scope = partial
-    ? `apksig reads only the first ${String(apksigRecords)} of the ${String(records)} central-directory records (it takes the count from the classic end-of-central-directory record's 16-bit field and ignores the Zip64 count). `
+    ? `apksig reads only the first ${String(apksigRecords)} of the ${String(records)} central-directory records (it takes the count from the classic end-of-central-directory record's 16-bit field and ignores the Zip64 count).`
     : "";
   const within =
     count > 0
@@ -337,9 +337,9 @@ const duplicateEntriesLimitation = (
       : "";
   const beyond =
     unread.count > 0
-      ? `${count > 0 ? " " : ""}${plural(unread.count)} (${listed(unread)}) ${unread.count === 1 ? "is" : "are"} duplicated only by records past those, which apksig does not read.`
+      ? `${plural(unread.count)} (${listed(unread)}) ${unread.count === 1 ? "is" : "are"} duplicated only by records past those, which apksig does not read.`
       : "";
-  return `${scope}${within}${beyond}`;
+  return [scope, within, beyond].filter(Boolean).join(" ");
 };
 
 const LAYOUT_LIMITATION =
@@ -504,7 +504,7 @@ export class ApkSignatureProvider implements ApkSignaturePort {
           ]),
       ...APK_SIGNATURE_LIMITATIONS,
       ...(matcher.layoutPreventedRecompute() ? [LAYOUT_LIMITATION] : []),
-      ...[duplicateEntriesLimitation(duplicates)].filter(
+      ...[v1DirectoryLimitation(duplicates)].filter(
         (note): note is string => note !== null,
       ),
       ...v1SignerNotes(v1Decoded),
