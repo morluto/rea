@@ -939,6 +939,14 @@ const lifecycleErrorDetails = (
       ...(error.constraint === undefined
         ? {}
         : { constraint: error.constraint }),
+      ...(error.targetIdentity === undefined
+        ? {}
+        : {
+            target_identity: {
+              sha256: error.targetIdentity.sha256,
+              byte_count: error.targetIdentity.byteCount,
+            },
+          }),
       ...(error.infoPlist === undefined ? {} : { info_plist: error.infoPlist }),
       ...(error.probedPaths === undefined
         ? {}

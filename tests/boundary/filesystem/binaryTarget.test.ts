@@ -95,6 +95,45 @@ it.each([
   },
 );
 
+it("preserves static file identity when an unrecognized raster format is declined", async () => {
+  const directory = await createTestTempDirectory("rea-png-identity-");
+  const path = join(directory, "pixel.png");
+  // The 70-byte 1x1 RGBA PNG from morluto/rea#3570, built from its recipe:
+  // IHDR 1x1 8-bit colour type 6, one compressed IDAT row, IEND.
+  const bytes = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489" +
+      "0000000d49444154789c63f8cfc0f01f00050001ff89993d1d0000000049454e44ae426082",
+    "hex",
+  );
+  expect(bytes.length).toBe(70);
+  expect(createHash("sha256").update(bytes).digest("hex")).toBe(
+    "4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5",
+  );
+  await writeFile(path, bytes);
+  const resolved = await parseBinaryTarget(path);
+  expect(resolved).toMatchObject({
+    ok: false,
+    error: {
+      reason: "unsupported binary format",
+      constraint: "file_format_rejected",
+    },
+  });
+  if (resolved.ok) throw new Error("PNG was admitted as executable");
+  expect(projectAnalysisError(resolved.error)).toMatchObject({
+    code: "target_unavailable",
+    category: "unsupported_target",
+    details: {
+      reason: "unsupported binary format",
+      constraint: "file_format_rejected",
+      target_identity: {
+        sha256:
+          "4ff6ab670a58c14270e034e2090d9a432caa263a14e0a25785386b0c12f880b5",
+        byte_count: 70,
+      },
+    },
+  });
+});
+
 it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
   "preserves JVM identity uncertainty at the class scan boundary for %i bytes",
   async (size) => {

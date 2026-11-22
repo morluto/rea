@@ -573,9 +573,14 @@ const readOpenedBinaryTarget = async (
       typeof detected.error === "string"
         ? undefined
         : detected.error.diagnostics;
+    // A declined file still names itself: hash the admitted descriptor so
+    // batch callers can ledger the exact input without a second read.
+    // The refusal's code, category and constraint are unchanged.
+    const rejected = await identity();
     return err(
       new BinaryTargetError(path, reason, {
         constraint: "file_format_rejected",
+        targetIdentity: { sha256: rejected.sha256, byteCount: metadata.size },
         ...(diagnostics === undefined ? {} : { diagnostics }),
       }),
     );
