@@ -84,6 +84,7 @@
 * **javascript:** track shared ESM HTTP agent mutations ([d500638](https://github.com/morluto/rea/commit/d500638d5d4b666cf0b255085ce4d75a29cbc35e))
 * **mcp:** keep doctor launches target-free on Windows ([#13250](https://github.com/morluto/rea/issues/13250)) ([0209d3e](https://github.com/morluto/rea/commit/0209d3e1b580d83497a7b04bc274001670311bd6))
 * **mcp:** name the HTTP option that requires --http ([2fbcec8](https://github.com/morluto/rea/commit/2fbcec84eb5054c7f014729021172173df1742c8))
+* **mcp:** retain doctor initialization when catalog requests fail ([#13255](https://github.com/morluto/rea/issues/13255)) ([87889b8](https://github.com/morluto/rea/commit/87889b8729da8a02a4159bc7274c92be52464031))
 * **model:** recognize F8_E4M3 GGUF tensors from ggml v0.29.0 ([afc040c](https://github.com/morluto/rea/commit/afc040ccebb9af1f8b9eb6c5dbbdbc322a58ded2))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
