@@ -118,6 +118,7 @@ export const publishFirmwareExtraction = async (context: {
     | undefined;
   const files: z.infer<typeof firmwareResultSchemas.extract_firmware>["files"] =
     [];
+  const workerFailures: unknown[] = [];
   let totalFiles = 0;
   let verifiedFiles = 0;
   const progress = () => ({
@@ -158,9 +159,8 @@ export const publishFirmwareExtraction = async (context: {
       regularEntries.length,
     );
     let cursor = 0;
-    let firstFailure: unknown;
     const publishWorker = async (): Promise<void> => {
-      while (firstFailure === undefined) {
+      while (workerFailures.length === 0) {
         const index = cursor++;
         const entry = regularEntries[index];
         if (entry === undefined) return;
@@ -205,7 +205,7 @@ export const publishFirmwareExtraction = async (context: {
           };
           verifiedFiles += 1;
         } catch (cause: unknown) {
-          firstFailure ??= cause;
+          workerFailures.push(cause);
           return;
         }
       }
@@ -214,7 +214,7 @@ export const publishFirmwareExtraction = async (context: {
     await Promise.allSettled(
       Array.from({ length: workerCount }, () => publishWorker()),
     );
-    if (firstFailure !== undefined) throw firstFailure;
+    if (workerFailures.length > 0) throw workerFailures[0];
     for (const item of publishedSlots) {
       if (item !== undefined) files.push(item);
     }
@@ -262,23 +262,45 @@ export const publishFirmwareExtraction = async (context: {
         : new AnalysisCleanupLease(async () => {
             await ownedTree.rollback();
           });
-    const primary = classifyProviderFailure(
+    const dialect = firmwareFailureDialect({
+      engine: "unblob",
+      operation: "extract_firmware",
+      phase: {
+        signal: context.signal,
+        deadline: context.deadline,
+        publication: progress(),
+      },
+      treeCleanupLease: treeLease,
+    });
+    let primary = classifyProviderFailure(
       outputDirectoryAdmissionRefusal(
         "extract_firmware",
         "output_directory",
         cause,
       ),
-      firmwareFailureDialect({
-        engine: "unblob",
-        operation: "extract_firmware",
-        phase: {
-          signal: context.signal,
-          deadline: context.deadline,
-          publication: progress(),
-        },
-        treeCleanupLease: treeLease,
-      }),
+      dialect,
     );
+    if (workerFailures.length > 1 && Object.is(cause, workerFailures[0])) {
+      for (const extraCause of workerFailures.slice(1)) {
+        const extra = classifyProviderFailure(
+          outputDirectoryAdmissionRefusal(
+            "extract_firmware",
+            "output_directory",
+            extraCause,
+          ),
+          dialect,
+        );
+        if (extra.cleanupIncomplete) {
+          primary = analysisErrorWithCleanupDependencies(
+            primary,
+            extra,
+            "extract_firmware",
+          );
+        } else {
+          primary.retainSecondaryFailure(extra);
+        }
+      }
+    }
     try {
       await treeLease?.release();
     } catch (cleanupCause: unknown) {

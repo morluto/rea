@@ -143,40 +143,88 @@ class ActiveWorkerReader {
   }
 }
 
-const writeWorkerFrame = async (
-  stdin: Writable,
-  frame: Buffer,
-  signal: AbortSignal,
-): Promise<void> => {
-  signal.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      stdin.off("drain", onDrain);
-      stdin.off("error", onError);
-      reject(signal.reason);
-    };
-    const onError = (cause: Error) => {
-      signal.removeEventListener("abort", onAbort);
-      stdin.off("drain", onDrain);
-      reject(cause);
-    };
-    const onDrain = () => {
-      signal.removeEventListener("abort", onAbort);
-      stdin.off("error", onError);
-      resolve();
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    stdin.once("error", onError);
-    const flushed = stdin.write(frame, (err) => {
-      if (err != null) onError(err);
-    });
-    if (flushed) {
-      onDrain();
-    } else {
-      stdin.once("drain", onDrain);
+class ActiveWorkerStdin {
+  #error: Error | undefined;
+
+  constructor(
+    private readonly stdin: Writable,
+    private readonly supervisor: ProviderProcessSupervisor,
+  ) {
+    stdin.on("error", this.#onError);
+  }
+
+  readonly #onError = (cause: Error): void => {
+    this.#error ??= cause;
+  };
+
+  end(): void {
+    if (!this.stdin.destroyed && !this.stdin.writableEnded) {
+      try {
+        this.stdin.end();
+      } catch {
+        // Closing stdin is a cooperative EOF hint before supervisor.stop() enforces exit.
+      }
     }
-  });
-};
+  }
+
+  async writeFrame(frame: Buffer, signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.#error !== undefined) {
+      throw this.#processFailure(this.#error);
+    }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (outcome: () => void): void => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        this.stdin.off("error", onStreamError);
+        this.stdin.off("close", onStreamClose);
+        outcome();
+      };
+      const onAbort = (): void => {
+        finish(() => reject(signal.reason));
+      };
+      const onStreamError = (cause: Error): void => {
+        finish(() => reject(this.#processFailure(cause)));
+      };
+      const onStreamClose = (): void => {
+        const cause = this.#error;
+        finish(() =>
+          reject(
+            cause !== undefined
+              ? this.#processFailure(cause)
+              : new OwnedCommandFailure(
+                  "process",
+                  "LZMA worker closed stdin before completing request write.",
+                  this.supervisor.snapshot(),
+                ),
+          ),
+        );
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.stdin.once("error", onStreamError);
+      this.stdin.once("close", onStreamClose);
+      this.stdin.write(frame, (err) => {
+        if (err != null) {
+          finish(() => reject(this.#processFailure(err)));
+          return;
+        }
+        finish(() => resolve());
+      });
+    });
+  }
+
+  #processFailure(cause: Error): OwnedCommandFailure {
+    return new OwnedCommandFailure(
+      "process",
+      `LZMA worker stdin failed: ${cause.message}`,
+      this.supervisor.snapshot(),
+      null,
+      { processError: cause },
+    );
+  }
+}
 
 interface ActiveLzmaWorker {
   readonly root: PrivateRuntimeRoot;
@@ -187,7 +235,7 @@ interface ActiveLzmaWorker {
     readonly lease: AnalysisCleanupLease;
   };
   supervisor: ProviderProcessSupervisor | undefined;
-  readonly stdin: Writable;
+  readonly stdinWriter: ActiveWorkerStdin;
   readonly reader: ActiveWorkerReader;
   readonly resources: readonly string[];
 }
@@ -239,8 +287,7 @@ export class UefiLzmaSession {
         format,
         max_output_bytes: maxOutputBytes,
       });
-      await writeWorkerFrame(
-        active.stdin,
+      await active.stdinWriter.writeFrame(
         encodeLzmaFrame(requestHeader, payload),
         signal,
       );
@@ -328,11 +375,7 @@ export class UefiLzmaSession {
     if (active === undefined) return;
     this.#active = undefined;
     active.reader.dispose();
-    try {
-      active.stdin.end();
-    } catch {
-      // Closing stdin is a polite EOF hint before supervisor.stop() enforces exit.
-    }
+    active.stdinWriter.end();
     const released = await this.resources.release(active.workspace);
     if (released.kind === "failed") {
       const failure = new ProviderCleanupError(
@@ -433,13 +476,14 @@ export class UefiLzmaSession {
       if (stdin == null || stdout == null) {
         throw new Error("LZMA worker stdio pipes were not established.");
       }
+      const stdinWriter = new ActiveWorkerStdin(stdin, supervisor);
       const reader = new ActiveWorkerReader(stdout, supervisor);
       const active: ActiveLzmaWorker = {
         root,
         rootLease,
         workspace,
         supervisor,
-        stdin,
+        stdinWriter,
         reader,
         resources: processResources,
       };

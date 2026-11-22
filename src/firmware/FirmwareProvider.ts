@@ -73,7 +73,6 @@ import {
   firmwareSignalInterruption,
 } from "./FirmwareFailures.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Outcome = Awaited<ReturnType<FirmwareAnalysisPort["execute"]>>;
 interface PendingFirmwareCleanup {
@@ -169,16 +168,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
   #closing: Promise<void> | undefined;
   readonly #files = new FirmwareFileAccess();
   readonly #pendingCleanup = new Map<string, PendingFirmwareCleanup>();
-  readonly #admittedVersions = new Map<
-    string,
-    {
-      readonly versionRun: Awaited<ReturnType<typeof runFirmwareCommand>>;
-      readonly admitted: Exclude<
-        ReturnType<typeof admitFirmwareVersion>,
-        { status: "unsupported" | "unresolved" }
-      >;
-    }
-  >();
   constructor(
     readonly environment: Readonly<
       Record<string, string | undefined>
@@ -234,7 +223,6 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
 
   async #close(): Promise<void> {
     await this.#tail;
-    this.#admittedVersions.clear();
     const failures: AnalysisError[] = [];
     try {
       await this.#files.close();
@@ -451,42 +439,21 @@ export class FirmwareProvider implements FirmwareAnalysisPort {
           });
         return output;
       };
-      const envFingerprint = sha256Hex(
-        JSON.stringify(
-          Object.entries(environment).sort(([a], [b]) =>
-            a < b ? -1 : a > b ? 1 : 0,
-          ),
-        ),
-      );
-      const versionKey = JSON.stringify([
-        engineName,
-        command.command.resolvedPath,
-        command.sha256,
-        command.limiter.resolvedPath,
-        envFingerprint,
-      ]);
-      let cachedVersion = this.#admittedVersions.get(versionKey);
-      if (cachedVersion === undefined) {
-        const probeRun = await run(["--version"]);
-        const version = probeRun.stdout.text.trim();
-        if (probeRun.stdout.bytes > 1024)
-          throw firmwareToolUnavailable(
-            engineName,
-            request.operation,
-            `Tool version banner is ${String(probeRun.stdout.bytes)} bytes; expected a short ${engineName} version line.`,
-          );
-        const checked = admitFirmwareVersion(engineName, version);
-        if (checked.status === "unsupported" || checked.status === "unresolved")
-          throw firmwareToolUnavailable(
-            engineName,
-            request.operation,
-            checked.message,
-          );
-        cachedVersion = { versionRun: probeRun, admitted: checked };
-        if (this.#admittedVersions.size >= 16) this.#admittedVersions.clear();
-        this.#admittedVersions.set(versionKey, cachedVersion);
-      }
-      const { versionRun, admitted } = cachedVersion;
+      const versionRun = await run(["--version"]);
+      const version = versionRun.stdout.text.trim();
+      if (versionRun.stdout.bytes > 1024)
+        throw firmwareToolUnavailable(
+          engineName,
+          request.operation,
+          `Tool version banner is ${String(versionRun.stdout.bytes)} bytes; expected a short ${engineName} version line.`,
+        );
+      const admitted = admitFirmwareVersion(engineName, version);
+      if (admitted.status === "unsupported" || admitted.status === "unresolved")
+        throw firmwareToolUnavailable(
+          engineName,
+          request.operation,
+          admitted.message,
+        );
       const engine = {
         name: engineName,
         version: admitted.version,

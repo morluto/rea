@@ -814,6 +814,66 @@ it.skipIf(!lzmaWorkerAvailable)(
   45_000,
 );
 
+it("keeps worker stdin errors owned across cancellation of an in-flight frame write", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-stdin-cancel-");
+  const blockedWorker = join(directory, "blocked-worker.mjs");
+  await writeFile(blockedWorker, "setInterval(() => {}, 1000);\n", "utf8");
+  const largeCompressed = Buffer.alloc(512 * 1024, 0x5d);
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(largeCompressed),
+  });
+  const imagePath = join(directory, "large-lzma.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const uncaught: unknown[] = [];
+  const onUncaught = (err: unknown) => {
+    uncaught.push(err);
+  };
+  process.on("uncaughtException", onUncaught);
+
+  const controller = new AbortController();
+  let capturedStdin: NodeJS.WritableStream | undefined;
+  const stop = ProviderProcessSupervisor.prototype.stop;
+  const stopping = vi
+    .spyOn(ProviderProcessSupervisor.prototype, "stop")
+    .mockImplementation(async function (this: ProviderProcessSupervisor) {
+      capturedStdin = this.launch.process.stdin ?? undefined;
+      capturedStdin?.emit(
+        "error",
+        Object.assign(new Error("write EPIPE during stop"), { code: "EPIPE" }),
+      );
+      return stop.call(this);
+    });
+
+  const provider = new UefiAnalysisProvider(blockedWorker);
+  try {
+    const timer = setTimeout(() => {
+      controller.abort(new Error("caller cancelled write"));
+    }, 120);
+    const result = await provider.execute(inspectRequest(imagePath), {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (capturedStdin !== undefined) {
+      capturedStdin.emit(
+        "error",
+        Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+      );
+    }
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+    }
+    expect(uncaught).toEqual([]);
+  } finally {
+    stopping.mockRestore();
+    process.off("uncaughtException", onUncaught);
+    await provider.close();
+  }
+});
+
 it("rolls back a tree acquired during failed publication setup without publishing", async () => {
   const { imagePath, directory } = await writeTestImage();
   const provider = new UefiAnalysisProvider();

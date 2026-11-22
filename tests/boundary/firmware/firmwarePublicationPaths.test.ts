@@ -27,7 +27,13 @@ import {
 import { publishFirmwareExtraction } from "../../../src/firmware/FirmwarePublication.js";
 import { normalizeUnblobReport } from "../../../src/firmware/FirmwareReports.js";
 import { startFirmwareDeadline } from "../../../src/firmware/FirmwareDeadline.js";
-import { SafeOutputTree } from "../../../src/resources/SafeOutputTree.js";
+import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  SafeOutputTree,
+} from "../../../src/resources/index.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
@@ -347,7 +353,7 @@ const SYNTHETIC_UNBLOB_ENGINE = (executableSha256: string) => ({
   executable_path: "/synthetic/unblob",
   executable_sha256: executableSha256,
   source_revision: null,
-  worker_count: 1,
+  worker_count: 1 as const,
 });
 
 it("publishes nested regular files concurrently in deterministic order without double-hashing and rolls back reported digest mismatches", async () => {
@@ -443,6 +449,114 @@ it("publishes nested regular files concurrently in deterministic order without d
       ),
     });
     await expect(access(outputBad)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await files.close();
+  }
+});
+
+it("retains incomplete cleanup leases from every concurrent publication worker", async () => {
+  const root = await createTestTempDirectory("rea-firmware-concurrent-leases-");
+  const staging = join(root, "staging");
+  await mkdir(staging);
+  const inputPath = join(root, "input.img");
+  const inputHash = "d".repeat(64);
+  const childSpecs = [0, 1, 2].map((idx) => {
+    const relativePath = `item-${idx}.bin`;
+    const payload = Buffer.from(`payload-${idx}`);
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    return { relativePath, payload, sha256 };
+  });
+  for (const spec of childSpecs) {
+    await writeFile(join(staging, spec.relativePath), spec.payload);
+  }
+
+  const entries = await inventoryFirmwareOutput(
+    staging,
+    65_536,
+    256,
+    Number.MAX_SAFE_INTEGER,
+    "extract_firmware",
+  );
+  let canCloseFirst = false;
+  let canCloseSecond = false;
+  const leaseFirst = new AnalysisCleanupLease(async () => {
+    if (!canCloseFirst) throw new Error("first descriptor still busy");
+  }, [join(staging, "item-0.bin")]);
+  const leaseSecond = new AnalysisCleanupLease(async () => {
+    if (!canCloseSecond) throw new Error("second descriptor still busy");
+  }, [join(staging, "item-1.bin")]);
+  const files = new FirmwareFileAccess();
+  let started = 0;
+  let releaseBarrier: (() => void) | undefined;
+  const barrier = new Promise<void>((resolve) => {
+    releaseBarrier = resolve;
+  });
+  vi.spyOn(files, "publish").mockImplementation(async (entry) => {
+    started += 1;
+    if (started >= 3) releaseBarrier?.();
+    await barrier;
+    if (entry.relativePath === "item-0.bin") {
+      const err = new ProviderCleanupError(
+        "unblob",
+        [join(staging, "item-0.bin")],
+        { reason: "first source close failed" },
+        { operation: "extract_firmware" },
+      );
+      new AnalysisCleanupLeaseGroup(err, [leaseFirst]);
+      throw err;
+    }
+    if (entry.relativePath === "item-1.bin") {
+      const err = new ProviderCleanupError(
+        "unblob",
+        [join(staging, "item-1.bin")],
+        { reason: "second source close failed" },
+        { operation: "extract_firmware" },
+      );
+      new AnalysisCleanupLeaseGroup(err, [leaseSecond]);
+      throw err;
+    }
+    throw new Error("ordinary sibling failure");
+  });
+
+  try {
+    const caught = await publishFirmwareExtraction({
+      files,
+      workspacePath: root,
+      deadline: startFirmwareDeadline("publication", 120_000),
+      analysisTimeoutMs: 120_000,
+      outputDirectory: join(root, "out"),
+      entries,
+      normalized: buildConcurrentUnblobReport(
+        inputPath,
+        staging,
+        inputHash,
+        childSpecs,
+      ),
+      selection: { offset: 0, length: 16, sha256: inputHash },
+      maxDepth: 3,
+      engine: SYNTHETIC_UNBLOB_ENGINE(inputHash),
+      signal: new AbortController().signal,
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+
+    expect(caught).toBeInstanceOf(AnalysisError);
+    if (!(caught instanceof AnalysisError)) return;
+    expect(caught.cleanupIncomplete).toBe(true);
+    expect(caught.cleanupResources).toEqual(
+      expect.arrayContaining([
+        join(staging, "item-0.bin"),
+        join(staging, "item-1.bin"),
+      ]),
+    );
+
+    canCloseFirst = true;
+    await leaseFirst.release();
+    expect(caught.cleanupIncomplete).toBe(true);
+    expect(caught.cleanupResources).toContain(join(staging, "item-1.bin"));
+
+    canCloseSecond = true;
+    await leaseSecond.release();
+    expect(caught.cleanupIncomplete).toBe(false);
   } finally {
     await files.close();
   }
