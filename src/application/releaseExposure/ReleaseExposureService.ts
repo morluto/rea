@@ -215,13 +215,10 @@ export class ReleaseExposureService {
       ),
     );
     const fuseImages: CollectedFuseImage[] = [];
+    const seenFusePaths = new Set<string>();
     for (const candidate of prepared.scan.fuse_candidates) {
-      if (
-        fuseImages.some(
-          (image) => image.inventoriedBundleFile === candidate.path,
-        )
-      )
-        continue;
+      if (seenFusePaths.has(candidate.path)) continue;
+      seenFusePaths.add(candidate.path);
       fuseImages.push(
         await settle(
           () => this.#fuseImage(candidate, digests, options),
@@ -911,17 +908,30 @@ const limitNativeSample = (
   }
   // A bundle read with no layout settles only the root build: a nested
   // asar: false build's host may be one the sample or inventory missed.
-  const electronExecutableIncluded =
-    layouts.length === 0
-      ? (bundleRead && !missedOutsideHost) ||
-        selectedRead ||
-        hostRead(preferred)
-      : !missedOutsideHost &&
-        layouts.every(
-          (folder) =>
-            settledLayouts.has(folder) ||
-            hostRead(preferred.filter((image) => inLayout(folder, image.path))),
-        );
+  let electronExecutableIncluded: boolean;
+  if (layouts.length === 0) {
+    electronExecutableIncluded =
+      (bundleRead && !missedOutsideHost) || selectedRead || hostRead(preferred);
+  } else if (missedOutsideHost) {
+    electronExecutableIncluded = false;
+  } else {
+    const preferredByLayout = new Map<string, (typeof preferred)[number][]>();
+    for (const folder of layouts) {
+      if (!settledLayouts.has(folder)) preferredByLayout.set(folder, []);
+    }
+    if (preferredByLayout.size > 0) {
+      for (const image of preferred) {
+        for (const [folder, list] of preferredByLayout) {
+          if (inLayout(folder, image.path)) list.push(image);
+        }
+      }
+    }
+    electronExecutableIncluded = layouts.every(
+      (folder) =>
+        settledLayouts.has(folder) ||
+        hostRead(preferredByLayout.get(folder) ?? []),
+    );
+  }
   const outsideHosts = hostsAmong(outside);
   // A build without an ASAR names no host, so any sampled image outside the
   // discovered layouts may carry another build's fuses and none settles

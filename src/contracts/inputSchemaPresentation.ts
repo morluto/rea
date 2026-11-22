@@ -167,47 +167,57 @@ const omitNestedDefaults = (
   kept: ReadonlySet<string> = new Set(),
   path: readonly string[] = [],
 ): unknown => {
+  const trackPaths = kept.size > 0;
   if (Array.isArray(schema))
     return schema.map((child, index) =>
-      omitNestedDefaults(child, kept, [...path, String(index)]),
+      omitNestedDefaults(
+        child,
+        kept,
+        trackPaths ? [...path, String(index)] : path,
+      ),
     );
   if (!isObject(schema)) return schema;
-  return Object.fromEntries(
-    Object.entries(schema).flatMap(([key, value]) => {
-      const childPath = [...path, key];
-      if (kept.has(JSON.stringify(childPath))) return [[key, value]];
-      if (key === "default") return [];
-      return [
-        [
-          key,
-          isObjectKeyword(key) && isObject(value)
-            ? Object.fromEntries(
-                Object.entries(value).map(([name, child]) => [
-                  name,
-                  omitNestedDefaults(child, kept, [...childPath, name]),
-                ]),
-              )
-            : isArrayKeyword(key) && Array.isArray(value)
-              ? value.map((child, index) =>
-                  omitNestedDefaults(child, kept, [
-                    ...childPath,
-                    String(index),
-                  ]),
-                )
-              : isChildKeyword(key)
-                ? Array.isArray(value)
-                  ? value.map((child, index) =>
-                      omitNestedDefaults(child, kept, [
-                        ...childPath,
-                        String(index),
-                      ]),
-                    )
-                  : omitNestedDefaults(value, kept, childPath)
-                : value,
-        ],
-      ];
-    }),
-  );
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    const childPath = trackPaths ? [...path, key] : path;
+    if (trackPaths && kept.has(JSON.stringify(childPath))) {
+      output[key] = value;
+      continue;
+    }
+    if (key === "default") continue;
+    if (isObjectKeyword(key) && isObject(value)) {
+      const mapped: Record<string, unknown> = {};
+      for (const [name, child] of Object.entries(value)) {
+        mapped[name] = omitNestedDefaults(
+          child,
+          kept,
+          trackPaths ? [...childPath, name] : path,
+        );
+      }
+      output[key] = mapped;
+    } else if (isArrayKeyword(key) && Array.isArray(value)) {
+      output[key] = value.map((child, index) =>
+        omitNestedDefaults(
+          child,
+          kept,
+          trackPaths ? [...childPath, String(index)] : path,
+        ),
+      );
+    } else if (isChildKeyword(key)) {
+      output[key] = Array.isArray(value)
+        ? value.map((child, index) =>
+            omitNestedDefaults(
+              child,
+              kept,
+              trackPaths ? [...childPath, String(index)] : path,
+            ),
+          )
+        : omitNestedDefaults(value, kept, childPath);
+    } else {
+      output[key] = value;
+    }
+  }
+  return output;
 };
 
 /** Every path into a `default` that a reference inside `schema` targets. */
