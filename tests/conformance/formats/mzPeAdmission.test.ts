@@ -249,9 +249,7 @@ it("recognizes a bounded non-PE Windows signature without requiring a COFF recor
         return bytes.subarray(offset, offset + length);
       },
     ),
-  ).rejects.toThrow(
-    "NE images do not contain PE resource or certificate tables",
-  );
+  ).rejects.toThrow("Expected a PE image but found NE.");
   expect(reads).toEqual([{ offset: 128, length: 2 }]);
 });
 
