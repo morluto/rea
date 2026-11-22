@@ -230,32 +230,45 @@ const projectHar = (
       return item.map((child, index) =>
         visit(child, capturePointer(pointer, String(index)), depth + 1),
       );
-    if (captureObject(item))
-      return Object.fromEntries(
-        Object.entries(item).flatMap(([key, child]) => {
-          if (
-            redact &&
-            sensitiveValues.some((literal) => key.includes(literal))
-          ) {
-            const beforeNumbers = numeric_literals.length;
-            const beforeBinaries = binary_fields.length;
-            const beforeRedactions = redactor.redactions.length;
-            visit(child, capturePointer(pointer, key), depth + 1, item);
-            numeric_literals.splice(beforeNumbers);
-            binary_fields.splice(beforeBinaries);
-            redactor.redactions.splice(beforeRedactions);
-            redactor.redactions.push({
-              pointer,
-              reason: "explicit-sensitive-value",
-              scope: "property-name",
-            });
-            return [];
-          }
-          return [
-            [key, visit(child, capturePointer(pointer, key), depth + 1, item)],
-          ];
-        }),
-      );
+    if (captureObject(item)) {
+      const checkSensitive = redact && sensitiveValues.length > 0;
+      const out: Record<string, JsonValue> = {};
+      for (const [key, child] of Object.entries(item)) {
+        if (
+          checkSensitive &&
+          sensitiveValues.some((literal) => key.includes(literal))
+        ) {
+          const beforeNumbers = numeric_literals.length;
+          const beforeBinaries = binary_fields.length;
+          const beforeRedactions = redactor.redactions.length;
+          visit(child, capturePointer(pointer, key), depth + 1, item);
+          numeric_literals.splice(beforeNumbers);
+          binary_fields.splice(beforeBinaries);
+          redactor.redactions.splice(beforeRedactions);
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+            scope: "property-name",
+          });
+          continue;
+        }
+        const value = visit(
+          child,
+          capturePointer(pointer, key),
+          depth + 1,
+          item,
+        );
+        if (key === "__proto__")
+          Object.defineProperty(out, key, {
+            value,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else out[key] = value;
+      }
+      return out;
+    }
     throw new CaptureFormatError(
       "malformed",
       "HAR parser returned a non-JSON value.",
