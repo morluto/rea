@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectOwnedArtifactIdentityFailure,
@@ -32,7 +35,7 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { readElfHardening } from "./ElfHardening.js";
+import { readElfHardeningCooperative } from "./ElfHardening.js";
 import { readMachoHardening } from "./MachoHardening.js";
 import { readPeHardening } from "./PeHardening.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
@@ -106,7 +109,7 @@ export const readBinaryHardening = async (
     return {
       artifact,
       format: "elf",
-      images: [readElfHardening(bytes, signal)],
+      images: [await readElfHardeningCooperative(bytes, signal)],
       limitations: [...BINARY_HARDENING_LIMITATIONS],
     };
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
@@ -138,20 +141,14 @@ const binaryHardeningFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
-        cause,
-        ...fixedAllowanceOptions(
-          "The binary hardening structural allowance",
-          "parser",
-          binaryResourceCeiling(cause),
-        ),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...fixedAllowanceOptions(
+        "The binary hardening structural allowance",
+        "parser",
+        binaryResourceCeiling(cause),
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (

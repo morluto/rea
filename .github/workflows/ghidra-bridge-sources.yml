@@ -1,28 +1,53 @@
 name: Ghidra bridge source compilation
 
 on:
-  workflow_dispatch:
   workflow_call:
+    inputs:
+      build_cache_artifact:
+        description: Portable build cache artifact from the calling CI run.
+        required: false
+        type: string
+        default: ""
+      remote_cache_write:
+        description: Trusted release qualification may publish the remote cache.
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      TURBO_TOKEN:
+        description: Remote cache token. Only trusted callers pass it.
+        required: false
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 env:
   HUSKY: "0"
+  # A called workflow sees the caller event, so workflow_call is not an event
+  # name here. Writes when remote_cache_write is set, or on the default branch
+  # for push, schedule, and manual dispatch. Open pull requests stay empty-token
+  # and use the local cache only.
+  TURBO_TOKEN: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (inputs.remote_cache_write == true || (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'))) && 'local:rw,remote:rw' || 'local:rw' }}"
 
 jobs:
   ghidra-bridge-sources:
     name: Compile packaged Ghidra bridge sources
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
-      GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.4_build/ghidra_12.1.4_PUBLIC_20260921.zip
-      GHIDRA_RELEASE_SHA256: ddac49f903da9d5bac833e5cc79395098b9c33cfd3279be5f31bd00387d2d4db
+      GHIDRA_RELEASE_URL: https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.2_build/ghidra_12.2_PUBLIC_20261016.zip
+      GHIDRA_RELEASE_SHA256: 2c2cd776db3c1f6a097ba418922378ac3649cadd5e844a6f5f088ae628a7be67
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
+      - name: Cache npm package downloads
+        id: npm-cache
+        uses: ./.github/actions/npm-cache
       - name: Validate the SDK pin against the provider's verified release
         run: node scripts/verify-ghidra-bridge-sources.mjs --check-sdk-pin >> "$GITHUB_ENV"
       # The bridge probe imports only source-owned ARM, Thumb and MIPS bytes and never
@@ -48,12 +73,21 @@ jobs:
           JAVA_HOME="${!java_home_variable}" npm run verify:ghidra:bridge-sources -- --verified-sdk
       - name: Install locked dependencies for loader relocation regression
         run: npm ci
+      - uses: ./.github/actions/portable-build-cache
+        with:
+          build_cache_artifact: ${{ inputs.build_cache_artifact }}
       - name: Verify loader relocation handling with the native decompiler
         shell: bash
         run: |
           java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
           export JAVA_HOME="${!java_home_variable}"
           npm run verify:ghidra:loader-relocation
+      - name: Check native prototype conflict decoding and frame paths
+        shell: bash
+        run: |
+          java_home_variable="JAVA_HOME_${GHIDRA_JAVA_MAJOR}_X64"
+          export JAVA_HOME="${!java_home_variable}"
+          node scripts/verify-ghidra-prototype-conflicts.mjs
       - name: Inspect real ARM, Thumb and MIPS instruction context through the bridge
         shell: bash
         run: |

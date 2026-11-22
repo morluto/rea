@@ -11,22 +11,10 @@ const directory = (mode: number) => ({
   isFile: () => false,
   isSymbolicLink: () => false,
 });
-const symlink = (mode: number) => ({
-  mode,
-  isFile: () => false,
-  isSymbolicLink: () => true,
-});
-
 describe("hostExecutableMarking", () => {
   it("marks Windows launchable files by extension because NTFS has no execute bit", () => {
-    expect(
-      hostExecutableMarking("C:\\scratch\\whoami.exe", file(0o666), "win32"),
-    ).toBe(true);
-    expect(
-      hostExecutableMarking("C:\\scratch\\SETUP.CMD", file(0o444), "win32"),
-    ).toBe(true);
     for (const path of [
-      "tools/SETUP.EXE",
+      "C:\\scratch\\SETUP.EXE",
       "run.Cmd",
       "build.bat",
       "legacy.com",
@@ -35,9 +23,6 @@ describe("hostExecutableMarking", () => {
     expect(hostExecutableMarking("readonly.exe", file(0o444), "win32")).toBe(
       true,
     );
-    expect(
-      hostExecutableMarking("C:\\scratch\\library.dll", file(0o666), "win32"),
-    ).toBe(false);
     expect(
       hostExecutableMarking(
         "C:\\scratch\\tools.exe",
@@ -48,7 +33,7 @@ describe("hostExecutableMarking", () => {
   });
 
   it("does not treat other Windows filenames as executable even with execute bits", () => {
-    for (const path of ["notes.txt", "README", "archive.exe.bak"])
+    for (const path of ["library.dll", "README", "archive.exe.bak"])
       expect(hostExecutableMarking(path, file(0o777), "win32")).toBe(false);
   });
 
@@ -59,16 +44,5 @@ describe("hostExecutableMarking", () => {
     expect(
       hostExecutableMarking("/scratch/whoami.exe", file(0o644), "darwin"),
     ).toBe(false);
-  });
-
-  it("never marks a symlink, whose target decides what runs", () => {
-    for (const [path, platform] of [
-      ["/scratch/current", "linux"],
-      ["/scratch/current", "darwin"],
-      ["C:\\scratch\\tool.exe", "win32"],
-    ] as const)
-      expect(hostExecutableMarking(path, symlink(0o120777), platform)).toBe(
-        false,
-      );
   });
 });

@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { ParseFailureError, unsupportedInput } from "../parseFailure.js";
 import { invariantViolation } from "../internalInvariant.js";
 import {
@@ -252,7 +253,6 @@ export const scanBinaryPlistScalars = (
     dates,
   });
   if (bytes.length < 40 || !hasBinaryPlistSignature(bytes)) return result(true);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const sourceLayoutResult = readBinaryPlistLayout(bytes);
   if (!sourceLayoutResult.ok) return result(true);
   const sourceLayout = sourceLayoutResult.value;
@@ -274,6 +274,11 @@ export const scanBinaryPlistScalars = (
   const count = Number(countRaw);
   const tableEnd = offsetTable + count * offsetWidth;
   if (referenceWidth < 1) return result(true);
+  const reader = new BinaryReader(
+    bytes.subarray(0, offsetTable),
+    false,
+    "binary-plist",
+  );
   const objectOffsets: number[] = [];
   let incomplete = false;
   for (let index = 0; index < count; index += 1) {
@@ -319,7 +324,7 @@ export const scanBinaryPlistScalars = (
         dates.push({
           offset,
           payloadOffset,
-          secondsSince2001: view.getFloat64(payloadOffset),
+          secondsSince2001: reader.f64(payloadOffset),
         });
       }
     }
@@ -339,18 +344,20 @@ export const scanBinaryPlistScalars = (
     }
     if (type !== 1 && type !== 2) continue;
     const width = 2 ** (marker & 0xf);
-    if (offset + 1 + width > offsetTable) incomplete = true;
-    if (offset + 1 + width > offsetTable) continue;
+    if (offset + 1 + width > offsetTable) {
+      incomplete = true;
+      continue;
+    }
     const isReachable =
       scalarPlan === undefined ||
       containsSortedOffset(scalarPlan.reachableNumericOffsets, offset);
     if (type === 1 && width === 8) {
-      const value = view.getBigInt64(offset + 1);
+      const value = reader.i64(offset + 1);
       if (isReachable) output.integer(value);
     } else if (type === 1 && width === 16) {
       const value = BigInt.asIntN(
         128,
-        (view.getBigUint64(offset + 1) << 64n) | view.getBigUint64(offset + 9),
+        (reader.word(offset + 1, 64) << 64n) | reader.word(offset + 9, 64),
       );
       if (isReachable) {
         output.integer(value);
@@ -363,10 +370,10 @@ export const scanBinaryPlistScalars = (
     } else if (type === 1 && width > 4) {
       incomplete = true;
     } else if (type === 2 && width === 4) {
-      const value = view.getFloat32(offset + 1);
+      const value = reader.f32(offset + 1);
       if (isReachable) output.real(value);
     } else if (type === 2 && width === 8) {
-      const value = view.getFloat64(offset + 1);
+      const value = reader.f64(offset + 1);
       if (isReachable) output.real(value);
     } else if (type === 2) {
       incomplete = true;

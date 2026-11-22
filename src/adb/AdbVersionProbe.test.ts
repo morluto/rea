@@ -1,52 +1,47 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { execFileOutput } from "../process/ExecFileOutput.js";
+import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { spawnFailure } from "../../tests/support/process/spawnFailure.js";
 import { inspectAdbClient } from "./AdbConfiguration.js";
 
-vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../process/ExecFileOutput.js")>();
-  return { ...actual, execFileOutput: vi.fn(actual.execFileOutput) };
-});
+const resources = new ArtifactResourceScope();
+afterAll(() => resources.close());
 
 const selection = {
   binary: "/host/adb",
   pathSource: "environment",
   environment: {},
+  resources,
 } as const;
 
-/** The error execFile rejects with when its launcher could not start adb. */
-const adbSpawnFailure = (code: string): Error =>
-  Object.assign(spawnFailure(code, selection.binary), {
-    spawnFailed: true,
-    stdout: "",
-    stderr: "",
-    signal: null,
-    killed: false,
-  });
+/** The selected adb whose launch fails with `failure`. */
+const launchFailing = (failure: unknown) => ({
+  ...selection,
+  launcher: async () => {
+    throw failure;
+  },
+});
+
+/** The host refuses to start adb with this errno. */
+const refusedWith = (code: string) =>
+  launchFailing(spawnFailure(code, selection.binary));
 
 it("reports the fixed adb version-probe deadline", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(
-    Object.assign(new Error("deadline"), {
-      code: "ETIMEDOUT",
-      stdout: "",
-      stderr: "",
-      signal: null,
-      killed: true,
-    }),
-  );
-  const failure = await inspectAdbClient(selection).catch(
-    (cause: unknown) => cause,
-  );
+  // The owner's deadline outcome, without waiting out the fixed 10 s probe.
+  const failure = await inspectAdbClient(
+    launchFailing(
+      new OwnedCommandFailure("timeout", "Command deadline elapsed."),
+    ),
+  ).catch((cause: unknown) => cause);
   expect(failure).toBeInstanceOf(AnalysisTimeoutError);
   const projected = projectAnalysisError(failure as AnalysisTimeoutError);
   expect(projected).toMatchObject({
@@ -57,32 +52,23 @@ it("reports the fixed adb version-probe deadline", async () => {
 });
 
 it("reports the fixed adb version-output cap", async () => {
-  let selected: string = selection.binary;
-  if (process.platform === "win32") {
-    vi.mocked(execFileOutput).mockRejectedValueOnce(
-      Object.assign(new Error("too much"), {
-        code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-        stdout: "",
-        stderr: "",
-        signal: null,
-        killed: false,
-        outputTruncated: true,
-      }),
-    );
-  } else {
-    const root = await mkdtemp(join(tmpdir(), "rea-adb-version-cap-"));
-    onTestFinished(() => rm(root, { recursive: true, force: true }));
-    selected = join(root, "adb");
+  let host: Parameters<typeof inspectAdbClient>[0] = launchFailing(
+    new OwnedCommandFailure(
+      "output-limit",
+      "Command diagnostic output exceeded its complete-output budget.",
+    ),
+  );
+  if (process.platform !== "win32") {
+    const root = await createTestTempDirectory("rea-adb-version-cap-");
+    const selected = join(root, "adb");
     await writeFile(
       selected,
       `#!${process.execPath}\nprocess.stdout.write("x".repeat(100_000));\n`,
       { mode: 0o755 },
     );
+    host = { ...selection, binary: selected };
   }
-  const failure = await inspectAdbClient({
-    ...selection,
-    binary: selected,
-  }).catch((cause: unknown) => cause);
+  const failure = await inspectAdbClient(host).catch((cause: unknown) => cause);
   const projected = projectAnalysisError(
     failure as Parameters<typeof projectAnalysisError>[0],
   );
@@ -106,20 +92,20 @@ it("reports the fixed adb version-output cap", async () => {
 it.skipIf(process.platform !== "win32")(
   "classifies an EACCES execute refusal on Windows",
   async () => {
-    vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EACCES"));
-    await expect(inspectAdbClient(selection)).rejects.toMatchObject({
-      code: "binary_not_executable",
-      diagnostics: {
-        selected_binary: selection.binary,
-        filesystem_error: "EACCES",
+    await expect(inspectAdbClient(refusedWith("EACCES"))).rejects.toMatchObject(
+      {
+        code: "binary_not_executable",
+        diagnostics: {
+          selected_binary: selection.binary,
+          filesystem_error: "EACCES",
+        },
       },
-    });
+    );
   },
 );
 
 it("names an EPERM execute refusal separately from missing permission", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EPERM"));
-  await expect(inspectAdbClient(selection)).rejects.toMatchObject({
+  await expect(inspectAdbClient(refusedWith("EPERM"))).rejects.toMatchObject({
     code: "binary_not_executable",
     remediation: expect.stringContaining("REA_ADB_PATH") as unknown,
     diagnostics: {
@@ -131,8 +117,7 @@ it("names an EPERM execute refusal separately from missing permission", async ()
 });
 
 it("names any other not-started spawn errno without an exit code", async () => {
-  vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure("EINVAL"));
-  const failure = await inspectAdbClient(selection).catch(
+  const failure = await inspectAdbClient(refusedWith("EINVAL")).catch(
     (cause: unknown) => cause,
   );
   expect(failure).toMatchObject({
@@ -158,8 +143,7 @@ it.each([
 ] as const)(
   "reports a host launch constraint %s through the shared launch owner, not as a fault of the selected path",
   async (code, retryable, facts) => {
-    vi.mocked(execFileOutput).mockRejectedValueOnce(adbSpawnFailure(code));
-    const failure = await inspectAdbClient(selection).catch(
+    const failure = await inspectAdbClient(refusedWith(code)).catch(
       (cause: unknown) => cause,
     );
     expect(failure).toBeInstanceOf(AnalysisResourceConstraintError);
@@ -208,8 +192,7 @@ it.skipIf(process.platform === "win32").each([
     expectedPath: () => null,
   },
 ])("preserves the source identity for $name", async (testCase) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-adb-version-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const root = await createTestTempDirectory("rea-adb-version-");
   const binary = join(root, testCase.fileName);
   const output =
     "Android Debug Bridge version 1.0.41\nVersion 35.0.2-stub\n" +
@@ -225,6 +208,7 @@ it.skipIf(process.platform === "win32").each([
       binary,
       pathSource: "environment",
       environment: {},
+      resources,
     }),
   ).toEqual({
     version: "35.0.2-stub",

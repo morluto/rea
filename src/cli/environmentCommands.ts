@@ -483,71 +483,94 @@ const registerBuildCommand = (
   logger: Logger,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): void => {
-  registerCliCommand(cli, CLI_COMMANDS.environmentBuild, {
-    description:
-      "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
-    args: z.object({
-      capture: localPathStringSchema.describe(
-        "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
-      ),
-      directory: localPathStringSchema
-        .optional()
-        .describe(
-          "Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run",
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.environmentBuild,
+    {
+      description:
+        "Build an agent environment bundle from a recorded capture in one offline step: inspect a HAR (or read capture Evidence), project the environment manifest, derive the state, report which tools the environment answers from state, which replay and why each write is withheld, then write the bundle environment-export writes",
+      args: z.object({
+        capture: localPathStringSchema.describe(
+          "A .har file, or capture Evidence JSON from inspect-web-network-capture (HAR) or capture-browser-scenario",
         ),
-    }),
-    options: z.object({
-      name: z
-        .string()
-        .optional()
-        .describe(
-          "Env folder and env id (kebab-case); default the manifest's name, or the capture file's name when the origin is a loopback or IP address",
+        directory: localPathStringSchema
+          .optional()
+          .describe(
+            "Bundle directory to create; must be absent or empty, nothing is overwritten; omit only with --dry-run",
+          ),
+      }),
+      options: z.object({
+        name: z
+          .string()
+          .optional()
+          .describe(
+            "Env folder and env id (kebab-case); default the manifest's name, or the capture file's name when the origin is a loopback or IP address",
+          ),
+        templateRule: z
+          .array(z.enum(TEMPLATE_RULES))
+          .optional()
+          .describe(
+            "Opt-in template rule; repeat to select several. Replaces the default after-uid-literal, opaque-token, sibling-variance and prefix-variance",
+          ),
+        formatRulesOnly: z
+          .boolean()
+          .default(false)
+          .describe("Apply only the four format rules, the views' own default"),
+        packageTarball: localPathStringSchema
+          .optional()
+          .describe(
+            "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",
+          ),
+        dryRun: z
+          .boolean()
+          .default(false)
+          .describe("Run every stage and report, but write nothing"),
+        // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+        captureTimeoutMs: cliDecimalField(
+          inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
         ),
-      templateRule: z
-        .array(z.enum(TEMPLATE_RULES))
-        .optional()
-        .describe(
-          "Opt-in template rule; repeat to select several. Replaces the default after-uid-literal, opaque-token, sibling-variance and prefix-variance",
-        ),
-      formatRulesOnly: z
-        .boolean()
-        .default(false)
-        .describe("Apply only the four format rules, the views' own default"),
-      packageTarball: localPathStringSchema
-        .optional()
-        .describe(
-          "Packed rea-agents tarball (npm pack) copied into the env folder and installed by the Dockerfile instead of the registry package pinned to this version",
-        ),
-      dryRun: z
-        .boolean()
-        .default(false)
-        .describe("Run every stage and report, but write nothing"),
-      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
-      captureTimeoutMs: cliDecimalField(
-        inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
-      ),
-    }),
-    run: ({ args, options }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, CLI_COMMANDS.environmentBuild, () =>
-          buildEnvironmentCommand(
-            {
-              capture: args.capture,
-              directory: args.directory,
-              name: options.name,
-              templateRule: options.templateRule,
-              formatRulesOnly: options.formatRulesOnly,
-              packageTarball: options.packageTarball,
-              dryRun: options.dryRun,
-              captureTimeoutMs: options.captureTimeoutMs,
-            },
-            environment,
-            logger,
-            signal,
+      }),
+      run: ({ args, options }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, CLI_COMMANDS.environmentBuild, () =>
+            buildEnvironmentCommand(
+              {
+                capture: args.capture,
+                directory: args.directory,
+                name: options.name,
+                templateRule: options.templateRule,
+                formatRulesOnly: options.formatRulesOnly,
+                packageTarball: options.packageTarball,
+                dryRun: options.dryRun,
+                captureTimeoutMs: options.captureTimeoutMs,
+              },
+              environment,
+              logger,
+              signal,
+            ),
           ),
         ),
-      ),
-  });
+    },
+    {
+      operations: [
+        {
+          name: "export_environment_bundle",
+          flags: {
+            name: "--name",
+            template_rules: "--template-rule",
+            package_tarball: "--package-tarball",
+            dry_run: "--dry-run",
+          },
+        },
+        {
+          name: "inspect_web_network_capture",
+          flags: {
+            capture_timeout_ms: "--capture-timeout-ms",
+          },
+        },
+      ],
+    },
+  );
 };
 
 const manifestArgument = z

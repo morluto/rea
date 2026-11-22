@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, type FileHandle } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fault = vi.hoisted(() => ({
@@ -83,6 +84,7 @@ import { silentLogger } from "../../src/logger.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import type { AnalysisClient } from "../../src/ports/AnalysisProvider.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 beforeEach(() => {
   fault.source = "";
@@ -121,8 +123,9 @@ it.each(["read", "write"] as const)(
       diagnostics: { failure_kind: "start" },
     });
     expect(result.error.cause).toMatchObject({ kind: "start", cause });
-    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
-    expect(fault.destinations.every((handle) => handle.fd === -1)).toBe(true);
+    expect(fault.handles.map(({ fd }) => fd)).toEqual([-1]);
+    if (stage === "write") expect(fault.destinations.length).toBeGreaterThan(0);
+    expect(fault.destinations.filter(({ fd }) => fd !== -1)).toEqual([]);
     expect(launches()).toBe(0);
   },
 );
@@ -193,30 +196,25 @@ it("waits for mixed finalization and resolves cleanup only after both exact desc
   const { path, runtime, sha256 } = await fixture();
   fault.blockSource = true;
   fault.blockDestination = true;
-  let release: () => void = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let entered = false;
+  const gate = phaseGate<FileHandle>();
   fault.onClose = async (handle) => {
-    if (fault.destinations.includes(handle)) {
-      entered = true;
-      await gate;
-    }
+    if (fault.destinations.includes(handle)) await gate.hold(handle);
   };
   const resources = new ArtifactResourceScope();
-  let settled = false;
   const running = createGhidraTargetSnapshot(path, runtime, sha256, {
     platform: "linux",
     resourceScope: resources,
-  }).catch((cause: unknown) => {
-    settled = true;
-    return cause;
-  });
+  }).catch((cause: unknown) => cause);
   try {
-    await expect.poll(() => entered).toBe(true);
-    expect(settled).toBe(false);
-    release();
+    const destinationHandle = await gate.reached(
+      running,
+      "snapshot destination close",
+    );
+    expect(destinationHandle.fd).toBeGreaterThanOrEqual(0);
+    expect(
+      await Promise.race([running.then(() => "settled"), setImmediate("held")]),
+    ).toBe("held");
+    gate.release();
     const failure = await running;
     expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
     if (!(failure instanceof ArtifactFileCleanupFailure))
@@ -229,9 +227,7 @@ it("waits for mixed finalization and resolves cleanup only after both exact desc
       throw new Error("Expected nested destination owner");
     const destination = physical.cause;
     expect(failure.fileCleanupFailure.owner.handle).toBe(fault.handles[0]);
-    expect(destination.fileCleanupFailure.owner.handle).toBe(
-      fault.destinations[0],
-    );
+    expect(destination.fileCleanupFailure.owner.handle).toBe(destinationHandle);
     expect(failure.cleanupLeases).toHaveLength(2);
     const projected = new ProviderCleanupError(
       "ghidra",
@@ -239,15 +235,20 @@ it("waits for mixed finalization and resolves cleanup only after both exact desc
       { reason: "controlled mixed cleanup" },
     );
     bindArtifactFileCleanup(failure, projected);
-    fault.blocked.delete(fault.destinations[0]!);
+    fault.blocked.delete(destinationHandle);
     await destination.cleanupLease.release();
+    expect(destinationHandle.fd).toBe(-1);
+    expect(failure.fileCleanupFailure.owner.handle.fd).toBeGreaterThanOrEqual(
+      0,
+    );
     expect(projected.cleanupIncomplete).toBe(true);
     expect(projected.cleanupResources).toEqual([path]);
     fault.blocked.clear();
     await resources.close();
+    expect(failure.fileCleanupFailure.owner.handle.fd).toBe(-1);
     expect(projected.cleanupIncomplete).toBe(false);
   } finally {
-    release();
+    gate.release();
     await running;
     fault.blocked.clear();
     await resources.close();
@@ -366,7 +367,8 @@ it.each([
     await expect(client.close()).resolves.toMatchObject({ ok: true });
     expect(result.error.cleanupIncomplete).toBe(false);
     if (!close.ok) expect(close.error.cleanupIncomplete).toBe(false);
-    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+    expect(fault.handles.map(({ fd }) => fd)).toEqual([-1]);
+    expect(fault.destinations.filter(({ fd }) => fd !== -1)).toEqual([]);
     expect(launches()).toBe(0);
   },
 );
@@ -383,11 +385,6 @@ it("copies every byte across chunk boundaries through the destination owner", as
   });
   expect(Buffer.compare(await readFile(snapshot.path), bytes)).toBe(0);
   expect(snapshot.sha256).toBe(sha256);
-  expect(fault.handles.length).toBeGreaterThan(0);
-  expect(fault.destinations.length).toBeGreaterThan(0);
-  expect(
-    [...fault.handles, ...fault.destinations].every(
-      (handle) => handle.fd === -1,
-    ),
-  ).toBe(true);
+  expect(fault.handles.map(({ fd }) => fd)).toEqual([-1]);
+  expect(fault.destinations.map(({ fd }) => fd)).toEqual([-1]);
 });

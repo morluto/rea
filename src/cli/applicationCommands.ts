@@ -1,15 +1,13 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { registerNtfsJournalCommand } from "./ntfsJournalCommand.js";
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 
 import { cliCommandFor } from "../contracts/cliCommandNames.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
-import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -20,8 +18,6 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
-
-type CliInstance = ReturnType<typeof Cli.create>;
 
 /** Application workflows whose CLI input is one Evidence-carrying JSON document. */
 type EvidenceWorkflowOperation =
@@ -37,7 +33,7 @@ const workflowJsonDescription = "Inline workflow JSON or JSON file path";
 
 /** Register CLI equivalents of provider-neutral application graph workflows. */
 export const registerApplicationCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
 ): void => {
   registerEvidenceJsonCommand({
@@ -89,8 +85,6 @@ export const registerApplicationCommands = (
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
-  registerSourceToBundleCommand(cli, logger);
-  registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
   registerNtfsJournalCommand(cli, logger);
   registerPlaywrightTraceCommand(cli, logger);

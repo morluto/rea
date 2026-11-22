@@ -9,12 +9,9 @@ import {
 } from "./counted-baseline.mjs";
 import { localCompletenessEnumCount } from "./completeness-enum-guard.mjs";
 import { countKeyedFirstMatches } from "./keyed-first-match.mjs";
-import {
-  incurImportedNameCount,
-  incurZodImportCount,
-} from "./incur-import-guard.mjs";
 import { budgetArithmeticCount } from "./budget-arithmetic-guard.mjs";
 import { localLimitErrorClassCount } from "./limit-class-guard.mjs";
+import { completedAbortReclassificationCount } from "./completed-abort-guard.mjs";
 import { countDefaultValidationClients } from "./mcp-client-validation.mjs";
 import {
   isComparisonOrCountFile,
@@ -30,6 +27,7 @@ import {
   TOOL_REGISTRATION_OWNERS,
   toolRegistrationCount,
 } from "./tool-registration-guard.mjs";
+import { findTypedScriptSiblingDeclarations } from "./typed-script-declarations-guard.mjs";
 
 // Architecture guards for the strict-identity / best-effort-inference split.
 // - Composite dedup keys must not NUL-join variable-length or free-form
@@ -96,7 +94,6 @@ check(
 
 check("NUL-joined list key (use compositeKey)", files, /\.join\(["']\\0["']\)/);
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Opaque-effect checks are private to javascriptSemanticEffectLog.ts, so the
 // compiler keeps readers on its questions, and only the log and its record
 // module read the recorded sites. A method read on an intrinsic
@@ -140,9 +137,8 @@ check(
 // prlimitCeilingArguments because PcapCommand appends the producer command.
 // Its CPU ceiling stays 300 seconds and it has no resident-input budget;
 // address space and file size use those shared fields.
-// selectEvmWorkerLimits stays a separate selector: Result failures, unit
-// checks, and a refusal when soft exceeds hard. It must not call
-// clampLinuxResourceLimits.
+// EVMole reads and validates inherited limits through the same foundation
+// reader. It still selects soft-only arguments as a separate launch policy.
 check(
   "inline paired prlimit ceilings (use prlimitArgumentVector from src/process/LinuxResourceLimits)",
   files,
@@ -246,22 +242,8 @@ check(
 );
 
 // "Non-null object other than an array" has one owner: src/kernel/isRecord.ts.
-// A local predicate with that body, under any name, is a copy. The listed files
-// still hold one and may only be removed from the list; a listed file that no
-// longer matches fails so the list shrinks with the code.
-const RECORD_PREDICATE_COPIES = [
-  // Exported under a module-specific name; importers still use that name.
-  "src/browser/history/CaptureRedaction.ts",
-  "src/contracts/compactJsonSchema.ts",
-  "src/domain/analysisView/environmentStateRules.ts",
-  // Owned by the advertised-schema workstream.
-  "src/contracts/inputSchemaPresentation.ts",
-  // Narrows a protocol-specific parameter type, not unknown.
-  "src/browser/execution/CdpRuntimeInitiator.ts",
-  // Named `object`, which also spells the typeof result in these files.
-  "src/pcap/PcapDnsWire.ts",
-  "src/pcap/PcapOutput.ts",
-];
+// A local predicate with that body, under any name, is a copy.
+const RECORD_PREDICATE_COPIES = [];
 const mismatchedRecordCopies = files.filter(({ path, content }) => {
   if (path === "src/kernel/isRecord.ts") return false;
   const { named, bodies } = recordPredicateCounts(content);
@@ -308,9 +290,9 @@ check(
   ],
 );
 
-// Native inventory results parse once against their named fact contract
-// (docs/adr/native/typed-operation-facts.md). Hopper's reply table and the
-// advertised output schemas own their own protocol and catalog contracts.
+// Native inventory results parse once against their named fact contract.
+// Hopper's reply table and the advertised output schemas own their protocol
+// and catalog contracts.
 check(
   "native inventory rows parsed outside their fact contract (use executeFact or a contract from src/domain/native/nativeOperationFacts)",
   files,
@@ -414,7 +396,6 @@ checkCounted(
   ["src/process/capturedProviderOutput.ts"],
 );
 
-// Pushed effect invalidation (docs/adr/javascript/pushed-effect-invalidation.md).
 // Recorded effects belong to the effect log. A reader that reads an effect
 // index itself decides on its own which effect kinds and proofs apply; readers
 // ask the log instead. Every reader has moved; the remaining counts are the
@@ -655,7 +636,7 @@ checkCounted(
   "completed result reclassified by a hand-read abort signal (finalize through runOwned in src/providers/runOwned)",
   "completed-abort-reclassification",
   files,
-  /\.ok\s*&&\s*(?:isAborted\(|[\w.?]*signal\??\.aborted)/gu,
+  completedAbortReclassificationCount,
   ["src/providers/runOwned.ts"],
 );
 
@@ -950,18 +931,6 @@ checkCounted(
   [],
 );
 
-// Schemas import zod directly. incur's `z` is a re-export of the same package;
-// importing it through the CLI framework ties schemas to a dependency REA is
-// removing (#11654). Declarations are read from code tokens, so the text in a
-// comment or string fixture does not count.
-checkCounted(
-  'zod imported through incur (import { z } from "zod")',
-  "incur-zod-reexport",
-  [...files, ...testFiles],
-  (_content, file) => incurZodImportCount(file.source ?? file.content),
-  [],
-);
-
 // Every CLI command is registered through src/cli/commandRegistry.ts, which
 // records it in REA's command table (name, inputs, contract operations and
 // their flags) before handing it to the dispatcher (#11654). A direct
@@ -974,21 +943,10 @@ checkCounted(
   ["src/cli/commandRegistry.ts"],
 );
 
-// REA is replacing incur with its own CLI owners (#11654). Each replacement
-// removes the names it superseded; this counted list only shrinks until incur
-// leaves package.json.
-checkCounted(
-  "name imported from incur (use REA's CLI owner in src/cli)",
-  "incur-import",
-  [...files, ...testFiles],
-  (_content, file) => incurImportedNameCount(file.source ?? file.content),
-  [],
-);
-
 // `find` on a parsed section, program-header or load-command table silently
 // keeps the first of repeated declarations. Select keyed entries through
 // src/domain/keyedCollection (`uniqueKeyed`, `allKeyed`, or
-// `firstKeyed`/`lastKeyed` with the format's precedence rule); an
+// `firstKeyed` with the format's precedence rule); an
 // address-containment test that selects nothing uses `some`. GuidanceAccess
 // looks up a guidance document's heading section by its locator identity,
 // not a parsed binary section table.
@@ -1077,6 +1035,15 @@ checkCounted(
     "tests/boundary/mcp/outputValidatorReuse.test.ts",
   ],
 );
+
+// Scripts covered by tsconfig.scripts.json declare and check their types in
+// JSDoc inside the .mjs source itself (#11616). A sibling .d.ts / .d.mts file
+// creates a second, unchecked type source that hides signature drift.
+const siblingDeclarationFiles = await findTypedScriptSiblingDeclarations(root);
+if (siblingDeclarationFiles.length > 0)
+  failures.push(
+    `typed script in tsconfig.scripts.json has a sibling declaration file (inline JSDoc types in the .mjs source instead):\n${siblingDeclarationFiles.map((file) => `  ${file}`).join("\n")}`,
+  );
 
 for (const key of baselineTexts.keys())
   if (!checkedBaselineKeys.has(key))

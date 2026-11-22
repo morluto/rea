@@ -161,7 +161,15 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
     "transport",
     "status exceeded the ceiling",
     { max_request_bytes: 8192 },
-    { remediationAction: "Raise the ceiling.", retryable: false, limit },
+    {
+      remediationAction: "Raise the ceiling.",
+      retryable: false,
+      limit,
+      related: {
+        parameters: ["max_output_bytes"],
+        operations: ["analyze_function"],
+      },
+    },
   );
   const attributed = analysisClientFailureForOperation(
     source,
@@ -174,9 +182,12 @@ it("keeps the structured limit when a resource refusal changes operation", () =>
   expect(attributed.operation).toBe("binary_overview");
   expect(attributed.retryable).toBe(false);
   expect(attributed.limit).toEqual(source.limit);
+  expect(attributed.related).toEqual(source.related);
   expect(projectAnalysisError(attributed)).toMatchObject({
     code: "resource_constraint",
     details: {
+      related_parameters: ["max_output_bytes"],
+      related_operations: ["analyze_function"],
       limit: {
         setting: "bridge.max_request_bytes",
         effective_value: 8192,

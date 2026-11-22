@@ -1,22 +1,26 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
+  type ProviderProcessDiagnostic,
 } from "./ProviderProcess.js";
 import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 
-it("retains final stderr between verified exit and output close during stop", async () => {
-  const producer = Object.assign(new EventEmitter(), {
+const createProducer = () =>
+  Object.assign(new EventEmitter(), {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     exitCode: null,
     signalCode: null,
     kill: () => false,
   });
+
+it("retains final stderr between verified exit and output close during stop", async () => {
+  const producer = createProducer();
   let cleanupStarted: () => void = () => {};
   const started = new Promise<void>((resolve) => {
     cleanupStarted = resolve;
@@ -120,7 +124,9 @@ it("retries process cleanup with capture attached until output closes", async ()
       return { cleaned: true, signaled: false };
     },
   });
-  await expect(owner.stop()).resolves.toMatchObject({ status: "incomplete" });
+  await expect(owner.stop({ killGraceMs: 0 })).resolves.toMatchObject({
+    status: "incomplete",
+  });
   expect(owner.snapshot().stopRequested).toBe(true);
   producer.stderr.write("retained during retry");
   producer.emit("exit", 0, null);
@@ -138,13 +144,7 @@ it("retries process cleanup with capture attached until output closes", async ()
 });
 
 it("bounds additional retention during held cleanup and across retries", async () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   let release: () => void = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
@@ -165,21 +165,29 @@ it("bounds additional retention during held cleanup and across retries", async (
       return { cleaned: true, signaled: false };
     },
   });
-  const stopped = owner.stop();
-  producer.stderr.write("x".repeat(65537));
-  expect(owner.snapshot().stderr).toMatchObject({
-    bytes: 65536,
-    observedBytes: 65537,
-  });
-  release();
-  await expect(stopped).resolves.toMatchObject({ status: "incomplete" });
-  producer.stderr.write("tail");
-  fails = false;
-  await expect(owner.stop()).resolves.toEqual({ status: "verified-cleanup" });
-  expect(owner.snapshot()).toMatchObject({
-    stderr: { bytes: 65536, observedBytes: 65541 },
-    diagnosticTruncated: true,
-  });
+  const stopped = owner.stop({ killGraceMs: 0 });
+  try {
+    producer.stderr.write("x".repeat(65537));
+    expect(owner.snapshot().stderr).toMatchObject({
+      bytes: 65536,
+      observedBytes: 65537,
+    });
+    release();
+    await expect(stopped).resolves.toMatchObject({ status: "incomplete" });
+    producer.stderr.write("tail");
+    fails = false;
+    await expect(owner.stop()).resolves.toEqual({ status: "verified-cleanup" });
+    expect(owner.snapshot()).toMatchObject({
+      stderr: { bytes: 65536, observedBytes: 65541 },
+      diagnosticTruncated: true,
+    });
+  } finally {
+    release();
+    await stopped;
+    owner.dispose();
+    producer.stdout.destroy();
+    producer.stderr.destroy();
+  }
 });
 
 it("releases borrowed capture as incomplete without killing or destroying streams", async () => {
@@ -213,13 +221,7 @@ it("releases borrowed capture as incomplete without killing or destroying stream
 });
 
 it("retains stream failure incompleteness even after output close", async () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const owner = new ProviderProcessSupervisor({
     process: producer,
     ownsProcessLifetime: false,
@@ -239,13 +241,7 @@ it("retains stream failure incompleteness even after output close", async () => 
 });
 
 it("exit does not establish complete output when a producer closes its streams later", async () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const supervisor = new ProviderProcessSupervisor({
     process: producer,
     ownsProcessLifetime: false,
@@ -270,13 +266,7 @@ it("exit does not establish complete output when a producer closes its streams l
 });
 
 it("reads an observed exit without materializing stream diagnostics", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const supervisor = new ProviderProcessSupervisor({
     process: producer,
     ownsProcessLifetime: false,
@@ -302,20 +292,8 @@ it("reads an observed exit without materializing stream diagnostics", () => {
 });
 
 it("scopes output checkpoints to raw bytes on one supervisor and epoch", () => {
-  const first = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
-  const second = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const first = createProducer();
+  const second = createProducer();
   const owner = new ProviderProcessSupervisor(
     { process: first, ownsProcessLifetime: false },
     { maxDiagnosticBytes: 128 },
@@ -360,13 +338,7 @@ it.each<{ budget: ProcessDiagnosticBudget; stderr: string }>([
 ])(
   "distinguishes aggregate and per-stream output budgets: $budget",
   ({ budget, stderr }) => {
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+    const producer = createProducer();
     const supervisor = new ProviderProcessSupervisor(
       { process: producer, ownsProcessLifetime: false },
       { maxDiagnosticBytes: budget },
@@ -402,13 +374,7 @@ it.each<{ budget: ProcessDiagnosticBudget; stderr: string }>([
 it.each(["stdout", "stderr"] as const)(
   "drains and reports overflowing %s without consuming the other stream's budget",
   (stream) => {
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+    const producer = createProducer();
     const events: unknown[] = [];
     const supervisor = new ProviderProcessSupervisor(
       { process: producer, ownsProcessLifetime: false },
@@ -443,13 +409,7 @@ it.each(["stdout", "stderr"] as const)(
 );
 
 it("tightens aggregate retention without replacing or relaxing the original stream caps", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const supervisor = new ProviderProcessSupervisor(
     { process: producer, ownsProcessLifetime: false },
     { maxDiagnosticBytes: { stdout: 4, stderr: 10 } },
@@ -482,13 +442,7 @@ it("tightens aggregate retention without replacing or relaxing the original stre
 it.each(["stdout", "stderr"] as const)(
   "retains raw UTF-8 and checkpoint facts while scanning %s markers past its stream cap",
   (stream) => {
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+    const producer = createProducer();
     const supervisor = new ProviderProcessSupervisor(
       { process: producer, ownsProcessLifetime: false },
       { maxDiagnosticBytes: { stdout: 4, stderr: 4 }, outputToken: "DONE" },
@@ -520,13 +474,7 @@ it.each(["stdout", "stderr"] as const)(
 it.each(["stdout", "stderr"] as const)(
   "redacts a budget-cut credential in scoped %s after prior output",
   (stream) => {
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+    const producer = createProducer();
     const supervisor = new ProviderProcessSupervisor(
       { process: producer, ownsProcessLifetime: false },
       { maxDiagnosticBytes: 40 },
@@ -576,13 +524,7 @@ it("observes an exit that completed before supervision", () => {
 
 it("reports a reached process memory limit only when the handle observed one", () => {
   let reached = false;
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   // A live accessor, as on the owned Windows process handle.
   Object.defineProperty(producer, "memoryLimitReached", { get: () => reached });
   const exitSnapshots: unknown[] = [];
@@ -612,13 +554,7 @@ it("reports a reached process memory limit only when the handle observed one", (
 });
 
 it("reports output closure synchronously with the final incomplete-output snapshot", async () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const events: string[] = [];
   let closeSnapshot: unknown;
   const owner = new ProviderProcessSupervisor(
@@ -635,6 +571,13 @@ it("reports output closure synchronously with the final incomplete-output snapsh
       },
     },
   );
+  const controller = new AbortController();
+  const closeWait = owner
+    .waitForOutputClose(undefined, controller.signal)
+    .then((closed) => {
+      events.push("close-waiter");
+      return closed;
+    });
   try {
     producer.stdout.emit("error", new Error("output ended unexpectedly"));
     producer.stdout.end();
@@ -642,10 +585,15 @@ it("reports output closure synchronously with the final incomplete-output snapsh
     producer.emit("close", 0, null);
     expect(events).toEqual(["output-close"]);
     expect(closeSnapshot).toMatchObject({ outputIncomplete: true });
-    await Promise.resolve();
-    expect(events).toEqual(["output-close", "exit-callback-microtask"]);
-    await expect(owner.waitForOutputClose(0)).resolves.toBe(true);
+    await expect(closeWait).resolves.toBe(true);
+    expect(events).toEqual([
+      "output-close",
+      "exit-callback-microtask",
+      "close-waiter",
+    ]);
   } finally {
+    controller.abort();
+    await closeWait;
     owner.dispose();
     producer.stdout.destroy();
     producer.stderr.destroy();
@@ -653,13 +601,7 @@ it("reports output closure synchronously with the final incomplete-output snapsh
 });
 
 it("does not emit diagnostics after disposal when process close arrives", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const events: string[] = [];
   const owner = new ProviderProcessSupervisor(
     { process: producer, ownsProcessLifetime: false },
@@ -672,48 +614,8 @@ it("does not emit diagnostics after disposal when process close arrives", () => 
   producer.stderr.destroy();
 });
 
-it("emits output-close before queued abort microtasks and promise continuations", async () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
-  const events: string[] = [];
-  let owner!: ProviderProcessSupervisor;
-  owner = new ProviderProcessSupervisor(
-    { process: producer, ownsProcessLifetime: false },
-    {
-      onDiagnostic: (event) => {
-        if (event.type === "exit")
-          queueMicrotask(() => events.push("later-abort-microtask"));
-        if (event.type === "output-close") {
-          expect(owner.observedOutputClose()).toBe(true);
-          events.push("output-close");
-        }
-      },
-    },
-  );
-  const closeWait = owner.waitForOutputClose();
-  producer.stdout.end();
-  producer.stderr.end();
-  producer.emit("close", 0, null);
-  expect(events).toEqual(["output-close"]);
-  await closeWait;
-  await Promise.resolve();
-  expect(events).toEqual(["output-close", "later-abort-microtask"]);
-  owner.dispose();
-});
-
 it("projects provider output loss as truncated diagnostics without inventing a byte count", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   Object.defineProperty(producer, "outputIncomplete", { value: true });
   const supervisor = new ProviderProcessSupervisor({
     process: producer,
@@ -753,7 +655,7 @@ it("unreferences process and stream handles when stop reports incomplete cleanup
     }),
   });
   try {
-    const result = await supervisor.stop();
+    const result = await supervisor.stop({ killGraceMs: 0 });
     expect(result).toMatchObject({
       status: "incomplete",
       reason: "process table could not be inspected: spawn EPERM",
@@ -776,13 +678,7 @@ it.each([
   "releases output wait resources after $outcome with timeout $timeoutMs",
   async ({ outcome, timeoutMs }) => {
     vi.useFakeTimers();
-    const producer = Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+    const producer = createProducer();
     const owner = new ProviderProcessSupervisor({
       process: producer,
       ownsProcessLifetime: true,
@@ -818,13 +714,7 @@ it.each([
 );
 
 it("keeps current checkpoint coverage separate from historically dropped output", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const supervisor = new ProviderProcessSupervisor(
     { process: producer, ownsProcessLifetime: false },
     { maxDiagnosticBytes: 0 },
@@ -855,14 +745,7 @@ it("keeps current checkpoint coverage separate from historically dropped output"
 });
 
 it("marks a stop the owner requested before any signal it sends", async () => {
-  const producer = () =>
-    Object.assign(new EventEmitter(), {
-      stdout: new PassThrough(),
-      stderr: new PassThrough(),
-      exitCode: null,
-      signalCode: null,
-      kill: () => false,
-    });
+  const producer = () => createProducer();
   const external = producer();
   const unowned = new ProviderProcessSupervisor({
     process: external,
@@ -927,13 +810,7 @@ it("marks a stop the owner requested before any signal it sends", async () => {
 });
 
 it("retains a stream's latest bytes in tail retention, with checkpoints over what remains", () => {
-  const producer = Object.assign(new EventEmitter(), {
-    stdout: new PassThrough(),
-    stderr: new PassThrough(),
-    exitCode: null,
-    signalCode: null,
-    kill: () => false,
-  });
+  const producer = createProducer();
   const supervisor = new ProviderProcessSupervisor(
     { process: producer, ownsProcessLifetime: false },
     {
@@ -973,4 +850,255 @@ it("retains a stream's latest bytes in tail retention, with checkpoints over wha
     producer.stdout.destroy();
     producer.stderr.destroy();
   }
+});
+
+describe("lazy diagnostic snapshot materialization", () => {
+  it("exposes enumerable memoized snapshots on exit and output-close events", () => {
+    const producer = createProducer();
+    const events: {
+      readonly type: string;
+      readonly snapshot?: unknown;
+    }[] = [];
+    let repeatedExitSnapshotSame = false;
+    let repeatedCloseSnapshotSame = false;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        onDiagnostic: (event) => {
+          if (event.type === "exit") {
+            events.push(event);
+            repeatedExitSnapshotSame = event.snapshot === event.snapshot;
+          } else if (event.type === "output-close") {
+            events.push(event);
+            repeatedCloseSnapshotSame = event.snapshot === event.snapshot;
+          }
+        },
+      },
+    );
+    try {
+      producer.stdout.write("hello");
+      producer.emit("exit", 0, null);
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 0, null);
+
+      expect(events).toHaveLength(2);
+      expect(Object.keys(events[0]!)).toContain("snapshot");
+      expect(Object.keys(events[1]!)).toContain("snapshot");
+      expect(repeatedExitSnapshotSame).toBe(true);
+      expect(repeatedCloseSnapshotSame).toBe(true);
+      expect(events[0]?.snapshot).toMatchObject({
+        exitCode: 0,
+        stdout: { text: "hello", bytes: 5 },
+      });
+      expect(events[1]?.snapshot).toEqual(supervisor.snapshot());
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+});
+
+describe("event-time snapshot capture before lazy materialization", () => {
+  it("preserves exit and output-close snapshots across later stderr, overflow, and resetOutput", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        maxDiagnosticBytes: { stdout: 8, stderr: 8 },
+        onDiagnostic: (event) => {
+          // Store only the event object; do not access `.snapshot` yet.
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stdout.write("out-1");
+      producer.stderr.write("err-1");
+      producer.emit("exit", 0, null);
+      // Late stderr overflows stderr budget after `exit` was emitted.
+      producer.stderr.write("-tail-overflow");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 0, null);
+      // Clear retained buffers before reading either stored `.snapshot`.
+      supervisor.resetOutput();
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "out-1", bytes: 5, observedBytes: 5 },
+        stderr: { text: "err-1", bytes: 5, observedBytes: 5 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(closeEvent?.snapshot).toEqual({
+        diagnosticTruncated: true,
+        stdout: { text: "out-1", bytes: 5, observedBytes: 5 },
+        stderr: { text: "err-1-ta", bytes: 8, observedBytes: 19 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(supervisor.snapshot()).toEqual({
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: 0,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+
+  it("isolates stored event snapshots from writes following resetOutput", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stdout.write("before-exit");
+      producer.stderr.write("err-before");
+      producer.emit("exit", 0, null);
+      supervisor.resetOutput();
+      producer.stdout.write("after-reset");
+      producer.stderr.write("err-after");
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "before-exit", bytes: 11, observedBytes: 11 },
+        stderr: { text: "err-before", bytes: 10, observedBytes: 10 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(supervisor.snapshot()).toEqual({
+        stdout: { text: "after-reset", bytes: 11, observedBytes: 11 },
+        stderr: { text: "err-after", bytes: 9, observedBytes: 9 },
+        exitCode: 0,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+});
+
+describe("event-time snapshot capture with tail retention and runtime exhaustion", () => {
+  it("preserves tail-retained event snapshots when post-exit output drops front bytes", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        maxDiagnosticBytes: { stdout: 5, stderr: 5 },
+        diagnosticRetention: "tail",
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stderr.write("12345");
+      producer.emit("exit", 1, null);
+      producer.stderr.write("67890");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 1, null);
+      supervisor.resetOutput();
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "12345", bytes: 5, observedBytes: 5 },
+        exitCode: 1,
+        signal: null,
+      });
+      expect(closeEvent?.snapshot).toEqual({
+        diagnosticTruncated: true,
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "67890", bytes: 5, observedBytes: 10 },
+        exitCode: 1,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+
+  it("preserves exit-time runtime exhaustion state before later stream updates", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        runtime: "jvm",
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stderr.write("java.lang.OutOfMemoryError: ");
+      producer.emit("exit", 1, null);
+      producer.stderr.write("Java heap space\n");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 1, null);
+      supervisor.resetOutput();
+      supervisor.dispose();
+
+      expect(exitEvent?.snapshot.runtimeExhaustion).toEqual({
+        runtime: "jvm",
+        area: undefined,
+        stream: "stderr",
+        line: "java.lang.OutOfMemoryError: ",
+        lineComplete: false,
+        truncated: false,
+        invalidUtf8: false,
+      });
+      expect(closeEvent?.snapshot.runtimeExhaustion).toEqual({
+        runtime: "jvm",
+        area: "heap",
+        stream: "stderr",
+        line: "java.lang.OutOfMemoryError: Java heap space",
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      });
+      expect(supervisor.snapshot().runtimeExhaustion).toBeUndefined();
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
 });

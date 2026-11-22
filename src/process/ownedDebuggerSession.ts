@@ -12,6 +12,7 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisResourceConstraintError,
+  cancelledBy,
   type AnalysisTimeoutRecovery,
 } from "../domain/analysisErrorCore.js";
 import type {
@@ -203,15 +204,16 @@ export const retainedDebuggerCleanupFailure = (
     diagnostics: { ...callerOptions.diagnostics, ...diagnostics },
   };
   const primary = options.cause;
-  if (primary instanceof AnalysisCancelledError)
-    return new AnalysisCancelledError(operation, {
-      ...options,
-      cause: primary.cause,
+  if (primary instanceof AnalysisCancelledError) {
+    const { cause: _, ...cancelledOptions } = options;
+    return cancelledBy(operation, primary, {
+      ...cancelledOptions,
       capturedOutput: options.capturedOutput ?? primary.capturedOutput,
       partialObservation:
         options.partialObservation ?? primary.partialObservation,
       cleanup,
     });
+  }
   return new AnalysisCapabilityUnavailableError(
     debugger_.provider,
     operation,

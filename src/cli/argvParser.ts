@@ -38,10 +38,14 @@ export interface CliFieldError {
  */
 export type CliArgvFailure =
   | { readonly kind: "parse"; readonly message: string }
+  | { readonly kind: "surplus"; readonly message: string }
+  | { readonly kind: "dry_run"; readonly message: string }
   | {
       readonly kind: "validation";
       readonly message: string;
       readonly fieldErrors: readonly CliFieldError[];
+      /** Original parser facts for command-specific safe constraint projection. */
+      readonly issues: readonly z.core.$ZodIssue[];
     };
 
 const parseFailure = (message: string): Result<never, CliArgvFailure> =>
@@ -117,6 +121,7 @@ export const validateCliInputs = (
   const { issues } = parsed.error;
   return err({
     kind: "validation",
+    issues,
     message:
       issues.map(({ message }) => message).join("; ") || "Validation failed",
     fieldErrors: issues.map((issue) => ({
@@ -159,7 +164,10 @@ export const parseCliArgv = (
   );
   const positionals: string[] = [];
   const options: Record<string, unknown> = {};
+  let invalidDryRun = false;
   const set = (name: string, value: string): void => {
+    if (name === "dryRun" && isBoolean(optionsSchema, name))
+      invalidDryRun ||= value !== "true" && value !== "false";
     if (!isArray(optionsSchema, name)) {
       options[name] = value;
       return;
@@ -225,9 +233,26 @@ export const parseCliArgv = (
       positionals.push(token);
     }
   }
+  // Check retained token facts before defaults or transforms can run. A later
+  // valid occurrence must not hide an earlier invalid dry-run literal.
+  if (invalidDryRun)
+    return err({
+      kind: "dry_run",
+      message: "Invalid --dry-run value; use true or false.",
+    });
+  const keys = Object.keys(argsSchema?.shape ?? {});
+  const last = keys.at(-1);
+  const variadic = last !== undefined && isArray(argsSchema, last);
+  if (!variadic && positionals.length > keys.length)
+    return err({
+      kind: "surplus",
+      message: `Unexpected positional arguments: ${positionals
+        .slice(keys.length)
+        .map((value) => JSON.stringify(value))
+        .join(" ")}.`,
+    });
   const rawArgs: Record<string, unknown> = {};
   if (argsSchema !== undefined) {
-    const keys = Object.keys(argsSchema.shape);
     for (const [position, key] of keys.entries()) {
       if (isArray(argsSchema, key)) {
         if (position !== keys.length - 1)

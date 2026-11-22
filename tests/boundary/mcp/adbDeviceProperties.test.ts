@@ -57,6 +57,7 @@ for (const scenario of scenarios) {
       const binary = await workspace.write(
         "adb",
         `#!/bin/sh
+[ "$1" = start-server ] && exit 0
 if [ "$1" = version ]; then
   printf 'Android Debug Bridge version 1.0.41\\nVersion 34.0.5-stub\\nInstalled as %s\\n' "$0"
   exit 0

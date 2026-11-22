@@ -135,7 +135,7 @@ export const hashManagedSource = async (
         throw managedSnapshotCapacityError(operation, maxBytes);
       const digest = createHash("sha256");
       let byteLength = 0;
-      const chunk = Buffer.allocUnsafe(64 * 1024);
+      const chunk = Buffer.allocUnsafe(256 * 1024);
       for (;;) {
         signal?.throwIfAborted();
         const { bytesRead } = await handle.read(

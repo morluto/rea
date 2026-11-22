@@ -1,4 +1,5 @@
-import { Cli } from "incur";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { z } from "zod";
 import pino from "pino";
 import { expect, it } from "vitest";
@@ -13,7 +14,7 @@ import { absoluteLocalPathStringSchema } from "../../../src/domain/localPath.js"
 /** Two synthetic contracts routed by whether the target names an archive. */
 const harness = () => {
   const calls: { route: string; cliOptions: unknown; input: unknown }[] = [];
-  const cli = Cli.create("rea-routed-test", { version: "1", sync: false });
+  const cli = createCommandCli();
   const command = { command: "probe", description: "Probe" };
   registerRoutedCommand(
     cli as unknown as CliInstance,
@@ -61,7 +62,7 @@ const harness = () => {
       ),
     ],
   );
-  const registered = Cli.toCommands.get(cli)?.get("probe");
+  const registered = cliCommand(cli, "probe")?.definition;
   if (registered === undefined) throw new Error("probe was not registered");
   const execute = Reflect.get(registered, "run") as (
     value: unknown,
@@ -130,11 +131,11 @@ it("advertises each option's default without supplying it to routing", async () 
   expect(schema.properties).toMatchObject({
     mode: {
       default: "fast",
-      description: "Default: fast",
     },
     policy: { default: JSON.stringify({ rules: [] }) },
     report: { default: "text" },
   });
+  expect(schema.properties.mode).not.toHaveProperty("description");
   // A given option routes the input even when it spells the default.
   const refused = await invoke("/x/program", { report: "text" });
   expect(calls).toEqual([]);
@@ -145,10 +146,7 @@ it("advertises each option's default without supplying it to routing", async () 
 });
 
 it("refuses routes that check a shared JSON input differently", () => {
-  const cli = Cli.create("rea-routed-check-test", {
-    version: "1",
-    sync: false,
-  });
+  const cli = createCommandCli();
   const command = { command: "probe", description: "Probe" };
   const route = (name: string, check: () => { ok: true; value: string }) =>
     commandRoute(
@@ -175,4 +173,62 @@ it("refuses routes that check a shared JSON input differently", () => {
       ],
     ),
   ).toThrow("probe routes check --policy differently");
+});
+
+it("accepts structurally matching shared options and rejects differing constraints or metadata", () => {
+  const cli = createCommandCli();
+  const command = { command: "probe", description: "Probe" };
+  const route = (name: string, extra: z.ZodType) =>
+    commandRoute(
+      {
+        name,
+        inputSchema: z.object({
+          path: absoluteLocalPathStringSchema,
+          flag: z.boolean().optional(),
+          mode: z.enum(["a", "b"]).optional(),
+          extra,
+        }),
+      },
+      {
+        ...command,
+        positionals: ["path"],
+      },
+      async () => ({}),
+      { takes: async () => true, requirement: name },
+    );
+  expect(() =>
+    registerRoutedCommand(
+      cli as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().optional()),
+        route("two_probe", z.string().optional()),
+      ],
+    ),
+  ).not.toThrow();
+
+  expect(() =>
+    registerRoutedCommand(
+      createCommandCli() as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().optional()),
+        route("two_probe", z.string().min(2).optional()),
+      ],
+    ),
+  ).toThrow("probe routes disagree on --extra");
+
+  expect(() =>
+    registerRoutedCommand(
+      createCommandCli() as unknown as CliInstance,
+      pino({ enabled: false }),
+      command,
+      [
+        route("one_probe", z.string().describe("first").optional()),
+        route("two_probe", z.string().describe("second").optional()),
+      ],
+    ),
+  ).toThrow("probe routes disagree on --extra");
 });

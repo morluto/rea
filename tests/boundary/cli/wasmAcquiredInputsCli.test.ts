@@ -92,6 +92,7 @@ ${body}
           references: [
             {
               value: "./selected.wasm",
+              association: "local-path-candidate",
               candidate_paths: [selected],
             },
           ],

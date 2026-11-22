@@ -23,7 +23,9 @@ type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 const nextTurn = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve));
 
-const wrappedListenerDisconnect = (code: "EPIPE" | "ECONNRESET") => {
+const wrappedListenerDisconnect = (
+  code: "EPIPE" | "ECONNRESET" | "ENOTCONN",
+) => {
   const error = new StreamableHttpListenError(
     Object.assign(new Error("SECRET listener stack"), { code }),
     "serving",
@@ -32,6 +34,21 @@ const wrappedListenerDisconnect = (code: "EPIPE" | "ECONNRESET") => {
   Object.defineProperty(error, "cause", { value: new Error("opaque cause") });
   return error;
 };
+
+const notConnectedCases = [
+  {
+    name: "a disconnected stdio socket",
+    cause: Object.assign(new Error("SECRET not connected"), {
+      code: "ENOTCONN",
+    }),
+    message: MCP_CONNECTION_LOST,
+  },
+  {
+    name: "a wrapped HTTP socket that is no longer connected",
+    cause: wrappedListenerDisconnect("ENOTCONN"),
+    message: MCP_CONNECTION_LOST,
+  },
+];
 
 const dependencies = ({
   serve,
@@ -85,13 +102,7 @@ describe("MCP runtime errors", () => {
       cause: Object.assign(new Error("SECRET broken pipe"), { code: "EPIPE" }),
       message: MCP_CONNECTION_LOST,
     },
-    {
-      name: "a disconnected stdio socket",
-      cause: Object.assign(new Error("SECRET not connected"), {
-        code: "ENOTCONN",
-      }),
-      message: MCP_CONNECTION_LOST,
-    },
+    ...notConnectedCases,
     {
       name: "a wrapped HTTP broken pipe",
       cause: wrappedListenerDisconnect("EPIPE"),

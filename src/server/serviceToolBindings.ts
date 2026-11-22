@@ -1,5 +1,23 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
+
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
+import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
+import type { ElectronObservationPort } from "../ports/javascript/ElectronObservationPort.js";
+import type { ElectronActiveObservationPort } from "../ports/javascript/ElectronActiveObservationPort.js";
+import {
+  inspectElectronPage,
+  listElectronTargets,
+} from "../application/javascript/ElectronObservationService.js";
+import { captureElectronScenario } from "../application/javascript/ElectronActiveObservationService.js";
+import { analyzeJavaScriptApplicationValidated } from "../application/javascript/JavaScriptApplicationService.js";
+import { reconcileJavaScriptRuntimeEvidence } from "../application/javascript/JavaScriptRuntimeReconciliationService.js";
+import { javascriptSourceAnalysis } from "../composition/javascriptSourceAnalysis.js";
 import { analysisSettingsConstraints } from "./analysisSettingsConstraints.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
@@ -22,6 +40,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
@@ -115,7 +134,11 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -336,6 +359,25 @@ export interface BrowserObservationToolOptions {
   readonly loadFailure?: OptionalProviderLoadFailure | undefined;
 }
 
+/** Passive Electron observation is independent of active scenario capture. */
+interface ElectronObservationToolOptions {
+  readonly provider: ElectronObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** Existing owned Electron scenario execution and its independent load failure. */
+interface ElectronScenarioToolOptions {
+  readonly provider: ElectronActiveObservationPort | undefined;
+  readonly loadFailure?: OptionalProviderLoadFailure | undefined;
+}
+
+/** Static JavaScript analysis needs local artifacts, never an Electron runtime. */
+interface JavaScriptApplicationToolOptions {
+  readonly resources: ArtifactResourceScope;
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly settings?: AnalysisSettingsReader;
+}
+
 /** The session native matching reads, and its allowance for each accepted call. */
 export interface NativeFunctionMatchingToolOptions {
   readonly session: BinarySessionPort;
@@ -410,7 +452,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 
@@ -461,6 +503,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfNotesService>,
+  elfDebugLink: ((service) => ({
+    inspect_elf_debug_link: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDebugLinkService>,
   nativeInitializers: ((service) => ({
     inspect_native_initializers: {
       admission: "sdk",
@@ -575,6 +623,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<RustBinaryService>,
+  nugetNupkg: ((service) => ({
+    inspect_nuget_nupkg: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NugetNupkgService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",
@@ -652,6 +706,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
@@ -815,6 +875,24 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  mavenGradleMetadata: ((service) => ({
+    inspect_maven_gradle_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MavenGradleMetadataService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
+  elfDependencies: ((service) => ({
+    inspect_elf_dependencies: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDependenciesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",
@@ -1446,19 +1524,21 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<RizinDebugToolOptions>,
-  // Starting GDB loads no target, so it runs outside admission; a console
+  // Starting GDB may load a selected file without running it, outside mutation admission; a console
   // command may change the bound artifact and runs under external-mutation
   // admission, keeping a failed cleanup owned for the next retry.
   gdb: (({ manager, session }) => ({
     start_gdb_session: {
       admission: "sdk",
       value: (input, { signal }) =>
-        manager.start(
-          signal,
-          input.inferior_tty === undefined
+        manager.start(signal, {
+          ...(input.inferior_tty === undefined
             ? {}
-            : { inferiorTty: input.inferior_tty },
-        ),
+            : { inferiorTty: input.inferior_tty }),
+          ...(input.executable === undefined
+            ? {}
+            : { executable: input.executable }),
+        }),
     },
     gdb_console: {
       admission: "sdk",
@@ -1560,6 +1640,85 @@ const SERVICE_TOOL_BINDINGS = {
       },
     };
   }) satisfies Bind<BrowserObservationToolOptions>,
+  electronFuses: ((service) => ({
+    inspect_electron_fuses: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<Pick<ElectronFuseService, "inspect">>,
+  electronObservation: (({ provider, loadFailure }) => ({
+    list_electron_targets: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) => listElectronTargets(provider, input, options),
+    },
+    inspect_electron_page: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) => inspectElectronPage(provider, input, options),
+    },
+  })) satisfies Bind<ElectronObservationToolOptions>,
+  // Keep active capture separate from passive observation and static analysis.
+  // Its existing service owns execution admission, effects and cleanup.
+  electronScenario: (({ provider, loadFailure }) => ({
+    capture_electron_scenario: {
+      admission: "sdk",
+      unavailable: loadFailure,
+      run: (input, options) =>
+        captureElectronScenario(provider, input, options),
+    },
+  })) satisfies Bind<ElectronScenarioToolOptions>,
+  javascriptApplication: ((
+    { resources, environment, settings },
+    retention,
+  ) => ({
+    analyze_javascript_application: {
+      admission: "sdk",
+      run: async ({ detail, view, ...request }, options) => {
+        if (detail === "summary") {
+          const ready = requireAnalysisViewRetention(
+            "analyze_javascript_application",
+            retention,
+          );
+          if (!ready.ok) return ready;
+        }
+        const analyzed = await analyzeJavaScriptApplicationValidated(
+          request,
+          resources,
+          {
+            ...options,
+            sourceAnalysis: javascriptSourceAnalysis,
+            environment,
+            ...(settings === undefined ? {} : { settings }),
+          },
+        );
+        return detail === "summary" && analyzed.ok
+          ? projectRetainedAnalysis(
+              analyzed.value,
+              retention,
+              view ?? { kind: "summary" },
+            )
+          : analyzed;
+      },
+    },
+    reconcile_javascript_runtime: {
+      admission: "sdk",
+      run: async (input, options) => {
+        const result = reconcileJavaScriptRuntimeEvidence(
+          input,
+          retention.evidenceById,
+          options,
+        );
+        if (!result.ok) return result;
+        const recorded = recordEvidenceSources(
+          retention.recordEvidence,
+          result.value.sources,
+          { evidence: result.value.evidence },
+        );
+        return recorded.ok ? ok(result.value.evidence) : recorded;
+      },
+    },
+  })) satisfies Bind<JavaScriptApplicationToolOptions>,
   // Frida sessions instrument a live process the caller selects, not the
   // session's target; compose them without analysis admission.
   frida: ((service, retention) => ({
@@ -1701,6 +1860,7 @@ const SERVICE_TOOL_BINDINGS = {
   processCapture: ((options) => ({
     capture_process_scenario: {
       admission: "sdk",
+      completionProgress: "workflow",
       analyze: (input, _analysis, request) =>
         captureSessionProcessScenario(options, input, request),
     },
@@ -2011,7 +2171,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

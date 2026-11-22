@@ -392,3 +392,19 @@ describe("runtimeSeeds", () => {
     ]);
   });
 });
+
+it.each([
+  [
+    "Documents/quarter\nreport.gnucash",
+    "Documents/quarter\nreport.gnucash.LCK",
+  ],
+  ["Documents/quarter\nreport.gsb", "Documents/.quarter\nreport.gsb.lock"],
+  ["Documents/quarter\nreport.vym", "Documents/quarter\nreport.vym.lock"],
+])("identifies a sibling document lock for %j", (document, lock) => {
+  expect(isLockFile(lock, [], new Set([document]))).toBe(true);
+  expect(isLockFile(lock, [], new Set())).toBe(false);
+});
+
+it("recognizes a LibreOffice lock whose document name contains a line break", () => {
+  expect(isLockFile("Documents/.~lock.quarter\nreport.ods#", [])).toBe(true);
+});

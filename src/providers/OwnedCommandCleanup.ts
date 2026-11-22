@@ -128,7 +128,7 @@ export const retainOwnedCommandCleanup = (
       {
         close: () => lease.release(),
         get cleanupResources() {
-          return cleanup.cleanupResources;
+          return lease.released ? [] : (lease.cleanupResources ?? []);
         },
       },
       commandFailure.resources[0] ?? "Provider prerequisite process",

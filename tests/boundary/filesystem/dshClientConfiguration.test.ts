@@ -14,7 +14,7 @@ import {
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { DshCordisDocument } from "../../../src/application/DshCordisPatch.js";
-
+import { ok } from "../../../src/domain/result.js";
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -173,152 +173,72 @@ const harnessClient = async () => {
 };
 
 describe("DeepSeek Harness Cordis patch registration", () => {
-  it("appends the rea-mcp insert, preserves user patches, and reads back", async () => {
+  it("appends one REA registration beside caller YAML and backs up the original bytes", async () => {
     const { home, client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `# Harness home patch
-- insert:
-    - id: user-tool
-      name: "@deepseek-ai/dsh-mcp-client"
+    const caller = {
+      id: "user-tool",
+      name: "@deepseek-ai/dsh-mcp-client",
+      config: {
+        serverName: "other",
+        transport: "stdio",
+        command: "other-server",
+      },
+    };
+    const initial =
+      "# Harness home patch\n" +
+      stringifyYaml([{ insert: [caller] }]) +
+      `- insert:
+    - id: caller-options
+      name: caller-plugin
+      config: !!js callerPluginConfig
+    - id: caller-group
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: !!js callerGroupEnabled
       config:
-        serverName: other
-        transport: stdio
-        command: other-server
-`,
-    );
-
+        - id: caller-peer
+          name: caller-plugin
+`;
+    await writeFile(client.configPath, initial);
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("# Harness home patch");
-    expect(parseYaml(text)).toEqual([
-      {
-        insert: [
-          {
-            id: "user-tool",
-            name: "@deepseek-ai/dsh-mcp-client",
-            config: {
-              serverName: "other",
-              transport: "stdio",
-              command: "other-server",
-            },
-          },
-        ],
-      },
-      {
-        insert: [
-          {
-            id: "rea-mcp",
-            name: "@deepseek-ai/dsh-mcp-client",
-            config: {
-              serverName: "rea",
-              transport: "stdio",
-              command: command[0],
-              args: command.slice(1),
-            },
-          },
-        ],
-      },
+    const callerPatches = cordisPatches(initial);
+    expect(cordisPatches(text)).toEqual([
+      ...callerPatches,
+      { insert: [canonicalEntry()] },
     ]);
-
-    expect(await configureClientConfiguration(client, {}, command)).toEqual({
-      status: "unchanged",
-    });
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "aligned", command });
-
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
     );
+    expect(cordisPatches(await readFile(client.configPath, "utf8"))).toEqual(
+      callerPatches,
+    );
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
+  });
+
+  it("repairs a wrong package while preserving its configured environment", async () => {
+    const { client } = await harnessClient();
+    const entry = canonicalEntry();
+    const config = {
+      ...entry.config,
+      env: { GHIDRA_INSTALL_DIR: "/caller/nondefault/ghidra" },
+    };
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        { insert: [{ ...entry, name: "not-the-harness-client", config }] },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
     expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
-      {
-        insert: [
-          {
-            id: "user-tool",
-            name: "@deepseek-ai/dsh-mcp-client",
-            config: {
-              serverName: "other",
-              transport: "stdio",
-              command: "other-server",
-            },
-          },
-        ],
-      },
+      { insert: [{ ...entry, config }] },
     ]);
-  });
-
-  it("replaces an existing rea-mcp entry without duplicating it", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: stale-launcher
-        args: [mcp]
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const patches = parseYaml(
-      await readFile(client.configPath, "utf8"),
-    ) as unknown[];
-    expect(patches).toHaveLength(1);
-    expect((patches[0] as { insert: unknown[] }).insert).toHaveLength(1);
-    expect(textOf(await readFile(client.configPath, "utf8"))).not.toContain(
-      "stale-launcher",
-    );
-  });
-
-  it("rewrites a wrong-package rea-mcp entry into the canonical one", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: not-the-harness-client
-      config:
-        serverName: rea
-        transport: stdio
-        command: stale-launcher
-        args: [mcp]
-        env:
-          GHIDRA_INSTALL_DIR: /caller/nondefault/ghidra
-`,
-    );
-
-    // The non-canonical entry reads back as stale, so setup rewrites it with
-    // the canonical package name rather than reporting unchanged, and the
-    // row's configured environment survives the identity repair.
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
-      insert: { id: string; name: string; config?: { env?: unknown } }[];
-    }[];
-    expect(patches).toHaveLength(1);
-    expect(patches[0]?.insert).toHaveLength(1);
-    expect(patches[0]?.insert[0]?.id).toBe("rea-mcp");
-    expect(patches[0]?.insert[0]?.name).toBe("@deepseek-ai/dsh-mcp-client");
-    expect(patches[0]?.insert[0]?.config?.env).toEqual({
-      GHIDRA_INSTALL_DIR: "/caller/nondefault/ghidra",
-    });
-    expect(textOf(await readFile(client.configPath, "utf8"))).not.toContain(
-      "not-the-harness-client",
-    );
   });
 });
 
@@ -375,112 +295,43 @@ describe("DeepSeek Harness caller-selected platform", () => {
 });
 
 describe("DeepSeek Harness registration identity", () => {
-  it("applies a direct config patch before judging the registration", async () => {
+  it("reports the command from the last applicable direct patch", async () => {
     const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    const initial = stringifyYaml([{ insert: [entry] }]);
+    await writeFile(client.configPath, initial);
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned", command });
+
+    const redirect = {
+      ...entry.config,
+      command: "redirected-launcher",
+      args: ["mcp"],
+    };
     await writeFile(
       client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: ${command[0]}
-        args: [${command.slice(1).join(", ")}]
-- id: rea-mcp
-  config:
-    serverName: rea
-    transport: stdio
-    command: redirected-launcher
-    args: [mcp]
-`,
+      initial + stringifyYaml([{ id: entry.id, config: redirect }]),
     );
-
-    // The later direct patch replaces the row's config, so the effective
-    // command is the redirect and the registration is stale, not aligned.
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "stale" });
-
-    // Setup rewrites one canonical entry and drops the superseded direct op.
+    expect(await dshStatus(home)).toMatchObject({
+      state: "stale",
+      command: ["redirected-launcher", "mcp"],
+    });
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const text = await readFile(client.configPath, "utf8");
-    expect(text).not.toContain("redirected-launcher");
-    expect(text).not.toMatch(/^- id: rea-mcp$/mu);
-    const patches = parseYaml(text) as unknown[];
-    expect(patches).toHaveLength(1);
+    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
+      { insert: [entry] },
+    ]);
   });
 
-  it("collapses duplicate rea entries into one canonical row", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: first-launcher
-        args: [mcp]
-- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: second-launcher
-        args: [mcp]
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
-      insert: unknown[];
-    }[];
-    const reaRows = patches.flatMap(({ insert }) =>
-      insert.filter(
-        (entry) =>
-          typeof entry === "object" &&
-          entry !== null &&
-          (entry as { id?: unknown }).id === "rea-mcp",
-      ),
-    );
-    expect(reaRows).toHaveLength(1);
-  });
-
-  it("reports a foreign server name as stale instead of aligned", async () => {
+  it("reports a foreign server name as stale on an otherwise aligned row", async () => {
     const { home, client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: other
-        transport: stdio
-        command: ${command[0]}
-        args: [${command.slice(1).join(", ")}]
-`,
-    );
+    const entry = canonicalEntry();
+    await writeFile(client.configPath, stringifyYaml([{ insert: [entry] }]));
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned", command });
 
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "stale" });
+    entry.config.serverName = "other";
+    await writeFile(client.configPath, stringifyYaml([{ insert: [entry] }]));
+    expect(await dshStatus(home)).toMatchObject({ state: "stale", command });
   });
 
   it("creates the patch list for an absent file and empties it on uninstall", async () => {
@@ -502,6 +353,7 @@ describe("DeepSeek Harness registration identity", () => {
               transport: "stdio",
               command: command[0],
               args: command.slice(1),
+              toolCallTimeoutMs: 450_000,
             },
           },
         ],
@@ -515,43 +367,6 @@ describe("DeepSeek Harness registration identity", () => {
 });
 
 describe("DeepSeek Harness repair boundaries", () => {
-  it("repairs a direct-only registration by appending the insert", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- id: rea-mcp
-  name: "@deepseek-ai/dsh-mcp-client"
-  config:
-    serverName: rea
-    transport: stdio
-    command: stale-launcher
-    args: [mcp]
-`,
-    );
-
-    // An incomplete manual registration has no insertion to rewrite, so the
-    // repair appends one canonical row instead of leaving the entry absent.
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
-      {
-        insert: [
-          {
-            id: "rea-mcp",
-            name: "@deepseek-ai/dsh-mcp-client",
-            config: {
-              serverName: "rea",
-              transport: "stdio",
-              command: command[0],
-              args: command.slice(1),
-            },
-          },
-        ],
-      },
-    ]);
-  });
-
   it("keeps group-targeted ownership for uninstall while setup rejects unknown activity", async () => {
     const { home, client } = await harnessClient();
     const initial = stringifyYaml([
@@ -651,26 +466,156 @@ describe("DeepSeek Harness repair boundaries", () => {
   });
 });
 
+it("recognizes REA inside nested Cordis groups and removes only its row", async () => {
+  const { home, client } = await harnessClient();
+  const entry = canonicalEntry();
+  const callerPeer = { id: "caller-peer", name: "caller-plugin" };
+  const opaque = {
+    id: "caller-config",
+    name: "caller-plugin",
+    group: false,
+    config: [entry],
+  };
+  const group = {
+    id: "tools",
+    name: "@deepseek-ai/cordis-plugin-group",
+    group: true,
+    config: [
+      {
+        id: "local",
+        name: "@deepseek-ai/cordis-plugin-group",
+        group: true,
+        config: [entry, callerPeer, opaque],
+      },
+    ],
+  };
+  const initial = stringifyYaml([{ insert: [group] }]).replace(
+    /^(\s*)- id: caller-peer$/m,
+    "$1# keep group sibling\n$1- id: caller-peer",
+  );
+  await writeFile(client.configPath, initial);
+
+  expect(await inspectClientConfiguration(client, {}, command)).toMatchObject({
+    status: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect(await dshStatus(home)).toMatchObject({
+    state: "invalid",
+    remediation: expect.stringContaining("group"),
+  });
+  expect((await configureClientConfiguration(client, {}, command)).status).toBe(
+    "failed",
+  );
+  expect(await readFile(client.configPath, "utf8")).toBe(initial);
+
+  const host = systemUninstallHost(home);
+  expect(await host.inspectClient(client)).toBeUndefined();
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  expect(parseYaml(text)).toEqual([
+    {
+      insert: [
+        {
+          ...group,
+          config: [{ ...group.config[0], config: [callerPeer, opaque] }],
+        },
+      ],
+    },
+  ]);
+  expect(text).toContain("# keep group sibling");
+  expect((await host.removeClient(client)).status).toBe("skipped");
+  expect(await readFile(client.configPath, "utf8")).toBe(text);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
+it("preserves alias-site comments when removing a nested DSH row", async () => {
+  const { home, client } = await harnessClient();
+  const initial = `- insert:
+    - id: holder
+      name: caller-plugin
+      config:
+        group: &group
+          id: tools
+          name: "@deepseek-ai/cordis-plugin-group"
+          group: true
+          config: &rows
+            - id: rea-mcp
+              name: "@deepseek-ai/dsh-mcp-client"
+            - id: caller-peer
+              name: caller-plugin
+    # caller group placement
+    - *group # caller group explanation
+    - id: second-tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config: *rows # caller config explanation
+`;
+  await writeFile(client.configPath, initial);
+  const host = systemUninstallHost(home);
+  expect((await host.removeClient(client)).status).toBe("removed");
+  const text = await readFile(client.configPath, "utf8");
+  for (const comment of [
+    "# caller group placement",
+    "# caller group explanation",
+    "# caller config explanation",
+  ])
+    expect(text).toContain(comment);
+  const rows = loadedInserts(text);
+  const expectedPeer = { id: "caller-peer", name: "caller-plugin" };
+  expect(rows.find(({ id }) => id === "holder")?.config).toMatchObject({
+    group: {
+      config: [expect.objectContaining({ id: "rea-mcp" }), expectedPeer],
+    },
+  });
+  for (const id of ["tools", "second-tools"])
+    expect(rows.find((row) => row.id === id)?.config).toEqual([expectedPeer]);
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    initial,
+  );
+});
+
 describe("DeepSeek Harness expression-backed structure", () => {
   it.each([
-    `- !!js process.env.DSH_PATCH\n`,
-    `- insert: !!js process.env.DSH_ROWS\n`,
-    `- insert: [!!js process.env.DSH_ROW]\n`,
-  ])(
+    [`- !!js process.env.DSH_PATCH\n`, "invalid"],
+    [`- insert: !!js process.env.DSH_ROWS\n`, "invalid"],
+    [`- insert: [!!js process.env.DSH_ROW]\n`, "invalid"],
+    [
+      `- insert:
+  - id: dynamic-group
+    name: "@deepseek-ai/cordis-plugin-group"
+    group: true
+    config: !!js callerGroupConfig
+` + stringifyYaml([{ insert: [canonicalEntry()] }]),
+      "stale",
+    ],
+    [
+      `- insert:
+  - id: caller-group
+    name: "@deepseek-ai/cordis-plugin-group"
+    group: !!js callerGroupEnabled
+    config:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+`,
+      "invalid",
+    ],
+  ] as const)(
     "retains dynamic insertion structure without appending or removing rows: %s",
-    async (initial) => {
+    async (initial, state) => {
       const { home, client } = await harnessClient();
       await writeFile(client.configPath, initial);
-      expect(await dshStatus(home)).toMatchObject({ state: "invalid" });
+      expect(
+        (await configureClientConfiguration(client, {}, command)).status,
+      ).toBe("failed");
+      expect(await dshStatus(home)).toMatchObject({ state });
       expect(
         await inspectClientConfiguration(client, {}, command),
       ).toMatchObject({
         status: "invalid",
         remediation: expect.stringContaining("unknown structure"),
       });
-      expect(
-        (await configureClientConfiguration(client, {}, command)).status,
-      ).toBe("failed");
       expect(await readFile(client.configPath, "utf8")).toBe(initial);
       const host = systemUninstallHost(home);
       expect((await host.removeClient(client)).status).toBe("retained");
@@ -687,28 +632,9 @@ describe("DeepSeek Harness registration state", () => {
     const { home, client } = await harnessClient();
     await writeFile(
       client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      disabled: true
-      config:
-        serverName: rea
-        transport: stdio
-        command: ${command[0]}
-        args: [${command.slice(1).join(", ")}]
-`,
+      stringifyYaml([{ insert: [{ ...canonicalEntry(), disabled: true }] }]),
     );
-
-    // The command matches, but Cordis never activates a disabled row, so the
-    // registration reads as stale rather than aligned.
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "stale" });
+    expect(await dshStatus(home)).toMatchObject({ state: "stale", command });
 
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
@@ -722,67 +648,17 @@ describe("DeepSeek Harness registration state", () => {
     ).toBe("unchanged");
   });
 
-  it("retains the existing registration environment across a repair", async () => {
-    const { client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: rea-mcp
-      name: "@deepseek-ai/dsh-mcp-client"
-      config:
-        serverName: rea
-        transport: stdio
-        command: stale-launcher
-        args: [mcp]
-        env:
-          GHIDRA_INSTALL_DIR: /caller/nondefault/ghidra
-`,
-    );
-
-    expect(
-      (await configureClientConfiguration(client, {}, command)).status,
-    ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
-      insert: { config: { env?: Record<string, string> } }[];
-    }[];
-    expect(patches[0]?.insert[0]?.config.env).toEqual({
-      GHIDRA_INSTALL_DIR: "/caller/nondefault/ghidra",
-    });
-  });
-
-  it("treats a direct-only registration as absent even when its config matches", async () => {
+  it("inserts an otherwise matching direct-only registration", async () => {
     const { home, client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- id: rea-mcp
-  name: "@deepseek-ai/dsh-mcp-client"
-  config:
-    serverName: rea
-    transport: stdio
-    command: ${command[0]}
-    args: [${command.slice(1).join(", ")}]
-`,
-    );
-
-    // A direct patch needs an inserted row to target; with none, Harness has
-    // no entry, so the registration is absent rather than aligned.
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "missing" });
-
+    const entry = canonicalEntry();
+    await writeFile(client.configPath, stringifyYaml([entry]));
+    expect(await dshStatus(home)).toMatchObject({ state: "missing" });
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
-      insert: unknown[];
-    }[];
-    expect(patches).toHaveLength(1);
-    expect(patches[0]?.insert).toHaveLength(1);
+    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([
+      { insert: [entry] },
+    ]);
   });
 
   it("keeps caller-owned config fields across a refresh", async () => {
@@ -818,10 +694,85 @@ describe("DeepSeek Harness registration state", () => {
   });
 });
 
-describe("DeepSeek Harness canonical row repair", () => {
-  it("normalizes two aligned insertions instead of reporting unchanged", async () => {
+describe("DeepSeek Harness tool call timeout", () => {
+  it("derives a deadline beyond Node's timer ceiling for an overridden provider startup", async () => {
+    const { client } = await harnessClient();
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          {
+            REA_ANALYSIS_PROVIDER: "ida",
+            REA_GHIDRA_STARTUP_TIMEOUT_MS: "2147483647",
+          },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(2_147_603_647);
+  });
+
+  it("preserves a caller-selected positive timeout through a refresh", async () => {
     const { home, client } = await harnessClient();
-    const row = `- insert:
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: 900_000 },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(900_000);
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
+  });
+
+  it("advises when a configured timeout is shorter than the provider allowance", async () => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: 300_000 },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(await dshStatus(home)).toMatchObject({
+      state: "aligned",
+      advisory: expect.stringContaining("toolCallTimeoutMs = 450000 ms"),
+    });
+  });
+});
+
+describe("DeepSeek Harness tool call timeout repair", () => {
+  it("repairs a registration without a tool timeout", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
     - id: rea-mcp
       name: "@deepseek-ai/dsh-mcp-client"
       config:
@@ -829,38 +780,108 @@ describe("DeepSeek Harness canonical row repair", () => {
         transport: stdio
         command: ${command[0]}
         args: [${command.slice(1).join(", ")}]
-`;
-    await writeFile(client.configPath, `${row}${row}`);
-
-    // Both rows already match, but Cordis still has two insertions. Doctor
-    // and setup must normalize to the single owned row.
-    const registration = async () =>
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh");
-    expect(await registration()).toMatchObject({ state: "stale" });
+`,
+    );
+    expect(await dshStatus(home)).toMatchObject({ state: "stale" });
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const patches = parseYaml(await readFile(client.configPath, "utf8")) as {
-      insert: unknown[];
-    }[];
-    const reaRows = patches.flatMap(({ insert }) =>
-      insert.filter(
-        (entry) =>
-          typeof entry === "object" &&
-          entry !== null &&
-          (entry as { id?: unknown }).id === "rea-mcp",
-      ),
-    );
-    expect(reaRows).toHaveLength(1);
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(450_000);
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("unchanged");
-    expect(await registration()).toMatchObject({ state: "aligned" });
+  });
+
+  it("repairs a malformed literal timeout with the recommended deadline", async () => {
+    const { client } = await harnessClient();
+    const entry = canonicalEntry();
+    await writeFile(
+      client.configPath,
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: { ...entry.config, toolCallTimeoutMs: '"450000"' },
+            },
+          ],
+        },
+      ]),
+    );
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(450_000);
+  });
+
+  it("preserves an expression-backed timeout and reports its value unknown", async () => {
+    const { home, client } = await harnessClient();
+    const document = parseDocument(
+      stringifyYaml([{ insert: [canonicalEntry()] }]),
+    );
+    const expression = document.createNode("process.env.REA_TOOL_TIMEOUT");
+    expression.tag = "tag:yaml.org,2002:js";
+    expression.comment = " caller timeout";
+    document.setIn([0, "insert", 0, "config", "toolCallTimeoutMs"], expression);
+    const original = document.toString();
+    await writeFile(client.configPath, original);
+
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+    expect(await dshStatus(home)).toMatchObject({
+      state: "aligned",
+      advisory: expect.stringContaining("effective timeout is unknown"),
+    });
+
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_ANALYSIS_PROVIDER: "ghidra" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const refreshed = await readFile(client.configPath, "utf8");
+    expect(
+      cordisPatches(refreshed)[0]?.insert?.[0]?.config?.toolCallTimeoutMs,
+    ).toEqual({ __jsExpr: "process.env.REA_TOOL_TIMEOUT" });
+    expect(refreshed).toContain("# caller timeout");
+    expect(cordisPatches(refreshed)[0]?.insert?.[0]?.config?.env).toMatchObject(
+      { REA_ANALYSIS_PROVIDER: "ghidra" },
+    );
+  });
+});
+
+describe("DeepSeek Harness canonical row repair", () => {
+  it("normalizes two individually aligned insertions", async () => {
+    const { home, client } = await harnessClient();
+    const row = { insert: [canonicalEntry()] };
+    await writeFile(client.configPath, stringifyYaml([row]));
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned", command });
+
+    await writeFile(
+      client.configPath,
+      stringifyYaml([row, row], { aliasDuplicateObjects: false }),
+    );
+    expect(await dshStatus(home)).toMatchObject({ state: "stale", command });
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("configured");
+    expect(parseYaml(await readFile(client.configPath, "utf8"))).toEqual([row]);
+    expect(
+      (await configureClientConfiguration(client, {}, command)).status,
+    ).toBe("unchanged");
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned", command });
   });
 
   it("keeps Cordis expression tags on caller-owned config fields", async () => {
@@ -1179,6 +1200,111 @@ describe("DeepSeek Harness entry ownership", () => {
     expect(await readFile(client.configPath, "utf8")).toContain(
       "!!js process.env.GHIDRA_INSTALL_DIR",
     );
+  });
+});
+
+describe("DeepSeek Harness budget resolver expressions", () => {
+  const budgetResolver = (budgetMs: number) =>
+    Object.assign(async () => ok(budgetMs), {
+      budgetSettings: () => new Set(["REA_IDA_MCP_CONFIG"]),
+    });
+
+  it("keeps an environment expression while a budget resolver is supplied", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          GHIDRA_INSTALL_DIR: !!js process.env.GHIDRA_INSTALL_DIR
+`,
+    );
+    const resolver = budgetResolver(45_000);
+    // A declared read set keeps the budget gate fail-closed only for settings
+    // the resolver may read, so the unrelated expression stays preserved and
+    // the row is still classified instead of rejected.
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+        resolveProviderRequestBudget: resolver,
+      }),
+    ).toMatchObject([
+      expect.objectContaining({ client: "dsh", state: "stale" }),
+    ]);
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("configured");
+    const text = await readFile(client.configPath, "utf8");
+    expect(text).toContain("!!js process.env.GHIDRA_INSTALL_DIR");
+    expect(text).not.toContain("stale-launcher");
+  });
+
+  it("derives the declared provider request budget into the written timeout", async () => {
+    const { home, client } = await harnessClient();
+    await writeFile(
+      client.configPath,
+      `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+`,
+    );
+    const resolver = budgetResolver(900_000);
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("configured");
+    // The 900000 ms upstream request budget joins the allowance instead of
+    // leaving the written deadline at the startup-only estimate.
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.toolCallTimeoutMs,
+    ).toBe(1_020_000);
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+        resolveProviderRequestBudget: resolver,
+      }),
+    ).toMatchObject([
+      expect.objectContaining({ client: "dsh", state: "aligned" }),
+    ]);
+  });
+
+  it("fails closed when a budget-read setting stays an expression", async () => {
+    const { client } = await harnessClient();
+    const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: rea
+        transport: stdio
+        command: stale-launcher
+        args: [mcp]
+        env:
+          REA_IDA_MCP_CONFIG: !!js process.env.REA_IDA_MCP_CONFIG
+`;
+    await writeFile(client.configPath, initial);
+    const resolver = budgetResolver(900_000);
+    // The resolver may read REA_IDA_MCP_CONFIG, so an unresolved expression
+    // there blocks budget derivation instead of treating it as absent.
+    expect(
+      (await configureClientConfiguration(client, {}, command, resolver))
+        .status,
+    ).toBe("failed");
+    expect(await readFile(client.configPath, "utf8")).toBe(initial);
   });
 });
 
@@ -1514,28 +1640,47 @@ describe("DeepSeek Harness root aliases", () => {
   config:
     serverName: rea
     transport: stdio
-    command: stale-launcher
+    command: aliased-launcher
     args: [mcp]
     env:
       GHIDRA_INSTALL_DIR: !!js process.env.GHIDRA_INSTALL_DIR
+- id: rea-mcp
+  config:
+    serverName: rea
+    transport: stdio
+    command: intervening-launcher
+    args: [mcp]
+    env:
+      GHIDRA_INSTALL_DIR: /absolute/other-ghidra
 - *patch
 `,
     );
 
-    expect(
-      (
-        await readClientRegistrationStatuses(home, undefined, {
-          platform: process.platform,
-          environment: {},
-        })
-      ).find(({ client: name }) => name === "dsh"),
-    ).toMatchObject({ state: "stale" });
+    expect(await dshStatus(home)).toMatchObject({
+      state: "stale",
+      command: ["aliased-launcher", "mcp"],
+    });
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    expect(await readFile(client.configPath, "utf8")).toContain(
-      "!!js process.env.GHIDRA_INSTALL_DIR",
-    );
+    const entry = canonicalEntry();
+    expect(cordisPatches(await readFile(client.configPath, "utf8"))).toEqual([
+      {
+        insert: [
+          {
+            ...entry,
+            config: {
+              ...entry.config,
+              env: {
+                GHIDRA_INSTALL_DIR: {
+                  __jsExpr: "process.env.GHIDRA_INSTALL_DIR",
+                },
+              },
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("removes a root alias of the owned insertion on uninstall", async () => {
@@ -1679,6 +1824,54 @@ describe("DeepSeek Harness inert anchors", () => {
 });
 
 describe("DeepSeek Harness alias anchors", () => {
+  it.each(["setup", "uninstall"] as const)(
+    "retains caller alias annotations when %s removes their anchor",
+    async (operation) => {
+      const { home, client } = await harnessClient();
+      const initial = `- insert:
+    - id: rea-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command: &oldLauncher stale-launcher
+- insert:
+    - id: caller
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        command:
+          # caller command explanation
+          *oldLauncher # caller inline comment
+        transport: &callerTransport stdio
+        env:
+          CALLER_TRANSPORT: *callerTransport # unrelated alias
+`;
+      await writeFile(client.configPath, initial);
+      const result =
+        operation === "setup"
+          ? await configureClientConfiguration(client, {}, command)
+          : await systemUninstallHost(home).removeClient(client);
+      expect(result.status).toBe(
+        operation === "setup" ? "configured" : "removed",
+      );
+      const text = await readFile(client.configPath, "utf8");
+      expect(loadedInserts(text).find(({ id }) => id === "caller")).toEqual({
+        id: "caller",
+        name: "@deepseek-ai/dsh-mcp-client",
+        config: {
+          command: "stale-launcher",
+          transport: "stdio",
+          env: { CALLER_TRANSPORT: "stdio" },
+        },
+      });
+      expect(text).toContain("# caller command explanation");
+      expect(text).toContain("# caller inline comment");
+      expect(text).toContain("*callerTransport # unrelated alias");
+      expect(text).not.toContain("*oldLauncher");
+      expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+        initial,
+      );
+    },
+  );
+
   it("rewrites an entry id alias before removing its anchor", async () => {
     const { client } = await harnessClient();
     await writeFile(
@@ -1715,9 +1908,7 @@ describe("DeepSeek Harness alias anchors", () => {
 
   it("drops a replayed root alias after its insert alias is emptied", async () => {
     const { home, client } = await harnessClient();
-    await writeFile(
-      client.configPath,
-      `- holder: &rows
+    const initial = `- holder: &rows
   - id: rea-mcp
     name: "@deepseek-ai/dsh-mcp-client"
     config:
@@ -1728,19 +1919,20 @@ describe("DeepSeek Harness alias anchors", () => {
 - &op
   insert: *rows
 - *op
-`,
-    );
+`;
+    await writeFile(client.configPath, initial);
 
     expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
       "removed",
     );
     const text = await readFile(client.configPath, "utf8");
     expect(text).not.toContain("*op");
-    expect(() => parseYaml(text)).not.toThrow();
+    expect(parseYaml(text)).toEqual([parseYaml(initial)[0]]);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
 });
-
-const textOf = (value: unknown): string => String(value);
 
 /** Same tagged expression representation as Harness's entry-list schema. */
 const cordisPatches = (text: string) =>
@@ -1761,6 +1953,7 @@ const canonicalEntry = () => ({
     transport: "stdio",
     command: command[0],
     args: command.slice(1),
+    toolCallTimeoutMs: 450_000,
   },
 });
 
@@ -1870,17 +2063,22 @@ describe("DeepSeek Harness runtime environment validation", () => {
       status: "invalid",
       remediation: expect.stringContaining("REA_GHIDRA_LANGUAGE_ID"),
     });
-    expect(
-      await inspectClientConfiguration(
-        client,
-        {
-          REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
-          HOPPER_LOADER_ARGS_JSON: '[""]',
-        },
-        command,
-      ),
-    ).toMatchObject({ status: "update" });
     expect(await readFile(client.configPath, "utf8")).toBe(configured);
+    const overrides = {
+      REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+      HOPPER_LOADER_ARGS_JSON: '[""]',
+    };
+    expect(
+      await configureClientConfiguration(client, overrides, command),
+    ).toMatchObject({ status: "configured" });
+    expect(
+      cordisPatches(await readFile(client.configPath, "utf8"))[0]?.insert?.[0]
+        ?.config?.env,
+    ).toEqual({
+      REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
+      CALLER_SETTING: "keep",
+      ...overrides,
+    });
     expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
       original,
     );
@@ -2412,14 +2610,19 @@ describe("DeepSeek Harness caller node metadata", () => {
 });
 
 describe("DeepSeek Harness uninstall of a shared operation", () => {
-  it("keeps a group patch's own fields and comment when its only row was REA's", async () => {
+  it("keeps a group insert from activating its ignored overrides on uninstall", async () => {
     const { home, client } = await harnessClient();
     const entry = canonicalEntry();
-    await writeFile(
-      client.configPath,
-      `- insert:
-    - id: user-a
-      name: plugin-a
+    const initial = `- insert:
+    - id: tools
+      name: "@deepseek-ai/cordis-plugin-group"
+      group: true
+      config:
+        - id: user-a
+          name: plugin-a
+- id: user-a
+  config:
+    sandbox: permissive
 # caller group patch
 - id: tools
   config:
@@ -2432,18 +2635,32 @@ describe("DeepSeek Harness uninstall of a shared operation", () => {
         transport: stdio
         command: ${entry.config.command}
         args: ${JSON.stringify(entry.config.args)}
-`,
-    );
+`;
+    await writeFile(client.configPath, initial);
 
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
+    const host = systemUninstallHost(home);
+    expect((await host.removeClient(client)).status).toBe("removed");
     const text = await readFile(client.configPath, "utf8");
     expect(parseYaml(text)).toEqual([
-      { insert: [{ id: "user-a", name: "plugin-a" }] },
-      { id: "tools", config: { sandbox: "strict" } },
+      {
+        insert: [
+          {
+            id: "tools",
+            name: "@deepseek-ai/cordis-plugin-group",
+            group: true,
+            config: [{ id: "user-a", name: "plugin-a" }],
+          },
+        ],
+      },
+      { id: "user-a", config: { sandbox: "permissive" } },
+      { id: "tools", config: { sandbox: "strict" }, insert: [] },
     ]);
     expect(text).toContain("# caller group patch");
+    expect((await host.removeClient(client)).status).toBe("skipped");
+    expect(await readFile(client.configPath, "utf8")).toBe(text);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      initial,
+    );
   });
 
   it("keeps an operation's own fields when setup removes a second REA row from it", async () => {
@@ -2474,7 +2691,10 @@ ${row("second-launcher")}`,
     const text = await readFile(client.configPath, "utf8");
     expect(text).toContain("# caller operation");
     expect(loadedInserts(text)).toHaveLength(1);
-    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({ disabled: false });
+    expect((parseYaml(text) as unknown[]).at(-1)).toEqual({
+      disabled: false,
+      insert: [],
+    });
     expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
   });
 

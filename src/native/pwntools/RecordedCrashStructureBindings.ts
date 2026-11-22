@@ -1,7 +1,16 @@
-import { readElfHeaderFacts } from "../../domain/elfFixedHeader.js";
+import {
+  elfFixedHeaderWidth,
+  readElfHeaderFacts,
+} from "../../domain/elfFixedHeader.js";
 import { readElfNoteHeader } from "../../domain/native/elfNoteLayout.js";
-import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
-import { readElfProgramHeader } from "../../domain/elfProgramHeader.js";
+import {
+  elfSectionHeaderWidth,
+  readElfSectionHeader,
+} from "../../domain/elfSectionHeader.js";
+import {
+  elfProgramHeaderWidth,
+  readElfProgramHeader,
+} from "../../domain/elfProgramHeader.js";
 import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclarations.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
 import {
@@ -49,6 +58,16 @@ const matchesKind = (
     : known === undefined && reported === raw;
 };
 
+const hexEquals = (field: string, value: bigint | number): boolean => {
+  if (typeof value === "number")
+    return field.length <= 15
+      ? Number(field) === value
+      : BigInt(field) === BigInt(value);
+  return field.length <= 15 && value <= 0xfffffffffffffn
+    ? Number(field) === Number(value)
+    : BigInt(field) === value;
+};
+
 const segmentMatches = (
   segment: RecordedCrash["segments"][number],
   raw: Buffer,
@@ -61,19 +80,15 @@ const segmentMatches = (
   return (
     type === segment.type_id &&
     matchesKind(type, segment.type, kinds) &&
-    BigInt(segment.flags) === BigInt(program.flags) &&
+    hexEquals(segment.flags, program.flags) &&
     segment.file_backing ===
       (type === 0 || program.fileSize === 0n ? "none" : "file") &&
-    (
-      [
-        [segment.offset, program.offset],
-        [segment.virtual_address, program.virtualAddress],
-        [segment.physical_address, program.physicalAddress],
-        [segment.file_size, program.fileSize],
-        [segment.memory_size, program.memorySize],
-        [segment.alignment, program.alignment],
-      ] as const
-    ).every(([field, value]) => BigInt(field) === value)
+    hexEquals(segment.offset, program.offset) &&
+    hexEquals(segment.virtual_address, program.virtualAddress) &&
+    hexEquals(segment.physical_address, program.physicalAddress) &&
+    hexEquals(segment.file_size, program.fileSize) &&
+    hexEquals(segment.memory_size, program.memorySize) &&
+    hexEquals(segment.alignment, program.alignment)
   );
 };
 
@@ -90,11 +105,21 @@ export function validateRecordedCrashStructure(
       { capturedOutput: diagnostics },
     );
   };
+  const snapshotLength = snapshot.length;
   const bytesAt = (offset: bigint, bytes: number): Buffer => {
-    if (offset < 0n || offset > BigInt(snapshot.length - bytes)) return fail();
-    return snapshot.subarray(Number(offset), Number(offset) + bytes);
+    if (offset < 0n || offset > BigInt(snapshotLength - bytes)) return fail();
+    const start = Number(offset);
+    return snapshot.subarray(start, start + bytes);
   };
-  const header = bytesAt(0n, 64);
+  const bytesAtHex = (offsetHex: string, bytes: number): Buffer => {
+    if (offsetHex.length <= 15) {
+      const start = Number(offsetHex);
+      if (start < 0 || start > snapshotLength - bytes) return fail();
+      return snapshot.subarray(start, start + bytes);
+    }
+    return bytesAt(BigInt(offsetHex), bytes);
+  };
+  const header = bytesAt(0n, elfFixedHeaderWidth(64));
   const expectedMachine =
     RECORDED_LINUX_CORE_PROFILES[report.architecture].machine;
   const parsedHeader = readElfHeaderFacts(header);
@@ -120,32 +145,41 @@ export function validateRecordedCrashStructure(
   const entryBytes = programs.width;
   let count = programs.count;
   if (count === 0xffff) {
-    if (sections.width < 64) return fail();
-    const zero = readElfSectionHeader(bytesAt(sections.offset, 64), 64, true);
+    const width = elfSectionHeaderWidth(64);
+    if (sections.width < width) return fail();
+    const zero = readElfSectionHeader(
+      bytesAt(sections.offset, width),
+      64,
+      true,
+    );
     if (!zero.ok) return fail();
     count = zero.value.info;
   }
-  if (count !== report.segments.length || (count > 0 && entryBytes < 56))
+  if (
+    count !== report.segments.length ||
+    (count > 0 && entryBytes < elfProgramHeaderWidth(64))
+  )
     fail();
+  const kinds = segmentKinds[report.architecture];
+  const entryBytesBig = BigInt(entryBytes);
   for (const segment of report.segments) {
-    const offset = table + BigInt(segment.index) * BigInt(entryBytes);
+    const offset = table + BigInt(segment.index) * entryBytesBig;
     if (
-      BigInt(segment.header_location.offset) !== offset ||
-      BigInt(segment.header_location.bytes) !== BigInt(entryBytes)
+      !hexEquals(segment.header_location.offset, offset) ||
+      !hexEquals(segment.header_location.bytes, entryBytes)
     )
       fail();
     const raw = bytesAt(offset, entryBytes);
-    if (!segmentMatches(segment, raw, segmentKinds[report.architecture]))
-      fail();
+    if (!segmentMatches(segment, raw, kinds)) fail();
   }
   for (const note of report.notes) {
-    const raw = bytesAt(BigInt(note.location.offset), 12);
+    const raw = bytesAtHex(note.location.offset, 12);
     const parsedNote = readElfNoteHeader(raw, true);
     if (!parsedNote.ok) return fail();
     const { namesz, descsz, type } = parsedNote.value;
     if (
-      BigInt(note.owner_location.bytes) !== BigInt(namesz) ||
-      BigInt(note.descriptor_location.bytes) !== BigInt(descsz) ||
+      !hexEquals(note.owner_location.bytes, namesz) ||
+      !hexEquals(note.descriptor_location.bytes, descsz) ||
       type !== note.type_id
     )
       fail();

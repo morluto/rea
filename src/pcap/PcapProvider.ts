@@ -32,14 +32,16 @@ import {
   type AnalysisCleanupReleaseClaim,
 } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import {
   PcapConfigurationFailure,
   assertWiresharkExecutableIdentity,
   inspectPcapClient,
-  locateWiresharkTool,
   resolvePcapTools,
   pcapConfigurationAvailability,
   PCAP_TOOL_REMEDIATION,
@@ -49,8 +51,9 @@ import {
   type WiresharkExecutableIdentity,
 } from "./PcapConfiguration.js";
 import {
+  finalizeTsharkWithDns,
   parseCapinfosOutput,
-  parseTsharkJsonOutput,
+  prepareTsharkBaseOutput,
   TSHARK_JSON_MAX_BYTES,
 } from "./PcapOutput.js";
 import {
@@ -62,7 +65,7 @@ import {
 } from "./PcapCommand.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
 import { PcapSnapshot } from "./PcapSnapshot.js";
@@ -106,6 +109,7 @@ const FIELDS = [
   ...Object.keys(PCAP_HTTP_URI_FIELDS),
   "http2.headers.path",
 ];
+const FIELD_ARGS = FIELDS.flatMap((field) => ["-e", field]);
 
 const pcapPartialEvidence = (
   request: PcapRequest,
@@ -124,7 +128,7 @@ const pcapPartialEvidence = (
   createPcapEvidence(request, {
     subject: { path, format: "file", sha256: identity.sha256 },
     provider,
-    result: jsonValueSchema.parse(result),
+    result: ownedJsonValueSchema.parse(result),
     rawResult: null,
     limitations,
     locations: [{ kind: "artifact-path", path }],
@@ -457,11 +461,7 @@ export class PcapProvider {
           cause,
           this.#failureDialect(operation),
         );
-        throw analysisErrorWithCleanupFailure(
-          primary,
-          pending,
-          operation,
-        ).bindCleanupDependencies([primary, pending]);
+        throw analysisErrorWithCleanupDependencies(primary, pending, operation);
       }
       throw cause;
     }
@@ -515,11 +515,9 @@ export class PcapProvider {
       ["tshark", selection.tshark],
       ["capinfos", selection.capinfos],
     ] as const) {
-      const path = locateWiresharkTool(selected, this.environment);
-      if (path === undefined) continue;
       let commandPath: ArtifactCommandPath;
       try {
-        commandPath = await selectArtifactCommandPath(path, signal);
+        commandPath = await selectArtifactCommandPath(selected.command, signal);
       } catch (cause) {
         if (
           cause instanceof Error &&
@@ -568,37 +566,29 @@ export class PcapProvider {
           `The selected ${name} command did not report a version. Set REA_${name.toUpperCase()}_COMMAND to its absolute executable path.`,
         );
     }
+    const tsharkIdentity = this.wiresharkIdentities.get(
+      selection.tshark.command,
+    );
+    const capinfosIdentity = this.wiresharkIdentities.get(
+      selection.capinfos.command,
+    );
     return {
       selection,
       client: {
         tshark_command: selection.tshark.command,
         tshark_source: selection.tshark.source,
         tshark_version: identity.tsharkVersion,
-        tshark_resolved_path:
-          this.wiresharkIdentities.get(selection.tshark.command)
-            ?.resolvedPath ?? null,
-        tshark_sha256:
-          this.wiresharkIdentities.get(selection.tshark.command)?.identity
-            .sha256 ?? null,
-        tshark_identity_status: this.wiresharkIdentities.has(
-          selection.tshark.command,
-        )
-          ? "verified"
-          : "unresolved",
+        tshark_resolved_path: tsharkIdentity?.resolvedPath ?? null,
+        tshark_sha256: tsharkIdentity?.identity.sha256 ?? null,
+        tshark_identity_status:
+          tsharkIdentity !== undefined ? "verified" : "unresolved",
         capinfos_command: selection.capinfos.command,
         capinfos_source: selection.capinfos.source,
         capinfos_version: identity.capinfosVersion,
-        capinfos_resolved_path:
-          this.wiresharkIdentities.get(selection.capinfos.command)
-            ?.resolvedPath ?? null,
-        capinfos_sha256:
-          this.wiresharkIdentities.get(selection.capinfos.command)?.identity
-            .sha256 ?? null,
-        capinfos_identity_status: this.wiresharkIdentities.has(
-          selection.capinfos.command,
-        )
-          ? "verified"
-          : "unresolved",
+        capinfos_resolved_path: capinfosIdentity?.resolvedPath ?? null,
+        capinfos_sha256: capinfosIdentity?.identity.sha256 ?? null,
+        capinfos_identity_status:
+          capinfosIdentity !== undefined ? "verified" : "unresolved",
       },
     };
   }
@@ -933,11 +923,11 @@ export class PcapProvider {
             new RetainedSnapshotFailure(failure, failure),
           );
         } else {
-          const returned = analysisErrorWithCleanupFailure(
+          const returned = analysisErrorWithCleanupDependencies(
             result.error,
             cleanup,
             request.operation,
-          ).bindCleanupDependencies([cleanup]);
+          );
           result = err(returned);
           this.snapshotFailures.set(
             snapshot,
@@ -1131,27 +1121,25 @@ export class PcapProvider {
         "json",
         "--no-duplicate-keys",
         `--temp-dir=${snapshot.configurationPath}`,
-        ...FIELDS.flatMap((field) => ["-e", field]),
+        ...FIELD_ARGS,
       ],
       { timeoutMs: 300_000, maxOutputBytes: TSHARK_JSON_MAX_BYTES },
       signal,
       snapshot,
       path,
     );
-    const parseOutput = async (
-      command: typeof dissected,
-      dnsStdout?: string,
-    ) => {
-      try {
-        return await parseTsharkJsonOutput(dissected.stdout, signal, dnsStdout);
-      } catch (cause) {
-        throw withOutputCleanup(cause, command);
-      }
-    };
-    let fields = await parseOutput(dissected);
+    let prepared: Awaited<ReturnType<typeof prepareTsharkBaseOutput>>;
+    try {
+      prepared = await prepareTsharkBaseOutput(dissected.stdout, signal);
+    } catch (cause) {
+      throw withOutputCleanup(cause, dissected);
+    }
+    let fields = prepared.fallback;
     let dnsDissected: typeof dissected | undefined;
     let dnsLimitation: string | undefined;
-    if (dissected.cleanup === undefined) {
+    if (!prepared.hasDnsProtocol) {
+      // Base pass observed no DNS/mDNS/LLMNR frames or fields; skip the second tshark pass.
+    } else if (dissected.cleanup === undefined) {
       try {
         dnsDissected = await this.run(
           "inspect_pcap_capture",
@@ -1176,7 +1164,15 @@ export class PcapProvider {
           snapshot,
           path,
         );
-        fields = await parseOutput(dnsDissected, dnsDissected.stdout);
+        try {
+          fields = await finalizeTsharkWithDns(
+            prepared,
+            dnsDissected.stdout,
+            signal,
+          );
+        } catch (cause) {
+          throw withOutputCleanup(cause, dnsDissected);
+        }
       } catch (cause) {
         if (cause instanceof AnalysisError && cause.cleanupIncomplete)
           throw cause;
