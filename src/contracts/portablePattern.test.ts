@@ -47,23 +47,12 @@ const ALPHABET = [
   "n",
 ];
 
-const samples = (() => {
-  const strings = new Set<string>([""]);
-  let state = 0x5eed;
-  const next = () => {
-    state = (state * 1103515245 + 12345) % 2 ** 31;
-    return state;
-  };
-  for (const character of ALPHABET) strings.add(character);
-  for (let index = 0; index < 4000; index++) {
-    let value = "";
-    const length = next() % 9;
-    for (let position = 0; position < length; position++)
-      value += ALPHABET[next() % ALPHABET.length];
-    strings.add(value);
-  }
-  return [...strings];
-})();
+// Each character appears in both positions with every other character.
+const samples = [
+  "",
+  ...ALPHABET,
+  ...ALPHABET.flatMap((left) => ALPHABET.map((right) => left + right)),
+];
 const bmpSamples = samples.filter(
   (value) => !/[\u{10000}-\u{10FFFF}]/u.test(value),
 );
@@ -71,46 +60,51 @@ const bmpSamples = samples.filter(
 const EXACT_SOURCES = new Set(["^\\/", "^\\d+$", "^[A-Za-z0-9._-]+$"]);
 
 const SOURCES = [
-  ...EXACT_SOURCES,
+  ["^\\/", "/tmp"],
+  ["^\\d+$", "0727"],
+  ["^[A-Za-z0-9._-]+$", "module-name_1.js"],
   // Advertised before projection (input and output catalogs).
-  "^-?\\d+$",
-  "^[^\\s\\x5b\\x5d]+$",
-  "^[^\\x00\\s\"']+$",
-  "^(?:....)*$",
-  "^1\\.0\\.\\d+$",
-  "^\\x2F(?:[^\\x2F\\x5C]|$)",
-  "^(?:\\/.*)?$",
-  "^[!#$%&'*+.^_`\\x7C~0-9A-Za-z\\x2D]+$",
-  "^[\\t\\x20-\\x7e\\x80-\\xff]*$",
-  "^[\\w .:@\\x2f+\\x2d]+$",
-  "^https?:\\/\\/",
-  "^INVOKE_",
-  "^[\\x01-\\x20]*(?:\\+|-)?(?:NaN|Infinity|(?:(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE](?:\\+|-)?\\d+)?[fFdD]?|0[xX](?:[\\da-fA-F]+(?:\\.[\\da-fA-F]*)?|\\.[\\da-fA-F]+)[pP](?:\\+|-)?\\d+[fFdD]?))[\\x01-\\x20]*$",
+  ["^-?\\d+$", "-27"],
+  ["^[^\\s\\x5b\\x5d]+$", "name:"],
+  ["^[^\\x00\\s\"']+$", "multipart/mixed"],
+  ["^(?:....)*$", "aZ07"],
+  ["^1\\.0\\.\\d+$", "1.0.22"],
+  ["^\\x2F(?:[^\\x2F\\x5C]|$)", "/example"],
+  ["^(?:\\/.*)?$", "/folder"],
+  ["^[!#$%&'*+.^_`\\x7C~0-9A-Za-z\\x2D]+$", "x-auth#1"],
+  ["^[\\t\\x20-\\x7e\\x80-\\xff]*$", "Aé"],
+  ["^[\\w .:@\\x2f+\\x2d]+$", "A-1: work/path"],
+  ["^https?:\\/\\/", "https://example.test/path"],
+  ["^INVOKE_", "INVOKE_STATIC"],
+  [
+    "^[\\x01-\\x20]*(?:\\+|-)?(?:NaN|Infinity|(?:(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE](?:\\+|-)?\\d+)?[fFdD]?|0[xX](?:[\\da-fA-F]+(?:\\.[\\da-fA-F]*)?|\\.[\\da-fA-F]+)[pP](?:\\+|-)?\\d+[fFdD]?))[\\x01-\\x20]*$",
+    " +0x1.9p-2F ",
+  ],
   // Constructs other engines refuse.
-  "^[^\\0]*$",
-  "^[^\\uD800-\\uDFFF]*$",
-  "^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])",
-  "^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)",
-  "^(?!\\.\\.?$)[^/]+$",
-  "^[^]$",
-  "a|^b|c$",
-  "^\\p{L}+$",
-  "^\\bcon\\b",
-  "^a{2,1001}$",
-  "^a{01}$",
-  "^(?:ab){0,02}$",
-  "^(?<word>[a-z]+)-x$",
-  "^\\u0041\\u{42}\\cJ$",
-  "^\\S\\W\\D$",
-  "^[\\S]$",
-  "^[^\\D]$",
-  "^é+$",
-];
+  ["^[^\\0]*$", "abc😀"],
+  ["^[^\\uD800-\\uDFFF]*$", "fox😀"],
+  ["^[a-z0-9]+(?:-[a-z0-9]+)*(?![\\s\\S])", "demo-1"],
+  ["^(?!(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$)", "demo.txt"],
+  ["^(?!\\.\\.?$)[^/]+$", "file.txt"],
+  ["^[^]$", "😀"],
+  ["a|^b|c$", "zzazz"],
+  ["^\\p{L}+$", "éA"],
+  ["^\\bcon\\b", "con test"],
+  ["^a{2,1001}$", "a".repeat(1001)],
+  ["^a{01}$", "a"],
+  ["^(?:ab){0,02}$", "abab"],
+  ["^(?<word>[a-z]+)-x$", "word-x"],
+  ["^\\u0041\\u{42}\\cJ$", "AB\n"],
+  ["^\\S\\W\\D$", "a-!"],
+  ["^[\\S]$", "é"],
+  ["^[^\\D]$", "7"],
+  ["^é+$", "éé"],
+] as const;
 
 describe("portable pattern projection", () => {
   it.each(SOURCES)(
     "re-emits %s inside the grammar and its declared relation",
-    (source) => {
+    (source, witness) => {
       const projection = projectPortablePattern(source);
       if (projection.kind === "unexpressible")
         throw new Error(`Expected a portable projection for /${source}/`);
@@ -118,10 +112,14 @@ describe("portable pattern projection", () => {
       expect(portablePatternViolations(projection.pattern)).toEqual([]);
       const original = new RegExp(source, "u");
       const projected = new RegExp(projection.pattern, "u");
+      expect(original.test(witness), "canonical witness").toBe(true);
+      expect(projected.test(witness), "portable witness").toBe(true);
       // Engines differ only on astral characters (see `projectPortablePattern`):
       // V8 without `u` matches UTF-16 units, the other modes code points.
       for (const flags of ["", "v"]) {
         const mode = new RegExp(projection.pattern, flags);
+        if (flags === "v" || !/[\u{10000}-\u{10FFFF}]/u.test(witness))
+          expect(mode.test(witness), `portable witness /${flags}`).toBe(true);
         expect(
           bmpSamples
             .filter((value) => mode.test(value) !== projected.test(value))
@@ -163,7 +161,10 @@ describe("portable pattern projection", () => {
     });
   });
 
-  it("keeps a repeated class with non-ASCII members in one stack-safe class", () => {
+  it("keeps safe alternations and repeated classes expressible", () => {
+    expect(projectPortablePattern("^(?:a|b)+$").kind).toBe("exact");
+    expect(projectPortablePattern("^[éè]+$").kind).toBe("wider");
+    expect(projectPortablePattern("^é(?:a|b)+$").kind).toBe("wider");
     const projected = projectPortablePattern("^[\\t\\x20-\\x7e\\x80-\\xff]*$");
     expect(projected).toEqual({
       kind: "wider",
@@ -183,10 +184,10 @@ describe("portable pattern projection", () => {
       expect(projected.kind).toBe("exact");
       if (projected.kind === "unexpressible")
         throw new Error("Expected exact projection");
+      const original = new RegExp(pattern, "u");
+      const advertised = new RegExp(projected.pattern, "u");
       for (const input of ["abc", "^", "a", "Z"])
-        expect(new RegExp(projected.pattern, "u").test(input)).toBe(
-          new RegExp(pattern, "u").test(input),
-        );
+        expect(advertised.test(input)).toBe(original.test(input));
     },
   );
 });
@@ -207,25 +208,32 @@ const PRESENTERS = [
 
 describe("advertised pattern presentation", () => {
   it.each(PRESENTERS)(
-    "omits overlapping widened alternatives from the %s schema",
+    "omits overlapping widened alternatives and preserves an exact %s sibling",
     (_kind, present) => {
-      for (const pattern of ["^(?:é|è)+$", "^(?:é|[èa])+$", "^(?:(?:é|è))+$"]) {
-        const canonical = new Ajv({ strict: false }).compile({
-          type: "string",
-          pattern,
-        });
-        const schema = present(property({ type: "string", pattern }));
-        expect(
-          (schema.properties as Record<string, unknown>).name,
-        ).not.toHaveProperty("pattern");
-        const validate = new Ajv({ strict: false }).compile(schema);
-        expect(validate({ name: "é".repeat(1000) + "A" })).toBe(true);
-        expect(canonical("éè"), pattern).toBe(true);
-        expect(canonical("éèA"), pattern).toBe(false);
+      const widened = {
+        alternatives: "^(?:é|è)+$",
+        mixedClass: "^(?:é|[èa])+$",
+        nestedGroup: "^(?:(?:é|è))+$",
+      };
+      const source = {
+        type: "object",
+        properties: Object.fromEntries(
+          Object.entries({ ...widened, exact: "^(?:a|b)+$" }).map(
+            ([name, pattern]) => [name, { type: "string", pattern }],
+          ),
+        ),
+      };
+      const schema = present(source);
+      const original = new Ajv({ strict: false }).compile(source);
+      const validate = new Ajv({ strict: false }).compile(schema);
+      for (const name of Object.keys(widened)) {
+        expect(schema).not.toHaveProperty(["properties", name, "pattern"]);
+        expect(original({ [name]: "éè" }), name).toBe(true);
+        expect(original({ [name]: "éèA" }), name).toBe(false);
+        expect(validate({ [name]: "é".repeat(1000) + "A" }), name).toBe(true);
       }
-      expect(projectPortablePattern("^(?:a|b)+$").kind).toBe("exact");
-      expect(projectPortablePattern("^[éè]+$").kind).toBe("wider");
-      expect(projectPortablePattern("^é(?:a|b)+$").kind).toBe("wider");
+      expect(validate({ exact: "abba" })).toBe(true);
+      expect(validate({ exact: "abca" })).toBe(false);
     },
   );
 
@@ -278,17 +286,39 @@ describe("advertised pattern presentation", () => {
   );
 
   it.each(PRESENTERS)(
-    "does not narrow %s through a named anchor",
+    "keeps %s negation sound across distinct reference scopes",
     (_kind, present) => {
-      const schema = {
-        $defs: {
-          name: { $anchor: "name", type: "string", pattern: lookAround },
+      const cases = [
+        {
+          context: "named anchor",
+          definition: { $anchor: "name" },
+          ref: "#name",
         },
-        type: "object",
-        properties: { name: { not: { $ref: "#name" } } },
-      };
-      const validate = new Ajv2020({ strict: false }).compile(present(schema));
-      expect(validate({ name: "con" })).toBe(true);
+        {
+          context: "embedded resource",
+          definition: { $id: "name" },
+          ref: "https://example.test/name",
+        },
+        {
+          context: "current resource",
+          definition: {},
+          ref: "https://example.test/root#/$defs/name",
+        },
+      ];
+      for (const { context, definition, ref } of cases) {
+        const schema = {
+          $id: "https://example.test/root",
+          $defs: {
+            name: { ...definition, type: "string", pattern: lookAround },
+          },
+          type: "object",
+          properties: { name: { not: { $ref: ref } } },
+        };
+        const validate = new Ajv2020({ strict: false }).compile(
+          present(schema),
+        );
+        expect(validate({ name: "con" }), context).toBe(true);
+      }
     },
   );
 
@@ -309,36 +339,6 @@ describe("advertised pattern presentation", () => {
       expect(
         (presented.properties as Record<string, unknown>).name,
       ).not.toHaveProperty("not");
-    },
-  );
-
-  it.each(PRESENTERS)(
-    "does not narrow %s through a URI naming an embedded resource",
-    (_kind, present) => {
-      const schema = {
-        $id: "https://example.test/root",
-        $defs: { name: { $id: "name", type: "string", pattern: lookAround } },
-        type: "object",
-        properties: { name: { not: { $ref: "https://example.test/name" } } },
-      };
-      const validate = new Ajv2020({ strict: false }).compile(present(schema));
-      expect(validate({ name: "con" })).toBe(true);
-    },
-  );
-
-  it.each(PRESENTERS)(
-    "does not narrow %s through a URI naming this resource",
-    (_kind, present) => {
-      const schema = {
-        $id: "https://example.test/root",
-        $defs: { name: { type: "string", pattern: lookAround } },
-        type: "object",
-        properties: {
-          name: { not: { $ref: "https://example.test/root#/$defs/name" } },
-        },
-      };
-      const validate = new Ajv2020({ strict: false }).compile(present(schema));
-      expect(validate({ name: "con" })).toBe(true);
     },
   );
 });
