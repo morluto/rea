@@ -249,6 +249,7 @@
 * **android:** reuse stat-verified SHA-256 digests across JADX operations ([#13460](https://github.com/morluto/rea/issues/13460)) ([8601170](https://github.com/morluto/rea/commit/86011705e5c65b2436230ca550ec872dd5dedc85))
 * **apktool/nativeaot:** skip ApktoolDecodeResult deep-clone and index NativeAOT MethodTables by type path ([#13548](https://github.com/morluto/rea/issues/13548)) ([824a994](https://github.com/morluto/rea/commit/824a994ad7e902cd636d7a1b1fedbfaa65c1926e))
 * **apple:** eliminate Mach-O multi-pass schema/export re-parses and fuse AppleDispatchCoverage scans ([#13550](https://github.com/morluto/rea/issues/13550)) ([69a691e](https://github.com/morluto/rea/commit/69a691e058e020fc327c0cdaa4709bede3bfe46b))
+* **apple:** parse Mach-O on single open during dylib root discovery and pipeline image SHA-256 hashing ([#13629](https://github.com/morluto/rea/issues/13629)) ([8699e69](https://github.com/morluto/rea/commit/8699e69c191bf1379af1df724e22a0abe87d0eea))
 * **application/cli:** reuse CapabilityInventory map, avoid BinarySessionStatus deep-clone, and cache admitsOmission ([#13552](https://github.com/morluto/rea/issues/13552)) ([08f6365](https://github.com/morluto/rea/commit/08f6365e9fcfb2587c1d5d154480ee9e994057a8))
 * **application/server:** bucket ReleaseExposure layouts, use Set in environmentStateStore, and avoid owned-payload deep-clones ([#13558](https://github.com/morluto/rea/issues/13558)) ([2b5f495](https://github.com/morluto/rea/commit/2b5f495228b0091b886b8447c451f3ab3ade5be1))
 * **application:** stat-verify cached packaged guidance bundle and index sections by guide and ordinal ([#13561](https://github.com/morluto/rea/issues/13561)) ([295a63d](https://github.com/morluto/rea/commit/295a63dde311c493eb4139f3deb9067f175908c4))
@@ -304,6 +305,7 @@
 * **ghidra:** push longest ASCII-foldable substring into bridge for non-ASCII case-insensitive literal searches ([#13485](https://github.com/morluto/rea/issues/13485)) ([bdfd0a1](https://github.com/morluto/rea/commit/bdfd0a16f5cbce3b6ba63b116d6b5014d31208f5))
 * **ghidra:** skip redundant leaf matching in ReaGhidraBridge literal searches ([#13439](https://github.com/morluto/rea/issues/13439)) ([beff3a2](https://github.com/morluto/rea/commit/beff3a284280692a27aeea0048793c876b475bd7))
 * **ghidra:** stream inventory and search replies directly via JsonWriter ([#13453](https://github.com/morluto/rea/issues/13453)) ([1df51e3](https://github.com/morluto/rea/commit/1df51e3247bf6ed40b7e52b08cb878192ff965d1))
+* **gpu:** single-pass embedded PTX parse and reuse sha256 ([#13639](https://github.com/morluto/rea/issues/13639)) ([c1c0509](https://github.com/morluto/rea/commit/c1c0509280603339fe1ead856fbd96ca074450d1))
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **hopper:** materialize pre-casefolded search inventory in hopper_bridge.py ([#13458](https://github.com/morluto/rea/issues/13458)) ([747656b](https://github.com/morluto/rea/commit/747656b995ccef27d6a9f2e8b9c75e2e3d44b696))
 * **hopper:** memoize containing procedure/identity lookups and fuse instruction/block passes in hopper_bridge.py ([#13534](https://github.com/morluto/rea/issues/13534)) ([60a50f1](https://github.com/morluto/rea/commit/60a50f183aa3931c8ba737c6ec072165f1a3723f))
@@ -383,6 +385,10 @@
 ### Code Refactoring
 
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **artifacts:** consolidate magic checks and range reads ([#13643](https://github.com/morluto/rea/issues/13643)) ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
+* **artifacts:** consolidate magic checks, probe windows, and range reads ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
+* **artifacts:** migrate NtfsMft, Fit, and UImage onto PositionalArtifactReader ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
+* **artifacts:** migrate NtfsMft, Fit, UImage onto PositionalArtifactReader ([#13650](https://github.com/morluto/rea/issues/13650)) ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
 * **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
