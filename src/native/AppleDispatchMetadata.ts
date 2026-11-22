@@ -459,15 +459,18 @@ export const inspectAppleDispatchMetadata = async (
     if (signal?.aborted) throw cancelled();
     next = steps.next();
   }
-  return nativeDispatchMetadataResultSchema.parse({
+  const envelope = nativeDispatchMetadataEnvelopeSchema.parse({
     target_sha256: target.sha256,
     target_architecture: target.architecture,
     provider: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider,
     analysis_profile_digest: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.digest,
     input_admission: { ...admission, retained_bytes: bytes.length },
-    result: next.value,
   });
+  return { ...envelope, result: next.value };
 };
+
+const nativeDispatchMetadataEnvelopeSchema =
+  nativeDispatchMetadataResultSchema.omit({ result: true });
 
 /** Translate the owned target read, keeping a failed close beside its physical outcome. */
 export const appleDispatchMetadataFailure = (
