@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -277,5 +277,158 @@ export async function stripRiscvFixture(directory, typed, run = execute) {
     stripped: true,
     sections: elf.sections,
     toolchain: { ...typed.toolchain, arguments: args },
+  };
+}
+
+const DW_AT_language = 0x13;
+const DW_TAG_compile_unit = 0x11;
+/** Fixed value sizes of the DWARF 4 and 5 forms a 32-bit unit may use. */
+const FIXED_FORM_BYTES = new Map([
+  [0x05, 2],
+  [0x06, 4],
+  [0x07, 8],
+  [0x0b, 1],
+  [0x0c, 1],
+  [0x0e, 4],
+  [0x10, 4],
+  [0x11, 1],
+  [0x12, 2],
+  [0x13, 4],
+  [0x14, 8],
+  [0x17, 4],
+  [0x19, 0],
+  [0x1c, 4],
+  [0x1d, 4],
+  [0x1e, 16],
+  [0x1f, 4],
+  [0x20, 8],
+  [0x21, 0],
+  [0x25, 1],
+  [0x26, 2],
+  [0x27, 3],
+  [0x28, 4],
+  [0x29, 1],
+  [0x2a, 2],
+  [0x2b, 3],
+  [0x2c, 4],
+]);
+// Forms whose value is one ULEB128 or SLEB128 number.
+const LEB_FORMS = new Set([0x0d, 0x0f, 0x15, 0x1a, 0x1b, 0x22, 0x23]);
+// Forms whose ULEB128 length precedes that many bytes.
+const BLOCK_FORMS = new Set([0x09, 0x18]);
+
+const leb = (bytes, at, end) => {
+  let value = 0;
+  let shift = 0;
+  for (let cursor = at; cursor < end; cursor += 1) {
+    value += (bytes[cursor] & 0x7f) * 2 ** shift;
+    shift += 7;
+    if ((bytes[cursor] & 0x80) === 0) return { value, next: cursor + 1 };
+    assert.ok(shift < 49, "DWARF LEB128 value is too long");
+  }
+  assert.fail("Truncated DWARF LEB128 value");
+};
+
+/**
+ * Rewrite the DW_AT_language of every C compile unit, so the same code reads
+ * as another language; assembly units keep theirs. Only 32-bit DWARF 4 and 5
+ * units with a data1 or data2 language are rewritten, and any other shape
+ * fails, because each value offset is computed from the unit's abbreviations.
+ */
+export async function relabelRiscvFixtureLanguage(directory, typed, language) {
+  const path = join(
+    directory,
+    typed.path.split("/").at(-1).replace(".elf", `-lang-${language}.elf`),
+  );
+  const bytes = Buffer.from(await readFile(typed.path));
+  const section = (name) => {
+    const found = typed.sections.filter((value) => value.name === name);
+    assert.equal(found.length, 1, `Fixture has no single ${name} section`);
+    const [{ offset, size }] = found;
+    assert.ok(offset + size <= bytes.length, `${name} lies outside the file`);
+    return { start: offset, end: offset + size };
+  };
+  const info = section(".debug_info");
+  const abbrev = section(".debug_abbrev");
+  /** The attribute forms of the compile-unit abbreviation at this offset. */
+  const unitForms = (offset, code) => {
+    let at = abbrev.start + offset;
+    for (;;) {
+      const entry = leb(bytes, at, abbrev.end);
+      assert.notEqual(entry.value, 0, "Compile-unit abbreviation not found");
+      const tag = leb(bytes, entry.next, abbrev.end);
+      at = tag.next + 1; // DW_CHILDREN_*
+      const attributes = [];
+      for (;;) {
+        const name = leb(bytes, at, abbrev.end);
+        const form = leb(bytes, name.next, abbrev.end);
+        at = form.next;
+        if (form.value === 0x21) at = leb(bytes, at, abbrev.end).next;
+        if (name.value === 0 && form.value === 0) break;
+        attributes.push({ name: name.value, form: form.value });
+      }
+      if (entry.value === code) {
+        assert.equal(tag.value, DW_TAG_compile_unit, "First DIE is not a unit");
+        return attributes;
+      }
+    }
+  };
+  const relabelled = [];
+  for (let unit = info.start; unit < info.end;) {
+    const length = bytes.readUInt32LE(unit);
+    assert.ok(length < 0xfffffff0, "64-bit DWARF units are not rewritten");
+    const end = unit + 4 + length;
+    assert.ok(end <= info.end, "DWARF unit overruns .debug_info");
+    const version = bytes.readUInt16LE(unit + 4);
+    assert.ok(version === 4 || version === 5, `DWARF ${version} unit`);
+    const abbrevOffset = bytes.readUInt32LE(unit + (version === 5 ? 8 : 6));
+    const addressSize = bytes[unit + (version === 5 ? 7 : 10)];
+    if (version === 5)
+      assert.equal(
+        bytes[unit + 6],
+        1,
+        "Only DW_UT_compile units are rewritten",
+      );
+    let at = unit + (version === 5 ? 12 : 11);
+    const code = leb(bytes, at, end);
+    at = code.next;
+    for (const { name, form } of unitForms(abbrevOffset, code.value)) {
+      if (name === DW_AT_language) {
+        assert.ok(
+          form === 0x0b || form === 0x05,
+          `DW_AT_language form ${form}`,
+        );
+        const read = form === 0x0b ? bytes[at] : bytes.readUInt16LE(at);
+        // C89, C, C99, C11 and C17; assembly (0x8001) keeps its label.
+        if ([0x01, 0x02, 0x0c, 0x1d, 0x2c].includes(read)) {
+          assert.ok(form === 0x05 || language <= 0xff, "Language does not fit");
+          if (form === 0x0b) bytes[at] = language;
+          else bytes.writeUInt16LE(language, at);
+          relabelled.push({ unit: unit - info.start, from: read });
+        }
+        break;
+      }
+      if (form === 0x01) at += addressSize;
+      else if (form === 0x08) at = bytes.indexOf(0, at) + 1;
+      else if (form === 0x0a) at += 1 + bytes[at];
+      else if (LEB_FORMS.has(form)) at = leb(bytes, at, end).next;
+      else if (BLOCK_FORMS.has(form)) {
+        const size = leb(bytes, at, end);
+        at = size.next + size.value;
+      } else {
+        assert.ok(FIXED_FORM_BYTES.has(form), `Unhandled DWARF form ${form}`);
+        at += FIXED_FORM_BYTES.get(form);
+      }
+      assert.ok(at > 0 && at <= end, "DWARF attribute overruns its unit");
+    }
+    unit = end;
+  }
+  assert.ok(relabelled.length > 0, "Fixture has no C compile unit to relabel");
+  await writeFile(path, bytes);
+  return {
+    ...typed,
+    path,
+    sha256: await sha256(path),
+    relabelled: { language, units: relabelled },
   };
 }

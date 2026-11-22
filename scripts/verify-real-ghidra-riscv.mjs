@@ -17,6 +17,7 @@ import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-ins
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import {
   buildRiscvFixture,
+  relabelRiscvFixtureLanguage,
   stripRiscvFixture,
 } from "../tests/conformance/ghidra/riscv-fixture.mjs";
 import {
@@ -156,6 +157,56 @@ const OUTCOME =
  * analysis, and the first analysis call over MCP and the CLI fail with the
  * bridge's reason. The source bytes stay unchanged.
  */
+/**
+ * The same C build with its C compile units labelled Rust: both policies model
+ * the C psABI, so each refuses the image and names the language. The unlabelled
+ * builds above are the controls.
+ */
+const verifyForeignLanguageRefusal = async (variant) => {
+  const built = await buildRiscvFixture(workspace, 32, {
+    variant,
+    execute: execOwned,
+  });
+  const fixture = await relabelRiscvFixtureLanguage(workspace, built, 0x1c);
+  const resolved = await parseBinaryTarget(fixture.path);
+  if (!resolved.ok) throw resolved.error;
+  assert.deepEqual(resolved.value.riscv, fixture.riscv);
+  const policy =
+    variant === "soft" ? "ilp32-prototype-v1" : "ilp32f-prototype-v1";
+  const reasons = [
+    `policy ${policy} refused this image`,
+    "in Rust (DW_AT_language 0x1c), such as ",
+  ];
+  const callTool = async (name, args = {}) => {
+    throwIfInterrupted();
+    return client.callTool(
+      { name, arguments: args },
+      { timeout: 240000, signal: commandInterruption.signal },
+    );
+  };
+  const opened = requireMcpLifecycleResult(
+    await callTool("open_binary", {
+      path: fixture.path,
+      provider_id: "ghidra",
+    }),
+    "open_binary",
+  );
+  assert.equal(opened.sha256, fixture.sha256);
+  const error = JSON.stringify(
+    requireMcpToolError(await callTool("list_procedures")),
+  );
+  for (const reason of reasons) assert.ok(error.includes(reason), error);
+  requireMcpLifecycleResult(await callTool("close_binary"), "close_binary");
+  return {
+    foreign_language: {
+      variant,
+      policy,
+      sha256: fixture.sha256,
+      relabelled: fixture.relabelled,
+    },
+  };
+};
+
 const verifyUnmodelledRefusal = async () => {
   const fixture = await buildRiscvFixture(workspace, 32, {
     variant: "unmodelled",
@@ -773,6 +824,8 @@ try {
     });
   }
   reports.push(await verifyUnmodelledRefusal());
+  for (const variant of ["soft", "single"])
+    reports.push(await verifyForeignLanguageRefusal(variant));
   for (const sites of callSites)
     reports.push({
       call_sites: {
