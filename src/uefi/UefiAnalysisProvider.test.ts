@@ -2999,7 +2999,7 @@ it("detects 32-bit and 64-bit machine width from PE and TE headers", () => {
   expect(detectPeTeMachineWidth(peX64)).toBe("64");
 
   // Short buffer fallback
-  expect(detectPeTeMachineWidth(Buffer.alloc(2))).toBe("64");
+  expect(detectPeTeMachineWidth(Buffer.alloc(2))).toBe("unknown");
 });
 
 it("emits 32-bit or 64-bit EFI_STATUS and sanitized comments in scaffolding", () => {
@@ -4180,7 +4180,7 @@ it("honors REA_OBJDUMP_COMMAND and reports mixed disassembler when both LLVM and
     expect(result.producers?.disassembler).toBe("mixed");
     expect(result.modules.length).toBe(2);
     expect(result.modules[0]?.asm_generator).toBe("llvm-objdump");
-    expect(result.modules[1]?.asm_generator).toBe("objdump");
+    expect(result.modules[1]?.asm_generator).toBe("custom-objdump");
   } finally {
     if (origEnv !== undefined) {
       process.env.REA_OBJDUMP_COMMAND = origEnv;
@@ -5324,6 +5324,7 @@ it("checks Ghidra exporter outcome and falls back to scaffolding when no usable 
       ),
     );
     const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
     expect(result.modules[0]?.c_generator).toBe("scaffold");
     expect(
       result.limitations.some((l) =>
@@ -5944,6 +5945,120 @@ it("reports skipped symlink entry as partial coverage and incorporates it into d
     const emptySha = createHash("sha256").update("").digest("hex");
     expect(result.image_sha256).not.toBe(emptySha);
   } finally {
+    await provider.close();
+  }
+});
+
+it("keeps machine width unknown for short executable payloads under 4 bytes and uses UINTN", () => {
+  const shortBuffer = Buffer.from([0x56, 0x5a, 0x01]);
+  expect(detectPeTeMachineWidth(shortBuffer)).toBe("unknown");
+  const scaffolding = buildUefiEntryPointScaffolding(
+    "ShortPayload",
+    "short_payload",
+    shortBuffer.length,
+    "PEI",
+    undefined,
+    detectPeTeMachineWidth(shortBuffer),
+  );
+  expect(scaffolding.typedefs).toContain("typedef UINTN EFI_STATUS;");
+  expect(scaffolding.typedefs).not.toContain("typedef uint64_t EFI_STATUS;");
+});
+
+it("retains configured REA_OBJDUMP_COMMAND as disassembler producer when GNU objdump is the sole disassembler", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-custom-objdump-sole-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const execSpy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command === "llvm-objdump") {
+        throw new Error("llvm-objdump simulated failure");
+      }
+      if (command === "custom-gnu-objdump") {
+        return {
+          stdout: "00000000 <Entry>:\n  0: nop\n",
+          stderr: "",
+          stdoutBytes: 25,
+          stderrBytes: 0,
+        };
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const origEnv = process.env.REA_OBJDUMP_COMMAND;
+  process.env.REA_OBJDUMP_COMMAND = "custom-gnu-objdump";
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.producers?.disassembler).toBe("custom-gnu-objdump");
+    expect(result.modules[0]?.asm_generator).toBe("custom-gnu-objdump");
+  } finally {
+    if (origEnv !== undefined) {
+      process.env.REA_OBJDUMP_COMMAND = origEnv;
+    } else {
+      delete process.env.REA_OBJDUMP_COMMAND;
+    }
+    execSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("honors late cancellation during directory reader finalization and retains published observation", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-dir-cancel-late-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during reader release");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error._tag).toBe("AnalysisCancelledError");
+    expect(executed.error.partialObservation).toBeDefined();
+
+    const partial = executed.error.partialObservation as {
+      kind: string;
+      result: UefiDecompileResult;
+    };
+    expect(partial.kind).toBe("uefi");
+    expect(partial.result.output_directory).toBe(outDir);
+    expect(partial.result.total_modules_decompiled).toBe(1);
+    expect(existsSync(join(outDir, "firmware_manifest.json"))).toBe(true);
+    expect(existsSync(join(outDir, "README.md"))).toBe(true);
+  } finally {
+    vi.restoreAllMocks();
     await provider.close();
   }
 });

@@ -177,7 +177,7 @@ export const sanitizeCComment = (text: string): string =>
 
 export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
   if (bytes.length < 4) {
-    return "64";
+    return "unknown";
   }
 
   try {
@@ -1253,7 +1253,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS = 20;
     let recordedDisassemblyFailures = 0;
     let totalStagedAsmBytes = 0;
-    const usedDisassemblers = new Set<"llvm-objdump" | "objdump">();
+    const usedDisassemblers = new Set<string>();
 
     const MAX_DECOMPILE_MODULE_BYTES = 4 * 1024 * 1024;
     const MAX_DECOMPILE_TOTAL_BYTES = 64 * 1024 * 1024;
@@ -1317,7 +1317,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         header_sha256: string;
         payload_sha256: string | null;
         c_generator: "ghidra" | "scaffold";
-        asm_generator: "llvm-objdump" | "objdump" | null;
+        asm_generator: string | null;
         code_bytes: number;
       }> = [];
       const publicationEntries: UefiPublicationEntry[] = [];
@@ -1491,7 +1491,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
         let asmRelPath: string | null = null;
         let asmSha256: string | null = null;
-        let asmGenerator: "llvm-objdump" | "objdump" | null = null;
+        let asmGenerator: string | null = null;
         let disassemblyStatus: "ok" | "failed" | "omitted" = "omitted";
         const scratchBasename = `mod_${moduleSeq}.efi`;
         const tempEfiPath = join(tempRoot.path, scratchBasename);
@@ -1593,8 +1593,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                         },
                       );
                       asmOutput = stdout;
-                      asmGenerator = "objdump";
-                      usedDisassemblers.add("objdump");
+                      asmGenerator = configuredCommand;
+                      usedDisassemblers.add(configuredCommand);
                     } catch (err2: unknown) {
                       if (signal.aborted) signal.throwIfAborted();
                       if (isAbortOf(err2, signal)) throw err2;
@@ -1874,6 +1874,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     effectiveLimitations.push(perModuleLimit);
                   }
                 } else if (exporterOutcome?.status === "no_functions") {
+                  if ((exporterOutcome.failed_functions ?? 0) > 0) {
+                    isCoveragePartial = true;
+                  }
                   const noFuncMsg = `Ghidra C decompilation for ${safeLimitationModName} found no usable functions (${exporterOutcome.failed_functions ?? 0} failed); generated entry point scaffolding instead.`;
                   if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
                     effectiveLimitations.push(noFuncMsg);
@@ -2241,21 +2244,12 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             };
           });
 
-          let disassemblerProducer:
-            | "llvm-objdump"
-            | "objdump"
-            | "mixed"
-            | "none" = "none";
+          let disassemblerProducer: string = "none";
           if (input.include_disassembly) {
-            if (
-              usedDisassemblers.has("llvm-objdump") &&
-              usedDisassemblers.has("objdump")
-            ) {
+            if (usedDisassemblers.size > 1) {
               disassemblerProducer = "mixed";
-            } else if (usedDisassemblers.has("llvm-objdump")) {
-              disassemblerProducer = "llvm-objdump";
-            } else if (usedDisassemblers.has("objdump")) {
-              disassemblerProducer = "objdump";
+            } else if (usedDisassemblers.size === 1) {
+              disassemblerProducer = [...usedDisassemblers][0]!;
             }
           }
 
@@ -3303,6 +3297,43 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 uefiFailureDialect(request.operation, input.path),
               )
             : undefined;
+
+      if (signal.aborted) {
+        const partialObservation =
+          publishedResult !== undefined
+            ? {
+                kind: "uefi" as const,
+                result: jsonValueSchema.parse(publishedResult),
+                provenance: {
+                  path: input.path,
+                  sha256: dirSha256,
+                },
+              }
+            : undefined;
+
+        let terminationError: AnalysisError =
+          signal.reason instanceof AnalysisTimeoutError
+            ? new AnalysisTimeoutError(
+                "decompile_uefi_firmware",
+                signal.reason.timeoutMs,
+                {
+                  cause: signal.reason,
+                  partialObservation,
+                },
+              )
+            : cancelledBy("decompile_uefi_firmware", signal, {
+                partialObservation,
+              });
+
+        if (cleanupError !== undefined) {
+          terminationError = analysisErrorWithCleanupDependencies(
+            terminationError,
+            cleanupError,
+            "decompile_uefi_firmware",
+          );
+        }
+        throw terminationError;
+      }
 
       if (cleanupError !== undefined) {
         if (primaryError !== undefined) {

@@ -584,17 +584,14 @@ export const uefiResultSchemas = {
         asm_sha256: digestSchema.nullable().optional(),
         header_sha256: digestSchema.nullable().optional(),
         c_generator: z.enum(["ghidra", "scaffold"]).optional(),
-        asm_generator: z
-          .enum(["llvm-objdump", "objdump"])
-          .nullable()
-          .optional(),
+        asm_generator: z.string().nullable().optional(),
         code_bytes: bytes,
       }),
     ),
     producers: z
       .strictObject({
         ghidra: z.string().nullable(),
-        disassembler: z.enum(["llvm-objdump", "objdump", "mixed", "none"]),
+        disassembler: z.string(),
       })
       .optional(),
     receipts: z
