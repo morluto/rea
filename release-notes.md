@@ -28,6 +28,7 @@
 
 * **android:** advertise the external-reference inputs the bridge accepts ([85154de](https://github.com/morluto/rea/commit/85154de8ab9107c0f403079a9bec81ab63077ea1))
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
+* **apk:** disclose v1 scan scope without duplicate names ([#13572](https://github.com/morluto/rea/issues/13572)) ([110b990](https://github.com/morluto/rea/commit/110b990c687bdb498de0134dce8b49547983273a))
 * **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
 * **apple:** decode the ivar WORD_ALIGN sentinel as 8-byte alignment ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
 * **apple:** preserve Interface Builder archive roles and omissions ([#13429](https://github.com/morluto/rea/issues/13429)) ([1f6a864](https://github.com/morluto/rea/commit/1f6a864a170e67fca964221ef4b0da4085e1daa6))
