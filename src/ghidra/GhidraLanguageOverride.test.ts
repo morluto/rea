@@ -16,10 +16,7 @@ import {
   ghidraProfileInstallationHost as host,
 } from "./GhidraInstallation.fixture.js";
 import { SUPPORTED_GHIDRA_VERSION } from "./GhidraReleasePolicy.js";
-import {
-  parseGhidraLanguageDefinitions,
-  readGhidraLanguageCatalog,
-} from "./GhidraLanguageCatalog.js";
+import { readGhidraLanguageCatalog } from "./GhidraLanguageCatalog.js";
 import { GhidraProvider } from "./GhidraProvider.js";
 import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
@@ -214,30 +211,10 @@ describe("Ghidra language override configuration", () => {
 });
 
 describe("Ghidra language catalog", () => {
-  it("reads quoted and escaped XML attributes without admitting comments or CDATA", () => {
-    const catalog = parseGhidraLanguageDefinitions(`<language_definitions>
-      <!-- <language id="removed"><compiler id="removed"/></language> -->
-      <language id='x86:LE:32:default'>
-        <description><![CDATA[<compiler id="not-a-compiler"/>]]></description>
-        <!-- <compiler id="removed"/> -->
-        <compiler id='borland&#99;pp' name='Borland &amp; C++'/>
-      </language>
-    </language_definitions>`);
-    expect(catalog).toEqual([
-      { id: "x86:LE:32:default", compilerSpecIds: ["borlandcpp"] },
-    ]);
-  });
-
-  it.each([
-    '<language_definitions><language id="x86:LE:32:default"></language_definitions>',
-    "<language_definitions><language id=x86:LE:32:default/></language_definitions>",
-    '<other><language id="x86:LE:32:default"/></other>',
-  ])("rejects malformed language-definition documents", (text) => {
-    expect(() => parseGhidraLanguageDefinitions(text)).toThrow();
-  });
-
   it("parses language IDs and their compiler specs", async () => {
-    expect(parseGhidraLanguageDefinitions(X86_LDEFS)).toEqual([
+    expect(
+      await readGhidraLanguageCatalog(installDir, new ArtifactResourceScope()),
+    ).toEqual([
       {
         id: "x86:LE:32:default",
         compilerSpecIds: ["windows", "gcc", "borlandcpp"],
@@ -245,41 +222,54 @@ describe("Ghidra language catalog", () => {
       { id: "x86:LE:16:Real Mode", compilerSpecIds: ["default"] },
     ]);
     expect(
-      await readGhidraLanguageCatalog(installDir, new ArtifactResourceScope()),
-    ).toHaveLength(2);
-    expect(
       await readGhidraLanguageCatalog(
         join(installDir, "absent"),
         new ArtifactResourceScope(),
       ),
     ).toEqual([]);
   });
-});
 
-describe("Ghidra language override profile", () => {
-  it("returns a provider failure for a malformed installed language definition", async () => {
+  it("identifies the malformed installed definition beside a valid selected language", async () => {
     const path = join(
       installDir,
       "Ghidra/Processors/x86/data/languages/broken.ldefs",
     );
+    const configured = provider({
+      REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+    });
     await writeFile(
       path,
       "<language_definitions><language></language_definitions>",
     );
     try {
-      const resolved = await provider({
-        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
-      }).resolveAnalysisProfile(pe);
+      const resolved = await configured.resolveAnalysisProfile(pe);
       if (resolved.ok) throw new Error("Expected a language catalog failure");
-      expect(resolved.error).toMatchObject({
-        providerId: "ghidra",
-        operation: "resolve_analysis_profile",
+      expect(projectAnalysisError(resolved.error)).toMatchObject({
+        details: {
+          provider_id: "ghidra",
+          operation: "resolve_analysis_profile",
+          diagnostics: {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+            code: "language_definition_invalid",
+            path,
+            parse_kind: "malformed",
+            parse_message: expect.stringContaining("XML is not well-formed"),
+          },
+        },
       });
+      await writeFile(path, "<language_definitions/>");
+      const repaired = await configured.resolveAnalysisProfile(pe);
+      if (!repaired.ok) throw repaired.error;
+      expect(repaired.value.profile?.parameters.language_id).toBe(
+        "x86:LE:32:default",
+      );
     } finally {
       await rm(path);
     }
   });
+});
 
+describe("Ghidra language override profile", () => {
   it("accepts the caller-selected language on the legacy MIPS lane", async () => {
     const mipsLanguages = join(
       installDir,
