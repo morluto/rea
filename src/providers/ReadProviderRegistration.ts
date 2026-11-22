@@ -77,6 +77,7 @@ export const readProviderRegistration = <Value>(
             MAXIMUM_REGISTRATION_BYTES,
             {
               signal: options.signal,
+              expectedSize: metadata.size,
               cancellationFailure: (reason) =>
                 new RegularFileOperationCancelled(reason),
             },

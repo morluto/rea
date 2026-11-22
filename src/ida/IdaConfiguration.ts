@@ -229,6 +229,18 @@ export const idaRegistrationTimeoutGuidance = (
   remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
 });
 
+/**
+ * Name the upstream supervisor setting that ended an open. It belongs to the
+ * process that runs ida-pro-mcp, not to REA's registration timeoutMs.
+ */
+export const idaSupervisorOpenTimeoutGuidance = (
+  seconds: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `The IDA database supervisor stopped opening and analyzing the input after its IDA_MCP_OPEN_TIMEOUT deadline of ${String(seconds)} s. That deadline is an ida-pro-mcp setting, separate from REA's registration timeoutMs.`,
+  remediationAction:
+    "Raise IDA_MCP_OPEN_TIMEOUT (0 waits indefinitely) in the environment that starts the ida-pro-mcp supervisor, then restart it. Keep the registration timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG above the expected analysis time as well. Confirm retained cleanup before retrying.",
+});
+
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */
 export const idaConfigurationError = (
   constraint: string,

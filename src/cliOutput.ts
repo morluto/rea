@@ -111,7 +111,7 @@ interface CliOutputControls {
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
-  /** First valued output flag that Incur skips because it has no value. */
+  /** First valued output flag with an absent or empty value. */
   readonly missingValue: string | undefined;
   readonly invalidValue: string | undefined;
   readonly tokenCount: boolean;
@@ -175,7 +175,7 @@ export const readCliOutputArguments = (
     if (argument === "--token-count") tokenCount = true;
     if (!VALUED_OUTPUT_FLAGS.has(argument)) continue;
     const value = values.has(index + 1) ? tokens[index + 1]! : undefined;
-    if (value === undefined) {
+    if (value === undefined || value === "") {
       missingValue ??= argument;
       continue;
     }
@@ -278,10 +278,14 @@ const validateCliOutputControls = (
       ok: false,
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
-      message:
-        filterPaths.error.kind === "unclosed_slice"
-          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
-          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
+      message: {
+        unclosed_slice:
+          "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        extra_slice_bounds:
+          "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
+        invalid_slice_bound:
+          "The --filter-output expression has a nonnumeric slice bound. Use a number or leave the bound empty.",
+      }[filterPaths.error.kind],
     };
   const delimited = format === "csv" || format === "tsv";
   // Name missing delimited controls before their combination checks; preserve

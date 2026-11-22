@@ -91,6 +91,23 @@ export const measureMcpResultWithinBudget = (
   return { ok: true, bytes };
 };
 
+const measureJsonPart = (
+  part: string,
+): {
+  readonly rawBytes: number;
+  readonly escapedBytes: number;
+  readonly escapedCodeUnits: number;
+} => {
+  const rawBytes = Buffer.byteLength(part);
+  const escaped = JSON.stringify(part);
+  const escapedCodeUnits = escaped.length - 2;
+  const escapedBytes =
+    rawBytes === part.length
+      ? escapedCodeUnits
+      : Buffer.byteLength(escaped) - 2;
+  return { rawBytes, escapedBytes, escapedCodeUnits };
+};
+
 /** Account for the delivered JSON representations before allocating the complete text. */
 export const encodeToolResult = (
   value: JsonValue,
@@ -105,12 +122,9 @@ export const encodeToolResult = (
     (targetContent ? TARGET_CONTENT_META_BYTES : 0);
   let codeUnits = bytes;
   for (const part of bufferedJsonParts(jsonParts(value))) {
-    const escapedPart = JSON.stringify(part);
-    bytes +=
-      (structured ? Buffer.byteLength(part) : 0) +
-      Buffer.byteLength(escapedPart) -
-      2;
-    codeUnits += (structured ? part.length : 0) + escapedPart.length - 2;
+    const measured = measureJsonPart(part);
+    bytes += (structured ? measured.rawBytes : 0) + measured.escapedBytes;
+    codeUnits += (structured ? part.length : 0) + measured.escapedCodeUnits;
     if (bytes > budgetBytes || codeUnits > MCP_RESULT_STRING_LIMIT)
       return {
         ok: false,

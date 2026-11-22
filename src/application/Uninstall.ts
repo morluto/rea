@@ -1185,17 +1185,16 @@ type RegistrationRemovalRefusal = {
   readonly owned: RegistrationRemoval;
 };
 
-const clientRegistrationRemoval = (
+const ownedRegistrationRemoval = (
   parsed: ClientConfigurationDocument,
-  original: string,
   client: SetupClient,
-): Result<RegistrationRemoval, RegistrationRemovalRefusal> => {
+): RegistrationRemoval => {
   const name = PRODUCT_IDENTITY.mcpServerKey;
   if (
     parsed.dialect === "dsh" &&
     dshDocument(parsed.document).hasUnknownStructure
   )
-    return ok({ removeNative: false, legacyPath: undefined });
+    return { removeNative: false, legacyPath: undefined };
   const removeNative =
     (parsed.dialect === "dsh" && dshDocument(parsed.document).carriesEntry) ||
     (Object.hasOwn(parsed.servers, name) &&
@@ -1204,18 +1203,28 @@ const clientRegistrationRemoval = (
   const removeLegacy =
     legacyPath !== undefined &&
     clientRegistrationOwnership(parsed.legacyServers[name], client) === "owned";
-  const ownership: RegistrationRemoval = {
+  return {
     removeNative,
     legacyPath: removeLegacy ? legacyPath : undefined,
   };
-  if (removeNative || removeLegacy) {
+};
+
+const clientRegistrationRemoval = (
+  parsed: ClientConfigurationDocument,
+  original: string,
+  client: SetupClient,
+): Result<RegistrationRemoval, RegistrationRemovalRefusal> => {
+  const name = PRODUCT_IDENTITY.mcpServerKey;
+  const ownership = ownedRegistrationRemoval(parsed, client);
+  const { removeNative, legacyPath } = ownership;
+  if (removeNative || legacyPath !== undefined) {
     const shadowed = shadowedClientServers(original, parsed, name);
     if (
       (removeNative &&
         shadowed.servers.some(
           (member) => clientRegistrationOwnership(member, client) !== "owned",
         )) ||
-      (removeLegacy &&
+      (legacyPath !== undefined &&
         shadowed.legacyServers.some(
           (member) => clientRegistrationOwnership(member, client) !== "owned",
         ))
@@ -1226,7 +1235,11 @@ const clientRegistrationRemoval = (
         owned: ownership,
       });
   }
-  if (removeNative && legacyPath !== undefined && !removeLegacy)
+  if (
+    removeNative &&
+    legacyPath === undefined &&
+    legacyClientServerPath(parsed, name) !== undefined
+  )
     return err({
       kind: "foreign_legacy_fallback",
       detail: UNOWNED_LEGACY_FALLBACK_DETAIL,
@@ -1359,8 +1372,10 @@ const resolveProjectUninstallClients = async (
       );
       continue;
     }
-    for (const path of configuration.projectUserAliases ?? []) {
+    for (const { path, source } of configuration.projectUserAliases ?? []) {
       if (!localPaths.has(path)) continue;
+      const removal = ownedRegistrationRemoval(source, userClient);
+      if (!removal.removeNative && removal.legacyPath === undefined) continue;
       reportIssue(
         path,
         `The selected project configuration at ${path} aliases user configuration. No change was made.`,
@@ -1761,47 +1776,57 @@ const removeClient = async (
       await retryClientConfigurationCleanup(cause, resources);
     return manualRecovery();
   }
+  const verifyRemoval = async (): Promise<UninstallItem> => {
+    try {
+      const text = await fileSystem.readText(publication.path);
+      await publication.assertCurrent(text);
+      const readback = parseClientConfiguration(text, client.format);
+      if (
+        (removeNative && Object.hasOwn(readback.servers, name)) ||
+        (readback.dialect === "dsh" &&
+          dshDocument(readback.document).carriesEntry) ||
+        (removeLegacy && Object.hasOwn(readback.legacyServers, name))
+      )
+        throw new Error("registration readback mismatch");
+      return item(
+        client.name,
+        "removed",
+        `Removed registration from ${client.configPath}.`,
+      );
+    } catch (cause: unknown) {
+      if (isClientConfigurationCleanupFailure(cause))
+        await retryClientConfigurationCleanup(cause, resources);
+      try {
+        await publication.restore(original);
+      } catch {
+        return manualRecovery();
+      }
+      return item(
+        client.name,
+        "failed",
+        `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
+      );
+    }
+  };
+  let completed: UninstallItem | undefined;
   try {
     return await publication.verify(async () => {
-      try {
-        const text = await fileSystem.readText(publication.path);
-        await publication.assertCurrent(text);
-        const readback = parseClientConfiguration(text, client.format);
-        if (
-          (removeNative && Object.hasOwn(readback.servers, name)) ||
-          (readback.dialect === "dsh" &&
-            dshDocument(readback.document).carriesEntry) ||
-          (removeLegacy && Object.hasOwn(readback.legacyServers, name))
-        )
-          throw new Error("registration readback mismatch");
-        return item(
-          client.name,
-          "removed",
-          `Removed registration from ${client.configPath}.`,
-        );
-      } catch (cause: unknown) {
-        if (isClientConfigurationCleanupFailure(cause))
-          await retryClientConfigurationCleanup(cause, resources);
-        try {
-          await publication.restore(original);
-        } catch {
-          return manualRecovery();
-        }
-        return item(
-          client.name,
-          "failed",
-          `Configuration could not be updated. The original was restored and its backup at ${backupPath} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-        );
-      }
+      completed = await verifyRemoval();
+      return completed;
     });
   } catch (cause: unknown) {
     if (isClientConfigurationCleanupFailure(cause))
       await retryClientConfigurationCleanup(cause, resources);
-    return item(
-      client.name,
-      "failed",
-      `Configuration verification or resource cleanup failed. The backup at ${backupPath} was retained. Check the configuration and rerun uninstall.`,
-    );
+    // Finalizing the staging owner can fail after verification or rollback settled.
+    const detail =
+      completed === undefined
+        ? "Configuration verification or resource cleanup failed."
+        : `${completed.detail} Configuration publication cleanup failed.`;
+    const recovery =
+      completed?.status === "failed"
+        ? ""
+        : ` The backup at ${backupPath} was retained. Check the configuration and rerun uninstall.`;
+    return item(client.name, "failed", `${detail}${recovery}`);
   }
 };
 

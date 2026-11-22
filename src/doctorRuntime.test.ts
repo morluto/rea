@@ -1182,6 +1182,7 @@ test.each([
     homeUnknown: true,
     available: "fallback",
     classification: "unknown",
+    timeout: { inherited: "0", classification: "config_drift" },
   },
   {
     kind: "discovery needs USERPROFILE",
@@ -1200,16 +1201,26 @@ test.each([
     homeUnknown: true,
     available: "system",
     classification: "healthy",
+    timeout: {
+      value: "!!js caller.timeout",
+      inherited: "120000",
+      classification: "unknown",
+    },
   },
   {
     kind: "explicit launcher bypasses HOME discovery",
     homeUnknown: true,
     available: "explicit",
     classification: "healthy",
+    timeout: {
+      value: '"120000"',
+      inherited: "0",
+      classification: "healthy",
+    },
   },
 ])(
   "keeps Hopper selection exact when $kind",
-  async ({ homeUnknown, available, classification }) => {
+  async ({ homeUnknown, available, classification, timeout }) => {
     const home = await createTestTempDirectory("rea-dsh-hopper-home-");
     const explicit = join(home, "explicit-hopper");
     const literalHome = join(home, "client-home");
@@ -1255,10 +1266,17 @@ test.each([
         ...(available === "explicit"
           ? [`          HOPPER_LAUNCHER_PATH: ${JSON.stringify(explicit)}`]
           : []),
+        ...(timeout?.value === undefined
+          ? []
+          : [`          REA_HOPPER_STARTUP_TIMEOUT_MS: ${timeout.value}`]),
       ].join("\n"),
     );
     const host = createSystemDoctorHost(
-      { HOME: home, USERPROFILE: fallbackHome },
+      {
+        HOME: home,
+        USERPROFILE: fallbackHome,
+        REA_HOPPER_STARTUP_TIMEOUT_MS: timeout?.inherited,
+      },
       undefined,
       { platform: "darwin", architecture: "arm64" },
     );
@@ -1290,6 +1308,21 @@ test.each([
     });
     expect(report.hopperPath).toBe(
       classification === "healthy" ? found : undefined,
+    );
+    expect(
+      report.scope_checks.filter(
+        ({ name }) => name === "hopper-startup-timeout",
+      ),
+    ).toEqual(
+      timeout === undefined
+        ? []
+        : [
+            expect.objectContaining({
+              ok: timeout.classification === "healthy",
+              classification: timeout.classification,
+              detail: expect.stringContaining("REA_HOPPER_STARTUP_TIMEOUT_MS"),
+            }),
+          ],
     );
   },
 );
