@@ -105,6 +105,7 @@
 * **ghidra:** name invalid installed language definition files ([#13401](https://github.com/morluto/rea/issues/13401)) ([1d85f68](https://github.com/morluto/rea/commit/1d85f680f9aeee634ff3da8cd20c9209c6275b9e))
 * **ghidra:** name the code seed recovery for addresses outside the listing ([#10682](https://github.com/morluto/rea/issues/10682)) ([33ecda0](https://github.com/morluto/rea/commit/33ecda025f0f21ebe7abd73e6ebd5c43a21a5822))
 * **ghidra:** preserve cancellation and failure order in language discovery ([#13399](https://github.com/morluto/rea/issues/13399)) ([8ee0ffe](https://github.com/morluto/rea/commit/8ee0ffe0862721e928feb6cb18f7684403b58d77))
+* **ghidra:** report incomplete language catalogs at the file size limit ([#13407](https://github.com/morluto/rea/issues/13407)) ([3d3e7db](https://github.com/morluto/rea/commit/3d3e7db5b53329fa0a43c35cb26b9bfade0ee045))
 * **ghidra:** say byte-search pages read match metadata live ([#10684](https://github.com/morluto/rea/issues/10684)) ([e7a0232](https://github.com/morluto/rea/commit/e7a023263bdd1221ab1fb1c2cafcf1b848152436))
 * **ghidra:** say how to build a missing macOS or Linux arm64 decompiler ([cc8716c](https://github.com/morluto/rea/commit/cc8716ce22e5d9a9a7c889e900c5e5cf196d91ef)), closes [#7018](https://github.com/morluto/rea/issues/7018)
 * **gpu:** decode UTF-8 CUBIN kernel symbol names ([#13101](https://github.com/morluto/rea/issues/13101)) ([23cf85e](https://github.com/morluto/rea/commit/23cf85ef24fbc598125d0d3a2cddb42eeb2337b5))
