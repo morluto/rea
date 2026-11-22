@@ -1,4 +1,5 @@
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { createReadStream } from "node:fs";
 import {
   open,
   readFile,
@@ -56,6 +57,10 @@ import {
 } from "../../fixtures/zipZstandard.js";
 import { ZipArtifactReader } from "../../../src/resources/index.js";
 
+vi.mock("node:fs", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return { ...original, createReadStream: vi.fn(original.createReadStream) };
+});
 vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return { ...original };
@@ -332,6 +337,8 @@ it.each([
   ["write", "ENOSPC"],
   ["close", "EIO"],
   ["chmod", "EACCES"],
+  ["stat", "EIO"],
+  ["digest", "EACCES"],
   ["zip-library", "EIO"],
 ] as const)(
   "classifies owned snapshot %s failure (%s) separately from source input",
@@ -352,6 +359,11 @@ it.each([
       vi.spyOn(fsPromises, "mkdtemp").mockRejectedValueOnce(cause);
     if (stage === "chmod")
       vi.spyOn(fsPromises, "chmod").mockRejectedValueOnce(cause);
+    if (stage === "stat")
+      vi.spyOn(fsPromises, "stat").mockImplementation((...args) => {
+        if (args[0] !== path) return Promise.reject(cause);
+        return native.stat(...args);
+      });
     if (["open", "write", "close"].includes(stage))
       vi.spyOn(fsPromises, "open").mockImplementation(async (...args) => {
         if (args[1] === "wx" && stage === "open") throw cause;
@@ -364,8 +376,19 @@ it.each([
         }
         return handle;
       });
+    if (stage === "digest")
+      vi.mocked(createReadStream).mockImplementation(
+        () =>
+          Readable.from(
+            (async function* () {
+              yield Buffer.alloc(0);
+              throw cause;
+            })(),
+          ) as ReturnType<typeof createReadStream>,
+      );
     onTestFinished(() => {
       vi.restoreAllMocks();
+      vi.mocked(createReadStream).mockReset();
     });
     const provider = new FlutterBuildProvider();
     onTestFinished(() => provider.close());
@@ -931,6 +954,90 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     });
   },
 );
+
+it.each([
+  { operation: "identify_flutter_build" },
+  { operation: "inspect_dart_aot" },
+] as const)(
+  "preserves native stream aborts during $operation digest",
+  async ({ operation }) => {
+    const path = await buildApk("abort.apk", [
+      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+    ]);
+    const controller = new AbortController();
+    const nativeFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const streamMock = vi.mocked(createReadStream);
+    let abortCode: string | undefined;
+    streamMock.mockImplementation((streamPath, options) => {
+      const stream = nativeFs.createReadStream(streamPath, options);
+      if (streamPath !== path) {
+        stream.once("error", (cause: NodeJS.ErrnoException) => {
+          abortCode = cause.code;
+        });
+        stream.once("readable", () =>
+          controller.abort(new Error("caller requested stop")),
+        );
+      }
+      return stream;
+    });
+    onTestFinished(() => {
+      streamMock.mockReset();
+    });
+    const removedRoots: string[] = [];
+    interceptFlutterRootRemoval(async (root) => {
+      await realRm(root, { recursive: true, force: true });
+      removedRoots.push(root);
+    });
+    const provider = new FlutterBuildProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.execute(
+      { operation, input: { path } },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("expected cancellation");
+    expect(abortCode).toBe("ABORT_ERR");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error).toMatchObject({ operation });
+    expect(projectAnalysisError(result.error).code).toBe("cancelled");
+    expect(removedRoots).toHaveLength(1);
+  },
+);
+
+it("preserves an independent abort-shaped digest stream failure when the caller also aborts", async () => {
+  const path = await buildApk("digest-physical-abort.apk", [
+    { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
+  ]);
+  const controller = new AbortController();
+  const reason = { caller: "stop after physical stream failure" };
+  const physical = Object.assign(new Error("digest read failed"), {
+    name: "AbortError",
+    code: "EIO",
+  });
+  const nativeFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const streamMock = vi.mocked(createReadStream);
+  streamMock.mockImplementation((streamPath, options) => {
+    const stream = nativeFs.createReadStream(streamPath, options);
+    if (streamPath !== path) {
+      stream.once("readable", () => {
+        stream.destroy(physical);
+        controller.abort(reason);
+      });
+    }
+    return stream;
+  });
+  onTestFinished(() => {
+    streamMock.mockReset();
+  });
+  const provider = new FlutterBuildProvider();
+  onTestFinished(() => provider.close());
+  const result = await provider.execute(
+    { operation: "inspect_dart_aot", input: { path } },
+    { signal: controller.signal },
+  );
+  if (result.ok) throw new Error("expected physical stream failure");
+  expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(physical);
+});
 
 it.each([undefined, "arm64-v8a", "x86_64", "mips"])(
   "applies the library cap only to selected ABI %s",
