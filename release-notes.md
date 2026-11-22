@@ -79,6 +79,7 @@
 * **desktop:** explain unavailable dconf descriptor paths ([#13391](https://github.com/morluto/rea/issues/13391)) ([5b2bc6c](https://github.com/morluto/rea/commit/5b2bc6c43d5cbabbce8142bf77137b20ec0a6829))
 * **desktop:** keep automatically named checkpoints distinct ([#13387](https://github.com/morluto/rea/issues/13387)) ([0b62db4](https://github.com/morluto/rea/commit/0b62db4d63a57e0196e1f2bd3b1e7eccb8ac707d))
 * **desktop:** keep every state-reader close failure in the cleanup composite ([10597e1](https://github.com/morluto/rea/commit/10597e10f233bb7ae1306a441e5770880cb2976a)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **desktop:** keep export and task drafts on the admitted capture ([#13418](https://github.com/morluto/rea/issues/13418)) ([cbafdaa](https://github.com/morluto/rea/commit/cbafdaa8e3f03dafdc3a454d89bde4b6c56bf64b))
 * **desktop:** leave host-dependent ELF library names unresolved ([1b2299c](https://github.com/morluto/rea/commit/1b2299c7f80f831af6f5243f6ea82b887a482c00))
 * **desktop:** match title filenames at Unicode boundaries ([d07d28b](https://github.com/morluto/rea/commit/d07d28b53348b820a8a3769b5b1fd45f8096015d))
 * **desktop:** preserve dynamic-token refusal wording ([efe6927](https://github.com/morluto/rea/commit/efe692721ea5206cd98f0847c2978c365f8bb289))
@@ -194,6 +195,7 @@
 ### Performance Improvements
 
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
+* **artifacts/android:** reuse ASAR snapshot descriptors and index JADX bridge lookups ([#13361](https://github.com/morluto/rea/issues/13361)) ([4d7a971](https://github.com/morluto/rea/commit/4d7a9710fe19af7e70693ea56c1e5d3a0268baa1))
 * **browser:** precompile redaction markers, eliminate quadratic secret scans, and scope HAR validation ([#13267](https://github.com/morluto/rea/issues/13267)) ([2afc34e](https://github.com/morluto/rea/commit/2afc34ec6eb2aee43c87a60eee9636db38d22c37))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
 * **cli:** keep single-command discovery lazy and skip throwaway Zod parses ([#13254](https://github.com/morluto/rea/issues/13254)) ([38bc4fe](https://github.com/morluto/rea/commit/38bc4fe907973800c1f6469c3d8ad46f1476f51c))
