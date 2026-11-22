@@ -1,6 +1,5 @@
 import { javaScriptSemanticPrecisionControls } from "./JavaScriptSemanticPrecisionControls.js";
 import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
-import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
 import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
 import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
@@ -210,13 +209,6 @@ export const reconstructJavaScriptArtifact = async (
         timeoutMs: timeout.value,
         timeoutSource: timeout.source,
       };
-      const preloads = await discoverJavaScriptPreloadPaths(
-        files,
-        sourceLimits,
-        scope,
-        sourceAnalysis,
-        signal,
-      );
       const worker = await sourceAnalysis(
         sourceLimits,
         files.files.filter(
@@ -260,8 +252,6 @@ export const reconstructJavaScriptArtifact = async (
             });
             abortIfNeeded(signal);
           },
-          preloads.paths,
-          preloads.limitations,
         );
       } catch (cause: unknown) {
         analysisFailure = { cause };

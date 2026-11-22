@@ -7,11 +7,15 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { translateArtifactFailure } from "../../resources/index.js";
-import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type {
+  JavaScriptArtifactFile,
+  JavaScriptArtifactFileSet,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { ElectronBrowserWindowFinding } from "../../domain/javascript/electronStaticAnalysisTypes.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import type { JavaScriptSourceAnalysisLimits } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
-import { createJavaScriptPackageTypeLookup } from "./JavaScriptArtifactAnalysis.js";
 import { JavaScriptJsonDocuments } from "./JavaScriptJsonDocuments.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
@@ -20,6 +24,119 @@ export interface JavaScriptPreloadDiscovery {
   readonly paths: ReadonlySet<string>;
   readonly limitations: readonly string[];
 }
+
+/**
+ * Node's package scope for a source is its nearest package.json; the lookup
+ * stops at a `node_modules` directory (Node's package scope resolution). Only
+ * a same-container, readable manifest object establishes the type; any other
+ * nearest manifest, including one whose bytes are unavailable, or none in the
+ * inventory, leaves the scope unknown.
+ */
+export const createJavaScriptPackageTypeLookup = (
+  fileSet: JavaScriptArtifactFileSet,
+  jsonDocuments: JavaScriptJsonDocuments,
+): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {
+  const manifests = new Map<string, JavaScriptArtifactFile>();
+  for (const file of fileSet.files)
+    if (posix.basename(file.path) === "package.json")
+      manifests.set(
+        `${file.container_sha256}:${posix.dirname(file.path)}`,
+        file,
+      );
+  const unavailableManifests = new Set(
+    fileSet.unavailable_relevant_files
+      .filter(({ path }) => posix.basename(path) === "package.json")
+      .map(
+        ({ path, container_sha256 }) =>
+          `${container_sha256}:${posix.dirname(path)}`,
+      ),
+  );
+  return (file) => {
+    for (
+      let directory = posix.dirname(file.path);
+      posix.basename(directory) !== "node_modules";
+      directory = posix.dirname(directory)
+    ) {
+      const key = `${file.container_sha256}:${directory}`;
+      if (unavailableManifests.has(key)) return "unknown";
+      const manifest = manifests.get(key);
+      if (manifest !== undefined) {
+        const document = jsonDocuments.read(manifest);
+        if (document.status !== "included" || document.packageFields === null)
+          return "unknown";
+        const type = document.packageFields.type;
+        return type === "module" || type === "commonjs" ? type : "unspecified";
+      }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
+      if (directory === "." || directory === "" || directory === "/") break;
+    }
+    return "unknown";
+  };
+};
+
+/** Canonical same-container preload lookup key shared by discovery and analysis. */
+export const preloadTargetKey = (
+  file: Pick<JavaScriptArtifactFile, "container_sha256" | "path">,
+): string => `${file.container_sha256}:${file.path}`;
+
+/** Whether any included `.js` file inherits `"module"` from its package scope. */
+export const hasModuleScopedJavaScript = (
+  files: readonly JavaScriptArtifactFile[],
+  packageTypeFor: (file: JavaScriptArtifactFile) => JavaScriptPackageType,
+): boolean =>
+  files.some(
+    (file) =>
+      file.kind === "javascript" &&
+      file.text.included &&
+      posix.extname(file.path) === ".js" &&
+      packageTypeFor(file) === "module",
+  );
+
+/** Resolve same-container preload paths declared by one source's BrowserWindows. */
+export const collectJavaScriptPreloadPathsFromWindows = (input: {
+  readonly sourceFile: JavaScriptArtifactFile;
+  readonly windows: readonly ElectronBrowserWindowFinding[];
+  readonly files: ReadonlyMap<string, JavaScriptArtifactFile>;
+  readonly jsonDocuments: JavaScriptJsonDocuments;
+  readonly unanalyzedFiles?: JavaScriptArtifactFileSet["unanalyzed_files"];
+  readonly targetPaths: Set<string>;
+}): void => {
+  for (const window of input.windows) {
+    if (window.preload_path === null || window.loader_authority === "candidate")
+      continue;
+    const resolution = resolveArtifactPathByContext({
+      declaredPath: window.preload_path,
+      sourcePath: input.sourceFile.path,
+      context: window.preload_resolution_context,
+      files: input.files,
+      jsonDocuments: input.jsonDocuments,
+      unanalyzedFiles: input.unanalyzedFiles,
+      runtimePathKind: "exact-file",
+    });
+    if (
+      resolution.resolution_status !== "resolved" ||
+      resolution.resolved_path === null
+    )
+      continue;
+    const target = input.files.get(resolution.resolved_path);
+    if (target?.container_sha256 === input.sourceFile.container_sha256)
+      input.targetPaths.add(preloadTargetKey(target));
+  }
+};
+
+/** Describe an unread source gap that may leave a `.js` preload in module scope. */
+export const formatPreloadDiscoveryLimitation = (
+  filePath: string,
+  errorMessage: string,
+  skipped: boolean,
+  laterSources: number,
+): string =>
+  skipped || laterSources === 0
+    ? `Preload discovery could not read ${filePath} (${errorMessage}); a .js preload declared only there keeps its package scope.`
+    : `Preload discovery stopped at ${filePath} (${errorMessage}); a .js preload declared only there or in ${String(laterSources)} later sources keeps its package scope.`;
 
 /** Resolve declared preload identities before choosing any .js file's loader.
  * Discovery uses the same bounded worker and path owner as normal analysis.
@@ -39,15 +156,7 @@ export const discoverJavaScriptPreloadPaths = async (
     fileSet,
     jsonDocuments,
   );
-  if (
-    !fileSet.files.some(
-      (file) =>
-        file.kind === "javascript" &&
-        file.text.included &&
-        posix.extname(file.path) === ".js" &&
-        packageTypeFor(file) === "module",
-    )
-  )
+  if (!hasModuleScopedJavaScript(fileSet.files, packageTypeFor))
     return { paths, limitations };
   const sources = fileSet.files.filter(
     (file) => file.kind === "javascript" && file.text.included,
@@ -82,37 +191,24 @@ export const discoverJavaScriptPreloadPaths = async (
           error.reportedLimits?.parent_result_budget_exhausted !== true;
         const later = sources.length - index - 1;
         limitations.push(
-          skipped || later === 0
-            ? `Preload discovery could not read ${file.path} (${error.message}); a .js preload declared only there keeps its package scope.`
-            : `Preload discovery stopped at ${file.path} (${error.message}); a .js preload declared only there or in ${String(later)} later sources keeps its package scope.`,
+          formatPreloadDiscoveryLimitation(
+            file.path,
+            error.message,
+            skipped,
+            later,
+          ),
         );
         if (skipped) continue;
         break;
       }
-      for (const window of result.value.javascript.electron.browser_windows) {
-        if (
-          window.preload_path === null ||
-          window.loader_authority === "candidate"
-        )
-          continue;
-        const resolution = resolveArtifactPathByContext({
-          declaredPath: window.preload_path,
-          sourcePath: file.path,
-          context: window.preload_resolution_context,
-          files,
-          jsonDocuments,
-          unanalyzedFiles: fileSet.unanalyzed_files,
-          runtimePathKind: "exact-file",
-        });
-        if (
-          resolution.resolution_status !== "resolved" ||
-          resolution.resolved_path === null
-        )
-          continue;
-        const target = files.get(resolution.resolved_path);
-        if (target?.container_sha256 === file.container_sha256)
-          paths.add(`${target.container_sha256}:${target.path}`);
-      }
+      collectJavaScriptPreloadPathsFromWindows({
+        sourceFile: file,
+        windows: result.value.javascript.electron.browser_windows,
+        files,
+        jsonDocuments,
+        unanalyzedFiles: fileSet.unanalyzed_files,
+        targetPaths: paths,
+      });
     }
   } catch (cause: unknown) {
     outcome = { kind: "failed", cause };

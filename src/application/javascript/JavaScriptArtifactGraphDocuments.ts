@@ -17,15 +17,16 @@ import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution
 export const addJavaScriptHtmlRoles = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
-  const byHtml = new Map<string, typeof context.analysis.html_scripts>();
+  const byHtml = new Map<
+    string,
+    (typeof context.analysis.html_scripts)[number][]
+  >();
   for (const script of context.analysis.html_scripts) {
     if (script.script_type !== "classic" && script.script_type !== "module")
       continue;
     const existing = byHtml.get(script.html_path);
-    byHtml.set(
-      script.html_path,
-      existing === undefined ? [script] : [...existing, script],
-    );
+    if (existing === undefined) byHtml.set(script.html_path, [script]);
+    else existing.push(script);
   }
   for (const [htmlPath, scripts] of byHtml) {
     const html = context.filesByPath.get(htmlPath);
