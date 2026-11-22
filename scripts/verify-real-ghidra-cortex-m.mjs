@@ -219,6 +219,9 @@ try {
 const verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
 assert.deepEqual(verifierRun.process_lineage.descendants, []);
+// Every owned process has stopped, so the workspace can go; a failure above
+// leaves it in place for diagnosis.
+await workspaceFixture.release();
 process.stdout.write(
   JSON.stringify({
     verifier_run: verifierRun,
