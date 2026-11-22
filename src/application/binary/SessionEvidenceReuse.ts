@@ -132,7 +132,7 @@ export const completedOperationEvidence = (
       parameters,
       observation,
       "observed",
-      { callerTarget: options.target },
+      { callerTarget: options.target, immutable: true },
     ),
   );
 };
