@@ -34,6 +34,12 @@ export function admitUefiFlashImage(
   );
 }
 
+/** Known file facts a caller already read before probing for a PI flash image. */
+export interface UefiFlashProbeKnownInput {
+  readonly fileSize?: number;
+  readonly prefix?: Buffer;
+}
+
 /**
  * Detect a PI flash image through an aligned `_FVH` plausibility probe over
  * the declared admission prefix (1 MiB). The prefix decides most misses
@@ -44,28 +50,50 @@ export function admitUefiFlashImage(
 export async function probeUefiFlashImage(
   handle: FileHandle,
   signal?: AbortSignal,
+  known?: UefiFlashProbeKnownInput,
 ): Promise<boolean> {
   const throwIfCancelled = (): void => {
     if (signal?.aborted === true)
       throw cancelledBy("resolve_binary_target", signal);
   };
   throwIfCancelled();
-  const { size } = await handle.stat();
-  const prefix = await readFileHandleRange(
-    handle,
-    0,
-    Math.min(UEFI_FIRMWARE_LIMITS.scanProbeBytes, size),
-    throwIfCancelled,
-  );
+  const size = known?.fileSize ?? (await handle.stat()).size;
+  throwIfCancelled();
+  if (known?.prefix !== undefined && claimsExecutableHeader(known.prefix, size))
+    return false;
+
+  const probeBytes = Math.min(UEFI_FIRMWARE_LIMITS.scanProbeBytes, size);
+  let prefix: Buffer;
+  if (known?.prefix !== undefined && known.prefix.length >= probeBytes) {
+    prefix = known.prefix.subarray(0, probeBytes);
+  } else if (known?.prefix !== undefined && known.prefix.length > 0) {
+    const tail = await readFileHandleRange(
+      handle,
+      known.prefix.length,
+      probeBytes - known.prefix.length,
+      throwIfCancelled,
+    );
+    prefix = Buffer.concat([known.prefix, tail]);
+  } else {
+    prefix = await readFileHandleRange(handle, 0, probeBytes, throwIfCancelled);
+  }
   throwIfCancelled();
   if (claimsExecutableHeader(prefix, size) || !prefix.includes("_FVH", "ascii"))
     return false;
 
   const readLimit = Math.min(UEFI_FIRMWARE_LIMITS.inputBytes, size);
-  const observed =
-    readLimit <= prefix.length
-      ? prefix
-      : await readFileHandleRange(handle, 0, readLimit, throwIfCancelled);
+  let observed: Buffer;
+  if (readLimit <= prefix.length) {
+    observed = prefix;
+  } else {
+    const tail = await readFileHandleRange(
+      handle,
+      prefix.length,
+      readLimit - prefix.length,
+      throwIfCancelled,
+    );
+    observed = Buffer.concat([prefix, tail]);
+  }
   throwIfCancelled();
   return admitUefiFlashImage(observed, prefix.length);
 }

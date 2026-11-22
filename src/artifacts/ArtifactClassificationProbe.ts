@@ -148,17 +148,27 @@ export const createArtifactClassificationProbe = (
   let mzWindowsHeaderRecord: MzWindowsHeaderRecordEvidence | undefined;
   let mzWindowsHeaderOffset: number | undefined;
   let mzHeaderChecked = false;
-  let suffix = Buffer.alloc(0);
+  const suffixBuffer = Buffer.allocUnsafe(ARTIFACT_CLASSIFICATION_SUFFIX_BYTES);
+  let suffixLength = 0;
   const observeSuffix = (bytes: Uint8Array): void => {
-    const joined =
-      bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES
-        ? bytes
-        : Buffer.concat([suffix, bytes]);
-    suffix = Buffer.from(
-      joined.subarray(
-        Math.max(0, joined.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
-      ),
-    );
+    if (bytes.length === 0) return;
+    if (bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
+      suffixBuffer.set(
+        bytes.subarray(bytes.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
+        0,
+      );
+      suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
+      return;
+    }
+    if (suffixLength + bytes.length <= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES) {
+      suffixBuffer.set(bytes, suffixLength);
+      suffixLength += bytes.length;
+      return;
+    }
+    const keep = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES - bytes.length;
+    suffixBuffer.copyWithin(0, suffixLength - keep, suffixLength);
+    suffixBuffer.set(bytes, keep);
+    suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
   };
   const observeSignatureWindow = (
     offset: number,
@@ -177,9 +187,10 @@ export const createArtifactClassificationProbe = (
     previous?.copy(window);
     let observedLength = previous?.length ?? 0;
     if (start < end && start <= offset + observedLength) {
-      Buffer.from(
+      window.set(
         sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
-      ).copy(window, start - offset);
+        start - offset,
+      );
       observedLength = Math.max(observedLength, end - offset);
     }
     if (observedLength === 0) return;
@@ -206,9 +217,10 @@ export const createArtifactClassificationProbe = (
     previous?.copy(window);
     let observedLength = previous?.length ?? 0;
     if (start <= offset + observedLength) {
-      Buffer.from(
+      window.set(
         sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
-      ).copy(window, start - offset);
+        start - offset,
+      );
       observedLength = Math.max(observedLength, end - offset);
     }
     if (observedLength === 0) return;
@@ -236,6 +248,8 @@ export const createArtifactClassificationProbe = (
     }
   };
   const retainedPrefix = (): Buffer => {
+    if (blocks.length === 0) return Buffer.alloc(0);
+    if (blocks.length === 1) return blocks[0]!.subarray(0, retainedBytes);
     const prefix = Buffer.allocUnsafe(retainedBytes);
     let copied = 0;
     for (const block of blocks) {
@@ -328,7 +342,9 @@ export const createArtifactClassificationProbe = (
       return finishClassificationEvidence(
         retainedPrefix(),
         // Bytes the probe did not observe could still follow its last write.
-        observedBytes === archiveBytes ? suffix : undefined,
+        observedBytes === archiveBytes
+          ? suffixBuffer.subarray(0, suffixLength)
+          : undefined,
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

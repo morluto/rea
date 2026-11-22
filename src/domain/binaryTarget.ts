@@ -118,6 +118,13 @@ export const PE_RECORD_HEADER_BYTES = 24;
 /** Bound the optional-header read used by structural PE admission. */
 export const MAX_PE_OPTIONAL_HEADER_BYTES = 4096;
 
+const hasElfMagic = (bytes: Buffer): boolean =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x7f &&
+  bytes[1] === 0x45 &&
+  bytes[2] === 0x4c &&
+  bytes[3] === 0x46;
+
 /**
  * Whether leading bytes begin an executable header family that
  * `parseExecutableHeader` interprets, whether or not that header is valid.
@@ -127,7 +134,7 @@ export const claimsExecutableHeader = (
   fileSize = bytes.length,
 ): boolean =>
   (bytes.length >= 4 &&
-    (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+    (hasElfMagic(bytes) ||
       readMachoHeaderPrefixFacts(bytes).format !== null)) ||
   (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) ||
   readFatContainerHeader(bytes, fileSize).state !== "not-fat";
@@ -144,11 +151,7 @@ export const parseExecutableHeader = (
   mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence,
   fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  )
-    return parseElf(bytes, fileSize);
+  if (hasElfMagic(bytes)) return parseElf(bytes, fileSize);
   if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
     return parseMzExecutableMetadata(
       bytes,
@@ -176,10 +179,7 @@ export const readNativeHeaderFormat = (
   bytes: Buffer,
   fileSize = bytes.length,
 ): Result<"elf" | "mach-o" | null, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  ) {
+  if (hasElfMagic(bytes)) {
     const header = readElfFixedHeader(bytes, fileSize);
     return header.ok ? ok("elf") : header;
   }
