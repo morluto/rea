@@ -1433,7 +1433,7 @@ function* reconstructAndroidOtaPartitionSteps(
   options: { readonly verifyDeclaredHash?: boolean } = {},
 ): Generator<
   { readonly raw: Uint8Array; readonly maxOutputLength: number },
-  Result<Uint8Array, AndroidOtaPayloadReconstructError>,
+  Result<Buffer, AndroidOtaPayloadReconstructError>,
   ZstandardFrameResult
 > {
   const refused = androidOtaExtractRefusalError(partition);
@@ -1560,7 +1560,7 @@ export const reconstructAndroidOtaPartitionCooperative = async (
   readBlob: (offset: number, length: number) => Uint8Array,
   pause: ZstandardFramePause,
   options: { readonly verifyDeclaredHash?: boolean } = {},
-): Promise<Result<Uint8Array, AndroidOtaPayloadReconstructError>> => {
+): Promise<Result<Buffer, AndroidOtaPayloadReconstructError>> => {
   const steps = reconstructAndroidOtaPartitionSteps(
     partition,
     blockSize,
