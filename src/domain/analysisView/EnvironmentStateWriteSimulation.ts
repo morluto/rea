@@ -1145,14 +1145,19 @@ export class EnvironmentStateWriteSimulation {
     );
     const writes = this.#pending.filter((write) => members.has(write.target));
     const fields = new Set<string>();
-    for (const [index, { target, before }] of writes.entries()) {
-      if (before === null) continue;
-      const after =
-        writes.slice(index + 1).find((later) => later.target === target)
-          ?.before ?? members.get(target)!;
-      for (const field of Object.keys(after))
-        if (!same(ownMember(before, field), ownMember(after, field)))
-          fields.add(field);
+    const nextBeforeByTarget = new Map<
+      string,
+      (typeof writes)[number]["before"]
+    >();
+    for (let index = writes.length - 1; index >= 0; index -= 1) {
+      const { target, before } = writes[index]!;
+      if (before !== null) {
+        const after = nextBeforeByTarget.get(target) ?? members.get(target)!;
+        for (const field of Object.keys(after))
+          if (!same(ownMember(before, field), ownMember(after, field)))
+            fields.add(field);
+      }
+      nextBeforeByTarget.set(target, before);
     }
     const order = [...members.keys()];
     const refuted = this.#refutedSorts.get(view.type) ?? new Set<string>();

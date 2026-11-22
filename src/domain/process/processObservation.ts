@@ -195,12 +195,14 @@ export const projectProcessObservation = (
 ): ProcessObservation | null => {
   const projected = projectedRecord(capture, location);
   if (projected === null) return null;
-  return createProcessObservation({
+  return {
+    event_id: `obs.${location.collection}.${String(location.index)}`,
     source: projected.source,
     source_sequence: location.index,
+    capture_order: location.capture_order,
     captured_at_ms: projected.captured_at_ms,
     subject_id: projected.subject_id,
     location,
     payload: projected.payload,
-  });
+  };
 };
