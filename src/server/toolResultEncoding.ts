@@ -98,66 +98,13 @@ const measureJsonPart = (
   readonly escapedBytes: number;
   readonly escapedCodeUnits: number;
 } => {
-  let rawBytes = 0;
-  let escapedBytes = 0;
-  let escapedCodeUnits = 0;
-  const length = part.length;
-  for (let i = 0; i < length; i += 1) {
-    const code = part.charCodeAt(i);
-    if (code < 0x80) {
-      rawBytes += 1;
-      if (
-        code === 0x22 ||
-        code === 0x5c ||
-        code === 0x08 ||
-        code === 0x09 ||
-        code === 0x0a ||
-        code === 0x0c ||
-        code === 0x0d
-      ) {
-        escapedBytes += 2;
-        escapedCodeUnits += 2;
-      } else if (code < 0x20) {
-        escapedBytes += 6;
-        escapedCodeUnits += 6;
-      } else {
-        escapedBytes += 1;
-        escapedCodeUnits += 1;
-      }
-      continue;
-    }
-    if (code < 0x800) {
-      rawBytes += 2;
-      escapedBytes += 2;
-      escapedCodeUnits += 1;
-      continue;
-    }
-    if (code >= 0xd800 && code <= 0xdbff) {
-      if (i + 1 < length) {
-        const next = part.charCodeAt(i + 1);
-        if (next >= 0xdc00 && next <= 0xdfff) {
-          rawBytes += 4;
-          escapedBytes += 4;
-          escapedCodeUnits += 2;
-          i += 1;
-          continue;
-        }
-      }
-      rawBytes += 3;
-      escapedBytes += 6;
-      escapedCodeUnits += 6;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) {
-      rawBytes += 3;
-      escapedBytes += 6;
-      escapedCodeUnits += 6;
-      continue;
-    }
-    rawBytes += 3;
-    escapedBytes += 3;
-    escapedCodeUnits += 1;
-  }
+  const rawBytes = Buffer.byteLength(part);
+  const escaped = JSON.stringify(part);
+  const escapedCodeUnits = escaped.length - 2;
+  const escapedBytes =
+    rawBytes === part.length
+      ? escapedCodeUnits
+      : Buffer.byteLength(escaped) - 2;
   return { rawBytes, escapedBytes, escapedCodeUnits };
 };
 
