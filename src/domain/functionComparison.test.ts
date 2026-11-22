@@ -1020,8 +1020,8 @@ describe("function comparison", () => {
 
 describe("function comparison normalization and provenance", () => {
   it("normalizes CFG relocation but preserves changed edges and constants", () => {
-    const left = observe("2", dossier("return 0x10;", "0x1000"));
-    const relocated = observe("3", dossier("return 0x10;", "0x2000"));
+    const left = observe("2", dossier("return 0x10; /* 🎨 */", "0x1000"));
+    const relocated = observe("3", dossier("return 0x10; /* 🎨 */", "0x2000"));
     const same = compareFunctions(
       functionSnapshotFixture(left),
       functionSnapshotFixture(relocated),
@@ -1033,9 +1033,17 @@ describe("function comparison normalization and provenance", () => {
     });
     expect(
       same.dimensions.find(({ dimension }) => dimension === "pseudocode"),
-    ).toMatchObject({ status: "unchanged" });
+    ).toMatchObject({
+      status: "unchanged",
+      left_count: 20,
+      right_count: 20,
+      text_delta: { added_lines: 0, removed_lines: 0, hunks: 0 },
+    });
 
-    const changed = observe("4", dossier("return 0x20;", "0x2000", ["0x2000"]));
+    const changed = observe(
+      "4",
+      dossier("return 0x20; /* 🎨 */", "0x2000", ["0x2000"]),
+    );
     const comparison = compareFunctions(
       functionSnapshotFixture(left),
       functionSnapshotFixture(changed),

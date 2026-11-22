@@ -124,9 +124,8 @@ export interface DoctorHost {
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
-  validTarget(path: string): Promise<boolean>;
-  /** Route-specific target admission details, when supplied by the host. */
-  inspectTarget?(path: string): Promise<DoctorCheck>;
+  /** Route-specific target admission details from the host. */
+  inspectTarget(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
   inspectLinuxHopper(
     path: string,
@@ -989,15 +988,6 @@ export const systemDoctorHost = (
     macosVersion: () =>
       readMacosVersion(hostExecFileOutput, commandEnvironment),
     linuxDistribution: () => readLinuxDistribution(architecture),
-    async validTarget(path) {
-      const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
-      return (
-        await parseBinaryTarget(path, {
-          cwd: process.cwd(),
-          hostArchitecture: architecture,
-        })
-      ).ok;
-    },
     async inspectTarget(path) {
       const { parseBinaryTarget } = await import("./BinaryTargetResolver.js");
       const result = await parseBinaryTarget(path, {
