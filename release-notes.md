@@ -2,7 +2,7 @@
 ---
 
 
-## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-21)
+## [6.11.0](https://github.com/morluto/rea/compare/rea-agents-6.10.1...rea-agents-6.11.0) (2026-11-22)
 
 
 ### Features
@@ -106,6 +106,7 @@
 * **v8:** admit the six-word code cache header of V8 8.8 through 11.7 ([cc19240](https://github.com/morluto/rea/commit/cc19240ca963a263f8c33a061782385e76344e0f))
 * **verification:** bind DeepSeek skill evidence to its installed directory ([#13238](https://github.com/morluto/rea/issues/13238)) ([e3ce2b5](https://github.com/morluto/rea/commit/e3ce2b53d4225eed98977727534f97c0e0e06433))
 * **verification:** read back Qwen skill output before analysis ([#13240](https://github.com/morluto/rea/issues/13240)) ([63ff46e](https://github.com/morluto/rea/commit/63ff46e9ee3c1ea678c33891032c0e70eec67987))
+* **verification:** require Gemini native answer and skill provenance ([#13241](https://github.com/morluto/rea/issues/13241)) ([34c69f6](https://github.com/morluto/rea/commit/34c69f606dd5032089de091adaefd6f179afb059))
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
 * **verify:** require confirmed DeepSeek process cleanup ([#13043](https://github.com/morluto/rea/issues/13043)) ([4aed56e](https://github.com/morluto/rea/commit/4aed56eccb68e49f411e472134feafd6b2a7996f))
 * **verify:** require DeepSeek Harness terminal JSON ([#13034](https://github.com/morluto/rea/issues/13034)) ([9b1631a](https://github.com/morluto/rea/commit/9b1631a1d73e44156b5347838198da358341fc34))
