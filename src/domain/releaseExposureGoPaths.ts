@@ -26,12 +26,13 @@ const goProfilePath = (value: string): string | null =>
 /**
  * One field as Go's `quoted.Split` reads a flag value: a field that begins with
  * `"` or `'` runs to the matching quote, which it drops; any other field runs to
- * whitespace and keeps every quote in it as a literal character.
+ * ASCII space, tab, CR, or LF and keeps every quote in it as a literal
+ * character. Other whitespace can be part of a filesystem name.
  */
-const GO_FLAG_FIELD = /"([^"]*)"|'([^']*)'|[^\s"'][^\s]*/gu;
+const GO_FLAG_FIELD = /"([^"]*)"|'([^']*)'|[^ \t\r\n"'][^ \t\r\n]*/gu;
 /** A path after a flag prefix, whitespace, `=`, or `,`, as in `-isystem/opt/x`. */
 const GO_FLAG_PATH =
-  /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\\s=,]+\\)[^=,]+)/gu;
+  /(?:^|[ \t\r\n=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\ \t\r\n=,]+\\)[^=,]+)/gu;
 
 /**
  * Settings read by a C compiler, where the flags below take a directory or file.
@@ -44,7 +45,7 @@ const GO_FLAG_PATH =
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?\s*|--sysroot(?:=|\s+|$)|-fprofile-(?:dir|generate|use)=)(.*)$/su;
+  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?[ \t\r\n]*|--sysroot(?:=|[ \t\r\n]+|$)|-fprofile-(?:dir|generate|use)=)(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take

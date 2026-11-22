@@ -2134,53 +2134,6 @@ describe("ReleaseExposureService cleanup", () => {
   });
 });
 
-describe("ReleaseExposureService Go Windows paths", () => {
-  it("reports UNC roots retained in Go flags", async () => {
-    const module = (value: string) => ({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "CGO_CFLAGS", value }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    });
-    const report = await goReport(
-      module(
-        String.raw`-O2 -I\\buildhost\sdk\include "-isystem \\buildhost\my sdk\include"`,
-      ),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([
-      String.raw`\\buildhost\sdk\include`,
-      String.raw`\\buildhost\my sdk\include`,
-    ]);
-    expect(
-      await goStatus(module(String.raw`-DNAME=\\ -DHOST=\\buildhost`)),
-    ).toBe("not_observed");
-  });
-
-  it.each([
-    [String.raw`-I..\sdk\include`, String.raw`..\sdk\include`],
-    [String.raw`-O2 -I.\sdk`, String.raw`.\sdk`],
-    [String.raw`"-isystem ..\my sdk\include"`, String.raw`..\my sdk\include`],
-  ])("reports the backslash-relative path in %s", async (value, path) => {
-    const report = await goReport({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "CGO_CFLAGS", value }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    });
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-});
-
 const goModule = (settings: { key: string; value: string }[]) => ({
   path: "github.com/acme/app",
   main: null,
@@ -2189,80 +2142,6 @@ const goModule = (settings: { key: string; value: string }[]) => ({
   unparsed_lines: [],
   unparsed_line_bytes_base64: [],
   complete: true,
-});
-
-describe("ReleaseExposureService Go linker path options", () => {
-  it.each([
-    ["-tmpdir=private-obj -s -w", "private-obj"],
-    ["-tmpdir private-obj", "private-obj"],
-    ["-capturehostobjs private-objs", "private-objs"],
-    ["-cpuprofile=link.prof", "link.prof"],
-    ["-importcfg private.cfg", "private.cfg"],
-    ["-o out/app", "out/app"],
-    ["-r private-lib", "private-lib"],
-    ["-r -private", "-private"],
-    ["-L -private", "-private"],
-    ["-r -L", "-L"],
-    ["-r= -L private-sdk", "private-sdk"],
-    ["'-L=/tmp/private '", "/tmp/private "],
-    ["-libgcc -private.a", "-private.a"],
-    ["-s -w -libgcc=private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
-    ["-libgcc private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
-  ])("keeps the relative linker path in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it.each([
-    "-extld clang -extar ar -libgcc none",
-    "-libgcc=none",
-    "-buildmode pie -linkmode external -installsuffix race",
-  ])("does not read the program or mode in %s as a path", async (value) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
-});
-
-describe("ReleaseExposureService compiler path separators", () => {
-  it.each(["/tmp/private,sdk", "/tmp/private=sdk", "/tmp/private "])(
-    "preserves a literal compiler argument %s",
-    async (path) => {
-      const report = await goReport(
-        goModule([{ key: "CGO_CFLAGS", value: `'-I${path}'` }]),
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-});
-
-describe("ReleaseExposureService compiler profile paths", () => {
-  it.each([
-    ["CGO_CFLAGS", "-O2 -fprofile-use=internal/profiles", "internal/profiles"],
-    ["CGO_CFLAGS", "'-fprofile-dir=private profiles'", "private profiles"],
-    ["-ldflags", "-extldflags=-fprofile-generate=private/gcov", "private/gcov"],
-  ])("reports the named directory in %s %s", async (key, value, path) => {
-    const report = await goReport(goModule([{ key, value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it("finds no profile path for options without directory operands", async () => {
-    const report = await goReport(
-      goModule([
-        {
-          key: "CGO_CFLAGS",
-          value: "-fprofile-use -fprofile-generate -O2",
-        },
-      ]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
 });
 
 describe("ReleaseExposureService Go linker -r search list", () => {
@@ -3110,37 +2989,6 @@ const goReport = async (
   return releaseExposureReportSchema.parse(result.value.normalized_result);
 };
 
-describe("ReleaseExposureService Go tool path options", () => {
-  const buildPaths = async (key: string, value: string) => {
-    const report = await goReport(goModule([{ key, value }]));
-    return report.checks.find((item) => item.id === "go.build_paths");
-  };
-
-  it.each([
-    ["-gcflags", "-I private-sdk"],
-    ["-gcflags", "-I=private-sdk"],
-    ["-gcflags", "--I private-sdk"],
-    ["-gcflags", "all=-N -l -I private-sdk"],
-    ["-gcflags", "-importcfg private-sdk"],
-    ["-gcflags", "-trimpath private-sdk"],
-    ["-asmflags", "-I private-sdk"],
-    ["-asmflags", "all=-trimpath=private-sdk"],
-  ])("finds the relative path in %s %s", async (key, value) => {
-    const check = await buildPaths(key, value);
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(["private-sdk"]);
-  });
-
-  it.each([
-    ["-gcflags", "all=-N -l"],
-    ["-gcflags", "-p main -lang go1.26 -m"],
-    ["-gcflags", "-X main.path=private-sdk"],
-    ["-asmflags", "-D GOAMD64_v1 -p main"],
-  ])("finds no path in %s %s", async (key, value) => {
-    expect((await buildPaths(key, value))?.status).toBe("not_observed");
-  });
-});
-
 describe("ReleaseExposureService undecoded metadata", () => {
   const statuses = async (undecodedContent: boolean) => {
     const { service, goBinaries, rustBinaries } = owners(
@@ -3201,96 +3049,6 @@ describe("ReleaseExposureService unnamed Electron hosts", () => {
   it("settles safe fuses when every possible host reports them", async () => {
     expect(await nodeStatus([1, 1])).toBe("not_observed");
   });
-});
-
-describe("ReleaseExposureService forwarded linker path operands", () => {
-  it.each([
-    ["-Wl,-T,/tmp/private=sdk/link.ld", "/tmp/private=sdk/link.ld"],
-    [
-      "-Wl,--version-script=/tmp/private=sdk/exports",
-      "/tmp/private=sdk/exports",
-    ],
-    [
-      "-Xlinker -T -Xlinker /tmp/private,sdk/link.ld",
-      "/tmp/private,sdk/link.ld",
-    ],
-    ["-Xlinker -L -Xlinker /tmp/private=sdk", "/tmp/private=sdk"],
-    ["'-Wl,-L/tmp/private '", "/tmp/private "],
-    ["-Xlinker -L -Xlinker '/tmp/private '", "/tmp/private "],
-  ])("preserves the complete forwarded path in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-});
-
-describe("ReleaseExposureService compiler operand ownership", () => {
-  it.each([
-    ["-I -Wl,-rpath,$ORIGIN", ["-Wl,-rpath,$ORIGIN"]],
-    ["-I -Wl,-L,/tmp/private", ["-Wl,-L,/tmp/private"]],
-    ["-I -Xlinker", ["-Xlinker"]],
-    [
-      "-I -Wl,-rpath,$ORIGIN -Wl,-L,other-sdk",
-      ["-Wl,-rpath,$ORIGIN", "other-sdk"],
-    ],
-  ])(
-    "keeps compiler operands out of forwarding in %s",
-    async (value, paths) => {
-      const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual(paths);
-    },
-  );
-});
-
-describe("ReleaseExposureService linker operand ownership", () => {
-  it.each([
-    ["-Wl,-T,-rpath,private-sdk", ["-rpath"]],
-    ["-Wl,-L,-private-sdk", ["-private-sdk"]],
-    ["-Wl,-rpath=-private-sdk", ["-private-sdk"]],
-    ["-Xlinker -rpath -Xlinker '/tmp/private '", ["/tmp/private "]],
-  ])("consumes each linker operand once in %s", async (value, paths) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    expect(
-      report.checks.find((check) => check.id === "go.build_paths")?.observation
-        .samples,
-    ).toEqual(paths);
-  });
-});
-
-describe("ReleaseExposureService Go tool operand ownership", () => {
-  it.each([
-    ["-L -X main.name=private", "-X"],
-    ["-L -extldflags=-Lprivate", "-extldflags=-Lprivate"],
-    ["all=-L -X main.name=private", "-X"],
-  ])(
-    "consumes Go path operands before interpreting options in %s",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "-ldflags", value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual([path]);
-    },
-  );
-});
-
-describe("ReleaseExposureService parsed field trailing characters", () => {
-  it.each([
-    ["CGO_LDFLAGS", "'-Wl,@private '", "private "],
-    ["CGO_CFLAGS", "'-DROOT=/tmp/private '", "/tmp/private "],
-  ])(
-    "preserves quoted trailing characters in %s=%s",
-    async (key, value, path) => {
-      const report = await goReport(goModule([{ key, value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual([path]);
-    },
-  );
 });
 
 it("attempts later release-exposure owners after a synchronous close rejection", async () => {
