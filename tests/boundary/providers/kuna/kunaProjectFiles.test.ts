@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   parseKunaExportSummary,
@@ -246,3 +246,41 @@ it.each([
     ]);
   },
 );
+
+describe("Kuna streaming line-scanner chunk boundary parity", () => {
+  it("handles empty lines, overlong skipped lines, cross-chunk kept lines, and unterminated EOF lines across chunk sizes", async () => {
+    const padding = "x".repeat(70_000);
+    const body = `  ${padding}`;
+    const header = "entry:  ; 0x1000";
+    // An overlong indented body line must be skipped without triggering MAX_KEPT_LINE_BYTES.
+    const asm = [
+      "",
+      header,
+      body,
+      "",
+      "; --- data ---",
+      "",
+      "g_val:  ; 0x2000 = dat_2000",
+    ].join("\n");
+    const expectedLen = Buffer.byteLength(`${header}\n${body}\n\n`);
+    for (const chunkSize of [1, 3, 17, 4096, 131_072]) {
+      const scanned = await scanKunaAssembly(chunked(asm, chunkSize));
+      if (!scanned.ok) throw new Error(scanned.error);
+      expect([...scanned.value.code.values()]).toEqual([
+        {
+          name: "entry",
+          address: "0x1000",
+          offset: 1,
+          length: expectedLen,
+        },
+      ]);
+      expect([...scanned.value.data]).toEqual([["0x2000", "g_val"]]);
+    }
+    // Cross-chunk overlong kept header still refuses with exact starting byte offset.
+    const overlongHeader = `${header}\n// kept_${padding}\n`;
+    expect(await scanKunaAssembly(chunked(overlongHeader, 16))).toEqual({
+      ok: false,
+      error: `the line at byte ${String(Buffer.byteLength(`${header}\n`))} is too long`,
+    });
+  });
+});
