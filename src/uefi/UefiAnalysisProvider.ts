@@ -230,15 +230,18 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
     }
 
     if (candidateMachine !== undefined) {
-      if (isPe && optionalHeaderMagic !== undefined) {
-        if (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b) {
+      if (isPe) {
+        if (
+          optionalHeaderMagic === undefined ||
+          (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b)
+        ) {
           return "unknown";
         }
       }
 
       const decoded = decodePeMachine(candidateMachine);
       if (decoded !== undefined && !decoded.nativeOsOverride) {
-        if (isPe && optionalHeaderMagic !== undefined) {
+        if (isPe) {
           const expectedMagic = peOptionalHeaderMagic(decoded.architecture);
           if (optionalHeaderMagic !== expectedMagic) {
             return "unknown";
@@ -250,25 +253,13 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           : "32";
       }
       if (candidateMachine === 0x5032 || candidateMachine === 0x6232) {
-        if (
-          isPe &&
-          optionalHeaderMagic !== undefined &&
-          optionalHeaderMagic !== 0x10b
-        ) {
+        if (isPe && optionalHeaderMagic !== 0x10b) {
           return "unknown";
         }
         return "32";
       }
-      if (
-        candidateMachine === 0x5064 ||
-        candidateMachine === 0x5128 ||
-        candidateMachine === 0x6264
-      ) {
-        if (
-          isPe &&
-          optionalHeaderMagic !== undefined &&
-          optionalHeaderMagic !== 0x20b
-        ) {
+      if (candidateMachine === 0x5064 || candidateMachine === 0x6264) {
+        if (isPe && optionalHeaderMagic !== 0x20b) {
           return "unknown";
         }
         return "64";
@@ -321,7 +312,7 @@ export const buildUefiEntryPointScaffolding = (
     machineWidth === "unknown"
       ? ["typedef uintptr_t UINTN;", "typedef UINTN EFI_STATUS;"]
       : [`typedef ${statusType} EFI_STATUS;`];
-  const normType = typeName?.toLowerCase();
+  const normType = typeName?.toLowerCase().trim();
   if (normType === "pei-core") {
     return {
       typedefs: [
@@ -433,6 +424,45 @@ export const buildUefiEntryPointScaffolding = (
         "    (void)ImageHandle;",
         "    (void)MmSystemTable;",
         "    return Status;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (normType === "mm-core-standalone") {
+    return {
+      typedefs: [
+        ...statusTypedefs,
+        "struct _EFI_MM_STARTUP_DESCRIPTOR;",
+        "typedef struct _EFI_MM_STARTUP_DESCRIPTOR EFI_MM_STARTUP_DESCRIPTOR;",
+        "#define EFI_SUCCESS 0",
+      ],
+      prototype: `EFI_STATUS EFIAPI ${identifier}EntryPoint(const EFI_MM_STARTUP_DESCRIPTOR *MmStartupDescriptor);`,
+      functionDefinition: [
+        `EFI_STATUS EFIAPI ${identifier}EntryPoint(`,
+        "    const EFI_MM_STARTUP_DESCRIPTOR *MmStartupDescriptor",
+        ") {",
+        `    // Reconstructed Standalone MM Core EntryPoint scaffolding for ${safeName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    EFI_STATUS Status = EFI_SUCCESS;",
+        "    (void)MmStartupDescriptor;",
+        "    return Status;",
+        "}",
+      ].join("\n"),
+    };
+  }
+
+  if (normType === "smm-core") {
+    return {
+      typedefs: [],
+      prototype: `void EFIAPI ${identifier}EntryPoint(void *SmramDescriptor);`,
+      functionDefinition: [
+        `void EFIAPI ${identifier}EntryPoint(`,
+        "    void *SmramDescriptor",
+        ") {",
+        `    // Reconstructed SMM Core EntryPoint scaffolding for ${safeName}`,
+        `    // Size: ${byteLength} bytes`,
+        "    (void)SmramDescriptor;",
         "}",
       ].join("\n"),
     };
@@ -1375,6 +1405,322 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }> = [];
       const publicationEntries: UefiPublicationEntry[] = [];
 
+      const isMultiModuleBatch = modulesToProcess.length > 1;
+      const ghidraBatchInputDir = join(tempRoot.path, "ghidra_batch_in");
+      const ghidraBatchOutputDir = join(tempRoot.path, "ghidra_batch_out");
+      const ghidraBatchOutcomeMap = new Map<
+        number,
+        { cPath: string; outcomePath: string }
+      >();
+      const preloadedModuleBytes = new Map<number, Buffer>();
+
+      let ghidraBatchFailed = false;
+      if (
+        ghidraBin !== null &&
+        pendingGhidraCleanupFailure === undefined &&
+        modulesToProcess.length > 0
+      ) {
+        const PUBLICATION_RESERVE_MS = 5_000;
+        const timeLeftForGhidra =
+          remainingTimeMs !== undefined
+            ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
+            : 45_000;
+
+        if (timeLeftForGhidra <= 1_000) {
+          isCoveragePartial = true;
+          effectiveLimitations.push(
+            "Ghidra C decompilation omitted to preserve deadline for publication; generated entry point scaffolding instead.",
+          );
+        } else {
+          const ghidraTimeout = Math.floor(
+            Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
+          );
+          const ghidraRunId = `rea-ghidra-decomp-${randomUUID()}`;
+          let ghidraCleanupRetained = false;
+          const retainGhidraCleanup = (owner: ProviderProcessSupervisor) => {
+            if (ghidraCleanupRetained) return;
+            ghidraCleanupRetained = true;
+            const ownership = owner.launch.ownership;
+            const leaseResources =
+              ownership === undefined
+                ? [tempRoot.path]
+                : ownedCommandResources(ownership, tempRoot.path);
+            const cleanupLease = new AnalysisCleanupLease(async () => {
+              const stopped = await owner.stop();
+              if (stopped.status === "incomplete") {
+                throw new Error(stopped.reason);
+              }
+            }, leaseResources);
+            this.#resources.retain({
+              kind: "lease",
+              resource:
+                ownership === undefined
+                  ? `ghidra-process-${ghidraRunId}`
+                  : `ghidra-process-${ownership.runId}`,
+              lease: cleanupLease,
+            });
+            pendingGhidraCleanupFailure = new ProviderCleanupError(
+              UEFI_PROVIDER_IDENTITY.id,
+              leaseResources,
+              { reason: "Ghidra process termination failed on Windows" },
+              { operation: "decompile_uefi_firmware" },
+            );
+            new AnalysisCleanupLeaseGroup(pendingGhidraCleanupFailure, [
+              cleanupLease,
+            ]);
+          };
+
+          try {
+            const bridgeDir = fileURLToPath(
+              new URL("../../bridge/ghidra", import.meta.url),
+            );
+            const scriptPath = join(bridgeDir, "ReaDecompileToC.java");
+            const ghidraHome = join(tempRoot.path, "ghidra_home");
+            const ghidraConfig = join(tempRoot.path, "ghidra_config");
+            const ghidraTemp = join(tempRoot.path, "ghidra_temp");
+            await Promise.all([
+              mkdir(ghidraHome, { recursive: true }),
+              mkdir(ghidraConfig, { recursive: true }),
+              mkdir(ghidraTemp, { recursive: true }),
+            ]);
+            const baseJavaEnv = ghidraJavaEnvironment(
+              ghidraInspection?.javaHome ?? undefined,
+              process.env,
+              this.#hostPlatform.platform,
+            );
+            const ghidraEnv: NodeJS.ProcessEnv = {
+              ...baseJavaEnv,
+              JDK_JAVA_OPTIONS: `-Duser.home="${ghidraHome}" -Djava.io.tmpdir="${ghidraTemp}"`,
+              HOME: ghidraHome,
+              TMPDIR: ghidraTemp,
+              XDG_CONFIG_HOME: ghidraConfig,
+              XDG_CACHE_HOME: ghidraTemp,
+              XDG_DATA_HOME: ghidraHome,
+              ...(this.#hostPlatform.platform === "win32"
+                ? {
+                    USERPROFILE: ghidraHome,
+                    APPDATA: ghidraConfig,
+                    LOCALAPPDATA: ghidraTemp,
+                    TEMP: ghidraTemp,
+                    TMP: ghidraTemp,
+                  }
+                : {}),
+            };
+
+            let ghidraArgs: string[];
+            if (!isMultiModuleBatch) {
+              const singleEfiPath = join(tempRoot.path, "mod_1.efi");
+              const singleOutC = join(tempRoot.path, "mod_1_decompiled.c");
+              const m = modulesToProcess[0]!;
+              let b = m.bytes;
+              if (b === undefined && (m.entry || m.sourcePath)) {
+                if (reader !== undefined && m.entry !== undefined) {
+                  b = await buffer(await reader.open(m.entry, signal));
+                } else if (m.sourcePath) {
+                  b = await readFile(m.sourcePath);
+                }
+                const freshSha256 = sha256Hex(b ?? Buffer.alloc(0));
+                if (
+                  m.expectedSha256 !== undefined &&
+                  freshSha256 !== m.expectedSha256
+                ) {
+                  throw new Error(
+                    `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
+                  );
+                }
+                if (b !== undefined) {
+                  preloadedModuleBytes.set(1, b);
+                }
+              }
+              await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
+              ghidraArgs = [
+                tempRoot.path,
+                "UefiDecomp_1",
+                "-import",
+                singleEfiPath,
+                "-scriptPath",
+                bridgeDir,
+                "-postScript",
+                scriptPath,
+                singleOutC,
+                String(MAX_DECOMPILE_MODULE_BYTES),
+                "-deleteProject",
+              ];
+              ghidraBatchOutcomeMap.set(1, {
+                cPath: singleOutC,
+                outcomePath: `${singleOutC}.outcome.json`,
+              });
+            } else {
+              await Promise.all([
+                mkdir(ghidraBatchInputDir, { recursive: true }),
+                mkdir(ghidraBatchOutputDir, { recursive: true }),
+              ]);
+              for (let i = 0; i < modulesToProcess.length; i++) {
+                const seq = i + 1;
+                const m = modulesToProcess[i]!;
+                let b = m.bytes;
+                if (b === undefined && (m.entry || m.sourcePath)) {
+                  if (reader !== undefined && m.entry !== undefined) {
+                    b = await buffer(await reader.open(m.entry, signal));
+                  } else if (m.sourcePath) {
+                    b = await readFile(m.sourcePath);
+                  }
+                  const freshSha256 = sha256Hex(b ?? Buffer.alloc(0));
+                  if (
+                    m.expectedSha256 !== undefined &&
+                    freshSha256 !== m.expectedSha256
+                  ) {
+                    throw new Error(
+                      `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
+                    );
+                  }
+                  if (b !== undefined) {
+                    preloadedModuleBytes.set(seq, b);
+                  }
+                }
+                const efiFile = join(ghidraBatchInputDir, `mod_${seq}.efi`);
+                await writeFile(efiFile, b ?? Buffer.alloc(0));
+                const outC = join(ghidraBatchOutputDir, `mod_${seq}.efi.c`);
+                ghidraBatchOutcomeMap.set(seq, {
+                  cPath: outC,
+                  outcomePath: `${outC}.outcome.json`,
+                });
+              }
+              ghidraArgs = [
+                tempRoot.path,
+                "UefiDecompBatch",
+                "-import",
+                ghidraBatchInputDir,
+                "-scriptPath",
+                bridgeDir,
+                "-postScript",
+                scriptPath,
+                ghidraBatchOutputDir,
+                String(MAX_DECOMPILE_MODULE_BYTES),
+                "-deleteProject",
+              ];
+            }
+
+            let execCmd = ghidraBin;
+            let execArgs = ghidraArgs;
+            if (
+              this.#hostPlatform.platform === "win32" &&
+              isWindowsBatchFile(ghidraBin)
+            ) {
+              const batch = windowsBatchCommand({
+                environment: ghidraEnv,
+                batchPath: ghidraBin,
+                arguments: ghidraArgs,
+              });
+              execCmd = batch.command;
+              execArgs = [...batch.arguments];
+            }
+            if (this.#hostPlatform.platform === "win32") {
+              await runOwnedCommand(
+                {
+                  command: execCmd,
+                  arguments: execArgs,
+                  runId: ghidraRunId,
+                  windowsVerbatimArguments: true,
+                  platform: "win32",
+                  env: ghidraEnv,
+                  hostEnvironment: process.env,
+                  signal,
+                },
+                {
+                  timeoutMs: ghidraTimeout,
+                  diagnosticBytes: 10 * 1024 * 1024,
+                },
+                {
+                  signal,
+                  retainCleanup: (owner) => retainGhidraCleanup(owner),
+                },
+              );
+            } else {
+              await execFileOutput(execCmd, execArgs, {
+                signal,
+                stopSignal: "SIGTERM",
+                timeout: ghidraTimeout,
+                maxBuffer: 10 * 1024 * 1024,
+                env: ghidraEnv,
+              });
+            }
+          } catch (ghidraBatchError: unknown) {
+            if (signal.aborted) signal.throwIfAborted();
+            if (isAbortOf(ghidraBatchError, signal)) throw ghidraBatchError;
+            ghidraBatchFailed = true;
+            if (
+              ghidraBatchError instanceof OwnedCommandFailure &&
+              ghidraBatchError.cleanupOwner !== undefined
+            ) {
+              retainGhidraCleanup(ghidraBatchError.cleanupOwner);
+            }
+            if (pendingGhidraCleanupFailure !== undefined) {
+              throw pendingGhidraCleanupFailure;
+            }
+            let rawErrMsg = errorMessage(ghidraBatchError);
+            if (ghidraBatchError instanceof OwnedCommandFailure) {
+              const diag =
+                ghidraBatchError.snapshot?.stderr.text?.trim() ||
+                ghidraBatchError.snapshot?.stdout.text?.trim();
+              if (diag) {
+                rawErrMsg = diag;
+              } else if (
+                ghidraBatchError.snapshot?.exitCode !== undefined &&
+                ghidraBatchError.snapshot?.exitCode !== null
+              ) {
+                rawErrMsg = `${ghidraBatchError.message} (exit code ${ghidraBatchError.snapshot.exitCode})`;
+              }
+            }
+            const budgetMatch =
+              /decompiled C output exceeded (\d+) byte limit/i.exec(rawErrMsg);
+            const errDetail = sanitizeDiag(rawErrMsg);
+            if (budgetMatch) {
+              isCoveragePartial = true;
+              const limitBytes = Number(budgetMatch[1]);
+              const limitMsg = formatDecompileBudgetLimit(
+                !isMultiModuleBatch
+                  ? formatMarkdownCodeSpan(
+                      ellipsisExcerpt(
+                        modulesToProcess[0]!.rawName.replace(/[\r\n]+/g, " "),
+                        128,
+                      ),
+                    )
+                  : "one or more modules",
+                limitBytes,
+              );
+              if (!effectiveLimitations.includes(limitMsg)) {
+                effectiveLimitations.push(limitMsg);
+              }
+            } else {
+              isCoveragePartial = true;
+              if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                const targetName = !isMultiModuleBatch
+                  ? formatMarkdownCodeSpan(
+                      ellipsisExcerpt(
+                        modulesToProcess[0]!.rawName.replace(/[\r\n]+/g, " "),
+                        128,
+                      ),
+                    )
+                  : "module batch";
+                effectiveLimitations.push(
+                  `Ghidra C decompilation for ${targetName} failed: ${errDetail}`,
+                );
+                recordedGhidraFailures++;
+              } else if (
+                !effectiveLimitations.includes(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                );
+              }
+            }
+          }
+        }
+      }
+
       for (const mod of modulesToProcess) {
         if (pendingGhidraCleanupFailure !== undefined) {
           throw pendingGhidraCleanupFailure;
@@ -1396,7 +1742,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
 
         moduleSeq++;
-        let modBytes = mod.bytes;
+        let modBytes = preloadedModuleBytes.get(moduleSeq) ?? mod.bytes;
         if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
           let freshBytes: Buffer;
           if (reader !== undefined && mod.entry !== undefined) {
@@ -1710,6 +2056,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   } else {
                     disassemblyStatus = "failed";
+                    isCoveragePartial = true;
                     if (
                       recordedDisassemblyFailures <
                       MAX_DISASSEMBLY_FAILURE_DIAGNOSTICS
@@ -1738,352 +2085,149 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           let cContent: string | null = null;
           let cGenerator: "ghidra" | "scaffold" = "scaffold";
 
-          if (ghidraBin !== null && pendingGhidraCleanupFailure === undefined) {
-            const remainingCBytes =
-              MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
-            const timeLeftForGhidra =
-              remainingTimeMs !== undefined
-                ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
-                : 45_000;
-            if (remainingCBytes <= 0) {
+          const ghidraTarget = ghidraBatchOutcomeMap.get(moduleSeq);
+          const ghidraOutC = ghidraTarget?.cPath;
+          const outcomeFile = ghidraTarget?.outcomePath;
+
+          if (ghidraTarget !== undefined) {
+            let exporterOutcome: {
+              status?: string;
+              decompiled_functions?: number;
+              failed_functions?: number;
+              bytes_written?: number;
+              max_output_bytes?: number;
+              error?: string;
+            } | null = null;
+            if (outcomeFile && existsSync(outcomeFile)) {
+              try {
+                const rawOutcome = await readFile(outcomeFile, "utf8");
+                exporterOutcome = JSON.parse(rawOutcome);
+              } catch {
+                // Ignore unparseable outcome metadata
+              }
+            }
+
+            if (exporterOutcome?.status === "limit_exceeded") {
               isCoveragePartial = true;
-              if (
+              const effectiveLimitBytes =
+                exporterOutcome.max_output_bytes ?? MAX_DECOMPILE_MODULE_BYTES;
+              const perModuleLimit = formatDecompileBudgetLimit(
+                safeLimitationModName,
+                effectiveLimitBytes,
+              );
+              if (!effectiveLimitations.includes(perModuleLimit)) {
+                effectiveLimitations.push(perModuleLimit);
+              }
+              if (ghidraOutC && existsSync(ghidraOutC)) {
+                const candidateC = await readFile(ghidraOutC, "utf8");
+                const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
+                if (
+                  candidateCBytes > 0 &&
+                  totalStagedCBytes + candidateCBytes <=
+                    MAX_DECOMPILE_TOTAL_BYTES
+                ) {
+                  cContent = candidateC;
+                  totalStagedCBytes += candidateCBytes;
+                  cGenerator = "ghidra";
+                  ghidraEngineUsed = true;
+                }
+              }
+            } else if (exporterOutcome?.status === "no_functions") {
+              if ((exporterOutcome.failed_functions ?? 0) > 0) {
+                isCoveragePartial = true;
+              }
+              const noFuncMsg = `Ghidra C decompilation for ${safeLimitationModName} found no usable functions (${exporterOutcome.failed_functions ?? 0} failed); generated entry point scaffolding instead.`;
+              if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                effectiveLimitations.push(noFuncMsg);
+                recordedGhidraFailures++;
+              } else if (
                 !effectiveLimitations.includes(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
                 )
               ) {
                 effectiveLimitations.push(
-                  "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
                 );
               }
-            } else if (timeLeftForGhidra <= 1_000) {
+            } else if (ghidraOutC && existsSync(ghidraOutC)) {
+              const cStat = await stat(ghidraOutC);
+              const remainingCBytes =
+                MAX_DECOMPILE_TOTAL_BYTES - totalStagedCBytes;
+              if (cStat.size > remainingCBytes) {
+                isCoveragePartial = true;
+                if (
+                  !effectiveLimitations.includes(
+                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  )
+                ) {
+                  effectiveLimitations.push(
+                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  );
+                }
+              } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
+                isCoveragePartial = true;
+                const perModuleLimit = formatDecompileBudgetLimit(
+                  safeLimitationModName,
+                  MAX_DECOMPILE_MODULE_BYTES,
+                );
+                if (!effectiveLimitations.includes(perModuleLimit)) {
+                  effectiveLimitations.push(perModuleLimit);
+                }
+              } else {
+                const candidateC = await readFile(ghidraOutC, "utf8");
+                const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
+                if (
+                  totalStagedCBytes + candidateCBytes <=
+                  MAX_DECOMPILE_TOTAL_BYTES
+                ) {
+                  cContent = candidateC;
+                  totalStagedCBytes += candidateCBytes;
+                  cGenerator = "ghidra";
+                  ghidraEngineUsed = true;
+                  const failedCount = exporterOutcome?.failed_functions ?? 0;
+                  if (
+                    failedCount > 0 ||
+                    candidateC.includes(
+                      "/* WARNING: Failed to decompile function",
+                    )
+                  ) {
+                    isCoveragePartial = true;
+                    const incompleteMsg =
+                      failedCount > 0
+                        ? `Ghidra C decompilation for ${safeLimitationModName} was incomplete; ${failedCount} function(s) failed to decompile.`
+                        : `Ghidra C decompilation for ${safeLimitationModName} was incomplete; one or more functions failed to decompile.`;
+                    if (!effectiveLimitations.includes(incompleteMsg)) {
+                      effectiveLimitations.push(incompleteMsg);
+                    }
+                  }
+                } else if (
+                  !effectiveLimitations.includes(
+                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  )
+                ) {
+                  isCoveragePartial = true;
+                  effectiveLimitations.push(
+                    "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+                  );
+                }
+              }
+            } else if (ghidraBin !== null && !ghidraBatchFailed) {
               isCoveragePartial = true;
-              const ghidraSkipMsg = `Ghidra C decompilation for ${safeLimitationModName} omitted to preserve deadline for publication; generated entry point scaffolding instead.`;
-              if (!effectiveLimitations.includes(ghidraSkipMsg)) {
-                effectiveLimitations.push(ghidraSkipMsg);
-              }
-            } else {
-              const ghidraTimeout = Math.floor(
-                Math.min(45_000, Math.max(1_000, timeLeftForGhidra)),
-              );
-              ghidraOutC = join(tempRoot.path, `mod_${moduleSeq}_decompiled.c`);
-              const ghidraRunId = `rea-ghidra-decomp-${randomUUID()}`;
-              let ghidraCleanupRetained = false;
-              const retainGhidraCleanup = (
-                owner: ProviderProcessSupervisor,
-              ) => {
-                if (ghidraCleanupRetained) return;
-                ghidraCleanupRetained = true;
-                const ownership = owner.launch.ownership;
-                const leaseResources =
-                  ownership === undefined
-                    ? [tempRoot.path]
-                    : ownedCommandResources(ownership, tempRoot.path);
-                const cleanupLease = new AnalysisCleanupLease(async () => {
-                  const stopped = await owner.stop();
-                  if (stopped.status === "incomplete") {
-                    throw new Error(stopped.reason);
-                  }
-                }, leaseResources);
-                this.#resources.retain({
-                  kind: "lease",
-                  resource:
-                    ownership === undefined
-                      ? `ghidra-process-${ghidraRunId}`
-                      : `ghidra-process-${ownership.runId}`,
-                  lease: cleanupLease,
-                });
-                pendingGhidraCleanupFailure = new ProviderCleanupError(
-                  UEFI_PROVIDER_IDENTITY.id,
-                  leaseResources,
-                  { reason: "Ghidra process termination failed on Windows" },
-                  { operation: "decompile_uefi_firmware" },
+              const reason =
+                exporterOutcome?.error ??
+                "decompilation script produced no output";
+              const noOutputMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: ${reason}.`;
+              if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                effectiveLimitations.push(noOutputMsg);
+                recordedGhidraFailures++;
+              } else if (
+                !effectiveLimitations.includes(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                )
+              ) {
+                effectiveLimitations.push(
+                  "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
                 );
-                new AnalysisCleanupLeaseGroup(pendingGhidraCleanupFailure, [
-                  cleanupLease,
-                ]);
-              };
-              try {
-                const bridgeDir = fileURLToPath(
-                  new URL("../../bridge/ghidra", import.meta.url),
-                );
-                const scriptPath = join(bridgeDir, "ReaDecompileToC.java");
-                const ghidraHome = join(tempRoot.path, "ghidra_home");
-                const ghidraConfig = join(tempRoot.path, "ghidra_config");
-                const ghidraTemp = join(tempRoot.path, "ghidra_temp");
-                await Promise.all([
-                  mkdir(ghidraHome, { recursive: true }),
-                  mkdir(ghidraConfig, { recursive: true }),
-                  mkdir(ghidraTemp, { recursive: true }),
-                ]);
-                const baseJavaEnv = ghidraJavaEnvironment(
-                  ghidraInspection?.javaHome ?? undefined,
-                  process.env,
-                  this.#hostPlatform.platform,
-                );
-                const ghidraEnv: NodeJS.ProcessEnv = {
-                  ...baseJavaEnv,
-                  JDK_JAVA_OPTIONS: `-Duser.home="${ghidraHome}" -Djava.io.tmpdir="${ghidraTemp}"`,
-                  HOME: ghidraHome,
-                  TMPDIR: ghidraTemp,
-                  XDG_CONFIG_HOME: ghidraConfig,
-                  XDG_CACHE_HOME: ghidraTemp,
-                  XDG_DATA_HOME: ghidraHome,
-                  ...(this.#hostPlatform.platform === "win32"
-                    ? {
-                        USERPROFILE: ghidraHome,
-                        APPDATA: ghidraConfig,
-                        LOCALAPPDATA: ghidraTemp,
-                        TEMP: ghidraTemp,
-                        TMP: ghidraTemp,
-                      }
-                    : {}),
-                };
-                const ghidraArgs = [
-                  tempRoot.path,
-                  `UefiDecomp_${moduleSeq}`,
-                  "-import",
-                  tempEfiPath,
-                  "-scriptPath",
-                  bridgeDir,
-                  "-postScript",
-                  scriptPath,
-                  ghidraOutC,
-                  String(Math.min(MAX_DECOMPILE_MODULE_BYTES, remainingCBytes)),
-                  "-deleteProject",
-                ];
-                let execCmd = ghidraBin;
-                let execArgs = ghidraArgs;
-                if (
-                  this.#hostPlatform.platform === "win32" &&
-                  isWindowsBatchFile(ghidraBin)
-                ) {
-                  const batch = windowsBatchCommand({
-                    environment: ghidraEnv,
-                    batchPath: ghidraBin,
-                    arguments: ghidraArgs,
-                  });
-                  execCmd = batch.command;
-                  execArgs = [...batch.arguments];
-                }
-                if (this.#hostPlatform.platform === "win32") {
-                  await runOwnedCommand(
-                    {
-                      command: execCmd,
-                      arguments: execArgs,
-                      runId: ghidraRunId,
-                      windowsVerbatimArguments: true,
-                      platform: "win32",
-                      env: ghidraEnv,
-                      hostEnvironment: process.env,
-                      signal,
-                    },
-                    {
-                      timeoutMs: ghidraTimeout,
-                      diagnosticBytes: 10 * 1024 * 1024,
-                    },
-                    {
-                      signal,
-                      retainCleanup: (owner) => retainGhidraCleanup(owner),
-                    },
-                  );
-                } else {
-                  await execFileOutput(execCmd, execArgs, {
-                    signal,
-                    stopSignal: "SIGTERM",
-                    timeout: ghidraTimeout,
-                    maxBuffer: 10 * 1024 * 1024,
-                    env: ghidraEnv,
-                  });
-                }
-                const outcomeFile = `${ghidraOutC}.outcome.json`;
-                let exporterOutcome: {
-                  status?: string;
-                  decompiled_functions?: number;
-                  failed_functions?: number;
-                  bytes_written?: number;
-                  max_output_bytes?: number;
-                  error?: string;
-                } | null = null;
-                if (existsSync(outcomeFile)) {
-                  try {
-                    const rawOutcome = await readFile(outcomeFile, "utf8");
-                    exporterOutcome = JSON.parse(rawOutcome);
-                  } catch {
-                    // Ignore unparseable outcome metadata
-                  }
-                }
-
-                if (exporterOutcome?.status === "limit_exceeded") {
-                  isCoveragePartial = true;
-                  const effectiveLimitBytes =
-                    exporterOutcome.max_output_bytes ??
-                    MAX_DECOMPILE_MODULE_BYTES;
-                  const perModuleLimit = formatDecompileBudgetLimit(
-                    safeLimitationModName,
-                    effectiveLimitBytes,
-                  );
-                  if (!effectiveLimitations.includes(perModuleLimit)) {
-                    effectiveLimitations.push(perModuleLimit);
-                  }
-                } else if (exporterOutcome?.status === "no_functions") {
-                  if ((exporterOutcome.failed_functions ?? 0) > 0) {
-                    isCoveragePartial = true;
-                  }
-                  const noFuncMsg = `Ghidra C decompilation for ${safeLimitationModName} found no usable functions (${exporterOutcome.failed_functions ?? 0} failed); generated entry point scaffolding instead.`;
-                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
-                    effectiveLimitations.push(noFuncMsg);
-                    recordedGhidraFailures++;
-                  } else if (
-                    !effectiveLimitations.includes(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    );
-                  }
-                } else if (existsSync(ghidraOutC)) {
-                  const cStat = await stat(ghidraOutC);
-                  if (cStat.size > remainingCBytes) {
-                    isCoveragePartial = true;
-                    if (
-                      !effectiveLimitations.includes(
-                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                      )
-                    ) {
-                      effectiveLimitations.push(
-                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                      );
-                    }
-                  } else if (cStat.size > MAX_DECOMPILE_MODULE_BYTES) {
-                    isCoveragePartial = true;
-                    const perModuleLimit = formatDecompileBudgetLimit(
-                      safeLimitationModName,
-                      MAX_DECOMPILE_MODULE_BYTES,
-                    );
-                    if (!effectiveLimitations.includes(perModuleLimit)) {
-                      effectiveLimitations.push(perModuleLimit);
-                    }
-                  } else {
-                    const candidateC = await readFile(ghidraOutC, "utf8");
-                    const candidateCBytes = Buffer.byteLength(
-                      candidateC,
-                      "utf8",
-                    );
-                    if (
-                      totalStagedCBytes + candidateCBytes <=
-                      MAX_DECOMPILE_TOTAL_BYTES
-                    ) {
-                      cContent = candidateC;
-                      totalStagedCBytes += candidateCBytes;
-                      cGenerator = "ghidra";
-                      ghidraEngineUsed = true;
-                      const failedCount =
-                        exporterOutcome?.failed_functions ?? 0;
-                      if (
-                        failedCount > 0 ||
-                        candidateC.includes(
-                          "/* WARNING: Failed to decompile function",
-                        )
-                      ) {
-                        isCoveragePartial = true;
-                        const incompleteMsg =
-                          failedCount > 0
-                            ? `Ghidra C decompilation for ${safeLimitationModName} was incomplete; ${failedCount} function(s) failed to decompile.`
-                            : `Ghidra C decompilation for ${safeLimitationModName} was incomplete; one or more functions failed to decompile.`;
-                        if (!effectiveLimitations.includes(incompleteMsg)) {
-                          effectiveLimitations.push(incompleteMsg);
-                        }
-                      }
-                    } else if (
-                      !effectiveLimitations.includes(
-                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                      )
-                    ) {
-                      isCoveragePartial = true;
-                      effectiveLimitations.push(
-                        "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
-                      );
-                    }
-                  }
-                } else {
-                  isCoveragePartial = true;
-                  const reason =
-                    exporterOutcome?.error ??
-                    "decompilation script produced no output";
-                  const noOutputMsg = `Ghidra C decompilation for ${safeLimitationModName} failed: ${reason}.`;
-                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
-                    effectiveLimitations.push(noOutputMsg);
-                    recordedGhidraFailures++;
-                  } else if (
-                    !effectiveLimitations.includes(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    );
-                  }
-                }
-              } catch (ghidraErr: unknown) {
-                if (signal.aborted) signal.throwIfAborted();
-                if (isAbortOf(ghidraErr, signal)) throw ghidraErr;
-                if (
-                  ghidraErr instanceof OwnedCommandFailure &&
-                  ghidraErr.cleanupOwner !== undefined
-                ) {
-                  retainGhidraCleanup(ghidraErr.cleanupOwner);
-                }
-                if (pendingGhidraCleanupFailure !== undefined) {
-                  throw pendingGhidraCleanupFailure;
-                }
-                let rawErrMsg = errorMessage(ghidraErr);
-                if (ghidraErr instanceof OwnedCommandFailure) {
-                  const diag =
-                    ghidraErr.snapshot?.stderr.text?.trim() ||
-                    ghidraErr.snapshot?.stdout.text?.trim();
-                  if (diag) {
-                    rawErrMsg = diag;
-                  } else if (
-                    ghidraErr.snapshot?.exitCode !== undefined &&
-                    ghidraErr.snapshot?.exitCode !== null
-                  ) {
-                    rawErrMsg = `${ghidraErr.message} (exit code ${ghidraErr.snapshot.exitCode})`;
-                  }
-                }
-                const budgetMatch =
-                  /decompiled C output exceeded (\d+) byte limit/i.exec(
-                    rawErrMsg,
-                  );
-                const errDetail = sanitizeDiag(rawErrMsg);
-                if (budgetMatch) {
-                  isCoveragePartial = true;
-                  const limitBytes = Number(budgetMatch[1]);
-                  const limitMsg = formatDecompileBudgetLimit(
-                    safeLimitationModName,
-                    limitBytes,
-                  );
-                  if (!effectiveLimitations.includes(limitMsg)) {
-                    effectiveLimitations.push(limitMsg);
-                  }
-                } else {
-                  isCoveragePartial = true;
-                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
-                    effectiveLimitations.push(
-                      `Ghidra C decompilation for ${safeLimitationModName} failed: ${errDetail}`,
-                    );
-                    recordedGhidraFailures++;
-                  } else if (
-                    !effectiveLimitations.includes(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    )
-                  ) {
-                    effectiveLimitations.push(
-                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                    );
-                  }
-                }
               }
             }
           }
@@ -2891,19 +3035,38 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                 }
 
-                let validType: string | undefined = undefined;
+                const MAX_MANIFEST_TYPE_LENGTH = 128;
+                let candidateType: string | undefined = undefined;
                 if (typeof m.type === "string" && m.type.length > 0) {
-                  validType = m.type;
+                  candidateType = m.type;
                 } else if (
                   typeof m.typeName === "string" &&
                   m.typeName.length > 0
                 ) {
-                  validType = m.typeName;
+                  candidateType = m.typeName;
                 } else if (
                   typeof m.type_name === "string" &&
                   m.type_name.length > 0
                 ) {
-                  validType = m.type_name;
+                  candidateType = m.type_name;
+                }
+
+                let validType: string | undefined = undefined;
+                if (candidateType !== undefined) {
+                  const trimmedType = candidateType.trim();
+                  if (
+                    trimmedType.length > 0 &&
+                    trimmedType.length <= MAX_MANIFEST_TYPE_LENGTH
+                  ) {
+                    validType = trimmedType;
+                  } else if (trimmedType.length > MAX_MANIFEST_TYPE_LENGTH) {
+                    isCoveragePartial = true;
+                    if (limitations.length < 50) {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has excessive type length (> ${MAX_MANIFEST_TYPE_LENGTH} chars); ignoring manifest type.`,
+                      );
+                    }
+                  }
                 }
 
                 let validPayloadSha256: string | undefined = undefined;
@@ -3150,9 +3313,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 .filter((s) => s.length > 0);
         const fromManifest =
           manifestModulesByExactRelPath.get(exactLookupKey) ??
-          manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
           manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
-          manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
+          (isWindows
+            ? (manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
+              manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey))
+            : undefined);
 
         const fallbackPhase = hierarchySegments.some((s) => s === "sec")
           ? "SEC"

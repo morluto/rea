@@ -89,8 +89,17 @@ public class ReaDecompileToC extends GhidraScript {
             return;
         }
 
-        File outputFile = new File(args[0]);
-        File outcomeFile = new File(args[0] + ".outcome.json");
+        File target = new File(args[0]);
+        File outputFile;
+        if (target.isDirectory() || !args[0].toLowerCase().endsWith(".c")) {
+            if (!target.exists()) {
+                target.mkdirs();
+            }
+            outputFile = new File(target, currentProgram.getName() + ".c");
+        } else {
+            outputFile = target;
+        }
+        File outcomeFile = new File(outputFile.getAbsolutePath() + ".outcome.json");
         long maxOutputBytes = 4L * 1024L * 1024L;
         if (args.length > 1) {
             try {
@@ -194,6 +203,10 @@ public class ReaDecompileToC extends GhidraScript {
                 if (limitExceeded) {
                     writeOutcome(outcomeFile, "limit_exceeded", decompiledCount, failedCount, bytesWritten, maxOutputBytes,
                             "Decompiled C output exceeded " + maxOutputBytes + " byte limit");
+                    if (decompiledCount > 0) {
+                        println("ReaDecompileToC: limit exceeded; retained " + decompiledCount + " functions (" + bytesWritten + " bytes) to " + outputFile.getAbsolutePath());
+                        return;
+                    }
                     throw new RuntimeException("ReaDecompileToC: decompiled C output exceeded " + maxOutputBytes + " byte limit");
                 }
                 if (decompiledCount == 0) {
@@ -205,7 +218,7 @@ public class ReaDecompileToC extends GhidraScript {
                 println("ReaDecompileToC: decompiled " + decompiledCount + " functions (" + failedCount + " failed/incomplete) to " + outputFile.getAbsolutePath());
             } catch (Exception writeEx) {
                 printerr("ReaDecompileToC: failed writing decompiled output: " + writeEx.getMessage());
-                if (outputFile.exists()) {
+                if (decompiledCount == 0 && outputFile.exists()) {
                     outputFile.delete();
                 }
                 if (!outcomeFile.exists()) {
