@@ -19,7 +19,7 @@ type DecimalWrapper =
 /** A number field, or a set of non-negative integer literals such as Rizin's widths. */
 type NumericCore = z.ZodNumber | z.ZodLiteral<number>;
 
-const isNumericCore = (field: z.ZodType): field is NumericCore =>
+export const isNumericCore = (field: z.ZodType): field is NumericCore =>
   field instanceof z.ZodNumber ||
   (field instanceof z.ZodLiteral &&
     [...field.values].every(

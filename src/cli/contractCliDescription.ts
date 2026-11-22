@@ -20,7 +20,7 @@ import { parseCliJsonOption } from "./cliJsonOption.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { cliJsonCallerPathSchema } from "./cliJsonInput.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { cliDecimalField, cliDecimalShape } from "./options.js";
+import { cliDecimalField, cliDecimalShape, isNumericCore } from "./options.js";
 import {
   selectCliAnalysisSelector,
   type CliSelectorKind,
@@ -829,7 +829,7 @@ const assertArgvField = (
       [...member.values].every((value) => typeof value === "string"));
   const scalar =
     current instanceof z.ZodString ||
-    current instanceof z.ZodNumber ||
+    isNumericCore(current) ||
     current instanceof z.ZodBoolean ||
     current instanceof z.ZodEnum ||
     (current instanceof z.ZodUnion &&
@@ -1987,7 +1987,7 @@ export const describeContractCommand = <
       booleanFlag: value instanceof z.ZodBoolean,
       cliDefault: projected?.default,
       repeatable: value instanceof z.ZodArray,
-      decimal: value instanceof z.ZodNumber,
+      decimal: isNumericCore(value),
       callerPath,
       delivery,
       jsonText,
@@ -2081,7 +2081,7 @@ export const describeContractCommand = <
             booleanFlag: value instanceof z.ZodBoolean,
             cliDefault: undefined,
             repeatable: value instanceof z.ZodArray,
-            decimal: value instanceof z.ZodNumber,
+            decimal: isNumericCore(value),
             callerPath,
             delivery: false,
             jsonText: false,
