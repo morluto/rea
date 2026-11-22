@@ -1,5 +1,6 @@
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import {
   managedMemberInspectionSchema,
   type ManagedMemberInspection,
@@ -48,6 +49,100 @@ type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
   readonly identity: readonly K[];
   readonly name?: keyof T;
   readonly declaringType?: keyof T;
+  readonly cacheOwner?: object;
+};
+
+interface CollectionFilterIndex {
+  readonly byName: ReadonlyMap<string, readonly number[]> | undefined;
+  readonly unresolvedName: readonly number[];
+  readonly byDeclaringType: ReadonlyMap<string, readonly number[]> | undefined;
+  readonly unresolvedDeclaringType: readonly number[];
+}
+
+const managedViewIndexes = new WeakMap<
+  object,
+  Map<string, CollectionFilterIndex>
+>();
+
+const pushRowIndex = (
+  map: Map<string, number[]>,
+  key: string,
+  index: number,
+): void => {
+  let bucket = map.get(key);
+  if (bucket === undefined) {
+    bucket = [];
+    map.set(key, bucket);
+  }
+  bucket.push(index);
+};
+
+const getCollectionFilterIndex = <T extends Row>(
+  cacheOwner: object | undefined,
+  collection: string,
+  rows: readonly T[],
+  nameKey: keyof T | undefined,
+  declaringTypeKey: keyof T | undefined,
+): CollectionFilterIndex | undefined => {
+  if (cacheOwner === undefined || !isImmutableJsonSnapshot(cacheOwner))
+    return undefined;
+  let byCollection = managedViewIndexes.get(cacheOwner);
+  if (byCollection === undefined) {
+    byCollection = new Map();
+    managedViewIndexes.set(cacheOwner, byCollection);
+  }
+  let cached = byCollection.get(collection);
+  if (cached !== undefined) return cached;
+  const byName =
+    nameKey === undefined ? undefined : new Map<string, number[]>();
+  const unresolvedName: number[] = [];
+  const byDeclaringType =
+    declaringTypeKey === undefined ? undefined : new Map<string, number[]>();
+  const unresolvedDeclaringType: number[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row === undefined) continue;
+    if (byName !== undefined && nameKey !== undefined) {
+      const value = row[nameKey];
+      if (typeof value === "string") pushRowIndex(byName, value, index);
+      else unresolvedName.push(index);
+    }
+    if (byDeclaringType !== undefined && declaringTypeKey !== undefined) {
+      const value = row[declaringTypeKey];
+      if (typeof value === "string")
+        pushRowIndex(byDeclaringType, value, index);
+      else unresolvedDeclaringType.push(index);
+    }
+  }
+  cached = {
+    byName,
+    unresolvedName,
+    byDeclaringType,
+    unresolvedDeclaringType,
+  };
+  byCollection.set(collection, cached);
+  return cached;
+};
+
+const collectFilterIndices = (
+  indexMap: ReadonlyMap<string, readonly number[]>,
+  filter: ReadonlySet<string>,
+  extra?: readonly number[],
+): number[] => {
+  if (filter.size === 1 && (extra === undefined || extra.length === 0)) {
+    const only = filter.values().next().value;
+    const list = only === undefined ? undefined : indexMap.get(only);
+    return list === undefined ? [] : [...list];
+  }
+  const seen = new Set<number>();
+  for (const key of filter) {
+    const list = indexMap.get(key);
+    if (list === undefined) continue;
+    for (let i = 0; i < list.length; i += 1) seen.add(list[i]!);
+  }
+  if (extra !== undefined)
+    for (let i = 0; i < extra.length; i += 1) seen.add(extra[i]!);
+  return [...seen].sort((left, right) => left - right);
 };
 
 const collectionPage = (
@@ -63,6 +158,7 @@ const collectionPage = (
           rows: report.types,
           identity: ["token", "row_offset"],
           name: "name",
+          cacheOwner: report,
         },
         view,
       );
@@ -73,6 +169,7 @@ const collectionPage = (
           rows: report.exported_types,
           identity: ["token", "row_offset"],
           name: "name",
+          cacheOwner: report,
         },
         view,
       );
@@ -84,6 +181,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "declaring_type_token"],
           name: "name",
           declaringType: "declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -95,6 +193,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "declaring_type_token"],
           name: "name",
           declaringType: "declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -106,6 +205,7 @@ const collectionPage = (
           identity: ["token", "row_offset", "parent_token"],
           name: "name",
           declaringType: "parent_name",
+          cacheOwner: report,
         },
         view,
       );
@@ -117,6 +217,7 @@ const collectionPage = (
           identity: ["caller_token", "il_offset", "target_token", "opcode"],
           name: "target_name",
           declaringType: "target_declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -128,6 +229,7 @@ const collectionPage = (
           identity: ["method_token", "il_offset", "field_token", "opcode"],
           name: "field_name",
           declaringType: "field_declaring_type",
+          cacheOwner: report,
         },
         view,
       );
@@ -190,6 +292,137 @@ const selectRows = <
   if (!filtering && fields === undefined)
     return sliceMemberRows(source.collection, source.rows, view);
   const selected: (Partial<T> & Pick<T, K> & { source_index: number })[] = [];
+  if (filtering) {
+    const idx = getCollectionFilterIndex(
+      source.cacheOwner,
+      source.collection,
+      source.rows,
+      source.name,
+      source.declaringType,
+    );
+    if (idx !== undefined) {
+      // Single-filter fast path: exact matches and unresolved counts come directly from the index.
+      if (
+        names !== undefined &&
+        declaringTypes === undefined &&
+        idx.byName !== undefined
+      ) {
+        const matchedIndices =
+          names.size === 0 ? [] : collectFilterIndices(idx.byName, names);
+        const end = Math.min(view.offset + view.limit, matchedIndices.length);
+        for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
+          const rowIndex = matchedIndices[ordinal]!;
+          selected.push(
+            projectRow(
+              source.rows[rowIndex]!,
+              rowIndex,
+              fields,
+              source.identity,
+            ),
+          );
+        }
+        return {
+          page: {
+            collection: source.collection,
+            rows: selected,
+            source_count: source.rows.length,
+            unresolved_filter_rows:
+              names.size === 0 ? 0 : idx.unresolvedName.length,
+          },
+          total: matchedIndices.length,
+        };
+      }
+      if (
+        declaringTypes !== undefined &&
+        names === undefined &&
+        idx.byDeclaringType !== undefined
+      ) {
+        const matchedIndices =
+          declaringTypes.size === 0
+            ? []
+            : collectFilterIndices(idx.byDeclaringType, declaringTypes);
+        const end = Math.min(view.offset + view.limit, matchedIndices.length);
+        for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
+          const rowIndex = matchedIndices[ordinal]!;
+          selected.push(
+            projectRow(
+              source.rows[rowIndex]!,
+              rowIndex,
+              fields,
+              source.identity,
+            ),
+          );
+        }
+        return {
+          page: {
+            collection: source.collection,
+            rows: selected,
+            source_count: source.rows.length,
+            unresolved_filter_rows:
+              declaringTypes.size === 0
+                ? 0
+                : idx.unresolvedDeclaringType.length,
+          },
+          total: matchedIndices.length,
+        };
+      }
+      if (
+        names !== undefined &&
+        declaringTypes !== undefined &&
+        idx.byName !== undefined &&
+        idx.byDeclaringType !== undefined
+      ) {
+        if (names.size === 0 || declaringTypes.size === 0)
+          return {
+            page: {
+              collection: source.collection,
+              rows: selected,
+              source_count: source.rows.length,
+              unresolved_filter_rows: 0,
+            },
+            total: 0,
+          };
+        const nameCandidates = collectFilterIndices(
+          idx.byName,
+          names,
+          idx.unresolvedName,
+        );
+        const typeCandidates = collectFilterIndices(
+          idx.byDeclaringType,
+          declaringTypes,
+          idx.unresolvedDeclaringType,
+        );
+        const candidates =
+          nameCandidates.length <= typeCandidates.length
+            ? nameCandidates
+            : typeCandidates;
+        let total = 0;
+        let unresolved = 0;
+        for (let i = 0; i < candidates.length; i += 1) {
+          const index = candidates[i]!;
+          const row = source.rows[index]!;
+          const matched = matchRow(row, source, { names, declaringTypes });
+          if (matched === false) continue;
+          if (matched === null) {
+            unresolved++;
+            continue;
+          }
+          const ordinal = total++;
+          if (ordinal < view.offset || selected.length >= view.limit) continue;
+          selected.push(projectRow(row, index, fields, source.identity));
+        }
+        return {
+          page: {
+            collection: source.collection,
+            rows: selected,
+            source_count: source.rows.length,
+            unresolved_filter_rows: unresolved,
+          },
+          total,
+        };
+      }
+    }
+  }
   const start = filtering ? 0 : Math.min(view.offset, source.rows.length);
   const end = filtering
     ? source.rows.length
