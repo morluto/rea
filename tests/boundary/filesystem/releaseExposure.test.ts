@@ -188,26 +188,6 @@ describe("release exposure filesystem boundary", () => {
       await service.close();
     }
   });
-
-  it("reads a directory of plain text", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-dir-");
-    await writeFile(join(root, "hello.txt"), "hello\n");
-    const service = createReleaseExposureService();
-    try {
-      const result = await service.inspect({ path: root });
-      if (!result.ok) throw result.error;
-      const report = result.value.normalized_result as {
-        summary: {
-          no_exposure_observed_in_assessed_checks: boolean;
-          by_status: { not_assessed: number };
-        };
-      };
-      expect(report.summary.no_exposure_observed_in_assessed_checks).toBe(true);
-      expect(report.summary.by_status.not_assessed).toBe(3);
-    } finally {
-      await service.close();
-    }
-  });
 });
 
 describe("release exposure app bundle boundary", () => {

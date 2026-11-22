@@ -702,6 +702,8 @@ another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
 Setup, doctor and uninstall share REA's sticky-profile resolver.
+If the selected profile's deletion marker cannot be checked, REA reports the
+profile as unresolved. Restore access to the reported path and retry.
 A custom `HERMES_HOME` outside the platform default home
 reads its own `active_profile`. An override physically inside the default home
 uses that default home's sticky selection and profile root together, including

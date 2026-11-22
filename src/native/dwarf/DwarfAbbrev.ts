@@ -5,6 +5,7 @@ import {
 import { DwarfCursor } from "./DwarfReader.js";
 import { Budget } from "../../domain/budget.js";
 
+const DW_AT_LOW_PC = 0x11;
 const DW_FORM_IMPLICIT_CONST = 0x21;
 // Admit one maximally sized table, including attribute terminators and its
 // final zero code. Cache eviction never replenishes this parsing allowance.
@@ -30,6 +31,7 @@ export interface DwarfAbbrevEntry {
   readonly code: number;
   readonly tag: number;
   readonly children: boolean;
+  readonly hasLowPc: boolean;
   readonly attributes: readonly DwarfAbbrevAttribute[];
 }
 
@@ -42,9 +44,6 @@ export type DwarfAbbrevTable =
     }
   | { readonly kind: "malformed"; readonly message: string }
   | { readonly kind: "budget"; readonly message: string };
-
-const safeCode = (value: bigint): number | null =>
-  value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(value);
 
 /**
  * Parse abbreviation tables. Failures are cached with successes. Retention is
@@ -98,28 +97,27 @@ const parseAbbrevTable = (
       kind: "malformed",
       message: "Abbreviation offset is outside .debug_abbrev",
     };
-  const cursor = new DwarfCursor(bytes.subarray(offset), little);
+  const cursor = new DwarfCursor(bytes, little);
+  cursor.offset = offset;
   const entries = new Map<number, DwarfAbbrevEntry>();
   for (;;) {
     if (work.remaining <= 0) return workExhausted();
     work.remaining -= 1;
-    const code = cursor.uleb();
-    if (!code.ok)
+    const code = cursor.ulebSafe();
+    if (code === -1)
       return {
         kind: "malformed",
         message: "Abbreviation table ended before its terminating code",
       };
-    if (code.value === 0n)
-      return { kind: "ok", entries, end: offset + cursor.offset };
+    if (code === 0) return { kind: "ok", entries, end: cursor.offset };
     if (entries.size >= MAX_DWARF_ABBREV_ENTRIES)
       return {
         kind: "budget",
         message: `Abbreviation table exceeds ${String(MAX_DWARF_ABBREV_ENTRIES)} entries`,
       };
-    const codeNumber = safeCode(code.value);
-    const tag = cursor.uleb();
+    const tag = cursor.ulebSafe();
     const children = cursor.u8();
-    if (codeNumber === null || !tag.ok || children === null)
+    if (code === -2 || tag === -1 || children === null)
       return {
         kind: "malformed",
         message: "Abbreviation header is truncated or out of range",
@@ -129,48 +127,47 @@ const parseAbbrevTable = (
         kind: "malformed",
         message: "Abbreviation children flag is not 0 or 1",
       };
-    const tagNumber = safeCode(tag.value);
-    if (tagNumber === null || tagNumber > 0xffff)
+    if (tag === -2 || tag > 0xffff)
       return {
         kind: "malformed",
         message: "Abbreviation tag is out of range",
       };
-    if (entries.has(codeNumber))
+    if (entries.has(code))
       return {
         kind: "malformed",
-        message: `Duplicate abbreviation code ${String(codeNumber)}`,
+        message: `Duplicate abbreviation code ${String(code)}`,
       };
     const attributes: DwarfAbbrevAttribute[] = [];
+    let hasLowPc = false;
     for (;;) {
       if (work.remaining <= 0) return workExhausted();
       work.remaining -= 1;
-      const name = cursor.uleb();
-      const form = cursor.uleb();
-      if (!name.ok || !form.ok)
+      const name = cursor.ulebSafe();
+      const form = cursor.ulebSafe();
+      if (name === -1 || form === -1)
         return {
           kind: "malformed",
           message: "Abbreviation attribute list is truncated",
         };
-      if (name.value === 0n && form.value === 0n) break;
+      if (name === 0 && form === 0) break;
       if (attributes.length >= MAX_DWARF_ABBREV_ATTRIBUTES)
         return {
           kind: "budget",
           message: `Abbreviation exceeds ${String(MAX_DWARF_ABBREV_ATTRIBUTES)} attributes`,
         };
-      const nameNumber = safeCode(name.value);
-      const formNumber = safeCode(form.value);
       if (
-        nameNumber === null ||
-        formNumber === null ||
-        nameNumber > 0xffff_ffff ||
-        formNumber > 0xffff_ffff
+        name === -2 ||
+        form === -2 ||
+        name > 0xffff_ffff ||
+        form > 0xffff_ffff
       )
         return {
           kind: "malformed",
           message: "Abbreviation attribute or form is out of range",
         };
+      if (name === DW_AT_LOW_PC) hasLowPc = true;
       let implicit: bigint | null = null;
-      if (formNumber === DW_FORM_IMPLICIT_CONST) {
+      if (form === DW_FORM_IMPLICIT_CONST) {
         const constant = cursor.sleb();
         if (!constant.ok)
           return {
@@ -179,12 +176,13 @@ const parseAbbrevTable = (
           };
         implicit = constant.value;
       }
-      attributes.push({ name: nameNumber, form: formNumber, implicit });
+      attributes.push({ name, form, implicit });
     }
-    entries.set(codeNumber, {
-      code: codeNumber,
-      tag: tagNumber,
+    entries.set(code, {
+      code,
+      tag,
       children: children === 1,
+      hasLowPc,
       attributes,
     });
   }

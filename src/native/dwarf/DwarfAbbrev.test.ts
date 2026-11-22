@@ -130,3 +130,30 @@ describe("DWARF abbreviation tables", () => {
     expect(exhausted).toBe(true);
   });
 });
+
+describe("DWARF abbreviation hasLowPc precomputation", () => {
+  it("records whether DW_AT_low_pc is present on each entry", () => {
+    const bytes = abbrevTable([
+      {
+        code: 1,
+        tag: 0x11,
+        children: false,
+        attributes: [
+          { name: 0x03, form: 0x08 },
+          { name: 0x11, form: 0x01 },
+        ],
+      },
+      {
+        code: 2,
+        tag: 0x11,
+        children: false,
+        attributes: [{ name: 0x03, form: 0x08 }],
+      },
+    ]);
+    const parsed = cache(bytes).get(0);
+    expect(parsed.kind).toBe("ok");
+    if (parsed.kind !== "ok") return;
+    expect(parsed.entries.get(1)?.hasLowPc).toBe(true);
+    expect(parsed.entries.get(2)?.hasLowPc).toBe(false);
+  });
+});

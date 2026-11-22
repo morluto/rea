@@ -1,6 +1,7 @@
 import type { AnalysisDatabaseEngine } from "./analysisDatabase.js";
 import type { DolHeader } from "./gamecubeDol.js";
 import type { TargetFormatsOfKind } from "./targetFormats.js";
+import type { BundleExecutableSelection } from "./apple/bundleExecutableProvenance.js";
 
 /** Provider-neutral CPU families detected from headers or explicitly selected raw loads. */
 export const BINARY_ARCHITECTURES = [
@@ -239,8 +240,9 @@ interface BinaryTargetIdentity {
   readonly callerInputPath?: string;
   /** Selected artifact spelling determines name-based format hints and external companions. */
   readonly artifactSelectedPath?: string;
-  /** Info.plist of the app bundle the target was resolved from. */
+  /** Info.plist of the Apple bundle the target was resolved from. */
   readonly bundleInfoPlist?: string;
+  readonly bundleExecutableSelection?: BundleExecutableSelection;
   readonly sha256: string;
 }
 

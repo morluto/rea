@@ -2241,3 +2241,51 @@ describe("headless IDA literal string predicate pushdown", () => {
     }
   });
 });
+
+describe("headless IDA open rejection", () => {
+  it("reports the supervisor's open deadline as a provider timeout", async () => {
+    const { producer, client } = await fixture("headless");
+    // ida-pro-mcp c133c385 idalib_supervisor.py reports a reaped open this way.
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? {
+            error:
+              "idalib worker timed out after 1800s while opening and analyzing /work/target.exe. The binary may drive auto-analysis into an unbounded loop. Retry with run_auto_analysis=false (open without analysis and decompile on demand), or raise IDA_MCP_OPEN_TIMEOUT.",
+          }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain(
+      "IDA_MCP_OPEN_TIMEOUT deadline of 1800 s",
+    );
+    expect(projected.remediation.action).toContain(
+      "Raise IDA_MCP_OPEN_TIMEOUT",
+    );
+    expect(result.error.diagnostics).toMatchObject({
+      upstream_setting: "IDA_MCP_OPEN_TIMEOUT",
+      upstream_timeout_seconds: 1800,
+    });
+    expect((await client.close()).ok).toBe(true);
+  });
+
+  it("reports an idb_open rejection with its upstream reason", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "Input was rejected before creating a session" }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain(
+      "Input was rejected before creating a session",
+    );
+    expect(result.error.message).not.toContain("malformed or unsupported");
+    expect((await client.close()).ok).toBe(true);
+  });
+});
