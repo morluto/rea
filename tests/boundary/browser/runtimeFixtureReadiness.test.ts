@@ -1,8 +1,8 @@
 import { ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
-import { setImmediate } from "node:timers/promises";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { CDP_DISCOVERY_RESPONSE_TIMEOUT_MS } from "../../../src/domain/browserDeadline.js";
 import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 const mock = vi.hoisted(() => ({ spawn: vi.fn(), port: vi.fn() }));
@@ -64,23 +64,23 @@ const fixture = async (
   mode: "empty targets" | "discovery timeout" | "malformed" | "exited",
 ) => {
   let ready = false;
-  let requests = 0;
+  const requests: (string | undefined)[] = [];
   const listed = phaseArrival();
-  const published = phaseArrival();
+  const stalled = phaseArrival();
   const server = createServer((request, response) => {
-    requests += 1;
-    if (mode === "exited") {
-      listed.arrive();
-      return;
-    }
+    requests.push(request.url);
     if (mode === "malformed") {
       response.end("{broken");
       return;
     }
-    if (mode === "discovery timeout" && requests === 1) {
+    if (
+      mode === "exited" ||
+      (mode === "discovery timeout" && requests.length === 1)
+    ) {
       response.once("close", () => {
         ready = true;
       });
+      stalled.arrive();
       return;
     }
     response.end(
@@ -121,20 +121,17 @@ const fixture = async (
     ownership: { processGroupId: 7 },
     cleanup,
   });
-  mock.port.mockImplementation(async () => {
-    published.arrive();
-    return port;
-  });
+  mock.port.mockResolvedValue(port);
   return {
     origin,
     listed,
-    published,
+    stalled,
     cleanup,
     exit: () => child.kill("SIGTERM"),
     makeReady: () => {
       ready = true;
     },
-    requests: () => requests,
+    requests,
     close: async () => {
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -147,31 +144,50 @@ it.each(["empty targets", "discovery timeout"] as const)(
   async (mode) => {
     const start = await startFixture();
     const server = await fixture(mode);
+    const responseDeadline = phaseArrival<() => void>();
+    const schedule = globalThis.setTimeout;
+    const timer =
+      mode === "discovery timeout"
+        ? vi
+            .spyOn(globalThis, "setTimeout")
+            .mockImplementation((callback, delay, ...args) => {
+              if (delay === CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)
+                responseDeadline.arrive(() => callback(...args));
+              return schedule(callback, delay, ...args);
+            })
+        : undefined;
     const pending = start(process.execPath, server.origin);
-    let settled = false;
-    void pending.then(
-      () => {
-        settled = true;
-      },
-      () => {
-        settled = true;
-      },
-    );
+    let completed = false;
     try {
-      await server.published.reached(pending, "fixture port publication");
-      await setImmediate();
-      expect(settled).toBe(false);
       if (mode === "empty targets") {
         await server.listed.reached(pending, "fixture target listing");
-        expect(settled).toBe(false);
         server.makeReady();
+      } else {
+        await server.stalled.reached(
+          pending,
+          "first fixture discovery request",
+        );
+        const expire = await responseDeadline.reached(
+          pending,
+          "CDP response deadline",
+        );
+        expire();
       }
       await pending;
-      expect(server.requests()).toBeGreaterThanOrEqual(3);
+      completed = true;
+      expect(server.requests).toEqual(
+        mode === "empty targets"
+          ? ["/json/version", "/json/list", "/json/version", "/json/list"]
+          : ["/json/version", "/json/version", "/json/list"],
+      );
     } finally {
-      server.makeReady();
-      await (await pending.catch(() => undefined))?.close();
-      await server.close();
+      try {
+        if (!completed) server.exit();
+        await (await pending.catch(() => undefined))?.close();
+      } finally {
+        timer?.mockRestore();
+        await server.close();
+      }
     }
   },
 );
@@ -184,7 +200,7 @@ it("preserves malformed discovery and closes the owned fixture", async () => {
     await expect(pending).rejects.toMatchObject({
       reason: "invalid_endpoint_response",
     });
-    expect(server.requests()).toBe(1);
+    expect(server.requests).toEqual(["/json/version"]);
     expect(server.cleanup).toHaveBeenCalledTimes(1);
   } finally {
     await (await pending.catch(() => undefined))?.close();
@@ -200,7 +216,7 @@ it("interrupts pending discovery when the owned fixture exits", async () => {
     "exited before CDP discovery",
   );
   try {
-    await server.listed.reached(pending, "fixture target listing");
+    await server.stalled.reached(pending, "fixture discovery request");
     server.exit();
     await rejected;
     expect(server.cleanup).toHaveBeenCalledTimes(1);

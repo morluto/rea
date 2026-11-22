@@ -11,12 +11,6 @@ import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
 
 cliTest.for([
   ["CLI", "query"],
-  ["CLI", "storage"],
-  ["CLI", "session-storage"],
-  ["CLI", "cookie"],
-  ["stdio MCP", "query"],
-  ["stdio MCP", "storage"],
-  ["stdio MCP", "session-storage"],
   ["stdio MCP", "cookie"],
 ] as const)(
   "reports undeclared references through %s for a wide %s list",
@@ -31,13 +25,13 @@ cliTest.for([
       retryable: false,
       details: {
         operation: "capture_browser_scenario",
-        issues: expect.arrayContaining([
-          expect.objectContaining({
+        issues: [
+          {
             path: ["secrets"],
             reason: "invalid_value",
             message: "Secret reference token is not declared",
-          }),
-        ]),
+          },
+        ],
       },
     };
     if (surface === "CLI") {

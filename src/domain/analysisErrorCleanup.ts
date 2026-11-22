@@ -107,7 +107,7 @@ export const analysisErrorWithCloseRejections = (
 
 /**
  * Compose several cleanup failures into one provider cleanup failure. It lists
- * the parts' resources and completes once every part reports release. Pass
+ * the parts' distinct resources and completes once every part reports release. Pass
  * `causes` to keep failures that are not AnalysisErrors in the aggregate
  * cause; only `failures` own completion.
  */
@@ -123,7 +123,7 @@ export const providerCleanupErrorFromFailures = (
 ): ProviderCleanupError =>
   new ProviderCleanupError(
     providerId,
-    failures.flatMap((failure) => failure.cleanupResources),
+    [...new Set(failures.flatMap((failure) => failure.cleanupResources))],
     typeof diagnostics === "string" ? { reason: diagnostics } : diagnostics,
     {
       operation: options.operation,

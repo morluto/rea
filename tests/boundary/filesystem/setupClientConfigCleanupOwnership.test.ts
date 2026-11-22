@@ -10,7 +10,7 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -74,7 +74,7 @@ afterEach(() => {
 });
 
 const holdReadHandle = (
-  path: string,
+  path: string | ((path: string) => boolean),
   reason: string,
   initiallyHeld = true,
   maxFailures = Number.POSITIVE_INFINITY,
@@ -85,7 +85,9 @@ const holdReadHandle = (
   let remainingFailures = maxFailures;
   openMock.mockImplementation(async (...args) => {
     const handle = await actualFs.open(...args);
-    if (String(args[0]) !== path) return handle;
+    const opened = String(args[0]);
+    if (!(typeof path === "string" ? opened === path : path(opened)))
+      return handle;
     const nativeClose = handle.close.bind(handle);
     vi.spyOn(handle, "close").mockImplementation(async () => {
       closeAttempts.push(handle);
@@ -208,6 +210,62 @@ it("stops uninstall and retains the backup read owner when its close fails", asy
     expect(await readFile(path, "utf8")).toBe(configured);
     expect(closeAttempts).toHaveLength(2);
     await expectCloseReclaimsHandle(host, closeAttempts, release);
+  } finally {
+    await cleanupHeldHandle(host, release);
+  }
+});
+
+it("reports a completed uninstall edit while publication cleanup remains owned", async () => {
+  const home = await createTestTempDirectory(
+    "rea-uninstall-publication-close-",
+  );
+  const path = join(home, ".cursor", "mcp.json");
+  const cache = join(home, ".rea", "cache", "marker");
+  const original =
+    '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]},"peer":{}}}\n';
+  await mkdir(dirname(path), { recursive: true });
+  await mkdir(dirname(cache), { recursive: true });
+  await writeFile(path, original);
+  await writeFile(cache, "keep");
+  const configDirectory = await fsRealpath(dirname(path));
+  let stagingDirectory: string | undefined;
+  const { release } = holdReadHandle((opened) => {
+    const directory = dirname(opened);
+    if (
+      basename(opened) !== "content" ||
+      dirname(directory) !== configDirectory ||
+      !basename(directory).startsWith(".rea-config-")
+    )
+      return false;
+    stagingDirectory = directory;
+    return true;
+  }, "held configuration publication handle");
+  const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const result = await runUninstall(true, host);
+    if (stagingDirectory === undefined)
+      throw new Error("Uninstall did not stage an edit");
+    expect(result.status).toBe("failed");
+    expect(result.cleanup?.resources).toEqual([stagingDirectory]);
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+      mcpServers: { peer: {} },
+    });
+    expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
+    expect(await readFile(cache, "utf8")).toBe("keep");
+    const client = result.items.find(({ name }) => name === "cursor");
+    expect(client).toMatchObject({
+      status: "failed",
+      configuration_path: path,
+    });
+    expect(client?.detail).toContain(`Removed registration from ${path}`);
+    expect(client?.detail).toContain(`${path}.rea.backup`);
+
+    release();
+    expect(await host.close?.()).toBeUndefined();
+    await expect(fsLstat(stagingDirectory)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(result.cleanup).toBeUndefined();
   } finally {
     await cleanupHeldHandle(host, release);
   }

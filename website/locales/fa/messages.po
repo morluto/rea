@@ -5640,6 +5640,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "نام operands و بررسی هر دو مسیر اپراتور."
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "یک تحلیلگر که در کامپیوتر فکر می کند"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
@@ -14771,15 +14776,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "جستجوی مشارکت‌کننده"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14864,12 +14860,12 @@ msgstr "راهنمای ساخت محیط"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}ساخت محیط برنامهٔ دسکتاپ{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "ساخت محیط برنامهٔ دسکتاپ"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -14880,6 +14876,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"کاری را که می‌خواهید ایجنت در یک برنامهٔ دسکتاپ لینوکس تمرین کند شرح دهید. "
+"مثلاً بخواهید محیطی برای Gnote بسازد که در آن روغن زیتون را به فهرست خرید "
+"اضافه کند. ایجنت برنامه را روی رایانهٔ ساخت محلی نصب می‌کند، وظیفه را "
+"می‌نویسد، محیط را صادر می‌کند و روی رایانه‌ای تازه با تصویر صفحه، ماوس و "
+"صفحه‌کلید آن را بررسی می‌کند."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -14893,6 +14894,9 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"رایانهٔ ساخت به لینوکس روی amd64 یا arm64، داکر و نسخهٔ تعیین‌شدهٔ AgentEnv "
+"نیاز دارد. برای نصب و بررسی آمادگی، {ph0}راهنمای راه‌اندازی رایانهٔ ساخت "
+"محیط دسکتاپ{ph1} را دنبال کنید."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -15490,48 +15494,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "روش‌ها و یادداشت‌های بازسازی."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
-"REA-پیدا کردن چگونه نرم افزار کار می کند. مهندسی معکوس با عامل برنامه نویسی "
-"شما."
+"نوشتهٔ آبی REA در کنار کد دیس‌اسمبل‌شده، داده‌های شانزده‌شانزدهی و گردش کار "
+"یک عامل."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -17361,3 +17341,16 @@ msgstr ""
 #~ "Windows x64 پشتیبانی آزمایشی و فقط‌خواندنی از برنامه‌ها و DLLهای بومی x86 "
 #~ "وx64 با قالب PE روی درایوهای ثابت محلی NTFS دارد. از نصب موجود Ghidra 12.1.x"
 #~ " وJDK ‏64 بیتی نسخهٔ 21 یا جدیدتر استفاده کنید:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr ""
+#~ "REA-پیدا کردن چگونه نرم افزار کار می کند. مهندسی معکوس با عامل برنامه نویسی "
+#~ "شما."

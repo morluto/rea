@@ -102,8 +102,8 @@ const historicalCapture = (
   stages: {
     launch: covered(
       test(
-        HISTORICAL_DECODER,
-        "cancels after snapshot acquisition before launch and removes private input declarations",
+        "tests/boundary/browser/historicalCapturePreparationCleanup.test.ts",
+        "cancels after snapshot acquisition without launching or adopting the opaque caller reason",
       ),
     ),
     handshake: notApplicable(
@@ -1552,23 +1552,19 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "applies command_timeout_ms to the primary connect handshake when service workers are allowed",
-        ),
-        test(
-          "src/browser/PlaywrightScenarioBrowser.test.ts",
           "closes a browser that connects after its deadline without waiting to report the timeout",
         ),
       ),
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step of a long scenario",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(
@@ -1580,7 +1576,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },
@@ -1676,7 +1672,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports wide and synthetic narrow header extents through the public CLI",
+        "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
       ),
     ),
     covered(
@@ -1756,7 +1752,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "returns cleanup_incomplete when owned cleanup fails after an engine error",
+          "retries retained browser cleanup before launching the next resolution",
         ),
       ),
       retry: covered(
@@ -2046,7 +2042,9 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "decodes an LZMA-custom section through the owned worker and derives it",
         ),
       ),
-      handshake: ONE_SHOT,
+      handshake: notApplicable(
+        "The decoder child writes one framed reply per request; there is no handshake.",
+      ),
       operation: covered(
         test(
           "tests/acceptance/uefiFirmware.test.ts",
@@ -2062,13 +2060,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
       retry: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
     },

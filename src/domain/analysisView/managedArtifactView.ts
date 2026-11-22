@@ -9,7 +9,7 @@ import {
 import { managedModuleRow } from "../managed/managedModuleIdentity.js";
 import { validateManagedTokenScope } from "../managed/managedInspectionEvidence.js";
 import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -74,6 +74,10 @@ export const managedViewIdentityUnknowns = (
     : []),
 ];
 
+const readManagedArtifact = createAnalysisViewResultReader(
+  managedArtifactInspectionSchema,
+);
+
 /** Project authenticated metadata without reading a path or invoking a provider. */
 export const projectManagedArtifactView = (
   parent: AnalysisViewParent,
@@ -93,10 +97,7 @@ export const projectManagedArtifactView = (
         },
       ]),
     );
-  const parsed = parseAnalysisViewResult(
-    managedArtifactInspectionSchema,
-    parent,
-  );
+  const parsed = readManagedArtifact(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const scope = validateManagedTokenScope(

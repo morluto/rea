@@ -1,11 +1,12 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
   ProviderProcessSupervisor,
   type ProcessDiagnosticBudget,
+  type ProviderProcessDiagnostic,
 } from "./ProviderProcess.js";
 import { redactExplicitOutput } from "../domain/explicitSensitiveValues.js";
 
@@ -849,4 +850,255 @@ it("retains a stream's latest bytes in tail retention, with checkpoints over wha
     producer.stdout.destroy();
     producer.stderr.destroy();
   }
+});
+
+describe("lazy diagnostic snapshot materialization", () => {
+  it("exposes enumerable memoized snapshots on exit and output-close events", () => {
+    const producer = createProducer();
+    const events: {
+      readonly type: string;
+      readonly snapshot?: unknown;
+    }[] = [];
+    let repeatedExitSnapshotSame = false;
+    let repeatedCloseSnapshotSame = false;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        onDiagnostic: (event) => {
+          if (event.type === "exit") {
+            events.push(event);
+            repeatedExitSnapshotSame = event.snapshot === event.snapshot;
+          } else if (event.type === "output-close") {
+            events.push(event);
+            repeatedCloseSnapshotSame = event.snapshot === event.snapshot;
+          }
+        },
+      },
+    );
+    try {
+      producer.stdout.write("hello");
+      producer.emit("exit", 0, null);
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 0, null);
+
+      expect(events).toHaveLength(2);
+      expect(Object.keys(events[0]!)).toContain("snapshot");
+      expect(Object.keys(events[1]!)).toContain("snapshot");
+      expect(repeatedExitSnapshotSame).toBe(true);
+      expect(repeatedCloseSnapshotSame).toBe(true);
+      expect(events[0]?.snapshot).toMatchObject({
+        exitCode: 0,
+        stdout: { text: "hello", bytes: 5 },
+      });
+      expect(events[1]?.snapshot).toEqual(supervisor.snapshot());
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+});
+
+describe("event-time snapshot capture before lazy materialization", () => {
+  it("preserves exit and output-close snapshots across later stderr, overflow, and resetOutput", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        maxDiagnosticBytes: { stdout: 8, stderr: 8 },
+        onDiagnostic: (event) => {
+          // Store only the event object; do not access `.snapshot` yet.
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stdout.write("out-1");
+      producer.stderr.write("err-1");
+      producer.emit("exit", 0, null);
+      // Late stderr overflows stderr budget after `exit` was emitted.
+      producer.stderr.write("-tail-overflow");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 0, null);
+      // Clear retained buffers before reading either stored `.snapshot`.
+      supervisor.resetOutput();
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "out-1", bytes: 5, observedBytes: 5 },
+        stderr: { text: "err-1", bytes: 5, observedBytes: 5 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(closeEvent?.snapshot).toEqual({
+        diagnosticTruncated: true,
+        stdout: { text: "out-1", bytes: 5, observedBytes: 5 },
+        stderr: { text: "err-1-ta", bytes: 8, observedBytes: 19 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(supervisor.snapshot()).toEqual({
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: 0,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+
+  it("isolates stored event snapshots from writes following resetOutput", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stdout.write("before-exit");
+      producer.stderr.write("err-before");
+      producer.emit("exit", 0, null);
+      supervisor.resetOutput();
+      producer.stdout.write("after-reset");
+      producer.stderr.write("err-after");
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "before-exit", bytes: 11, observedBytes: 11 },
+        stderr: { text: "err-before", bytes: 10, observedBytes: 10 },
+        exitCode: 0,
+        signal: null,
+      });
+      expect(supervisor.snapshot()).toEqual({
+        stdout: { text: "after-reset", bytes: 11, observedBytes: 11 },
+        stderr: { text: "err-after", bytes: 9, observedBytes: 9 },
+        exitCode: 0,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+});
+
+describe("event-time snapshot capture with tail retention and runtime exhaustion", () => {
+  it("preserves tail-retained event snapshots when post-exit output drops front bytes", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        maxDiagnosticBytes: { stdout: 5, stderr: 5 },
+        diagnosticRetention: "tail",
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stderr.write("12345");
+      producer.emit("exit", 1, null);
+      producer.stderr.write("67890");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 1, null);
+      supervisor.resetOutput();
+
+      expect(exitEvent?.snapshot).toEqual({
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "12345", bytes: 5, observedBytes: 5 },
+        exitCode: 1,
+        signal: null,
+      });
+      expect(closeEvent?.snapshot).toEqual({
+        diagnosticTruncated: true,
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "67890", bytes: 5, observedBytes: 10 },
+        exitCode: 1,
+        signal: null,
+      });
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
+
+  it("preserves exit-time runtime exhaustion state before later stream updates", () => {
+    const producer = createProducer();
+    let exitEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+      | undefined;
+    let closeEvent:
+      | Extract<ProviderProcessDiagnostic, { type: "output-close" }>
+      | undefined;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        runtime: "jvm",
+        onDiagnostic: (event) => {
+          if (event.type === "exit") exitEvent = event;
+          else if (event.type === "output-close") closeEvent = event;
+        },
+      },
+    );
+    try {
+      producer.stderr.write("java.lang.OutOfMemoryError: ");
+      producer.emit("exit", 1, null);
+      producer.stderr.write("Java heap space\n");
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 1, null);
+      supervisor.resetOutput();
+      supervisor.dispose();
+
+      expect(exitEvent?.snapshot.runtimeExhaustion).toEqual({
+        runtime: "jvm",
+        area: undefined,
+        stream: "stderr",
+        line: "java.lang.OutOfMemoryError: ",
+        lineComplete: false,
+        truncated: false,
+        invalidUtf8: false,
+      });
+      expect(closeEvent?.snapshot.runtimeExhaustion).toEqual({
+        runtime: "jvm",
+        area: "heap",
+        stream: "stderr",
+        line: "java.lang.OutOfMemoryError: Java heap space",
+        lineComplete: true,
+        truncated: false,
+        invalidUtf8: false,
+      });
+      expect(supervisor.snapshot().runtimeExhaustion).toBeUndefined();
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
 });

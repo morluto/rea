@@ -21,7 +21,7 @@
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="เข้าร่วมชุมชน REA บน Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[เริ่มต้นอย่างรวดเร็ว](#เริ่มต้นอย่างรวดเร็ว) · [REA ทำงานอย่างไร](#rea-ทำงานอย่างไร) · [สิ่งที่วิเคราะห์ได้](#สิ่งที่วิเคราะห์ได้) · [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน) · [สร้างสภาพแวดล้อม RL](#build-rl-environments) · [คำถามที่พบบ่อย](#คำถามที่พบบ่อย) · [เอกสาร](#เอกสาร)
+[เริ่มต้นอย่างรวดเร็ว](#เริ่มต้นอย่างรวดเร็ว) · [ตัวอย่างการใช้งาน](#ตัวอย่างการใช้งาน) · [REA ทำงานอย่างไร](#rea-ทำงานอย่างไร) · [สิ่งที่วิเคราะห์ได้](#สิ่งที่วิเคราะห์ได้) · [สร้างสภาพแวดล้อม RL](#build-rl-environments) · [คำถามที่พบบ่อย](#คำถามที่พบบ่อย) · [เอกสาร](#เอกสาร)
 
 <code>npx rea-agents setup</code>
 
@@ -63,15 +63,13 @@ REA เชื่อมเอเจนต์ของคุณกับเคร�
 
 การตั้งค่าลงทะเบียน REA กับเอเจนต์และติดตั้งคำแนะนำการทำงานที่ตรงกัน การวิเคราะห์เนทีฟใช้ Hopper, Ghidra, IDA หรือ Kuna ที่มีอยู่ได้ และติดตั้ง Hopper ได้เมื่อคุณอนุมัติ การวิเคราะห์ JavaScript แบบสแตติกไม่ต้องใช้เอนจินวิเคราะห์เนทีฟ
 
-> **[เยี่ยมชมเว็บไซต์ REA](https://rea.tools/th/)** เพื่อดูคำแนะนำการตั้งค่า คู่มือพร้อมภาพประกอบ และกรณีศึกษาจริง
-
 ## เริ่มต้นอย่างรวดเร็ว
 
-บน Linux การเปิด Ghidra, JADX และเครื่องมือเฟิร์มแวร์ รวมถึงการวิเคราะห์ JavaScript/Electron แบบสแตติก ต้องมี `ps` ที่เข้ากันได้กับ procps ใน `PATH` ของ REA เพื่อตรวจสอบความเป็นเจ้าของโปรเซส ดูข้อกำหนดของ Linuxสำหรับวิธีแก้ไข
+**[เริ่มต้นอย่างรวดเร็ว · rea.tools](https://rea.tools/th/get-started/)**
 
-### ตั้งค่าเอเจนต์
+### ตั้งค่าเอเจนต์ (MCP)
 
-เมื่อติดตั้ง Node.js และ npm แล้ว ให้เรียกใช้:
+เมื่อติดตั้ง [Node.js และ npm](../reference/supported-targets.md) แล้ว ให้รันคำสั่งนี้จากไดเรกทอรีที่เชื่อถือได้ภายนอกโครงการที่ต้องการวิเคราะห์
 
 ```bash
 npx rea-agents setup
@@ -79,15 +77,9 @@ npx rea-agents setup
 
 เลือกเอเจนต์ ตรวจสอบการเปลี่ยนแปลงที่เสนอ แล้วอนุมัติ ขั้นตอนตั้งค่าจะเพิ่มเซิร์ฟเวอร์ MCP ของ REA และคำแนะนำการทำงานที่ตรงกัน พร้อมสำรองการตั้งค่าที่มีอยู่ จากนั้นเริ่มเอเจนต์ใหม่
 
-ขั้นตอนตั้งค่ารองรับ Claude Code, Codex, Cursor, Gemini CLI, Grok Build และ[เอเจนต์อื่น ๆ](../getting-started/installation.md#supported-agents) ดู[การติดตั้งและตั้งค่า](../getting-started/installation.md) สำหรับการตั้งค่าผู้ให้บริการวิเคราะห์และการลงทะเบียน MCP ด้วยตนเอง
+[การติดตั้งและตั้งค่า](../getting-started/installation.md)
 
-MCP ใช้สคีมาอินพุตแบบกระชับโดยปริยาย คำแนะนำที่สคีมาแบบกระชับละไว้จะต่อท้ายคำอธิบายเครื่องมือ เครื่องมือทั้งหมดและการตรวจสอบมาตรฐานฝั่งเซิร์ฟเวอร์ยังคงเหมือนเดิม ดูคู่มือสัญญา MCP
-
-การตั้งค่าจะลงทะเบียนรันไทม์ที่เลือกและสคริปต์เริ่มต้นของ REA โดยตรง หากใช้ตัวรันแพ็กเกจ ให้เก็บรายการแคชและรันไทม์ไว้ และรับแพ็กเกจจากไดเรกทอรีที่เชื่อถือได้นอกโปรเจกต์เป้าหมาย ดูคู่มือการติดตั้ง
-
-ตามค่าเริ่มต้น ระบบจะไม่ใส่สคีมาเอาต์พุตใน `tools/list` เพราะไม่มี API ของโมเดลใดอ่านสคีมาเหล่านี้ และ REA ตรวจสอบผลลัพธ์ทุกรายการเอง ตั้ง `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` ในการลงทะเบียน MCP เพื่อประกาศสคีมาเอาต์พุตแต่ละรายการภายใน 4096 ไบต์ ทุกการตั้งค่ายังคงการตรวจสอบฝั่งเซิร์ฟเวอร์และผลลัพธ์แบบมีโครงสร้างครบถ้วน ดูหัวข้อ “Output schemas” ในคู่มือสัญญา MCP
-
-### ถามเอเจนต์
+ถามเอเจนต์:
 
 ```text
 ตรวจสอบว่าการค้นหาในแอป Notes ทำงานอย่างไร แสดงหลักฐานให้ฉันดู และสร้างฟีเจอร์ที่คล้ายกันสำหรับโปรเจกต์ของฉัน
@@ -95,7 +87,7 @@ MCP ใช้สคีมาอินพุตแบบกระชับโด�
 
 แทนที่ Notes ด้วยแอปเป้าหมายและฟีเจอร์ที่คุณต้องการเข้าใจ
 
-### ใช้เทอร์มินัล
+### ใช้เทอร์มินัล (CLI)
 
 ตรวจสอบไดเรกทอรีแอป JavaScript/Electron ที่แตกไฟล์แล้ว หรือไฟล์ ASAR:
 
@@ -114,9 +106,9 @@ rea --help
 
 สำหรับการวิเคราะห์เนทีฟ ให้ตั้งค่าผู้ให้บริการวิเคราะห์ก่อน ดู[คู่มือ CLI และ Evidence](../getting-started/cli.md) สำหรับคำสั่งเนทีฟ การเลือกผู้ให้บริการ สแนปช็อต และการใช้งานในสคริปต์
 
-### อัปเดต REA
+[ข้อกำหนดสำหรับ Linux](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-REA เปลี่ยนแปลงอย่างรวดเร็ว และรุ่นใหม่มีการแก้ไขบั๊กอยู่บ่อยครั้ง โปรดอัปเดตการติดตั้งของคุณให้เป็นปัจจุบัน
+### อัปเดต REA
 
 สำหรับ CLI ที่ติดตั้งผ่าน `npm install --global` / `bun add --global`:
 
@@ -124,21 +116,44 @@ REA เปลี่ยนแปลงอย่างรวดเร็ว แล
 rea update
 ```
 
-`rea --update` เป็นชื่อแทนของ `rea update` และรับตัวเลือกเอาต์พุตส่วนกลางเดียวกัน คำสั่งอัปเดตเก็บ stdout/stderr รวมไม่เกิน 4 MiB เมทาดาทาที่ใหญ่เกินจะถูกปฏิเสธหลังคำสั่งจบ ส่วนการติดตั้งที่มีเอาต์พุตมากจะเก็บการวินิจฉัยแบบจำกัด ความคืบหน้าเคารพ backpressure ของเทอร์มินัลและรอการเขียนที่ส่งแล้วเสร็จ
-
-การอัปเดต Bun แบบโกลบอลต้องใช้ Bun 1.2.17 ขึ้นไป หากเก่ากว่านี้ให้อัปเกรด Bun เองก่อนเรียก `rea update`
-
-หากต้องการปรับปรุงการลงทะเบียนเอเจนต์และสกิลให้เป็นปัจจุบัน ให้เรียกใช้คำสั่งตั้งค่าที่แสดงหลังการอัปเดต
-
 หากใช้ `npx` ให้อัปเดตการตั้งค่าเอเจนต์ด้วย:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-ตรวจสอบการเปลี่ยนแปลงการตั้งค่าและเริ่มเอเจนต์ใหม่ สำหรับคำสั่ง CLI ที่ใช้ครั้งเดียว ให้ใช้ `npx rea-agents@latest` ตามด้วยคำสั่งที่ต้องการ
+[อัปเดตและถอนการติดตั้ง](../getting-started/installation.md#diagnose-update-and-remove)
 
-เมื่อใช้ Bun ให้ใช้ `bunx rea-agents@latest` แทน `npx rea-agents@latest`
+## ตัวอย่างการใช้งาน
+
+<a href="https://rea.tools/th/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="ภาพประกอบกรณีศึกษาการแพนเสียงใน DX-Ball บริดจ์คลิปบอร์ดของ Notion และวงแหวนกระสุนใน TH04" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: สร้างการคำนวณแพนเสียงขึ้นใหม่</h3>
+<p>ติดตามการเรียกเสียงไปยังฟังก์ชันช่วยแปลงตำแหน่งเป็นค่าแพน ตรวจสอบคำสั่ง และแปลงโค้ดเทียมที่ยังไม่สมบูรณ์เป็น C การสร้างขึ้นใหม่นี้ผ่านการทดสอบ 3,205 กรณีเทียบกับ x86 ต้นฉบับ และสร้างไบต์ทั้ง 63 ไบต์ของฟังก์ชันที่คอมไพล์แล้วได้ตรงกัน</p>
+<p><a href="https://rea.tools/th/showcase/dx-ball/">อ่านกรณีศึกษา</a> · <a href="https://github.com/N0zoM1z0/dx-ball">รีโพซิทอรีการสร้างขึ้นใหม่</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: ติดตามบริดจ์คลิปบอร์ดของ Electron</h3>
+<p>ค้นหา API คลิปบอร์ดของ renderer ติดตามผ่าน preload และ IPC ไปยังโปรเซสหลัก แล้วตรวจสอบรูปแบบคลิปบอร์ดที่มีข้อมูลการจัดรูปแบบ</p>
+<p><a href="https://rea.tools/th/showcase/notion/">อ่านกรณีศึกษา</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: กู้คืนการคำนวณวงแหวนกระสุนของ DOS</h3>
+<p>ตรวจสอบคำสั่ง 16 บิตของเกมต้นฉบับบน PC-98 กู้คืนการคำนวณมุมคงที่และมุมเล็งเป้าหมาย แล้วเปรียบเทียบ C++ ที่สร้างขึ้นใหม่กับผลลัพธ์จากคอมไพเลอร์ในยุคนั้น</p>
+<p><a href="https://rea.tools/th/showcase/th04/">อ่านกรณีศึกษา</a> · <a href="https://github.com/N0zoM1z0/th04">รีโพซิทอรีการสร้างขึ้นใหม่</a></p>
+</td></tr>
+</tbody>
+</table>
+
+หากคุณใช้ REA กับสิ่งที่น่าสนใจ เราอยากเห็นผลงานของคุณ แบ่งปันกรณีของคุณผ่าน [issue](https://github.com/morluto/rea/issues) หรือ [pull request](https://github.com/morluto/rea/pulls) พร้อมระบุเป้าหมาย คำถามของคุณ REA ช่วยอย่างไร และสิ่งที่คุณค้นพบ
 
 ## REA ทำงานอย่างไร
 
@@ -152,141 +167,21 @@ npx rea-agents@latest setup
 
 ## สิ่งที่วิเคราะห์ได้
 
-REA ต้องใช้ Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) หรือ 26+ (>=26.12.1) และ npm เครื่องมือเพิ่มเติมและแพลตฟอร์มที่รองรับขึ้นอยู่กับเป้าหมาย:
+ไบนารีเนทีฟ · JavaScript / Electron · เว็บไซต์ · แอสเซมบลี .NET · APK ของ Android · เฟิร์มแวร์ · พฤติกรรมของโปรเซส
 
-| เป้าหมาย                      | สิ่งที่ REA ส่งกลับ                                                                   | ข้อกำหนดและคู่มือ                                                                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ไบนารีเนทีฟ                    | โค้ดเทียม แอสเซมบลี สตริง สัญลักษณ์ การเรียก และการอ้างอิง                                | Hopper, Ghidra, IDA หรือ Kuna; [การวิเคราะห์เนทีฟ](../guides/native/native-investigation.md)                                                                  |
-| โครงสร้าง ELF แบบออฟไลน์       | เซกชัน เซกเมนต์ สัญลักษณ์/รีโลเคชันต้นฉบับ และตัวเลือกกลไกป้องกันที่พบจากการวิเคราะห์แบบสถิต      | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; [การวินิจฉัยไบนารี](../guides/native/binary-diagnostics.md)                                                                 |
-| PE certificates              | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                   |
-| PE imports                   | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                             |
-| Windows shortcuts            | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts    | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                 |
-| ไบต์โค้ด EVM                   | ตัวเลือกฟังก์ชันสำหรับการเรียก ออฟเซ็ตไบต์ อาร์กิวเมนต์และความสามารถในการเปลี่ยนสถานะที่อนุมานได้ | ไฟล์บนเครื่องที่มีไบต์ดิบหรือข้อมูลเลขฐานสิบหกบน Linux x64; [คู่มือ EVM แบบออฟไลน์](../guides/evm/evm-bytecode.md)                                                        |
-| Rust binaries                | Embedded cargo-auditable dependency list                                        | [Rust binaries](../rust-binaries.md)                                                                                                                      |
-| ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                              |
-| DWARF compile units          | Compile-unit name, directory, producer, language, and dwo_name                  | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                    |
-| ELF dependencies             | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports           | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                |
-| Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                             |
-| Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                    |
-| Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                         |
-| Apple IPS crashes            | .ips metadata, threads, images, registers and crash classes                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                             |
-| ข้อมูลการแครชของ Linux ที่บันทึกไว้ | ระเบียน note ดิบ รีจิสเตอร์/สัญญาณของทุกเธรดที่บันทึกไว้ และตัวเลือกการแมปเพิ่มเติม              | pwntools ที่ผู้ใช้จัดเตรียมบน Linux x64; เลือกใช้ GDB/pwndbg เพิ่มเติมได้; [การแครชที่บันทึกไว้](../guides/native/recorded-crashes.md)                                      |
-| ไดเรกทอรีติดตั้งแอปเดสก์ท็อป       | รันไทม์ที่เป็นไปได้ ไฟล์หลักฐาน ตัวบ่งชี้ส่วนประกอบ และขั้นตอนถัดไป                             | ตรวจสอบไดเรกทอรีและส่วนหัวโดยจำกัดขอบเขต；[แอปเดสก์ท็อป](../desktop-applications.md)                                                                            |
-| JavaScript / Electron        | โมดูล การนำเข้า ซอร์สแมป เส้นทาง IPC และความสัมพันธ์กับส่วนเสริมเนทีฟ                      | Node.js และ npm; [การวิเคราะห์แอปพลิเคชัน](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                      |
-| เว็บไซต์                       | โครงสร้างหน้า สคริปต์ ข้อมูลเครือข่ายที่สังเกตได้ และภาพหน้าจอที่ร้องขอ                         | เบราว์เซอร์ในตระกูล Chrome; [การวิเคราะห์ผ่านเบราว์เซอร์](../guides/web/browser-observation.md)                                                                   |
-| ข้อมูลเครือข่ายที่บันทึกไว้           | คำขอ คำตอบ เพย์โหลดที่ปรากฏ และตำแหน่งต้นทาง                                         | HAR / Fiddler Everywhere SAZ; mitmdump บน Linux สำหรับข้อมูลที่บันทึกในรูปแบบเนทีฟของ mitmproxy; [คู่มือการบันทึกข้อมูล](../guides/web/web-network-captures.md)           |
-| การจับแพ็กเก็ต                  | จุดเชื่อมต่อ, DNS, TLS SNI, การกระจายโปรโตคอล และคำขอ HTTP                          | tshark และ capinfos ที่ผู้เรียกจัดเตรียม (ตรวจสอบแล้วบน Linux); [คู่มือ pcap](../guides/data/pcap-analysis.md)                                                       |
-| แอสเซมบลี .NET                | เมทาดาทา คำสั่ง CIL การพึ่งพาเนทีฟที่ประกาศไว้ และการเปรียบเทียบผลการบิลด์                  | การตรวจสอบแบบสถิต; [คู่มือโค้ดแบบจัดการ](../guides/managed/managed-code-analysis.md)                                                                            |
-| PyInstaller                  | CArchive, PYZ, Python bytecode                                                  | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                     |
-| Deno compile binaries        | Virtual files, entry point, recorded options, npm snapshot length               | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                      |
-| APK ของ Android              | การประกาศใน manifest คลาส เมธอดที่ดีคอมไพล์ และการอ้างอิง                             | JADX แบบไม่มี GUI และ JDK แบบเต็มบน Linux/macOS/Windows x64; [คู่มือ Android](../guides/android/android-analysis.md)                                            |
-| อุปกรณ์ Android                | อุปกรณ์ แพ็กเกจ โพรเซส บันทึก ดัมพ์ ภาพหน้าจอ และการถ่ายโอน APK/ไฟล์                      | adb ที่ผู้เรียกจัดเตรียม (โปรแกรมจำลองหรืออุปกรณ์จริง); [คู่มือ ADB](../guides/android/adb-device-analysis.md)                                                          |
-| โปรเจกต์ JEB                  | หน่วยโปรเจกต์จากเอนจิน, แฮชของอาร์ติแฟกต์ และซูโดโค้ดของไทป์/เมท็อด                       | ไคลเอนต์ JEB ที่ผู้เรียกเริ่มและให้บริการ MCP เลือกด้วย REA_JEB_MCP_URL; [คู่มือ JEB](../providers/jeb-analysis.md)                                                      |
-| ทรัพยากร Android              | ไฟล์ manifest ที่ถอดรหัสแล้ว ตารางสตริง ภาษา และข้อมูลเวอร์ชัน                            | ตัวเรียก Apktool ที่ผู้เรียกจัดเตรียม; [คู่มือทรัพยากร](../guides/android/apktool-resource-analysis.md)                                                                |
-| แอป Flutter                  | แฮชสแนปชอต Dart, แฮชไลบรารีราย ABI และที่มาของบิลด์เอนจิน                             | ไม่ต้อง (วิเคราะห์ APK แบบ static); [คู่มือ Flutter](../guides/android/flutter-analysis.md)                                                                      |
-| เฟิร์มแวร์                      | พื้นที่ข้อมูล ผลการแตกไฟล์ และการส่งต่อไปวิเคราะห์เนทีฟ                                     | Binwalk / Unblob บน Linux; [คู่มือเฟิร์มแวร์](../guides/firmware/firmware-analysis.md)                                                                          |
-| แพ็กเก็ตที่บันทึกไว้                | ฟิลด์ที่เลือก ค่าซ้ำ ตัวกรอง และกฎการถอดรหัส                                             | Linux: TShark 4.x + prlimit; [คู่มือไฟล์แคปเจอร์](../guides/data/packet-captures.md)                                                                           |
-| สัญญาณลอจิกที่บันทึกไว้             | คำอธิบายจากตัวถอดรหัส ช่วงตัวอย่าง และข้อมูลวินิจฉัย                                       | Linux: sigrok-cli 0.7.2 + prlimit; [คู่มือสัญญาณ](../guides/signals/signal-recordings.md)                                                                     |
-| แพ็กเกจและทรัพยากร             | รายการไฟล์ ค่าแฮช plist โครงสร้างบันเดิลของ Apple และทรัพยากรที่แตกออกมา                | [คู่มืออาร์ติแฟกต์และ JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [แอปพลิเคชัน Apple](../guides/apple/apple-application-analysis.md) |
-| พฤติกรรมของโปรเซส             | เอาต์พุตเทอร์มินัล การโต้ตอบ ข้อมูลการสิ้นสุดและระบบไฟล์ที่สังเกตได้ และการเปรียบเทียบการรัน       | Linux/macOS ที่มี PTY เนทีฟ; [การบันทึกโปรเซส](../guides/runtime/process-capture.md)                                                                            |
-| ไบนารี Go                     | เวอร์ชันคอมไพเลอร์ โมดูล การแทนที่ และค่าบิลด์ที่ฝังอยู่                                      | การตรวจสอบสแตติกในตัว ELF/PE/thin Mach-O; ไม่ต้องติดตั้ง Go                                                                                                      |
-| ฐานข้อมูล SQLite               | ตาราง คอลัมน์ ดัชนี วิว ทริกเกอร์ และแถวที่เลือกจากตารางทั่วไป                              | สแนปช็อตฐานข้อมูล/WAL ในเครื่อง; Node.js 24.x >=24.15 หรือ 26+ พร้อมขีดจำกัด SQLite แบบเนทีฟ                                                                        |
-| ออบเจ็กต์โค้ด GPU               | เป้าหมาย CUDA/HIP พารามิเตอร์และทรัพยากรเคอร์เนลที่เลือก และข้อความ PTX ที่เก็บไว้           | การตรวจสอบสแตติกในตัว ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                                |
-| ไฟล์โมเดล                     | เมทาดาทา GGUF / safetensors การประกาศเทนเซอร์ และยอดรวมที่คำนวณได้                  | ตรวจสอบส่วนหัว; เลือกแฮชทั้งไฟล์ได้; [GGUF / safetensors](../model-artifacts.md)                                                                                 |
-| เมทาดาทา IL2CPP              | อิมเมจแอสเซมบลี Unity global-metadata.dat ชื่อชนิด/เมธอด และช่วงดัชนี                   | ถอดรหัสสแตติกเวอร์ชัน 24, 27, 29, 31, 39; ไม่ต้องใช้ Unity                                                                                                       |
-| Godot PCK                    | รายการและการแตกไฟล์ ข้อมูลส่วนหัว/ไดเรกทอรีต้นฉบับ และตัวตนเนื้อหาที่เลือก                    | รูปแบบสแตติก 2, 3, 4; ไม่ต้องใช้ Godot                                                                                                                         |
-| แพ็กเกจ NuGet                 | ตัวตนของแพ็กเกจ กลุ่ม dependency ใบอนุญาต repository และเนื้อหา ZIP                    | การตรวจสอบ .nupkg แบบสแตติกในตัว; [แพ็กเกจ NuGet](../guides/managed/nuget-nupkg.md)                                                                          |
-| เค้าโครงอิมเมจ OCI             | รุ่นเค้าโครง รายการดัชนี การตั้งค่าอิมเมจ เลเยอร์ และการตรวจ digest ของ blob              | การตรวจสอบไดเรกทอรีแบบสแตติกในตัว; [เค้าโครงอิมเมจ OCI](../guides/artifacts/oci-image-layout.md)                                                               |
-| อาร์ติแฟกต์ WASM                | การตรวจสอบ เซกชัน รูปแบบ WAT นำเข้า/ส่งออกที่ตรงต้นฉบับ และ WAT ที่ถอดรหัส                 | ผู้เรียกจัดเตรียม WABT 1.0.42; `inspect_wasm_artifact`                                                                                                         |
-| ลายเซ็น APK                   | ผู้ลงนาม v1/v2/v3/v3.1 ลายนิ้วมือใบรับรอง การหมุนเวียนคีย์ และความสอดคล้องภายในของไดเจสต์   | การตรวจสอบสแตติกในตัว; `inspect_apk_signature`                                                                                                              |
-
-การตรวจสอบ JavaScript และ .NET แบบสถิตอ่านไฟล์ที่ให้มาโดยไม่รันแอปพลิเคชัน การบันทึกขณะทำงานจะรันหรือโต้ตอบกับเป้าหมายที่เลือกโดยใช้สิทธิ์ของผู้ใช้คุณ คู่มือการทำงานแต่ละฉบับอธิบายผลที่เกิดขึ้นไว้
-
-สำหรับการตรวจสอบไบนารีเนทีฟแบบออฟไลน์ REA ยังรองรับ GNU objdump และ Rizin ที่ผู้ใช้ต้องจัดหาเอง [คู่มือเครื่องมือวิศวกรรมย้อนกลับ](../reverse-engineering-tools.md) อธิบายการตั้งค่าผู้ให้บริการ คำสั่ง CLI และข้อจำกัดของ Evidence โดย REA จะไม่ติดตั้งหรืออัปเดตผู้ให้บริการทั้งสองนี้
+[รูปแบบที่รองรับและข้อกำหนด](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-สำหรับไบนารีขนาดใหญ่ เพิ่มเวลารอเริ่มต้นด้วย `REA_GHIDRA_STARTUP_TIMEOUT_MS` หรือ `REA_HOPPER_STARTUP_TIMEOUT_MS`
-
-รูปแบบไบนารีเนทีฟและแพลตฟอร์มที่รองรับแตกต่างกันตามผู้ให้บริการวิเคราะห์ ดู[การตั้งค่า Hopper และ Ghidra](../getting-started/installation.md#hopper), [คู่มือ IDA](../providers/ida-provider.md) [Kuna](../kuna-provider.md) และ[การรองรับ Ghidra บน Windows แบบทดลอง](../providers/windows-ghidra-p0.md) Ghidra ยังรองรับ[การวิเคราะห์ DOS แบบ 16 บิต](../providers/ghidra-dos.md) สำหรับการเลือกผู้ให้บริการ ดู[คู่มือ CLI](../getting-started/cli.md#choose-a-provider) ตรวจสอบ[ความพร้อมใช้งานในแต่ละรุ่น](../getting-started/installation.md#released-package-and-main) สำหรับฟีเจอร์ที่เพิ่มหลังรุ่นล่าสุดบน npm
-
-## ตัวอย่างการใช้งาน
-
-<a href="https://rea.tools/th/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="ภาพประกอบกรณีศึกษาการแพนเสียงใน DX-Ball บริดจ์คลิปบอร์ดของ Notion และวงแหวนกระสุนใน TH04" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: สร้างการคำนวณแพนเสียงขึ้นใหม่
-
-ติดตามการเรียกเสียงไปยังฟังก์ชันช่วยแปลงตำแหน่งเป็นค่าแพน ตรวจสอบคำสั่ง และแปลงโค้ดเทียมที่ยังไม่สมบูรณ์เป็น C การสร้างขึ้นใหม่นี้ผ่านการทดสอบ 3,205 กรณีเทียบกับ x86 ต้นฉบับ และสร้างไบต์ทั้ง 63 ไบต์ของฟังก์ชันที่คอมไพล์แล้วได้ตรงกัน
-
-[อ่านกรณีศึกษา](https://rea.tools/th/showcase/dx-ball/) · [รีโพซิทอรีการสร้างขึ้นใหม่](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: ติดตามบริดจ์คลิปบอร์ดของ Electron
-
-ค้นหา API คลิปบอร์ดของ renderer ติดตามผ่าน preload และ IPC ไปยังโปรเซสหลัก แล้วตรวจสอบรูปแบบคลิปบอร์ดที่มีข้อมูลการจัดรูปแบบ
-
-[อ่านกรณีศึกษา](https://rea.tools/th/showcase/notion/)
-
-### TH04: กู้คืนการคำนวณวงแหวนกระสุนของ DOS
-
-ตรวจสอบคำสั่ง 16 บิตของเกมต้นฉบับบน PC-98 กู้คืนการคำนวณมุมคงที่และมุมเล็งเป้าหมาย แล้วเปรียบเทียบ C++ ที่สร้างขึ้นใหม่กับผลลัพธ์จากคอมไพเลอร์ในยุคนั้น
-
-[อ่านกรณีศึกษา](https://rea.tools/th/showcase/th04/) · [รีโพซิทอรีการสร้างขึ้นใหม่](https://github.com/N0zoM1z0/th04)
-
-### สร้างสภาพแวดล้อม RL ด้วย REA
-
-บันทึกเซสชันเว็บแอป เปลี่ยน API เป็นเครื่องมือ และส่งออกสภาพแวดล้อมที่เอเจนต์ AI ใช้ได้ รันด้วย AgentEnv แล้วเพิ่มงานและการตรวจสอบรางวัลสำหรับการฝึก RL หรือการประเมิน
-
-[คู่มือสร้างสภาพแวดล้อม](https://rea.tools/guides/rl-environments/) ·
-[ชมเดโมบน X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-หากคุณใช้ REA กับสิ่งที่น่าสนใจ เราอยากเห็นผลงานของคุณ แบ่งปันกรณีของคุณผ่าน [issue](https://github.com/morluto/rea/issues) หรือ [pull request](https://github.com/morluto/rea/pulls) พร้อมระบุเป้าหมาย คำถามของคุณ REA ช่วยอย่างไร และสิ่งที่คุณค้นพบ
+[เลือกเครื่องมือวิเคราะห์](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## สร้างสภาพแวดล้อม RL
 
-สร้างสภาพแวดล้อมในเครื่องให้เอเจนต์ AI ฝึกทำงาน เช่น ค้นหา issue หรือสร้างโฟลเดอร์ โดยไม่ต้องรันแอปต้นฉบับ ใช้สำหรับการเรียนรู้แบบเสริมกำลัง (RL) หรือทดสอบว่าเอเจนต์ทำงานได้ดีเพียงใด
+สร้างสภาพแวดล้อมในเครื่องจากเซสชันเว็บที่บันทึกไว้หรือแอปเดสก์ท็อป Linux เพื่อให้เอเจนต์ฝึกทำงานและตรวจสอบผลลัพธ์ได้
 
-REA เปลี่ยนคำขอและคำตอบ API ที่บันทึกไว้เป็นเครื่องมือที่เอเจนต์เรียกใช้ได้ สภาพแวดล้อมใช้ข้อมูลที่บันทึกไว้และรองรับการเปลี่ยนแปลงเฉพาะเมื่อข้อมูลบันทึกยืนยันผลของการเปลี่ยนแปลงนั้น
-
-เมื่อตั้งค่า REA ในเอเจนต์แล้ว ให้เปลี่ยน URL และงานเกี่ยวกับโฟลเดอร์ในตัวอย่างให้ตรงกับแอปของคุณ:
-
-```text
-ใช้ REA สร้างสภาพแวดล้อม RL จากเว็บแอปทดสอบของฉันที่
-http://127.0.0.1:3000
-ครอบคลุมการแสดงรายการ สร้าง เปลี่ยนชื่อ และลบโฟลเดอร์
-อนุญาตให้สร้างและลบโฟลเดอร์ทดสอบ แต่ห้ามเปลี่ยนข้อมูลที่มีอยู่
-บันทึกในโฟลเดอร์ชื่อ my-env ตรวจสอบว่างานใดใช้ได้ และบอกวิธีรันให้ฉันทราบ
-```
-
-<details>
-<summary>ใช้บรรทัดคำสั่งแทน</summary>
-
-ใช้คำสั่งเหล่านี้เมื่อมีไฟล์บันทึกคำขอและคำตอบของแอปในเบราว์เซอร์แล้ว การรันสภาพแวดล้อมที่สร้างขึ้นต้องใช้ AgentEnv และ Docker ด้วย
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA ส่งออกสภาพแวดล้อมที่รันได้พร้อมการทดสอบพื้นฐานว่าเริ่มทำงานและตอบสนองได้ เชื่อมต่อกับเฟรมเวิร์ก RL เพื่อกำหนดเป้าหมายงาน เพิ่มการตรวจสอบรางวัล และฝึกเอเจนต์
-
-[คู่มือสร้างสภาพแวดล้อม](https://rea.tools/guides/rl-environments/) ·
-[เอกสารอ้างอิงสภาพแวดล้อม](../agent-environments.md) ·
-[ชมเดโมบน X](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### สภาพแวดล้อมของแอปเดสก์ท็อป
-
-REA ยังสร้างสภาพแวดล้อมของแอปเดสก์ท็อปบน Linux ที่เอเจนต์ใช้งานผ่านภาพหน้าจอ เมาส์ และคีย์บอร์ดได้ด้วย จากคำขอเพียงบรรทัดเดียว เช่น "สร้างสภาพแวดล้อม Gnote ที่เอเจนต์เพิ่มน้ำมันมะกอกลงในโน้ตรายการซื้อของ" เอเจนต์ของคุณจะติดตั้งแอปบนคอมพิวเตอร์สำหรับบิลด์ในเครื่อง เขียนงาน ส่งออกสภาพแวดล้อม และตรวจสอบงานบนคอมพิวเตอร์เครื่องใหม่ เครื่องที่ใช้สร้างต้องมี Linux บน amd64 หรือ arm64, Docker และ agentenv framework เวอร์ชันที่คู่มือกำหนด
-
-[ตั้งค่าสภาพแวดล้อมของแอปเดสก์ท็อป](../desktop-build-computer.md)
+[สร้างสภาพแวดล้อม RL](https://rea.tools/guides/rl-environments/)
 
 ## คำถามที่พบบ่อย
 
@@ -365,11 +260,21 @@ npx rea-agents@latest setup
 
 รายงานช่องโหว่ผ่าน [SECURITY.md](../../SECURITY.md)
 
+## ชุมชนและการสนับสนุน
+
+- **Discord** — ร่วมถามคำถามและแบ่งปันสิ่งที่คุณกำลังศึกษากับชุมชนนักวิศวกรรมย้อนกลับและนักสร้างสรรค์กว่า 50,000 คน! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — ติดตาม [@reatools](https://x.com/reatools) เพื่อรับข่าวสารและประกาศ
+- **ข้อเสนอแนะ** — อยากได้ฟีเจอร์ใหม่หรือต้องการให้รองรับไฟล์รูปแบบใด บอกเราได้ทาง [GitHub](https://github.com/morluto/rea/issues) หรือ [Discord](https://discord.gg/GkcryMnJDM)
+
 ## ประวัติดาว
 
 🎉 **400,000 ดาวบน GitHub — ขอบคุณทุกคน!**
 
 ขอบคุณทุกคนที่ใช้ REA รายงานบั๊ก เสนอฟีเจอร์ ทดสอบบิลด์ และช่วยแก้ไข
+
+<a href="https://rea.tools/th/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="ผู้ร่วมพัฒนา REA" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -378,6 +283,12 @@ npx rea-agents@latest setup
     <img alt="ประวัติดาว GitHub ของ REA" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
   </picture>
 </a>
+
+## การมีส่วนร่วม
+
+เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
+
+ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน
 
 ## ข้อสงวนสิทธิ์
 
@@ -388,12 +299,6 @@ REA มีไว้สำหรับการวิจัย การศึก
 The project's position on illegal or unauthorized use covers all REA
 versions, distribution channels, and platforms; each copy retains its
 applicable licenses.
-
-## การมีส่วนร่วม
-
-เรายินดีรับความช่วยเหลือในการพัฒนา REA! [เปิด issue](https://github.com/morluto/rea/issues) เพื่อรายงานบั๊กหรือเสนอฟีเจอร์ หรือ[ส่ง pull request](https://github.com/morluto/rea/pulls) เพื่อปรับปรุงโค้ดหรือเอกสาร
-
-ดู [CONTRIBUTING.md](../../CONTRIBUTING.md) สำหรับการตั้งค่าสภาพแวดล้อมพัฒนาและการตรวจสอบ ดู[การทดสอบ](../development/testing.md) สำหรับแนวทางการตรวจยืนยัน
 
 ## สัญญาอนุญาต
 

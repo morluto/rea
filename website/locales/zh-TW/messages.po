@@ -5116,6 +5116,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "確定運算元的含義，並檢查兩條運算路徑。"
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "在電腦前思考的分析師"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
@@ -13621,15 +13626,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "尋找貢獻者"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "來自 {ph0}GitHub 貢獻者名單{ph1} · 更新於 {ph2}。"
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -13710,12 +13706,12 @@ msgstr "建立環境指南"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}建立桌面應用程式環境{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "建立桌面應用程式環境"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -13726,6 +13722,8 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"先描述你希望代理在 Linux 桌面應用程式中練習的任務。例如，請它建立 Gnote "
+"環境，練習將橄欖油加入購物清單。代理會在本機建置電腦上安裝應用程式、編寫任務並匯出環境，接著在全新的電腦上透過螢幕截圖、滑鼠與鍵盤進行驗證。"
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -13739,6 +13737,8 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"建置主機需要執行 amd64 或 arm64 版 Linux，並安裝 Docker 和指定版本的 "
+"AgentEnv。請依照{ph0}桌面環境建置主機設定指南{ph1}完成安裝並確認主機已就緒。"
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -14329,46 +14329,22 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "方法與軟體重建筆記。"
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
-msgstr "REA-瞭解軟體的工作原理。 逆向工程與你的程式設計助手."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
+msgstr "藍色 REA 字樣旁顯示反組譯程式碼、十六進位資料與代理程式的工作流程。"
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -16063,3 +16039,14 @@ msgstr ""
 #~ msgstr ""
 #~ "Windows x64 提供實驗性的只讀支援：分析固定本地 NTFS 驅動器上的原生 x86、x64 PE 應用和 DLL。使用已有的 Ghidra "
 #~ "12.1.x 和 64 位 JDK 21 或更新版本："
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "來自 {ph0}GitHub 貢獻者名單{ph1} · 更新於 {ph2}。"
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr "REA-瞭解軟體的工作原理。 逆向工程與你的程式設計助手."

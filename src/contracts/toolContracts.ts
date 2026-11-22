@@ -133,20 +133,30 @@ export const TOOL_CONTRACTS: readonly CatalogContract[] = Object.values(
   CATALOG_CONTRACT_GROUPS,
 ).flat();
 
+/** Public tool contract paired with its canonical catalog index. */
+export interface ToolContractEntry {
+  readonly contract: CatalogContract;
+  readonly index: number;
+}
+
+const TOOL_CONTRACTS_BY_NAME: ReadonlyMap<string, ToolContractEntry> = new Map(
+  TOOL_CONTRACTS.map((contract, index) => [contract.name, { contract, index }]),
+);
+
+/** Resolve a public contract entry in catalog order in O(1). */
+export const toolContractEntry = (
+  name: string,
+): ToolContractEntry | undefined => TOOL_CONTRACTS_BY_NAME.get(name);
+
 /** Resolve a public contract by name while retaining its exact schema types. */
 export const toolContract = <
   Name extends (typeof TOOL_CONTRACTS)[number]["name"],
 >(
   name: Name,
 ): Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }> => {
-  const contract = TOOL_CONTRACTS.find(
-    (
-      candidate,
-    ): candidate is Extract<
-      (typeof TOOL_CONTRACTS)[number],
-      { readonly name: Name }
-    > => candidate.name === name,
-  );
+  const contract = TOOL_CONTRACTS_BY_NAME.get(name)?.contract as
+    | Extract<(typeof TOOL_CONTRACTS)[number], { readonly name: Name }>
+    | undefined;
   if (contract === undefined) throw new Error(`Missing tool contract: ${name}`);
   return contract;
 };

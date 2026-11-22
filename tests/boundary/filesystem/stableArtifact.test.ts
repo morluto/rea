@@ -9,9 +9,10 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import {
+  completedStableArtifactStream,
   readStableArtifact,
   streamStableArtifact,
 } from "../../../src/resources/readStableArtifact.js";
@@ -605,4 +606,102 @@ it("keeps a completed void operation distinct from a failed operation and arbitr
     file.release();
     await scope.close();
   }
+});
+
+describe("streamStableArtifact async chunks and custom chunkBytes", () => {
+  it("awaits async onChunk callbacks with custom chunkBytes and preserves completion", async () => {
+    const root = await createTestTempDirectory("rea-stable-async-stream-");
+    const path = join(root, "streamed.bin");
+    const payload = Buffer.alloc(300, 0x41);
+    payload.writeUInt32BE(0xdeadbeef, 296);
+    await writeFile(path, payload);
+
+    const seenSizes: number[] = [];
+    let activeCallbacks = 0;
+    let maxConcurrency = 0;
+    const result = await streamStableArtifact(path, payload.length, {
+      chunkBytes: 128,
+      retainBytes: () => 16,
+      onChunk: async (chunk) => {
+        activeCallbacks += 1;
+        maxConcurrency = Math.max(maxConcurrency, activeCallbacks);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        seenSizes.push(chunk.length);
+        activeCallbacks -= 1;
+      },
+    });
+    expect(maxConcurrency).toBe(1);
+    expect(seenSizes).toEqual([16, 128, 128, 28]);
+    expect(result.size).toBe(300);
+    expect(Buffer.compare(result.prefix, payload.subarray(0, 16))).toBe(0);
+    expect(result.sha256).toBe(
+      createHash("sha256").update(payload).digest("hex"),
+    );
+
+    const full = await readStableArtifact(path, 2_000_000);
+    expect(Buffer.compare(full.bytes, payload)).toBe(0);
+  });
+
+  it("reads multi-megabyte files across 1 MiB snapshot chunks accurately", async () => {
+    const root = await createTestTempDirectory("rea-stable-large-read-");
+    const path = join(root, "large.bin");
+    const payload = Buffer.alloc(1_500_000, 0x6b);
+    payload.write("tail", payload.length - 4);
+    await writeFile(path, payload);
+
+    const read = await readStableArtifact(path, 2_000_000);
+    expect(read.bytes.length).toBe(payload.length);
+    expect(read.sha256).toBe(
+      createHash("sha256").update(payload).digest("hex"),
+    );
+  });
+
+  it.each([0, -1, 1.5, Number.NaN])(
+    "rejects invalid chunkBytes (%j) with format failure",
+    async (chunkBytes) => {
+      const root = await createTestTempDirectory("rea-stable-bad-chunk-");
+      const path = join(root, "sample.bin");
+      await writeFile(path, "abc");
+      await expect(
+        streamStableArtifact(path, 3, {
+          chunkBytes,
+          retainBytes: () => 0,
+          onChunk: async () => {},
+        }),
+      ).rejects.toMatchObject({ reason: "format" });
+    },
+  );
+
+  it("retains streamed identity when handle close fails after async onChunk", async () => {
+    const file = await heldDescriptor();
+    const scope = new ArtifactResourceScope();
+    const failure = await streamStableArtifact(file.path, file.bytes.length, {
+      chunkBytes: 2,
+      retainBytes: () => 2,
+      resourceScope: scope,
+      fileSystem: file.fileSystem,
+      onChunk: async () => {
+        await Promise.resolve();
+      },
+    }).catch((cause: unknown) => cause);
+
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    const completed = completedStableArtifactStream(failure);
+    expect(completed).toBeDefined();
+    expect(completed?.size).toBe(file.bytes.length);
+    expect(
+      Buffer.compare(
+        completed?.prefix ?? Buffer.alloc(0),
+        file.bytes.subarray(0, 2),
+      ),
+    ).toBe(0);
+    expect(completed?.sha256).toBe(
+      createHash("sha256").update(file.bytes).digest("hex"),
+    );
+
+    file.release();
+    if (failure instanceof ArtifactFileCleanupFailure)
+      await failure.cleanupLease.release();
+    await scope.close();
+  });
 });

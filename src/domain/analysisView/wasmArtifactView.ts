@@ -2,7 +2,7 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   wasmArtifactSchema,
   wasmArtifactMatchesSubject,
@@ -72,6 +72,8 @@ export const wasmSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
+const readWasmArtifact = createAnalysisViewResultReader(wasmArtifactSchema);
+
 /** Read the exact retained WABT forms with source identity and explicit uncertainty. */
 export const projectWasmArtifactView = (
   parent: AnalysisViewParent,
@@ -90,7 +92,7 @@ export const projectWasmArtifactView = (
         },
       ]),
     );
-  const parsed = parseAnalysisViewResult(wasmArtifactSchema, parent);
+  const parsed = readWasmArtifact(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   if (

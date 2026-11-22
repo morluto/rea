@@ -21,7 +21,7 @@
 
 <a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord par REA community mein shamil hon" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
-[Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
+[Jaldi shuru karein](#jaldi-shuru-karein) · [Amli misaalein](#amli-misaalein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
 
@@ -65,18 +65,13 @@ REA aapke agent ko native binaries, JavaScript aur Electron apps, .NET assemblie
 
 Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra, IDA ya Kuna use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
 
-> Setup instructions, tasveeron ke saath guides aur asli case studies ke liye **[REA ki website dekhein](https://rea.tools/)**.
-
 ## Jaldi shuru karein
 
-Linux par Ghidra, JADX, firmware tools shuru karne aur static JavaScript/Electron
-analysis ke liye REA ke `PATH` par procps-compatible `ps` hona chahiye, taake
-process ownership check ho sake. Masla hal karne ke steps `docs/getting-started/installation.md`
-ke "Linux owned-process prerequisite" section mein hain.
+**[Jaldi shuru karein · rea.tools](https://rea.tools/ur-Latn/get-started/)**
 
-### Apna agent setup karein
+### Apna agent setup karein (MCP)
 
-Node.js aur npm installed hon to yeh command chalayein:
+[Node.js aur npm](../reference/supported-targets.md) install karne ke baad yeh command target project se bahar kisi bharosemand directory mein chalayein.
 
 ```bash
 npx rea-agents setup
@@ -86,22 +81,9 @@ Apne agents select karein, proposed changes dekhein aur approve karein. Setup
 REA ka MCP server aur matching workflow instructions add karta hai, aur existing
 configuration ke backups banata hai. Iske baad apna agent restart karein.
 
-Setup Claude Code, Codex, Cursor, Gemini CLI, Grok Build aur
-[doosre agents](../getting-started/installation.md#supported-agents) support karta hai. Provider
-configuration aur manual MCP registration ke liye
-[installation aur setup](../getting-started/installation.md) dekhein.
+[installation aur setup](../getting-started/installation.md)
 
-Context overhead kam rakhne ke liye MCP compact input schemas advertise karta
-hai; jo guidance compact schema chhor deta hai woh tool description ke baad aati
-hai. Tamam tools aur canonical server validation baghair tabdeeli ke maujood
-rehte hain. MCP contracts guide ka "Compact input schema profile"
-section dekhein.
-
-Setup chuna hua runtime aur REA entry script seedha register karta hai. Package runner use karne par uski cache entry aur runtime barqarar rakhein; package target project se bahar kisi bharosemand directory se hasil karein. Installation guide dekhein.
-
-Default mein output schemas `tools/list` se nikal diye jate hain: koi model API inhein nahin parhti, aur REA har result ko khud validate karta hai. Har output schema ko 4096 bytes ki had mein advertise karne ke liye MCP registration mein `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` set karein. Har setting mein server validation aur structured results mukammal rehte hain. MCP contracts guide ka “Output schemas” section dekhein.
-
-### Apne agent se kahein
+Apne agent se kahein:
 
 ```text
 Samjho ke Notes app mein search kaise kaam karti hai, mujhe saboot dikhao aur
@@ -110,7 +92,7 @@ mere project ke liye aisa hi feature banao.
 
 Notes ki jagah apni target app aur jis feature ko samajhna hai uska naam likhein.
 
-### Terminal se use karein
+### Terminal se use karein (CLI)
 
 Extract ki hui JavaScript/Electron app directory ya ASAR inspect karein:
 
@@ -132,10 +114,9 @@ Native analysis se pehle provider configure karein. Native commands, provider
 selection, snapshots aur scripting ke liye
 [CLI aur Evidence guide](../getting-started/cli.md) dekhein.
 
-### REA update karein
+[Linux ki zaroori cheezein](../getting-started/installation.md#linux-owned-process-prerequisite)
 
-REA mein tezi se changes aate hain aur naye releases mein aksar bug fixes hoti
-hain. Apni installation updated rakhein.
+### REA update karein
 
 Agar CLI `npm install --global` ya `bun add --global` se install ki hai:
 
@@ -143,31 +124,55 @@ Agar CLI `npm install --global` ya `bun add --global` se install ki hai:
 rea update
 ```
 
-`rea --update` isi verified workflow ka alias hai aur wohi global output flags
-accept karta hai. Doosre command controls ke saath use karte waqt `rea update`
-likhein.
-
-Updater commands stdout aur stderr mila kar zyada se zyada 4 MiB retain karti
-hain. Command khatam hone ke baad is had se bade metadata replies reject ho
-jate hain; verbose installs bounded diagnostics ke saath jari rehti hain.
-Insaan ke liye progress output terminal ki backpressure ka khayal rakhta hai
-aur bheji hui writes mukammal hone ka intezar karta hai.
-
-Bun global updates ke liye Bun 1.2.17 ya naya version chahiye. Purana Bun ho
-to `rea update` chalane se pehle Bun manually upgrade karein.
-
-Agent registrations aur skill refresh karne ke liye update ke output mein
-di hui setup command chalayein.
-
 Agar aap `npx` use karte hain to agent setup is tarah update karein:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Setup changes review karein aur agent restart karein. Ek dafa chalane wali CLI
-commands ke liye `npx rea-agents@latest` ke baad command likhein. Bun ke saath
-`npx rea-agents@latest` ki jagah `bunx rea-agents@latest` use karein.
+[Update aur uninstall](../getting-started/installation.md#diagnose-update-and-remove)
+
+## Amli misaalein
+
+<a href="https://rea.tools/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="DX-Ball sound-pan, Notion clipboard-bridge aur TH04 bullet-ring case studies ki tasveerein" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball: sound-pan calculation dobara banayein</h3>
+<p>Sound call se uske position-to-pan helper tak jayein, instructions inspect
+karein aur adhoore pseudocode ko C mein badlein. Dobara banaya gaya code 3,205
+original-x86 cases pass karta hai aur compiled function ke tamam 63 bytes
+dobara hasil karta hai.</p>
+<p><a href="https://rea.tools/showcase/dx-ball/">Case study parhein</a> ·
+<a href="https://github.com/N0zoM1z0/dx-ball">Reconstruction repository</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion: Electron clipboard bridge trace karein</h3>
+<p>Renderer ki clipboard API dhoondein, preload aur IPC ke raste main process tak
+uska flow follow karein aur rich clipboard format inspect karein.</p>
+<p><a href="https://rea.tools/showcase/notion/">Case study parhein</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04: DOS bullet-ring calculation recover karein</h3>
+<p>Original PC-98 game ki 16-bit instructions inspect karein, fixed aur aimed angle
+calculations recover karein aur dobara banaye gaye C++ ko purane compiler ke
+output se compare karein.</p>
+<p><a href="https://rea.tools/showcase/th04/">Case study parhein</a> ·
+<a href="https://github.com/N0zoM1z0/th04">Reconstruction repository</a></p>
+</td></tr>
+</tbody>
+</table>
+
+Agar aapne REA se koi dilchasp kaam kiya hai to hum dekhna chahenge. Apna case
+[issue](https://github.com/morluto/rea/issues) ya
+[pull request](https://github.com/morluto/rea/pulls) mein share karein. Target,
+apna sawal, REA ne kaise madad ki aur kya mila, yeh sab batayein.
 
 ## REA kaise kaam karta hai
 
@@ -185,166 +190,21 @@ karti hain.
 
 ## Kya kuch analyze kar sakte hain
 
-REA ke liye Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ya 26.12.1+, aur npm chahiye.
-Mazeed tools aur host support target par depend karte hain:
+Native binaries · JavaScript / Electron · Websites · .NET assemblies · Android APKs · Firmware · Process behavior
 
-| Target                  | REA kya wapas deta hai                                                                            | Zarooriyat aur guide                                                                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Desktop installations   | Runtime candidates, supporting files, component markers aur agle probes                           | Built-in bounded directory/header inspection; [desktop applications](../desktop-applications.md)                                                                 |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra, IDA ya Kuna; [native analysis](../guides/native/native-investigation.md)                                                                         |
-| Offline ELF layout      | Sections, segments, original symbols/relocations aur static mitigation candidates                 | Linux x64 par aapka diya hua pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                              |
-| Go binaries             | Embedded compiler version, modules, replacements aur build settings                               | Built-in static ELF/PE/thin Mach-O inspection; Go install karna zaroori nahi                                                                                     |
-| GPU code objects        | CUDA/HIP targets, selected kernel parameters aur resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](../gpu-code-objects.md)                                                                   |
-| Model artifacts         | GGUF / safetensors metadata, tensor declarations aur unse nikale hue totals                       | Built-in header inspection; optional full-file hash; [model files](../model-artifacts.md)                                                                        |
-| IL2CPP metadata         | Unity global-metadata.dat assembly images, type aur method names aur index ranges                 | Versions 24, 27, 29, 31 aur 39 ki built-in static decoding; Unity zaroori nahi                                                                                   |
-| Godot PCK               | Archive inventory aur extraction, original header/directory facts aur selected content identities | Built-in static formats 2, 3 aur 4; Godot zaroori nahi                                                                                                           |
-| Rust binaries           | Embedded cargo-auditable crate names, versions, sources aur dependency edges                      | Built-in static ELF/PE/thin Mach-O inspection; [Rust binaries](../rust-binaries.md)                                                                              |
-| PE certificates         | Authenticode WIN_CERTIFICATE entries aur PKCS#7 signer/X.509 identity fields                      | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
-| PE imports              | Import aur delay-load DLL names, ordinals, IAT RVAs aur pefile import hash                        | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
-| Windows shortcuts       | Shell Link target, arguments, working dir, ExtraData and Tracker droid facts                      | Built-in static LNK inspection; [Windows shortcuts](../guides/native/windows-shortcut.md)                                                                        |
-| ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id aur ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
-| DWARF compile units     | Compile-unit name, directory, producer, language, and dwo_name                                    | Built-in static ELF, Mach-O, and PE inspection; [DWARF compile units](../guides/native/dwarf-units.md)                                                           |
-| ELF dependencies        | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                             | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                       |
-| Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
-| Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
-| Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |
-| NuGet packages          | Package identity, dependency groups, license, repository aur ZIP contents                         | Built-in static .nupkg inspection; [NuGet packages](../guides/managed/nuget-nupkg.md)                                                                            |
-| OCI image layouts       | Layout version, index entries, image config, layers aur blob digest verification                  | Built-in static directory inspection; [OCI image layouts](../guides/artifacts/oci-image-layout.md)                                                               |
-| WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                               | Aapka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                                                              |
-| EVM bytecode            | Dispatch selectors, byte offsets, inferred arguments aur mutability                               | Linux x64 par local raw/hex carrier; [offline EVM guide](../guides/evm/evm-bytecode.md)                                                                          |
-| SQLite databases        | Tables, columns, indexes, views, triggers aur selected ordinary-table rows                        | Local database/WAL snapshot; native SQLite limits ke saath Node.js 24.x >=24.15 ya 26+                                                                           |
-| Apple IPS crash reports | Apple .ips metadata, threads, images aur crash classification                                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
-| Recorded Linux crashes  | Raw notes, har recorded thread ke registers/signals aur optional mapping candidates               | Linux x64 par aapka diya hua pwntools; optional GDB/pwndbg; [recorded crashes](../guides/native/recorded-crashes.md)                                             |
-| JavaScript / Electron   | Modules, imports, source maps, routes, IPC aur native add-on relationships                        | Node.js aur npm; Linux: procps-compatible `ps`; [application analysis](../guides/javascript/javascript-application-workflows.md)                                 |
-| Websites                | Page structure, scripts, network observations aur requested screenshots                           | Chrome-family browser; [browser analysis](../guides/web/browser-observation.md)                                                                                  |
-| Saved network captures  | Requests, responses, exposed payloads aur source locations                                        | HAR ya Fiddler Everywhere SAZ; native mitmproxy ke liye Linux par mitmdump; [capture guide](../guides/web/web-network-captures.md)                               |
-| .NET assemblies         | Metadata, CIL instructions, declared native dependencies aur build comparisons                    | Koi additional tool nahi (sirf static analysis); [managed-code guide](../guides/managed/managed-code-analysis.md)                                                |
-| Android APKs            | Manifest declarations, classes, decompiled methods aur references                                 | Linux/macOS/Windows x64 par headless JADX aur full JDK; [Android guide](../guides/android/android-analysis.md)                                                   |
-| APK signatures          | v1/v2/v3/v3.1 signers, certificate fingerprints, key rotation aur digest self-consistency         | Koi additional tool nahi (sirf static analysis); `inspect_apk_signature`                                                                                         |
-| Android devices         | Devices, packages, processes, logs, dumps, screen captures aur APK/file transfers                 | Aapka diya hua adb (emulator ya hardware); [ADB guide](../guides/android/adb-device-analysis.md)                                                                 |
-| JEB projects            | Engine-backed project units, artifact digests aur type/method pseudo-code                         | Aapka shuru kiya hua JEB client jo MCP serve kar raha ho, REA_JEB_MCP_URL se select karein; [JEB guide](../providers/jeb-analysis.md)                            |
-| Android resources       | Decoded manifest, string tables, locales aur version facts                                        | Aapka diya hua Apktool launcher; [resource guide](../guides/android/apktool-resource-analysis.md)                                                                |
-| Flutter apps            | Dart snapshot hash, per-ABI library digests aur engine build provenance                           | Koi additional tool nahi (static APK parsing); [Flutter guide](../guides/android/flutter-analysis.md)                                                            |
-| Firmware                | Regions, extraction results aur native-analysis handoffs                                          | Linux par Binwalk / Unblob; [firmware guide](../guides/firmware/firmware-analysis.md)                                                                            |
-| Recorded packets        | Selected fields, repeated values, filters aur decode-as rules                                     | Linux: TShark 4.x + prlimit; [capture guide](../guides/data/packet-captures.md)                                                                                  |
-| Packet summaries        | Endpoints, DNS, TLS SNI, protocol distribution aur HTTP requests                                  | Aapke diye hue tshark aur capinfos (Linux par verified); [pcap guide](../guides/data/pcap-analysis.md)                                                           |
-| Recorded logic signals  | Decoder annotations, sample ranges aur diagnostics                                                | Linux: sigrok-cli 0.7.2 + prlimit; [signal recordings](../guides/signals/signal-recordings.md)                                                                   |
-| Packages aur resources  | File inventories, digests, plists, Apple bundle structure aur extracted resources                 | [Artifact aur JavaScript guide](../guides/javascript/javascript-artifact-reconstruction.md), [Apple applications](../guides/apple/apple-application-analysis.md) |
-| Process behavior        | Terminal output, interactions, exit aur filesystem observations aur runs ka comparison            | Native PTY ke saath Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                         |
-| PyInstaller executables | CArchive members, Python version, entry scripts aur extracted bytecode                            | Koi additional tool nahi (sirf static analysis); [Python packaged applications](../python-packaged-applications.md)                                              |
-| Deno compile binaries   | Virtual files, entry point, recorded options, npm snapshot length                                 | Static inspection; [Deno compile executables](../deno-standalone.md)                                                                                             |
-
-Static JavaScript aur .NET inspection di hui files ko application chalaye baghair
-parhti hai. Runtime capture aapki user permissions se selected target ko chalata
-hai ya uske saath interact karta hai; har runtime guide apne effects batati hai.
-
-Offline native-binary inspection ke liye REA aapke diye hue GNU objdump aur
-Rizin bhi support karta hai. Provider setup, CLI commands aur Evidence ki
-limitations ke liye [reverse-engineering tools guide](../reverse-engineering-tools.md)
-dekhein. REA in dono providers ko install ya update nahi karta.
+[Supported formats aur zaroori cheezein](../reference/supported-targets.md)
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Native formats aur host support har provider ke liye alag ho sakte hain.
-[Hopper aur Ghidra setup](../getting-started/installation.md#hopper),
-[IDA guide](../providers/ida-provider.md) (optional native MCP bridge samet),
-[Kuna decompiler guide](../kuna-provider.md) aur
-[experimental Windows Ghidra support](../providers/windows-ghidra-p0.md) dekhein.
-Ghidra [16-bit DOS analysis](../providers/ghidra-dos.md) bhi support karta hai.
-Badi binaries ke liye `REA_GHIDRA_STARTUP_TIMEOUT_MS` ya
-`REA_HOPPER_STARTUP_TIMEOUT_MS` se provider ki startup deadline barhayein.
-Provider select karne ke liye [CLI guide](../getting-started/cli.md#choose-a-provider) dekhein.
-Latest npm release ke baad add hone wale features ki
-[release availability](../getting-started/installation.md#released-package-and-main) check karein.
-
-## Amli misaalein
-
-<a href="https://rea.tools/showcase/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
-    <img alt="DX-Ball sound-pan, Notion clipboard-bridge aur TH04 bullet-ring case studies ki tasveerein" src="../assets/rea-showcases.svg" />
-  </picture>
-</a>
-
-### DX-Ball: sound-pan calculation dobara banayein
-
-Sound call se uske position-to-pan helper tak jayein, instructions inspect
-karein aur adhoore pseudocode ko C mein badlein. Dobara banaya gaya code 3,205
-original-x86 cases pass karta hai aur compiled function ke tamam 63 bytes
-dobara hasil karta hai.
-
-[Case study parhein](https://rea.tools/showcase/dx-ball/) ·
-[Reconstruction repository](https://github.com/N0zoM1z0/dx-ball)
-
-### Notion: Electron clipboard bridge trace karein
-
-Renderer ki clipboard API dhoondein, preload aur IPC ke raste main process tak
-uska flow follow karein aur rich clipboard format inspect karein.
-
-[Case study parhein](https://rea.tools/showcase/notion/)
-
-### TH04: DOS bullet-ring calculation recover karein
-
-Original PC-98 game ki 16-bit instructions inspect karein, fixed aur aimed angle
-calculations recover karein aur dobara banaye gaye C++ ko purane compiler ke
-output se compare karein.
-
-[Case study parhein](https://rea.tools/showcase/th04/) ·
-[Reconstruction repository](https://github.com/N0zoM1z0/th04)
-
-### REA se RL environments banayein
-
-Web app session record karein, us ki API ko tools mein badlein aur AI agent ke liye environment export karein. AgentEnv ke saath chalayein, phir RL training ya evaluation ke liye tasks aur reward checks shamil karein.
-
-[Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
-[X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
-
-Agar aapne REA se koi dilchasp kaam kiya hai to hum dekhna chahenge. Apna case
-[issue](https://github.com/morluto/rea/issues) ya
-[pull request](https://github.com/morluto/rea/pulls) mein share karein. Target,
-apna sawal, REA ne kaise madad ki aur kya mila, yeh sab batayein.
+[Analysis provider ka intikhab](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
 
 <a id="build-rl-environments"></a>
 
 ## RL environments banayein
 
-AI agent ke liye local environment banayein jahan woh asal app chalaye baghair issue dhoondhne ya folder banane jaise kaam ki mashq kar sake. Ise reinforcement learning (RL) ya agent ke kaam poore karne ki salahiyat jaanchne ke liye istemal karein.
+Record kiye gaye web session ya Linux desktop app se ek local environment banayein jahan agent task ki practice kare aur natija check kare.
 
-REA record kiye hue API requests aur responses ko aise tools mein badalta hai jinhein agent call kar sakta hai. Environment recorded data istemal karta hai aur sirf woh tabdeeliyan support karta hai jin ke asraat recording tasdeeq karti hai.
-
-Agent mein REA setup karne ke baad neeche example URL aur folder tasks ko apne app ke mutabiq badlein:
-
-```text
-Meri test web app se REA ke zariye RL environment banao:
-http://127.0.0.1:3000
-Folders ki list, creation, rename aur deletion cover karo. Test folders bana
-aur hata sakte ho, lekin mojooda data tabdeel na karo.
-my-env naam ke folder mein save karo, kaam karne wale operations check karo aur chalane ka tareeqa batao.
-```
-
-<details>
-<summary>Command line istemal karein</summary>
-
-Yeh commands tab istemal karein jab app ke browser requests aur responses ki recording pehle se file mein ho. Result chalane ke liye AgentEnv aur Docker bhi chahiye.
-
-```sh
-rea environment-build ./session.har ./my-env --name my-env --json
-agent-env run ./my-env
-```
-
-</details>
-
-REA chalne ke liye tayyar environment aur aik bunyadi test export karta hai jo us ka shuru hona aur jawab dena check karta hai. Apne RL framework ke saath task goals aur reward checks tay karein aur training chalayein.
-
-[Environment banane ki rehnumai](https://rea.tools/guides/rl-environments/) ·
-[Environment reference](../agent-environments.md) ·
-[X par demo dekhein](https://x.com/reatools/status/2112574822584918075?s=20)
-
-### Desktop app environments
-
-REA Linux desktop app ka environment bhi bana sakta hai, jise agent screenshots, mouse aur keyboard se istemal karta hai. Aik line ki request se, jaise "Mere liye Gnote environment banao jis mein agent shopping list note mein olive oil shamil kare", aap ka agent app ko local build computer par install karta hai, task likhta hai, environment export karta hai aur naye computer par task check karta hai. Ise banane wali machine ko amd64 ya arm64 par Linux, Docker aur guide mein muqarrar agentenv framework version chahiye.
-
-[Desktop app environments setup karein](../desktop-build-computer.md)
+[RL environments banayein](https://rea.tools/guides/rl-environments/)
 
 ## FAQ
 
@@ -446,12 +306,22 @@ Exact options, prerequisites aur result contracts ke liye:
 
 Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karein.
 
+## Community aur madad
+
+- **Discord** — Sawal poochhein aur apni tehqeeq hamari community ke saath share karein, jahan 50,000 se zyada log reverse engineering aur naye projects banane ka shauq rakhte hain! [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — Nayi khabron aur updates ke liye [@reatools](https://x.com/reatools) ko follow karein.
+- **Raye aur tajaveez** — Koi naya feature chahiye ya kisi file format ki support? [GitHub](https://github.com/morluto/rea/issues) ya [Discord](https://discord.gg/GkcryMnJDM) par hamein batayein.
+
 ## Stars ki history
 
 🎉 **400,000 GitHub stars — shukriya!**
 
 REA use karne, bugs report karne, features suggest karne, builds test karne aur
 fixes contribute karne wale sab logon ka shukriya.
+
+<a href="https://rea.tools/ur-Latn/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="REA mein hissa lene wale" />
+</a>
 
 <a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
   <picture>
@@ -460,6 +330,15 @@ fixes contribute karne wale sab logon ka shukriya.
     <img alt="REA ke GitHub stars ki history" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
   </picture>
 </a>
+
+## Hissa dalein
+
+REA mein aapki madad ka khairmaqdam hai! Bug report karne ya feature suggest
+karne ke liye [issue kholein](https://github.com/morluto/rea/issues), ya code aur
+docs behtar karne ke liye [pull request bhejein](https://github.com/morluto/rea/pulls).
+
+Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md),
+verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 ## Zimmedarana istemal
 
@@ -472,15 +351,6 @@ par uske applicable licenses barqarar rehte hain.
 REA qanooni research, taleem, interoperability, software preservation aur aise
 software ke analysis ke liye hai jo aapka apna ho ya jise examine karne ki aapko
 ijazat ho.
-
-## Hissa dalein
-
-REA mein aapki madad ka khairmaqdam hai! Bug report karne ya feature suggest
-karne ke liye [issue kholein](https://github.com/morluto/rea/issues), ya code aur
-docs behtar karne ke liye [pull request bhejein](https://github.com/morluto/rea/pulls).
-
-Development setup aur checks ke liye [CONTRIBUTING.md](../../CONTRIBUTING.md),
-verification lanes ke liye [testing](../development/testing.md) dekhein.
 
 ## License
 

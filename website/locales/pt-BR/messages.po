@@ -5748,6 +5748,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "Nomeie os operandos e verifique os dois caminhos do operador."
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Um analista a pensar num computador"
+
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
@@ -15035,15 +15040,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "Encontrar colaboradores"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "Da {ph0}lista de colaboradores do GitHub{ph1} · Atualizada em {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -15127,12 +15123,12 @@ msgstr "Guia para criar um ambiente"
 #, python-brace-format
 msgctxt "page:guides/rl-environments/index.html"
 msgid "{ph0}Build a desktop app environment{ph1}"
-msgstr ""
+msgstr "{ph0}Criar um ambiente para um aplicativo de desktop{ph1}"
 
 #: website/public/guides/rl-environments/index.html:492
 msgctxt "page:guides/rl-environments/index.html"
 msgid "Build a desktop app environment"
-msgstr ""
+msgstr "Criar um ambiente para um aplicativo de desktop"
 
 #: website/public/guides/rl-environments/index.html:493
 msgctxt "page:guides/rl-environments/index.html"
@@ -15143,6 +15139,11 @@ msgid ""
 "computer, writes the task, exports the environment, and checks it on a fresh"
 " computer using screenshots, the mouse, and the keyboard."
 msgstr ""
+"Descreva a tarefa que o agente deve praticar em um aplicativo de desktop "
+"Linux. Por exemplo, peça um ambiente do Gnote em que ele adicione azeite à "
+"lista de compras. O agente instala o aplicativo em uma máquina de compilação"
+" local, escreve a tarefa, exporta o ambiente e o verifica em uma máquina "
+"limpa usando capturas de tela, mouse e teclado."
 
 #. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
 #. build-
@@ -15156,6 +15157,10 @@ msgid ""
 "AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
 "installation and readiness checks."
 msgstr ""
+"A máquina de compilação precisa de Linux em amd64 ou arm64, Docker e a "
+"versão especificada do AgentEnv. Siga o {ph0}guia de configuração da máquina"
+" de compilação{ph1} para instalar os componentes e verificar se estão "
+"prontos."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -15756,48 +15761,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "Métodos e notas sobre reconstrução."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
-"REA-descubra como o software funciona. Engenharia reversa com seu agente de "
-"codificação."
+"Letras azuis de REA ao lado de código desmontado, dados hexadecimais e um "
+"fluxo de trabalho de agente."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -17657,3 +17638,16 @@ msgstr ""
 #~ "O Windows x64 tem suporte experimental somente leitura para aplicativos e "
 #~ "DLLs nativos x86 e x64 PE em unidades NTFS locais fixas. Use uma instalação "
 #~ "existente do Ghidra 12.1.x e um JDK de 64 bits, versão 21 ou posterior:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "Da {ph0}lista de colaboradores do GitHub{ph1} · Atualizada em {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr ""
+#~ "REA-descubra como o software funciona. Engenharia reversa com seu agente de "
+#~ "codificação."

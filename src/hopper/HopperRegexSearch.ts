@@ -159,7 +159,6 @@ export class HopperRegexSearch {
     if (!matched.ok) return matched;
     if (options.signal?.aborted)
       return err(cancelledBy(operation, options.signal));
-    const selected = new Set(matched.value);
-    return ok(rows.filter((_, index) => selected.has(index)));
+    return ok(matched.value.map((index) => rows[index]!));
   }
 }

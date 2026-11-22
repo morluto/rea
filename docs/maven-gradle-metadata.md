@@ -42,6 +42,8 @@ properties or inherit parent or BOM values. POM text goes through XML
 end-of-line handling, as Maven's reader applies it: CRLF and lone CR read as LF.
 POM coordinates, parent fields, and dependency fields use Maven's trimming
 rules, retaining non-ASCII characters at the edges of a declared version.
+Coordinate, parent, dependency and property values can contain text and CDATA.
+REA reports nested elements inside those values as malformed input.
 When a parent is declared, omitted project group/version fields point to the
 parent as possible sources. An omitted project `artifactId` is a missing child
 coordinate: [only group/version coordinates may be inherited](https://maven.apache.org/pom.html#Maven_Coordinates).
