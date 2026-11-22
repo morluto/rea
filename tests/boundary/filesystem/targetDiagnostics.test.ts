@@ -8,6 +8,10 @@ import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { rawLoadAtEntry } from "../../../src/domain/rawBinary.fixture.js";
 
+/** A raw x86 load selection at an entry. */
+const rawX86At = (entryPoint: string) =>
+  ({ format: "raw-binary", architecture: "x86", entryPoint }) as const;
+
 /** The open_binary fields a raw load refusal names. */
 const RAW_LOAD_PARAMETERS = [
   "format",
@@ -149,11 +153,7 @@ describe("target route diagnostics", () => {
     await writeFile(path, Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
     expect(
       await parseBinaryTarget(path, {
-        loadSelection: {
-          format: "raw-binary",
-          architecture: "x86",
-          entryPoint: "0x001000",
-        },
+        loadSelection: rawX86At("0x001000"),
       }),
     ).toMatchObject({
       ok: true,
