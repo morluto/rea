@@ -549,13 +549,29 @@ function* ripRelativeReferences(
   arrays: ReadonlySet<bigint>,
 ): Generator<void, Set<bigint>> {
   const referenced = new Set<bigint>();
+  const bytes = image.stored.bytes;
   for (const mapping of image.container.executable_mappings ?? []) {
     const loaded =
       image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
       true;
+    if (!loaded && image.stored.little) {
+      const startAt = Math.max(0, mapping.offset);
+      const end = Math.min(mapping.offset + mapping.size, bytes.length) - 7;
+      for (let at = startAt; at <= end; at++) {
+        if ((at & 0xffff) === 0) yield;
+        if ((bytes[at]! & 0xfb) !== 0x48) continue; // REX.W, optionally REX.R
+        const opcode = bytes[at + 1]!;
+        if (opcode !== 0x8d && opcode !== 0x8b) continue;
+        if ((bytes[at + 2]! & 0xc7) !== 0x05) continue; // mod 00, rm 101: RIP + disp32
+        const next = mapping.address + BigInt(at - mapping.offset + 7);
+        const target = next + BigInt(image.stored.i32(at + 3));
+        if (arrays.has(target)) referenced.add(target);
+      }
+      continue;
+    }
     const end = mapping.offset + mapping.size - 7;
     for (let at = mapping.offset; at <= end; at++) {
-      if ((at & 0xffff) < 8) yield;
+      if ((at & 0xffff) === 0) yield;
       const address = mapping.address + BigInt(at - mapping.offset);
       const prefix = loaded ? readUInt32(image, address) : image.stored.u32(at);
       if (typeof prefix !== "number") continue;
@@ -588,11 +604,42 @@ function* arm64PageReferences(
   arrays: ReadonlySet<bigint>,
 ): Generator<void, Set<bigint>> {
   const referenced = new Set<bigint>();
+  const bytes = image.stored.bytes;
   for (const mapping of image.container.executable_mappings ?? []) {
     const loaded =
       image.elfPointerOverlay?.hasWrites(mapping.address, mapping.size) ===
       true;
     const start = Number((4n - (mapping.address % 4n)) % 4n);
+    if (!loaded && image.stored.little) {
+      const baseOffset = mapping.offset;
+      const limit = Math.min(
+        mapping.size,
+        Math.max(0, bytes.length - baseOffset),
+      );
+      for (let at = start; at + 8 <= limit; at += 4) {
+        if ((at & 0xffff) < 4) yield;
+        const offset = baseOffset + at;
+        if ((bytes[offset + 3]! & 0x9f) !== 0x90) continue;
+        if (bytes[offset + 7]! !== 0x91 || (bytes[offset + 6]! & 0xc0) !== 0)
+          continue;
+        const adrp = image.stored.u32(offset);
+        const register = adrp & 0x1f;
+        // Register 31 is xzr for ADRP and sp for ADD, so no address is formed.
+        if (register === 31) continue;
+        const add = image.stored.u32(offset + 4);
+        if ((add & 0x1f) !== register || ((add >>> 5) & 0x1f) !== register)
+          continue;
+        const pages =
+          (((((adrp >>> 5) & 0x7ffff) << 2) | ((adrp >>> 29) & 3)) << 11) >> 11;
+        const pc = mapping.address + BigInt(at);
+        const target =
+          (pc & ~0xfffn) +
+          (BigInt(pages) << 12n) +
+          BigInt((add >>> 10) & 0xfff);
+        if (arrays.has(target)) referenced.add(target);
+      }
+      continue;
+    }
     for (let at = start; at + 8 <= mapping.size; at += 4) {
       if ((at & 0xffff) < 4) yield;
       const address = mapping.address + BigInt(at);
