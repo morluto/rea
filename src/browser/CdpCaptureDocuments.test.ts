@@ -12,7 +12,6 @@ import {
   frameTreeReply,
   resourceTreeReply,
 } from "../../tests/fixtures/fakeCdpSend.js";
-import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 
 const origin = "https://app.example.test";
 
@@ -117,31 +116,32 @@ it("publishes exact approved frame URLs and counts malformed and foreign childre
   });
 });
 
-it("keeps DOM node and URL source positions when neighboring rows are malformed", () => {
-  const columns = [
-    [9, 1, -1, -1, []],
-    [1, 2, -1, 0, []],
-    // Wrong wire types in name, parent, value, and attribute references.
-    [1, "3", -1, 1, []],
-    [1, 3, -1, "1", []],
-    [1, 3, "0", 1, []],
-    [1, 3, -1, 1, [4, "bad", 4, 5]],
-    // Malformed and missing string references, including the value-only -1 sentinel.
-    [1, -1, -1, 1, []],
-    [1, 20, -1, 1, []],
-    [1, 7, -1, 1, []],
-    [1, 3, -2, 1, []],
-    [1, 3, 20, 1, []],
-    [1, 3, 7, 1, []],
-    [1, 3, -1, 1, [-1, 5]],
-    [1, 3, -1, 1, [20, 5]],
-    [1, 3, -1, 1, [4, -2]],
-    [1, 3, -1, 1, [4, 20]],
-    [1, 3, -1, 1, [4]],
-    [1, 3, -1, 1, "invalid"],
-    [1, 3, 8, 2, []],
-    [1, 9, -1, 1, [4, 6]],
-  ] as const;
+const mixedDomColumns = [
+  [9, 1, -1, -1, []],
+  [1, 2, -1, 0, []],
+  // Wrong wire types in name, parent, value, and attribute references.
+  [1, "3", -1, 1, []],
+  [1, 3, -1, "1", []],
+  [1, 3, "0", 1, []],
+  [1, 3, -1, 1, [4, "bad", 4, 5]],
+  // Malformed and missing string references, including the value-only -1 sentinel.
+  [1, -1, -1, 1, []],
+  [1, 20, -1, 1, []],
+  [1, 7, -1, 1, []],
+  [1, 3, -2, 1, []],
+  [1, 3, 20, 1, []],
+  [1, 3, 7, 1, []],
+  [1, 3, -1, 1, [-1, 5]],
+  [1, 3, -1, 1, [20, 5]],
+  [1, 3, -1, 1, [4, -2]],
+  [1, 3, -1, 1, [4, 20]],
+  [1, 3, -1, 1, [4]],
+  [1, 3, -1, 1, "invalid"],
+  [1, 3, 8, 2, []],
+  [1, 9, -1, 1, [4, 6]],
+] as const;
+
+it("keeps DOM source positions across malformed rows and later documents", () => {
   const completeness = new CdpCaptureCompleteness();
   const generator = captureDom(
     {
@@ -156,31 +156,43 @@ it("keeps DOM node and URL source positions when neighboring rows are malformed"
         42,
         "😀a",
         "A",
+        "hidden",
+        "#text",
+        "go",
       ],
       documents: [
         {
           documentURL: 0,
           nodes: {
-            nodeType: columns.map(([type]) => type),
-            nodeName: columns.map(([, name]) => name),
-            nodeValue: columns.map(([, , value]) => value),
-            parentIndex: columns.map(([, , , parent]) => parent),
-            attributes: columns.map(([, , , , attributes]) => attributes),
+            nodeType: mixedDomColumns.map(([type]) => type),
+            nodeName: mixedDomColumns.map(([, name]) => name),
+            nodeValue: mixedDomColumns.map(([, , value]) => value),
+            parentIndex: mixedDomColumns.map(([, , , parent]) => parent),
+            attributes: mixedDomColumns.map(
+              ([, , , , attributes]) => attributes,
+            ),
+          },
+        },
+        {
+          documentURL: 0,
+          baseURL: -1,
+          nodes: {
+            nodeType: [9, 1, 3],
+            nodeName: [1, 9, 11],
+            nodeValue: [-1, -1, 12],
+            parentIndex: [-1, 0, 1],
+            attributes: [[], [4, -1, 10, -1], []],
           },
         },
       ],
     },
     new Set([origin]),
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: "http://127.0.0.1:9222",
-      allowed_origins: [origin],
-      target_id: "page-1",
-    }),
     completeness,
   );
   const result = generator.next();
   if (!result.done) throw new Error("Unexpected SVG identity query");
-  expect(result.value.total).toBe(20);
+  expect(result.value.total).toBe(23);
+  expect(result.value.nodeValueLengthUnit).toBe("utf16-code-units");
   expect(result.value.nodes).toEqual([
     {
       index: 0,
@@ -214,12 +226,42 @@ it("keeps DOM node and URL source positions when neighboring rows are malformed"
       node_value_length: 0,
       attribute_names: ["href"],
     },
+    {
+      index: 20,
+      node_type: 9,
+      node_name: "#document",
+      parent_index: -1,
+      node_value_length: 0,
+      attribute_names: [],
+    },
+    {
+      index: 21,
+      node_type: 1,
+      node_name: "A",
+      parent_index: 20,
+      node_value_length: 0,
+      attribute_names: ["href", "hidden"],
+    },
+    {
+      index: 22,
+      node_type: 3,
+      node_name: "#text",
+      parent_index: 21,
+      node_value_length: 2,
+      attribute_names: [],
+    },
   ]);
   expect(result.value.urls).toEqual([
     {
       node_index: 19,
       attribute: "href",
       url: `${origin}/kept`,
+      destination_scope: "approved",
+    },
+    {
+      node_index: 21,
+      attribute: "href",
+      url: `${origin}/app`,
       destination_scope: "approved",
     },
   ]);
@@ -263,11 +305,6 @@ describe("CDP DOM string and namespace validity", () => {
         ],
       },
       new Set([origin]),
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: [origin],
-        target_id: "page-1",
-      }),
       completeness,
     );
     let captured = generator.next([]);
@@ -334,64 +371,5 @@ describe("CDP frame capture", () => {
     expect(resources.items.map(({ url }) => url)).toEqual(
       frameIndexes.map((index) => `${origin}/${index}.js`),
     );
-  });
-});
-
-describe("CDP DOM snapshot empty strings", () => {
-  it("reads Chrome's -1 string index as an empty node or attribute value", () => {
-    const completeness = new CdpCaptureCompleteness();
-    const generator = captureDom(
-      {
-        strings: [
-          origin + "/app",
-          "#document",
-          "A",
-          "href",
-          "hidden",
-          "#text",
-          "go",
-        ],
-        documents: [
-          {
-            documentURL: 0,
-            baseURL: -1,
-            nodes: {
-              nodeType: [9, 1, 3],
-              nodeName: [1, 2, 5],
-              nodeValue: [-1, -1, 6],
-              parentIndex: [-1, 0, 1],
-              attributes: [[], [3, -1, 4, -1], []],
-            },
-          },
-        ],
-      },
-      new Set([origin]),
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: "http://127.0.0.1:9222",
-        allowed_origins: [origin],
-        target_id: "page-1",
-      }),
-      completeness,
-    );
-    let captured = generator.next([]);
-    while (!captured.done) captured = generator.next([]);
-    expect(
-      captured.value.nodes.map(
-        ({ node_name, node_value_length, attribute_names }) => ({
-          node_name,
-          node_value_length,
-          attribute_names,
-        }),
-      ),
-    ).toEqual([
-      { node_name: "#document", node_value_length: 0, attribute_names: [] },
-      {
-        node_name: "A",
-        node_value_length: 0,
-        attribute_names: ["href", "hidden"],
-      },
-      { node_name: "#text", node_value_length: 2, attribute_names: [] },
-    ]);
-    expect(completeness.snapshot().excluded).toEqual([]);
   });
 });

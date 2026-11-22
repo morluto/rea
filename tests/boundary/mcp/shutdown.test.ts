@@ -1,6 +1,5 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { EventEmitter } from "node:events";
-import type { StdioServerHandle } from "@modelcontextprotocol/server/stdio";
 import pino from "pino";
 import { expect, it } from "vitest";
 
@@ -19,129 +18,40 @@ import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { observed } from "../../fixtures/analysisExecution.js";
 import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
-import { waitFor } from "../../support/testWait.js";
 import {
   createBinarySessionTargets,
   createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 
-it("keeps shutdown output stable while logging the rejected cause at debug level", async () => {
-  const logs: string[] = [];
-  const output: string[] = [];
-  const exitCodes: number[] = [];
-  const requests: Array<() => void> = [];
-  let androidClosed = false;
-  const failure = Object.assign(
-    new TypeError("fixture transport close failed"),
-    {
-      code: "ECONNRESET",
-    },
-  );
-  const handle: StdioServerHandle = {
-    close: () => Promise.reject(failure),
-  };
-  const dependencies: RuntimeDependencies = {
-    env: {},
-    serve: () => {
-      throw new Error("unused fixture transport");
-    },
-    writeStderr: (text) => output.push(text),
-    setExitCode: (code) => exitCodes.push(code),
-    registerShutdown: (request) => {
-      requests.push(request);
-      return () => undefined;
-    },
-  };
-  const logger = pino({ level: "debug" }, { write: (line) => logs.push(line) });
-  createShutdown({
-    handle,
-    closeAndroid: async () => {
-      androidClosed = true;
-    },
-    session: createManagedBinarySession(),
-    dependencies,
-    serverLogger: logger,
-  });
-
-  requests[0]?.();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  expect(exitCodes).toEqual([1]);
-  expect(androidClosed).toBe(true);
-  expect(output).toEqual([`${MCP_SHUTDOWN_FAILED}\n`]);
-  expect(logs.map((line) => JSON.parse(line))).toContainEqual(
-    expect.objectContaining({
-      level: 20,
-      msg: "MCP shutdown rejected",
-      failure_cause: {
-        name: "TypeError",
-        message: "fixture transport close failed",
-        code: "ECONNRESET",
-      },
-    }),
-  );
-});
-
-it("names retained debuggers in stderr and every log level when shutdown ends", async () => {
-  const logs: string[] = [];
-  const output: string[] = [];
-  const requests: Array<() => void> = [];
+it("reports ordinary and retained debugger shutdown failures at their owning boundary", async () => {
   const retained = new OwnedDebuggerCleanupError(
     [new Error("detach unverified")],
     "One or more owned GDB processes did not stop cleanly",
     [4242],
   );
-  const dependencies: RuntimeDependencies = {
-    env: {},
-    serve: () => {
-      throw new Error("unused fixture transport");
+  const cases = [
+    {
+      failure: Object.assign(new TypeError("fixture transport close failed"), {
+        code: "ECONNRESET",
+      }),
+      stderr: [`${MCP_SHUTDOWN_FAILED}\n`],
+      failureCause: {
+        name: "TypeError",
+        message: "fixture transport close failed",
+        code: "ECONNRESET",
+      },
     },
-    writeStderr: (text) => output.push(text),
-    setExitCode: () => undefined,
-    registerShutdown: (request) => {
-      requests.push(request);
-      return () => undefined;
-    },
-  };
-  createShutdown({
-    // Runtime owners wrap this failure before it reaches the shutdown report.
-    handle: {
-      close: () =>
-        Promise.reject(
-          new AggregateError(
-            [new AggregateError([retained], "REA provider cleanup failed")],
-            "REA server cleanup failed",
-          ),
-        ),
-    },
-    session: createManagedBinarySession(),
-    dependencies,
-    serverLogger: pino(
-      { level: "debug" },
-      { write: (line) => logs.push(line) },
-    ),
-  });
-
-  requests[0]?.();
-  await new Promise((resolve) => setImmediate(resolve));
-
-  expect(output).toHaveLength(2);
-  expect(output[0]).toBe(`${MCP_SHUTDOWN_FAILED}\n`);
-  expect(output[1]).toBe(`${retainedDebuggerRemediation([4242])}\n`);
-  expect(output[1]).toMatch(/\b4242\b/u);
-  const parsed = logs.map((line) => JSON.parse(line));
-  expect(parsed).toContainEqual(
-    expect.objectContaining({
-      level: 50,
-      msg: MCP_SHUTDOWN_FAILED,
-      retained_debugger_pids: [4242],
-    }),
-  );
-  expect(parsed).toContainEqual(
-    expect.objectContaining({
-      level: 20,
-      failure_cause: expect.objectContaining({
+    {
+      failure: new AggregateError(
+        [new AggregateError([retained], "REA provider cleanup failed")],
+        "REA server cleanup failed",
+      ),
+      stderr: [
+        `${MCP_SHUTDOWN_FAILED}\n`,
+        `${retainedDebuggerRemediation([4242])}\n`,
+      ],
+      failureCause: expect.objectContaining({
         errors: [
           expect.objectContaining({
             errors: [
@@ -150,8 +60,52 @@ it("names retained debuggers in stderr and every log level when shutdown ends", 
           }),
         ],
       }),
-    }),
-  );
+    },
+  ];
+  for (const scenario of cases) {
+    const logs: string[] = [];
+    const output: string[] = [];
+    const exitCodes: number[] = [];
+    const lifecycle = createShutdown({
+      handle: {
+        close: async () => {
+          throw scenario.failure;
+        },
+      },
+      session: createManagedBinarySession(),
+      dependencies: {
+        ...idleShutdownDependencies(),
+        writeStderr: (text) => output.push(text),
+        setExitCode: (code) => exitCodes.push(code),
+      },
+      serverLogger: pino(
+        { level: "debug" },
+        { write: (line) => logs.push(line) },
+      ),
+    });
+    lifecycle.request();
+    await expect(lifecycle.shutdown()).rejects.toBe(scenario.failure);
+    expect(exitCodes).toEqual([1]);
+    expect(output).toEqual(scenario.stderr);
+    const entries = logs.map((line) => JSON.parse(line));
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        level: 20,
+        msg: "MCP shutdown rejected",
+        failure_cause: scenario.failureCause,
+      }),
+    );
+    if (scenario.failure instanceof AggregateError) {
+      expect(output[1]).toMatch(/\b4242\b/u);
+      expect(entries).toContainEqual(
+        expect.objectContaining({
+          level: 50,
+          msg: MCP_SHUTDOWN_FAILED,
+          retained_debugger_pids: [4242],
+        }),
+      );
+    }
+  }
 });
 
 it("reports a typed binary cleanup failure and retains the client for retry", async () => {
@@ -171,27 +125,18 @@ it("reports a typed binary cleanup failure and retains the client for retry", as
   expect((await session.open(target)).ok).toBe(true);
   const output: string[] = [];
   const exitCodes: number[] = [];
-  const requests: Array<() => void> = [];
-  const dependencies: RuntimeDependencies = {
-    env: {},
-    serve: () => {
-      throw new Error("unused fixture transport");
-    },
-    writeStderr: (text) => output.push(text),
-    setExitCode: (code) => exitCodes.push(code),
-    registerShutdown: (request) => {
-      requests.push(request);
-      return () => undefined;
-    },
-  };
-  createShutdown({
+  const lifecycle = createShutdown({
     handle: { close: async () => undefined },
     session,
-    dependencies,
+    dependencies: {
+      ...idleShutdownDependencies(),
+      writeStderr: (text) => output.push(text),
+      setExitCode: (code) => exitCodes.push(code),
+    },
     serverLogger: pino({ enabled: false }),
   });
-  requests[0]?.();
-  await new Promise((resolve) => setImmediate(resolve));
+  lifecycle.request();
+  await expect(lifecycle.shutdown()).rejects.toBe(failure);
   expect(exitCodes).toEqual([1]);
   expect(output).toEqual([
     `${MCP_SHUTDOWN_FAILED}\n`,
@@ -199,9 +144,8 @@ it("reports a typed binary cleanup failure and retains the client for retry", as
   ]);
   expect(retainDocument).toBe(true);
   cleanupAllowed = true;
-  requests[0]?.();
-  await new Promise((resolve) => setImmediate(resolve));
-  expect((await session.close()).ok).toBe(true);
+  await lifecycle.shutdown();
+  expect(session.activeTarget()).toBeUndefined();
 });
 
 it("joins stdin and signal shutdown, retaining investigation history until retry succeeds", async () => {
@@ -210,6 +154,7 @@ it("joins stdin and signal shutdown, retaining investigation history until retry
   const transport = phaseGate();
   const logs: string[] = [];
   const exitCode = createDeferred<number>();
+  const unregistered = createDeferred<void>();
   let unregisterCount = 0;
   let handleCalls = 0;
   let androidCalls = 0;
@@ -227,6 +172,7 @@ it("joins stdin and signal shutdown, retaining investigation history until retry
       return () => {
         unregister();
         unregisterCount += 1;
+        unregistered.resolve();
       };
     },
   };
@@ -333,12 +279,11 @@ it("joins stdin and signal shutdown, retaining investigation history until retry
     expect(session.listUnknowns()).toEqual([unknown.value]);
 
     expect(signals.emit("SIGTERM")).toBe(true);
-    await waitFor(() => expect(unregisterCount).toBe(1));
+    await unregistered.promise;
     expect(signals.emit("SIGINT")).toBe(false);
     expect(signals.emit("SIGTERM")).toBe(false);
     expect(stdin.emit("end")).toBe(false);
     expect(stdin.emit("close")).toBe(false);
-    await lifecycle.shutdown();
     expect([
       handleCalls,
       androidCalls,
@@ -364,20 +309,18 @@ const idleShutdownDependencies = (): RuntimeDependencies => ({
   registerShutdown: () => () => undefined,
 });
 
-it("does not leave a provider running when a target open is queued behind shutdown", async () => {
+it("reopens after ordinary close and seals new acquisitions throughout shutdown", async () => {
   const [target] = await createBinarySessionTargets();
   if (target === undefined) throw new Error("Missing fixture target");
+  const providerHealth = phaseGate();
+  const transport = phaseGate();
   let created = 0;
   let closed = 0;
-  let releaseHealth: (() => void) | undefined;
   const session = createTestBinarySession(() => {
-    created += 1;
+    const reopening = ++created === 2;
     return {
       execute: async (operation) => {
-        if (operation === "health" && created === 1)
-          await new Promise<void>((resolve) => {
-            releaseHealth = resolve;
-          });
+        if (operation === "health" && reopening) await providerHealth.hold();
         return observed(null);
       },
       close: async () => {
@@ -386,94 +329,60 @@ it("does not leave a provider running when a target open is queued behind shutdo
       },
     };
   });
-  const opening = session.open(target);
-  await expect.poll(() => releaseHealth).toBeTypeOf("function");
-  let closeQueued = false;
-  const originalClose = session.close.bind(session);
-  session.close = (...args) => {
-    closeQueued = true;
-    return originalClose(...args);
+  const lifecycle = createShutdown({
+    handle: {
+      prepareShutdown: () => transport.hold(),
+      close: async () => undefined,
+    },
+    session,
+    dependencies: idleShutdownDependencies(),
+    serverLogger: pino({ enabled: false }),
+  });
+  const expectAcquisitionRefused = async () => {
+    const [binary, resources] = await Promise.all([
+      session.open(target),
+      session.openBundleResources(target),
+    ]);
+    expect(binary).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
+    });
+    expect(resources).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "open_bundle_resources",
+      },
+    });
   };
-  const lifecycle = createShutdown({
-    handle: { close: async () => undefined },
-    session,
-    dependencies: idleShutdownDependencies(),
-    serverLogger: pino({ enabled: false }),
-  });
 
-  const shuttingDown = lifecycle.shutdown();
-  await expect.poll(() => closeQueued).toBe(true);
-  const reopening = session.open(target);
-  const resources = session.openBundleResources(target);
-  releaseHealth?.();
+  try {
+    expect((await session.open(target)).ok).toBe(true);
+    expect((await session.close()).ok).toBe(true);
+    expect(session.activeTarget()).toBeUndefined();
 
-  expect((await opening).ok).toBe(true);
-  await shuttingDown;
-  await expect(reopening).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
-  });
-  await expect(resources).resolves.toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCancelledError",
-      operation: "open_bundle_resources",
-    },
-  });
-  expect(session.activeTarget()).toBeUndefined();
-  expect(await session.status()).toMatchObject({ open: false });
-  expect(created).toBe(closed);
-});
+    const opening = session.open(target);
+    await providerHealth.reached(
+      opening,
+      "provider health after ordinary close",
+    );
+    const closing = lifecycle.shutdown();
+    await transport.reached(closing, "transport shutdown preparation");
+    const acquisition = expectAcquisitionRefused();
+    providerHealth.release();
+    const [opened] = await Promise.all([opening, acquisition]);
+    expect(opened).toMatchObject({ ok: true });
+    expect(session.activeTarget()?.path).toBe(target);
 
-it("rejects target acquisition after shutdown has settled", async () => {
-  const [target] = await createBinarySessionTargets();
-  if (target === undefined) throw new Error("Missing fixture target");
-  let created = 0;
-  const session = createTestBinarySession(() => {
-    created += 1;
-    return {
-      execute: async () => observed(null),
-      close: async () => ok(null),
-    };
-  });
-  const lifecycle = createShutdown({
-    handle: { close: async () => undefined },
-    session,
-    dependencies: idleShutdownDependencies(),
-    serverLogger: pino({ enabled: false }),
-  });
-
-  await lifecycle.shutdown();
-  await expect(session.open(target)).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "AnalysisCancelledError", operation: "open_binary" },
-  });
-  await expect(session.openBundleResources(target)).resolves.toMatchObject({
-    ok: false,
-    error: {
-      _tag: "AnalysisCancelledError",
-      operation: "open_bundle_resources",
-    },
-  });
-  expect(created).toBe(0);
-  expect(session.activeTarget()).toBeUndefined();
-});
-
-it("opens a target again after an ordinary close", async () => {
-  const [target] = await createBinarySessionTargets();
-  if (target === undefined) throw new Error("Missing fixture target");
-  let created = 0;
-  const session = createTestBinarySession(() => {
-    created += 1;
-    return {
-      execute: async () => observed(null),
-      close: async () => ok(null),
-    };
-  });
-
-  expect((await session.open(target)).ok).toBe(true);
-  expect((await session.close()).ok).toBe(true);
-  expect((await session.open(target)).ok).toBe(true);
-  expect(created).toBe(2);
-  expect(session.activeTarget()?.path).toBe(target);
+    transport.release();
+    await closing;
+    await expectAcquisitionRefused();
+    expect(session.activeTarget()).toBeUndefined();
+    expect(await session.status()).toMatchObject({ open: false });
+    expect([created, closed]).toEqual([2, 2]);
+  } finally {
+    providerHealth.release();
+    transport.release();
+    await settledCause(lifecycle.shutdown());
+  }
 });

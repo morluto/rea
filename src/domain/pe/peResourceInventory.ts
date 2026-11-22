@@ -26,6 +26,7 @@ import { peFailure, requirePeRange } from "./peImageHeaders.js";
 import { readPeResourceLayout } from "./peResourceLayout.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
+type PeResourceInventory = Omit<PeResources, "artifact">;
 
 type Range = { offset: number; bytes: number };
 type OccupiedRange = Range & {
@@ -60,20 +61,45 @@ const jsonBytes = (value: unknown, maximum: number): number => {
 const identityKey = (id: PeResourceIdentity): string =>
   id.kind === "id" ? `id:${String(id.id)}` : `name:${id.utf16le_hex}`;
 
+/** Attach the selected carrier identity for the public PE resource report. */
+export const parsePeResources = async (
+  bytes: Buffer,
+  artifact: PeResources["artifact"],
+  input: InspectPeResourcesInput,
+  signal?: AbortSignal,
+): Promise<PeResources> =>
+  boundedResourceResult(
+    {
+      artifact,
+      ...(await parsePeResourceInventory(bytes, input.max_entries, signal)),
+    },
+    signal,
+  );
+
+/** Decode entries from an admitted layout without requiring a carrier identity. */
+export const readPeResourceEntries = async (
+  bytes: Buffer,
+  layout: PeResourceLayout,
+  maxEntries: number,
+  signal: AbortSignal | undefined,
+): Promise<PeResources["resources"]> =>
+  boundedResourceResult(
+    await parsePeResourceInventory(bytes, maxEntries, signal, layout),
+    signal,
+  ).resources;
+
 /**
  * Decode the conventional type/name/language tree; never infer payload
  * meaning or runtime loading. Malformed structure and exhausted budgets are
  * `ParseFailureError`s (`peResourceLimitBoundary` names a limit's bound); a
  * caller's cancellation rethrows `signal.reason`.
  */
-export const parsePeResources = async (
+const parsePeResourceInventory = async (
   bytes: Buffer,
-  artifact: PeResources["artifact"],
-  input: InspectPeResourcesInput,
-  signal?: AbortSignal,
-  /** Already admitted from these same bytes; used by carrier probes that own layout failure policy. */
+  maxEntries: number,
+  signal: AbortSignal | undefined,
   admittedLayout?: PeResourceLayout,
-): Promise<PeResources> => {
+): Promise<PeResourceInventory> => {
   signal?.throwIfAborted();
   const layout = admittedLayout ?? readPeResourceLayout(bytes);
   const directories: PeResources["directories"] = [];
@@ -167,11 +193,11 @@ export const parsePeResources = async (
     );
     const { namedEntries: named, idEntries: ids, entryCount: count } = facts;
     relative(at, PE_RESOURCE_DIRECTORY_BYTES + PE_RESOURCE_ENTRY_BYTES * count);
-    if (count > input.max_entries - examined)
+    if (count > maxEntries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
         PE_RESOURCE_ENTRY_LIMIT,
-        input.max_entries,
+        maxEntries,
       );
     examined += count;
     const directory = {
@@ -292,8 +318,7 @@ export const parsePeResources = async (
     resource.payload.sha256 = digest;
   }
   const iconGroups = readIconGroups(bytes, resources, account, ensureCapacity);
-  const report: PeResources = {
-    artifact,
+  return {
     format: layout.format,
     machine: layout.machine,
     directory:
@@ -318,6 +343,12 @@ export const parsePeResources = async (
       "Exact shared byte ranges are retained; non-identical overlapping resource structures or payloads are rejected.",
     ],
   };
+};
+
+const boundedResourceResult = <Report extends PeResourceInventory>(
+  report: Report,
+  signal: AbortSignal | undefined,
+): Report => {
   signal?.throwIfAborted();
   if (jsonBytes(report, METADATA_BYTES) > METADATA_BYTES)
     limit(

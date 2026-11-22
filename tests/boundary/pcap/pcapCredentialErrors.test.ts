@@ -21,6 +21,10 @@ import {
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { offlineHttpCapture } from "../../fixtures/pcap/offlineHttpCapture.js";
+import {
+  stopTestChild,
+  stopTestOwner,
+} from "../../support/process/stopTestChild.js";
 
 const credential = "SYNTHETIC_PCAP_AUTH_83A4";
 const uri = `http://user:${credential}@example.test/a/../b?value=keep%2Fthis`;
@@ -51,7 +55,7 @@ const ownedCommand = (
     ...(options.launcher === undefined ? {} : { launcher: options.launcher }),
     retain: (owner) =>
       onTestFinished(async () => {
-        expect((await owner.stop()).status).not.toBe("incomplete");
+        expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
       }),
   });
 const print = `process.stdout.write(${JSON.stringify(authoredJson)});`;
@@ -101,6 +105,7 @@ it("excludes HTTP credentials after output-observed cancellation and preserves i
       signal: controller.signal,
       launcher: async (spawn) => {
         const launched = await spawnOwnedProviderProcess(spawn);
+        onTestFinished(() => stopTestChild(launched.process));
         launched.process.stdout?.once("data", () => {
           observedOutput = true;
           queueMicrotask(() => controller.abort(reason));
@@ -150,7 +155,7 @@ it("retains safe cleanup observations and retries their original owner", async (
       retained = true;
       onTestFinished(async () => {
         mayClean = true;
-        expect((await owner.stop()).status).not.toBe("incomplete");
+        expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
       });
       expect(resources.length).toBeGreaterThan(0);
       expect(capturedOutput.stdout).not.toContain(credential);
@@ -196,7 +201,7 @@ const nativeOptions = (
   signal: undefined,
   retain: (owner: ProviderProcessSupervisor) =>
     onTestFinished(async () => {
-      expect((await owner.stop()).status).not.toBe("incomplete");
+      expect((await stopTestOwner(owner)).status).not.toBe("incomplete");
     }),
 });
 

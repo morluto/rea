@@ -113,6 +113,43 @@ Terminal=true
       });
     },
   );
+  it.each(["\u00a0", "\u3000", "\ufeff"])(
+    "refuses a key indented with %j, which GLib keeps inside the key",
+    (padding) => {
+      const parsed = parseDesktopEntry(
+        `[Desktop Entry]\nType=Application\n${padding}Name=Injected\n`,
+      );
+      expect(parsed).toMatchObject({
+        ok: true,
+        value: { name: null, malformed_line: 3 },
+      });
+    },
+  );
+
+  it.each(["\u00a0", "\u3000", "\ufeff"])(
+    "does not read a %j line as a blank or a comment",
+    (padding) => {
+      const blank = parseDesktopEntry(
+        `[Desktop Entry]\nType=Application\nName=Notes\n${padding}\n`,
+      );
+      expect(blank).toMatchObject({ ok: true, value: { malformed_line: 4 } });
+      const comment = parseDesktopEntry(
+        `[Desktop Entry]\nType=Application\nName=Notes\n${padding}# Hidden=true\n`,
+      );
+      expect(comment).toMatchObject({ ok: true, value: { malformed_line: 4 } });
+    },
+  );
+
+  it("keeps accepting keys indented with ASCII spaces and tabs", () => {
+    const parsed = parseDesktopEntry(
+      "[Desktop Entry]\nType=Application\n \tName=Notes\n  Exec=notes\n \t # note\n",
+    );
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: { name: "Notes", exec: "notes" },
+    });
+    expect(parsed.ok && parsed.value).not.toHaveProperty("malformed_line");
+  });
 });
 
 describe("tokenizeDesktopExec", () => {

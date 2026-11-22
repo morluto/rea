@@ -31,6 +31,8 @@ import {
 } from "./analysisProfile.js";
 import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
@@ -93,11 +95,14 @@ const fileSubjectSchema = z.strictObject({
 });
 /** A debugger session whose launch file is validated like a file subject. */
 const sessionSubjectIdentitySchema = sessionTargetIdentitySchema.extend({
-  target: z.union([subjectIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    subjectIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
 /** A subject that names no file (a URL, process, session, or unknown target) has no file display facts. */
 const nonFileSubjectSchema = z.strictObject({
-  identity: z.union([
+  identity: z.discriminatedUnion("kind", [
     nonFileTargetIdentitySchema,
     sessionSubjectIdentitySchema,
   ]),
@@ -211,6 +216,15 @@ export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
 
+/** Strict Evidence parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceSchema = evidenceBaseSchema
+  .safeExtend({
+    parameters: detachedJsonObjectSchema,
+    raw_result: detachedJsonValueSchema.nullable(),
+    normalized_result: detachedJsonValueSchema,
+  })
+  .superRefine(validateAnalysisProfileProvider);
+
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {
     const { evidence_id: evidenceId, ...withoutId } = evidence;
@@ -237,6 +251,9 @@ const immutableResultSchema = z
     if (issue !== undefined)
       context.addIssue({ code: "custom", message: issue });
   });
+const immutableResultEvidenceSchema = evidenceSchema.safeExtend({
+  normalized_result: immutableResultSchema,
+});
 export type EvidenceLocation = z.infer<typeof evidenceLocationSchema>;
 
 /** Candidate local artifact identity validated by the Evidence subject schema. */
@@ -661,7 +678,7 @@ const normalizeEvidenceObservation = (
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
   const selectedSchema = sharedResult
-    ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
+    ? immutableResultEvidenceSchema
     : evidenceSchema;
   const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only

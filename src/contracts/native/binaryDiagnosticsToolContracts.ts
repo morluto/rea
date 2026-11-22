@@ -2,22 +2,20 @@ import {
   inspectDevicetreeInputSchema,
   devicetreeSchema,
 } from "../../domain/firmware/devicetree.js";
+import { binaryLayoutSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
+import { devicetreeSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/devicetreeSummarySchema.js";
+import { elfDependenciesSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/elfDependenciesSummarySchema.js";
+import { nativeExportsSummaryViewResultSchema } from "../../domain/analysisView/summarySchemas/nativeExportsSummarySchema.js";
 import {
-  devicetreeSummaryViewResultSchema,
-  binaryLayoutSummaryViewResultSchema,
-  nativeExportsSummaryViewResultSchema,
-  elfDependenciesSummaryViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
-import {
-  inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
+  inspectPeLoadConfigInputSchema,
 } from "../../domain/native/peLoadConfig.js";
 import {
   binaryHardeningSchema,
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
+import { byteEntropyOutputSchema } from "./byteEntropyOutputSchema.js";
 import {
   inspectRecordedCrashInputSchema,
   recordedCrashSchema,
@@ -469,7 +467,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_native_exports", evidenceEffects),
     kind: "native-provider",
     description:
-      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Unreadable entries are partial; unavailable ELF section metadata can make enumeration unsupported. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
+      "Inspect PE/ELF exports without execution or an analysis engine; use inspect_macho for Mach-O. Returns named/ordinal/forwarded PE exports or defined ELF dynamic symbols with binding/type/version, preserving aliases, hidden versions and raw-name qualifications. Without SHT_DYNSYM, ELF uses PT_DYNAMIC with DT_HASH or DT_GNU_HASH; an indeterminate symbol count is unsupported. Readable fallback version indices and hidden flags are retained; unresolved version names or unreadable entries make coverage partial. An empty complete inventory means no declared exports. detail summary retains full Evidence for inspect_analysis_view kind native-exports, collection exports/issues, with exact names/indices, fields and paging; source_index is parent-scoped.",
     inputSchema: inspectNativeExportsRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       nativeExportsSchema,

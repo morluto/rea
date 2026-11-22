@@ -26,18 +26,22 @@ type Projection = Pick<
   "reported" | "numeric_literals" | "binary_fields" | "redactions"
 >;
 
+const validateHarDocument = (raw: unknown) =>
+  createHarValidator()(projectHar(raw, [], "validation").reported);
+
 /** Decode a retained HAR, validating a disposable projection of source facts. */
 export const decodeHarCapture = (
   text: string,
   sensitiveValues: readonly string[],
 ): DecodedCapture => {
   const raw = parseCaptureJson(text, "HAR");
-  const validation = projectHar(raw, [], "validation");
-  const adaptations = createHarValidator()(validation.reported);
+  const adaptations = validateHarDocument(raw);
   const ipv6Adaptation = adaptations.bracketedIpv6;
   const timingAdaptation = adaptations.failedRequests;
   const failedRequests = new Set(timingAdaptation?.entries);
   const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
+  const emptyAddressAdaptation = adaptations.emptyServerAddress;
+  const emptyAddressEntries = new Set(emptyAddressAdaptation?.entries);
   const ipv6Limitations =
     ipv6Adaptation === null
       ? []
@@ -83,8 +87,13 @@ export const decodeHarCapture = (
         : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
       ...projection,
       limitations: [
-        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3/12.3.1 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
         ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(emptyAddressAdaptation !== null && emptyAddressEntries.has(ordinal)
+          ? [
+              `This capture declares ${emptyAddressAdaptation.producer} and reports an empty serverIPAddress, which its HAR writer emits when a request has no remote address. The empty value is retained; only the validation copy omits the optional field. The server address is unknown. Producer declarations are not authenticated.`,
+            ]
+          : []),
         ...(timingAdaptation !== null && failedRequests.has(ordinal)
           ? [
               `This capture declares ${timingAdaptation.producer} and records a failed request with unavailable timings (-1). The original failure and timing sentinels are retained; only the validation copy substitutes nonnegative timings. Producer declarations are not authenticated.`,
