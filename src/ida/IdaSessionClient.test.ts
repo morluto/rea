@@ -1,10 +1,14 @@
-import { createIdaMcpConnection } from "./IdaMcpConnection.js";
+import {
+  createIdaMcpConnection,
+  decodeIdaToolResult,
+} from "./IdaMcpConnection.js";
 import {
   mkdir,
   readFile,
   readdir,
   realpath,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -1315,6 +1319,74 @@ describe("headless IDA session ownership and cleanup", () => {
     ).toBe(false);
     expect(await readdir(root)).toEqual(["target.elf"]);
     expect(Buffer.compare(await readFile(target.path), original)).toBe(0);
+  });
+});
+
+describe("headless IDA completed-database retention", () => {
+  it("saves and keeps a completed database when a later truncated tool call fails closed", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    const idbPath = `${producer.inputPath}.i64`;
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs")
+        decodeIdaToolResult({
+          content: [],
+          structuredContent: { result: [{ name: "main" }] },
+          _meta: { ida_mcp: { output_truncated: true } },
+        });
+    };
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected truncation to fail closed");
+    expect(result.error).toBeInstanceOf(AnalysisProtocolError);
+    expect(result.error.message).toContain("IDA MCP truncated its output");
+    expect(result.error.message).toContain(
+      "the preview cannot establish a complete observation",
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        idb_path: idbPath,
+        reason: expect.stringContaining("keeps the workspace"),
+      },
+    });
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: true } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
+  });
+
+  it("still removes the private workspace when auto-analysis never completed", async () => {
+    const { producer, client, root } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "server_health"
+        ? {
+            status: "ok",
+            input_path: producer.inputPath,
+            idb_path: `${producer.inputPath}.i64`,
+            module: "target.elf",
+            imagebase: "0x1000",
+            auto_analysis_ready: false,
+          }
+        : undefined;
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected incomplete auto-analysis refusal");
+    expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
+    expect(result.error.diagnostics).not.toHaveProperty("retained_database");
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: false } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect(await readdir(root)).toEqual(["target.elf"]);
   });
 });
 

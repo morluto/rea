@@ -290,7 +290,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
         return {
           success: true,
           session_id: session_id ?? "missing",
-          saved: null,
+          saved: args.save === true ? true : null,
           owned: this.owned,
           backend: "worker",
         };
