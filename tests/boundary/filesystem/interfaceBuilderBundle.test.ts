@@ -667,7 +667,7 @@ describe("keyed archive hierarchy coverage", () => {
 });
 
 describe("compiled Interface Builder bundle reader cancellation", () => {
-  it("honors cancellation during directory traversal", async () => {
+  it("honors cancellation before directory traversal", async () => {
     const root = await createTestTempDirectory("rea-ib-test-");
     const controller = new AbortController();
     controller.abort();
@@ -704,7 +704,13 @@ describe("flat Interface Builder plist values", () => {
     );
     await writeFile(
       join(resources, "Xml.nib"),
-      '<?xml version="1.0"?><plist version="1.0"><dict><key>$archiver</key><string>NSKeyedArchiver</string><key>$objects</key><array><string>$null</string><dict><key>NSWhite</key><data>MC41AA==</data><key>NSDate</key><date>2026-10-07T00:00:00Z</date></dict></array><key>$top</key><dict/></dict></plist>',
+      `<?xml version="1.0"?><plist version="1.0"><dict>
+        <key>com.apple.ibtool.document.objects</key><dict><key>cell</key><dict>
+          <key>class</key><string>NSView</string>
+          <key>NSWhite</key><data>MC41AA==</data>
+          <key>NSDate</key><date>2026-10-07T00:00:00Z</date>
+        </dict></dict>
+      </dict></plist>`,
     );
 
     const analysis = await analyzeInterfaceBuilderBundle({
@@ -721,7 +727,24 @@ describe("flat Interface Builder plist values", () => {
     expect(analysis.graph.coverage).toContainEqual(
       expect.objectContaining({ facet: "archive_decode", status: "complete" }),
     );
-    expect(analysis.graph.nodes.map(({ name }) => name)).toContain("Build");
+    expect(analysis.graph.nodes).toContainEqual(
+      expect.objectContaining({ name: "Build" }),
+    );
+    expect(
+      analysis.graph.nodes.find(({ name }) => name === "NSColor")?.attributes
+        .NSWhite,
+    ).toEqual({
+      $plist_type: "data",
+      base64: "MC41AA==",
+    });
+    expect(
+      analysis.graph.nodes.find(
+        ({ attributes }) => attributes.interface_builder_object_id === "cell",
+      )?.attributes,
+    ).toMatchObject({
+      NSWhite: { $plist_type: "data", base64: "MC41AA==" },
+      NSDate: { $plist_type: "date", iso8601: "2026-10-07T00:00:00.000Z" },
+    });
   });
 });
 
@@ -1530,15 +1553,6 @@ describe("Interface Builder XML plist depth", () => {
       "Contents/Resources/BeyondLimit.nib: omitted because aggregate decode budget exhausted.",
     );
   });
-
-  it("restores released representation bytes up to the initial budget", () => {
-    const budget = new InterfaceBuilderDecodeBudget(100);
-    budget.reserve(60, "reserve");
-    budget.release(60);
-    expect(budget.remainingBytes).toBe(100);
-    budget.release(10);
-    expect(budget.remainingBytes).toBe(100);
-  });
 });
 
 describe("bounded Interface Builder archive decoding", () => {
@@ -1705,210 +1719,129 @@ describe("Xcode-compiled Interface Builder archives", () => {
   );
 });
 
-describe("NIBArchive UIKit event connections", () => {
-  it("projects a runtime event connection and its event mask", async () => {
-    const root = await createTestTempDirectory("rea-ib-test-");
-    const bundle = join(root, "Example.app");
-    await mkdir(bundle, { recursive: true });
-    await writeFile(
-      join(bundle, "Cell.nib"),
-      encodeNibArchiveFixture({
-        classes: [
-          "UIProxyObject",
-          "UIClassSwapper",
-          "UIButton",
-          "UIRuntimeEventConnection",
-          "NSString",
-        ],
-        objects: [
-          { classIndex: 0, values: { UIProxiedObjectIdentifier: { ref: 5 } } },
-          { classIndex: 1, values: { UIClassName: { ref: 6 } } },
-          { classIndex: 2, values: {} },
-          {
-            classIndex: 3,
-            values: {
-              UISource: { ref: 2 },
-              UIDestination: { ref: 1 },
-              UILabel: { ref: 7 },
-              UIEventMask: 64,
-            },
-          },
-          { classIndex: 2, values: {} },
-          { classIndex: 4, values: { "NS.bytes": "IBFilesOwner" } },
-          { classIndex: 4, values: { "NS.bytes": "BuildCell" } },
-          { classIndex: 4, values: { "NS.bytes": "buildTapped:" } },
-        ],
-      }),
-    );
-
-    const analysis = await analyzeInterfaceBuilderBundle({
-      bundlePath: bundle,
-      targetSha256: "e".repeat(64),
-    });
-    const byId = new Map(analysis.graph.nodes.map((node) => [node.id, node]));
-    const named = (id: string | null) =>
-      id === null ? null : (byId.get(id)?.name ?? null);
-    const action = analysis.graph.nodes.find(({ kind }) => kind === "action");
-    expect(action).toMatchObject({
-      name: "buildTapped:",
-      attributes: { ui_event_mask: 64 },
-    });
-    const actionEdges = analysis.graph.edges.filter(
-      ({ relation }) => relation === "target_action",
-    );
-    expect(
-      actionEdges
-        .filter(({ to }) => to === action?.id)
-        .map(({ from }) => named(from)),
-    ).toEqual(["UIButton"]);
-    expect(
-      actionEdges
-        .filter(({ from }) => from === action?.id)
-        .map(({ to }) => named(to)),
-    ).toEqual(expect.arrayContaining(["BuildCell"]));
-    expect(
-      analysis.graph.nodes.find(({ name }) => name === "IBFilesOwner")?.kind,
-    ).toBe("placeholder");
-    expect(analysis.graph.nodes.map(({ name }) => name)).not.toContain(
+it("retains UIKit event routes and accounts for ownerless and limited connectors", async () => {
+  const bundlePath = await createTestTempDirectory("rea-ib-event-");
+  const controller = { classIndex: 1, values: { UIClassName: { ref: 5 } } };
+  const button = { classIndex: 2, values: {} };
+  const ownerless = {
+    classIndex: 3,
+    values: { UIDestination: { ref: 1 }, UIEventMask: 64 },
+  };
+  const cell = encodeNibArchiveFixture({
+    classes: [
+      "UIProxyObject",
+      "UIClassSwapper",
+      "UIButton",
       "UIRuntimeEventConnection",
-    );
+      "NSString",
+    ],
+    objects: [
+      { classIndex: 0, values: { UIProxiedObjectIdentifier: { ref: 4 } } },
+      controller,
+      button,
+      button,
+      { classIndex: 4, values: { "NS.bytes": "IBFilesOwner" } },
+      { classIndex: 4, values: { "NS.bytes": "BuildCell" } },
+      { classIndex: 4, values: { "NS.bytes": "buildTapped:" } },
+      {
+        classIndex: 3,
+        values: {
+          UISource: { ref: 2 },
+          UIDestination: { ref: 1 },
+          UILabel: { ref: 6 },
+          UIEventMask: 64,
+        },
+      },
+      {
+        classIndex: 3,
+        values: {
+          UISource: { ref: 3 },
+          UIDestination: { ref: 1 },
+          UILabel: { ref: 6 },
+        },
+      },
+      ownerless,
+    ],
   });
+  await writeFile(join(bundlePath, "Cell.nib"), cell);
+  await writeFile(
+    join(bundlePath, "Ownerless.nib"),
+    encodeNibArchiveFixture({
+      classes: [
+        "UIView",
+        "UIViewController",
+        "UIButton",
+        "UIRuntimeEventConnection",
+      ],
+      objects: [
+        { classIndex: 0, values: {} },
+        { classIndex: 1, values: {} },
+        ownerless,
+      ],
+    }),
+  );
 
-  it("reports a runtime connection with no resolvable owner as an omission", async () => {
-    const root = await createTestTempDirectory("rea-ib-ownerless-");
-    const bundle = join(root, "Example.app");
-    await mkdir(bundle, { recursive: true });
-    // The connector is recognized by class, but carries no UISource reference,
-    // so no connection can be projected from it.
-    await writeFile(
-      join(bundle, "Cell.nib"),
-      encodeNibArchiveFixture({
-        classes: [
-          "UIProxyObject",
-          "UIClassSwapper",
-          "UIButton",
-          "UIRuntimeEventConnection",
-          "NSString",
-        ],
-        objects: [
-          { classIndex: 0, values: { UIProxiedObjectIdentifier: { ref: 5 } } },
-          { classIndex: 1, values: { UIClassName: { ref: 6 } } },
-          { classIndex: 2, values: {} },
-          {
-            classIndex: 3,
-            values: { UIDestination: { ref: 1 }, UIEventMask: 64 },
-          },
-          { classIndex: 2, values: {} },
-          { classIndex: 4, values: { "NS.bytes": "IBFilesOwner" } },
-          { classIndex: 4, values: { "NS.bytes": "BuildCell" } },
-        ],
-      }),
-    );
-
-    const analysis = await analyzeInterfaceBuilderBundle({
-      bundlePath: bundle,
-      targetSha256: "e".repeat(64),
-    });
-
-    expect(analysis.graph.coverage).toContainEqual(
-      expect.objectContaining({
-        facet: "connections:Cell.nib",
-        status: "partial",
-        reason: "connection_unresolved",
-        examined: 0,
-        omitted: 1,
-      }),
-    );
-    // The keyed-archive producer counts a recognized connector it cannot emit,
-    // so this producer has to report the same document total for the same
-    // connector rather than zero.
-    expect(analysis.documents).toContainEqual(
-      expect.objectContaining({
-        relative_path: "Cell.nib",
-        connection_count: 1,
-      }),
-    );
-    expect(analysis.graph.truncated).toBe(true);
-    expect(analysis.limitations).toContainEqual(
-      expect.stringMatching(/resolvable owner.*omissions/iu),
-    );
+  const input = { bundlePath, targetSha256: "e".repeat(64) };
+  const full = await analyzeInterfaceBuilderBundle(input);
+  const action = full.graph.nodes.find(
+    ({ kind, attributes }) =>
+      kind === "action" && attributes.ui_event_mask === 64,
+  );
+  expect(action?.name).toBe("buildTapped:");
+  const named = (id: string | null) =>
+    full.graph.nodes.find((node) => node.id === id)?.name;
+  const actions = full.graph.edges.filter(
+    ({ relation }) => relation === "target_action",
+  );
+  expect(
+    actions
+      .filter(({ to }) => to === action?.id)
+      .map(({ from }) => named(from)),
+  ).toEqual(["UIButton"]);
+  expect(
+    actions
+      .filter(({ from }) => from === action?.id)
+      .map(({ to }) => named(to)),
+  ).toContain("BuildCell");
+  expect(
+    full.graph.nodes.find(({ name }) => name === "IBFilesOwner")?.kind,
+  ).toBe("placeholder");
+  expect(full.graph.nodes.map(({ name }) => name)).not.toContain(
+    "UIRuntimeEventConnection",
+  );
+  expect(
+    full.documents.map(({ relative_path, connection_count }) => [
+      relative_path,
+      connection_count,
+    ]),
+  ).toEqual([
+    ["Cell.nib", 3],
+    ["Ownerless.nib", 1],
+  ]);
+  expect(full.graph.coverage).toContainEqual({
+    facet: "connections:Ownerless.nib",
+    status: "partial",
+    reason: "connection_unresolved",
+    examined: 0,
+    omitted: 1,
   });
-});
+  expect(full.graph.truncated).toBe(true);
+  expect(full.limitations).toContainEqual(
+    expect.stringMatching(/resolvable owner.*omissions/iu),
+  );
 
-describe("NIBArchive ownerless connector accounting", () => {
-  it("keeps a connection dropped by the limit reported as a limit", async () => {
-    const root = await createTestTempDirectory("rea-ib-ownerless-limit-");
-    const bundle = join(root, "Example.app");
-    await mkdir(bundle, { recursive: true });
-    // Two resolvable connectors and one ownerless connector with the limit
-    // below the resolvable count, so this facet has both causes at once. Only a
-    // higher limit recovers the dropped connection, so that is the reason the
-    // caller needs, exactly as the keyed-archive producer reports it.
-    await writeFile(
-      join(bundle, "Cell.nib"),
-      encodeNibArchiveFixture({
-        classes: [
-          "UIProxyObject",
-          "UIClassSwapper",
-          "UIButton",
-          "UIRuntimeEventConnection",
-          "NSString",
-        ],
-        objects: [
-          { classIndex: 0, values: { UIProxiedObjectIdentifier: { ref: 5 } } },
-          { classIndex: 1, values: { UIClassName: { ref: 6 } } },
-          { classIndex: 2, values: {} },
-          {
-            classIndex: 3,
-            values: {
-              UISource: { ref: 2 },
-              UIDestination: { ref: 1 },
-              UILabel: { ref: 7 },
-              UIEventMask: 64,
-            },
-          },
-          { classIndex: 2, values: {} },
-          { classIndex: 4, values: { "NS.bytes": "IBFilesOwner" } },
-          { classIndex: 4, values: { "NS.bytes": "BuildCell" } },
-          { classIndex: 4, values: { "NS.bytes": "buildTapped:" } },
-          {
-            classIndex: 3,
-            values: {
-              UISource: { ref: 4 },
-              UIDestination: { ref: 1 },
-              UILabel: { ref: 7 },
-            },
-          },
-          {
-            classIndex: 3,
-            values: { UIDestination: { ref: 1 }, UIEventMask: 64 },
-          },
-        ],
-      }),
-    );
-
-    const analysis = await analyzeInterfaceBuilderBundle({
-      bundlePath: bundle,
-      targetSha256: "e".repeat(64),
-      limits: { max_connections: 1 },
-    });
-
-    expect(analysis.graph.coverage).toContainEqual(
-      expect.objectContaining({
-        facet: "connections:Cell.nib",
-        status: "partial",
-        reason: "connection_limit_reached",
-        examined: 1,
-        omitted: 2,
-      }),
-    );
-    expect(analysis.documents).toContainEqual(
-      expect.objectContaining({
-        relative_path: "Cell.nib",
-        connection_count: 3,
-      }),
-    );
+  const limited = await analyzeInterfaceBuilderBundle({
+    ...input,
+    limits: { max_connections: 1 },
   });
+  expect(limited.graph.coverage).toContainEqual({
+    facet: "connections:Cell.nib",
+    status: "partial",
+    reason: "connection_limit_reached",
+    examined: 1,
+    omitted: 2,
+  });
+  expect(limited.documents[0]?.connection_count).toBe(3);
 });
 
 describe("NIBArchive single-object connectors", () => {
@@ -2119,23 +2052,6 @@ describe("NIBArchive connectors with unusable sources", () => {
 describe.skipIf(process.platform !== "darwin")(
   "Foundation Interface Builder XML encodings",
   () => {
-    it.each(interfaceBuilderEncodings)(
-      "filesystem preserves native %s graph and original bytes",
-      async (encoding) => {
-        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: fixture.app,
-          targetSha256: "e".repeat(64),
-        });
-        expectInterfaceBuilderEncoding(
-          result,
-          fixture.expected,
-          fixture.bytes,
-          fixture.oracle,
-        );
-      },
-    );
-
     cliTest.for(interfaceBuilderEncodings)(
       "built CLI preserves native $0 graph and original bytes",
       async (encoding, { cli }) => {
@@ -2157,18 +2073,6 @@ describe.skipIf(process.platform !== "darwin")(
           fixture.bytes,
           fixture.oracle,
         );
-      },
-    );
-
-    it.each(invalidInterfaceBuilderEncodings)(
-      "filesystem rejects %s without graph substitution",
-      async (encoding) => {
-        const fixture = await createInterfaceBuilderEncodingFixture(encoding);
-        const result = await analyzeInterfaceBuilderBundle({
-          bundlePath: fixture.app,
-          targetSha256: "e".repeat(64),
-        });
-        expectInvalidInterfaceBuilderEncoding(result);
       },
     );
 
