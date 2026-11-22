@@ -476,7 +476,15 @@ const project = (
           });
           continue;
         }
-        projected[key] = visit(child, capturePointer(pointer, key), item);
+        const projectedValue = visit(child, capturePointer(pointer, key), item);
+        if (key === "__proto__")
+          Object.defineProperty(projected, key, {
+            value: projectedValue,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else projected[key] = projectedValue;
       }
       return projected;
     }
