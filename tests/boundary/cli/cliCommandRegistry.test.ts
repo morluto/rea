@@ -20,6 +20,9 @@ describe("REA's CLI command table", () => {
         flags: {
           format: "--target-format",
           architecture: "--architecture",
+          architecture_variant: "--architecture-variant",
+          base_address: "--base-address",
+          vector_table_address: "--vector-table-address",
           entry_point: "--entry-point",
           provider_id: "--provider",
           snapshot_path: "--snapshot",
