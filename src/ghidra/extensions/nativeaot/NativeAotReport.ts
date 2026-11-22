@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../../domain/coverage.js";
 import type { GhidraExtensionResult } from "../GhidraExtensions.js";
 
 const report = z
@@ -8,8 +9,7 @@ const report = z
     source_revision: z.literal("effeb734fc570c32650f88b159608979dc7b423e"),
     source_revision_authority: z.literal("build-reported-unattested"),
     status: z.enum([
-      "complete",
-      "partial",
+      ...knownCoverageStatusSchema.options,
       "not_applicable",
       "unsupported",
       "failed",

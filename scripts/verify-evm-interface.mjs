@@ -133,7 +133,7 @@ try {
       report.artifact.sha256,
       createHash("sha256").update(carrier).digest("hex"),
     );
-    assert.equal(evidence.subject.digest.sha256, report.artifact.sha256);
+    assert.equal(evidence.subject.identity.sha256, report.artifact.sha256);
     assert.equal(report.artifact.bytes, carrier.length);
     assert.equal(
       report.bytecode.sha256,

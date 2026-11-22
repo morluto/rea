@@ -6,7 +6,7 @@ import { jsonStringByteLength } from "./jsonStringByteLength.js";
 import { jsonValueByteLength } from "./jsonValueByteLength.js";
 import { err, ok, type Result } from "./result.js";
 import { strictUtf8Decoder } from "./strictUtf8.js";
-import { isRecord } from "./isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 const jsonValueTypeSchema = z.enum([
   "object",

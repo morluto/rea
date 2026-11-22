@@ -1,6 +1,6 @@
 import type { Logger } from "pino";
 
-import type { FridaInstrumentationPort } from "../application/frida/FridaInstrumentationPort.js";
+import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { CliInstance } from "./types.js";
 
@@ -9,6 +9,7 @@ export interface CliRegistrationContext {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly environment: Readonly<Record<string, string | undefined>>;
+  readonly savedDefaults: ReadonlySet<string> | undefined;
   readonly fridaInstrumentation: FridaInstrumentationPort | undefined;
 }
 

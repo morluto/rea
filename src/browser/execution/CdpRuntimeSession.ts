@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisTimeoutError,
@@ -15,10 +15,7 @@ import {
 } from "../../domain/browserDeadline.js";
 import { CdpTargetSessionOwner } from "../CdpTargetSessionOwner.js";
 import { classifyCdpFrameUrl } from "../CdpCaptureDocuments.js";
-import {
-  observedFrameUrl,
-  type CdpFrameTree,
-} from "../protocol/CdpFrameTree.js";
+import type { CdpFrameTree } from "../protocol/CdpFrameTree.js";
 import type {
   CdpDomainWith,
   CdpCommand,
@@ -38,10 +35,12 @@ import {
   type CdpEndpointDiscovery,
 } from "../CdpEndpoint.js";
 import {
+  cdpRootDocument,
   openCdpTargetSession,
   type CdpTargetSession,
 } from "../CdpTargetSession.js";
 import { CdpTargetDocument } from "../CdpTargetDocument.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** A domain this session can both enable and, on cleanup, disable. */
 export type CdpRuntimeDomain = CdpDomainWith<"enable"> &
@@ -137,8 +136,8 @@ export class CdpRuntimeSession {
           target_id: target.id,
           initial_url: url.url,
           origin: url.origin,
-          frame_id: frame.id,
-          loader_id: frame.loaderId ?? null,
+          frame_id: frame.document.frameId,
+          loader_id: frame.document.loaderId ?? null,
         },
         allowedOrigins,
         operation,
@@ -299,7 +298,7 @@ export class CdpRuntimeSession {
         );
       } catch (cause: unknown) {
         failures.push(
-          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
+          `${method}: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
         );
       }
     };
@@ -320,7 +319,7 @@ export class CdpRuntimeSession {
           );
         } catch (cause: unknown) {
           failures.push(
-            `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : cause instanceof Error ? cause.message : String(cause)}`,
+            `Target.detachFromTarget: ${cause instanceof AnalysisError ? (cause.userMessage ?? cause.message) : errorMessage(cause)}`,
           );
         }
       }
@@ -337,8 +336,7 @@ export class CdpRuntimeSession {
                 "rea-cdp-browser",
                 [this.target.target_id],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { operation: this.operation, cause },
               );
@@ -374,16 +372,14 @@ const runtimeMainFrame = (
   allowedOrigins: ReadonlySet<string>,
   operation: BrowserObservationOperation,
 ) => {
-  const { frameId, loaderId, loaderIssue } = tree.root.facts;
-  if (frameId === null || loaderIssue !== null)
+  const document = cdpRootDocument(tree);
+  if (document === undefined)
     throw new BrowserObservationError(operation, "protocol_error", {
       detail:
         "CDP Page.getFrameTree did not identify the selected main frame's document.",
     });
   return {
-    id: frameId,
-    loaderId,
-    document: { frameId, loaderId, url: observedFrameUrl(tree.root.url) },
+    document,
     ...classifyCdpFrameUrl(tree.root.url, allowedOrigins),
   };
 };

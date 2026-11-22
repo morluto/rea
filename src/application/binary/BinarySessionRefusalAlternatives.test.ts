@@ -13,7 +13,7 @@ import type {
   AnalysisProvider,
   CapabilityDescriptor,
   ExecutionOptions,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../CapabilityInventory.js";
 import { offeredOperationAlternatives } from "../OperationAlternatives.js";
 

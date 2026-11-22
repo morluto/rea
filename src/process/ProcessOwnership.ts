@@ -6,7 +6,6 @@ import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
-  errorMessage,
   readNativeProcessIdentityMap,
   readProcessOwnershipFacts,
   reobserveUnavailableTokenFacts,
@@ -34,6 +33,7 @@ import {
   type ProcessLifecycleObservation,
   type ProcessExitSettlementBudget,
 } from "./ProcessLifecycle.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -489,8 +489,26 @@ const cleanupOwnedProcessGroupAttempt = async (
         });
     }
   }
-  if (plan.unresolved.length > 0)
-    return finish(cleanupValidationFailure(plan.unresolved));
+  if (plan.unresolved.length > 0) {
+    // A separately owned nested worker can be finishing after its parent
+    // receives the signal. Join only the generations already retained by the
+    // native reader. The final sweep grants no new signaling authority.
+    const retainedGenerations = new Set(
+      ownership.evidenceOwner?.candidates
+        .filter(({ identity }) => identity !== undefined)
+        .map(({ pid }) => pid),
+    );
+    if (
+      ownership.sweepTokenOwnedProcesses !== true ||
+      !attempt.signaled ||
+      host.processIdentities === undefined ||
+      plan.unresolved.some(
+        ({ pid, reason }) =>
+          reason !== "run-token-mismatch" || !retainedGenerations.has(pid),
+      )
+    )
+      return finish(cleanupValidationFailure(plan.unresolved));
+  }
   if (ownership.sweepTokenOwnedProcesses === true) {
     let verification: ProcessCleanupResult;
     try {

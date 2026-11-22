@@ -8,6 +8,7 @@ import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.skipIf(process.platform === "win32")(
   "classifies output paths blocked by a file before device commands",
@@ -39,7 +40,10 @@ it.skipIf(process.platform === "win32")(
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
-    const client = new Client({ name: "adb-output-refusal", version: "1" });
+    const client = new Client(
+      { name: "adb-output-refusal", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(() => client.close());
     await client.connect(clientTransport);
     for (const { output, hostCode } of [
@@ -91,12 +95,13 @@ it.skipIf(process.platform === "win32")(
         );
         expect(cli.status).toBe(1);
         expect(cli.stderr).toBe("");
+        // The CLI names the refused field by its option key.
         expect(JSON.parse(cli.stdout)).toMatchObject({
           code: "invalid_request",
           details: {
             issues: [
               {
-                path: ["output_directory"],
+                path: ["output-directory"],
                 reason: "invalid_value",
                 observed: { path: output, code: hostCode },
               },

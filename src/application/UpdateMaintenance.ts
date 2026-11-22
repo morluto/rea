@@ -14,8 +14,9 @@ import {
 } from "./SetupSkill.js";
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ClientSystemPaths } from "./SupportedClients.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /**
  * A client maintenance left alone: its registration as inspected, and why REA
@@ -138,6 +139,7 @@ export const existingMaintenanceScope = async (
       // profile is absent, so maintenance reads ownership evidence instead of
       // product applicability. Owned rows stay the only ones selected below.
       evidence: "ownership",
+      scope: "user",
       ...(resources === undefined ? {} : { resources }),
       ...(systemPaths === undefined ? {} : { systemPaths }),
     },
@@ -147,6 +149,7 @@ export const existingMaintenanceScope = async (
   // The launcher and explicitly selected settings the maintenance setup run
   // registers; provider defaults doctor discovers there are not known here.
   const command = currentClientRegistrationCommand({
+    platform,
     entrypointPath: entryPoint,
     environment,
   });
@@ -171,6 +174,7 @@ export const existingMaintenanceScope = async (
     const refusal = await clientRefreshRefusal(client, settings, command, {
       platform,
       currentCommandPath: entryPoint,
+      launcherEnvironment: environment,
       ...(resources === undefined ? {} : { resources }),
     });
     if (refusal !== undefined) {
@@ -293,9 +297,6 @@ export const planIntegrationMaintenance = async (
     // Without a supplied scope, the typed failure is the caller's cleanup capability.
     if (resources === undefined && cause instanceof RegularFileCleanupFailure)
       throw cause;
-    return unavailableMaintenance(
-      cause instanceof Error ? cause.message : String(cause),
-      scope,
-    );
+    return unavailableMaintenance(errorMessage(cause), scope);
   }
 };

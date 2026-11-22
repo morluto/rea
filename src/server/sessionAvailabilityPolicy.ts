@@ -3,7 +3,6 @@ import {
   HOST_RESTRICTED_FEATURES,
   type HostRestrictedFeature,
 } from "../contracts/toolAvailability.js";
-import { platform } from "node:process";
 import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
 
 /** Either the caller or the observed host can mark an integration unsupported. */
@@ -22,6 +21,8 @@ const combineHostUnsupported = (
 export const sessionAvailabilityPolicy = (
   configured: (() => AvailabilityPolicy) | undefined,
   defaults: CapabilityAvailabilityFacts,
+  /** The host process capture plans for and runs on. */
+  platform: NodeJS.Platform,
 ): (() => AvailabilityPolicy) => {
   const policy =
     configured ??

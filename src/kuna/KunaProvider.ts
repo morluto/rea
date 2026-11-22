@@ -1,3 +1,5 @@
+import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { KUNA_STRING_MIN_LENGTH } from "./KunaLimits.js";
 
 import type {
@@ -6,15 +8,15 @@ import type {
   AnalysisProviderCandidate,
   ProviderAvailability,
   ProviderTargetSupport,
-} from "../application/AnalysisProvider.js";
+} from "../ports/AnalysisProvider.js";
 import { cancelledBy } from "../domain/analysisErrorCore.js";
 import {
   createAnalysisProfile,
   type AnalysisProfileCommitment,
 } from "../domain/analysisProfile.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { err, ok } from "../domain/result.js";
-import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   resolveRegexMatchingDeadline,
   type RegexMatchingDeadline,
@@ -25,8 +27,7 @@ import {
 } from "../config/regexWorkerHeapRequest.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import {
-  kunaFileCleanupError,
-  kunaRetainedResourceCleanupError,
+  kunaInstallationDialect,
   type KunaProcessLauncher,
 } from "./KunaCommand.js";
 import {
@@ -50,12 +51,24 @@ import { KunaRunSlots } from "./KunaRunSlots.js";
 import { KunaSessionClient } from "./KunaSessionClient.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 
-/** Architectures REA verified Kuna on: x86-64 and AArch64 ELF and Mach-O, plus ARM Thumb. */
-const VERIFIED_ARCHITECTURES: ReadonlySet<string> = new Set([
-  "x86_64",
-  "arm64",
-  "arm",
-]);
+const KUNA_ARCHITECTURE_LABELS = {
+  x86: null,
+  x86_64: "x86-64",
+  arm64: "AArch64",
+  arm: "ARM",
+  arm64_32: null,
+  mips: null,
+  "6502": null,
+  riscv: null,
+  powerpc: null,
+  m68k: null,
+  hexagon: null,
+  xtensa: null,
+} as const satisfies Record<BinaryArchitecture, string | null>;
+
+const kunaArchitectureLabels = new Intl.ListFormat("en-GB").format(
+  Object.values(KUNA_ARCHITECTURE_LABELS).filter((label) => label !== null),
+);
 
 /**
  * Bring-your-own Kuna candidate. Discovery reads configuration and the
@@ -90,7 +103,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
       readonly regexWorkerHeapRequest?: RegexWorkerHeapRequest;
     } = {},
   ) {
-    this.#platform = options.platform ?? process.platform;
+    this.#platform = options.platform ?? HOST_PLATFORM.platform;
     this.#environment = snapshotEnvironment(environment, this.#platform);
     this.#deadline =
       options.regexMatchingDeadline ??
@@ -160,11 +173,11 @@ export class KunaProvider implements AnalysisProviderCandidate {
             : `REA verified the Kuna provider on ELF and thin Mach-O images; ${target.format} is not admitted yet.`,
         diagnostics,
       };
-    if (!VERIFIED_ARCHITECTURES.has(target.architecture))
+    if (KUNA_ARCHITECTURE_LABELS[target.architecture] === null)
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason: `REA verified the Kuna provider on x86-64, AArch64 and ARM; ${target.architecture} is not admitted yet.`,
+        reason: `REA verified the Kuna provider on ${kunaArchitectureLabels}; ${target.architecture} is not admitted yet.`,
         diagnostics: { ...diagnostics, architecture: target.architecture },
       };
     return { status: "supported", code: null, reason: null, diagnostics };
@@ -196,22 +209,20 @@ export class KunaProvider implements AnalysisProviderCandidate {
           : { processLauncher: this.#launcher }),
       });
     } catch (cause: unknown) {
-      const retainedCleanup = kunaRetainedResourceCleanupError(
-        cause,
-        "kuna:profile",
-      );
-      if (retainedCleanup !== undefined) return err(retainedCleanup);
-      if (!(cause instanceof RegularFileCleanupFailure)) {
-        const cancellation = kunaResources.installationCancellationError(
+      return err(
+        classifyProviderFailure(
           cause,
-          "kuna:profile",
-        );
-        if (cancellation !== undefined) return err(cancellation);
-      }
-      if (!(cause instanceof RegularFileCleanupFailure)) throw cause;
-      const error = kunaFileCleanupError(cause, "kuna:profile");
-      kunaResources.bindFailure(cause, error);
-      return err(error);
+          kunaInstallationDialect(
+            "kuna:profile",
+            kunaResources,
+            (unrecognised) => {
+              // The inspection reports expected failures in its Result; any
+              // other rejection is not a Kuna outcome and stays the caller's.
+              throw unrecognised;
+            },
+          ),
+        ),
+      );
     }
     if (!installation.ok) {
       const error = kunaUnavailable("open_binary", installation.error.reason, {
@@ -305,6 +316,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
       cache: this.#projectCache(configuration.value),
       runSlots: this.#foregroundSlots(configuration.value),
       environment: this.#environment,
+      platform: this.#platform,
       deadline: this.#deadline,
       heapRequest: this.#heapRequest,
       ...(this.#launcher === undefined ? {} : { launcher: this.#launcher }),

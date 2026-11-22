@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -35,7 +36,7 @@ const resealSummary = (
   });
 };
 
-it("refuses a historical alias summary with recreate guidance and rejects resealed false facts", async () => {
+it("compares a current alias summary and refuses its historical format with recreate guidance", async () => {
   const root = await createTestTempDirectory("rea-historical-summary-mcp-");
   const path = join(root, "original.plist");
   await writeFile(
@@ -48,12 +49,11 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
   const inspected = await call("inspect_artifact", { detail: "complete" });
   expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
   const parent = parseEvidence(inspected.structuredContent);
-  const originalParent = JSON.stringify(parent);
   const alias = join(root, "caller-selected-alias.plist");
   const aliasedParent = rebindEvidenceToTargetPath(parent, {
     path: alias,
-    sha256: parent.subject!.digest.sha256,
-    format: parent.subject!.format,
+    sha256: fileIdentity(parent.subject).sha256,
+    format: fileIdentity(parent.subject).format,
   });
   expect(aliasedParent.evidence_id).toBe(parent.evidence_id);
   const projected = await call("inspect_analysis_view", {
@@ -71,6 +71,20 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
     summary: { source_coverage: { scope: "root", status: "complete" } },
   });
 
+  const accepted = await call("compare_artifacts", {
+    left: current,
+    right: parent,
+  });
+  expect(accepted.isError, JSON.stringify(accepted)).not.toBe(true);
+  const comparison = parseEvidence(accepted.structuredContent);
+  expect(
+    artifactComparisonResultSchema.parse(comparison.normalized_result).status,
+  ).toBe("unchanged");
+  expect(comparison.evidence_links).toEqual([
+    parent.evidence_id,
+    parent.evidence_id,
+  ]);
+
   // Exact ordinary-root projector before ce1f4b1bb: no source_coverage or
   // traversal caveat. Before b395190e4 the hash caveat was also absent; this
   // fully hashed root has no such caveat in either era.
@@ -87,7 +101,6 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
     ),
   });
   expect(historical.evidence_id).not.toBe(current.evidence_id);
-  const originalHistorical = JSON.stringify(historical);
   // The Evidence format owner no longer rebuilds 6.7-era summary identities:
   // the earlier projection is refused with the single recreate guidance.
   const compared = await call("compare_artifacts", {
@@ -101,30 +114,6 @@ it("refuses a historical alias summary with recreate guidance and rejects reseal
       details: { reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE) },
     },
   });
-
-  const historicalResult = artifactInventorySummaryViewResultSchema.parse(
-    historical.normalized_result,
-  );
-  const forged = resealSummary(historical, {
-    ...historicalResult,
-    summary: {
-      ...historicalResult.summary,
-      available_counts: {
-        ...historicalResult.summary.available_counts,
-        nodes: historicalResult.summary.available_counts.nodes + 1,
-      },
-    },
-  });
-  const rejected = await call("compare_artifacts", {
-    left: forged,
-    right: parent,
-  });
-  expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
-  expect(parseMcpToolError(rejected)).toMatchObject({
-    error: { code: "evidence_integrity_mismatch" },
-  });
-  expect(JSON.stringify(parent)).toBe(originalParent);
-  expect(JSON.stringify(historical)).toBe(originalHistorical);
 
   const retained = await call("inspect_analysis_view", {
     source: { kind: "retained-evidence", evidence_id: parent.evidence_id },

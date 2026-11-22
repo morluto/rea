@@ -22,12 +22,28 @@ const FILTER_PATTERNS = [
   new RegExp(FILTER + DESTRUCTURED, "gu"),
 ];
 
-/** Index just past the parenthesis that closes the one at `open`, or -1. */
-const closingParen = (content, open) => {
+/** Index of the quote that closes the literal opening at `start`, or -1. */
+const literalEnd = (content, start) => {
+  const quote = content[start];
+  for (let index = start + 1; index < content.length; index += 1) {
+    if (content[index] === "\\") index += 1;
+    else if (content[index] === quote) return index;
+  }
+  return -1;
+};
+
+/**
+ * Index just past the parenthesis that closes the one at `open`, or -1.
+ * Parentheses inside string and template literals do not count.
+ */
+export const closingParen = (content, open) => {
   let depth = 0;
   for (let index = open; index < content.length; index += 1) {
     const character = content[index];
-    if (character === "(") depth += 1;
+    if (character === '"' || character === "'" || character === "`") {
+      index = literalEnd(content, index);
+      if (index < 0) return -1;
+    } else if (character === "(") depth += 1;
     else if (character === ")") {
       depth -= 1;
       if (depth === 0) return index + 1;

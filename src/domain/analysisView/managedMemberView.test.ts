@@ -48,6 +48,16 @@ it("keeps unexamined collections unknown while normalizing immutable managed par
     field_accesses: [],
   };
   const input = parent(freezeOwnedJsonTreeSnapshot(unexamined));
+  const coordinates = managedMembersViewRequestSchema.parse({
+    kind: "managed-members",
+    collection: "unresolved_definitions",
+    offset: 0,
+    limit: 1,
+  });
+  expect(projectManagedMemberView(input, coordinates)).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError" },
+  });
   for (let attempt = 0; attempt < 2; attempt++) {
     expect(projectManagedMemberView(input, { kind: "summary" })).toMatchObject({
       ok: true,
@@ -278,6 +288,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       caller_token: "0x06000001",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       caller: "Unrelated.Caller",
       opcode: "call",
       target_token: "0x0a000001",
@@ -289,6 +300,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       caller_token: "0x06000002",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       caller: "Exact.Type.Target",
       opcode: "call",
       target_token: "0x0a000002",
@@ -302,6 +314,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       method_token: "0x06000001",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       method: "Unrelated.Caller",
       opcode: "ldfld",
       field_token: "0x04000001",
@@ -312,6 +325,7 @@ it("filters relationship endpoints from recorded facts rather than caller displa
       method_token: "0x06000002",
       il_offset: 0,
       target_identity_sha256: null,
+      target_row_resolved: false,
       method: "Exact.Type.Target",
       opcode: "ldfld",
       field_token: "0x04000002",

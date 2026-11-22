@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -421,9 +422,9 @@ describe("macOS application projection", () => {
     const projection = appleApplicationProjectionResultSchema.parse(
       requireSuccessfulProjection(result).normalized_result,
     );
-    expect(requireSuccessfulProjection(result).subject?.format).toBe(
-      "directory",
-    );
+    expect(
+      fileIdentity(requireSuccessfulProjection(result).subject).format,
+    ).toBe("directory");
     expect(projection).toMatchObject({
       root_format: "directory",
       platforms: ["macos"],

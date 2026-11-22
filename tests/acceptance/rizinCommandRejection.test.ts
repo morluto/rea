@@ -19,6 +19,12 @@ interface Outcome {
   readonly stderr: string;
   /** Expected completion and the refusal the limitation must name. */
   readonly refused?: RegExp;
+  /** The typed refusal record the result must carry. */
+  readonly refusal?: {
+    readonly reason: string;
+    readonly command: string | null;
+    readonly line: string;
+  };
 }
 
 // Captured from the official Rizin 0.9.1 static Linux build on /usr/bin/true.
@@ -29,6 +35,11 @@ const outcomes: readonly Outcome[] = [
     stderr:
       "ERROR: Command 'axffj' does not exist.\nERROR: Displaying the help of command 'axf'.\n\nERROR: Usage: axf[jq]   # List xrefs from current seek\n",
     refused: /unknown command "axffj"/u,
+    refusal: {
+      reason: "unknown_command",
+      command: "axffj",
+      line: "ERROR: Command 'axffj' does not exist.",
+    },
   },
   {
     // Rizin runs the statements before a refusal and skips the rest.
@@ -36,6 +47,11 @@ const outcomes: readonly Outcome[] = [
     stdout: "0x1\n",
     stderr: "ERROR: Command 'zz' does not exist.\n",
     refused: /unknown command "zz"/u,
+    refusal: {
+      reason: "unknown_command",
+      command: "zz",
+      line: "ERROR: Command 'zz' does not exist.",
+    },
   },
   {
     command: "%v 1; afl 1 2; %v 2",
@@ -43,6 +59,11 @@ const outcomes: readonly Outcome[] = [
     stderr:
       "ERROR: Wrong number of arguments passed to `afl`, see its help with `afl?`\n\nERROR: Usage: afl[?]   # List functions\n",
     refused: /wrong argument count for "afl"/u,
+    refusal: {
+      reason: "wrong_argument_count",
+      command: "afl",
+      line: "ERROR: Wrong number of arguments passed to `afl`, see its help with `afl?`",
+    },
   },
   {
     command: "pd 1 @ nosuch",
@@ -50,12 +71,22 @@ const outcomes: readonly Outcome[] = [
     stderr:
       "ERROR: core: Invalid address (nosuch)\nERROR: core: Error while executing command: pd 1 @ nosuch\n",
     refused: /an invalid statement/u,
+    refusal: {
+      reason: "invalid_statement",
+      command: null,
+      line: "ERROR: core: Error while executing command: pd 1 @ nosuch",
+    },
   },
   {
     command: "?e",
     stdout: "",
     stderr: "ERROR: core: Error while parsing command: `?e`\n",
     refused: /input that failed to parse/u,
+    refusal: {
+      reason: "parse_failure",
+      command: null,
+      line: "ERROR: core: Error while parsing command: `?e`",
+    },
   },
   // A command that ran and reported its own failure is not a shell refusal.
   {
@@ -80,6 +111,13 @@ const expectClassified = (raw: unknown, outcome: Outcome): void => {
     completion_status: outcome.refused === undefined ? "complete" : "rejected",
   });
   expect(evidence.raw_result).toEqual(evidence.normalized_result);
+  if (outcome.refusal === undefined)
+    expect(evidence.normalized_result).not.toHaveProperty("refusal");
+  else
+    expect(evidence.normalized_result).toHaveProperty(
+      "refusal",
+      outcome.refusal,
+    );
   const refusals = evidence.limitations.filter((limitation) =>
     limitation.startsWith("Rizin refused "),
   );

@@ -1,4 +1,5 @@
 import { strictUtf8Decoder } from "./strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 /** JSON parsing without throws at an input boundary. */
 export type SafeJsonParseResult =
   | { readonly ok: true; readonly value: unknown }
@@ -12,7 +13,7 @@ export const safeParseUtf8Json = (bytes: Uint8Array): SafeJsonParseResult => {
   } catch (cause: unknown) {
     return {
       ok: false,
-      error: cause instanceof Error ? cause.message : String(cause),
+      error: errorMessage(cause),
       cause,
     };
   }
@@ -33,7 +34,7 @@ export const safeParseJson = (
   } catch (cause: unknown) {
     return {
       ok: false,
-      error: cause instanceof Error ? cause.message : String(cause),
+      error: errorMessage(cause),
       cause,
     };
   }

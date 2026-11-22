@@ -1,7 +1,9 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
-import { classifyLaunchFailureCode } from "../process/launchFailure.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
 import { randomUUID } from "node:crypto";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import {
   AnalysisError,
   type AnalysisCapturedOutput,
@@ -22,6 +24,7 @@ import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   prepareOwnedCommand,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   OwnedCommandFailure,
 } from "../process/OwnedCommand.js";
@@ -78,18 +81,6 @@ const refusal = (
 ): Result<never, JadxJavaProbeRefusal> =>
   err({ code, message, diagnostics, kind });
 
-const capturedOutput = (
-  snapshot: ProviderProcessSnapshot,
-): AnalysisCapturedOutput => ({
-  stdout: snapshot.stdout.text,
-  stderr: snapshot.stderr.text,
-  stdout_bytes: snapshot.stdout.observedBytes,
-  stderr_bytes: snapshot.stderr.observedBytes,
-  truncated:
-    snapshot.diagnosticTruncated === true || snapshot.outputIncomplete === true,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
-});
 const projectRefusal = (
   failure: JadxJavaProbeRefusal,
   operation: string,
@@ -164,7 +155,7 @@ export const inspectJadxJava = async (
             ? preparation instanceof DarwinProcessOwnershipInspectionError
               ? preparation.capturedOutput
               : undefined
-            : capturedOutput(command.snapshot);
+            : capturedProviderOutput(command.snapshot);
         const inspectionCancellation =
           command === undefined || command.preparationFailure !== undefined
             ? processInspectionCancellationError(cause, operation)
@@ -175,6 +166,7 @@ export const inspectJadxJava = async (
           "jadx",
           operation,
         );
+        const hostConstraint = hostLaunchConstraint(command, cause);
         let primary: AnalysisError;
         if (observed !== undefined && !observed.ok) {
           if (cleanups.length === 0) return observed;
@@ -230,7 +222,11 @@ export const inspectJadxJava = async (
               },
             },
           });
-        } else if (preparation !== undefined && command?.reason !== "timeout") {
+        } else if (
+          preparation !== undefined &&
+          command?.reason !== "timeout" &&
+          hostConstraint === undefined
+        ) {
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
@@ -254,6 +250,21 @@ export const inspectJadxJava = async (
           primary = new ProviderAdapterError("jadx", operation, {
             cause,
             ...(output === undefined ? {} : { capturedOutput: output }),
+          });
+        } else if (hostConstraint !== undefined) {
+          // The host, not the selected Java runtime, refused this launch.
+          primary = classifyLaunchFailure(hostConstraint, {
+            providerId: "jadx",
+            operation,
+            fixedArguments: true,
+            command: java,
+            details: {
+              cause,
+              diagnostics: {
+                java_executable: java,
+                phase: "module-inspection",
+              },
+            },
           });
         } else {
           const failure = commandProbeRefusal(
@@ -284,6 +295,19 @@ export const inspectJadxJava = async (
   }
 };
 
+/** A launch the host refused for capacity or argument size, not the runtime's fault. */
+const hostLaunchConstraint = (
+  command: Pick<OwnedCommandFailure, "processError"> | undefined,
+  cause: unknown,
+) => {
+  const launch =
+    preparationHostCapacityFailure(cause) ??
+    launcherFailureOf(command?.processError ?? cause);
+  return launch?.kind === "host-exhausted" || launch?.kind === "argument-list"
+    ? launch
+    : undefined;
+};
+
 const commandProbeRefusal = (
   java: string,
   command:
@@ -293,12 +317,14 @@ const commandProbeRefusal = (
   timeoutMs: number,
 ): JadxJavaProbeRefusal => {
   const output =
-    command?.snapshot == null ? undefined : capturedOutput(command.snapshot);
+    command?.snapshot == null
+      ? undefined
+      : capturedProviderOutput(command.snapshot);
   const processError =
     command?.processError ?? (cause instanceof Error ? cause : undefined);
   const systemCode =
     processError === undefined ? undefined : Reflect.get(processError, "code");
-  const missing = classifyLaunchFailureCode(systemCode)?.kind === "missing";
+  const missing = launcherFailureOf(processError)?.kind === "missing";
   const limited = command?.reason === "output-limit";
   const timedOut = command?.reason === "timeout";
   return {

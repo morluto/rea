@@ -6,13 +6,11 @@ import { basename, dirname, isAbsolute } from "node:path";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
-} from "../../artifacts/ArtifactResourceScope.js";
-import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import {
+  SafeOutputTree,
   outputDirectoryAdmissionRefusal,
   SafeOutputTreeDestinationRefusal,
-} from "../../artifacts/SafeOutputTreeAdmission.js";
-import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
+  SafeOutputTreeCreationFailure,
+} from "../../resources/index.js";
 import { canonicalCallerPath } from "../../filesystem/canonicalCallerPath.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -23,6 +21,7 @@ import {
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** A published tree whose output handles could not be released. */
 type FailedRelease = Extract<
@@ -217,10 +216,7 @@ export const desktopOutputFailure = (
   if (cancellation !== undefined && evidence !== undefined)
     cancellation.retainPartialObservation(evidence);
   if (release === undefined) return cancellation;
-  const reason =
-    release.cause instanceof Error
-      ? release.cause.message
-      : String(release.cause);
+  const reason = errorMessage(release.cause);
   const error = new ProviderAdapterError(context.provider, context.operation, {
     cause: release.cause,
     userMessage: `The ${context.what} was written to ${directory} and is complete, but its output handles could not be closed: ${reason}.`,

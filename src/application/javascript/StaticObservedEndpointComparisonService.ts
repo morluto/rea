@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import type { WebNetworkCapture } from "../../domain/webNetworkCapture.js";
 import { setImmediate } from "node:timers/promises";
 import { compareStaticObservedEndpointsRequestSchema } from "../../contracts/javascript/applicationWorkflowInputContracts.js";
@@ -178,7 +179,7 @@ const createComparison = (
     limitations,
   };
   const evidence: Evidence = createEvidence(
-    undefined,
+    unknownTarget("derived-from-linked-evidence"),
     JAVASCRIPT_APPLICATION_WORKFLOW_PROVIDER,
     {
       predicateType: "rea.static-observed-endpoint-comparison",

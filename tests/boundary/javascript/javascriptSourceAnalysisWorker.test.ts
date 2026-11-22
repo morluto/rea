@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
-import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { createJavaScriptSourceAnalysis } from "../../../src/javascript/analysis/JavaScriptSourceAnalysis.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
 import type { OwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
@@ -332,15 +332,8 @@ it("keeps a worker parked while a limit change closes the previous process", asy
   const limits = { heapMb: 128, timeoutMs: 30_000 };
   const file = source("parked.mjs", "export const observed = 1;");
   const originalClose = JavaScriptAnalysisWorker.prototype.close;
-  let releaseClose = (): void => {};
-  const gate = new Promise<void>((resolve) => {
-    releaseClose = resolve;
-  });
   let closeCalls = 0;
-  let markCloseStarted = (): void => {};
-  const closeStarted = new Promise<void>((resolve) => {
-    markCloseStarted = resolve;
-  });
+  const workerClose = phaseGate();
   let replacement:
     | ReturnType<typeof createJavaScriptSourceAnalysis>
     | undefined;
@@ -361,8 +354,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
     ) {
       closeCalls += 1;
       if (closeCalls === 1) {
-        markCloseStarted();
-        await gate;
+        await workerClose.hold();
       }
       return originalClose.call(this);
     };
@@ -371,7 +363,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
       1,
       { scope, launcher },
     );
-    await awaitAcknowledgement(closeStarted, replacement, "worker close");
+    await workerClose.reached(replacement, "worker close");
 
     const concurrent = await createJavaScriptSourceAnalysis(limits, 1, {
       scope,
@@ -387,7 +379,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
     if (parkedPid === undefined)
       throw new Error("Parked analyzer has no observed PID");
 
-    releaseClose();
+    workerClose.release();
     const extra = await replacement;
     const extraResult = await extra.analyze(file, {
       nodes: 100,
@@ -408,7 +400,7 @@ it("keeps a worker parked while a limit change closes the previous process", asy
     await exits.get(parkedPid);
     expect(exited.has(parkedPid)).toBe(true);
   }, [
-    releaseClose,
+    workerClose.release,
     async () => {
       const port = await replacement?.catch(() => undefined);
       await port?.close();

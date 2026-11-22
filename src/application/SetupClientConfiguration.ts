@@ -1,4 +1,4 @@
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
@@ -32,6 +32,7 @@ import {
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
+import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { dshDocument, DshCordisDocument } from "./DshCordisPatch.js";
 import { mkdir } from "node:fs/promises";
@@ -59,6 +60,7 @@ import {
   clientRegistrationOwnershipRemediation,
   refreshClientRegistration,
 } from "./ClientRegistration.js";
+import { recommendedMcpToolTimeoutMs } from "../config/mcpStartupPolicy.js";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -69,7 +71,7 @@ import {
   readRegularFileText,
   readRegularFileTextSnapshot,
   InvalidUtf8FileError,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   preserveCurrentRecoveryBackup,
   selectCurrentRecoveryBackup,
@@ -84,6 +86,8 @@ import {
   registrationWriteBlocker,
   type SetupClient,
 } from "./SupportedClients.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 export class ClientConfigurationCleanupRollbackFailure extends RegularFileCleanupFailure<string> {
   constructor(
@@ -111,6 +115,7 @@ export const configureClientConfiguration = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup writes the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<ClientConfigurationResult> => {
   if (command.length === 0)
     return {
@@ -129,7 +134,7 @@ export const configureClientConfiguration = async (
   try {
     return await withClientConfigurationTransaction(transactionPath, () =>
       configureClientDocument(
-        { client, transactionPath, platform },
+        { client, transactionPath, platform, launcherEnvironment },
         environment,
         command,
         resolveProviderRequestBudget,
@@ -151,10 +156,12 @@ const configureClientDocument = async (
     client,
     transactionPath,
     platform,
+    launcherEnvironment,
   }: {
     readonly client: SetupClient;
     readonly transactionPath: string;
     readonly platform: NodeJS.Platform;
+    readonly launcherEnvironment: Readonly<NodeJS.ProcessEnv>;
   },
   environment: SetupProviderEnvironment,
   command: readonly string[],
@@ -167,7 +174,7 @@ const configureClientDocument = async (
     client,
     undefined,
     platform,
-    environment,
+    { writeOverrides: environment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -229,6 +236,7 @@ const configureClientDocument = async (
         parsed,
         files.value,
         platform,
+        launcherEnvironment,
         resolveProviderRequestBudget,
       ),
     );
@@ -266,6 +274,7 @@ const configureClientDocument = async (
     },
     files.value,
     platform,
+    launcherEnvironment,
     resolveProviderRequestBudget,
   );
   // The settings written now can differ from the ones inspection admitted,
@@ -543,10 +552,12 @@ const readClientRefresh = async (
     resolveProviderRequestBudget,
     resources,
     currentCommandPath,
+    launcherEnvironment,
   }: {
     readonly platform: NodeJS.Platform;
     readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
     readonly resources?: ArtifactResourceScope;
+    readonly launcherEnvironment: Readonly<NodeJS.ProcessEnv>;
     /** The entry point whose registrations setup owns; update names the new one. */
     readonly currentCommandPath?: string;
   },
@@ -555,7 +566,7 @@ const readClientRefresh = async (
     client,
     resources,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -584,6 +595,7 @@ const readClientRefresh = async (
     parsed,
     files.value,
     platform,
+    launcherEnvironment,
     resolveProviderRequestBudget,
   );
   const target =
@@ -652,6 +664,7 @@ export const clientConfigurationAligned = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup reads the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<boolean> => {
   if (client.configPathError !== undefined) return false;
   try {
@@ -660,8 +673,8 @@ export const clientConfigurationAligned = async (
       providerEnvironment,
       command,
       resolveProviderRequestBudget === undefined
-        ? { platform }
-        : { platform, resolveProviderRequestBudget },
+        ? { platform, launcherEnvironment }
+        : { platform, launcherEnvironment, resolveProviderRequestBudget },
     );
     return (
       refresh.ok &&
@@ -705,8 +718,10 @@ export const clientRefreshRefusal = async (
     platform,
     currentCommandPath,
     resources,
+    launcherEnvironment = process.env,
   }: {
     readonly platform: NodeJS.Platform;
+    readonly launcherEnvironment?: Readonly<NodeJS.ProcessEnv>;
     /** The entry point the refreshing setup runs from. */
     readonly currentCommandPath: string;
     readonly resources?: ArtifactResourceScope;
@@ -726,6 +741,7 @@ export const clientRefreshRefusal = async (
       {
         platform,
         currentCommandPath,
+        launcherEnvironment,
         ...(resources === undefined ? {} : { resources }),
       },
     );
@@ -738,6 +754,7 @@ export const clientRefreshRefusal = async (
       command,
       refresh.value,
       platform,
+      launcherEnvironment,
     );
     if (discovered !== undefined)
       return {
@@ -754,7 +771,7 @@ export const clientRefreshRefusal = async (
         `${cause.message}: ${cause.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
       );
     return refused(
-      `The configuration could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+      `The configuration could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     );
   }
 };
@@ -774,6 +791,7 @@ const discoveredInlineSettings = async (
   command: readonly string[],
   refresh: ClientRefresh,
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<
   | {
       readonly origin: ClientInlineConfiguration["origin"];
@@ -810,6 +828,7 @@ const discoveredInlineSettings = async (
     refresh.parsed,
     refresh.sources,
     platform,
+    launcherEnvironment,
   );
   return inlineRegistrationOverride(
     client,
@@ -829,6 +848,7 @@ export const inspectClientConfiguration = async (
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
   // Setup reads the running host's client files unless its host selects one.
   platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): Promise<ClientConfigurationInspection> => {
   let inspection: ClientConfigurationInspection;
   try {
@@ -837,6 +857,7 @@ export const inspectClientConfiguration = async (
       providerEnvironment,
       command,
       platform,
+      launcherEnvironment,
       resolveProviderRequestBudget,
     );
   } catch (cause: unknown) {
@@ -860,6 +881,7 @@ const inspectClientDocument = async (
   providerEnvironment: SetupProviderEnvironment,
   command: readonly string[],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<ClientConfigurationInspection> => {
   if (client.configPathError !== undefined)
@@ -869,7 +891,7 @@ const inspectClientDocument = async (
     client,
     undefined,
     platform,
-    providerEnvironment,
+    { writeOverrides: providerEnvironment },
   );
   if (!files.ok) {
     throwCleanupFailure(files.error);
@@ -912,6 +934,7 @@ const inspectClientDocument = async (
         undefined,
         files.value,
         platform,
+        launcherEnvironment,
         resolveProviderRequestBudget,
       );
       const override = inlineOverrideBlocker(
@@ -943,7 +966,7 @@ const inspectClientDocument = async (
     }
     return {
       status: "invalid",
-      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${cause instanceof Error ? cause.message : String(cause)}`,
+      remediation: `The configuration file could not be read. Check its permissions before rerunning setup. ${errorMessage(cause)}`,
     };
   }
   try {
@@ -967,6 +990,7 @@ const inspectClientDocument = async (
       parsed,
       files.value,
       platform,
+      launcherEnvironment,
       resolveProviderRequestBudget,
     );
     const override = inlineOverrideBlocker(
@@ -1137,9 +1161,7 @@ const registrationOwnershipBlocker = (
   const inheritsLauncher =
     effective !== undefined &&
     effective !== parsed &&
-    typeof fragment === "object" &&
-    fragment !== null &&
-    !Array.isArray(fragment) &&
+    isRecord(fragment) &&
     !Object.hasOwn(fragment, "command");
   if (Object.hasOwn(parsed.servers, name) && !inheritsLauncher)
     entries.push({ value: parsed.servers[name], paths: [client.configPath] });
@@ -1224,7 +1246,7 @@ const readZcodeFallbackServers = async (
     return err({
       kind: "malformed",
       path,
-      detail: `${detail} ${cause instanceof Error ? cause.message : String(cause)}`,
+      detail: `${detail} ${errorMessage(cause)}`,
     });
   }
 };
@@ -1250,7 +1272,7 @@ const restoreConfig = async (
     return err({
       kind: "restore",
       path: publication.path,
-      detail: errorDetail(cause),
+      detail: errorMessage(cause),
     });
   }
 };
@@ -1295,9 +1317,6 @@ const conflictFailure = (
   ...(backupPath === undefined ? {} : { backupPath }),
 });
 
-const errorDetail = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
 /** Whether REA's entry matches, no legacy entry remains, and no client disable list suppresses it. */
 const registrationCurrent = (
   parsed: ClientConfigurationDocument,
@@ -1335,6 +1354,7 @@ const clientConfigurationDesired = async (
   parsed: ClientConfigurationDocument | undefined,
   sources: readonly ClientConfigurationSource[],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
   resolveProviderRequestBudget?: ProviderRequestBudgetResolver,
 ): Promise<unknown> => {
   const effective = effectiveClientConfiguration(
@@ -1349,18 +1369,28 @@ const clientConfigurationDesired = async (
   const launcher =
     command.length === 0 ? [PRODUCT_IDENTITY.cliBinary, "mcp"] : command;
   if (format === "dsh") {
-    const validated = clientRegistrationEnvironment(
+    // The budget resolver's declared read set keeps the gate fail-closed only
+    // for settings the derivation may actually read, so unrelated Cordis
+    // expressions stay preserved while the budget still resolves.
+    const validated = await clientRegistrationEnvironmentDetailsWithBudget(
       effective,
       client,
-      platform,
       providerEnvironment,
+      "effective",
+      resolveProviderRequestBudget,
+      platform,
     );
     if (!validated.ok) throw validated.error;
     const desired = (
       parsed === undefined
         ? new DshCordisDocument("")
         : dshDocument(parsed.document)
-    ).desired(launcher, providerEnvironment, platform);
+    ).desired(
+      launcher,
+      providerEnvironment,
+      platform,
+      recommendedMcpToolTimeoutMs(validated.value.timeoutInputs),
+    );
     if (!desired.ok) throw desired.error;
     return desired.value;
   }
@@ -1375,6 +1405,12 @@ const clientConfigurationDesired = async (
     platform,
   );
   if (!validated.ok) throw validated.error;
+  // Decide the fallback from the effective layers, then edit only the target.
+  // A lower layer's locator still applies when the target has no value of its own.
+  const writeEnvironment =
+    validated.value.configHomeFallbackApplied === true
+      ? providerEnvironment
+      : registrationEnvironmentProposal(providerEnvironment).overrides;
   // Preserve explicitly configured server settings, never the ambient process
   // environment. The effective layered view validates precedence and supplies
   // timeout facts; the target file's fragment remains the value being written.
@@ -1382,7 +1418,7 @@ const clientConfigurationDesired = async (
     parsed,
     client,
     platform,
-    providerEnvironment,
+    writeEnvironment,
     "fragment",
   );
   if (!environment.ok) throw environment.error;
@@ -1395,6 +1431,8 @@ const clientConfigurationDesired = async (
       ? undefined
       : effectiveClientServer(parsed, PRODUCT_IDENTITY.mcpServerKey),
     validated.value.timeoutInputs,
+    launcherEnvironment,
+    platform,
   );
   if (!registration.ok) throw registration.error;
   return withInheritedGooseSettings(
@@ -1404,7 +1442,7 @@ const clientConfigurationDesired = async (
     parsed,
     sources,
     effective,
-    providerEnvironment,
+    writeEnvironment,
     platform,
   );
 };

@@ -30,7 +30,7 @@ const forCredential = (credential: string) =>
     url: "http://127.0.0.1:12345/mcp",
     headers: { Authorization: `Custom ${credential}` },
     mode: "attached",
-    protocol: "legacy",
+    protocol: "native",
     timeoutMs: 1000,
   });
 
@@ -38,15 +38,11 @@ describe("IDA JSON diagnostic source preservation", () => {
   it("matches equivalent JSON encodings without enumerating credential spellings", () => {
     const redactor = forCredential("<s/>");
     const encodings = [
-      ["<", String.raw`\u003c`, String.raw`\u003C`],
-      ["s", String.raw`\u0073`],
-      ["/", String.raw`\/`, String.raw`\u002f`, String.raw`\u002F`],
-      [">", String.raw`\u003e`, String.raw`\u003E`],
-    ].reduce<string[]>(
-      (prefixes, units) =>
-        prefixes.flatMap((prefix) => units.map((unit) => prefix + unit)),
-      [""],
-    );
+      "<s/>",
+      String.raw`\u003cs\/\u003e`,
+      String.raw`\u003C\u0073\u002F\u003E`,
+      String.raw`<s\u002f>`,
+    ];
     for (const encoded of encodings)
       expect(redactor.json(`{"reason":"${encoded}"}`)).toBe(
         `{"reason":"${marker}"}`,
@@ -180,7 +176,7 @@ describe("IDA JSON diagnostic source preservation", () => {
       headers: {},
       url: "http://127.0.0.1:12345/mcp",
       mode: "attached",
-      protocol: "legacy",
+      protocol: "native",
       timeoutMs: 1000,
     });
     expect(redactor.json(source)).toBe(source);
@@ -281,7 +277,7 @@ describe("overlapping raw and decoded JSON credential spans", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Custom X]", Cookie: "a=]SECRET" },
       mode: "attached",
-      protocol: "legacy",
+      protocol: "native",
       timeoutMs: 1000,
     });
   it.each([
@@ -306,7 +302,7 @@ describe("overlapping raw and decoded JSON credential spans", () => {
       url: "http://127.0.0.1:12345/mcp",
       headers: { Authorization: "Basic " + encoded, Cookie: "a=]SECRET" },
       mode: "attached",
-      protocol: "legacy",
+      protocol: "native",
       timeoutMs: 1000,
     });
     expect(

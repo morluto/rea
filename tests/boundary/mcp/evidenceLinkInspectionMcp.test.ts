@@ -1,4 +1,11 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -82,7 +89,7 @@ const connect = async (
   const reply = (args: Record<string, unknown>) =>
     client.callTool(
       { name: "get_evidence_bundle", arguments: args },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
   const outputSchema: Record<string, unknown> = canonicalOutputSchema(
@@ -272,13 +279,12 @@ it("pages selected link rows in a stable order without skips or duplicates", asy
 
 it("reports the source a composed workflow refuses, and clears it on import", async () => {
   const dossier = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (dossier.subject === null) throw new Error("Expected a subject");
   const health = record("get_project_health");
   const linked = createEvidence(
     {
-      path: dossier.subject.local_path,
-      sha256: dossier.subject.digest.sha256,
-      format: dossier.subject.format,
+      path: fileSubjectDisplay(dossier.subject).local_path,
+      sha256: fileIdentity(dossier.subject).sha256,
+      format: fileIdentity(dossier.subject).format,
     },
     dossier.provider,
     {
@@ -352,8 +358,18 @@ it("refuses link selections outside link delivery and names a smaller page", asy
     ["summary", "traversal", "direct", "detail: links"],
     ["records", "link_status", "all", "detail: links"],
     ["complete", "traversal", "retained-closure", "detail: links"],
-    ["summary", "offset", 1, "detail: records or detail: links"],
-    ["summary", "limit", 1, "detail: records or detail: links"],
+    [
+      "complete",
+      "offset",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
+    [
+      "complete",
+      "limit",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
   ] as const)
     expect(
       parseMcpToolError(await reply({ detail, [field]: value })).error,

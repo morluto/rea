@@ -1,9 +1,6 @@
 import { z } from "zod";
 
-import {
-  HopperProtocolError,
-  HopperRemoteError,
-} from "../domain/hopperErrors.js";
+import { HopperProtocolError, HopperRemoteError } from "./HopperErrors.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";

@@ -1,3 +1,4 @@
+import { ellipsisExcerpt } from "../../domain/excerpt.js";
 import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
 import type { FieldRule } from "../../domain/analysisView/environmentStateWriteRules.js";
@@ -20,10 +21,10 @@ import {
   IDENTITY_FIELD,
   keyedByLearnedIds,
   pairElements,
-  translateValue,
   type IdMap,
 } from "./environmentCompareIds.js";
-import { isRecord } from "../../domain/isRecord.js";
+import { compareIdentifierList } from "./environmentCompareListIds.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 export const DIFFERENCE_CATEGORIES = [
   "status",
@@ -66,11 +67,10 @@ const TIME_FIELD =
   /(?:^|[_-])(?:at|time|date|timestamp|created|updated|modified)$/iu;
 const TIME_FIELD_CAMEL =
   /(?:At|Time|Date|Timestamp|Created|Updated|Modified)$/u;
-const ID_LIST_FIELD = /^(ids|uuids|guids)$/u;
 
 const shown = (value: JsonValue | undefined): string => {
   const text = value === undefined ? "<absent>" : JSON.stringify(value);
-  return text.length > VALUE_CHARS ? `${text.slice(0, VALUE_CHARS)}…` : text;
+  return ellipsisExcerpt(text, VALUE_CHARS);
 };
 
 const formatKey = (format: ClockFormat): string =>
@@ -325,11 +325,23 @@ class Differ {
     live: JsonValue[],
     env: JsonValue[],
     pointer: string,
-    clockKey: string | undefined,
+    at: {
+      readonly key?: string;
+      readonly own?: boolean;
+      readonly clockKey?: string | undefined;
+    },
     generation: Generation | undefined,
   ): void {
     const own = pointer === this.entity.at;
-    if (this.sameItems(live, env, pointer)) {
+    const clockKey = at.clockKey ?? at.key;
+    const ids = compareIdentifierList(
+      live,
+      env,
+      at.key,
+      this.map,
+      own || at.own === true ? this.entity.scope : undefined,
+    );
+    if (ids === undefined && this.sameItems(live, env, pointer)) {
       // Equal/reordered scalar sets still establish unchanged generated pairs;
       // otherwise another field could split an alias hidden by this fast path.
       if (generation !== undefined)
@@ -343,7 +355,14 @@ class Differ {
           );
       return;
     }
-    const pairs = pairElements(live, env);
+    const pairs =
+      ids === undefined
+        ? pairElements(live, env)
+        : live.flatMap((_, index) => {
+            const right =
+              ids.survivors.get(index) ?? ids.replacements.get(index);
+            return right === undefined ? [] : [[index, right] as const];
+          });
     if (live.length !== env.length || pairs.length !== live.length)
       this.add({
         category: "length",
@@ -353,14 +372,31 @@ class Differ {
       });
     const envOrder = pairs.map(([, right]) => right);
     if (
+      ids?.reordered ??
       envOrder.some((right, index) => index > 0 && right < envOrder[index - 1]!)
     )
       this.add({ category: "order", pointer });
-    for (const [left, right] of pairs)
+    for (const [left, right] of pairs) {
+      const liveValue = live[left]!;
+      const envValue = env[right]!;
+      const atItem = `${pointer}/${String(left)}`;
+      if (ids?.survivors.has(left) && liveValue !== envValue) {
+        this.normalised.ids += 1;
+        continue;
+      }
+      if (ids?.replacements.has(left) && ids.hasMapping.has(left)) {
+        this.add({
+          category: "value",
+          pointer: atItem,
+          live: shown(liveValue),
+          env: shown(envValue),
+        });
+        continue;
+      }
       this.value(
-        live[left]!,
-        env[right]!,
-        `${pointer}/${String(left)}`,
+        liveValue,
+        envValue,
+        atItem,
         {
           own,
           clockKey,
@@ -369,6 +405,7 @@ class Differ {
           ? undefined
           : { ...generation, pointer: `${generation.pointer}/*` },
       );
+    }
   }
 
   /** Arrays of scalars holding the same items in another order differ only in order, as sets an application returns unordered do. */
@@ -377,24 +414,10 @@ class Differ {
       item === null || typeof item !== "object";
     if (live.length !== env.length || !live.every(scalar) || !env.every(scalar))
       return false;
-    // Only identifier lists or known string identifiers are translated; numeric measurements stay literal.
-    const field = pointer.slice(pointer.lastIndexOf("/") + 1);
-    const mapped = live.map((item) => {
-      if (
-        (typeof item === "string" && this.map.isStateReference(item, field)) ||
-        ((typeof item === "number" || typeof item === "string") &&
-          ID_LIST_FIELD.test(field))
-      )
-        return translateValue(item, this.map);
-      return item;
-    });
     const key = (items: JsonValue[]): string =>
       JSON.stringify(items.map((item) => JSON.stringify(item)).sort());
-    if (key(mapped) !== key(env)) return false;
-    this.normalised.ids += mapped.filter(
-      (item, index) => item !== live[index],
-    ).length;
-    if (JSON.stringify(mapped) !== JSON.stringify(env))
+    if (key(live) !== key(env)) return false;
+    if (JSON.stringify(live) !== JSON.stringify(env))
       this.add({ category: "order", pointer });
     return true;
   }
@@ -514,7 +537,7 @@ class Differ {
     generation?: Generation,
   ): void {
     if (Array.isArray(live) && Array.isArray(env))
-      this.array(live, env, pointer, at.clockKey ?? at.key, generation);
+      this.array(live, env, pointer, at, generation);
     else if (isRecord(live) && isRecord(env))
       this.object(
         live,
@@ -563,6 +586,7 @@ export const compareAnswers = (
     scope: entity.scope,
     at: entity.at ?? "",
     identity: entity.identity === true,
+    // optional-fact-default: a caller-selected comparison option, not an observation.
     rules: entity.rules ?? [],
   });
   if (live.status !== env.status)

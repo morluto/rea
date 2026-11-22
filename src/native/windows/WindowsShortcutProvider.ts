@@ -1,26 +1,26 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
   projectSelectedArtifactFileFailure,
   projectOwnedArtifactIdentityFailure,
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   readStableArtifact,
   type StableArtifactFileSystem,
   type StableArtifactSnapshot,
-} from "../../artifacts/readStableArtifact.js";
-import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { WindowsShortcutPort } from "../../application/binaryDiagnostics/WindowsShortcutPort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import { fileSnapshotPartialObservationSchema } from "../../domain/fileSnapshotObservation.js";
+import type { WindowsShortcutPort } from "../../ports/binaryDiagnostics/WindowsShortcutPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
@@ -41,6 +41,7 @@ import {
   type WindowsShortcutSelectedBoundary,
 } from "./WindowsShortcut.errors.js";
 import { parseWindowsShortcut } from "./WindowsShortcutParser.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_windows_shortcut";
 
@@ -143,7 +144,9 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
   readonly #resources = new ArtifactResourceScope();
 
-  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
+  constructor(
+    private readonly platform: NodeJS.Platform = HOST_PLATFORM.platform,
+  ) {}
 
   async close(): Promise<void> {
     try {
@@ -258,12 +261,11 @@ const SELECTED_BUDGETS = {
   }
 >;
 
-const budgetRemediation = (
-  input: InspectWindowsShortcutInput,
-  boundary: WindowsShortcutSelectedBoundary,
-): string => {
-  const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const selected = input[argument];
+const budgetRemediation = ({
+  name,
+  maximum: selected,
+}: WindowsShortcutResourceFailure["failure"]["limit"]): string => {
+  const { argument, maximum, unit } = SELECTED_BUDGETS[name];
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller shortcut.`
@@ -285,17 +287,11 @@ const windowsShortcutFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof WindowsShortcutResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum },
-      {
-        cause,
-        retryable: false,
-        remediationAction: budgetRemediation(input, cause.boundary),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      retryable: false,
+      remediationAction: budgetRemediation(cause.failure.limit),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (
@@ -330,7 +326,7 @@ const windowsShortcutFailurePrimary = (
     cause,
     diagnostics: {
       path: input.path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });
 };

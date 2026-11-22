@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  evidenceFileTarget,
   evidenceSchema,
   immutableEvidence,
   parseEvidence,
@@ -123,17 +124,18 @@ export const createEvidenceBundle = (
   return {
     evidence_format: EVIDENCE_FORMAT_REVISION,
     artifacts: uniqueSorted(
-      sortedRecords.flatMap(({ subject }) =>
-        subject === null
+      sortedRecords.flatMap((record) => {
+        const file = evidenceFileTarget(record);
+        return file === undefined
           ? []
           : [
               artifactManifestSchema.parse({
-                digest: subject.digest,
-                format: subject.format,
-                architecture: subject.architecture,
+                digest: { sha256: file.sha256 },
+                format: file.format,
+                architecture: file.architecture,
               }),
-            ],
-      ),
+            ];
+      }),
     ),
     providers: uniqueSorted(sortedRecords.map(({ provider }) => provider)),
     environments: uniqueSorted(
@@ -197,7 +199,8 @@ export const evidenceBundleForTarget = (
         // Mutation subjects record the target active at the time of an edit,
         // which need not be the question's immutable investigation scope.
         return (
-          record?.subject?.digest.sha256 === sha256 ||
+          (record !== undefined &&
+            evidenceFileTarget(record)?.sha256 === sha256) ||
           (mutationEvidenceIds.has(evidenceId) &&
             record?.predicate_type === "rea.residual-unknown-mutation")
         );
@@ -236,7 +239,7 @@ export const evidenceBundleForTarget = (
     bundle.records
       .filter(
         (record) =>
-          record.subject?.digest.sha256 === sha256 ||
+          evidenceFileTarget(record)?.sha256 === sha256 ||
           mutationIds.has(record.evidence_id),
       )
       .map((record) => record.evidence_id),
@@ -295,7 +298,13 @@ const describeEvidenceBundleFailure = (
       message: `Expected an Evidence bundle with records and manifest arrays, but this JSON is one Evidence record (${record.evidence_id}). Export a session bundle with the MCP export_evidence_bundle tool and supply that file.`,
     };
   } catch (recordFailure: unknown) {
-    if (!(recordFailure instanceof z.ZodError)) throw recordFailure;
+    // An earlier-format record is not a current record either; the bundle
+    // failure below already carries the recreate guidance.
+    if (
+      !(recordFailure instanceof z.ZodError) &&
+      !isUnsupportedEvidenceFormat(recordFailure)
+    )
+      throw recordFailure;
     // The format owner decides earlier bundles once; its message carries the
     // recreate guidance instead of per-field schema failures.
     if (isUnsupportedEvidenceFormat(cause))

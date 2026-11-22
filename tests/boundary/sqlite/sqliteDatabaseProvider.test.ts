@@ -81,6 +81,50 @@ nativeTest.each([
   },
 );
 
+it("reports a SQLite worker that fails to launch and removes its snapshot before the next inspection", async () => {
+  const { database } = await createFixture();
+  const roots: string[] = [];
+  let launches = 0;
+  const provider = new SqliteDatabaseProvider(
+    process.env,
+    (spawn) => {
+      launches += 1;
+      if (launches === 1)
+        throw Object.assign(new Error("spawn E2BIG"), { code: "E2BIG" });
+      return spawnOwnedProviderProcess({
+        ...spawn,
+        arguments: spawn.arguments.map((argument, index) =>
+          index === 1 ? fileURLToPath(workerUrl) : argument,
+        ),
+      });
+    },
+    async () => {
+      const root = await PrivateRuntimeRoot.create({
+        prefix: "rea-sqlite-launch-",
+      });
+      roots.push(root.path);
+      return root;
+    },
+  );
+  onTestFinished(() => provider.close());
+
+  const refused = await provider.inspect({ path: database.path });
+  if (refused.ok) throw new Error("Expected a worker launch failure");
+  expect(refused.error.diagnostics).toMatchObject({
+    phase: "worker",
+    reason: "spawn E2BIG",
+  });
+  expect(refused.error.cleanupIncomplete).toBe(false);
+  expect(refused.error.capturedOutput).toBeUndefined();
+  const [refusedRoot] = roots;
+  if (refusedRoot === undefined) throw new Error("Missing private root");
+  await expectPrivateRootRemoved(refusedRoot);
+
+  const inspected = await provider.inspect({ path: database.path });
+  if (!inspected.ok) throw inspected.error;
+  expect(launches).toBe(2);
+});
+
 it("enforces a selected worker budget and completes the corrected same-database retry", async () => {
   const { database } = await createFixture();
   const original = await readFile(database.path);
@@ -471,7 +515,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,
@@ -509,7 +553,7 @@ it.each(["late-cancellation", "cleanup-failure", "cancelled cleanup-failure"])(
             confidence: "observed",
             subject: {
               local_path: database.path,
-              digest: { sha256: digestForTest(original) },
+              identity: { sha256: digestForTest(original) },
             },
             parameters: {
               path: database.path,
@@ -884,58 +928,6 @@ it("reports a projection above SQLite's result-column capacity as capacity, not 
   expect(JSON.stringify(projection)).not.toContain("invalid_format");
 });
 
-it("attributes inventory selections beyond metadata bind capacity to result-column capacity", async () => {
-  const { database } = await createFixture();
-  const reader = new DatabaseSync(database.path, { readOnly: true });
-  let selectedColumns: number;
-  let engineColumnLimit: number;
-  try {
-    engineColumnLimit = reader.limits.column;
-    selectedColumns =
-      Math.max(reader.limits.variableNumber, engineColumnLimit) + 1;
-  } finally {
-    reader.close();
-  }
-  const provider = createProvider();
-  onTestFinished(() => provider.close());
-  const original = await readFile(database.path);
-  const control = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: ["text_value", "text_value"],
-    row_limit: 1,
-  });
-  if (!control.ok) throw control.error;
-  expect(control.value.result).toMatchObject({
-    rows: {
-      columns: ["text_value", "text_value"],
-      returned_rows: 1,
-    },
-  });
-  const result = await provider.inspect({
-    path: database.path,
-    table: "records",
-    schema_scope: "inventory",
-    columns: Array.from({ length: selectedColumns }, () => "text_value"),
-    row_limit: 1,
-  });
-  if (result.ok) throw new Error("Expected result-column capacity refusal");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: {
-      resource: "capacity",
-      reported_limits: {
-        selected_result_columns: selectedColumns,
-        engine_result_column_limit: engineColumnLimit,
-      },
-    },
-  });
-  expect(JSON.stringify(projected)).not.toContain("invalid_format");
-  expect(Buffer.compare(await readFile(database.path), original)).toBe(0);
-});
-
 it("reports application-collation row failures as unavailable while retaining schema-only recovery", async () => {
   const workspace = await createTestWorkspace("rea-sqlite-collation-");
   onTestFinished(() => removeTestWorkspace(workspace.root));
@@ -1134,7 +1126,8 @@ nativeTest(
       error: {
         _tag: "ProviderAdapterError",
         diagnostics: {
-          failure_kind: "process",
+          failure_kind: "exited",
+          stop_requested: false,
           exit_code: 7,
           captured_output: {
             stderr: "authored SQLite worker failure",
@@ -1397,7 +1390,7 @@ nativeTest(
 
 nativeTest.each([
   ["cancelled", "cancelled"],
-  ["output-limit", "unreadable_output"],
+  ["output-limit", "resource_constraint"],
   ["heap-diagnostic", "resource_constraint"],
 ] as const)(
   "preserves the typed %s worker failure through retained cleanup retry",

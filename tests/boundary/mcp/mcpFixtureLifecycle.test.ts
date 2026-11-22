@@ -1,9 +1,8 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 /** Keep real SDK objects recoverable even when a red ownership assertion fails. */
@@ -45,13 +44,11 @@ const createSdkFixture = () => {
 it("joins an accepted late handshake and refuses to publish it after shutdown", async () => {
   const fixture = createSdkFixture();
   const server = fixture.server("late-handshake");
-  const connected = createDeferred<void>();
-  const release = createDeferred<void>();
+  const lateHandshake = phaseGate();
   const connect = server.connect.bind(server);
   server.connect = async (transport) => {
     await connect(transport);
-    connected.resolve();
-    await release.promise;
+    await lateHandshake.hold();
   };
   const serverClose = vi.spyOn(server, "close");
   const opening = fixture.mcp.connect(server).then(
@@ -61,7 +58,7 @@ it("joins an accepted late handshake and refuses to publish it after shutdown", 
   let closeSettled = false;
   let closing: Promise<void> | undefined;
   try {
-    await connected.promise;
+    await lateHandshake.reached(opening, "late handshake");
     closing = fixture.mcp.close().then(() => {
       closeSettled = true;
     });
@@ -70,13 +67,13 @@ it("joins an accepted late handshake and refuses to publish it after shutdown", 
     await Promise.resolve();
     await Promise.resolve();
     expect(closeSettled).toBe(false);
-    release.resolve();
+    lateHandshake.release();
     expect(await opening).toMatchObject({ ok: false });
     await closing;
     expect(serverClose).toHaveBeenCalledTimes(1);
     expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
   } finally {
-    release.resolve();
+    lateHandshake.release();
     await opening;
     await closing?.catch(() => undefined);
     await fixture.dispose();
@@ -86,8 +83,7 @@ it("joins an accepted late handshake and refuses to publish it after shutdown", 
 it("registers acquisition before a producer can reenter shutdown and attach its transport late", async () => {
   const fixture = createSdkFixture();
   const server = fixture.server("reentrant-shutdown");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const reentrantShutdown = phaseGate();
   const connect = server.connect.bind(server);
   const close = server.close.bind(server);
   const lifecycle: string[] = [];
@@ -97,8 +93,7 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
     closing = fixture.mcp.close().then(() => {
       closeSettled = true;
     });
-    entered.resolve();
-    await release.promise;
+    await reentrantShutdown.hold();
     await connect(transport);
     lifecycle.push("attached");
   };
@@ -111,17 +106,13 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
     (reason: unknown) => ({ ok: false as const, reason }),
   );
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      opening,
-      "MCP lifecycle boundary",
-    );
+    await reentrantShutdown.reached(opening, "MCP lifecycle boundary");
     await Promise.resolve();
     await Promise.resolve();
     expect(closeSettled).toBe(false);
     expect(serverClose).not.toHaveBeenCalled();
     expect(fixture.clientCloses).not.toHaveBeenCalled();
-    release.resolve();
+    reentrantShutdown.release();
     const outcome = await opening;
     if (outcome.ok) throw new Error("Shutdown published a late MCP client");
     expect(outcome.reason).toMatchObject({
@@ -133,7 +124,7 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
     expect(serverClose).toHaveBeenCalledTimes(1);
     expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
   } finally {
-    release.resolve();
+    reentrantShutdown.release();
     await opening;
     await closing?.catch(() => undefined);
     await fixture.dispose();
@@ -143,8 +134,7 @@ it("registers acquisition before a producer can reenter shutdown and attach its 
 it("shares one concurrent close attempt and does not reclose released SDK objects", async () => {
   const fixture = createSdkFixture();
   const server = fixture.server("concurrent-close");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const serverCloseHold = phaseGate();
   let first: Promise<void> | undefined;
   let second: Promise<void> | undefined;
   try {
@@ -154,28 +144,23 @@ it("shares one concurrent close attempt and does not reclose released SDK object
     const serverClose = vi
       .spyOn(server, "close")
       .mockImplementation(async () => {
-        entered.resolve();
-        await release.promise;
+        await serverCloseHold.hold();
         await close();
       });
     first = fixture.mcp.close();
-    await awaitAcknowledgement(
-      entered.promise,
-      first,
-      "MCP lifecycle boundary",
-    );
+    await serverCloseHold.reached(first, "MCP lifecycle boundary");
     second = fixture.mcp.close();
     await Promise.resolve();
     await Promise.resolve();
     expect(serverClose).toHaveBeenCalledTimes(1);
     expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
-    release.resolve();
+    serverCloseHold.release();
     await Promise.all([first, second]);
     await fixture.mcp.close();
     expect(serverClose).toHaveBeenCalledTimes(1);
     expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
   } finally {
-    release.resolve();
+    serverCloseHold.release();
     await Promise.allSettled([first, second]);
     await fixture.dispose();
   }
@@ -184,11 +169,9 @@ it("shares one concurrent close attempt and does not reclose released SDK object
 it("cancels a real initialize handshake before awaiting its held server handler", async () => {
   const fixture = createSdkFixture();
   const server = fixture.server("stalled-initialize");
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const initializeHandler = phaseGate();
   server.server.setRequestHandler("initialize", async () => {
-    entered.resolve();
-    await release.promise;
+    await initializeHandler.hold();
     throw new Error("Held initialize handler released during test cleanup");
   });
   let openingSettled = false;
@@ -204,43 +187,54 @@ it("cancels a real initialize handshake before awaiting its held server handler"
   );
   const serverClose = vi.spyOn(server, "close");
   try {
-    await awaitAcknowledgement(
-      entered.promise,
-      opening,
-      "MCP lifecycle boundary",
-    );
+    await initializeHandler.reached(opening, "MCP lifecycle boundary");
     await fixture.mcp.close();
     expect(openingSettled).toBe(true);
     expect(await opening).toMatchObject({ ok: false });
     expect(serverClose).toHaveBeenCalledTimes(1);
   } finally {
-    release.resolve();
+    initializeHandler.release();
     await opening;
     await fixture.dispose();
   }
 });
 
-it("keeps a failed handshake as the exact error when its SDK cleanup succeeds", async () => {
-  const fixture = createSdkFixture();
-  const server = fixture.server("failed-handshake");
-  const startup = new Error("controlled server handshake failure");
-  const connect = server.connect.bind(server);
-  server.connect = async (transport) => {
-    await connect(transport);
-    throw startup;
-  };
-  const serverClose = vi.spyOn(server, "close");
-  try {
-    await expect(fixture.mcp.connect(server)).rejects.toBe(startup);
-    expect(serverClose).toHaveBeenCalledTimes(1);
-    expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
-    await fixture.mcp.close();
-    expect(serverClose).toHaveBeenCalledTimes(1);
-    expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
-  } finally {
-    await fixture.dispose();
-  }
-});
+it.each(["server handshake", "client transport startup"] as const)(
+  "keeps the exact %s failure when its SDK cleanup succeeds",
+  async (phase) => {
+    const fixture = createSdkFixture();
+    const server = fixture.server("failed-handshake");
+    const startup = new Error(`controlled ${phase} failure`);
+    const pair = InMemoryTransport.createLinkedPair();
+    const makePair = vi
+      .spyOn(InMemoryTransport, "createLinkedPair")
+      .mockReturnValueOnce(pair);
+    if (phase === "server handshake") {
+      const connect = server.connect.bind(server);
+      server.connect = async (transport) => {
+        await connect(transport);
+        throw startup;
+      };
+    } else {
+      vi.spyOn(pair[0], "start").mockRejectedValueOnce(startup);
+    }
+    const serverClose = vi.spyOn(server, "close");
+    try {
+      await expect(fixture.mcp.connect(server)).rejects.toBe(startup);
+      expect(serverClose).toHaveBeenCalledTimes(1);
+      expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
+      await expect(
+        pair[1].send({ jsonrpc: "2.0", method: "probe" }),
+      ).rejects.toThrow();
+      await fixture.mcp.close();
+      expect(serverClose).toHaveBeenCalledTimes(1);
+      expect(fixture.clientCloses).toHaveBeenCalledTimes(1);
+    } finally {
+      makePair.mockRestore();
+      await fixture.dispose();
+    }
+  },
+);
 
 it.each([new Error("controlled server close failure"), undefined])(
   "retains failed handshake cleanup and retries its exact owner: %s",

@@ -1,10 +1,11 @@
+import { registerMcpClientOnHost } from "../../tests/fixtures/mcpRegistration.js";
 import { chmod, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { registerMcpClient } from "./McpClientRegistration.js";
 import { parseGooseConfigurationYaml } from "./GooseConfigurationYaml.js";
 import { clientConfigurationRecordSchema } from "./ClientConfigurationDocument.js";
@@ -95,7 +96,7 @@ it.each([
   "publishes native $format launcher facts without retaining obsolete remote selection",
   async ({ format, id, text, expected }) => {
     const { path } = await settingsFixture(text);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, format, id),
       launcher,
       undefined,
@@ -120,44 +121,48 @@ it.each([
   },
 );
 
-it("secures fx permissions on owned directory and staged file, including a semantic no-op", async () => {
-  const { path, directory } = await settingsFixture(
-    '{"mcp":{"rea":{"type":"local","command":["/fixture/server path","","a\'b","--mcp"],"enabled":true}}}',
-  );
-  await chmod(directory, 0o755);
-  await chmod(path, 0o644);
-  const client = {
-    ...clientFor(path, "fx", "fx"),
-    privateProfile: { home: tmpdir() },
-  } as const;
-  const result = await registerMcpClient(
-    client,
-    launcher,
-    undefined,
-    resources,
-  );
-  expect(result).toMatchObject({
-    ok: true,
-    value: {
-      status: "configured",
-      permissions: {
-        kind: "verified_posix_modes",
-        directoryMode: 0o700,
-        fileMode: 0o600,
+// POSIX modes are verified only off Windows; the Windows mode request has its own case below.
+it.skipIf(process.platform === "win32")(
+  "secures fx permissions on owned directory and staged file, including a semantic no-op",
+  async () => {
+    const { path, directory } = await settingsFixture(
+      '{"mcp":{"rea":{"type":"local","command":["/fixture/server path","","a\'b","--mcp"],"enabled":true}}}',
+    );
+    await chmod(directory, 0o755);
+    await chmod(path, 0o644);
+    const client = {
+      ...clientFor(path, "fx", "fx"),
+      privateProfile: { home: tmpdir() },
+    } as const;
+    const result = await registerMcpClientOnHost(
+      client,
+      launcher,
+      undefined,
+      resources,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        status: "configured",
+        permissions: {
+          kind: "verified_posix_modes",
+          directoryMode: 0o700,
+          fileMode: 0o600,
+        },
       },
-    },
-  });
-  expect((await stat(directory)).mode & 0o777).toBe(0o700);
-  expect((await stat(path)).mode & 0o777).toBe(0o600);
-  const before = await stat(path);
-  expect(
-    await registerMcpClient(client, launcher, undefined, resources),
-  ).toMatchObject({
-    ok: true,
-    value: { status: "unchanged" },
-  });
-  expect((await stat(path)).ino).toBe(before.ino);
-});
+    });
+    expect((await stat(directory)).mode & 0o777).toBe(0o700);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+    const before = await stat(path);
+    expect(
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
+    ).toMatchObject({
+      ok: true,
+      value: { status: "unchanged" },
+    });
+    expect((await stat(path)).ino).toBe(before.ino);
+  },
+);
 
 it.each([
   {
@@ -181,11 +186,16 @@ it.each([
     text: '{"mcp":{"rea":{"type":"local","command":["old"],"enabled":false,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
     native: true,
   },
+  {
+    name: "V1 disabled fallback migrated into native V2",
+    text: '{"mcp":{"rea":{"type":"local","command":["old"],"disabled":true,"environment":{"KEEP":"1"}},"servers":{"peer":{"type":"local","command":["peer"]}}}}',
+    native: true,
+  },
 ])(
   "retains OpenCode activation policy from $name",
   async ({ text, native, ...control }) => {
     const { path } = await settingsFixture(text);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "opencode", "opencode"),
       launcher,
       undefined,
@@ -229,7 +239,7 @@ it.each([
       `extensions:\n  rea: ${entry}\nfeature: on\n`,
     );
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "goose", "goose"),
         launcher,
         undefined,
@@ -262,7 +272,7 @@ it.runIf(process.platform === "win32")(
       ...clientFor(path, "fx", "fx"),
       privateProfile: { home: tmpdir() },
     } as const;
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       client,
       launcher,
       undefined,
@@ -280,13 +290,14 @@ it.runIf(process.platform === "win32")(
       },
     });
     const published = await readFile(path, "utf8");
-    expect(JSON.parse(published).mcp.rea.command).toEqual([
+    // Fx writes a new profile's servers under mcpServers.
+    expect(JSON.parse(published).mcpServers.rea.command).toEqual([
       launcher.command,
       ...launcher.args,
     ]);
     const before = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect(await readFile(path, "utf8")).toBe(published);
     expect((await stat(path)).ino).toBe(before.ino);
@@ -312,7 +323,7 @@ it.each([
       ...clientFor(path, format, "github-copilot-cli"),
       scope,
     } as const;
-    const first = await registerMcpClient(
+    const first = await registerMcpClientOnHost(
       client,
       launcher,
       undefined,
@@ -325,7 +336,7 @@ it.each([
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
     const beforeRepeat = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect((await stat(path)).ino).toBe(beforeRepeat.ino);
   },
@@ -339,7 +350,7 @@ it.skipIf(process.platform === "win32")(
     const links = await createTestTempDirectory("rea-private-profile-link-");
     await symlink(dirname(directory), join(links, "parent"));
     const linked = join(links, "parent", basename(directory), basename(path));
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       { ...clientFor(linked, "fx", "fx"), privateProfile: { home: directory } },
       launcher,
       undefined,
@@ -354,43 +365,47 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-it("retains the private directory close owner during a semantic no-op", async () => {
-  const { path } = await settingsFixture("{}");
-  const client = {
-    ...clientFor(path, "fx", "fx"),
-    privateProfile: { home: tmpdir() },
-  } as const;
-  expect(
-    await registerMcpClient(client, launcher, undefined, resources),
-  ).toMatchObject({ ok: true });
-  const originalClose = OwnedFileHandle.prototype.close;
-  const close = vi
-    .spyOn(OwnedFileHandle.prototype, "close")
-    .mockImplementation(async function (this: OwnedFileHandle) {
-      if ((await this.handle.stat()).isDirectory())
-        throw new Error("fixture private directory close denied");
-      return originalClose.call(this);
-    });
-  try {
-    const result = await registerMcpClient(
-      client,
-      launcher,
-      undefined,
-      resources,
-    );
-    expect(result).toMatchObject({
-      ok: false,
-      error: { cleanupIncomplete: true },
-    });
-    expect(resources.hasPending).toBe(true);
-    await expect(resources.close()).rejects.toBeDefined();
-    expect(resources.hasPending).toBe(true);
-  } finally {
-    close.mockRestore();
-  }
-  await resources.close();
-  expect(resources.hasPending).toBe(false);
-});
+// Only the POSIX path opens the private directory to verify its mode.
+it.skipIf(process.platform === "win32")(
+  "retains the private directory close owner during a semantic no-op",
+  async () => {
+    const { path } = await settingsFixture("{}");
+    const client = {
+      ...clientFor(path, "fx", "fx"),
+      privateProfile: { home: tmpdir() },
+    } as const;
+    expect(
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
+    ).toMatchObject({ ok: true });
+    const originalClose = OwnedFileHandle.prototype.close;
+    const close = vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementation(async function (this: OwnedFileHandle) {
+        if ((await this.handle.stat()).isDirectory())
+          throw new Error("fixture private directory close denied");
+        return originalClose.call(this);
+      });
+    try {
+      const result = await registerMcpClientOnHost(
+        client,
+        launcher,
+        undefined,
+        resources,
+      );
+      expect(result).toMatchObject({
+        ok: false,
+        error: { cleanupIncomplete: true },
+      });
+      expect(resources.hasPending).toBe(true);
+      await expect(resources.close()).rejects.toBeDefined();
+      expect(resources.hasPending).toBe(true);
+    } finally {
+      close.mockRestore();
+    }
+    await resources.close();
+    expect(resources.hasPending).toBe(false);
+  },
+);
 
 // Fx v0.0.16's profile reader chooses mcp over mcpServers. Its native writer
 // keeps the sole existing key, creates mcpServers, and refuses both keys.
@@ -409,7 +424,7 @@ it.each(["mcp", "mcpServers"])(
       theme: "dark",
     };
     const { path } = await settingsFixture(JSON.stringify(original));
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -435,7 +450,7 @@ it.each(["mcp", "mcpServers"])(
     ]);
     const before = await stat(path);
     expect(
-      await registerMcpClient(
+      await registerMcpClientOnHost(
         clientFor(path, "fx", "fx"),
         launcher,
         undefined,
@@ -449,7 +464,7 @@ it.each(["mcp", "mcpServers"])(
 it("creates Fx registrations in the native writer's mcpServers profile table", async () => {
   const { path } = await settingsFixture("{}");
   expect(
-    await registerMcpClient(
+    await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -478,7 +493,7 @@ it.each([
   async (document) => {
     const original = JSON.stringify(document);
     const { path } = await settingsFixture(original);
-    const result = await registerMcpClient(
+    const result = await registerMcpClientOnHost(
       clientFor(path, "fx", "fx"),
       launcher,
       undefined,
@@ -509,7 +524,7 @@ it.each(["mcp", "mcpServers"])(
     const { path } = await settingsFixture(original);
     const client = clientFor(path, "fx", "fx");
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "configured" } });
     expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
       [key]: { rea: entry, peer: { command: "peer" } },
@@ -518,7 +533,7 @@ it.each(["mcp", "mcpServers"])(
     expect(await readFile(`${path}.rea.backup`, "utf8")).toBe(original);
     const beforeRepeat = await stat(path);
     expect(
-      await registerMcpClient(client, launcher, undefined, resources),
+      await registerMcpClientOnHost(client, launcher, undefined, resources),
     ).toMatchObject({ ok: true, value: { status: "unchanged" } });
     expect((await stat(path)).ino).toBe(beforeRepeat.ino);
   },

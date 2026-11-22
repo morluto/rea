@@ -4,7 +4,7 @@ import {
 } from "../../domain/pcap/pcapAnalysis.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
-import { toolContractMetadata } from "../toolEffects.js";
+import { toolContractMetadata, toolEffects } from "../toolEffects.js";
 import {
   analysisDetailSchema,
   analysisDetailOutputSchemaOf,
@@ -15,7 +15,15 @@ import { pcapCaptureSummaryViewResultSchema } from "../../domain/analysisView/an
 export const PCAP_TOOL_CONTRACTS = [
   {
     name: "inspect_pcap_client",
-    ...toolContractMetadata("inspect_pcap_client"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_pcap_client",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     description:
       "Inspect the caller-selected tshark and capinfos binaries: selected commands, selection sources, and versions. Both tools must be usable. Reads no capture file. REA never installs the Wireshark suite; select binaries with REA_TSHARK_COMMAND and REA_CAPINFOS_COMMAND (absolute) or from PATH.",
     kind: "pcap-provider",
@@ -26,7 +34,15 @@ export const PCAP_TOOL_CONTRACTS = [
   {
     name: "inspect_pcap_capture",
     availability: { host: "pcapCapture" },
-    ...toolContractMetadata("inspect_pcap_capture"),
+    cli: true,
+    ...toolContractMetadata(
+      "inspect_pcap_capture",
+      toolEffects({
+        mutatesSession: true,
+        launchesProcess: true,
+        writesFilesystem: true,
+      }),
+    ),
     description:
       "Summarize a saved pcap/pcapng snapshot: exact packet count, SHA-256, IP endpoints, DNS questions/addresses, TLS SNI, protocols and HTTP URIs. Use inspect_packet_capture for caller-selected TShark fields or display filters. Default complete returns full Evidence; detail summary retains it for inspect_analysis_view kind pcap. Unknown DNS attribution and excluded credentials stay explicit. Requires caller-supplied capinfos/tshark and Linux prlimit or Windows Job Objects; never captures live traffic.",
     kind: "pcap-provider",

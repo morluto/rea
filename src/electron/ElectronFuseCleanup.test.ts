@@ -17,7 +17,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ElectronFuseProvider } from "./ElectronFuseProvider.js";
 import { PlaywrightElectronActiveProvider } from "../browser/PlaywrightElectronActiveProvider.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { assertNodeCliInspectArgumentsSupported } from "../browser/PlaywrightElectronActiveFuses.js";
 
 afterEach(() => {

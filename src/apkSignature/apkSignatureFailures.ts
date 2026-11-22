@@ -1,17 +1,15 @@
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   stableArtifactInputFailure,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
+  completedStableArtifactObservation,
+} from "../resources/index.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
-import { completedStableArtifactObservation } from "../artifacts/StableArtifactObservation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -22,6 +20,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import type { ApkSchemeError } from "../domain/apkSignature/apkSignatureSchemes.js";
 import type { ApkSigningBlockError } from "../domain/apkSignature/apkSigningBlock.js";
 import type { ApkCentralDirectoryError } from "../domain/apkSignature/apkV1Signature.js";
@@ -30,6 +29,7 @@ import {
   APK_SIGNATURE_LIMITS,
   APK_SIGNATURE_PROVIDER_IDENTITY,
 } from "./ApkSignatureRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_apk_signature";
 
@@ -72,17 +72,16 @@ export const mapApkBlockError = (
       return inputError(
         `Malformed APK Signing Block at byte ${String(error.offset)}: ${error.detail}.`,
       );
-    case "budget-exceeded":
-      return new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signing Block holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { max_signing_block_pairs: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signing Block allowance of ${String(error.limit)} pairs (this release has no runtime override)`,
+    case "limit": {
+      const { name, maximum } = error.failure.limit;
+      return parseLimitConstraint(OPERATION, "capacity", error, {
+        legacyMaximumKey: name,
+        ...fixedAllowanceOptions(
+          `The APK Signing Block allowance of ${String(maximum)} pairs (this release has no runtime override)`,
           "count",
         ),
-      );
+      });
+    }
   }
 };
 
@@ -90,40 +89,38 @@ export const mapApkBlockError = (
 export const mapApkSchemeError = (
   error: ApkSchemeError,
   scheme: string,
-): AnalysisError =>
-  error.kind === "malformed-signer"
-    ? inputError(
-        `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
-      )
-    : new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `APK Signature Scheme ${scheme} holds more ${error.resource} than the ${String(error.limit)} limit.`,
-        { [`max_${error.resource.replace(/-/g, "_")}`]: error.limit },
-        fixedAllowanceOptions(
-          `The APK Signature Scheme ${scheme} allowance of ${String(error.limit)} ${error.resource} (this release has no runtime override)`,
-          "count",
-        ),
-      );
+): AnalysisError => {
+  if (error.kind === "malformed-signer")
+    return inputError(
+      `Malformed APK Signature Scheme ${scheme} block: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: `max_${name.replace(/-/g, "_")}`,
+    ...fixedAllowanceOptions(
+      `The APK Signature Scheme ${scheme} allowance of ${String(maximum)} ${name} (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** A central directory that cannot be walked leaves v1 presence unknown: refuse. */
 export const mapCentralDirectoryError = (
   error: ApkCentralDirectoryError,
-): AnalysisError =>
-  error.kind === "budget-exceeded"
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "capacity",
-        `The central directory holds more than ${String(error.limit)} META-INF v1 signing entries.`,
-        { max_v1_signature_entries: error.limit },
-        fixedAllowanceOptions(
-          `The APK v1 allowance of ${String(error.limit)} META-INF signing entries (this release has no runtime override)`,
-          "count",
-        ),
-      )
-    : inputError(
-        `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
-      );
+): AnalysisError => {
+  if (error.kind !== "limit")
+    return inputError(
+      `Malformed ZIP central directory at byte ${String(error.offset)}: ${error.detail}.`,
+    );
+  const { name, maximum } = error.failure.limit;
+  return parseLimitConstraint(OPERATION, "capacity", error, {
+    legacyMaximumKey: name,
+    ...fixedAllowanceOptions(
+      `The APK v1 allowance of ${String(maximum)} META-INF signing entries (this release has no runtime override)`,
+      "count",
+    ),
+  });
+};
 
 /** More v1 signers than a signed APK carries: refused rather than decoded. */
 export const v1SignerCapacityError = (limit: number): AnalysisError =>
@@ -146,8 +143,12 @@ export const apkOutputBudgetError = (projectedBytes: number): AnalysisError =>
     `The decoded signing report (${String(projectedBytes)} bytes) exceeds the ${String(APK_SIGNATURE_LIMITS.outputBytes)}-byte output budget.`,
     { max_output_bytes: APK_SIGNATURE_LIMITS.outputBytes },
     fixedAllowanceOptions(
-      `The decoded APK signing report allowance of ${String(APK_SIGNATURE_LIMITS.outputBytes)} bytes (this release has no runtime override)`,
+      "The decoded APK signing report allowance",
       "report",
+      {
+        limit: APK_SIGNATURE_LIMITS.outputBytes,
+        unit: "bytes",
+      },
     ),
   );
 
@@ -251,6 +252,6 @@ const adapterFailure = (cause: unknown, path: string): AnalysisError =>
     cause,
     diagnostics: {
       path,
-      reason: cause instanceof Error ? cause.message : String(cause),
+      reason: errorMessage(cause),
     },
   });

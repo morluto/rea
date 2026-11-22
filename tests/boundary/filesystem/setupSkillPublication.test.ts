@@ -13,7 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { runSetup } from "../../../src/application/Setup.js";
 import {

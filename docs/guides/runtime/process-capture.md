@@ -112,6 +112,21 @@ event includes that field. Semantic fields such as output, interaction outcome,
 exit status, finalization delivery, process identity/command, and filesystem
 contents still participate in the default comparison.
 
+A located divergence names the compared fields that differed, so a report does
+not have to be diffed by hand: `first_divergence.fields` lists sorted leaf names
+such as `files[0].path`, `pid`, or `finalization.signals[0].delivery`, with array
+positions as bracketed indices, `$` for a whole observation, and at most eight
+names for a wide difference. The names describe only the projection the
+comparison actually judged, so capture-local timing is never named unless a
+`trace_spec` made it part of the question. `left` and `right` still retain the
+complete observations. `fields` is optional in the contract because records
+authenticated before it existed remain readable; new reports always populate it.
+Naming a volatile value is not a claim of equivalence: when a per-run temporary
+path or PID is not behavior, exclude it at capture time with
+`normalization.paths`, `normalization.pids`, or an explicit
+`normalization.patterns` replacement, and recapture both sides under the same
+rules. Comparison refuses captures whose normalization rules differ.
+
 For scenarios where independent scheduling can change event order, the CLI
 also accepts an optional trace-specification JSON file as the third argument.
 That specification must state the exact events and ordering constraints to
@@ -129,6 +144,20 @@ scenarios from the same absolute working directory and observation paths.
 Captures are local Evidence files; keep
 their source artifacts and invocation context available when interpreting a
 difference.
+
+The capture's Evidence subject names the launched root process:
+`{ "kind": "process", "pid", "start_time", "executable_sha256" }`, where
+`start_time` is the platform start identity REA read for that PID at launch,
+bound to the capture's run token, and `executable_sha256` is `null` unless the
+executable's path metadata stayed stable across spawn. `manifest.root_process`
+records the same observation. A PID alone does not identify a process, so when
+the start identity could not be read the subject is
+`{ "kind": "unknown", "reason": "not-observed" }` and `root_process` keeps the
+reason. When PID normalization is selected (the default), REA honours it: the
+raw PID and start identity are not recorded, `root_process` is
+`{ "state": "withheld-by-caller" }`, and the subject is
+`{ "kind": "unknown", "reason": "withheld-by-caller" }`. A planned scenario
+(`dry_run`) launches nothing and stays `not-observed`.
 
 ## Hash a report independently of terminal output
 
@@ -373,11 +402,8 @@ The terminal finalizer then freezes PTY input, retains normalized and rendered
 facts, and releases the renderer. Cleanup retry reuses those completed facts.
 All new captures commit
 `terminal_observation_version: "deferred-rendered-journal-v1"`, including when
-PID and port normalization are disabled. An Evidence bundle exported by an
-earlier release, without `evidence_format`, is refused; recreate the
-observation. A standalone record with an earlier observation version remains
-readable; recapture both sides with the same observation version before
-comparison.
+PID and port normalization are disabled. An Evidence bundle or record from an
+earlier Evidence format revision is refused; recreate the observation.
 
 When path normalization is enabled, aliases apply to selected path identities
 at clear text delimiters. A selected executable path does not alias a longer
@@ -429,6 +455,8 @@ than treating missing data as proof of equivalence. Cancellation and timeout
 run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
+
+The target is the session leader of the capture PTY. When that leader exits, the terminal delivers SIGHUP to processes that are still in its foreground process group, as `script -c` and `ssh -t` do. A child that should outlive the target has to leave the group, for example with `setsid`, or ignore SIGHUP. This hangup comes from the terminal, not from REA's owned-process cleanup, and the capture result does not record it.
 
 ### Finalization interval
 
@@ -495,7 +523,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of

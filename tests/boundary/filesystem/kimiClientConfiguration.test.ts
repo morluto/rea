@@ -13,7 +13,7 @@ import {
   supportedClients,
 } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
-import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
+import { MCP_STARTUP_POLICY } from "../../../src/config/mcpStartupPolicy.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 

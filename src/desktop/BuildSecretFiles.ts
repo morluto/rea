@@ -16,11 +16,9 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
   withArtifactFileHandle,
-} from "../artifacts/ArtifactFileOperation.js";
-import type {
-  ArtifactResourceScope,
-  ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+  type ArtifactResourceScope,
+  type ArtifactResourceOwner,
+} from "../resources/index.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -44,7 +42,7 @@ const maxFileBytes = (characters: number) => characters * 4 + 2;
 /** The folder of secret files on the build host: `rea/build-secrets` under the XDG config folder, or `~/.config`. */
 export const buildSecretsDirectory = (
   environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform = process.platform,
+  platform: NodeJS.Platform,
 ): string => {
   const root = xdgBase(environment.XDG_CONFIG_HOME, () =>
     // Resolve the home fallback only when it is the one that applies: on a host

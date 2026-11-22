@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import {
   joinCoverageStatus,
   type CoverageStatus,
@@ -14,6 +15,7 @@ import {
 import {
   createEvidence,
   evidenceEnvelopeForAdmission,
+  evidenceFileTarget,
   type Evidence,
 } from "../../domain/evidence.js";
 import {
@@ -33,7 +35,7 @@ import {
   resolveEvidenceRequest,
   type EvidenceLookup,
 } from "../EvidenceInputResolver.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { z } from "zod";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
@@ -63,12 +65,7 @@ const parseInspection = (
   if (
     !wasmArtifactMatchesSubject(
       result.artifact,
-      evidence.subject === null
-        ? null
-        : {
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-          },
+      evidenceFileTarget(evidence),
     ) ||
     evidence.parameters.path !== result.artifact.path
   )
@@ -141,6 +138,7 @@ export const compareWasmInterfaces = async (
       ["left", left],
       ["right", right],
     ] as const) {
+      // optional-fact-default: an absent interface fails knownInventory, so every key is unknown.
       for (const entry of inspection.result.interface?.entries ?? []) {
         if (++work % 256 === 0) {
           await setImmediate();
@@ -278,7 +276,7 @@ export const compareWasmInterfaces = async (
     };
     const admission = requireAuthenticationHeadroom(
       evidenceEnvelopeForAdmission(
-        undefined,
+        unknownTarget("derived-from-linked-evidence"),
         ARTIFACT_COMPARISON_PROVIDER,
         observation,
       ),
@@ -291,10 +289,14 @@ export const compareWasmInterfaces = async (
     );
     if (!admission.ok) return admission;
     const report = wasmInterfaceComparisonSchema.parse(observedReport);
-    const evidence = createEvidence(undefined, ARTIFACT_COMPARISON_PROVIDER, {
-      ...observation,
-      result: report,
-    });
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        ...observation,
+        result: report,
+      },
+    );
     await setImmediate();
     const completed = completeProviderEvidence(evidence, options?.signal);
     const sources = [left.evidence, right.evidence];

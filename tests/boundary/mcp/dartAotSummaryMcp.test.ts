@@ -1,4 +1,8 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -57,7 +61,7 @@ it("retains the selected pool policy through MCP summary projection", async () =
         pool_policy: { contains: "package:animations/", uri_limit: 1 },
       },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(filteredReply.isError).not.toBe(true);
   const filteredView = dartAotSummaryViewResultSchema.parse(
@@ -100,7 +104,7 @@ it("honors explicit ABI and old full requests, validates SDK schemas and reuses 
       name: "inspect_dart_aot",
       arguments: { path, abi: "x86_64", detail: "summary" },
     },
-    { toolDefinition: definition },
+    { toolDefinition: withCanonicalOutputSchema(definition) },
   );
   expect(reply.isError).not.toBe(true);
   const receipt = parseEvidence(reply.structuredContent);
@@ -232,7 +236,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
   ) =>
     createEvidence(
       sha === null
-        ? undefined
+        ? unknownTarget("not-observed")
         : { path: "/source.apk", sha256: sha, format: "apk" },
       { id: "flutter", name: "Flutter", version: null },
       {
@@ -242,7 +246,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
         limitations: ["Original uncertainty"],
       },
     );
-  for (const parent of [evidence(), evidence(report, null)]) {
+  for (const stored of [evidence(), evidence(report, null)]) {
+    const parent = parseEvidence(JSON.parse(JSON.stringify(stored)));
+    expect(parent.evidence_id).toBe(stored.evidence_id);
     const summary = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
@@ -252,6 +258,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       summary.value.normalized_result,
     );
     expect(result.summary.libapp.snapshot_hash).toBeNull();
+    expect(result.summary.libapp).not.toHaveProperty("snapshot_profile");
     expect(result.summary.string_pool.package_uri_count_at_least).toBe(1000);
     expect(result.summary.string_pool.returned_counts.package_uris).toBe(1);
     expect(result.limitations).toEqual(parent.limitations);
@@ -272,6 +279,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       string_pool: { coverage: "partial", package_uri_count_at_least: 1000 },
       coverage: { total: 1, exhausted: true },
     });
+    expect(page.value.normalized_result).not.toHaveProperty(
+      "libapp.snapshot_profile",
+    );
   }
   expect(
     await inspectAnalysisView({

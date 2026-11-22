@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import {
   XcrunCommandRunner,
   type NativeCommandLauncher,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { ok } from "../../../../src/domain/result.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../../src/process/DarwinProcessRunTokenReader.js";
 

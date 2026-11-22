@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { emptyProcessCapture } from "../../domain/process/processCapture.fixture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { analysisErrorProjectionSchema } from "../../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { ProcessCaptureError } from "./ProcessCaptureError.js";
 import {
   PROCESS_CAPTURE_CLEANUP_INTERVENTION_UNKNOWN,

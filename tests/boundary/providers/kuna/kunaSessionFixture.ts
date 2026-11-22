@@ -6,7 +6,7 @@ import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement
 
 import { onTestFinished } from "vitest";
 
-import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../../src/ports/AnalysisProvider.js";
 import type { BinaryTarget } from "../../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../../src/domain/jsonValue.js";
 import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";

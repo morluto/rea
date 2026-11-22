@@ -5,7 +5,7 @@ import {
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
+} from "../../resources/ArtifactReader.js";
 import { scanReader } from "./scanReader.js";
 
 it.each(["entries", "declared bytes", "unknown bytes", "understated bytes"])(

@@ -1,7 +1,9 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { access, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -10,21 +12,19 @@ import type {
   WasmArtifactExecutionOptions,
   WasmArtifactExecution,
   WasmArtifactPort,
-} from "../application/wasm/WasmArtifactPort.js";
-import { createAnalysisExecution } from "../application/AnalysisProvider.js";
+} from "../ports/wasm/WasmArtifactPort.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   completedStableArtifact,
   readStableArtifact,
   type StableArtifactSnapshot,
-} from "../artifacts/readStableArtifact.js";
-import {
   ArtifactResourceScope,
   ArtifactResourceRetryFailure,
-} from "../artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLeaseGroup } from "../artifacts/AnalysisCleanupLease.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  AnalysisCleanupLeaseGroup,
+  bindArtifactFileCleanup,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import type {
   AnalysisError,
   AnalysisCapturedOutput,
@@ -37,8 +37,9 @@ import {
   cancelledBy,
   isAborted,
 } from "../domain/analysisErrorCore.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -56,7 +57,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import { runOwnedCommand } from "../process/OwnedCommand.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
-import { artifactCommandOutput } from "../process/ArtifactAnalysisResources.js";
 import {
   assertArtifactCommandPath,
   selectArtifactCommandPath,
@@ -76,6 +76,8 @@ import {
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 type AcquiredGlue =
@@ -86,19 +88,22 @@ type AcquiredGlue =
       readonly references: [];
     };
 const OPERATION = "inspect_wasm_artifact";
-const digest = (text: string) =>
-  createHash("sha256").update(text).digest("hex");
-const warningOutput = (text: string): readonly string[] | null => {
-  if (text === "") return [];
-  const lines = text.trimEnd().split("\n");
-  return lines.every(
-    (line) =>
-      /^\S+: warning: /u.test(line) ||
-      /^[\da-f]+: error: invalid utf-8 encoding: section name$/u.test(line),
-  )
-    ? lines
-    : null;
+/** Admit successful-command stderr and parse the offsets that require byte corroboration. */
+const diagnosticNameEnds = (text: string): ReadonlySet<number> | null => {
+  const offsets = new Set<number>();
+  if (text === "") return offsets;
+  for (const line of text.trimEnd().split("\n")) {
+    if (/^\S+: warning: /u.test(line)) continue;
+    const offset =
+      /^([\da-f]+): error: invalid utf-8 encoding: section name$/u.exec(
+        line,
+      )?.[1];
+    if (offset === undefined) return null;
+    offsets.add(Number.parseInt(offset, 16));
+  }
+  return offsets;
 };
+
 /** Run caller-supplied WABT against private copies of exactly selected bytes. */
 export class WabtArtifactProvider implements WasmArtifactPort {
   readonly #resources = new ArtifactResourceScope();
@@ -193,7 +198,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         ? undefined
         : createEvidence(
             artifact === undefined
-              ? undefined
+              ? unknownTarget("not-observed")
               : {
                   path: artifact.path,
                   format: "file",
@@ -272,7 +277,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         const selection = await selectArtifactCommandPath(
           appendCallerPath(
             directory,
-            `${tool}${process.platform === "win32" ? ".exe" : ""}`,
+            `${tool}${HOST_PLATFORM.platform === "win32" ? ".exe" : ""}`,
           ),
           options?.signal,
         );
@@ -353,7 +358,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             ...(this.launcher === undefined ? {} : { launcher: this.launcher }),
           },
         );
-        capturedOutput = artifactCommandOutput(snapshot);
+        capturedOutput = capturedProviderOutput(snapshot);
         const invalidUtf8Streams = [
           ...(snapshot.stdout.invalidUtf8 ? ["stdout"] : []),
           ...(snapshot.stderr.invalidUtf8 ? ["stderr"] : []),
@@ -412,11 +417,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             {
               userMessage: reason,
               diagnostics: versionProbe,
-              capturedOutput: {
-                stdout: version.stdout.text,
-                stderr: version.stderr.text,
-                truncated: version.diagnosticTruncated === true,
-              },
+              capturedOutput: capturedProviderOutput(version),
               remediationAction: wabtConfigurationRecoveryAction(),
             },
           );
@@ -522,12 +523,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       }).catch((cause: unknown) => {
         // Node rejects a write this signal aborted with an envelope that
         // carries the signal's own reason; any other failure stays itself.
-        if (
-          isAborted(signal) &&
-          cause instanceof Error &&
-          cause.cause === signal.reason
-        )
-          throw cancelledBy(OPERATION, signal);
+        if (isAbortOf(cause, signal)) throw cancelledBy(OPERATION, signal);
         throw cause;
       });
       snapshotHash = selected.sha256;
@@ -540,7 +536,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       )
         throw new WabtAdmissionError("incomplete_tool_profile");
       const validation = await execute(validate, validate.arguments, true);
-      if (validation.exitCode !== 0)
+      if (validation.exitCode !== 0) {
+        const validationOutput = capturedProviderOutput(validation);
         throw new AnalysisInputError(
           OPERATION,
           {
@@ -553,9 +550,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 result: {
                   ...acquiredFacts(),
                   validation: "rejected-by-selected-profile",
-                  exit_code: validation.exitCode ?? null,
-                  stdout: validation.stdout.text,
-                  stderr: validation.stderr.text,
+                  exit_code: validationOutput.exit_code ?? null,
+                  stdout: validationOutput.stdout,
+                  stderr: validationOutput.stderr,
                 },
                 confidence: "observed",
                 locations: [{ kind: "artifact-path", path: input.path }],
@@ -567,7 +564,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 ],
               },
             ),
-            capturedOutput: artifactCommandOutput(validation),
+            capturedOutput: validationOutput,
           },
           [
             {
@@ -578,27 +575,31 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             },
           ],
         );
+      }
       validationState = "valid";
-      const customSectionWarnings: {
+      const parsedDiagnostics: {
         tool: (typeof commands)[number]["tool"];
-        text: string;
+        output: typeof validation;
+        nameEnds: ReadonlySet<number>;
       }[] = [];
       const optionalLimitations: string[] = [];
+      const unexpectedDiagnostics = (output: typeof validation) =>
+        new AnalysisOutputError(
+          OPERATION,
+          "Unexpected WABT diagnostic output.",
+          {
+            capturedOutput: capturedProviderOutput(output),
+          },
+        );
       const retainWarnings = (
         tool: (typeof commands)[number]["tool"],
         output: typeof validation,
       ) => {
-        const warnings = warningOutput(output.stderr.text);
-        if (warnings === null)
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Unexpected WABT diagnostic output.",
-            {
-              capturedOutput: artifactCommandOutput(output),
-            },
-          );
-        if (warnings.length > 0)
-          customSectionWarnings.push({ tool, text: output.stderr.text });
+        const text = output.stderr.text;
+        if (text === "") return;
+        const nameEnds = diagnosticNameEnds(text);
+        if (nameEnds === null) throw unexpectedDiagnostics(output);
+        parsedDiagnostics.push({ tool, output, nameEnds });
       };
       retainWarnings("wasm-validate", validation);
       const dump = await execute(objdump, objdump.arguments);
@@ -622,7 +623,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       // WAT framing reads module names, not every inner name map. A producer
       // warning may concern a skipped body or another custom section; without
       // section attribution it cannot establish complete debug-name coverage.
-      capturedOutput = artifactCommandOutput(dump);
+      capturedOutput = capturedProviderOutput(dump);
       const { sections, headers, details, invalidNameEnds } = parseWabtOutput(
         dump.stdout.text,
         selected.bytes.length,
@@ -630,33 +631,17 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         debugModuleNames,
         selected.bytes,
       );
-      for (const warning of customSectionWarnings) {
-        for (const line of warning.text.trimEnd().split("\n")) {
-          const error =
-            /^([\da-f]+): error: invalid utf-8 encoding: section name$/u.exec(
-              line,
-            );
-          if (
-            error !== null &&
-            !invalidNameEnds.includes(Number.parseInt(error[1] ?? "", 16))
-          )
-            throw new AnalysisOutputError(
-              OPERATION,
-              "Unexpected WABT diagnostic output.",
-              {
-                capturedOutput: artifactCommandOutput(
-                  warning.tool === "wasm-validate"
-                    ? validation
-                    : warning.tool === "wasm-objdump"
-                      ? dump
-                      : wat,
-                ),
-              },
-            );
-        }
-      }
+      for (const { output, nameEnds } of parsedDiagnostics)
+        for (const offset of nameEnds)
+          if (!invalidNameEnds.has(offset)) throw unexpectedDiagnostics(output);
+      const customSectionWarnings = parsedDiagnostics.map(
+        ({ tool, output }) => ({
+          tool,
+          text: output.stderr.text,
+        }),
+      );
       const debugNameMetadata =
-        invalidNameEnds.length > 0 ||
+        invalidNameEnds.size > 0 ||
         (decodedNameMetadata === "complete" && customSectionWarnings.length > 0)
           ? "unknown"
           : decodedNameMetadata;
@@ -672,7 +657,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         optionalLimitations.push(
           "WABT reported optional custom-section interpretation warnings; exact warning output is retained in custom_section_warnings.",
         );
-      if (invalidNameEnds.length > 0)
+      if (invalidNameEnds.size > 0)
         optionalLimitations.push(
           "An optional custom-section name is invalid UTF-8 and was omitted from decoded WAT. Its original bytes and objdump section range remain available; its identity and debug-name coverage are unknown.",
         );
@@ -698,7 +683,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         details,
         wat: {
           text: wat.stdout.text,
-          sha256: digest(wat.stdout.text),
+          sha256: sha256Hex(wat.stdout.text),
           representation: "decoded-wat",
         },
         tool_profile: toolProfile,
@@ -785,7 +770,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           WABT_PROVIDER_IDENTITY.id,
           [runtime.path],
           {
-            reason: cause instanceof Error ? cause.message : String(cause),
+            reason: errorMessage(cause),
             previous_error: result.ok
               ? null
               : projectAnalysisError(result.error),
@@ -802,11 +787,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         result = result.ok
           ? err(failure)
           : err(
-              analysisErrorWithCleanupFailure(
+              analysisErrorWithCleanupDependencies(
                 result.error,
                 failure,
                 OPERATION,
-              ).bindCleanupDependencies([result.error, failure]),
+              ),
             );
       }
     }
@@ -822,9 +807,7 @@ const resourceCleanupFailure = (cause: unknown): ProviderCleanupError => {
     WABT_PROVIDER_IDENTITY.id,
     cleanup?.resources ?? ["artifact-resources"],
     {
-      reason:
-        cleanup?.reason ??
-        (cause instanceof Error ? cause.message : String(cause)),
+      reason: cleanup?.reason ?? errorMessage(cause),
     },
     { operation: OPERATION, cause },
   );

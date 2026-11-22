@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -41,6 +41,7 @@ import {
   type ProviderFailureDialect,
 } from "../providers/classifyProviderFailure.js";
 import type { HopperReply } from "./HopperReplyContracts.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "address_to_file_offset";
 const MAX_FAT_ARCHITECTURES = 128;
@@ -90,11 +91,7 @@ export async function mapHopperFileOffset(
     unavailable,
     publish,
     withCleanup: (primary, marker) =>
-      analysisErrorWithCleanupFailure(
-        primary,
-        publish(marker),
-        OPERATION,
-      ).bindCleanupDependencies([marker]),
+      analysisErrorWithCleanupDependencies(primary, publish(marker), OPERATION),
   };
   try {
     const captured = await snapshotFromPath(
@@ -200,7 +197,7 @@ const sourceAccessDialect = (
       ? cancelled(partial, carriedReason(cause.reason))
       : undefined,
   unclassified: (cause) => {
-    const reason = `Cannot verify original source bytes: ${cause instanceof Error ? cause.message : String(cause)}`;
+    const reason = `Cannot verify original source bytes: ${errorMessage(cause)}`;
     const code =
       typeof cause === "object" && cause !== null && "code" in cause
         ? cause.code
@@ -220,10 +217,7 @@ const sourceAccessDialect = (
 const descriptorCleanup = (
   failure: RegularFileCleanupFailure<unknown>,
 ): ProviderCleanupError => {
-  const reason =
-    failure.cleanupCause instanceof Error
-      ? failure.cleanupCause.message
-      : String(failure.cleanupCause);
+  const reason = errorMessage(failure.cleanupCause);
   return new ProviderCleanupError(
     "hopper",
     [failure.path],

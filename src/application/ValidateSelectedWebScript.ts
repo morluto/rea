@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -7,6 +6,7 @@ import type {
   SelectedWebScriptInput,
 } from "../domain/webScriptArtifacts.js";
 import type { ExportedWebScript } from "../domain/webScriptExport.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 /** Bind actual source text to the selected manifest entry before analysis. */
 export const validateSelectedWebScript = (
@@ -21,8 +21,7 @@ export const validateSelectedWebScript = (
     selected.content.sha256 !== data.sourceFile.sha256 ||
     selected.content.bytes !== data.sourceFile.bytes ||
     Buffer.byteLength(data.source) !== data.sourceFile.bytes ||
-    createHash("sha256").update(data.source, "utf8").digest("hex") !==
-      data.sourceFile.sha256 ||
+    sha256Hex(data.source) !== data.sourceFile.sha256 ||
     data.manifestFile.path !== input.manifest_path
   )
     return err(

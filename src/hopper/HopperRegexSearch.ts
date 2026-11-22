@@ -1,9 +1,9 @@
 import { z } from "zod";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
-import { HopperRemoteError } from "../domain/hopperErrors.js";
+import { HopperRemoteError } from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
@@ -159,7 +159,6 @@ export class HopperRegexSearch {
     if (!matched.ok) return matched;
     if (options.signal?.aborted)
       return err(cancelledBy(operation, options.signal));
-    const selected = new Set(matched.value);
-    return ok(rows.filter((_, index) => selected.has(index)));
+    return ok(matched.value.map((index) => rows[index]!));
   }
 }

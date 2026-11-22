@@ -1,8 +1,10 @@
-import { ProviderInspectionScope } from "../ProviderInspectionScope.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
+import { ProviderInspectionScope } from "../../ports/ProviderInspectionScope.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  bindArtifactFileCleanup,
+} from "../../resources/index.js";
 import { SharedStartupAttempt } from "../../process/SharedStartupAttempt.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
@@ -46,14 +48,14 @@ import type {
   ProviderIdentity,
   ProviderTargetSupport,
   RetainedResourceScope,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   evaluateAnalysisProviderCandidate,
   type AnalysisProviderCandidateEvaluation,
 } from "./AnalysisProviderEvaluation.js";
 import { withCandidateRejections } from "./AnalysisProviderCandidateDiagnostics.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
-import { ownedProcessPrerequisiteAvailability } from "../ownedProcessAvailability.js";
+import { ownedProcessPrerequisiteAvailability } from "../../providers/ownedProcessAvailability.js";
 
 /** Where a selected provider's choice came from; never a priority or fallback. */
 export type AnalysisProviderSelectionSource =

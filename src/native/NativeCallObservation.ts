@@ -21,7 +21,7 @@ import {
   nativeCallTargetFailure,
   verifyNativeCallTarget,
 } from "./NativeCallTarget.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   nativeCallPartialObservationSchema,

@@ -46,8 +46,7 @@ export const apiContractViewRequestSchema = z.discriminatedUnion("collection", [
   }),
 ]);
 
-export const apiContractFormatSchema = z.enum(["openapi-json", "graphql-sdl"]);
-export const apiContractFileBytesSchema = z
+const apiContractFileBytesSchema = z
   .int()
   .positive()
   .max(API_CONTRACT_MAX_FILE_BYTES)
@@ -55,10 +54,6 @@ export const apiContractFileBytesSchema = z
   .describe(
     "Maximum bytes per input document (up to 32 MiB); reply paging does not increase parser allowances",
   );
-export const apiContractViewSelectionSchema = z.discriminatedUnion("kind", [
-  apiContractViewRequestSchema,
-  graphqlContractViewRequestSchema,
-]);
 const commonInput = {
   path: absoluteLocalPathStringSchema.describe(
     "Absolute path to a local API contract document",

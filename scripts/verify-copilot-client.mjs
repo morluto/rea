@@ -10,7 +10,6 @@ import {
 } from "../dist/contracts/toolContracts.js";
 import { advertisedInputJsonSchema } from "../dist/contracts/toolSchemaMetadata.js";
 import { advertiseTool } from "../dist/contracts/advertisedTool.js";
-import { advertisedToolPresentation } from "../dist/config/mcpOutputSchemaProfile.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -26,6 +25,7 @@ import {
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { advertisedToolPresentation } from "../dist/contracts/mcpSchemaPresentation.js";
 
 assert(
   process.platform !== "win32",

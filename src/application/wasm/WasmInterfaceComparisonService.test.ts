@@ -152,7 +152,7 @@ it("authenticates semantic Evidence and rejects altered artifact digests", async
     }),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
   const rebound = JSON.parse(JSON.stringify(evidence(facts("f"))));
-  rebound.subject.digest.sha256 = "b".repeat(64);
+  rebound.subject.identity.sha256 = "b".repeat(64);
   expect(
     await compareWasmInterfaces({
       left: rebound,

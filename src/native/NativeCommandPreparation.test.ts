@@ -19,7 +19,10 @@ import {
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
 import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
-import { XcrunCommandRunner, NativeCommandFailure } from "./CommandRunner.js";
+import {
+  XcrunCommandRunner,
+  NativeCommandFailure,
+} from "../providers/NativeCommandRunner.js";
 import { LldbCallTracer } from "./LldbCallTracer.js";
 import { err } from "../domain/result.js";
 

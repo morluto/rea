@@ -17,6 +17,30 @@ const objectOf = (body: JsonValue | undefined) => {
 describe("served creates that count and make values", () => {
   it("numbers created tasks on from the recorded counter and makes each one's subscription", () => {
     const tasks = servedFrom(COUNTED_TASK_ROWS);
+    const plan = tasks.state.writes.get("post_projects_tasks_by_id");
+    expect(plan).toMatchObject({
+      served: true,
+      checked_record_ordinals: [4, 7],
+    });
+    expect(plan?.rules.find(({ field }) => field === "index")).toEqual({
+      field: "index",
+      rule: "sequence",
+      scope: "collection",
+      start: 15,
+    });
+    expect(plan?.rules.find(({ field }) => field === "identifier")).toEqual({
+      field: "identifier",
+      rule: "template",
+      from: "index",
+    });
+    expect(
+      plan?.rules.find(({ field }) => field === "subscription"),
+    ).toMatchObject({
+      rule: "made-object",
+      clocks: ["created"],
+      own: ["entity_id"],
+      counts: [{ member: "id", start: 21 }],
+    });
     const first = objectOf(
       tasks.answer("post_projects_tasks_by_id", {
         id: "5",
@@ -51,8 +75,14 @@ describe("served creates that count and make values", () => {
     expect(read["subscription"]).toMatchObject({ entity_id: 99 });
   });
 
-  it("answers a bulk create in the envelope it was sent in", () => {
+  it("answers bulk creates in their envelope and honors the requested project", () => {
     const tasks = servedFrom(BULK_TASK_ROWS);
+    expect(
+      tasks.state.writes.get("post_projects_tasks_bulk_by_id"),
+    ).toMatchObject({
+      served: true,
+      body: { envelope: "tasks" },
+    });
     const body = objectOf(
       tasks.answer("post_projects_tasks_bulk_by_id", {
         id: "5",
@@ -62,16 +92,12 @@ describe("served creates that count and make values", () => {
     expect(body["tasks"]).toMatchObject([
       { title: "Restock the fog-horn spares", index: 15, identifier: "#15" },
     ]);
-  });
-
-  it("creates into another project when the task stores its project and lands in one collection", () => {
-    const tasks = servedFrom(BULK_TASK_ROWS);
-    const body = objectOf(
+    const other = objectOf(
       tasks.answer("post_projects_tasks_bulk_by_id", {
         id: "7",
         body: { tasks: [{ title: "Paint the gallery rail" }] },
       }).body,
     );
-    expect(body["tasks"]).toMatchObject([{ project_id: 7 }]);
+    expect(other["tasks"]).toMatchObject([{ project_id: 7 }]);
   });
 });

@@ -58,6 +58,16 @@ cliTest(
           details: z.object({ partial_observation: z.unknown() }),
         })
         .parse(interrupted.json);
+      // The analyzer names the deadline field; the CLI adds its flag.
+      expect(interrupted.json).toMatchObject({
+        details: {
+          limit: {
+            control_kind: "parameter",
+            parameter: "total_analysis_timeout_ms",
+            cli_flag: "--total-analysis-timeout-ms",
+          },
+        },
+      });
       const partial = parseEvidence(timeout.details.partial_observation);
       expect(partial.parameters).toMatchObject({
         max_heap_mb: 128,

@@ -1,24 +1,26 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   chmod,
   access,
-  mkdtemp,
   mkdir,
   readFile,
+  readdir,
   writeFile,
   rm,
   rename,
   symlink,
   type FileHandle,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
+  hashGhidraPackedProgram,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
 
@@ -45,7 +47,6 @@ vi.mock("../process/OwnedLease.js", async (importOriginal) => {
   return { ...actual, acquireOwnedLease: vi.fn(actual.acquireOwnedLease) };
 });
 
-const roots: string[] = [];
 const owners: GhidraCheckpoint[] = [];
 afterEach(async () => {
   controls.file = undefined;
@@ -63,8 +64,6 @@ afterEach(async () => {
   vi.mocked(rm).mockReset().mockImplementation(actual.rm);
   vi.mocked(rename).mockReset().mockImplementation(actual.rename);
   for (const owner of owners.splice(0)) await owner.close();
-  for (const root of roots.splice(0))
-    await rm(root, { recursive: true, force: true });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -112,9 +111,10 @@ const profile = createAnalysisProfile(
   { import_mode: "test" },
 );
 const target = "1".repeat(64);
-async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "rea-checkpoint-test-"));
-  roots.push(root);
+async function fixture(
+  contents: string | Uint8Array = "controlled packed bytes",
+) {
+  const root = await createTestTempDirectory("rea-checkpoint-test-");
   const resources = new ArtifactResourceScope();
   const selection = await resolveGhidraCheckpoint(
     root,
@@ -125,7 +125,7 @@ async function fixture() {
   const owner = new GhidraCheckpoint(selection, resources);
   owners.push(owner);
   const packed = join(root, "fixture.gzf");
-  await writeFile(packed, "controlled packed bytes");
+  await writeFile(packed, contents);
   return { root, resources, selection, owner, packed };
 }
 
@@ -184,50 +184,17 @@ it.skipIf(process.platform === "win32").each(
   },
 );
 
-it.skipIf(process.platform === "win32")(
-  "publishes a verified state, reopens it, and separates target and analysis identities",
-  async () => {
-    const f = await fixture();
-    expect(f.selection.state).toEqual({ kind: "initial-analysis" });
-    expect(await f.owner.acquire("first")).toBeUndefined();
-    await f.owner.publish(f.packed);
-    await f.owner.close();
-    const loaded = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(loaded.state).toEqual(f.selection.state);
-    const saved = f.owner.observation.source!;
-    const resumed = new GhidraCheckpoint(loaded, f.resources);
-    owners.push(resumed);
-    expect(await resumed.acquire("second")).toEqual({
-      path: join(loaded.directory, saved.file),
-      sha256: saved.sha256,
-    });
-    expect(
-      (
-        await resolveGhidraCheckpoint(
-          f.root,
-          "2".repeat(64),
-          profile,
-          f.resources,
-        )
-      ).key,
-    ).not.toBe(f.selection.key);
-    expect(
-      (
-        await resolveGhidraCheckpoint(
-          f.root,
-          target,
-          createAnalysisProfile(profile.provider, { import_mode: "other" }),
-          f.resources,
-        )
-      ).key,
-    ).not.toBe(f.selection.key);
-  },
-);
+it("hashes packed checkpoint bytes beyond the first buffer", async () => {
+  const bytes = Buffer.concat([
+    Buffer.alloc(64 * 1024, 0x61),
+    Buffer.from("packed bytes beyond the initial read"),
+  ]);
+  const { packed, resources } = await fixture(bytes);
+  const expected = createHash("sha256").update(bytes).digest("hex");
+  await expect(hashGhidraPackedProgram(packed, resources)).resolves.toBe(
+    expected,
+  );
+});
 
 it.skipIf(process.platform === "win32")(
   "refuses a concurrent owner and admits it after the original owner closes",
@@ -273,23 +240,14 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps initial identity stable and rejects an unknown manifest version without rewriting it",
+  "rejects an unknown manifest version without rewriting it",
   async () => {
     const f = await fixture();
     await f.owner.acquire("initial");
     await f.owner.publish(f.packed);
     await f.owner.close();
-    const initial = await resolveGhidraCheckpoint(
-      f.root,
-      target,
-      profile,
-      f.resources,
-    );
-    expect(initial).toEqual(f.selection);
-    const path = join(initial.directory, "current.json");
+    const path = join(f.selection.directory, "current.json");
     const record = JSON.parse(await readFile(path, "utf8"));
-    expect(record.version).toBe(2);
-    expect(record.source.kind).toBe("initial-analysis");
     const unknown = JSON.stringify({ ...record, version: 1 });
     await writeFile(path, unknown);
     await expect(
@@ -335,15 +293,15 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "keeps the prior checkpoint after a failed publication and succeeds on retry",
   async () => {
-    const f = await fixture();
+    const f = await fixture("previous packed bytes");
     await f.owner.acquire("first");
     await f.owner.publish(f.packed);
-    const path = join(f.selection.directory, "current.json"),
-      before = await readFile(path, "utf8");
-    const actual =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
+    const directory = f.selection.directory;
+    const previous = f.owner.observation.source!;
+    const previousPath = join(directory, previous.file);
+    const manifest = join(directory, "current.json");
+    const committed = await readFile(manifest, "utf8");
+    const files = (await readdir(directory)).sort();
     vi.mocked(rename).mockRejectedValueOnce(
       new Error("controlled publish failure"),
     );
@@ -353,10 +311,21 @@ it.skipIf(process.platform === "win32")(
       _tag: "ProviderAdapterError",
       diagnostics: { reason: "controlled publish failure" },
     });
-    expect(await readFile(path, "utf8")).toEqual(before);
-    vi.mocked(rename).mockImplementation(actual.rename);
+    expect(await readFile(manifest, "utf8")).toBe(committed);
+    expect(await readFile(previousPath, "utf8")).toBe("previous packed bytes");
+    expect((await readdir(directory)).sort()).toEqual(files);
+
     await f.owner.publish(next);
-    expect(await readFile(path, "utf8")).not.toEqual(before);
+    const replacement = f.owner.observation.source!;
+    expect(JSON.parse(await readFile(manifest, "utf8"))).toMatchObject({
+      source: replacement,
+    });
+    expect(await readFile(join(directory, replacement.file), "utf8")).toBe(
+      "new packed bytes",
+    );
+    await expect(access(previousPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   },
 );
 

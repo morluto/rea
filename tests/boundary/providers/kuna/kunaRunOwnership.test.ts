@@ -1,7 +1,7 @@
 import { setImmediate } from "node:timers/promises";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { expect, it as test, vi } from "vitest";
+import { phaseGate } from "../../../support/lifecycleHarness.js";
 
 import { inspectKunaInstallationOwned as inspectKunaInstallation } from "./kunaResourceScope.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
@@ -11,19 +11,11 @@ import { fakeKunaCalls } from "./fakeKuna.js";
 import { run, session, unprovenCleanupLauncher } from "./kunaSessionFixture.js";
 
 const it = test.skipIf(process.platform === "win32");
-const barrier = () => {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-};
 
 it.each(["procedure_callees", "xrefs"] as const)(
   "shares foreground admission between a decompile and %s",
   async (operation) => {
-    const started = barrier();
-    const proceed = barrier();
+    const decompileLaunch = phaseGate();
     const grants: { owner: KunaRunSlots }[] = [];
     const acquire = KunaRunSlots.prototype.acquire;
     const spy = vi
@@ -38,8 +30,7 @@ it.each(["procedure_callees", "xrefs"] as const)(
       {},
       async (options) => {
         if (options.arguments[0] === "decompile") {
-          started.release();
-          await proceed.promise;
+          await decompileLaunch.hold();
         }
         return spawnOwnedProviderProcess(options);
       },
@@ -49,11 +40,7 @@ it.each(["procedure_callees", "xrefs"] as const)(
     const text = run(client, "procedure_pseudo_code", { procedure: "main" });
     let reference: ReturnType<typeof run> | undefined;
     try {
-      await awaitAcknowledgement(
-        started.promise,
-        text,
-        "Kuna decompile admission",
-      );
+      await decompileLaunch.reached(text, "Kuna decompile admission");
       const budget = grants[0]?.owner;
       expect(budget).toBeDefined();
       reference = run(
@@ -71,13 +58,13 @@ it.each(["procedure_callees", "xrefs"] as const)(
           ({ argv }) => argv[0] === "decompile-graph" || argv[0] === "xrefs",
         ),
       ).toBe(false);
-      proceed.release();
+      decompileLaunch.release();
       expect((await text).result).toContain("single-function");
       expect((await reference).result).toEqual([
         operation === "xrefs" ? "0x1004" : "0x1040",
       ]);
     } finally {
-      proceed.release();
+      decompileLaunch.release();
       await Promise.allSettled([text, reference]);
       await client.close();
       spy.mockRestore();

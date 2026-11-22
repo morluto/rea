@@ -1,21 +1,18 @@
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
 
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import {
-  ArtifactPathRegistry,
-  normalizeArtifactPath,
-} from "../ArtifactPaths.js";
-import {
+  type ArtifactResourceScope,
   ArtifactReaderFailure,
   type ArtifactEntry,
   type ArtifactReader,
-} from "../ArtifactReader.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
+  ArtifactPathRegistry,
+  normalizeArtifactPath,
+  streamChunkToBuffer,
+} from "../../resources/index.js";
 import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
@@ -31,6 +28,7 @@ import type {
   JavaScriptArtifactFileSet,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 interface ExpectedFile {
   readonly path: string;
@@ -383,7 +381,7 @@ const readText = async (
     await input.reader.open(input.entry, context.signal),
     context.signal,
   );
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   if (digest !== input.expected.sha256 || bytes.length !== input.expected.bytes)
     throw new ArtifactReaderFailure(
       "integrity",
@@ -551,6 +549,22 @@ const createUnanalyzedArtifactLookup = (
     occurrence.entry_kind === "file" &&
     occurrence.artifact_id === null &&
     relevantKind(occurrence.logical_path) !== undefined;
+  function* filesBelow(path: string): Iterable<ArtifactOccurrence> {
+    const prefix = `${path}/`;
+    for (
+      let index = lowerBound(
+        snapshot.occurrences,
+        prefix,
+        (entry) => entry.logical_path,
+      );
+      index < snapshot.occurrences.length;
+      index += 1
+    ) {
+      const entry = snapshot.occurrences[index];
+      if (entry === undefined || !entry.logical_path.startsWith(prefix)) break;
+      if (entry.entry_kind === "file") yield entry;
+    }
+  }
   return {
     coverage: snapshot.coverage,
     get(path) {
@@ -613,24 +627,15 @@ const createUnanalyzedArtifactLookup = (
       requested.set(path, file);
       return file;
     },
+    *filePathsBelow(path) {
+      for (const entry of filesBelow(path)) yield entry.logical_path;
+    },
     hasDirectory(path, containerSha256) {
       let results = directories.get(path);
       const previous = results?.get(containerSha256);
       if (previous !== undefined) return previous;
-      const prefix = `${path}/`;
       let present = false;
-      for (
-        let index = lowerBound(
-          snapshot.occurrences,
-          prefix,
-          (entry) => entry.logical_path,
-        );
-        index < snapshot.occurrences.length;
-        index += 1
-      ) {
-        const entry = snapshot.occurrences[index];
-        if (entry === undefined || !entry.logical_path.startsWith(prefix))
-          break;
+      for (const entry of filesBelow(path)) {
         if (
           (isOpaque(entry) || isUnavailableRelevant(entry)) &&
           (containerSha256 === undefined ||

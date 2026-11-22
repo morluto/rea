@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,19 +11,15 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-import {
-  captureProcessScenarioFile,
-  compareProcessEvidenceFiles,
-} from "../../../src/application/process/ProcessCli.js";
+import { captureProcessScenarioFile } from "../../../src/application/process/ProcessCli.js";
+import { compareProcessCaptureFiles } from "../../support/cli/processComparisonCli.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { parseProcessCaptureEvidence } from "../../../src/application/process/ProcessEvidence.js";
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 import { INVESTIGATION_EXAMPLES } from "../../../src/contracts/investigationExamples.js";
 import { observeProcessStartIdentity } from "../../../src/process/ProcessOwnershipObservation.js";
-import {
-  analysisCliErrorEnvelopeSchema,
-  analysisErrorProjectionSchema,
-} from "../../../src/contracts/errorSchemas.js";
+import { analysisCliErrorEnvelopeSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 
 const execFileAsync = promisify(execFile);
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
@@ -221,12 +218,6 @@ describe("process CLI errors", () => {
       const cases = [
         ["capture-process", join(root, "missing.json"), "--json"],
         ["capture-process", malformed, "--json"],
-        [
-          "compare-process-captures",
-          join(root, "missing-left.json"),
-          join(root, "missing-right.json"),
-          "--json",
-        ],
       ] as const;
 
       for (const arguments_ of cases) {
@@ -243,9 +234,7 @@ describe("process CLI errors", () => {
           category: "invalid_input",
           retryable: false,
           details: {
-            operation: expect.stringMatching(
-              /^(capture_process_scenario|compare_process_captures)$/u,
-            ),
+            operation: "capture_process_scenario",
             issues: [
               expect.objectContaining({
                 path: ["input_file"],
@@ -255,6 +244,29 @@ describe("process CLI errors", () => {
           },
         });
       }
+
+      // The comparison reads its captures as JSON inputs, naming the file.
+      const missingLeft = join(root, "missing-left.json");
+      const compared = await cli.run({
+        arguments: [
+          "compare-process-captures",
+          missingLeft,
+          join(root, "missing-right.json"),
+          "--json",
+        ],
+        cwd: root,
+      });
+      expect(compared.exitCode).toBe(1);
+      expect(
+        analysisCliErrorEnvelopeSchema.safeParse(compared.json).success,
+      ).toBe(true);
+      expect(compared.json).toMatchObject({
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        input_path: missingLeft,
+        details: { operation: "compare_process_captures" },
+      });
 
       const full = await cli.run({
         arguments: [
@@ -410,7 +422,7 @@ describe("process CLI evidence validation", () => {
     await writeFile(
       invalidCapture,
       JSON.stringify(
-        createEvidence(undefined, PROCESS_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
           predicateType: "rea.process-capture/other",
           operation: "capture_process_scenario",
           parameters: {},
@@ -421,7 +433,7 @@ describe("process CLI evidence validation", () => {
     await writeFile(
       unrelated,
       JSON.stringify(
-        createEvidence(undefined, PROCESS_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
           predicateType: "unrelated/v1",
           operation: "other",
           parameters: {},
@@ -431,17 +443,13 @@ describe("process CLI evidence validation", () => {
     );
 
     expect(
-      await compareProcessEvidenceFiles(invalidCapture, invalidCapture),
+      await compareProcessCaptureFiles(invalidCapture, invalidCapture),
     ).toMatchObject({
-      error: "Process command failed",
       category: "invalid_input",
     });
-    const failure = await compareProcessEvidenceFiles(unrelated, unrelated);
-    expect(analysisCliErrorEnvelopeSchema.safeParse(failure).success).toBe(
-      true,
-    );
+    const failure = await compareProcessCaptureFiles(unrelated, unrelated);
+    expect(analysisErrorProjectionSchema.safeParse(failure).success).toBe(true);
     expect(failure).toMatchObject({
-      error: "Process command failed",
       code: "invalid_request",
       retryable: false,
       category: "invalid_input",
@@ -461,9 +469,8 @@ describe("process CLI evidence validation", () => {
     await writeFile(malformed, "{}");
 
     expect(
-      await compareProcessEvidenceFiles(malformed, malformed),
+      await compareProcessCaptureFiles(malformed, malformed),
     ).toMatchObject({
-      error: "Process command failed",
       category: "invalid_input",
       code: "invalid_request",
       details: {

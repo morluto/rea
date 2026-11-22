@@ -2,8 +2,8 @@ import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../resources/index.js";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   AnalysisCancelledError,
@@ -23,6 +23,7 @@ import {
   NonRegularFileReadError,
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Omitted registration `timeoutMs` for each upstream IDA MCP request. */
 export const DEFAULT_IDA_REQUEST_TIMEOUT_MS = 300_000;
@@ -46,11 +47,14 @@ const common = {
     .optional(),
   mode: z.enum(["attached", "headless"]).default("attached"),
   /**
-   * Attached mode serves two upstream protocols, so an attached registration
-   * names one; omitting it no longer selects the legacy 1.4 GUI proxy.
-   * Headless mode has one protocol (the database supervisor).
+   * An attached registration names its upstream protocol. `"legacy"` (the
+   * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
+   * registration is refused with migration guidance rather than reported as an
+   * unknown value or read as another protocol. Headless mode uses the database
+   * supervisor when `protocol` is omitted, or `"hexrays"` for the official
+   * Hex-Rays IDA MCP.
    */
-  protocol: z.enum(["legacy", "native"]).optional(),
+  protocol: z.enum(["legacy", "native", "hexrays"]).optional(),
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
@@ -61,6 +65,9 @@ const common = {
     .refine(isAbsolute, "workspaceRoot must be absolute on the REA host")
     .optional(),
 };
+/** Refusal for a stored registration that still selects the removed 1.4 proxy. */
+export const LEGACY_PROTOCOL_REMOVED =
+  'the legacy ida-pro-mcp 1.4 attached protocol was removed. Replace this registration with the native ida-free-mcp plugin ("protocol": "native") for an open GUI database, or an ida-pro-mcp 2.x database supervisor in headless mode, as described in "Migrate a legacy attached registration"';
 const registrationSchema = z
   .union([
     z
@@ -90,18 +97,36 @@ const registrationSchema = z
       .strict(),
   ])
   .refine(
-    (config) => config.protocol === undefined || config.mode === "attached",
-    "An IDA MCP protocol requires attached mode; headless registrations omit protocol",
+    (config) =>
+      config.protocol === undefined ||
+      config.protocol === "hexrays" ||
+      config.mode === "attached",
+    'An IDA MCP protocol requires attached mode; a headless registration omits protocol or sets "hexrays"',
   )
   .refine(
     (config) => config.protocol !== undefined || config.mode !== "attached",
-    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin) or "legacy" (ida-pro-mcp 1.4 GUI proxy)',
+    'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
+  )
+  // Hex-Rays database leases belong to the MCP server process. Only a stdio
+  // registration gives REA a server, and therefore leases, of its own.
+  .refine(
+    (config) =>
+      config.protocol !== "hexrays" ||
+      (config.mode === "headless" && "command" in config),
+    "The Hex-Rays IDA MCP protocol requires a headless stdio registration",
   )
   // Resolve the upstream protocol once; consumers never infer it from mode.
-  .transform((config) => ({
-    ...config,
-    protocol: config.protocol ?? ("modern" as const),
-  }));
+  .transform((config, context) => {
+    if (config.protocol === "legacy") {
+      context.addIssue({
+        code: "custom",
+        path: ["protocol"],
+        message: LEGACY_PROTOCOL_REMOVED,
+      });
+      return z.NEVER;
+    }
+    return { ...config, protocol: config.protocol ?? ("modern" as const) };
+  });
 
 /** An upstream MCP registration plus REA's database lifecycle selection. */
 export type IdaConfiguration = z.infer<typeof registrationSchema>;
@@ -119,19 +144,19 @@ const registrationConstraint = (
 
 /** Resolved compatibility facts; persisted identities and diagnostics intentionally differ. */
 export const IDA_COMPATIBILITY_PROFILES = {
-  legacy: {
-    protocol: "legacy",
-    mode: "attached",
-    identity: "legacy-1.4",
-    diagnosticIdentity: "legacy-1.4",
-    diagnosticLabel: "attached",
-  },
   modern: {
     protocol: "modern",
     mode: "headless",
     identity: "database-supervisor",
     diagnosticIdentity: "database-supervisor",
     diagnosticLabel: "headless",
+  },
+  hexrays: {
+    protocol: "hexrays",
+    mode: "headless",
+    identity: "hexrays-ida-mcp",
+    diagnosticIdentity: "hexrays",
+    diagnosticLabel: "Hex-Rays",
   },
   native: {
     protocol: "native",
@@ -248,10 +273,7 @@ export const readIdaConfiguration = (
             carriedReason(cancellation.reason),
             {
               cleanup: {
-                reason:
-                  cause.cleanupCause instanceof Error
-                    ? cause.cleanupCause.message
-                    : String(cause.cleanupCause),
+                reason: errorMessage(cause.cleanupCause),
                 resources: [path],
               },
             },
@@ -275,15 +297,12 @@ export const readIdaConfiguration = (
               ? primary.message
               : primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                : `Cannot read IDA MCP registration ${path}: ${primary instanceof Error ? primary.message : String(primary)}`
+                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
             : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
-            reason:
-              cause.cleanupCause instanceof Error
-                ? cause.cleanupCause.message
-                : String(cause.cleanupCause),
+            reason: errorMessage(cause.cleanupCause),
             resources: [path],
           },
           settings: [
@@ -334,6 +353,18 @@ export const idaRegistrationTimeoutGuidance = (
         ? `This IDA request reached the registration timeoutMs deadline of ${String(timeoutMs)} ms (deadlineExpired).`
         : `This IDA request reached its ${String(timeoutMs)} ms deadline (deadlineExpired), within the registration timeoutMs ceiling of ${String(ceilingMs)} ms.`,
   remediationAction: `Set timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG to an integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} (omitted means ${String(DEFAULT_IDA_REQUEST_TIMEOUT_MS)}). REA applies the edited file on the next IDA connection after it re-reads the registration; an already open session keeps the timeout it connected with. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.`,
+});
+
+/**
+ * Name the upstream supervisor setting that ended an open. It belongs to the
+ * process that runs ida-pro-mcp, not to REA's registration timeoutMs.
+ */
+export const idaSupervisorOpenTimeoutGuidance = (
+  seconds: number,
+): { readonly userMessage: string; readonly remediationAction: string } => ({
+  userMessage: `The IDA database supervisor stopped opening and analyzing the input after its IDA_MCP_OPEN_TIMEOUT deadline of ${String(seconds)} s. That deadline is an ida-pro-mcp setting, separate from REA's registration timeoutMs.`,
+  remediationAction:
+    "Raise IDA_MCP_OPEN_TIMEOUT (0 waits indefinitely) in the environment that starts the ida-pro-mcp supervisor, then restart it. Keep the registration timeoutMs in the JSON file named by REA_IDA_MCP_CONFIG above the expected analysis time as well. Confirm retained cleanup before retrying.",
 });
 
 /** A REA_IDA_MCP_CONFIG rejection that names the setting it concerns. */

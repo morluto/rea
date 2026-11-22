@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { boundedList } from "../boundedList.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
@@ -119,6 +120,34 @@ const choose = <T extends object>(
   return out;
 };
 
+/**
+ * Call sites each source unknown repeats on every summary and page. The
+ * shared fields are copied into every view before the page budget applies,
+ * so per-call detail stays a small prefix; the parent keeps every call site.
+ */
+const VIEW_CALL_SITES = 20;
+
+/**
+ * A web bundle's unknowns as views repeat them: per-call detail is a prefix,
+ * with the count of call sites only the parent Evidence lists.
+ */
+export const webBundleViewSourceUnknownsSchema = z.array(
+  webBundleAnalysisSchema.shape.unknowns.element.extend({
+    call_sites_omitted: z.int().min(1).exactOptional(),
+  }),
+);
+
+const viewSourceUnknowns = (
+  unknowns: WebBundleAnalysis["unknowns"],
+): z.output<typeof webBundleViewSourceUnknownsSchema> =>
+  unknowns.map((unknown) => {
+    if (unknown.call_sites === undefined) return unknown;
+    const { items, omitted } = boundedList(unknown.call_sites, VIEW_CALL_SITES);
+    return omitted === 0
+      ? unknown
+      : { ...unknown, call_sites: [...items], call_sites_omitted: omitted };
+  });
+
 /** Historical projection of completed analyze_web_bundle Evidence. */
 export const projectWebBundleView = (
   parent: AnalysisViewParent,
@@ -164,7 +193,7 @@ export const projectWebBundleView = (
     artifact: parent.artifact ?? null,
     target_url: report.capture.target_url,
     target_origin: report.capture.target_origin,
-    source_unknowns: report.unknowns,
+    source_unknowns: viewSourceUnknowns(report.unknowns),
     limitations: boundedViewMessages(
       sourceLimitations,
       parent.evidenceId,

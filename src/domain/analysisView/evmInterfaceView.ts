@@ -3,7 +3,7 @@ import { z } from "zod";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { evmInterfaceSchema } from "../evm/evmInterface.js";
 import { err, ok } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -18,6 +18,7 @@ import {
   analysisTextPage,
   analysisTextPageItemSchema,
 } from "./analysisViewText.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 /** Retained inferred candidates or exact text; offsets for text count UTF-16 code units. */
 export const evmViewRequestSchema = z.strictObject({
@@ -48,6 +49,8 @@ export const evmSummarySchema = z.strictObject({
   limitations: evmInterfaceSchema.shape.limitations,
 });
 
+const readEvmInterface = createAnalysisViewResultReader(evmInterfaceSchema);
+
 /** Select already authenticated producer facts; no interpreter or provider is invoked. */
 export const projectEvmInterfaceView = (
   parent: AnalysisViewParent,
@@ -66,14 +69,14 @@ export const projectEvmInterfaceView = (
         },
       ]),
     );
-  const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
+  const parsed = readEvmInterface(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
+  const subject = evidenceFileTarget(parent);
   if (
     subject == null ||
     subject.format !== "file" ||
-    subject.digest.sha256 !== report.artifact.sha256
+    subject.sha256 !== report.artifact.sha256
   )
     return err(
       analysisViewInputError([

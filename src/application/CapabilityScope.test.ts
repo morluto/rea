@@ -1,6 +1,6 @@
 import { expect, it, vi } from "vitest";
 
-import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import { CapabilityScope } from "./CapabilityScope.js";
 
 it("retains each failed cleanup while releasing successful peers across retries", async () => {
@@ -75,23 +75,13 @@ it("retains each failed cleanup while releasing successful peers across retries"
 
 it("joins concurrent shutdowns and seals ownership before asynchronous cleanup settles", async () => {
   const scope = new CapabilityScope();
-  let acknowledge = () => {};
-  const entered = new Promise<void>((resolve) => {
-    acknowledge = resolve;
-  });
-  let release = () => {};
-  const released = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const close = vi.fn(async () => {
-    acknowledge();
-    await released;
-  });
+  const cleanup = phaseGate();
+  const close = vi.fn(() => cleanup.hold());
   scope.own("controlled-owner", {}, close);
   const first = scope.close();
   let second: Promise<void> | undefined;
   try {
-    await awaitAcknowledgement(entered, first, "capability cleanup");
+    await cleanup.reached(first, "capability cleanup");
     second = scope.close();
     let secondSettled = false;
     void second.then(() => {
@@ -103,7 +93,7 @@ it("joins concurrent shutdowns and seals ownership before asynchronous cleanup s
     expect(() => scope.own("later-owner", {}, async () => undefined)).toThrow(
       "after host shutdown",
     );
-    release();
+    cleanup.release();
     await Promise.all([first, second]);
     expect(() =>
       scope.own("post-shutdown-owner", {}, async () => undefined),
@@ -111,7 +101,7 @@ it("joins concurrent shutdowns and seals ownership before asynchronous cleanup s
     await scope.close();
     expect(close).toHaveBeenCalledTimes(1);
   } finally {
-    release();
+    cleanup.release();
     await Promise.allSettled([
       first,
       ...(second === undefined ? [] : [second]),

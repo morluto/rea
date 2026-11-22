@@ -1,4 +1,5 @@
 import { createTestArtifactResourceScope } from "../../../tests/fixtures/artifactResourceScope.js";
+import { SIMULATED_LINUX_X64 } from "../../../tests/fixtures/simulatedHost.js";
 import {
   ProcessOwnershipInspectionCancelled,
   ProcessOwnershipIdentityBatchFailure,
@@ -28,13 +29,13 @@ import {
   runWakaruCommand,
   type WakaruLauncher,
 } from "./WakaruCommand.js";
-import { prlimitArgumentVector } from "../../process/LinuxResourceLimits.js";
 import { RECOVERY_LIMITS } from "./WakaruRelease.js";
 
 it("names the Wakaru configuration requirement when it is not configured", async () => {
-  const refusal: unknown = await resolveWakaruCommand({}).catch(
-    (cause: unknown) => cause,
-  );
+  const refusal: unknown = await resolveWakaruCommand(
+    {},
+    SIMULATED_LINUX_X64,
+  ).catch((cause: unknown) => cause);
 
   if (!(refusal instanceof AnalysisCapabilityUnavailableError))
     throw new Error("Expected a capability refusal");
@@ -422,7 +423,7 @@ it("enforces the shared deadline while exited output streams remain open", async
   }
 });
 
-it("pins both Wakaru ceilings through the shared prlimit vector", async () => {
+it("launches Wakaru with fixed memory, file and CPU ceilings", async () => {
   let observed: readonly string[] | undefined;
   const producer = createProducer();
   const command = "/selected/wakaru";
@@ -457,14 +458,12 @@ it("pins both Wakaru ceilings through the shared prlimit vector", async () => {
     }),
   ).resolves.toMatchObject({ exit_code: 0 });
   expect(observed).toEqual([
-    ...prlimitArgumentVector(
-      {
-        address_space_bytes: RECOVERY_LIMITS.addressSpaceBytes,
-        file_bytes: RECOVERY_LIMITS.outputBytes,
-        cpu_seconds: RECOVERY_LIMITS.cpuSeconds,
-      },
-      command,
-    ),
+    "--as=1073741824:1073741824",
+    "--fsize=134217728:134217728",
+    "--cpu=120:120",
+    "--core=0:0",
+    "--",
+    command,
     "--version",
   ]);
 });

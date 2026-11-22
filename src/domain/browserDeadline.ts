@@ -1,7 +1,9 @@
 import {
   MAX_NODE_TIMER_DELAY_MS,
+  deadlineParameterLimit,
   timerDurationMsSchema,
 } from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
 
 import type { BrowserObservationOperation } from "./browserObservationErrors.js";
 
@@ -30,11 +32,18 @@ export const browserDeadlineIncrease = (
   key: string,
   timeoutMs: number,
   defaultMs: number,
-  cli: string,
 ): string =>
   timeoutMs < MAX_NODE_TIMER_DELAY_MS
-    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(defaultMs)}), or use ${cli} on the CLI.`
+    ? `Increase ${key} above ${String(timeoutMs)} (integer milliseconds from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)}; omitted means ${String(defaultMs)}).`
     : `${key} is already at the maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms; do not increase it further.`;
+
+/** Recovery for a caller-selectable browser deadline, with the control it binds. */
+export interface BrowserDeadlineRecovery {
+  readonly userMessage: string;
+  readonly remediationAction: string;
+  /** Present when the caller can select the deadline on the next call. */
+  readonly limit?: AnalysisControlLimit;
+}
 
 export const browserDeadlineRetry =
   "Applies on the next call. Allow execution, cleanup and delivery headroom in the outer MCP client deadline. Confirm outstanding work and cleanup before retrying.";
@@ -127,7 +136,7 @@ export const cdpCommandDeadlineRecovery = (
   phase: CdpCommandDeadlinePhase,
   method?: string,
   selectable = true,
-): { readonly userMessage: string; readonly remediationAction: string } => {
+): BrowserDeadlineRecovery => {
   const subject = cdpDeadlineSubject(timeoutMs, phase, method, selectable);
   if (!selectable) {
     const fixed = noRuntimeOverrideSentence(
@@ -137,7 +146,12 @@ export const cdpCommandDeadlineRecovery = (
   }
   return {
     userMessage: `${subject} This is not the caller observation window, not the ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms CDP discovery deadline, and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace.`,
-    remediationAction: `${browserDeadlineIncrease("command_timeout_ms", timeoutMs, DEFAULT_CDP_COMMAND_TIMEOUT_MS, "--command-timeout-ms")} ${browserDeadlineRetry} command_timeout_ms does not raise the CDP discovery deadline (default ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms, or discovery_timeout_ms where supported), nor the fixed protocol, retained-event, or source byte budgets or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace, which have no runtime override.`,
+    limit: deadlineParameterLimit(
+      "command_timeout_ms",
+      timeoutMs,
+      DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+    ),
+    remediationAction: `${browserDeadlineIncrease("command_timeout_ms", timeoutMs, DEFAULT_CDP_COMMAND_TIMEOUT_MS)} ${browserDeadlineRetry} command_timeout_ms does not raise the CDP discovery deadline (default ${String(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ms, or discovery_timeout_ms where supported), nor the fixed protocol, retained-event, or source byte budgets or the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace, which have no runtime override.`,
   };
 };
 
@@ -147,7 +161,7 @@ export const cdpDiscoveryTimeoutRecovery = (
   timeoutMs: number,
   phase: "response" | "browser-socket",
   budgetDescription: string,
-): { readonly userMessage: string; readonly remediationAction: string } => {
+): BrowserDeadlineRecovery => {
   const unrelatedCommand = cdpCommandTimeoutUnrelatedControl(operation);
   if (!cdpDiscoveryTimeoutIsSelectable(operation)) {
     const subject =
@@ -173,7 +187,12 @@ export const cdpDiscoveryTimeoutRecovery = (
   );
   return {
     userMessage: `${subject} This is not the caller observation window and not the ${String(CDP_CLEANUP_GRACE_MS)} ms cleanup grace. ${fixedBudget}`,
-    remediationAction: `${browserDeadlineIncrease("discovery_timeout_ms", timeoutMs, CDP_DISCOVERY_RESPONSE_TIMEOUT_MS, "--discovery-timeout-ms")} ${browserDeadlineRetry} ${fixedBudget}`,
+    remediationAction: `${browserDeadlineIncrease("discovery_timeout_ms", timeoutMs, CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)} ${browserDeadlineRetry} ${fixedBudget}`,
+    limit: deadlineParameterLimit(
+      "discovery_timeout_ms",
+      timeoutMs,
+      CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+    ),
   };
 };
 

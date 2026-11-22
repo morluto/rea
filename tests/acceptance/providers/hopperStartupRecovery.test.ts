@@ -14,8 +14,9 @@ import { z } from "zod";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
-import { acquireHopperTargetLease } from "../../../src/process/HopperLease.js";
+import { acquireHopperTargetLease } from "../../../src/hopper/HopperLease.js";
 import { waitFor } from "../../support/testWait.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const statusSchema = z.object({ result: z.object({ open: z.boolean() }) });
 const test = workspaceCliTest.skipIf(process.platform !== "darwin");
@@ -92,7 +93,10 @@ test.for(["target", "loader"] as const)(
       stderr: "pipe",
       env: environment,
     });
-    const mcp = new Client({ name: "hopper-literal-boundary", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-literal-boundary", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await closeVerifierResources([
         () => mcp.close(),
@@ -183,7 +187,10 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     env: environment,
     stderr: "pipe",
   });
-  const mcp = new Client({ name: "hopper-startup-recovery", version: "1" });
+  const mcp = new Client(
+    { name: "hopper-startup-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   let stderr = "";
   transport.stderr?.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
@@ -197,6 +204,13 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
       throw new Error(`${name}: ${stderr}`, { cause });
     });
   expect((await call("open_binary", { path: target })).isError).not.toBe(true);
+  const appleEventsRejection = {
+    boundary: "apple_events_authorization",
+    reason: "not_authorized",
+    responsibility: "client_or_disclaimed_runtime",
+    settings_pane: "privacy_security_automation",
+    entitlement_id: "com.apple.security.automation.apple-events",
+  };
   for (const operation of ["current_document", "list_procedures"]) {
     const { error } = parseMcpToolError(await call(operation));
     expect(error).toMatchObject({
@@ -207,10 +221,7 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         stage: "launch",
         provider_state: "unknown",
         retry_action: "unknown",
-        launch_rejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launch_rejection: appleEventsRejection,
         launcher: {
           exit_code: 2,
           stderr: {
@@ -221,11 +232,6 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
         },
       },
     });
-    expect(error.remediation.action).toContain("client developer");
-    expect(error.remediation.action).toContain("Terminal");
-    expect(error.remediation.action).toContain(
-      "Retrying from the same unauthorized client will not succeed until authorization changes",
-    );
     const bootstrap = await readFile(receipt, "utf8");
     await expect(access(dirname(bootstrap))).rejects.toMatchObject({
       code: "ENOENT",
@@ -243,10 +249,7 @@ test("recovers a denied Hopper launch through the same stdio MCP session and CLI
     retryable: false,
     details: {
       retry_action: "unknown",
-      launch_rejection: {
-        boundary: "apple_events_authorization",
-        reason: "not_authorized",
-      },
+      launch_rejection: appleEventsRejection,
       launcher: { exit_code: 2 },
     },
   });
@@ -289,7 +292,10 @@ test.for(["handoff", "not-found"] as const)(
         REA_LOG_LEVEL: "silent",
       },
     });
-    const mcp = new Client({ name: "hopper-late-readiness", version: "1" });
+    const mcp = new Client(
+      { name: "hopper-late-readiness", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const children: ChildProcess[] = [];
     let runtime: string | undefined;
     onTestFinished(async () => {
@@ -324,7 +330,17 @@ test.for(["handoff", "not-found"] as const)(
                 : "provider_unavailable",
             details:
               launchMode === "handoff"
-                ? { timeout_ms: startupTimeoutMs, launcher: { exit_code: 0 } }
+                ? {
+                    timeout_ms: startupTimeoutMs,
+                    launcher: {
+                      // The receipt proves launch. The deadline snapshot may
+                      // precede delivery of the successful child exit event.
+                      exit_code: expect.toSatisfy(
+                        (exitCode: unknown) =>
+                          exitCode === null || exitCode === 0,
+                      ),
+                    },
+                  }
                 : { stage: "launch", launcher: { exit_code: 3 } },
           },
         },

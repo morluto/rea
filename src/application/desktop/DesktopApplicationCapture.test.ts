@@ -1,5 +1,7 @@
+import * as linuxSampling from "../../process/capture/LinuxProcessSampling.js";
 import {
   samplingInspectionFailures,
+  samplingObservation,
   settleSamplingReads,
   SamplingReadBatchFailure,
 } from "../../process/capture/ProcessSamplingObservation.js";
@@ -42,13 +44,17 @@ import * as captureFailures from "./DesktopCaptureFailure.js";
 import * as providerProcess from "../../process/ProviderProcess.js";
 import { systemProcessOwnershipHost } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessOwnershipInspectionCancelled } from "../../process/ProcessInspectionCancellation.js";
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import {
   desktopApplicationCaptureSchema,
   desktopCaptureEventSchema,
 } from "../../domain/desktop/desktopCapture.js";
-import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import * as desktopSession from "../../desktop/DesktopApplicationSession.js";
+import { createDesktopCaptureProvider } from "../../desktop/DesktopCaptureProvider.js";
+import {
+  DesktopSessionCleanupError,
+  type SessionRequest,
+} from "../../ports/DesktopApplicationSession.js";
 import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
@@ -166,6 +172,7 @@ const host = (
   platform,
   environment,
   callerDirectory: environment.HOME ?? "/",
+  desktop: createDesktopCaptureProvider(),
   nextRequest,
   report: async () => {},
 });
@@ -362,6 +369,59 @@ it.skipIf(process.platform !== "linux")(
     } finally {
       spy.mockRestore();
     }
+  },
+);
+
+it.skipIf(process.platform !== "linux")(
+  "keeps ownership of a worker after its clean-env launcher exits",
+  async () => {
+    const { root, environment } = await fixture();
+    const app = join(root, "bin/fakeapp");
+    const worker = join(root, "worker");
+    const pidFile = join(root, "worker-pid");
+    const completed = join(root, "worker-completed");
+    await executable(app, `#!/bin/sh\n"${worker}" &\nexit 0\n`);
+    await executable(
+      worker,
+      [
+        "#!/bin/sh",
+        `printf '%s\\n' "$$" > "${pidFile}"`,
+        "/bin/sleep 2",
+        '[ "${INHERITED-unset}" = unset ] && [ "$SELECTED" = yes ] || exit 91',
+        `touch "${completed}"`,
+      ].join("\n"),
+    );
+    const entry = join(root, "clean.desktop");
+    const argv = ["/usr/bin/env", "-i", "SELECTED=yes", app];
+    await writeFile(
+      entry,
+      `[Desktop Entry]\nType=Application\nName=FakeApp\nExec=${argv.join(" ")}\n`,
+    );
+
+    const evidence = await captureDesktopApplication(
+      {
+        ...request(join(root, "out")),
+        desktopEntry: entry,
+        executable: undefined,
+        maxDurationSeconds: 8,
+      },
+      host({ ...environment, INHERITED: "host" }),
+    );
+    if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+    const capture = desktopApplicationCaptureSchema.parse(
+      evidence.normalized_result,
+    );
+    expect(capture.application.argv).toEqual(argv);
+    expect(capture.session).toMatchObject({
+      end_reason: "application_exited",
+      cleanup: { verified: true },
+    });
+    const workerPid = Number(await readFile(pidFile, "utf8"));
+    expect(workerPid).not.toBe(capture.session.launch_pid);
+    expect(capture.session.processes).toContainEqual(
+      expect.objectContaining({ pid: workerPid, started_by_capture: true }),
+    );
+    expect(fileExists(completed)).toBe(true);
   },
 );
 
@@ -1107,7 +1167,7 @@ const sessionInspectionFailure = async (
     stopped.inspectionCleanup === undefined
   )
     throw new Error("Expected actual supervisor-held inspection cleanup");
-  return new desktopSession.DesktopSessionCleanupError(cause, {
+  return new DesktopSessionCleanupError(cause, {
     reason: stopped.reason,
     inspectionCleanup: stopped.inspectionCleanup,
     leases: [
@@ -1118,6 +1178,18 @@ const sessionInspectionFailure = async (
     ],
   });
 };
+
+// Supply the Linux identity sample even when the test host has no procfs.
+// The real run-token reader still transfers the descriptor failure.
+const fixtureProcessStat = samplingObservation({
+  pid: process.pid,
+  parent_pid: process.ppid,
+  process_group_id: process.pid,
+  session_id: process.pid,
+  command: "",
+  startTime: "1",
+  lifecycle: "non-zombie" as const,
+});
 
 it.for([
   { retrySucceeds: true, sessionOwns: false, neutralBatch: false },
@@ -1137,7 +1209,7 @@ it.for([
     const completed = { value: "caller-selected completed sampling peer" };
     let sourceFailure: unknown = descriptor.failure;
     const captured = captureFixture();
-    let sessionFailure: desktopSession.DesktopSessionCleanupError | undefined;
+    let sessionFailure: DesktopSessionCleanupError | undefined;
     const retainedStores = new Set<DesktopContentStore>();
     let projectedFailure: AnalysisError | undefined;
     vi.spyOn(linuxInventory, "inspectLinuxApplication").mockResolvedValue({
@@ -1157,6 +1229,9 @@ it.for([
       state: "listed",
       windows: [],
     });
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockResolvedValue(
+      fixtureProcessStat,
+    );
     const environmentRead = vi
       .spyOn(systemProcessOwnershipHost, "environment")
       .mockRejectedValue(descriptor.failure);

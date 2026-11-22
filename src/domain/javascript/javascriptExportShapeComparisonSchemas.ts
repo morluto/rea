@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { javascriptSourceRangeSchema } from "./javascriptSourceCoordinates.js";
 
@@ -156,7 +157,7 @@ export const projectedExportReturnShapesSchema = z
     callable_kind: z.enum(["function", "class", "method"]),
     static_return_shapes: z.array(projectedReturnShapeSchema),
     return_shape_coverage: z.strictObject({
-      status: z.enum(["complete", "partial", "truncated"]),
+      status: z.enum([...knownCoverageStatusSchema.options, "truncated"]),
       retained_return_sites: z.int().min(0),
       omitted_return_sites: z.int().min(0).nullable(),
       omitted_fields: z.int().min(0),
@@ -266,7 +267,7 @@ export const javaScriptExportShapeComparisonChangeSchema = z.strictObject({
 
 const inventoryPropertyCoverageSchema = z.strictObject({
   path: jsonPointerSchema,
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
 });
 
 const propertyInventorySchema = z.strictObject({

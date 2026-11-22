@@ -1,10 +1,9 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { open, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { byteEntropySchema } from "../../../src/domain/native/byteEntropy.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
-import { TOOL_EFFECTS } from "../../../src/contracts/toolEffects.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
@@ -18,7 +17,6 @@ import { ok } from "../../../src/domain/result.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
-import { registerAnalysisViewTool } from "../../../src/server/registerAnalysisViewTool.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { withAdmittedAnalysis } from "../../../src/server/analysisAdmission.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -33,8 +31,9 @@ import {
   peStoredExportTableImage,
   peRepeatedExportNamesImage,
 } from "../../fixtures/binaryDiagnostics/nativeExports.js";
-import { parseNativeExports } from "../../../src/native/exports/NativeExportParser.js";
+import { parseNativeExports } from "../../../src/domain/native/nativeExportParser.js";
 import { createNativeExportsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("reports the exhausted native export allowance through MCP", async () => {
   const root = await createTestTempDirectory("rea-native-export-mcp-limits-");
@@ -42,7 +41,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
     throw new Error("deep provider must not start");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-export-limits", version: "1" });
+  const client = new Client(
+    { name: "native-export-limits", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -57,6 +59,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "byte-limit.dll",
       bytes: peRepeatedExportNamesImage(0x3000),
+      boundary: "retained_text",
       maximum: 16777216,
       expected: "fixed byte allowance",
       excluded: "fixed count",
@@ -64,6 +67,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
+      boundary: "rows",
       maximum: 262144,
       expected: "fixed count",
       excluded: "fixed byte allowance",
@@ -81,7 +85,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
-        reported_limits: { boundary: "structure", maximum: fixture.maximum },
+        reported_limits: {
+          boundary: fixture.boundary,
+          maximum: fixture.maximum,
+        },
       },
     });
     expect(error.remediation.action).toContain(fixture.expected);
@@ -109,10 +116,13 @@ it.each(["inspect_native_exports", "inspect_byte_entropy"] as const)(
         : { nativeExports: service },
       { logger: silentLogger },
     );
-    const client = new Client({
-      name: "exports-preflight-client",
-      version: "1",
-    });
+    const client = new Client(
+      {
+        name: "exports-preflight-client",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       await client.close();
       await server.close();
@@ -190,14 +200,20 @@ it.each([false, true])(
         withAdmittedAnalysis: admission,
       },
     );
-    registerAnalysisViewTool(
+    registerServiceTools(
       server,
-      silentLogger,
-      evidenceById,
-      recordEvidence,
-      admission,
+      { analysisView: {} },
+      {
+        logger: silentLogger,
+        evidenceById,
+        recordEvidence,
+        withAdmittedAnalysis: admission,
+      },
     );
-    const client = new Client({ name: "entropy-cleanup-client", version: "1" });
+    const client = new Client(
+      { name: "entropy-cleanup-client", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     onTestFinished(async () => {
       failClose = false;
       try {
@@ -293,7 +309,10 @@ it("records inline layout with compact schemas and canonical path checks", async
     { kind: "session", session },
     { binaryLayout: service },
   );
-  const client = new Client({ name: "binary-layout-contract", version: "1" });
+  const client = new Client(
+    { name: "binary-layout-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -362,7 +381,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     path,
     Buffer.concat([
       Buffer.alloc(4096),
-      randomBytes(4096),
+      Buffer.from(Array.from({ length: 4096 }, (_, index) => index % 256)),
       Buffer.from("ordinary text ".repeat(400)),
     ]),
   );
@@ -370,7 +389,10 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     throw new Error("No provider needed");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "entropy-contract", version: "1" });
+  const client = new Client(
+    { name: "entropy-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -380,6 +402,19 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  for (const [options, field, reason] of [
+    [{ detail: "summary", surprise: true }, "surprise", "unknown_argument"],
+    [{ block_size: 257 }, "block_size", "invalid_value"],
+  ] as const) {
+    const rejected = await client.callTool({
+      name: "inspect_byte_entropy",
+      arguments: { path, ...options },
+    });
+    expect(parseMcpToolError(rejected).error).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: [field], reason }] },
+    });
+  }
   const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_byte_entropy",
@@ -405,7 +440,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     { offset: 12288, length: 1504 },
   ]);
   expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
-  expect(TOOL_EFFECTS.inspect_byte_entropy).toMatchObject({
+  expect(toolContract("inspect_byte_entropy").effects).toMatchObject({
     launchesProcess: false,
     writesFilesystem: false,
     accessesNetwork: false,
@@ -437,7 +472,10 @@ it("records a portable export inventory through MCP without a binary target", as
     throw new Error("deep provider must not start");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "native-exports-contract", version: "1" });
+  const client = new Client(
+    { name: "native-exports-contract", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();

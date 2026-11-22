@@ -1,4 +1,4 @@
-import type { DoctorProviderInspection } from "./Doctor.js";
+import type { DoctorProviderInspection } from "../ports/DoctorProviderInspection.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const SELECTED_REGISTRATION_SETTINGS = [
@@ -122,15 +122,22 @@ export const explicitSetupRegistrationEnvironment = (
     }),
   );
 
+/** Saved values stay in the settings file and must never be copied to a client. */
+export const copyableProviderRegistrationSettings = ({
+  registrationEnvironment,
+  providerSettings,
+}: DoctorProviderInspection): readonly [string, string][] =>
+  Object.entries(registrationEnvironment).filter(
+    ([key]) => providerSettings?.[key]?.source !== "config",
+  );
+
 /** Discovered provider defaults; explicit selections are applied separately. */
 export const providerRegistrationEnvironment = (
   inspections: readonly DoctorProviderInspection[],
 ): Readonly<Record<string, string>> =>
   Object.fromEntries(
     inspections
-      .flatMap(({ registrationEnvironment }) =>
-        Object.entries(registrationEnvironment),
-      )
+      .flatMap(copyableProviderRegistrationSettings)
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right)),
   );
 

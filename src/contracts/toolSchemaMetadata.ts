@@ -6,10 +6,8 @@ import { z } from "zod";
 
 import type { ToolContract } from "./toolContractTypes.js";
 import { advertisedInputExamples } from "./advertisedInputExamples.js";
-import {
-  presentInputJsonSchema,
-  presentOutputJsonSchema,
-} from "./inputSchemaPresentation.js";
+import { presentInputJsonSchema } from "./inputSchemaPresentation.js";
+import { presentOutputJsonSchema } from "./outputSchemaPresentation.js";
 import {
   schemaArrays,
   schemaChildren,
@@ -19,7 +17,7 @@ import {
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
 import { shareOutputDefinitions } from "./outputSchemaDefinitions.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
-import { isRecord } from "../domain/isRecord.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { schemaAnnotations } from "../domain/schemaAnnotations.js";
 
 const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
@@ -178,7 +176,10 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
     ),
   );
 
-/** Return the full-profile advertised input JSON Schema registered on MCP. */
+/**
+ * Return the input JSON Schema registered on MCP. It keeps canonical patterns;
+ * `advertiseToolInput` derives what a client receives from it.
+ */
 export const advertisedInputJsonSchema = <Contract extends ToolContract>(
   contract: Contract,
 ): Record<string, unknown> =>

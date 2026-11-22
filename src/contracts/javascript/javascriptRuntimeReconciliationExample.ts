@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { createEvidence } from "../../domain/evidence.js";
 import {
   createJavaScriptApplicationGraph,
@@ -217,7 +218,7 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
 );
 
 const runtimeEvidence = createEvidence(
-  undefined,
+  unknownTarget("not-observed"),
   {
     id: "rea-cdp-electron",
     name: "REA Electron file-page CDP observation provider",

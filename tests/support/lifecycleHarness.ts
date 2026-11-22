@@ -3,51 +3,88 @@ import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 /**
  * Controls for the scenarios in
  * docs/development/testing.md#lifecycle-regressions that a fixed delay cannot
- * establish: a late handshake or work still in flight at close (`phaseGate`),
+ * establish: a late handshake or work still in flight at close (`phaseGate`,
+ * or `phaseArrival` when the work waits on something other than a release),
  * cancellation during final cleanup (`cancelDuringCleanup`), and mixed child
  * cleanup outcomes with retry (`controlledCleanup`).
  */
 
 /**
+ * A phase boundary the code under test only announces: it calls `arrive` and
+ * keeps going (or waits on something the test triggers, such as an abort),
+ * and the test waits until the boundary is `reached`.
+ */
+export interface PhaseArrival<T = void> {
+  /** Called by the code under test: records arrival with `value`. */
+  arrive(value: T): void;
+  /**
+   * Resolve with the arrival value once the boundary is reached. Fails if
+   * `operation` settles first or the test wait deadline passes.
+   */
+  reached(operation: Promise<unknown>, boundary: string): Promise<T>;
+}
+
+export const phaseArrival = <T = void>(): PhaseArrival<T> => {
+  let arrive!: (value: T) => void;
+  const arrived = new Promise<T>((resolve) => {
+    arrive = resolve;
+  });
+  return {
+    arrive,
+    reached: async (operation, boundary) => {
+      // Pass `arrived` itself: a derived promise would settle a turn later
+      // and lose the race to an operation that settles right after arriving.
+      await awaitAcknowledgement(arrived, operation, boundary);
+      return arrived;
+    },
+  };
+};
+
+/**
  * A phase boundary the test holds open. The code under test calls `hold` at
  * the boundary and waits there; the test waits until the boundary is
- * `reached`, acts (closes, cancels, lets a deadline pass), then `release`s it.
+ * `reached`, acts (closes, cancels, lets a deadline pass), then `release`s it
+ * with the value `hold` returns, or `reject`s it with the failure `hold`
+ * throws (a late module load, a read that fails after cancellation).
  */
-export interface PhaseGate<T = void> {
+export interface PhaseGate<T = void, R = void> {
   /** Called by the code under test: records arrival with `value`, then waits for release. */
-  hold(value: T): Promise<void>;
+  hold(value: T): Promise<R>;
   /**
    * Resolve with the held value once the boundary is reached. Fails if
    * `operation` settles first or the test wait deadline passes.
    */
   reached(operation: Promise<unknown>, boundary: string): Promise<T>;
-  /** Let every current and later `hold` continue. Safe to call more than once. */
-  release(): void;
+  /**
+   * Let every current and later `hold` continue with `value`. Only the first
+   * `release` or `reject` decides the outcome; later calls are ignored.
+   */
+  release(value: R): void;
+  /** Make every current and later `hold` throw `error`. */
+  reject(error: unknown): void;
 }
 
-export const phaseGate = <T = void>(): PhaseGate<T> => {
-  let arrive!: (value: T) => void;
-  const arrived = new Promise<T>((resolve) => {
-    arrive = resolve;
-  });
-  let release!: () => void;
-  const released = new Promise<void>((resolve) => {
+export const phaseGate = <T = void, R = void>(): PhaseGate<T, R> => {
+  const arrival = phaseArrival<T>();
+  let release!: (value: R) => void;
+  let reject!: (error: unknown) => void;
+  const released = new Promise<R>((resolve, refuse) => {
     release = resolve;
+    reject = refuse;
   });
+  // A rejection before any `hold` is observed by that later `hold`, not here.
+  released.catch(() => {});
   return {
-    hold: async (value) => {
-      arrive(value);
-      await released;
+    // Each hold gets its own promise, so code under test that leaves a held
+    // rejection unhandled is still reported; the guard above covers only the
+    // gate's shared outcome.
+    hold: (value) => {
+      arrival.arrive(value);
+      return released.then((outcome) => outcome);
     },
-    reached: async (operation, boundary) => {
-      await awaitAcknowledgement(
-        arrived.then(() => {}),
-        operation,
-        boundary,
-      );
-      return arrived;
-    },
+    reached: arrival.reached,
     release,
+    reject,
   };
 };
 

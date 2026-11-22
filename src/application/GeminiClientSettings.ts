@@ -5,7 +5,7 @@ import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import {
   clientConfigurationValuesEqual,
@@ -22,6 +22,7 @@ import {
 } from "./ClientConfigurationFiles.js";
 import type { SetupClient } from "./SupportedClients.js";
 import { readJunieLocationBlock } from "./JunieClientSettings.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type SettingsSource = { path: string; document: ClientConfigurationDocument };
 const folderTrustSchema = z
@@ -46,7 +47,7 @@ const sourceFailure = (
 ): ClientConfigurationFileError => ({
   kind: "malformed",
   path,
-  detail: `Gemini settings in ${path} are malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+  detail: `Gemini settings in ${path} are malformed: ${errorMessage(cause)}`,
 });
 
 // Gemini normalizes trust-file keys before replacement and rule precedence.
@@ -173,7 +174,7 @@ export const readClientPolicyBlock = async (
           : err({
               kind: "unreadable" as const,
               path,
-              detail: `Configuration ${path} could not be read: ${cause instanceof Error ? cause.message : String(cause)}`,
+              detail: `Configuration ${path} could not be read: ${errorMessage(cause)}`,
             }),
     );
     if (!present.ok) return present;

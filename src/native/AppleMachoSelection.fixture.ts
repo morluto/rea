@@ -1,10 +1,13 @@
 import { malformedInput } from "../domain/parseFailure.js";
-import { parseMachoLayout, type MachoLayout } from "./AppleMachoSelection.js";
+import {
+  parseMachoLayout,
+  type MachoLayout,
+} from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
   type AdmittedMachoSlice,
   type MachoSliceSelectionRefusal,
-} from "./metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 
 /** A refused admitted selection, thrown so a test can assert its kind. */
 export class MachoSliceRefused extends Error {

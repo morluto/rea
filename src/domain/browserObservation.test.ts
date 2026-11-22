@@ -6,9 +6,11 @@ import {
   browserOriginSchema,
   recordedBrowserOriginSchema,
   recordedBrowserObservationEndpointSchema,
+  browserUrlTargetIdentity,
   sanitizeEndpointCandidate,
   sanitizeBrowserUrl,
 } from "./browserObservation.js";
+import { unknownTarget, urlTargetIdentitySchema } from "./targetIdentity.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { createWebPageInspection } from "../../tests/support/browser/webPageInspection.js";
 
@@ -343,5 +345,42 @@ describe("page inspection producer facts", () => {
     expect(parsed.error?.issues.map((issue) => issue.path)).toContainEqual(
       path,
     );
+  });
+});
+
+describe("browser URL target identity", () => {
+  it("names the reported page URL without userinfo, keeping its query and fragment", () => {
+    const identity = browserUrlTargetIdentity(
+      "https://user:pass@app.example.test/path?token=secret#part",
+    );
+    expect(identity).toEqual({
+      kind: "url",
+      url: "https://app.example.test/path?token=secret#part",
+      origin: "https://app.example.test",
+    });
+    expect(urlTargetIdentitySchema.parse(identity)).toEqual(identity);
+
+    const backslash = browserUrlTargetIdentity(
+      String.raw`https:\\user:pass@app.example.test/path`,
+    );
+    expect(urlTargetIdentitySchema.parse(backslash)).toMatchObject({
+      origin: "https://app.example.test",
+    });
+    expect(JSON.stringify(backslash)).not.toContain("user:pass");
+  });
+
+  it("names an opaque origin as null", () => {
+    expect(browserUrlTargetIdentity("about:blank")).toEqual({
+      kind: "url",
+      url: "about:blank",
+      origin: null,
+    });
+  });
+
+  it("does not identify a document whose URL was withheld or is not a URL", () => {
+    for (const value of ["[unsupported-url]", ""])
+      expect(browserUrlTargetIdentity(value)).toEqual(
+        unknownTarget("not-observed"),
+      );
   });
 });

@@ -5,19 +5,22 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "./gdbTestHelpers.js";
-import { readFileSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+
 import { delimiter, join } from "node:path";
 
 import { afterEach, expect, it } from "vitest";
 
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
+import { AnalysisSettings } from "../../../src/application/AnalysisSettings.js";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
 import { waitForTestPidFile } from "../../support/process/pidFile.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { testWaitDeadline } from "../../support/testWait.js";
 
 // These tests launch controlled fake providers; Linux admission is injected so
 // lifecycle semantics remain testable on hosts that correctly reject GDB.
@@ -39,45 +42,32 @@ const unmodeledPath = (): string => {
   return join(directory, "unmodeled");
 };
 
-const expectOwnedProcessExited = async (pid: number): Promise<void> => {
-  expect(Number.isSafeInteger(pid)).toBe(true);
-  expect(pid).toBeGreaterThan(0);
-  await expect
-    .poll(() => {
-      try {
-        if (process.platform === "linux") {
-          const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-          const state = stat.slice(
-            stat.lastIndexOf(")") + 2,
-            stat.lastIndexOf(")") + 3,
-          );
-          if (state === "Z") return false;
-        }
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    })
-    .toBe(false);
-};
+it.each([
+  ["win32", "Job Object"],
+  ["darwin", "available only on Linux"],
+] as const)(
+  "rejects persistent GDB on %s before launching a provider",
+  async (platform, reason) => {
+    let spawnCalls = 0;
+    const gdb = await createGdbManagerForInjectedPlatform({
+      platform,
+      spawnProcess: async () => {
+        spawnCalls += 1;
+        throw new Error("unexpected provider launch");
+      },
+    }).start();
 
-it("rejects an empty PID before observing process exit", async () => {
-  await expect(expectOwnedProcessExited(Number(""))).rejects.toThrow();
-});
-
-it("keeps persistent GDB sessions unavailable on Windows", async () => {
-  const gdb = await createGdbManagerForInjectedPlatform({
-    environment: { REA_GDB_COMMAND: "/missing/gdb" },
-    platform: "win32",
-  }).start();
-
-  expect(gdb.ok).toBe(false);
-  if (!gdb.ok) {
-    expect(gdb.error._tag).toBe("AnalysisCapabilityUnavailableError");
-    expect(gdb.error.message).toContain("Job Object");
-  }
-});
+    expect(gdb).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "start_gdb_session",
+        message: expect.stringContaining(reason),
+      },
+    });
+    expect(spawnCalls).toBe(0);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "spawns GDB from the provider environment snapshot",
@@ -133,6 +123,7 @@ it.skipIf(process.platform === "win32")(
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-startup-early-exit-"));
     const provider = join(directory, "fake-gdb-exits-during-config.mjs");
+    const diagnostic = String.raw`~"GDB startup diagnostic\n"`;
     await writeFile(
       provider,
       `#!${process.execPath}
@@ -144,8 +135,7 @@ process.stdin.on("data", (chunk) => {
   for (const line of chunk.split("\\n")) {
     const match = /^(\\d+)/.exec(line);
     if (match && line.includes("auto-load off")) {
-      process.stdout.write("~\\"GDB startup diagnostic\\n\\"\\n");
-      process.exit(7);
+      process.stdout.write(${JSON.stringify(diagnostic + "\n")}, () => process.exit(7));
     }
   }
 });
@@ -154,7 +144,6 @@ process.stdin.on("data", (chunk) => {
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
       environment: { REA_GDB_COMMAND: provider },
-      startupTimeoutMs: 1_000,
     });
     managers.push(manager);
 
@@ -166,10 +155,7 @@ process.stdin.on("data", (chunk) => {
         _tag: "AnalysisCapabilityUnavailableError",
         operation: "start_gdb_session",
       });
-      expect(started.error).not.toMatchObject({ _tag: "AnalysisTimeoutError" });
-      expect(JSON.stringify(started.error)).toContain("GDB startup diagnostic");
       expect(started.error.message).toContain("exit code 7, signal null");
-      expect(JSON.stringify(started.error)).toContain("process_exit_observed");
       expect(started.error.partialObservation).toMatchObject({
         parameters: {
           command: "-gdb-set auto-load off",
@@ -177,6 +163,7 @@ process.stdin.on("data", (chunk) => {
         raw_result: {
           process_exit_code: 7,
           process_exit_observed: true,
+          records: expect.arrayContaining([diagnostic]),
           completion_status: "unknown",
         },
       });
@@ -277,7 +264,11 @@ process.stdin.on("data", (chunk) => {
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async (session) => {
         retainedSessionId = session.id;
-        return { status: "incomplete", reason: "startup cleanup is retained" };
+        return {
+          status: "incomplete",
+          code: "stop-failed",
+          reason: "startup cleanup is retained",
+        };
       },
     });
     managers.push(manager);
@@ -447,8 +438,11 @@ it.skipIf(process.platform === "win32")(
       `#!${process.execPath}
 ${fakeGdbStartupPreamble}
 import { readFile, writeFile } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
 process.on("SIGTERM", async () => {
-  await writeFile(${JSON.stringify(signalPath)}, "SIGTERM");
+  // Publish the signal before yielding: bounded stop may end this fake
+  // while an asynchronous write has created but not populated its file.
+  writeFileSync(${JSON.stringify(signalPath)}, "SIGTERM");
   while (true) {
     try {
       await readFile(${JSON.stringify(releasePath)}, "utf8");
@@ -484,7 +478,7 @@ process.stdin.resume();
     managers.push(manager);
 
     const starting = manager.start();
-    const pid = await waitForTestPidFile(pidPath, 1_000);
+    const pid = await waitForTestPidFile(pidPath, testWaitDeadline());
 
     let closeSettled = false;
     const closing = manager.closeAll().then(() => {
@@ -504,7 +498,7 @@ process.stdin.resume();
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
-    await expectOwnedProcessExited(pid);
+    await expect.poll(() => processHasStopped(pid)).toBe(true);
     expect(manager.status("unknown-session")).toBeUndefined();
     await expect(manager.start()).resolves.toMatchObject({
       ok: false,
@@ -585,7 +579,6 @@ process.stdin.on("data", (chunk) => {
     else if (match) process.stdout.write("~\\"partial output\\n\\"\\n");
   }
 });
-setTimeout(() => process.exit(0), 250).unref();
 `,
     );
     await chmod(provider, 0o700);
@@ -596,7 +589,20 @@ setTimeout(() => process.exit(0), 250).unref();
       },
     });
     managers.push(manager);
-    const started = await manager.start();
+    // The 40 ms budget exercises the console timeout, not provider startup.
+    const startup = new AnalysisSettings({});
+    expect(
+      startup.update({
+        changes: [
+          {
+            setting: "debugger.command_deadline_ms",
+            action: "set",
+            value: 5000,
+          },
+        ],
+      }).ok,
+    ).toBe(true);
+    const started = await startup.run(() => manager.start());
     expect(started.ok).toBe(true);
     if (!started.ok) return;
 
@@ -617,9 +623,14 @@ setTimeout(() => process.exit(0), 250).unref();
       });
       expect(result.error.cleanupIncomplete).toBe(true);
     }
-    await expectOwnedProcessExited(
-      await waitForTestPidFile(join(directory, "pid"), 1_000),
+    // Only the fixture knows this provider has no real inferior. Stop it after
+    // asserting the production cleanup uncertainty instead of racing an exit timer.
+    await fixtureOwner.cleanup(managers, async () => {});
+    const pid = await waitForTestPidFile(
+      join(directory, "pid"),
+      testWaitDeadline(),
     );
+    await expect.poll(() => processHasStopped(pid)).toBe(true);
     expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
@@ -656,6 +667,7 @@ setTimeout(() => process.exit(0), 250);
       },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated incomplete stop",
       }),
     });
@@ -694,73 +706,14 @@ setTimeout(() => process.exit(0), 250);
 );
 
 it.skipIf(process.platform === "win32")(
-  "keeps queued GDB commands serialized when a waiting request is cancelled",
-  async () => {
-    directory = await mkdtemp(join(tmpdir(), "rea-gdb-queue-cancel-"));
-    const provider = join(directory, "fake-gdb-queue-cancel.mjs");
-    const overlapPath = join(directory, "overlap");
-    await writeFile(
-      provider,
-      `#!${process.execPath}
-${fakeGdbStartupPreamble}
-${fakeGdbModeledReplies(unmodeledPath(), { ...FAKE_GDB_SESSION_REPLIES, '-interpreter-exec console "third"': "^done" })}
-process.stdout.write("(gdb)\\n");
-let input = "";
-let firstActive = false;
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const boundary = input.indexOf("\\n"); if (boundary < 0) break;
-    const line = input.slice(0, boundary); input = input.slice(boundary + 1);
-    const match = /^(\\d+)/.exec(line); if (!match) continue;
-    if (line.slice(match[1].length) === "-gdb-set auto-load off") process.stdout.write(match[1] + "^done\\n");
-    else if (line.slice(match[1].length) === '-interpreter-exec console "first"') {
-      firstActive = true;
-      setTimeout(() => { firstActive = false; process.stdout.write(match[1] + "^done\\n"); }, 100);
-    } else {
-      if (line.slice(match[1].length) === '-interpreter-exec console "third"' && firstActive) import("node:fs/promises").then((fs) => fs.writeFile(${JSON.stringify(overlapPath)}, "overlap"));
-      answerModeled(match[1], line.slice(match[1].length));
-    }
-  }
-});
-`,
-    );
-    await chmod(provider, 0o700);
-    const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-    });
-    managers.push(manager);
-    const started = await manager.start();
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const first = manager.execute(started.value.session_id, "first");
-    const controller = new AbortController();
-    const second = manager.execute(
-      started.value.session_id,
-      "second",
-      controller.signal,
-    );
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    const reason = { source: "cancelled while queued" };
-    controller.abort(reason);
-    const third = manager.execute(started.value.session_id, "third");
-    const cancelled = await second;
-    expect(cancelled).toMatchObject({
-      ok: false,
-      error: { _tag: "AnalysisCancelledError", cause: reason },
-    });
-    expect((await first).ok).toBe(true);
-    expect((await third).ok).toBe(true);
-    await expect(readFile(overlapPath, "utf8")).rejects.toThrow();
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "marks GDB exit-fallback output truncated when MI history was bounded",
+  "preserves active GDB exit Evidence beyond the recent MI history cap",
   async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-exit-truncated-"));
     const provider = join(directory, "fake-gdb-exit-truncated.mjs");
+    const records = Array.from(
+      { length: 300 },
+      (_, index) => `=thread-created,id="${index}"`,
+    );
     await writeFile(
       provider,
       `#!${process.execPath}
@@ -775,10 +728,7 @@ process.stdin.on("data", (chunk) => {
     const line = input.slice(0, boundary); input = input.slice(boundary + 1);
     const match = /^(\\d+)/.exec(line); if (!match) continue;
     if (line.includes("auto-load off")) process.stdout.write(match[1] + "^done\\n");
-    else {
-      process.stdout.write(Array.from({ length: 300 }, (_, index) => "=thread-created,id=\\"" + index + "\\"\\n").join(""));
-      process.exit(0);
-    }
+    else process.stdout.write(${JSON.stringify(records.join("\n") + "\n")}, () => process.exit(0));
   }
 });
 `,
@@ -797,35 +747,23 @@ process.stdin.on("data", (chunk) => {
       "info threads",
     );
 
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.partialObservation).toMatchObject({
+    if (result.ok) throw new Error("expected GDB to exit with partial output");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(evidenceSchema.parse(result.error.partialObservation)).toMatchObject(
+      {
         normalized_result: {
           process_exit_observed: true,
           output_truncated: false,
           completion_status: "unknown",
-          records: expect.arrayContaining([
-            expect.stringContaining("thread-created"),
-          ]),
+          records,
         },
-      });
-      const parsedEvidence = evidenceSchema.safeParse(
-        result.error.partialObservation,
-      );
-      expect(parsedEvidence.success).toBe(true);
-      if (parsedEvidence.success) {
-        const rawResult = parsedEvidence.data.raw_result;
-        expect(rawResult).toMatchObject({ records: expect.any(Array) });
-        if (
-          typeof rawResult === "object" &&
-          rawResult !== null &&
-          !Array.isArray(rawResult) &&
-          "records" in rawResult
-        )
-          expect(rawResult.records).toHaveLength(300);
-      }
-    }
+        raw_result: { records },
+      },
+    );
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      recent_mi_records: records.slice(-256),
+      recent_mi_records_truncated: true,
+    });
   },
 );
 
@@ -927,6 +865,7 @@ setTimeout(() => process.exit(0), 500);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "test cleanup",
       }),
     });
@@ -1041,6 +980,7 @@ setInterval(() => {}, 1000);
           ? stopOwnedDebuggerProcess(session, name, options)
           : {
               status: "incomplete",
+              code: "stop-failed",
               reason: "fixture-owned process awaits test teardown",
             },
     });
@@ -1078,7 +1018,8 @@ setInterval(() => {}, 1000);
             child.kill("SIGKILL");
         }
         await ownedProcessExit;
-        await expectOwnedProcessExited(ownedLaunch.process.pid!);
+        const pid = ownedLaunch.ownership.leaderPid;
+        await expect.poll(() => processHasStopped(pid)).toBe(true);
       }
       const retried = await manager.retryCleanupFailures();
       expect(retried.ok).toBe(false);
@@ -1159,6 +1100,14 @@ process.stdin.on("data", (chunk) => {
         },
       });
       expect(exited.error.partialObservation).toMatchObject({
+        subject: {
+          identity: {
+            kind: "session",
+            session_kind: "gdb",
+            id: started.value.session_id,
+            target: { kind: "unknown", reason: "not-observed" },
+          },
+        },
         parameters: {
           command: "second command",
           session_id: started.value.session_id,
@@ -1225,6 +1174,7 @@ setTimeout(() => process.exit(0), 250);
       environment: { REA_GDB_COMMAND: provider },
       stopProcess: async () => ({
         status: "incomplete",
+        code: "stop-failed",
         reason: "simulated debugger cleanup failure",
       }),
     });

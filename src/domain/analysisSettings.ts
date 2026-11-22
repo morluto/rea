@@ -31,6 +31,7 @@ export interface AnalysisSettingValues {
   readonly "windows.change_time_drift_ms": number;
   readonly "windows.change_time_settle_poll_ms": number;
   readonly "windows.change_time_settle_max_polls": number;
+  readonly "zstd.max_frames": number;
 }
 export type AnalysisSettingId = keyof AnalysisSettingValues;
 export interface AnalysisSettingsSnapshot {
@@ -102,8 +103,6 @@ export type AnalysisControlLimit = {
   | {
       readonly control_kind: "parameter";
       readonly parameter: string;
-      /** CLI spelling of the same per-call parameter. */
-      readonly cli_flag: string;
       readonly applies_at: "next_call";
     }
   | {
@@ -113,6 +112,12 @@ export type AnalysisControlLimit = {
       readonly applies_at: "next_startup" | "next_invocation";
     }
 );
+
+/** A per-call request parameter control, named by its contract field. */
+export type AnalysisParameterLimit = Extract<
+  AnalysisControlLimit,
+  { readonly control_kind: "parameter" }
+>;
 
 /** The limit an error binds: a registered setting, or a parameter or environment control. */
 export type AnalysisLimit = AnalysisSettingLimit | AnalysisControlLimit;

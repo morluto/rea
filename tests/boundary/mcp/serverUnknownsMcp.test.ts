@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -13,7 +14,7 @@ import type {
   AnalysisClient,
   AnalysisProvider,
   CapabilityDescriptor,
-} from "../../../src/application/AnalysisProvider.js";
+} from "../../../src/ports/AnalysisProvider.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { err, ok as resultOk } from "../../../src/domain/result.js";
 import { observed as ok } from "../../fixtures/analysisExecution.js";
@@ -32,6 +33,7 @@ import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "../../../src/domain/process/proce
 import { PROCESS_PROVIDER } from "../../../src/domain/process/processEvidenceProvider.js";
 
 import { processCaptureSchema } from "../../../src/domain/process/processCapture.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 const resources: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {
@@ -103,7 +105,7 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
   const root = await createTestTempDirectory("rea-unknown-divergent-");
   const provider = { id: "fixture", name: "Fixture", version: "1" };
   const records = ["create", "left", "right"].map((operation) =>
-    createEvidence(undefined, provider, {
+    createEvidence(unknownTarget("not-observed"), provider, {
       operation,
       parameters: {},
       result: {},
@@ -153,7 +155,10 @@ it("rejects divergent imported histories without suggesting an unchanged retry",
     throw new Error("no target");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "conflicting-history", version: "1" });
+  const client = new Client(
+    { name: "conflicting-history", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -208,7 +213,10 @@ it("does not record capability unavailability without supporting Evidence", asyn
     providerWithCapabilities(["procedure_pseudo_code"]),
   );
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unavailable-unknown", version: "1" });
+  const client = new Client(
+    { name: "unavailable-unknown", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -263,7 +271,7 @@ it("records capture disagreement as a contradicted unknown", async () => {
     ],
   });
   const captureEvidence = (capture: typeof left) =>
-    createEvidence(undefined, PROCESS_PROVIDER, {
+    createEvidence(unknownTarget("not-observed"), PROCESS_PROVIDER, {
       predicateType: "rea.process-capture",
       operation: "capture_process_scenario",
       parameters: {},
@@ -276,7 +284,10 @@ it("records capture disagreement as a contradicted unknown", async () => {
   expect(session.recordEvidence(leftEvidence).ok).toBe(true);
   expect(session.recordEvidence(rightEvidence).ok).toBe(true);
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "comparison-unknown", version: "1" });
+  const client = new Client(
+    { name: "comparison-unknown", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -369,7 +380,10 @@ it("records capture disagreement as a contradicted unknown", async () => {
 it("pages filtered unknown heads through the public MCP contract", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-pagination", version: "1" });
+  const client = new Client(
+    { name: "unknown-pagination", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -523,7 +537,10 @@ it("pages filtered unknown heads through the public MCP contract", async () => {
 it("reports contradictory unknown input as a correctable request", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-input", version: "1" });
+  const client = new Client(
+    { name: "unknown-input", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -637,7 +654,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-overflow-receipt", version: "1" });
+  const client = new Client(
+    { name: "unknown-overflow-receipt", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   resources.push(client, server);
   await server.connect(st);
@@ -721,7 +741,10 @@ it("returns exact committed unknown receipts when creation and update replies ov
 it("preserves graph constraint facts and rejects atomically until input is corrected", async () => {
   const session = createTestBinarySession(providerWithCapabilities([]));
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "unknown-constraint", version: "1" });
+  const client = new Client(
+    { name: "unknown-constraint", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(client, server);
@@ -839,7 +862,10 @@ it("recovers an oversized list with same-session paging or export", async () => 
     { kind: "session", session },
     { delivery: createToolResultDelivery(8 * 1024) },
   );
-  const client = new Client({ name: "unknown-list-recovery", version: "1" });
+  const client = new Client(
+    { name: "unknown-list-recovery", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [ct, st] = InMemoryTransport.createLinkedPair();
   resources.push(client, server);
   await server.connect(st);

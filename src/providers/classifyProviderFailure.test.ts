@@ -5,9 +5,9 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import {
   ArtifactFileCleanupFailure,
   withArtifactRegularFile,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import type { AnalysisPartialObservation } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,

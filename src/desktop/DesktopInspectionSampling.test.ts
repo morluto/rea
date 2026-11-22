@@ -17,10 +17,6 @@ vi.mock("node:fs/promises", async (original) => {
         throw new Error("Unexpected native procfs directory read");
       return actual.readdir(...args);
     },
-    readFile: (...args: Parameters<typeof actual.readFile>) =>
-      String(args[0]) === "/proc/42/cmdline"
-        ? Promise.resolve("recording-child\0")
-        : actual.readFile(...args),
   };
 });
 vi.mock("../process/ProviderProcess.js", async (original) => ({
@@ -41,13 +37,14 @@ import {
   ProcessOwnershipIdentityBatchFailure,
   ProcessOwnershipInspectionCancelled,
 } from "../process/ProcessInspectionCancellation.js";
-import {
-  DesktopSessionCleanupError,
-  runDesktopSession,
-} from "./DesktopApplicationSession.js";
+import { runDesktopSession } from "./DesktopApplicationSession.js";
+import { DesktopSessionCleanupError } from "../ports/DesktopApplicationSession.js";
 import { X11WindowObserver } from "./X11WindowObserver.js";
 import * as linuxSampling from "../process/capture/LinuxProcessSampling.js";
-import { SamplingReadBatchFailure } from "../process/capture/ProcessSamplingObservation.js";
+import {
+  SamplingReadBatchFailure,
+  type SamplingObservation,
+} from "../process/capture/ProcessSamplingObservation.js";
 import {
   failedCaptureError,
   projectFailure,
@@ -57,6 +54,7 @@ type Route =
   | "runId"
   | "tokenCarriers"
   | "cancelledListing"
+  | "command"
   | "stat"
   | "children"
   | "cancelledStat";
@@ -75,6 +73,8 @@ const samplingFiles = async (route: Route, cancel: () => void) => {
     stat,
     `42 (recording-child) ${["S", "1", "42", "42", ...Array<string>(15).fill("0"), "100"].join(" ")}`,
   );
+  const command = join(root, "command");
+  await writeFile(command, "recording-child\0");
   const children = new Map<number, string>();
   for (const thread of [42, 43, 44]) {
     const path = join(root, `children-${thread}`);
@@ -85,11 +85,15 @@ const samplingFiles = async (route: Route, cancel: () => void) => {
     children.set(thread, path);
   }
   const failedPaths = new Set(
-    route === "stat" || route === "cancelledStat"
-      ? ["/proc/42/stat"]
-      : route === "children"
-        ? ["/proc/42/task/42/children", "/proc/42/task/43/children"]
-        : [],
+    {
+      stat: ["/proc/42/stat"],
+      cancelledStat: ["/proc/42/stat"],
+      children: ["/proc/42/task/42/children", "/proc/42/task/43/children"],
+      command: ["/proc/42/cmdline"],
+      runId: [],
+      tokenCarriers: [],
+      cancelledListing: [],
+    }[route],
   );
   const handles = new Map<number, OwnedFileHandle>();
   const allowed = new Set<number>();
@@ -109,11 +113,15 @@ const samplingFiles = async (route: Route, cancel: () => void) => {
         : thread !== undefined
           ? children.get(Number(thread))
           : (route === "stat" ||
+                route === "runId" ||
+                route === "command" ||
                 route === "children" ||
                 route === "cancelledStat") &&
               path === "/proc/42/stat"
             ? stat
-            : undefined;
+            : path === "/proc/42/cmdline"
+              ? command
+              : undefined;
     if (redirected === undefined && path.startsWith("/proc/"))
       throw new Error("Unexpected native procfs open");
     const handle =
@@ -192,17 +200,30 @@ const observeSamplingFailure = (
   route: Route,
   observe: (cause: unknown) => void,
 ) => {
-  const stat = linuxSampling.readLinuxProcessStat;
-  vi.spyOn(linuxSampling, "readLinuxProcessStat").mockImplementation(
-    async (...args) => {
+  const observeRead =
+    <T>(
+      read: (
+        pid: number,
+        signal: AbortSignal,
+      ) => Promise<SamplingObservation<T>>,
+    ) =>
+    async (pid: number, signal: AbortSignal) => {
       try {
-        return await stat(...args);
+        const observation = await read(pid, signal);
+        if (observation.diagnostics.interrupted) observe(observation);
+        return observation;
       } catch (cause: unknown) {
         observe(cause);
         throw cause;
       }
-    },
-  );
+    };
+  if (route === "command") {
+    const command = observeRead(linuxSampling.readLinuxCommand);
+    vi.spyOn(linuxSampling, "readLinuxCommand").mockImplementation(command);
+  } else {
+    const stat = observeRead(linuxSampling.readLinuxProcessStat);
+    vi.spyOn(linuxSampling, "readLinuxProcessStat").mockImplementation(stat);
+  }
   if (route !== "children") return;
   const children = linuxSampling.readLinuxChildren;
   vi.spyOn(linuxSampling, "readLinuxChildren").mockImplementation(
@@ -437,7 +458,7 @@ it("keeps actual native listing cancellation as a cancelled session with an opaq
   expect(result.unreleased).toBeUndefined();
 });
 
-it.each(["stat", "children"] as const)(
+it.each(["stat", "command", "children"] as const)(
   "retires actual %s sampling owners through the public desktop cleanup error",
   async (route) => {
     const fixture = await samplingSession(route);
@@ -449,7 +470,9 @@ it.each(["stat", "children"] as const)(
       throw new Error("Expected retained sampling session failure");
     const source = fixture.sourceFailure();
     expect(caught.primary).toBe(source);
-    expect(fixture.retained.pending()).toHaveLength(route === "stat" ? 1 : 2);
+    expect(fixture.retained.pending()).toHaveLength(
+      route === "children" ? 2 : 1,
+    );
     const error = projectFailure(
       failedCaptureError(
         new DesktopSessionCleanupError(
@@ -498,10 +521,7 @@ it("keeps completed stat-close cancellation as a cancelled session", async () =>
   expect(fixture.retained.pending()).toEqual([]);
   expect([...fixture.retained.handles.values()][0]!.handle.fd).toBe(-1);
   const source = fixture.sourceFailure();
-  expect(source).toBeInstanceOf(ProcessOwnershipInspectionCancelled);
-  if (!(source instanceof ProcessOwnershipInspectionCancelled))
-    throw new Error("Expected typed caller cancellation");
-  expect(source.reason).toBe(fixture.reason);
+  expect(source).toMatchObject({ diagnostics: { interrupted: true } });
   expect(result.session.end_reason).toBe("cancelled");
   expect(result.session.cleanup.verified).toBe(true);
   expect(result.unreleased).toBeUndefined();

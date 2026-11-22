@@ -11,8 +11,8 @@ import {
 } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import type { BinaryTarget } from "../../../src/domain/binaryTargetTypes.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../../../src/resources/AnalysisCleanupLease.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 import type { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { mapHopperFileOffset } from "../../../src/hopper/HopperFileOffset.js";

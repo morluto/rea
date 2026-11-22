@@ -8,7 +8,7 @@ import {
   cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { AnalysisOperationPort } from "./AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
 import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
 
 /** Resolve an exact symbol after the provider rejects the caller address format. */

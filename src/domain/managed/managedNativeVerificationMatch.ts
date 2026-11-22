@@ -1,3 +1,4 @@
+import { managedModuleRow } from "./managedModuleIdentity.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { joinCoverageStatus } from "../coverage.js";
 import type { Evidence } from "../evidence.js";
@@ -6,7 +7,10 @@ import type {
   ManagedNativeObservationFacts,
   ManagedNativePlatform,
 } from "./managedNativeVerificationSource.js";
-import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
+import {
+  managedInspectionCoverage,
+  type ManagedNativeBoundaryInspection,
+} from "./managedArtifact.js";
 import type {
   ManagedNativeVerificationResult,
   NativeSymbol,
@@ -571,11 +575,7 @@ export const buildVerificationResult = ({
   // verification cannot tell what it would cover: unknown wins beside the
   // known gaps of skipped native Evidence or non-exhaustive exports.
   const status = joinCoverageStatus([
-    managed.coverage.state === "unavailable"
-      ? "unknown"
-      : managed.coverage.state === "complete"
-        ? "complete"
-        : "partial",
+    managedInspectionCoverage(managed.coverage.state),
     native.unsupported === 0 && !native.partialExports ? "complete" : "partial",
   ]);
   const coverage: ManagedNativeVerificationResult["coverage"] = {
@@ -591,7 +591,7 @@ export const buildVerificationResult = ({
       evidence_id: managedEvidence.evidence_id,
       artifact_sha256: managed.artifact.sha256,
       artifact_path: managed.artifact.path,
-      mvid: managed.module?.mvid ?? null,
+      mvid: managedModuleRow(managed)?.mvid ?? null,
       metadata_status: managed.metadata.status,
       pinvoke_imports_total: managed.pinvoke_imports.length,
       native_implementations_total: managed.native_implementations.length,

@@ -1,16 +1,16 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
-import { createHash } from "node:crypto";
 
 import { z } from "zod";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
+  ArtifactReaderFailure,
   AnalysisCleanupLeaseGroup,
   type AnalysisCleanupLease,
-} from "../artifacts/AnalysisCleanupLease.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { publishWebScripts } from "../browser/assets/PublishWebScripts.js";
-import { selectScriptCapture } from "../browser/assets/ScriptCaptureAdapters.js";
+  type ArtifactResourceScope,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
+import { publishWebScripts } from "./PublishWebScripts.js";
+import { selectScriptCapture } from "../domain/webScriptCaptureAdapters.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -19,6 +19,7 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
@@ -32,23 +33,24 @@ import {
   type ExportWebScriptsInput,
 } from "../domain/webScriptExport.js";
 import { WebScriptExportError } from "../domain/webScriptExportError.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import { WEB_SCRIPT_EXPORT_PROVIDER as PROVIDER } from "../domain/investigationProviders.js";
 import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
+} from "../process/RegularFileRead.js";
 import {
   NonRegularFileReadError,
   RegularFileChangedError,
   RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
 } from "../filesystem/OwnedRegularFile.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const OPERATION = "export_web_scripts";
 
@@ -99,7 +101,7 @@ export const exportWebScriptsValidated = async (
     const { bytes, loaded } = prepared.value;
     if (options.signal?.aborted)
       return err(cancelledBy(OPERATION, options.signal));
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     const result = await publishWebScripts(input, loaded, sha256, {
       resources,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -261,11 +263,10 @@ const readCapture = async (
           ? {}
           : { lease: retry.cleanupLease }),
       };
-      if (retry.outcome.kind === "completed") {
+      if (cause.outcome.kind === "completed") {
         const cancellation =
-          signal?.aborted === true
-            ? { reason: signal.reason }
-            : regularFileCancellation(cause);
+          regularFileCancellation(cause) ??
+          (signal?.aborted === true ? { reason: signal.reason } : undefined);
         if (cancellation !== undefined) {
           const primary = cancelledBy(
             OPERATION,
@@ -277,12 +278,17 @@ const readCapture = async (
               : incompleteCaptureCleanup(primary, path, cleanup),
           );
         }
-        return ok({ bytes: retry.outcome.value as Buffer, cleanup });
+        return ok({ bytes: cause.outcome.value as Buffer, cleanup });
       }
-      const primary = captureReadFailure(
-        path,
-        cause,
-        retry.cleanup === undefined ? { cause: cause.cleanupCause } : undefined,
+      const primary = captureReadErrorWithCancellation(
+        captureReadFailure(
+          path,
+          cause,
+          retry.cleanup === undefined
+            ? { cause: cause.cleanupCause }
+            : undefined,
+        ),
+        signal,
       );
       return err(
         retry.cleanup === undefined
@@ -290,9 +296,19 @@ const readCapture = async (
           : incompleteCaptureCleanup(primary, path, cleanup),
       );
     }
-    return err(captureReadFailure(path, cause));
+    return err(
+      captureReadErrorWithCancellation(captureReadFailure(path, cause), signal),
+    );
   }
 };
+
+const captureReadErrorWithCancellation = (
+  error: AnalysisError,
+  signal: AbortSignal | undefined,
+): AnalysisError =>
+  signal?.aborted === true
+    ? analysisErrorWithCancellation(error, cancelledBy(OPERATION, signal))
+    : error;
 
 const captureReadFailure = (
   path: string,
@@ -364,7 +380,7 @@ const captureReadFailure = (
     diagnostics: {
       capture_path: path,
       error_name: cause instanceof Error ? cause.name : "UnknownError",
-      error_message: cause instanceof Error ? cause.message : String(cause),
+      error_message: errorMessage(cause),
     },
   });
 };
@@ -388,9 +404,6 @@ const incompleteCaptureCleanup = (
     new AnalysisCleanupLeaseGroup(error, [cleanup.lease]);
   return error;
 };
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const parseCapture = (
   bytes: Buffer,

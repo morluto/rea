@@ -1,3 +1,4 @@
+import { javaScriptSemanticPrecisionControls } from "./JavaScriptSemanticPrecisionControls.js";
 import type { JavaScriptMemberMutationAllowance } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
 import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
@@ -16,7 +17,10 @@ import {
 import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
@@ -36,13 +40,12 @@ import { analysisErrorWithCleanupDependencies } from "../../domain/analysisError
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import type { ArtifactInventoryPartialObservation } from "../../domain/artifactPartialObservation.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "./JavaScriptArtifactAnalysis.js";
 import {
   isSkippedJavaScriptAnalysis,
   javascriptArtifactAnalysisScopes,
 } from "./JavaScriptArtifactAnalysisTypes.js";
-import { createJavaScriptSourceAnalysis } from "../../artifacts/javascript/JavaScriptSourceAnalysis.js";
+import type { JavaScriptSourceAnalysisFactory } from "../../ports/javascript/JavaScriptSourceAnalysisFactory.js";
 import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
@@ -50,7 +53,7 @@ import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifact
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
-import type { ProgressReporter } from "../ProgressReporter.js";
+import type { ProgressReporter } from "../../ports/ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
   completeJavaScriptAnalysisSteps,
@@ -88,6 +91,7 @@ export interface JavaScriptArtifactReconstructionResult {
 export const reconstructJavaScriptArtifact = async (
   input: AnalyzeJavaScriptApplicationInput,
   scope: ArtifactResourceScope,
+  sourceAnalysis: JavaScriptSourceAnalysisFactory,
   signal?: AbortSignal,
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
@@ -210,9 +214,10 @@ export const reconstructJavaScriptArtifact = async (
         files,
         sourceLimits,
         scope,
+        sourceAnalysis,
         signal,
       );
-      const worker = await createJavaScriptSourceAnalysis(
+      const worker = await sourceAnalysis(
         sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
@@ -328,6 +333,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        javaScriptSemanticPrecisionControls(analysis.files),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",

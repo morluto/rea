@@ -13,7 +13,7 @@ import { idReferencesOf, mirrorsOf } from "./appTaskDraftMirrors.js";
 import { isPositionalKey, positionalKeys } from "./positionalKeys.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
-import { isRecord } from "../isRecord.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** Why a change is what an app writes as it saves or shows a document, rather than what its user made. */
 export const NOISE_REASONS = [

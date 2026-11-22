@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 import {
+  changedEvidenceSubject,
+  UNKNOWN_EVIDENCE_SUBJECT,
+} from "../../../tests/fixtures/evidenceSubject.js";
+import {
   analysisViewCaptureEvidence,
   analysisViewLayoutEvidence,
   environmentManifestCaptureFixture,
@@ -13,7 +17,7 @@ type ManifestView = Extract<
   { kind: "environment-manifest" }
 >;
 type Rules = ManifestView["template_rules"];
-const ALL_RULES: Rules = [
+const GRAFANA_RULES: Rules = [
   "after-uid-literal",
   "opaque-token",
   "sibling-variance",
@@ -80,16 +84,15 @@ const syntheticCapture = (
     postMimeType?: string,
   ])[],
 ) => {
-  const capture = environmentManifestCaptureFixture();
-  capture.total_records = samples.length;
-  capture.records = samples.map(
-    (
-      [method, url, mimeType, postText, postMimeType = "application/json"],
-      ordinal,
-    ) => ({
-      ...capture.records[0]!,
-      ordinal,
-      reported: {
+  return environmentManifestCaptureFixture(
+    samples.map(
+      ([
+        method,
+        url,
+        mimeType,
+        postText,
+        postMimeType = "application/json",
+      ]) => ({
         request: {
           method,
           url,
@@ -103,10 +106,9 @@ const syntheticCapture = (
             mimeType: mimeType === undefined ? "application/json" : mimeType,
           },
         },
-      },
-    }),
+      }),
+    ),
   );
-  return capture;
 };
 
 it("keeps every template identical to the api-surface grouping when no opt-in rule is selected", () => {
@@ -114,7 +116,6 @@ it("keeps every template identical to the api-surface grouping when no opt-in ru
   const result = projectAnalysisView(parent, view());
   if (!result.ok || result.value.kind !== "environment-manifest")
     throw new Error("Expected an environment manifest");
-  expect(projectAnalysisView(parent, view())).toEqual(result);
   const projected = result.value;
   const surface = projectAnalysisView(parent, {
     kind: "api-surface",
@@ -202,9 +203,8 @@ it("keeps every template identical to the api-surface grouping when no opt-in ru
     expect(JSON.stringify(projected)).not.toContain(value);
 });
 
-it("templates uid literals, opaque tokens and identifier-like siblings when every rule is selected", () => {
-  const projected = manifest(ALL_RULES);
-  expect(manifest(ALL_RULES)).toEqual(projected);
+it("combines UID literals, opaque tokens and identifier-like siblings", () => {
+  const projected = manifest(GRAFANA_RULES);
   const templates = projected.tools.map((tool) => tool.path_template);
   expect(templates).toEqual(
     expect.arrayContaining([
@@ -291,11 +291,12 @@ it.each([
 ] as const)(
   "applies %s on its own and leaves the other literals in place",
   (rule, templated, literal) => {
-    const templates = manifest([rule]).tools.map((tool) => tool.path_template);
+    const { tools } = manifest([rule]);
+    const templates = tools.map((tool) => tool.path_template);
     expect(templates).toEqual(
       expect.arrayContaining([...templated, ...literal]),
     );
-    const params = manifest([rule]).tools.flatMap((tool) => tool.params);
+    const params = tools.flatMap((tool) => tool.params);
     expect(
       params.every((param) => param.rule === rule || param.rule === "numeric"),
     ).toBe(true);
@@ -482,13 +483,6 @@ it("names tools deterministically from literals, strips dotted labels and disamb
     ],
     body_shape: { type: "object", properties: { name: "string" } },
   });
-  expect(
-    manifest([], syntheticCapture([["GET", "https://k8s.test/api/a.b/c"]]))
-      .tools,
-  ).toEqual(
-    manifest([], syntheticCapture([["GET", "https://k8s.test/api/a.b/c"]]))
-      .tools,
-  );
 });
 
 it("merges identifier-like siblings at index two or later and never folds stop words", () => {
@@ -508,6 +502,9 @@ it("merges identifier-like siblings at index two or later and never folds stop w
       ["GET", "https://s.test/api/beta1"],
       ["GET", "https://s.test/api/items/a1/versions"],
       ["GET", "https://s.test/api/items/a1/children"],
+      ["GET", "https://s.test/api/items/mine"],
+      ["GET", "https://s.test/api/items/search"],
+      ["GET", "https://s.test/api/widgets/shared"],
     ]),
   );
   expect(projected.tools.map((tool) => tool.path_template)).toEqual([
@@ -515,11 +512,14 @@ it("merges identifier-like siblings at index two or later and never folds stop w
     "/api/beta1",
     "/api/items/a1/children",
     "/api/items/a1/versions",
+    "/api/items/mine",
+    "/api/items/search",
     "/api/items/{item_id}",
     "/api/things/x",
     "/api/things/y",
     "/api/users/{numeric}/search",
     "/api/users/{numeric}/settings",
+    "/api/widgets/shared",
     "/api/widgets/{widget_id}",
   ]);
   expect(
@@ -678,7 +678,7 @@ it("keeps each pair parameter's role when sibling-variance later templates the s
 
 it("never folds a literal sibling into a format-rule parameter", () => {
   const projected = manifest(
-    ALL_RULES,
+    GRAFANA_RULES,
     syntheticCapture([
       ["GET", "https://t.test/api/teams/1"],
       ["GET", "https://t.test/api/teams/2"],
@@ -711,7 +711,7 @@ it("folds a literal sibling recorded before the templated token into the same pa
     ["GET", "https://g.test/api/folders/general?accesscontrol=true"],
     ["GET", "https://g.test/api/folders/fg1jo91e57e2ob"],
   ] as const;
-  const projected = manifest(ALL_RULES, syntheticCapture(literalFirst));
+  const projected = manifest(GRAFANA_RULES, syntheticCapture(literalFirst));
   expect(projected.tools).toHaveLength(1);
   expect(projected.tools[0]).toMatchObject({
     name: "get_folders_by_uid",
@@ -730,7 +730,7 @@ it("folds a literal sibling recorded before the templated token into the same pa
   });
   expect(projected.templated_groups).toBe(1);
   const tokenFirst = manifest(
-    ALL_RULES,
+    GRAFANA_RULES,
     syntheticCapture([literalFirst[1], literalFirst[0]]),
   ).tools[0]!;
   expect(tokenFirst.api_surface_template).toBe("/api/folders/fg1jo91e57e2ob");
@@ -844,7 +844,7 @@ it("refuses non-HAR formats, sensitive parents, unsupported parents and malforme
     expect(
       projectAnalysisView(
         parentOf(environmentManifestCaptureFixture(), parameters),
-        view(ALL_RULES),
+        view(GRAFANA_RULES),
       ),
     ).toMatchObject({
       ok: false,
@@ -1174,50 +1174,23 @@ it("refuses a parent whose subject is absent or names another digest", () => {
   const { subject, ...withoutSubject } = parent;
   expect(projectAnalysisView(withoutSubject, view())).toMatchObject(refusal);
   expect(
-    projectAnalysisView({ ...withoutSubject, subject: null }, view()),
+    projectAnalysisView(
+      { ...withoutSubject, subject: UNKNOWN_EVIDENCE_SUBJECT },
+      view(),
+    ),
   ).toMatchObject(refusal);
-  if (subject == null) throw new Error("Fixture evidence carries a subject");
+  if (subject.identity.kind !== "file")
+    throw new Error("Fixture evidence carries a subject");
   expect(
     projectAnalysisView(
       {
         ...parent,
-        subject: {
-          ...subject,
-          digest: { ...subject.digest, sha256: "0".repeat(64) },
-        },
+        subject: changedEvidenceSubject(subject, { sha256: "0".repeat(64) }),
       },
       view(),
     ),
   ).toMatchObject(refusal);
   expect(projectAnalysisView(parent, view()).ok).toBe(true);
-});
-
-it("merges only the identifier-like siblings and keeps the other literals as their own tools", () => {
-  const projected = manifest(
-    ["sibling-variance"],
-    syntheticCapture([
-      ["GET", "https://s.test/api/items/a1"],
-      ["GET", "https://s.test/api/items/b2"],
-      ["GET", "https://s.test/api/items/mine"],
-      ["GET", "https://s.test/api/items/search"],
-      ["GET", "https://s.test/api/widgets/red-one"],
-      ["GET", "https://s.test/api/widgets/blue-two"],
-      ["GET", "https://s.test/api/widgets/green-three"],
-      ["GET", "https://s.test/api/widgets/shared"],
-    ]),
-  );
-  expect(projected.tools.map((tool) => tool.path_template)).toEqual([
-    "/api/items/mine",
-    "/api/items/search",
-    "/api/items/{item_id}",
-    "/api/widgets/shared",
-    "/api/widgets/{widget_id}",
-  ]);
-  expect(
-    projected.tools.find(
-      (tool) => tool.path_template === "/api/items/{item_id}",
-    )?.params[0]?.observed_values,
-  ).toEqual(["a1", "b2"]);
 });
 
 it.each([

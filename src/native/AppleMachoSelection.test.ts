@@ -15,15 +15,16 @@ import {
   fatSliceRange,
   machoImage,
   machoImageWithUnknownCommand,
+  segmentCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
-import { readMachoImage } from "../artifacts/apple/MachoLoadCommandReader.js";
-import { readMachoImage as readMachoMetadataImage } from "./metadata/MachoImage.js";
-import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
+import { readMachoImage } from "../domain/apple/machoLoadCommandReader.js";
+import { readMachoImage as readMachoMetadataImage } from "../domain/apple/machoImage.js";
+import { BinaryFormatFailure } from "../domain/binaryContainer.js";
 import { layoutFor, MachoSliceRefused } from "./AppleMachoSelection.fixture.js";
 import {
   selectMachoSlice,
   type AdmittedMachoSlice,
-} from "./metadata/MachoSliceSelection.js";
+} from "../domain/apple/machoSliceSelection.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
 const admittedSlice = (
@@ -70,6 +71,47 @@ it.each([
     );
   },
 );
+
+it("keeps the selected slice's file offset bound for an empty segment", () => {
+  const segment = Buffer.from(
+    segmentCommand({ name: "__EMPTY", vmaddr: 0n, vmsize: 0n }),
+  );
+  const imageWithSegment = () =>
+    Buffer.from(machoImage({ cpu: CPU.arm64, commands: [segment] }));
+  const fileBytes = imageWithSegment().length;
+  segment.writeBigUInt64LE(BigInt(fileBytes), 40);
+  expect(layoutFor(imageWithSegment(), "arm64").segments).toEqual([
+    { address: 0n, size: 0n, offset: fileBytes, executable: false },
+  ]);
+  segment.writeBigUInt64LE(BigInt(fileBytes + 1), 40);
+  const outside = imageWithSegment();
+  expect(() => readMachoMetadataImage(outside)).not.toThrow();
+  expect(() => layoutFor(outside, "arm64")).toThrow(
+    malformedInput("macho", "Segment file range exceeds target bytes"),
+  );
+});
+
+it("preserves the selected layout's truncation diagnosis when a segment lacks its declared section", () => {
+  const segment = Buffer.from(
+    segmentCommand({ name: "__EMPTY", vmaddr: 0n, vmsize: 0n }),
+  );
+  segment.writeUInt32LE(1, 64);
+  const image = Buffer.from(
+    machoImage({ cpu: CPU.arm64, commands: [segment] }),
+  );
+  expect(() => layoutFor(image, "arm64")).toThrow(
+    expect.objectContaining({
+      kind: "truncated",
+      message: "Truncated section table",
+    }),
+  );
+  expect(() => readMachoMetadataImage(image)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: "Mach-O section table exceeds its segment command",
+    }),
+  );
+});
 
 const registerThinCpuFamilyControls = (): void => {
   it.each([
@@ -217,6 +259,62 @@ const mappingImage = (commands: readonly Buffer[]): Buffer => {
   Buffer.from(machoImage({ commands })).copy(bytes);
   return bytes;
 };
+
+it.each([
+  { flags: 0, fileAddress: 0x1000n, zeroAddress: 0x1008n },
+  { flags: 1, fileAddress: 0x1008n, zeroAddress: 0x1000n },
+])(
+  "maps the file-backed and zero-filled halves of a core segment ($flags)",
+  ({ flags, fileAddress, zeroAddress }) => {
+    const fileOffset = 104;
+    const segment = mappingSegment(0x1000n, fileOffset, 8, 16);
+    segment.write("__STACK", 8);
+    segment.writeUInt32LE(flags, 68);
+    const thin = Buffer.from(machoImage({ fileType: 4, commands: [segment] }));
+    thin.write("stackbuf", fileOffset);
+    const image = readMachoMetadataImage(thin);
+    expect(image.mappings).toEqual([
+      { address: fileAddress, offset: fileOffset, size: 8 },
+    ]);
+    expect(image.zero_fills).toEqual([{ address: zeroAddress, size: 8n }]);
+
+    const fat = Buffer.from(fatImage([{ cpu: CPU.arm64, bytes: thin }]));
+    const slice = fatSliceRange(fat, 0);
+    const layout = layoutFor(fat, "arm64", slice);
+    const offset = layout.offset(fileAddress, 8);
+    expect(offset).toBe(slice.offset + fileOffset);
+    expect(fat.toString("ascii", offset, offset + 8)).toBe("stackbuf");
+    expect(layout.segments[0]).toMatchObject({
+      address: fileAddress,
+      offset,
+    });
+    expect(() => layout.offset(zeroAddress)).toThrow("Unmapped");
+    expect(() => layout.offset(0x1007n, 2)).toThrow("Unmapped");
+  },
+);
+
+it("does not apply an ordinary fixup offset to high-backed segment bytes", () => {
+  const highSegment = mappingSegment(0x1000n, 0, 128, 256);
+  highSegment.writeUInt32LE(1, 68);
+  const dyldInfo = Buffer.alloc(48);
+  dyldInfo.writeUInt32LE(LC.DYLD_INFO_ONLY);
+  dyldInfo.writeUInt32LE(dyldInfo.length, 4);
+  dyldInfo.writeUInt32LE(200, 8);
+  dyldInfo.writeUInt32LE(1, 12);
+  const bytes = mappingImage([highSegment, dyldInfo]);
+  const layout = layoutFor(bytes, "arm64");
+  expect(layout.offset(0x1080n)).toBe(0);
+  expect(() =>
+    parsePointerFixups(
+      bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    ),
+  ).toThrow(
+    "Mach-O pointer fixups with leading segment zero-fill are unsupported",
+  );
+});
 
 describe("Mach-O metadata span mapping", () => {
   it.each([
@@ -592,6 +690,73 @@ describe("admitted Mach-O slices", () => {
     });
   });
 });
+
+it.each([LC.DYLD_INFO, LC.DYLD_INFO_ONLY])(
+  "resolves nonempty weak and lazy binds from Mach-O command %i in a FAT slice",
+  (command) => {
+    const weak = Buffer.from([
+      0x40,
+      ...Buffer.from("_weak_fixture\0"),
+      0x51,
+      0x70,
+      8,
+      0x90,
+      0,
+    ]);
+    const lazy = Buffer.from([
+      0x70,
+      16,
+      0x11,
+      0x40,
+      ...Buffer.from("_lazy_fixture\0"),
+      0x90,
+      0,
+    ]);
+    const weakOffset = 400;
+    const lazyOffset = 448;
+    const dyld = Buffer.alloc(48);
+    dyld.writeUInt32LE(command);
+    dyld.writeUInt32LE(dyld.length, 4);
+    dyld.writeUInt32LE(weakOffset, 24);
+    dyld.writeUInt32LE(weak.length, 28);
+    dyld.writeUInt32LE(lazyOffset, 32);
+    dyld.writeUInt32LE(lazy.length, 36);
+    const library = "/fixture/lib-bindings.dylib";
+    const thin = mappingImage([
+      mappingSegment(0x2000n, 256, 128),
+      dyld,
+      Buffer.from(dylibCommand(LC.LOAD_DYLIB, library)),
+    ]);
+    weak.copy(thin, weakOffset);
+    lazy.copy(thin, lazyOffset);
+    const bytes = Buffer.from(fatImage([{ cpu: CPU.arm64, bytes: thin }]));
+    const slice = fatSliceRange(bytes, 0);
+    const layout = layoutFor(bytes, "arm64", slice);
+    expect(layout.fixups.binds).toEqual([
+      { stream: "weak", offset: slice.offset + weakOffset, size: weak.length },
+      { stream: "lazy", offset: slice.offset + lazyOffset, size: lazy.length },
+    ]);
+    const decoded = parsePointerFixups(
+      bytes,
+      layout.fixups,
+      layout.segments,
+      layout.baseAddress,
+    );
+    expect(decoded.issues).toEqual([]);
+    expect(decoded.decode(0x2008n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_weak_fixture",
+      binding_source: "weak",
+      library: null,
+    });
+    expect(decoded.decode(0x2010n, 0n)).toMatchObject({
+      kind: "bind",
+      symbol: "_lazy_fixture",
+      binding_source: "lazy",
+      library,
+    });
+  },
+);
 
 describe("native Mach-O fixup load command boundaries", () => {
   const decode = (command: Uint8Array) =>

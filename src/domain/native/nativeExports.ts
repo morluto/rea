@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { isUtf8 } from "node:buffer";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -108,7 +109,7 @@ const artifactSchema = z.strictObject({
 
 const coverageSchema = z.strictObject({
   /** complete: every table entry was read; partial: issues name the gaps. */
-  status: z.enum(["complete", "partial", "unsupported"]),
+  status: z.enum([...knownCoverageStatusSchema.options, "unsupported"]),
   reason: z.string().min(1).nullable(),
   examined_entries: uint,
   exports: uint,

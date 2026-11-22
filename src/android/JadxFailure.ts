@@ -29,6 +29,7 @@ import type { JadxMcpTransport } from "./JadxMcpTransport.js";
 import type { OwnedMcpTransportFailure } from "../process/OwnedMcpStdioTransport.js";
 import { jadxHeapExhausted } from "./JadxProtocol.js";
 import { JADX_HEAP_REMEDIATION } from "./JadxRelease.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 interface FailureContext {
   readonly cause: unknown;
@@ -127,10 +128,7 @@ const observeJadxFailure = (
           })
         : cancelledBy(request.operation, carriedReason(cancellation.reason));
   if (cause instanceof RegularFileCleanupFailure) {
-    const reason =
-      cause.cleanupCause instanceof Error
-        ? cause.cleanupCause.message
-        : String(cause.cleanupCause);
+    const reason = errorMessage(cause.cleanupCause);
     // A finished copy or its cancellation can sit on this close or inside a
     // nested one when another descriptor also rejected close. Name every
     // descriptor that failed; the copied output path stays on the observation.
@@ -187,10 +185,7 @@ const observeJadxFailure = (
         ? primaryCause
         : new ProviderAdapterError("jadx", request.operation, {
             cause: primaryCause,
-            userMessage:
-              primaryCause instanceof Error
-                ? primaryCause.message
-                : String(primaryCause),
+            userMessage: errorMessage(primaryCause),
           }));
     const cleanup = new ProviderCleanupError(
       "jadx",
@@ -379,7 +374,7 @@ const presentDiagnosticFailure = (
           remediationAction: JADX_HEAP_REMEDIATION,
         },
       );
-    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${failure.cause instanceof Error ? failure.cause.message : String(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
+    const reason = `Java could not start REA's Android bridge using ${failure.command}: ${errorMessage(failure.cause)}. ${output === undefined || output.stderr.length === 0 ? "No launcher stderr was observed." : "Review the retained launcher diagnostics."}${output?.truncated === true ? " Diagnostics are incomplete." : ""} Review the selected Java/JADX configuration; for a JVM memory limit, review REA_JADX_HEAP_MIB and inherited JVM options such as JAVA_TOOL_OPTIONS.`;
     return new AnalysisCapabilityUnavailableError(
       "jadx",
       failure.operation,
@@ -393,10 +388,7 @@ const presentDiagnosticFailure = (
   return new ProviderAdapterError("jadx", failure.operation, {
     ...options,
     diagnostics: {
-      reason:
-        failure.cause instanceof Error
-          ? failure.cause.message
-          : String(failure.cause),
+      reason: errorMessage(failure.cause),
     },
   });
 };

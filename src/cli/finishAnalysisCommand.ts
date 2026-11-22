@@ -14,6 +14,7 @@ import {
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { dispatchQueuedInterrupts } from "../process/queuedInterrupts.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Finish a one-shot CLI operation while retaining primary results through close. */
 export const finishAnalysisCommand = async <
@@ -133,11 +134,7 @@ export const finishAnalysisCommand = async <
     details: {
       ...failure.details,
       diagnostics: {
-        ...(typeof diagnostics === "object" &&
-        diagnostics !== null &&
-        !Array.isArray(diagnostics)
-          ? diagnostics
-          : {}),
+        ...(isRecord(diagnostics) ? diagnostics : {}),
         primary_error: initialDiagnosticFailure ?? initialFailure,
       },
     },

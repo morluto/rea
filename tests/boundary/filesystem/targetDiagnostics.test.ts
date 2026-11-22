@@ -89,10 +89,14 @@ describe("target route diagnostics", () => {
         details: {
           path: await realpath(path),
           constraint: "wasm_requires_static_inspection",
+          related_operations: ["inspect_wasm_artifact"],
         },
       });
       expect(projected.message).toContain("WebAssembly");
       expect(projected.remediation.action).toContain("inspect_wasm_artifact");
+      expect(projected.remediation.action).not.toContain(
+        "rea inspect-wasm-artifact",
+      );
       expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
       expect(projected.remediation.action).toContain("WABT 1.0.42");
       expect(await systemDoctorHost().inspectTarget?.(path)).toMatchObject({
@@ -160,10 +164,13 @@ describe("target route diagnostics", () => {
       details: {
         path: await realpath(directory),
         constraint: "directory_requires_file",
+        related_operations: ["analyze_javascript_application"],
       },
     });
     expect(projected.message).toContain("analyze_javascript_application");
+    expect(projected.message).not.toContain("rea analyze");
     expect(projected.remediation.action).toContain("input_path");
+    expect(projected.remediation.action).not.toContain("rea analyze");
     const doctor = systemDoctorHost();
     expect(await doctor.inspectTarget?.(directory)).toMatchObject({
       name: "target",
@@ -245,13 +252,10 @@ describe("raw-binary load rejection diagnostics", () => {
           /raw-binary.*arm.*entry_point.*0x1.*4.byte.*align/i,
         ),
         constraint: "load_selection_rejected",
-      },
-      remediation: {
-        action: expect.stringMatching(
-          /--target-format.*--architecture.*--entry-point.*entry_point/i,
-        ),
+        related_parameters: ["format", "architecture", "entry_point"],
       },
     });
+    expect(projected.remediation.action).not.toContain("--target-format");
   });
 
   it("projects an x86 entry beyond the address width as caller input", async () => {

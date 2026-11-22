@@ -44,6 +44,7 @@ import {
   AnalysisResourceConstraintError,
   OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** MCP endpoint path shared by `rea mcp --http` and agent environment servers. */
 export const MCP_HTTP_PATH = "/mcp";
@@ -126,9 +127,6 @@ const jsonError = jsonRpcErrorResponse;
 
 const protocolOf = (instance: McpServer | Server): Server =>
   "server" in instance ? instance.server : instance;
-
-const describe = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
 
 const NO_SHUTDOWN_HOOK = (): void => undefined;
 const SHUTTING_DOWN = (): Response =>
@@ -592,7 +590,7 @@ export const serveStreamableHttp = async (
   httpServer.on("request", (request, response) => {
     void requests.handle(request, response).catch((cause: unknown) => {
       logger?.warn(
-        { error: describe(cause) },
+        { error: errorMessage(cause) },
         "MCP HTTP request did not complete",
       );
       response.destroy();
@@ -713,7 +711,7 @@ const serveNodeRequest = async (
   } catch (cause: unknown) {
     // A client that left mid-stream is routine; a failure before headers is not.
     logger?.[response.headersSent ? "debug" : "warn"](
-      { error: describe(cause) },
+      { error: errorMessage(cause) },
       "MCP HTTP request did not complete",
     );
     if (response.headersSent) response.destroy();

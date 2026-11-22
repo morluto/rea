@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
+import { phaseArrival } from "../../../support/lifecycleHarness.js";
 import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
-import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { KunaQueryWork } from "../../../../src/kuna/KunaQueryWork.js";
 import { KunaRunSlots } from "../../../../src/kuna/KunaRunSlots.js";
@@ -25,23 +25,20 @@ it("does not materialize values for a cancelled queued regex query", async () =>
     own: (promise) => promise,
     runSlots: new KunaRunSlots(1),
   });
-  let admitted!: () => void;
-  const ready = new Promise<void>((resolve) => {
-    admitted = resolve;
-  });
+  const workerAdmission = phaseArrival();
   const slow = work.match({
     operation: "search_strings",
     pattern: "^(a+)+$",
     caseSensitive: true,
     values: () => {
-      admitted();
+      workerAdmission.arrive();
       return [`${"a".repeat(40)}!`];
     },
   });
   const cancelled = new AbortController();
   let queued: ReturnType<typeof work.match> | undefined;
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(ready, slow, "regex worker admission");
+    await workerAdmission.reached(slow, "regex worker admission");
     let materialized = false;
     queued = work.match({
       operation: "search_procedures",

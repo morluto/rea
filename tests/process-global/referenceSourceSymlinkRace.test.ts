@@ -62,7 +62,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import { importReferenceSource } from "../../src/application/ReferenceSourceImport.js";
 import { readReferenceSource } from "../../src/reference/ReferenceSourceReader.js";
 

@@ -27,9 +27,9 @@ export const analyzeCapturedWebScript = (
   memberMutationAllowance?: JavaScriptMemberMutationAllowance,
 ): WebBundleScriptAnalysis => {
   const accumulator = createWebBundleAnalysisAccumulator();
-  let routeFacts: ReturnType<typeof analyzeScript>;
+  let analysis: ReturnType<typeof analyzeScript>;
   try {
-    routeFacts = analyzeScript(
+    analysis = analyzeScript(
       script,
       accumulator,
       precision,
@@ -59,12 +59,16 @@ export const analyzeCapturedWebScript = (
     parse_status: failed ? "failed" : recovered ? "recovered" : "parsed",
     visited_ast_nodes: accumulator.visitedNodes,
     widened_return_references: accumulator.widenedScripts.length > 0,
-    route_facts: routeFacts,
+    route_facts: analysis.routeFacts,
+    ...(analysis.semanticLimits.length === 0
+      ? {}
+      : { semantic_limits: analysis.semanticLimits }),
     observations: {
       edges: accumulator.edges,
       routes: accumulator.routes,
       endpoints: accumulator.endpoints,
       webmcp_declarations: accumulator.webMcp,
+      unresolved_endpoints: accumulator.unresolvedEndpoints,
     },
     inferences: accumulator.inferences,
   });

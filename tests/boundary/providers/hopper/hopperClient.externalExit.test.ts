@@ -10,7 +10,7 @@ import {
   type AnalysisProviderCandidate,
   type CapabilityDescriptor,
   type ProviderIdentity,
-} from "../../../../src/application/AnalysisProvider.js";
+} from "../../../../src/ports/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { BinarySession } from "../../../../src/application/binary/BinarySession.js";
 import { SessionProviderRouter } from "../../../../src/application/binary/SessionProviderRouter.js";
@@ -30,6 +30,7 @@ import {
   transportReplyContracts,
   type TransportHopperClient,
 } from "./hopperClient.fixture.js";
+import { ArtifactResourceScope } from "../../../../src/resources/index.js";
 
 const identities = {
   hopper: { id: "hopper", name: "Hopper fixture", version: null },
@@ -235,6 +236,7 @@ it.skipIf(process.platform === "win32")(
       processSupervisor: undefined,
       runtimeRoot,
       shutdownConfirmed: false,
+      inspections: new ArtifactResourceScope(),
       externalApplication: {
         pid: started.value.processId,
         identity,

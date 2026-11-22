@@ -1,3 +1,4 @@
+import { Budget } from "../../domain/budget.js";
 import {
   decodeLimit,
   type ParseFailureError,
@@ -22,45 +23,36 @@ export const interfaceBuilderDecodeBudgetExceeded = (
 
 /** Shared byte budget for decoder records and projected archive data. */
 export class InterfaceBuilderDecodeBudget {
-  readonly #initialBytes: number;
-  #remainingBytes: number;
+  readonly #bytes: Budget;
 
   constructor(maxBytes: number) {
-    this.#initialBytes = maxBytes;
-    this.#remainingBytes = maxBytes;
+    this.#bytes = new Budget(maxBytes);
   }
 
   /** Representation bytes still available for the current inspection. */
   get remainingBytes(): number {
-    return this.#remainingBytes;
+    return this.#bytes.remaining;
   }
 
   /** Representation bytes reserved so far. */
   get usedBytes(): number {
-    return this.#initialBytes - this.#remainingBytes;
+    return this.#bytes.used;
   }
 
   /** Reserve representation bytes before allocation, or report exhaustion. */
   reserve(bytes: number, message: string): void {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.#remainingBytes
-    )
-      throw interfaceBuilderDecodeBudgetExceeded(
+    this.#bytes.charge(bytes, () =>
+      interfaceBuilderDecodeBudgetExceeded(
         "interface-builder",
         message,
-        this.#initialBytes,
-      );
-    this.#remainingBytes -= bytes;
+        this.#bytes.maximum,
+      ),
+    );
   }
 
   /** Return a reservation whose representation was rejected and not retained. */
   release(bytes: number): void {
-    this.#remainingBytes = Math.min(
-      this.#initialBytes,
-      this.#remainingBytes + bytes,
-    );
+    this.#bytes.refund(bytes);
   }
 
   /** Reserve an upper bound for one JSON-serialized string occurrence. */
@@ -92,13 +84,6 @@ export class InterfaceBuilderDecodeBudget {
 
   /** Reserve bytes for an optional projection without throwing on exhaustion. */
   tryReserve(bytes: number): boolean {
-    if (
-      !Number.isSafeInteger(bytes) ||
-      bytes < 0 ||
-      bytes > this.#remainingBytes
-    )
-      return false;
-    this.#remainingBytes -= bytes;
-    return true;
+    return this.#bytes.tryCharge(bytes);
   }
 }

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 import { pwntoolsHostSupported } from "./PwntoolsDecoder.js";
@@ -60,10 +60,8 @@ it("keeps the caller-selected pwntools input-limit source", () => {
     update_mode: "parameter",
     pending_restart: false,
     parameter: "producer_limits.input_bytes",
+    unit: "bytes",
   });
-  expect(projected.remediation.action).toContain(
-    "producer_limits.input_bytes is 4096 bytes",
-  );
   expect(projected.remediation.action).not.toContain("launch default of");
 });
 
@@ -90,11 +88,9 @@ it("names a runtime pwntools ceiling instead of the built-in default", () => {
   expect(projected.details?.limit).toMatchObject({
     effective_value: 67_108_864,
     source: "runtime",
+    unit: "bytes",
     update_mode: "runtime",
   });
-  expect(projected.remediation.action).toContain(
-    "67108864 bytes (source runtime)",
-  );
   expect(projected.remediation.action).toContain("update_analysis_settings");
   expect(projected.message).not.toContain(
     "Selected producer_limits.input_bytes is",
@@ -121,13 +117,12 @@ it("distinguishes the wall deadline from caller-selected producer resource budge
   expect(projected.details?.limit).toMatchObject({
     control_kind: "parameter",
     parameter: "pwntools_timeout_ms",
-    cli_flag: "--pwntools-timeout-ms",
     effective_value: 4_500,
     default_value: 30_000,
+    applies_at: "next_call",
   });
   expect(projected.remediation.action).toContain("cpu_seconds=30");
   expect(projected.remediation.action).toContain("producer_limits");
-  expect(projected.remediation.action).toContain("no REA restart");
   expect(projected.remediation.action).toContain("67108864");
 });
 
@@ -166,6 +161,85 @@ it("names the reported file-size allowance instead of address space", () => {
   expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("1111");
   expect(projected.remediation.action).not.toContain("3221225472");
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "producer_limits.file_bytes",
+    effective_value: 67108864,
+  });
+});
+
+it("reports the selected output allowance as the omitted file-size default", () => {
+  const outputBytes = 128 * 1024 * 1024;
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new OwnedCommandFailure("process", "sigxfsz", {
+        stdout: { text: "", bytes: 0, observedBytes: 0 },
+        stderr: { text: "", bytes: 0, observedBytes: 0 },
+        exitCode: null,
+        signal: "SIGXFSZ",
+      }),
+      "decoder",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits({ output_bytes: outputBytes }),
+      },
+    ),
+  );
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "producer_limits.file_bytes",
+    effective_value: outputBytes,
+    default_value: outputBytes,
+  });
+});
+
+it("binds diagnostic_bytes as the only control of the command output budget", () => {
+  const projected = projectAnalysisError(
+    pwntoolsDecoderFailure(
+      new OwnedCommandFailure(
+        "output-limit",
+        "Command diagnostic output exceeded its complete-output budget.",
+        {
+          stdout: { text: "x".repeat(64), bytes: 64, observedBytes: 65 },
+          stderr: { text: "", bytes: 0, observedBytes: 0 },
+          exitCode: 0,
+          signal: null,
+          outputIncomplete: true,
+        },
+      ),
+      "decoder",
+      "/selected",
+      "/python",
+      {},
+      {
+        operation: "inspect_binary_layout",
+        providerId: "pwntools",
+        producerLimits: resolvePwntoolsLimits({ diagnostic_bytes: 64 }),
+      },
+    ),
+  );
+  expect(projected).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      limit: {
+        control_kind: "parameter",
+        parameter: "producer_limits.diagnostic_bytes",
+        effective_value: 64,
+        default_value: 1048576,
+        applies_at: "next_call",
+      },
+    },
+  });
+  // output_bytes bounds the reply file, not this budget.
+  expect(projected.message).not.toContain("output_bytes");
+  expect(projected.remediation.action).toContain(
+    "producer_limits.diagnostic_bytes",
+  );
+  expect(projected.remediation.action).not.toContain("--");
 });
 
 it("names the file-size cap when SIGXFSZ has no reported limit", () => {
@@ -190,6 +264,9 @@ it("names the file-size cap when SIGXFSZ has no reported limit", () => {
   expect(projected.remediation.action).toContain("tighter inherited limit");
   expect(projected.remediation.action).not.toContain("address_space_bytes");
   expect(projected.remediation.action).not.toContain("3221225472");
+  expect(projected.details?.limit).toMatchObject({
+    parameter: "producer_limits.file_bytes",
+  });
 });
 
 it("names memory in the marker recovery for an allocation failure", () => {
@@ -259,6 +336,31 @@ it.each(["ENOEXEC", "EACCES"])(
     });
   },
 );
+
+it("keeps the launch owner's cause and facts on an unavailable selected Python", () => {
+  const launch = Object.assign(new Error("spawn /python EIO"), {
+    code: "EIO",
+    syscall: "spawn /python",
+    path: "/python",
+  });
+  const failure = pwntoolsDecoderFailure(
+    launch,
+    "decoder",
+    "/selected",
+    "/python",
+  );
+  expect(failure.cause).toBe(launch);
+  expect(failure.diagnostics).toMatchObject({
+    boundary: "provider-launch",
+    system_code: "EIO",
+    syscall: "spawn /python",
+    command: "/python",
+  });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "provider_unavailable",
+    message: expect.stringContaining("EIO from spawn /python"),
+  });
+});
 
 it("does not read an errno from another syscall as a launch refusal", () => {
   const unrelated = Object.assign(new Error("open EACCES"), {

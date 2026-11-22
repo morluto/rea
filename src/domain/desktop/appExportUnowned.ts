@@ -1,3 +1,4 @@
+import { boundedList, describeBoundedList } from "../boundedList.js";
 import {
   STATE_PATH_INPUTS,
   STATE_PATH_INPUTS_MARKDOWN,
@@ -163,11 +164,8 @@ export const runtimeSeeds = (
 };
 
 /** Names as a list, the first eight named and the rest counted. */
-export const counted = (names: readonly string[]): string => {
-  const named = names.slice(0, MAX_LISTED).join(", ");
-  const rest = names.length - MAX_LISTED;
-  return rest > 0 ? `${named}, and ${String(rest)} more` : named;
-};
+export const counted = (names: readonly string[]): string =>
+  describeBoundedList(boundedList(names, MAX_LISTED), ", ");
 
 /** Home paths as a list, the first eight named and the rest counted. */
 const listed = (paths: readonly string[], markdown: boolean): string =>

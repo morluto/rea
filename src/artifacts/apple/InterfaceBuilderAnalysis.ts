@@ -1,11 +1,10 @@
-import { createHash } from "node:crypto";
 import {
   isHostLimitFailure,
   ParseFailureError,
 } from "../../domain/parseFailure.js";
 import { InternalInvariantError } from "../../domain/internalInvariant.js";
 
-import { decodeBinaryPropertyList } from "./BinaryPlistMaterializer.js";
+import { decodeBinaryPropertyList } from "../../domain/apple/binaryPlistMaterializer.js";
 import {
   plistDuplicateKeyLimitations,
   type PlistDuplicateKeys,
@@ -20,9 +19,14 @@ import {
   isSourceLessAppKitAnnotationConnector,
   isUIKitRuntimeConnectionClass,
 } from "../../domain/apple/interfaceBuilderKeyedArchive.js";
-import { streamChunkToBuffer } from "../StreamBytes.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
-import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import {
+  streamChunkToBuffer,
+  ArtifactResourceScope,
+  ArtifactReaderFailure,
+  type ArtifactEntry,
+  type ArtifactReaderTraversal,
+  DirectoryArtifactReader,
+} from "../../resources/index.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
 import {
   projectPlistValue,
@@ -41,16 +45,11 @@ import {
 import {
   preflightPropertyListDecode,
   type PlistDecodePreflight,
-} from "./PropertyListDecodeBudget.js";
+} from "../../domain/apple/propertyListDecodeBudget.js";
 import {
   InterfaceBuilderDecodeBudget,
   interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
-import {
-  ArtifactReaderFailure,
-  type ArtifactEntry,
-  type ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
 import {
   buildInterfaceBuilderAnalysis,
   interfaceBuilderLimitsSchema,
@@ -65,13 +64,14 @@ import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
 import {
   scanBinaryPlistScalars,
   UnsupportedBinaryPlistUidError,
-} from "./PlistScalars.js";
+} from "../../domain/apple/plistScalars.js";
 import type { PlistNumberLiterals } from "../../domain/apple/plistNumbers.js";
 import {
   hasBinaryPlistSignature,
   hasNibArchiveSignature,
 } from "../../domain/apple/appleArchiveFormat.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const MAX_AGGREGATE_INPUT_BYTES = 32 * 1024 * 1024;
 const MAX_AGGREGATE_DECODE_BYTES = 256 * 1024 * 1024;
@@ -265,7 +265,7 @@ const decodeInterfaceBuilderBundle = async (
           unknownScalars.set(entry.path, unknownScalarCount);
         if (repeatedKeys !== undefined && repeatedKeys.replaced > 0)
           duplicateKeys.set(entry.path, repeatedKeys);
-        const documentHash = createHash("sha256").update(bytes).digest("hex");
+        const documentHash = sha256Hex(bytes);
         documents.push({
           relativePath: entry.path,
           archiveSha256: documentHash,
@@ -558,7 +558,10 @@ const finalizeHierarchyCoverage = (
                 // it, so that cause keeps the reason the graph already named.
                 // Only a facet with no other cause reports the omission.
                 reason: facet.reason ?? "connection_unresolved",
-                omitted: facet.omitted + omittedConnection,
+                omitted:
+                  facet.omitted === null
+                    ? null
+                    : facet.omitted + omittedConnection,
               }
             : facet;
         }),

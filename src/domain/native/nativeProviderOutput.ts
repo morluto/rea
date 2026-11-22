@@ -1,3 +1,4 @@
+import { boundedList } from "../boundedList.js";
 import { z } from "zod";
 import { err, type Result } from "../result.js";
 import { AnalysisOutputError } from "../analysisErrorCore.js";
@@ -60,24 +61,22 @@ export const outputContractDiagnostics = (
   cause: z.ZodError,
   value?: unknown,
 ): Readonly<Record<string, JsonValue>> => {
-  const located = locatedIssues(cause.issues);
+  const located = boundedList(locatedIssues(cause.issues), MAX_CONTRACT_ISSUES);
   return {
-    contract_issue_count: located.length,
-    contract_issues: located
-      .slice(0, MAX_CONTRACT_ISSUES)
-      .map(({ issue, path, branches }) => ({
-        path: path.map((key) => (typeof key === "number" ? key : String(key))),
-        code: issue.code,
-        ...(branches.length === 0 ? {} : { union_branches: [...branches] }),
-        ...(issue.code === "invalid_type"
-          ? {
-              expected: issue.expected,
-              ...(value === undefined
-                ? {}
-                : { received: jsonKind(valueAt(value, path)) }),
-            }
-          : {}),
-      })),
+    contract_issue_count: located.items.length + located.omitted,
+    contract_issues: located.items.map(({ issue, path, branches }) => ({
+      path: path.map((key) => (typeof key === "number" ? key : String(key))),
+      code: issue.code,
+      ...(branches.length === 0 ? {} : { union_branches: [...branches] }),
+      ...(issue.code === "invalid_type"
+        ? {
+            expected: issue.expected,
+            ...(value === undefined
+              ? {}
+              : { received: jsonKind(valueAt(value, path)) }),
+          }
+        : {}),
+    })),
   };
 };
 

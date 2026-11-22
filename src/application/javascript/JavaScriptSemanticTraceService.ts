@@ -1,4 +1,4 @@
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   resolveEvidenceRequest,
   type EvidenceLookup,

@@ -21,6 +21,7 @@ import { functionDossierSchema } from "../../../src/domain/native/functionDossie
 import { reconstructionVerificationResultSchema } from "../../../src/domain/reconstructionVerificationSchemas.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const example = FUNCTION_COMPARISON_EXAMPLE.left;
 const dossier = functionDossierSchema.parse(example.normalized_result);
@@ -1034,7 +1035,10 @@ it("distinguishes same-entry renames from different entries through retained MCP
     name: "comparison-schema",
     version: "1",
   });
-  const schemaClient = new Client({ name: "comparison-schema", version: "1" });
+  const schemaClient = new Client(
+    { name: "comparison-schema", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(async () => {

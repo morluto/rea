@@ -1,20 +1,3 @@
 {
-  "src/browser/ElectronCaptureCleanup.test.ts": 2,
-  "src/browser/PlaywrightElectronActiveProvider.test.ts": 2,
-  "src/browser/PlaywrightScenarioBrowser.test.ts": 3,
-  "src/browser/modules/NativeModuleResolver.test.ts": 3,
-  "src/pcap/PcapNativeBound.test.ts": 2,
-  "tests/boundary/browser/historicalCaptureDecoder.test.ts": 2,
-  "tests/boundary/cli/debuggerOneShotExit.test.ts": 1,
-  "tests/boundary/evm/evmCleanupRetry.test.ts": 52,
-  "tests/boundary/filesystem/webScriptExport.test.ts": 2,
-  "tests/boundary/filesystem/webScriptManifestPaths.test.ts": 2,
-  "tests/boundary/native/pwntoolsArtifactCleanup.test.ts": 4,
-  "tests/boundary/process/artifactSelectedCommand.test.ts": 6,
-  "tests/boundary/process/nativeUiVerifierActions.test.ts": 1,
-  "tests/process-global/hostRestrictedAvailabilityMcp.test.ts": 4,
-  "tests/process-global/pwntoolsCleanup.test.ts": 4,
-  "tests/process-global/pwntoolsCliFinalization.test.ts": 4,
-  "tests/process-global/pwntoolsCliRemediation.test.ts": 4,
-  "tests/process-global/pwntoolsStageRetirement.test.ts": 4
+  "tests/boundary/cli/debuggerOneShotExit.test.ts": 1
 }

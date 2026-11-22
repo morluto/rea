@@ -1,9 +1,13 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -166,11 +170,13 @@ it.each(["compact"] as const)(
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
+      const listed = (await client.listTools()).tools.find(
         (tool) => tool.name === "inspect_analysis_view",
       );
-      if (advertised === undefined)
+      if (listed === undefined)
         throw new Error("Missing advertised view schema");
+      // Every call, including continuation pages, checks the whole reply.
+      const advertised = withCanonicalOutputSchema(listed);
       expect(
         validation.assertions.validateSchema(
           canonicalOutputSchema(advertised.name),
@@ -280,7 +286,7 @@ it.each(["compact"] as const)(
 
 it("recovers the complete parent when a single reference exceeds the page budget", async () => {
   const oversized = { ...row, type: "x".repeat(1024 * 1024) };
-  const parent = createEvidence(undefined, provider, {
+  const parent = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "inspect_native_instruction",
     parameters: { address: "0x1000" },
     result: { ...instruction("rows"), incoming_references: [row, oversized] },
@@ -292,10 +298,13 @@ it("recovers the complete parent when a single reference exceeds the page budget
   const retained = session.recordEvidence(parent);
   if (!retained.ok) throw retained.error;
   const server = createServer({ kind: "session", session });
-  const client = new Client({
-    name: "oversized-instruction-reference",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "oversized-instruction-reference",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {

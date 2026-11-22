@@ -11,7 +11,7 @@ import {
   createProcessTerminalFinalizer,
   retainTerminalObservationFailure,
 } from "./ProcessTerminalObservation.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import {
   captureInspectionFailures,
   describeProcessCaptureExecutionFailure,
@@ -28,8 +28,10 @@ import type {
   ProcessSample,
   RecordProcessCaptureEvent,
   TerminalFrame,
+  ProcessCaptureRootProcess,
 } from "../../domain/process/processCapture.js";
 import { startProcessSampler } from "./ProcessSampling.js";
+import { AbortedWait, waitForAbortable } from "../AbortablePromise.js";
 import {
   snapshotRoots,
   ProcessCaptureSnapshotFailure,
@@ -104,78 +106,161 @@ interface StartedCaptureRuntime {
   readonly stopSampler: ReturnType<typeof startProcessSampler>;
   /** One ownership ledger shared by observations and final cleanup for this run. */
   readonly ownershipEvidence: ProcessOwnershipEvidenceOwner;
+  /** The root's start identity, read once at launch. */
+  readonly rootIdentity: Promise<RetainedRootIdentity>;
   /** Signals the captured root only while its launch-time start identity still matches. */
-  readonly signalRoot: (signal: "SIGTERM" | "SIGKILL") => Promise<{
+  readonly rootSignaller: RootSignaller;
+}
+
+/** Identity-checked finalization signalling for one captured root. */
+export interface RootSignaller {
+  /** Deliver one signal; never rejects, so a failed delivery is recorded as unverified. */
+  readonly signal: (signal: "SIGTERM" | "SIGKILL") => Promise<{
     readonly delivery: "signaled" | "gone" | "identity-changed" | "unverified";
     readonly reason?: string | undefined;
   }>;
+  /**
+   * Join every delivery, including one that outlasted the finalization
+   * grace, and hand over the inspection failures their identity checks left
+   * owned. Never rejects.
+   */
+  readonly settled: () => Promise<readonly ProcessCaptureInspectionFailure[]>;
 }
 
-/** Identity observation and signalling used for finalization signals; injectable for tests. */
+/** Root identity observation and finalization signalling; injectable for tests. */
 export interface FinalizationHost {
   readonly observe: typeof observeProcessStartIdentity;
   readonly signal: typeof signalProcessWithStartIdentity;
 }
 
-/** Bind the captured root's initial identity to its run token before retaining it. */
+/**
+ * The captured root's launch-time start identity, bound to its run token. A
+ * read that failed through the inspection owner keeps that owner's failure,
+ * including any descriptor whose close failed, for the capture to retain.
+ */
+export type RetainedRootIdentity =
+  | { readonly state: "identity"; readonly identity: string }
+  | { readonly state: "gone" }
+  | {
+      readonly state: "unverified";
+      readonly reason: string;
+      readonly inspectionFailure?: ProcessCaptureInspectionFailure;
+    };
+
+/**
+ * Read the captured root's start identity once at launch, bound to its run
+ * token. Finalization signals and the capture's root process fact both use
+ * this one observation; nothing re-reads it later.
+ */
+export const retainRootIdentity = (
+  pid: number,
+  runId: string,
+  observe: FinalizationHost["observe"] = (rootPid) =>
+    observeProcessStartIdentity(rootPid, undefined, runId),
+): Promise<RetainedRootIdentity> =>
+  observe(pid).then(
+    (observation) =>
+      observation === undefined
+        ? ({ state: "gone" } as const)
+        : observation.state === "readable"
+          ? ({ state: "identity", identity: observation.identity } as const)
+          : ({
+              state: "unverified",
+              reason:
+                observation.reason.trim() === ""
+                  ? "start identity is unavailable without a diagnostic"
+                  : observation.reason,
+            } as const),
+    (cause: unknown) => {
+      const [inspectionFailure] = captureInspectionFailures(
+        normalizeCaptureFailure(cause),
+      );
+      return {
+        state: "unverified",
+        reason: describeUnverifiedCause(
+          cause,
+          "start identity inspection failed without a message",
+        ),
+        ...(inspectionFailure === undefined ? {} : { inspectionFailure }),
+      } as const;
+    },
+  );
+
+/**
+ * Signal the captured root only while its retained launch identity still
+ * matches. A delivery whose identity check fails through the inspection owner
+ * is recorded as unverified, and the signaller keeps that failure until
+ * `settled` hands it to the run, so its descriptors stay owned for cleanup.
+ */
 export const retainRootSignaller = (
   pid: number,
-  finalizationMs: number,
-  runId: string,
-  host: FinalizationHost = {
-    observe: (rootPid) =>
-      observeProcessStartIdentity(rootPid, undefined, runId),
-    signal: signalProcessWithStartIdentity,
-  },
-): StartedCaptureRuntime["signalRoot"] => {
-  const retained =
-    finalizationMs > 0
-      ? host.observe(pid).then(
-          (observation) =>
-            observation === undefined
-              ? ({ state: "gone" } as const)
-              : observation.state === "readable"
-                ? ({
-                    state: "identity",
-                    identity: observation.identity,
-                  } as const)
-                : ({
-                    state: "unverified",
-                    reason:
-                      observation.reason.trim() === ""
-                        ? "start identity is unavailable without a diagnostic"
-                        : observation.reason,
-                  } as const),
-          (cause: unknown) =>
-            ({
-              state: "unverified",
-              reason: describeUnverifiedCause(
-                cause,
-                "start identity inspection failed without a message",
-              ),
-            }) as const,
-        )
-      : undefined;
-  return async (signal) => {
+  retained: Promise<RetainedRootIdentity>,
+  signalProcess: FinalizationHost["signal"] = signalProcessWithStartIdentity,
+): RootSignaller => {
+  const deliveries = new Set<Promise<unknown>>();
+  const inspectionFailures: ProcessCaptureInspectionFailure[] = [];
+  const deliver: RootSignaller["signal"] = async (signal) => {
     const identity = await retained;
-    if (identity === undefined)
-      return {
-        delivery: "unverified",
-        reason: "root identity was not retained",
-      };
     if (identity.state === "unverified")
       return { delivery: "unverified", reason: identity.reason };
     if (identity.state === "gone") return { delivery: "gone" };
-    const delivery = await host.signal(pid, identity.identity, signal);
-    return delivery === "unverified"
-      ? {
-          delivery,
-          reason:
-            "start identity could not be verified or the signal call failed",
-        }
-      : { delivery };
+    try {
+      const delivery = await signalProcess(pid, identity.identity, signal);
+      return delivery === "unverified"
+        ? {
+            delivery,
+            reason:
+              "start identity could not be verified or the signal call failed",
+          }
+        : { delivery };
+    } catch (cause: unknown) {
+      inspectionFailures.push(
+        ...captureInspectionFailures(normalizeCaptureFailure(cause)),
+      );
+      return {
+        delivery: "unverified",
+        reason: describeUnverifiedCause(
+          cause,
+          "signal delivery failed without a message",
+        ),
+      };
+    }
+  };
+  return {
+    signal: (signal) => {
+      const delivery = deliver(signal);
+      deliveries.add(delivery);
+      void delivery.finally(() => deliveries.delete(delivery));
+      return delivery;
+    },
+    settled: async () => {
+      while (deliveries.size > 0) await Promise.allSettled(deliveries);
+      return inspectionFailures.splice(0);
+    },
   };
 };
+
+/**
+ * The capture's root process fact: the PID with its retained launch
+ * identity, withheld when the caller selected PID normalization, or unknown
+ * with the reason. A PID without its start identity is not an identity.
+ */
+export const capturedRootProcess = (
+  pid: number,
+  identity: RetainedRootIdentity,
+  pidsNormalized: boolean,
+): ProcessCaptureRootProcess =>
+  pidsNormalized
+    ? { state: "withheld-by-caller" }
+    : identity.state === "identity"
+      ? { state: "observed", pid, start_time: identity.identity }
+      : {
+          state: "unknown",
+          reason:
+            identity.state === "gone"
+              ? "the root process exited before its start identity was read"
+              : identity.reason,
+        };
 
 const cleanupFailedStartup = async (options: {
   readonly cause: unknown;
@@ -291,6 +376,7 @@ const startCaptureRuntime = async (
     | ReturnType<typeof createProcessTerminalFinalizer>
     | undefined;
   let stopSampler: ReturnType<typeof startProcessSampler> | undefined;
+  let rootIdentity: Promise<RetainedRootIdentity> | undefined;
   try {
     const privacy = createProcessSensitiveOutput(scenario);
     if (!privacy.ok) throw privacy.error;
@@ -383,6 +469,11 @@ const startCaptureRuntime = async (
       renderer,
       started,
     });
+    rootIdentity = retainRootIdentity(
+      terminal.pid,
+      options.runId,
+      options.finalizationHost?.observe,
+    );
     stopSampler = startProcessSampler({
       rootPid: terminal.pid,
       runId: options.runId,
@@ -403,11 +494,11 @@ const startCaptureRuntime = async (
       lastOutput: () => lastOutput,
       terminalObservation,
       stopSampler,
-      signalRoot: retainRootSignaller(
+      rootIdentity,
+      rootSignaller: retainRootSignaller(
         terminal.pid,
-        scenario.finalization_ms,
-        options.runId,
-        options.finalizationHost,
+        rootIdentity,
+        options.finalizationHost?.signal,
       ),
     };
   } catch (cause: unknown) {
@@ -420,13 +511,19 @@ const startCaptureRuntime = async (
     try {
       await stopSampler?.();
     } catch (samplingCause: unknown) {
-      failure = retainSamplingFailure(
+      failure = retainSecondaryInspectionFailure(
         failure,
         samplingCause,
         options.resourceScope,
         options.inspectionFailures,
       );
     }
+    failure = retainRootIdentityFailure(
+      failure,
+      await rootIdentity,
+      options.resourceScope,
+      options.inspectionFailures,
+    );
     return cleanupFailedStartup({
       cause: failure,
       timers: options.timers,
@@ -462,8 +559,30 @@ const retainRunInspectionFailures = (
   return failure;
 };
 
-/** A sampler's final rejection cannot skip cleanup or replace an earlier physical failure. */
-const retainSamplingFailure = (
+/**
+ * A failed launch identity read through the inspection owner fails the
+ * capture like a sampler read: its descriptors stay owned for cleanup.
+ */
+const retainRootIdentityFailure = (
+  primary: unknown,
+  identity: RetainedRootIdentity | undefined,
+  resources: ProcessCaptureResourceScope,
+  inspections: Set<ProcessCaptureInspectionFailure>,
+): unknown =>
+  identity?.state === "unverified" && identity.inspectionFailure !== undefined
+    ? retainSecondaryInspectionFailure(
+        primary,
+        identity.inspectionFailure,
+        resources,
+        inspections,
+      )
+    : primary;
+
+/**
+ * A sampler's, identity read's or signal delivery's final rejection cannot
+ * skip cleanup or replace an earlier physical failure.
+ */
+const retainSecondaryInspectionFailure = (
   primary: unknown,
   cause: unknown,
   resources: ProcessCaptureResourceScope,
@@ -486,9 +605,11 @@ const retainSamplingFailure = (
     retainCaptureInspectionCancellations(error, inspection);
   if (error.secondaryFailures.includes(secondary)) return error;
   if (secondary.cleanupIncomplete)
-    return analysisErrorWithCleanupFailure(error, secondary, "capture_process")
-      .bindCleanupDependencies([error, secondary])
-      .retainSecondaryFailure(secondary);
+    return analysisErrorWithCleanupDependencies(
+      error,
+      secondary,
+      "capture_process",
+    ).retainSecondaryFailure(secondary);
   return error.retainSecondaryFailure(secondary);
 };
 
@@ -519,13 +640,31 @@ const finishProcessRun = async (options: {
   try {
     await options.stopSampler();
   } catch (cause: unknown) {
-    executionFailure = retainSamplingFailure(
+    executionFailure = retainSecondaryInspectionFailure(
       executionFailure,
       cause,
       options.resourceScope,
       options.inspectionFailures,
     );
   }
+  // Join the launch identity read on every exit; it never rejects and, like
+  // other cleanup reads, runs without the caller's signal so it can finish.
+  executionFailure = retainRootIdentityFailure(
+    executionFailure,
+    await options.runtime?.rootIdentity,
+    options.resourceScope,
+    options.inspectionFailures,
+  );
+  // Join finalization deliveries the same way: an identity check that failed
+  // through the inspection owner fails the capture and keeps its descriptors.
+  for (const inspection of (await options.runtime?.rootSignaller.settled()) ??
+    [])
+    executionFailure = retainSecondaryInspectionFailure(
+      executionFailure,
+      inspection,
+      options.resourceScope,
+      options.inspectionFailures,
+    );
   const sampledProcessGroupIds =
     options.runtime === undefined
       ? undefined
@@ -725,6 +864,14 @@ const completeCapture = async (options: {
       truncated: after.truncated,
     },
   ];
+  // The launch identity read keeps running unsignalled for finalization
+  // signals; only this wait observes cancellation. finishProcessRun joins it.
+  const rootIdentity = await waitForAbortable(
+    runtime.rootIdentity,
+    options.signal,
+  );
+  if (rootIdentity instanceof AbortedWait)
+    throw processCaptureCancelled(rootIdentity.carried);
   let manifest: Awaited<ReturnType<typeof createRunManifest>>;
   try {
     manifest = await createRunManifest(
@@ -732,6 +879,11 @@ const completeCapture = async (options: {
       runtime.startedAt,
       new Date(),
       runtime.executableIdentity,
+      capturedRootProcess(
+        runtime.terminal.pid,
+        rootIdentity,
+        scenario.normalization.pids,
+      ),
       {
         platform: options.hostPlatform,
         architecture: HOST_PLATFORM.architecture,
@@ -900,7 +1052,7 @@ const runProcessScenario = async (
       started: runtime.started,
       lastOutput: runtime.lastOutput,
       signal,
-      signalTarget: runtime.signalRoot,
+      signalTarget: runtime.rootSignaller.signal,
       recordFinalization: (finalization) => {
         observations.finalization = { state: "available", value: finalization };
       },
@@ -1076,11 +1228,11 @@ export const captureProcessScenario = async (
         ? cause
         : capture.error instanceof ProcessCaptureError
           ? capture.error.withFinalization({ cleanupFailure: cause })
-          : analysisErrorWithCleanupFailure(
+          : analysisErrorWithCleanupDependencies(
               capture.error,
               cause,
               "capture_process_scenario",
-            ).bindCleanupDependencies([capture.error, cause]),
+            ),
     );
   }
   return capture;

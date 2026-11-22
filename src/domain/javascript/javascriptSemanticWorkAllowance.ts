@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { Budget } from "../budget.js";
 import type { AnalysisCapturedOutput } from "../analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import {
@@ -123,18 +124,20 @@ export const reportsJavaScriptMemberMutationRefusal = (
  * mutation index would let later reads keep stale values.
  */
 export class JavaScriptSemanticWorkMeter {
-  #used = 0;
+  readonly #aliasStates: Budget;
 
   constructor(
     readonly allowance: JavaScriptMemberMutationAllowance = DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
-  ) {}
+  ) {
+    this.#aliasStates = new Budget(allowance.aliasStates);
+  }
 
   charge(units = 1): void {
-    this.#used += units;
-    if (this.#used <= this.allowance.aliasStates) return;
-    throw javaScriptMemberMutationRefusal(
-      "analyze_javascript_semantics",
-      this.allowance,
+    this.#aliasStates.charge(units, () =>
+      javaScriptMemberMutationRefusal(
+        "analyze_javascript_semantics",
+        this.allowance,
+      ),
     );
   }
 }

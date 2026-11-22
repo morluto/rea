@@ -1,24 +1,22 @@
 import { lstat, open, realpath, writeFile } from "node:fs/promises";
 import { constants, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  withArtifactFileHandle,
+  assertArtifactReadActive,
+  completedStableArtifact,
+  readStableArtifact,
+  type StableArtifactSnapshot,
+  type StableArtifactFileSystem,
+} from "../resources/index.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { SQLITE_PROVIDER_IDENTITY } from "../domain/sqlite/SqliteProviderIdentity.js";
-import {
-  withArtifactFileHandle,
-  assertArtifactReadActive,
-} from "../artifacts/ArtifactFileOperation.js";
-import {
-  completedStableArtifact,
-  readStableArtifact,
-  type StableArtifactSnapshot,
-  type StableArtifactFileSystem,
-} from "../artifacts/readStableArtifact.js";
 import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 
 const fileSystem: StableArtifactFileSystem = {
@@ -270,9 +268,10 @@ const verifyInactiveJournal = async (
           phase === "initial"
             ? `Rollback journal may require recovery: ${path}. Supply a clean offline snapshot; only empty journals or a fully zeroed header are supported.`
             : `Rollback journal became active or malformed during database acquisition: ${path}`,
-          phase === "initial"
-            ? undefined
-            : { integrityCheck: "container-identity" },
+          {
+            integrityCheck:
+              phase === "initial" ? undefined : "container-identity",
+          },
         );
     },
   );

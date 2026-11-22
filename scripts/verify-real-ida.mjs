@@ -3,15 +3,19 @@ import {
   assertFeatureTrace,
   findMappedNonFunction,
 } from "./lib/ida-feature-trace.mjs";
+import { privateIdaInput } from "./lib/ida-private-input.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { access, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { access, readdir, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -26,6 +30,8 @@ const { values } = parseArgs({
     "second-marker": { type: "string" },
     "expected-string": { type: "string" },
     "expected-xref": { type: "string" },
+    "expected-backend": { type: "string" },
+    "verify-peer-cleanup": { type: "boolean" },
     "package-root": { type: "string" },
     report: { type: "string" },
   },
@@ -58,6 +64,10 @@ const [
   { readIdaConfiguration, idaCompatibilityProfile },
   { createIdaMcpConnection },
   { idaAddressSchema },
+  { hasIdaDatabaseSignature },
+  { hexRaysOpenSchema, hexRaysListSchema, hexRaysCloseSchema },
+  { sameIdaHostPath },
+  { isPathWithinRoot },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
@@ -65,6 +75,10 @@ const [
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
+  importBuilt("domain/analysisDatabase.js"),
+  importBuilt("ida/IdaHexRaysProtocol.js"),
+  importBuilt("ida/IdaWorkspace.js"),
+  importBuilt("domain/localPath.js"),
 ]);
 const config = await withVerifierResourceOwner(async (resourceScope) => {
   const registration = await readIdaConfiguration(
@@ -82,6 +96,19 @@ if (
   throw new Error(
     "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
   );
+const expectedBackend = values["expected-backend"];
+if (
+  expectedBackend !== undefined &&
+  (config.protocol !== "hexrays" ||
+    (expectedBackend !== "idat" && expectedBackend !== "idalib"))
+)
+  throw new Error(
+    "--expected-backend requires a Hex-Rays registration and an idat or idalib value.",
+  );
+if (values["verify-peer-cleanup"] && config.protocol !== "hexrays")
+  throw new Error(
+    "--verify-peer-cleanup requires a Hex-Rays stdio registration.",
+  );
 const environment = Object.fromEntries(
   Object.entries({
     ...process.env,
@@ -93,6 +120,7 @@ const report = {
   passed: false,
   mode: config.mode,
   protocol: idaCompatibilityProfile(config).protocol,
+  worker_backends: [],
   checks: [],
   observations: [],
   unverified: [],
@@ -103,6 +131,7 @@ const expectedXref =
     : idaAddressSchema.parse(values["expected-xref"]);
 let phase = "target admission";
 const workspaces = new Set();
+let targetIsDatabase = false;
 const databases = new Set();
 const digest = async () => {
   const hash = createHash("sha256");
@@ -121,12 +150,41 @@ const observe = (input) => {
   assert.ok(
     evidence.locations.some((location) => location.kind === "artifact-path"),
   );
+  if (config.protocol === "hexrays") {
+    const backend = evidence.raw_result.worker_backend;
+    assert.ok(
+      backend === "idalib" || backend === "idat",
+      "Hex-Rays evidence must identify the bound worker backend.",
+    );
+    if (expectedBackend !== undefined)
+      assert.equal(
+        backend,
+        expectedBackend,
+        "Hex-Rays worker backend differed from the requested verification lane.",
+      );
+    if (!report.worker_backends.includes(backend))
+      report.worker_backends.push(backend);
+  }
   if (config.mode === "headless") {
-    assert.notEqual(evidence.raw_result.metadata_before.input_path, target);
-    workspaces.add(dirname(evidence.raw_result.metadata_before.input_path));
+    workspaces.add(
+      dirname(
+        privateIdaInput(
+          evidence.raw_result.metadata_before,
+          target,
+          targetIsDatabase,
+        ),
+      ),
+    );
     for (const observation of evidence.raw_result.observations) {
-      assert.equal(typeof observation.arguments.database, "string");
-      databases.add(observation.arguments.database);
+      // Hex-Rays reads select their lease by instance id through execute_python.
+      const database =
+        config.protocol === "hexrays"
+          ? observation.arguments.instance_id
+          : observation.arguments.database;
+      if (config.protocol === "hexrays")
+        assert.equal(observation.tool, "execute_python");
+      assert.equal(typeof database, "string");
+      databases.add(database);
     }
   }
   report.observations.push(evidence);
@@ -170,6 +228,68 @@ const cli = async () => {
   report.checks.push("production CLI and complete function Evidence");
   return dossier;
 };
+const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
+  phase = "Hex-Rays peer lease cleanup";
+  const privateInput = privateIdaInput(
+    analysis.raw_result.metadata_before,
+    target,
+    targetIsDatabase,
+  );
+  const workspace = dirname(privateInput);
+  assert.ok(workspaces.has(workspace));
+  const peer = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
+  let instanceId;
+  const releasePeer = async () => {
+    if (instanceId === undefined) return;
+    hexRaysCloseSchema.parse(
+      await peer.call("close_database", { instance_id: instanceId }),
+    );
+    instanceId = undefined;
+  };
+
+  await withVerifierCleanup(async () => {
+    await peer.connect();
+    const lease = hexRaysOpenSchema.parse(
+      await peer.call("open_database", {
+        path: privateInput,
+        set_current: false,
+      }),
+    );
+    instanceId = lease.instance_id;
+    assert.equal(lease.backend, analysis.raw_result.worker_backend);
+
+    const retained = requireMcpToolError(await closeWithPeer());
+    assert.equal(retained.code, "cleanup_incomplete");
+    const resources = retained.details?.resources;
+    assert.ok(
+      Array.isArray(resources) && resources.includes(workspace),
+      "The cleanup error must identify the retained workspace.",
+    );
+    await access(privateInput);
+    const inventory = hexRaysListSchema.parse(
+      await peer.call("list_databases", {}),
+    );
+    const held = inventory.instances.find(
+      (row) => row.instance_id === instanceId,
+    );
+    assert.ok(held?.status === "current" || held?.status === "attached");
+    assert.equal(held.backend, lease.backend);
+    assert.ok(
+      sameIdaHostPath(held.path, privateInput),
+      "The peer lease must still bind the private input.",
+    );
+
+    await releasePeer();
+    await retryClose();
+    await assert.rejects(access(workspace), { code: "ENOENT" });
+    report.checks.push(
+      "a second Hex-Rays client retains the private database until its lease is released and REA retries cleanup",
+    );
+  }, [releasePeer, () => peer.close()]);
+};
+
 const mcp = async (cliDossier) => {
   const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
   const transport = await createOwnedMcpStdioTransport({
@@ -210,9 +330,6 @@ const mcp = async (cliDossier) => {
       ["procedure_address", { procedure: dossier.procedure.name }],
       ["procedure_assembly", { procedure: dossier.procedure.address }],
       ["procedure_callees", { procedure: dossier.procedure.address }],
-      ...(config.mode === "attached" && config.protocol !== "native"
-        ? [["procedure_callers", { procedure: dossier.procedure.address }]]
-        : []),
       ["search_procedures", { pattern: dossier.procedure.name }],
       ["procedure_pseudo_code", { procedure: dossier.procedure.address }],
       ["read_function_instructions", { procedure: dossier.procedure.address }],
@@ -249,16 +366,12 @@ const mcp = async (cliDossier) => {
         case "procedure_pseudo_code":
           assert.equal(value, dossier.pseudocode);
           break;
-        case "procedure_callers":
-        case "procedure_callees": {
-          const expected =
-            name === "procedure_callers" ? dossier.callers : dossier.callees;
+        case "procedure_callees":
           assert.deepEqual(
             [...value].sort(),
-            expected.map((item) => item.address).sort(),
+            dossier.callees.map((item) => item.address).sort(),
           );
           break;
-        }
         case "read_function_instructions":
           assert.deepEqual(value.procedure.address, dossier.procedure.address);
           assert.deepEqual(value.instructions, dossier.assembly);
@@ -388,7 +501,23 @@ const mcp = async (cliDossier) => {
     });
     assert.equal(invalid.isError, true);
     assert.equal(requireMcpToolError(invalid).code, "invalid_request");
-    await call("close_binary", {});
+    if (values["verify-peer-cleanup"])
+      await verifyPeerCleanup(
+        analyzed,
+        () =>
+          client.callTool(
+            { name: "close_binary", arguments: {} },
+            { timeout: config.timeoutMs * 2 },
+          ),
+        () => call("close_binary", {}),
+      );
+    else {
+      await call("close_binary", {});
+      if (config.protocol === "hexrays")
+        report.unverified.push(
+          "Peer-held Hex-Rays cleanup: --verify-peer-cleanup was not selected.",
+        );
+    }
     opened = false;
     report.checks.push(
       "one MCP connection, positive procedure inventory/search, contract-valid tool results, invalid input, and close",
@@ -417,21 +546,32 @@ const cleanup = async () => {
   try {
     await upstream.connect();
     if (config.mode === "attached") {
-      const metadata =
-        config.protocol === "native"
-          ? await upstream.readResource("ida://idb/metadata")
-          : await upstream.call("get_metadata", {});
+      const metadata = await upstream.readResource("ida://idb/metadata");
       assert.equal(metadata.sha256.toLowerCase(), await digest());
       report.checks.push(
         "existing GUI target remains open with the original input identity",
       );
     } else {
-      const inventory = await upstream.call("idb_list", {});
-      assert.ok(
-        inventory.sessions.every(
-          (session) => !databases.has(session.session_id),
-        ),
-      );
+      if (config.protocol === "hexrays") {
+        // Leases are per server process, so a fresh server proves release by
+        // listing no live database inside any REA private workspace.
+        const inventory = await upstream.call("list_databases", {});
+        assert.ok(
+          inventory.instances.every(({ path }) =>
+            [...workspaces].every(
+              (workspace) =>
+                !isAbsolute(path) || !isPathWithinRoot(workspace, path),
+            ),
+          ),
+        );
+      } else {
+        const inventory = await upstream.call("idb_list", {});
+        assert.ok(
+          inventory.sessions.every(
+            (session) => !databases.has(session.session_id),
+          ),
+        );
+      }
       for (const workspace of workspaces)
         await assert.rejects(access(workspace), { code: "ENOENT" });
       report.checks.push(
@@ -444,21 +584,24 @@ const cleanup = async () => {
 };
 try {
   const before = await digest();
+  for await (const head of createReadStream(target, { end: 3 }))
+    targetIsDatabase = hasIdaDatabaseSignature(head);
+  const siblings = (await readdir(dirname(target))).sort();
   await mcp(await cli());
   await cleanup();
   assert.equal(await digest(), before);
-  report.checks.push("original binary unchanged and never executed");
+  // Engines write databases beside their input; only the private copy may get one.
+  assert.deepEqual((await readdir(dirname(target))).sort(), siblings);
+  report.checks.push(
+    "original target bytes and sibling directory entries unchanged",
+  );
   report.passed = true;
 } catch (cause) {
   report.failure = {
     phase,
     message: cause instanceof Error ? cause.message : String(cause),
     ...(cause instanceof AggregateError
-      ? {
-          causes: cause.errors.map((failure) =>
-            failure instanceof Error ? failure.message : String(failure),
-          ),
-        }
+      ? { causes: verifierFailureReasons(cause) }
       : {}),
   };
   process.exitCode = 1;
@@ -474,6 +617,9 @@ try {
       {
         passed: report.passed,
         mode: report.mode,
+        ...(report.worker_backends.length === 0
+          ? {}
+          : { worker_backends: report.worker_backends }),
         checks: report.checks,
         unverified: report.unverified,
         ...(report.passed

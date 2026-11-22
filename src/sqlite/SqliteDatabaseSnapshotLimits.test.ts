@@ -1,21 +1,13 @@
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  open,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, open, readdir, writeFile } from "node:fs/promises";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { expect, it } from "vitest";
 
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { StableArtifactFileSystem } from "../artifacts/readStableArtifact.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+import type { StableArtifactFileSystem } from "../resources/readStableArtifact.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -25,7 +17,7 @@ import { SQLITE_DATABASE_LIMITS } from "./SqliteDatabaseLimits.js";
 import { sqliteDatabaseDialect } from "./SqliteDatabaseFailures.js";
 
 it("tags an exact caller reason at snapshot admission", async () => {
-  const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-snapshot-entry-"));
+  const workspace = await createTestTempDirectory("rea-sqlite-snapshot-entry-");
   const reason = { requested: "cancel at snapshot admission" };
   const controller = new AbortController();
   controller.abort(reason);
@@ -60,13 +52,12 @@ it("tags an exact caller reason at snapshot admission", async () => {
     expect(projected.cause).toBe(reason);
   } finally {
     await resourceScope.close();
-    await rm(workspace, { force: true, recursive: true });
   }
 });
 
 it("keeps the exact caller reason when cancellation lands at final snapshot verification", async () => {
-  const workspace = await mkdtemp(
-    join(tmpdir(), "rea-sqlite-snapshot-cancel-"),
+  const workspace = await createTestTempDirectory(
+    "rea-sqlite-snapshot-cancel-",
   );
   const databasePath = join(workspace, "selected.db");
   const privateRoot = join(workspace, "private");
@@ -111,14 +102,13 @@ it("keeps the exact caller reason when cancellation lands at final snapshot veri
     expect(projected.cause).toBe(reason);
   } finally {
     await resourceScope.close();
-    await rm(workspace, { force: true, recursive: true });
   }
 });
 
 it("reports filesystem sizes above the safe-integer range exactly before opening files", async () => {
   const databaseBytes = BigInt(Number.MAX_SAFE_INTEGER) + 1n;
   const walBytes = 17n;
-  const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-budget-"));
+  const workspace = await createTestTempDirectory("rea-sqlite-budget-");
   const databasePath = join(workspace, "selected.db");
   const walPath = `${databasePath}-wal`;
   const journalPath = `${databasePath}-journal`;
@@ -202,7 +192,6 @@ it("reports filesystem sizes above the safe-integer range exactly before opening
     });
   } finally {
     await resourceScope.close();
-    await rm(workspace, { force: true, recursive: true });
   }
 });
 
@@ -212,7 +201,7 @@ it.each([
 ])(
   "preserves $label when a late read-limit failure becomes changed evidence",
   async ({ retainCleanup }) => {
-    const workspace = await mkdtemp(join(tmpdir(), "rea-sqlite-read-cleanup-"));
+    const workspace = await createTestTempDirectory("rea-sqlite-read-cleanup-");
     const databasePath = join(workspace, "selected.db");
     await writeFile(databasePath, "tiny fixture");
     const stat = await lstat(databasePath, { bigint: true });
@@ -291,7 +280,6 @@ it.each([
       }
     } finally {
       await resourceScope.close();
-      await rm(workspace, { force: true, recursive: true });
     }
   },
 );

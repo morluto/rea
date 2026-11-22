@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { lt, valid } from "semver";
 
 import { PRODUCT_IDENTITY } from "../identity.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 import {
@@ -20,6 +20,7 @@ import {
 } from "./Update.js";
 import { planIntegrationMaintenance } from "./UpdateMaintenance.js";
 import { UpdateCommandRunner } from "./UpdateCommandRunner.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** npm filesystem queries used to identify the installation being updated. */
 export interface NpmInstallationHost {
@@ -338,13 +339,7 @@ export const systemUpdateHost = (
         resources.close(),
       ]);
       const failures = results.flatMap((result) =>
-        result.status === "rejected"
-          ? [
-              result.reason instanceof Error
-                ? result.reason.message
-                : String(result.reason),
-            ]
-          : [],
+        result.status === "rejected" ? [errorMessage(result.reason)] : [],
       );
       return failures.length === 0
         ? undefined

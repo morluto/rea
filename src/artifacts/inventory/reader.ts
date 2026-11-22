@@ -6,7 +6,7 @@ import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrity
 import type {
   ArtifactReader,
   ArtifactReaderTraversal,
-} from "../ArtifactReader.js";
+} from "../../resources/index.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { createArtifactReader } from "../createArtifactReader.js";
 import type {

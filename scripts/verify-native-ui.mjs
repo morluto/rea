@@ -9,9 +9,10 @@ import { observeNativeUi } from "../dist/native/NativeUiObservation.js";
 import { NATIVE_UI_HELPER_MAX_BUFFER } from "../dist/native/NativeUiOutputBudget.js";
 import { artifactMcpResult, withArtifactMcp } from "./lib/artifact-e2e.mjs";
 import { observeProcessStartIdentity } from "../dist/process/ProcessOwnershipObservation.js";
+import { HOST_PLATFORM } from "../dist/platform/HostPlatform.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
-if (process.platform !== "darwin")
+if (HOST_PLATFORM.platform !== "darwin")
   throw new Error(
     "Native UI verification requires macOS, an interactive desktop and Xcode command-line tools",
   );

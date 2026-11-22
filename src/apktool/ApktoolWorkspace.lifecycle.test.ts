@@ -8,8 +8,8 @@ import {
   artifactFilePrimaryFacts,
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+} from "../resources/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { ApktoolCommandCleanup } from "./ApktoolCommandCleanup.js";
 import { ApktoolWorkspace } from "./ApktoolWorkspace.js";

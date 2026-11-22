@@ -5,7 +5,10 @@ import { promisify } from "node:util";
 
 import { JebAnalysisService } from "../dist/application/jeb/JebAnalysisService.js";
 import { createJebAnalysisProvider } from "../dist/composition/jeb.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const run = promisify(execFile);
@@ -104,11 +107,8 @@ try {
   if (fixture !== undefined && !fixture.released)
     process.stderr.write(`JEB fixture retained at ${fixtureDirectory}\n`);
   // Fixture and cleanup failures nest AggregateErrors; report each leaf reason.
-  const leaves = (reason) =>
-    reason instanceof AggregateError ? reason.errors.flatMap(leaves) : [reason];
-  const causes = leaves(cause);
   process.stderr.write(
-    `JEB real-provider verification failed: ${causes.map((reason) => (reason instanceof Error ? reason.message : String(reason))).join("; ")}\n`,
+    `JEB real-provider verification failed: ${verifierFailureReasons(cause).join("; ")}\n`,
   );
   process.exitCode = 1;
 }

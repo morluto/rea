@@ -22,7 +22,7 @@ input.on('line', (line) => {
     ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'environment-producer', version: '1' } }
     : request.method === 'tools/list'
       ? { tools: [{ name: 'environment', inputSchema: { type: 'object' } }] }
-      : { content: [], structuredContent: { selected: process.env.REA_SELECTED_CONTEXT ?? null, registration: process.env.REA_REGISTRATION_CONTEXT ?? null, ambient: process.env.REA_AMBIENT_CONTEXT ?? null, home: process.env.HOME ?? null, path: process.env.PATH ?? null } };
+      : { content: [{ type: 'text', text: JSON.stringify({ selected: process.env.REA_SELECTED_CONTEXT ?? null, registration: process.env.REA_REGISTRATION_CONTEXT ?? null, ambient: process.env.REA_AMBIENT_CONTEXT ?? null, home: process.env.HOME ?? null, path: process.env.PATH ?? null }) }] };
   process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
 });
 `,
@@ -55,7 +55,7 @@ input.on('line', (line) => {
         args: [script],
         env: registrationEnvironment,
         mode: "attached",
-        protocol: "legacy",
+        protocol: "native",
         timeoutMs: 5000,
       },
       selected,
@@ -102,7 +102,7 @@ input.on('line', (line) => {
       command: process.execPath,
       args: [script],
       env: {},
-      protocol: "legacy",
+      protocol: "native",
       mode: "attached",
       timeoutMs: 5000,
     },

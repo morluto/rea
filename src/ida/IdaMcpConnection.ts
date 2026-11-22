@@ -1,15 +1,14 @@
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../artifacts/ArtifactResourceScope.js";
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
 import { ResponseBodyCleanup } from "../providers/ResponseBodyCleanup.js";
-import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   mcpToolResultSchema,
   mcpTextBlocks,
-  decodeMcpTextReply,
-  type McpTextReplyKind,
+  decodeMcpJsonText,
 } from "../providers/McpToolResult.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import {
@@ -64,6 +63,9 @@ import {
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
 
+/** A completed upstream tool reply that reported failure, as opposed to an unreadable or missing reply. */
+export class IdaToolRejection extends AnalysisProtocolError {}
+
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
   connect(): Promise<readonly string[]>;
@@ -73,8 +75,6 @@ export interface IdaMcpConnection {
     options?: {
       readonly timeoutMs?: number | undefined;
       readonly signal?: AbortSignal | undefined;
-      /** The tool's declared text reply kind; JSON unless the tool returns plain text. */
-      readonly reply?: McpTextReplyKind | undefined;
     },
   ): Promise<JsonValue>;
   readResource?(
@@ -190,11 +190,8 @@ const idaStdioLauncher =
     });
   };
 
-const parseIdaTextReply = (
-  text: string,
-  reply: McpTextReplyKind = "json",
-): JsonValue => {
-  const decoded = decodeMcpTextReply(text, reply);
+const parseIdaTextReply = (text: string): JsonValue => {
+  const decoded = decodeMcpJsonText(text);
   if (!decoded.ok)
     throw new AnalysisProtocolError("IDA MCP returned malformed JSON text.");
   return decoded.value;
@@ -202,19 +199,18 @@ const parseIdaTextReply = (
 
 /**
  * Decode Python FastMCP's scalar wrapper without dropping structured
- * dictionaries. A text block is read as the tool's declared reply kind.
+ * dictionaries. A text block is read as JSON.
  */
 export const decodeIdaToolResult = (
   input: unknown,
-  protocol?: "native",
+  protocol?: "native" | "hexrays",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
-  reply: McpTextReplyKind = "json",
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
   if (result.isError === true) {
     const reason = diagnostic.blocks(blocks);
-    throw new AnalysisProtocolError(
+    throw new IdaToolRejection(
       diagnostic.message("IDA MCP tool failed: ", reason),
       {
         diagnostics: { reason },
@@ -251,7 +247,7 @@ export const decodeIdaToolResult = (
     throw new AnalysisProtocolError(
       "IDA MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
     );
-  return parseIdaTextReply(text, reply);
+  return parseIdaTextReply(text);
 };
 
 // Retain only producer-sanitized JSON diagnostics, never a native parser cause.
@@ -717,7 +713,18 @@ export const createIdaMcpConnection = (
     async connect() {
       await client
         .connect(transport, { timeout: config.timeoutMs })
-        .catch((cause: unknown) => transportFailure(cause, "ida_mcp_connect"));
+        .catch(async (cause: unknown) => {
+          // A launcher can close stdin before its diagnostic reaches stderr.
+          // Join the SDK's bounded teardown before taking the diagnostic snapshot.
+          if (
+            stdio !== undefined &&
+            cause instanceof Error &&
+            "code" in cause &&
+            cause.code === "EPIPE"
+          )
+            await stdio.close();
+          return transportFailure(cause, "ida_mcp_connect");
+        });
       const catalog = await client
         .listTools(undefined, {
           timeout: config.timeoutMs,
@@ -745,7 +752,6 @@ export const createIdaMcpConnection = (
         }),
         config.protocol === "native" ? "native" : undefined,
         redactor,
-        options?.reply,
       );
     },
     async readResource(uri, options) {

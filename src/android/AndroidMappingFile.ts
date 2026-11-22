@@ -1,24 +1,22 @@
 import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  bindArtifactFileCleanup,
-} from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
+  projectStableArtifactFailure,
   stableArtifactInputRecovery,
   readerIntegrityFailure,
-} from "../artifacts/StableArtifactFailure.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+  type ArtifactResourceScope,
+  readStableArtifact,
+} from "../resources/index.js";
 import {
   ANDROID_MAPPING_LIMITS,
   type AndroidMappingSource,
 } from "../domain/android/androidMapping.js";
 import { parseProguardMapping } from "../domain/android/proguardMapping.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
@@ -26,11 +24,11 @@ import {
   carriedReason,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 export interface AndroidMappingReadDeadline {
   readonly timeout: AbortSignal;
@@ -117,35 +115,40 @@ const readFailurePrimary = (
         { cause: primary },
       );
   }
-  // A closed resource scope during shutdown is cancellation, not a file fault.
-  if (read.signal.aborted) return mappingInterruption(read, read.signal.reason);
+  // The scope can refuse admission during shutdown before any physical read.
+  if (
+    owned?.reason === "unavailable" &&
+    owned.cleanup === undefined &&
+    read.signal.aborted
+  )
+    return mappingInterruption(read, read.signal.reason);
   return new ProviderAdapterError("jadx", read.operation, {
     cause: primary,
     diagnostics: {
       mapping_path: read.path,
-      reason: primary instanceof Error ? primary.message : String(primary),
+      reason: errorMessage(primary),
     },
   });
 };
 
-/** Compose the read failure with any descriptor cleanup the scope retained. */
+/** Preserve the read's outcome, any later interruption, and its descriptor lease. */
 const readFailure = (cause: unknown, read: MappingRead): AnalysisError => {
   const primary = readFailurePrimary(cause, read);
-  const error =
-    cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          new ProviderCleanupError(
-            "jadx",
-            cause.cleanup.resources,
-            { reason: cause.cleanup.reason },
-            { operation: read.operation, cause },
-          ),
-          read.operation,
-        )
-      : primary;
-  bindArtifactFileCleanup(cause, error);
-  return error;
+  if (
+    read.signal.aborted &&
+    !(primary instanceof AnalysisCancelledError) &&
+    !(primary instanceof AnalysisTimeoutError)
+  )
+    primary.retainSecondaryFailure(
+      mappingInterruption(read, read.signal.reason),
+    );
+  return projectStableArtifactFailure(
+    cause,
+    primary,
+    read.path,
+    "jadx",
+    read.operation,
+  );
 };
 
 /**
@@ -197,14 +200,17 @@ export const readAndroidMapping = async (
   }
   const mapping = parseProguardMapping(text, ANDROID_MAPPING_LIMITS);
   if (!mapping.ok) {
-    if (mapping.error.kind === "capacity")
+    if (mapping.error.kind === "capacity") {
+      const { cause, line } = mapping.error;
+      const { detail, limit } = cause.failure;
       return err(
         new AnalysisResourceConstraintError(
           operation,
-          mapping.error.resource === "index" ? "memory" : "transport",
-          `The mapping exceeds its ${mapping.error.resource} admission budget.`,
-          { limit_bytes: mapping.error.limit_bytes, line: mapping.error.line },
+          limit.name === "projection" ? "transport" : "memory",
+          detail,
+          { limit_bytes: limit.maximum, line },
           {
+            cause,
             retryable: false,
             diagnostics: { mapping_path: path, mapping_sha256: file.sha256 },
             remediationAction:
@@ -212,6 +218,7 @@ export const readAndroidMapping = async (
           },
         ),
       );
+    }
     return malformed(`Mapping file has no R8/ProGuard class records: ${path}`);
   }
   return ok({ file, mapping: mapping.value });

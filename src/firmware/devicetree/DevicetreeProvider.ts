@@ -1,23 +1,23 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
   stableArtifactInputFailure,
   projectArtifactCloseFailure,
-} from "../../artifacts/StableArtifactFailure.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import {
+  ArtifactReaderFailure,
   type StableArtifactSnapshot,
   readStableArtifact,
-} from "../../artifacts/readStableArtifact.js";
-import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
-} from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import type { DevicetreePort } from "../../application/binaryDiagnostics/DevicetreePort.js";
-import type { ExecutionOptions } from "../../application/AnalysisProvider.js";
+  ArtifactResourceScope,
+} from "../../resources/index.js";
+import type { DevicetreePort } from "../../ports/binaryDiagnostics/DevicetreePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
@@ -26,7 +26,10 @@ import {
 } from "../../domain/firmware/devicetree.js";
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
-import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
+import {
+  DEVICETREE_FORMAT,
+  parseDevicetree,
+} from "../../domain/firmware/devicetreeParser.js";
 
 const OPERATION = "inspect_devicetree";
 
@@ -58,17 +61,16 @@ export class DevicetreeProvider implements DevicetreePort {
           undefined,
           this.#resources,
         );
-        return ok(
-          parseDevicetree(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-          ),
+        const { report } = parseDevicetree(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
         );
+        return ok(report);
       });
     } catch (cause) {
       return err(devicetreeFailure(cause, input, snapshot));
@@ -81,17 +83,12 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  if (cause instanceof DevicetreeLimitFailure)
-    return new AnalysisResourceConstraintError(
+  if (isParseLimit(cause, DEVICETREE_FORMAT))
+    return parseLimitConstraint(
       OPERATION,
-      cause.limit === "decoded_bytes" ? "memory" : "capacity",
-      cause.message,
-      {
-        limit: cause.limit,
-        selected:
-          cause.limit === "decoded_bytes" ? 33554432 : input[cause.limit],
-      },
-      { cause, retryable: false, remediationAction: cause.message },
+      cause.failure.limit.name === "decoded_bytes" ? "memory" : "capacity",
+      cause,
+      { retryable: false, remediationAction: cause.failure.detail },
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;

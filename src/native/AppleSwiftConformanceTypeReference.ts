@@ -3,7 +3,7 @@ import {
   createSwiftContextReader,
   type SwiftContextReader,
 } from "./AppleSwiftNominalTypes.js";
-import type { PointerResolution } from "./AppleMachoFixups.js";
+import type { PointerResolution } from "../domain/apple/appleMachoFixups.js";
 import type {
   SwiftDispatchReaders,
   SwiftRelativeField,

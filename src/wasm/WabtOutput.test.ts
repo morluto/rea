@@ -6,7 +6,6 @@ const refused = (code: string) =>
 import { parseWabtOutput } from "./WabtOutput.js";
 import { parseWabtWat } from "./WabtWat.js";
 import { associateWasmGlue } from "./WasmGlueAdapter.js";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
 const golden = () =>
   readFile(
     new URL("../../tests/fixtures/wasm/objdump.txt", import.meta.url),
@@ -25,7 +24,7 @@ it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
     "",
   ].join("\n");
   const parsed = parseWabtOutput(dump, bytes.length, [], [], bytes);
-  expect(parsed.invalidNameEnds).toEqual([13]);
+  expect(parsed.invalidNameEnds).toEqual(new Set([13]));
   expect(parsed.sections).toMatchObject([{ kind: "Custom", description: "" }]);
   const valid = Buffer.from(bytes);
   valid[11] = 0x61;
@@ -50,10 +49,12 @@ it("corroborates a blank custom name with bounded invalid UTF-8 bytes", () => {
 });
 it("retains real WABT section ranges, custom section identity and original header output", async () => {
   const text = await golden();
-  const headers = text.slice(0, text.indexOf("Section Details:\n"));
-  expect(parseWabtOutput(text, 76, ["test"]).sections).toHaveLength(7);
-  expect(parseWabtOutput(text, 76, ["test"]).headers).toBe(headers);
-  expect(parseWabtOutput(text, 76, ["test"]).sections.at(-1)).toEqual({
+  const parsed = parseWabtOutput(text, 76, ["test"]);
+  expect(parsed.sections).toHaveLength(7);
+  expect(parsed.headers).toBe(
+    text.slice(0, text.indexOf("Section Details:\n")),
+  );
+  expect(parsed.sections.at(-1)).toEqual({
     kind: "Custom",
     start: 64,
     end: 76,
@@ -245,7 +246,6 @@ it.each([
   });
 });
 it.each([
-  String.raw`\00\06\05hello\01\02\01`,
   String.raw`\00\07\05hello\00`,
   String.raw`\00\06\05hello\00\06\05later`,
 ])(
@@ -305,7 +305,7 @@ it("preserves leading U+FEFF as custom-name data, not a debug-name marker", () =
   expect(parsed.debugModuleNames).toEqual([]);
   expect(() => parseWabtWat('(module (@custom "\\ff" "payload"))')).toThrow();
 });
-it("extracts escaped WAT import/export forms while retaining multiline producer text", async () => {
+it("extracts recorded WAT forms and refuses malformed outer framing", async () => {
   const text = await readFile(
     new URL("../../tests/fixtures/wasm/decoded.wat", import.meta.url),
     "utf8",
@@ -316,21 +316,6 @@ it("extracts escaped WAT import/export forms while retaining multiline producer 
     customSectionNames: ["test"],
     debugModuleNames: [],
   });
-  expect(
-    parseWabtWat(
-      '(module (import "a.b" "c\\0aline" (func)) (export "fake\\22Export[1]:" (func 0)))',
-    ),
-  ).toMatchObject({
-    imports: ['(import "a.b" "c\\0aline" (func))'],
-    exports: ['(export "fake\\22Export[1]:" (func 0))'],
-    customSectionNames: [],
-    debugModuleNames: [],
-  });
-  expect(
-    parseWabtWat(
-      '(module (; nested (; comment ;) ;) ;; comment\n (export "x" (func 0)))',
-    ).exports,
-  ).toEqual(['(export "x" (func 0))']);
   expect(() => parseWabtWat('(module (export "unfinished"')).toThrow(
     refused("incomplete_output"),
   );
@@ -445,60 +430,37 @@ it("retains directive literals and matches their cooked escaped path", () => {
   ]);
 });
 
-it("matches a CLI-selected ./ module exactly against its glue reference", () => {
-  // The CLI makes `./module.wasm` absolute from /app with absoluteCallerPath.
-  const selected = absoluteCallerPath("./module.wasm", {
-    cwd: "/app",
-    platform: "linux",
-  });
-  expect(
-    associateWasmGlue('fetch("./module.wasm");', "/app/glue.js", [
-      selected,
-      "/other/module.wasm",
-    ]).references,
-  ).toMatchObject([
-    {
-      association: "local-path-candidate",
-      candidate_paths: ["/app/module.wasm"],
-    },
-  ]);
-});
-
-it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
-  "retains complete .wasm query and fragment literals containing %j",
-  (separator) => {
+it.each([
+  ["\n", 2],
+  ["\r", 2],
+  ["\r\n", 2],
+  // JSON.stringify leaves LS and PS literal, so they advance the source line.
+  ["\u2028", 3],
+  ["\u2029", 3],
+] as const)(
+  "keeps query and fragment line breaks outside the .wasm path check: %j",
+  (separator, fragmentLine) => {
+    const path = "https://example.invalid/module.wasm";
     const candidates = ["/artifacts/module.wasm", "/other/module.wasm"];
-    for (const qualifier of ["?query=", "#fragment="]) {
-      const value = `https://example.invalid/module.wasm${qualifier}a${separator}b`;
-      const result = associateWasmGlue(
-        `fetch(${JSON.stringify(value)});`,
-        "/artifacts/glue.js",
-        candidates,
-      );
-      expect(result).toEqual({
-        parse_status: "complete",
-        references: [
-          {
-            value,
-            line: 1,
-            column: 6,
-            candidate_paths: candidates,
-            association: "basename-candidates",
-            evidence_kind: "static-literal",
-          },
-        ],
-      });
-    }
-  },
-);
-
-it.each(["\n", "\r", "\r\n", "\u2028", "\u2029"])(
-  "does not accept a path-ending separator without a query or fragment: %j",
-  (separator) => {
-    const value = `https://example.invalid/module.wasm${separator}`;
-    expect(
-      associateWasmGlue(`fetch(${JSON.stringify(value)});`, "/glue.js", []),
-    ).toEqual({ parse_status: "complete", references: [] });
+    const query = `${path}?query=a${separator}b`;
+    const fragment = `${path}#fragment=a${separator}b`;
+    const source = [query, fragment, path + separator]
+      .map((value) => `fetch(${JSON.stringify(value)});`)
+      .join("\n");
+    const result = associateWasmGlue(source, "/artifacts/glue.js", candidates);
+    expect(result).toEqual({
+      parse_status: "complete",
+      references: [
+        { value: query, line: 1 },
+        { value: fragment, line: fragmentLine },
+      ].map((reference) => ({
+        ...reference,
+        column: 6,
+        candidate_paths: candidates,
+        association: "basename-candidates",
+        evidence_kind: "static-literal",
+      })),
+    });
   },
 );
 

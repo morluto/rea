@@ -1,4 +1,7 @@
-import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, onTestFinished } from "vitest";
@@ -61,7 +64,7 @@ mcpTest(
     );
     const result = await client.callTool(
       { name: "inspect_pe_certificates", arguments: { path } },
-      { toolDefinition: advertised },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
     );
     expect(result.isError).not.toBe(true);
   },

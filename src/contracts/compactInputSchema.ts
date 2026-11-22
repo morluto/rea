@@ -7,13 +7,13 @@ import {
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
-  stripAnnotations,
 } from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
-// The compact input presentation: every advertised input schema is self-contained
-// (clients such as Kimi expand references before sending tools to Moonshot),
-// inside the per-tool byte budget, and in the portable advertised dialect.
-// Canonical server-side validation remains unchanged.
+// The compact input presentation: every advertised input schema is
+// self-contained (the dialect admits no `$ref` or `$defs`), inside the
+// per-tool byte budget, and in the portable advertised dialect. Canonical
+// server-side validation remains unchanged.
 
 export type AdvertisedInputSchemaPresentation = "inline" | "reduced";
 
@@ -46,18 +46,20 @@ const retainRootPropertyGuidance = (
     !isSchemaObject(stripped.properties)
   )
     return stripped;
-  const properties = { ...stripped.properties };
+  let properties: Record<string, unknown> | undefined;
   for (const name of retainedRootPropertyDescriptions) {
     const source = schema.properties[name];
-    const kept = properties[name];
+    const kept = (properties ?? stripped.properties)[name];
     if (
       isSchemaObject(source) &&
       isSchemaObject(kept) &&
       typeof source.description === "string"
-    )
+    ) {
+      properties ??= { ...stripped.properties };
       properties[name] = { ...kept, description: source.description };
+    }
   }
-  return { ...stripped, properties };
+  return properties === undefined ? stripped : { ...stripped, properties };
 };
 
 const withinDialect = (schema: Record<string, unknown>): boolean =>
@@ -76,7 +78,11 @@ export const compactAdvertisedInputSchema = (
   schema: Record<string, unknown>,
   budgetBytes: number,
 ): CompactedInputSchema => {
-  const expanded = inlineWithinBudget(stripAnnotations(schema), budgetBytes);
+  const references = new JsonSchemaReferences(schema);
+  const expanded = inlineWithinBudget(schema, budgetBytes, {
+    stripAnnotations: true,
+    references,
+  });
   const inline =
     expanded === undefined
       ? undefined
@@ -91,7 +97,7 @@ export const compactAdvertisedInputSchema = (
   )
     return { ...inline, presentation: "inline" };
   const reduced = projectToAdvertisedDialect(
-    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION),
+    reduceToShallowProperties(schema, INPUT_REDUCED_ANNOTATION, references),
   );
   if (serializedBytes(reduced.schema) <= budgetBytes)
     return { ...reduced, presentation: "reduced" };

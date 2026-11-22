@@ -4,7 +4,7 @@ import {
   BinaryReader,
   mappedFileOffset,
   type BinaryContainer,
-} from "../native/metadata/BinaryContainer.js";
+} from "../domain/binaryContainer.js";
 import { firstKeyed, keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 
 export interface GoBuildInfoSearchRange extends FileMapping {

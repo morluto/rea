@@ -4,9 +4,8 @@ import {
   compareArtifactEvidence,
   resolveArtifactComparisonSources,
 } from "../application/artifacts/ArtifactComparisonEvidence.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/index.js";
 import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
-import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { ARTIFACT_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -23,7 +22,6 @@ export const registerArtifactComparisonCommand = (
     logger,
     contractNamed(SESSION_TOOL_CONTRACTS, "compare_artifacts"),
     {
-      command: CLI_COMMANDS.compareArtifacts,
       description:
         'Compare two artifact inventories, including FIT and legacy uImage firmware components, named as {left, right}: complete Evidence or {kind:"evidence-file",path,evidence_id?}. A one-shot command retains no session Evidence for retained-evidence references.',
       document: "Inline workflow JSON or JSON file path",

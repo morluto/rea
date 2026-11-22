@@ -1,10 +1,10 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
-import { McpServer } from "@modelcontextprotocol/server";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { z } from "zod";
@@ -19,11 +19,9 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
-import { silentLogger } from "../../../src/logger.js";
 import { stopOwnedDebuggerProcess } from "../../../src/process/ownedDebuggerSession.js";
-import { registerGdbTools } from "../../../src/server/registerGdbTools.js";
-import type { GdbToolManager } from "../../../src/server/registerGdbTools.js";
-import { createToolResultDelivery } from "../../../src/server/toolResult.js";
+import { gdbMcpServer } from "../../fixtures/debuggerMcp.js";
+import type { GdbToolOptions } from "../../../src/server/serviceToolBindings.js";
 import {
   createBinarySessionTargets,
   createCacheProvider,
@@ -41,11 +39,13 @@ import {
   fakeGdbModeledReplies,
   fakeGdbStartupPreamble,
 } from "../providers/gdbTestHelpers.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 it.skipIf(process.platform === "win32")(
   "keeps a failed GDB startup closed through MCP and retries its retained owner before console admission",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-startup-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-startup-");
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -76,6 +76,7 @@ process.stdin.on("data", (chunk) => {
         if (stopCalls === 1)
           return {
             status: "incomplete",
+            code: "stop-failed",
             reason: "simulated startup stop uncertainty",
           };
         const stopped = await stopOwnedDebuggerProcess(session, name);
@@ -83,17 +84,11 @@ process.stdin.on("data", (chunk) => {
         return stopped;
       },
     });
-    const server = new McpServer({
-      name: "gdb-startup-readiness",
-      version: "1",
-    });
-    registerGdbTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = gdbMcpServer("gdb-startup-readiness", manager);
+    const client = new Client(
+      { name: "gdb-startup-readiness", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "gdb-startup-readiness", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -103,8 +98,8 @@ process.stdin.on("data", (chunk) => {
         name: "start_gdb_session",
         arguments: {},
       });
-      expect(started.isError).toBe(true);
-      expect(started.structuredContent).toMatchObject({
+      const startError = parseMcpToolError(started);
+      expect(startError).toMatchObject({
         error: {
           code: "cleanup_incomplete",
           details: {
@@ -119,7 +114,7 @@ process.stdin.on("data", (chunk) => {
             details: z.object({ resources: z.tuple([z.string().uuid()]) }),
           }),
         })
-        .parse(started.structuredContent);
+        .parse(startError);
       const sessionId = failure.error.details.resources[0];
       expect(stopCalls).toBe(1);
       expect(manager.status(sessionId)?.state).toBe("closed");
@@ -129,8 +124,7 @@ process.stdin.on("data", (chunk) => {
         name: "gdb_console",
         arguments: { session_id: sessionId, command: "show version" },
       });
-      expect(command.isError).toBe(true);
-      expect(command.structuredContent).toMatchObject({
+      expect(parseMcpToolError(command)).toMatchObject({
         error: { code: "invalid_request" },
       });
       expect(stopCalls).toBe(2);
@@ -142,11 +136,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }
@@ -156,7 +146,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "propagates MCP cancellation into a running GDB command",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-cancel-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-cancel-");
     const provider = join(directory, "fake-gdb.mjs");
     const commandPath = join(directory, "command-started");
     await writeFile(
@@ -202,14 +192,11 @@ process.stdin.on("data", async (chunk) => {
         return stopped;
       },
     });
-    const server = new McpServer({ name: "gdb-cancellation", version: "1" });
-    registerGdbTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = gdbMcpServer("gdb-cancellation", manager);
+    const client = new Client(
+      { name: "gdb-cancellation", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "gdb-cancellation", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -272,7 +259,6 @@ process.stdin.on("data", async (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          await rm(directory, { recursive: true, force: true });
         },
       ]);
     }
@@ -282,7 +268,7 @@ process.stdin.on("data", async (chunk) => {
 it.skipIf(process.platform === "win32")(
   "accepts caller-selected inferior_tty and exposes verified sink status through MCP",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-tty-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-tty-");
     const provider = join(directory, "fake-gdb.mjs");
     const tty = `${directory}/inferior-"terminal-Ω"`;
     await writeFile(
@@ -307,14 +293,11 @@ process.stdin.on("data", (chunk) => {
       platform: "linux",
       environment: { REA_GDB_COMMAND: provider },
     });
-    const server = new McpServer({ name: "gdb-inferior-tty", version: "1" });
-    registerGdbTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = gdbMcpServer("gdb-inferior-tty", manager);
+    const client = new Client(
+      { name: "gdb-inferior-tty", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "gdb-inferior-tty", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -360,11 +343,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }
@@ -374,7 +353,7 @@ process.stdin.on("data", (chunk) => {
 it.skipIf(process.platform === "win32")(
   "exposes lossy GDB MI decoding through the strict status MCP contract",
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-gdb-mcp-mi-utf8-"));
+    const directory = await createTestTempDirectory("rea-gdb-mcp-mi-utf8-");
     const provider = join(directory, "fake-gdb.mjs");
     await writeFile(
       provider,
@@ -400,14 +379,11 @@ process.stdin.on("data", (chunk) => {
       platform: "linux",
       environment: { REA_GDB_COMMAND: provider },
     });
-    const server = new McpServer({ name: "gdb-mi-utf8", version: "1" });
-    registerGdbTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = gdbMcpServer("gdb-mi-utf8", manager);
+    const client = new Client(
+      { name: "gdb-mi-utf8", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "gdb-mi-utf8", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -435,11 +411,7 @@ process.stdin.on("data", (chunk) => {
         () => server.close(),
         async () => {
           await manager.closeAll();
-          try {
-            await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-          } finally {
-            await rm(directory, { recursive: true, force: true });
-          }
+          await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
         },
       ]);
     }
@@ -448,7 +420,7 @@ process.stdin.on("data", (chunk) => {
 
 it("records partial GDB Evidence from an MCP command error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -487,8 +459,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "The debugger session does not identify an inferior.",
+      limitations: ["The debugger session does not identify an inferior."],
     },
   );
   expect(
@@ -519,20 +490,18 @@ it("records partial GDB Evidence from an MCP command error", async () => {
     status: () => undefined,
     close: async () => ok({ target_state: "unknown" as const }),
     retryCleanupFailures: async () => ok(null),
-  } satisfies GdbToolManager;
+  } satisfies GdbToolOptions["manager"];
   const recorded: string[] = [];
-  const server = new McpServer({ name: "gdb-partial-evidence", version: "1" });
-  registerGdbTools(
-    server,
-    manager,
-    silentLogger,
-    createToolResultDelivery(undefined),
-    (value) => {
+  const server = gdbMcpServer("gdb-partial-evidence", manager, undefined, {
+    recordEvidence: (value) => {
       recorded.push(value.evidence_id);
       return ok("added");
     },
+  });
+  const client = new Client(
+    { name: "gdb-partial-evidence", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  const client = new Client({ name: "gdb-partial-evidence", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -546,8 +515,7 @@ it("records partial GDB Evidence from an MCP command error", async () => {
       },
     });
     expect(recorded).toEqual([evidence.evidence_id]);
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
+    expect(parseMcpToolError(response)).toMatchObject({
       error: {
         details: { partial_observation: { evidence_id: evidence.evidence_id } },
       },
@@ -584,17 +552,12 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
       return ok({ target_state: "unknown" as const });
     },
     retryCleanupFailures: async () => ok(null),
-  } satisfies GdbToolManager;
-  const server = new McpServer({ name: "gdb-owned-cleanup", version: "1" });
-  registerGdbTools(
-    server,
-    manager,
-    silentLogger,
-    createToolResultDelivery(undefined),
-    undefined,
-    analysisSession,
+  } satisfies GdbToolOptions["manager"];
+  const server = gdbMcpServer("gdb-owned-cleanup", manager, analysisSession);
+  const client = new Client(
+    { name: "gdb-owned-cleanup", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  const client = new Client({ name: "gdb-owned-cleanup", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -640,7 +603,7 @@ it("recovers only the owning debugger cleanup and reopens admitted analysis", as
 
 it("records partial GDB startup Evidence from an MCP start error", async () => {
   const evidence = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     {
       id: "gnu.gdb",
       name: "GNU GDB",
@@ -676,8 +639,7 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
         output_truncated: false,
         completion_status: "unknown",
       },
-      subjectUnavailableReason:
-        "No debugger session became ready before GDB exited.",
+      limitations: ["No debugger session became ready before GDB exited."],
     },
   );
   const manager = {
@@ -692,26 +654,26 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
     status: () => undefined,
     close: async () => ok({ target_state: "unknown" as const }),
     retryCleanupFailures: async () => ok(null),
-  } satisfies GdbToolManager;
+  } satisfies GdbToolOptions["manager"];
   const recorded: string[] = [];
-  const server = new McpServer({
-    name: "gdb-startup-partial-evidence",
-    version: "1",
-  });
-  registerGdbTools(
-    server,
+  const server = gdbMcpServer(
+    "gdb-startup-partial-evidence",
     manager,
-    silentLogger,
-    createToolResultDelivery(undefined),
-    (value) => {
-      recorded.push(value.evidence_id);
-      return ok("added");
+    undefined,
+    {
+      recordEvidence: (value) => {
+        recorded.push(value.evidence_id);
+        return ok("added");
+      },
     },
   );
-  const client = new Client({
-    name: "gdb-startup-partial-evidence",
-    version: "1",
-  });
+  const client = new Client(
+    {
+      name: "gdb-startup-partial-evidence",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   try {
@@ -722,8 +684,7 @@ it("records partial GDB startup Evidence from an MCP start error", async () => {
       arguments: {},
     });
     expect(recorded).toEqual([evidence.evidence_id]);
-    expect(response.isError).toBe(true);
-    expect(response.structuredContent).toMatchObject({
+    expect(parseMcpToolError(response)).toMatchObject({
       error: {
         details: { partial_observation: { evidence_id: evidence.evidence_id } },
       },

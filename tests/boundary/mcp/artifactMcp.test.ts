@@ -1,4 +1,8 @@
 import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
   PROCESS_CAPTURE_REFERENCE,
   PROCESS_CAPTURE_RECONSTRUCTION,
   PROCESS_COMPARISON_EVIDENCE,
@@ -180,14 +184,13 @@ it.for([
               .digest("hex"),
             unpacked,
             integrity_check: "declared-digest",
+            related_parameters: ["integrity_policy"],
           },
           retryable: false,
           remediation: { action: projected.error.message },
         },
       });
-      expect(projected.error.message).toContain(
-        "--integrity-policy record-and-continue",
-      );
+      expect(projected.error.message).not.toContain("--integrity-policy");
       if (unpacked)
         expect(projected.error.message).toMatch(
           /unpacked entry main\.js.*companion file/iu,
@@ -291,6 +294,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
     expect(inventory.occurrences).toContainEqual(
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
+        hash_status: "verified",
         limitations: [
           expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
@@ -645,7 +649,7 @@ it("returns full artifact graphs inline and compares changed inventories", async
     if (evidence === undefined) throw new Error("missing inventory Evidence");
     expect(evidence).toMatchObject({
       provider: { id: "rea-artifact-graph" },
-      subject: { format: "ipa" },
+      subject: { identity: { format: "ipa" } },
     });
     const inventoryInspection = z
       .object({
@@ -917,12 +921,11 @@ const withForeignMetadataAndNestedZipMember = (
     graphSha256,
   );
   const subject = evidence.subject;
-  if (subject === null) throw new Error("missing inventory subject");
   return createEvidence(
     {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
+      path: fileSubjectDisplay(subject).local_path,
+      sha256: fileIdentity(subject).sha256,
+      format: fileIdentity(subject).format,
     },
     evidence.provider,
     {
@@ -1523,3 +1526,142 @@ const assertIntegrityComparison = async (
       : { status: "correlated", summary: { hypotheses: 1, unresolved: 0 } },
   );
 };
+
+it("evaluates hypotheses for an unchanged artifact member the comparison omits from its deltas", async ({
+  mcp,
+  onTestFinished,
+}) => {
+  const root = await createTestTempDirectory("rea-unchanged-member-mcp-");
+  const archives = [];
+  for (const [name, value] of [
+    ["left", "1"],
+    ["right", "9"],
+  ] as const) {
+    const zip = new ZipWriter(new Uint8ArrayWriter());
+    await zip.add("lib/a.js", new TextReader(`var a = ${value};`));
+    await zip.add("lib/deep/x.js", new TextReader("unchanged"));
+    const archive = join(root, `${name}.zip`);
+    await writeFile(archive, await zip.close());
+    archives.push(archive);
+  }
+  const session = createTestBinarySession(new ArtifactProvider(process.env));
+  ownArtifactSession(session, onTestFinished);
+  const server = createServer({ kind: "session", session });
+  const client = await mcp.connect(server, {
+    name: "artifact-unchanged-member",
+    version: "1",
+  });
+  try {
+    const inventories = [];
+    for (const archive of archives) {
+      inventories.push(
+        await inspectArtifactInventoryThroughMcp(client, archive),
+      );
+      await client.callTool({ name: "close_binary", arguments: {} });
+    }
+    const [left, right] = inventories;
+    if (left === undefined || right === undefined)
+      throw new Error("Expected two artifact inventories");
+    const compared = await compareArtifactEvidenceThroughMcp(
+      client,
+      left,
+      right,
+    );
+    expect(compared.isError).not.toBe(true);
+    const comparison = toolEvidence(compared.structuredContent);
+    expect(comparison.normalized_result).toMatchObject({
+      summary: { unchanged: 1 },
+    });
+    const { changes } = z
+      .object({ changes: z.array(z.object({ logical_path: z.string() })) })
+      .parse(comparison.normalized_result);
+    expect(changes.map(({ logical_path: path }) => path)).not.toContain(
+      "lib/deep/x.js",
+    );
+    for (const record of [
+      PROCESS_CAPTURE_REFERENCE,
+      PROCESS_CAPTURE_RECONSTRUCTION,
+      PROCESS_COMPARISON_EVIDENCE,
+    ])
+      expect(session.recordEvidence(record).ok).toBe(true);
+    const correlate = (logicalPath: string, expectedPattern: string) =>
+      client.callTool({
+        name: "correlate_static_and_runtime",
+        arguments: {
+          static_comparisons: [
+            {
+              kind: "retained-evidence",
+              evidence_id: comparison.evidence_id,
+            },
+          ],
+          runtime_comparisons: [
+            {
+              kind: "retained-evidence",
+              evidence_id: PROCESS_COMPARISON_EVIDENCE.evidence_id,
+            },
+          ],
+          mappings: [
+            {
+              static: {
+                comparison_evidence_id: comparison.evidence_id,
+                selector: { kind: "artifact", logical_path: logicalPath },
+              },
+              runtime: {
+                comparison_evidence_id: PROCESS_COMPARISON_EVIDENCE.evidence_id,
+                dimension: "exit",
+              },
+              side_alignment: "left_to_left",
+              hypothesis: {
+                statement: "Compare selected observations.",
+                expected_pattern: expectedPattern,
+              },
+            },
+          ],
+        },
+      });
+    for (const [expectedPattern, status, classification] of [
+      ["both_unchanged", "correlated", "hypothesis"],
+      ["runtime_only", "contradicted", "contradiction"],
+    ] as const) {
+      const correlated = await correlate("lib/deep/x.js", expectedPattern);
+      expect(correlated.isError, JSON.stringify(correlated)).not.toBe(true);
+      expect(
+        toolEvidence(correlated.structuredContent).normalized_result,
+      ).toMatchObject({
+        status,
+        correlations: {
+          items: [
+            {
+              static: {
+                selector: { kind: "artifact", logical_path: "lib/deep/x.js" },
+                status: "unchanged",
+                conclusion_kind: "derived_relationship",
+              },
+              runtime: { status: "unchanged" },
+              observed_pattern: "both_unchanged",
+              classification,
+            },
+          ],
+        },
+      });
+    }
+    const changed = await correlate("lib/a.js", "static_only");
+    expect(changed.isError).not.toBe(true);
+    expect(
+      toolEvidence(changed.structuredContent).normalized_result,
+    ).toMatchObject({
+      status: "correlated",
+      correlations: { items: [{ static: { status: "changed" } }] },
+    });
+    // A path neither inventory observed is still a malformed selector.
+    const absent = await correlate("lib/missing.js", "both_unchanged");
+    expect(absent.isError).toBe(true);
+    expect(parseMcpToolError(absent).error).toMatchObject({
+      code: "invalid_request",
+      message:
+        "Artifact selector must resolve exactly one compared artifact path",
+    });
+  } finally {
+    await mcp.close();
+  }
+});

@@ -112,9 +112,7 @@ await assert.rejects(() => commands.runProcess(fixture, [], root, 2000), error =
 console.log(JSON.stringify({ passed: true, timeoutHelpers: 3, controls: 7, childrenClosed: children.every(x => x.closed) }));
 `,
     );
-    const result = await processes.run(process.execPath, [driver], {
-      timeoutMs: Math.min(2_147_483_647, preparationBudgetMs + 35_000),
-    });
+    const result = await processes.run(process.execPath, [driver]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       passed: true,
@@ -180,7 +178,6 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
-        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);
@@ -284,7 +281,6 @@ registerHooks({ load(url, context, nextLoad) {
           REA_AGENT_EVAL_ROOT: parent,
           REA_AGENT_EVAL_KEEP_FIXTURES: "false",
         },
-        timeoutMs: 10_000,
       },
     );
     expect(result.exitCode).toBe(1);

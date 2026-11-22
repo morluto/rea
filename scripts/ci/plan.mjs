@@ -14,7 +14,7 @@ const plan = planChanges(
   },
   gitRepository(),
 );
-const { tier, matrix, reasons, testSelection } = plan;
+const { tier, matrix, reasons, testSelection, testShards } = plan;
 const selected = Object.fromEntries(flags.map((flag) => [flag, plan[flag]]));
 if (process.env.GITHUB_OUTPUT)
   appendFileSync(
@@ -24,6 +24,8 @@ if (process.env.GITHUB_OUTPUT)
       tier,
       matrix: JSON.stringify(matrix),
       test_selection: JSON.stringify(testSelection),
+      test_mode: testSelection.mode,
+      test_shards: JSON.stringify(testShards),
     })
       .map(([key, value]) => `${key}=${value}\n`)
       .join(""),
@@ -31,6 +33,6 @@ if (process.env.GITHUB_OUTPUT)
 if (process.env.GITHUB_STEP_SUMMARY)
   appendFileSync(
     process.env.GITHUB_STEP_SUMMARY,
-    `### Selected CI lanes (${tier})\n\n${flags.filter((flag) => selected[flag]).join(", ") || "Formatting only"}\n\n${reasons.join("\n\n")}\n`,
+    `### Selected CI lanes (${tier})\n\n${flags.filter((flag) => selected[flag]).join(", ") || "Formatting only"}\n\n${reasons.join("\n\n")}\n\nPortable tests (${testSelection.mode}): ${testSelection.reason}\n`,
   );
 console.log(JSON.stringify(plan));

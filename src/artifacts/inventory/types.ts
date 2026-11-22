@@ -1,7 +1,7 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
 import type { ArtifactIntegrityPolicyName } from "../../domain/artifactIntegrityPolicy.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
-import type { ArtifactResourceScope } from "../ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import type { ArtifactReaderLimits } from "../../domain/artifactReaderLimits.js";
 
 /** Options shared by artifact inventory scans. */
