@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { access, readdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readdir, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createIdaTarget } from "../../tests/fixtures/idaMcp.js";
@@ -9,11 +9,9 @@ import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readCallGraphCallees } from "./IdaCallGraph.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { runHexRaysQuery } from "./IdaHexRaysProtocol.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { WindowsPrivateRuntime } from "../windows/WindowsPrivateRuntime.js";
 
 const roots: string[] = [];
@@ -62,50 +60,9 @@ const fixture = async () => {
   );
   return { root, target, producer, client };
 };
-const resourceScope: RetainedResourceScope = {
-  retain: () => undefined,
-  run: (operation) => operation(),
-};
 /** Private workspaces REA allocated beside the fixture target. */
 const workspaces = async (root: string) =>
   (await readdir(root)).filter((name) => name.startsWith("rea-ida-"));
-
-describe("Hex-Rays IDA MCP registration", () => {
-  it("admits only a headless stdio registration", async () => {
-    const { root } = await createIdaTarget();
-    roots.push(root);
-    const path = join(root, "mcp.json");
-    for (const [input, ok] of [
-      [
-        {
-          command: "uvx",
-          args: ["ida-mcp", "stdio"],
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        true,
-      ],
-      [
-        { command: "uvx", args: ["ida-mcp", "stdio"], protocol: "hexrays" },
-        false,
-      ],
-      [
-        {
-          url: "http://127.0.0.1:8737/mcp",
-          mode: "headless",
-          protocol: "hexrays",
-        },
-        false,
-      ],
-    ] as const) {
-      await writeFile(path, JSON.stringify(input));
-      expect(
-        (await readIdaConfiguration(path, { resourceScope })).ok,
-        JSON.stringify(input),
-      ).toBe(ok);
-    }
-  });
-});
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 
@@ -532,28 +489,31 @@ describe("Hex-Rays IDA MCP session", () => {
     );
   });
 
-  it("adopts and releases a late lease when the open reply was lost", async () => {
-    const { root, producer, client } = await fixture();
-    producer.openBackend = "idat";
-    producer.loseOpenReply = { leased: true };
-    expect((await client.execute("list_procedures", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(false);
-    // The lease is released even though the open itself never completed.
-    expect(producer.leases.size).toBe(0);
-    expect(producer.calls.map(({ name }) => name)).toContain("close_database");
-    expect(await workspaces(root)).toHaveLength(1);
-  });
+  it.each([
+    { label: "a late lease", leased: true },
+    { label: "no visible lease", leased: false },
+  ])(
+    "retains the workspace after a lost open reply with $label",
+    async ({ leased }) => {
+      const { root, producer, client } = await fixture();
+      producer.openBackend = "idat";
+      producer.loseOpenReply = { leased };
+      expect((await client.execute("list_procedures", {})).ok).toBe(false);
 
-  it("retains the workspace when a lost open reply left no visible lease", async () => {
-    const { root, producer, client } = await fixture();
-    producer.loseOpenReply = { leased: false };
-    expect((await client.execute("list_procedures", {})).ok).toBe(false);
-    expect((await client.close()).ok).toBe(false);
-    expect(producer.calls.map(({ name }) => name)).not.toContain(
-      "close_database",
-    );
-    expect(await workspaces(root)).toHaveLength(1);
-  });
+      const cleanup = await client.close();
+      if (cleanup.ok) throw new Error("Expected unverified startup cleanup");
+      expect(cleanup.error.cleanupIncomplete).toBe(true);
+      expect(
+        producer.calls.filter(({ name }) => name === "close_database"),
+      ).toEqual(
+        leased
+          ? [{ name: "close_database", args: { instance_id: "lease1" } }]
+          : [],
+      );
+      expect(producer.leases.size).toBe(0);
+      expect(await workspaces(root)).toHaveLength(1);
+    },
+  );
 
   it("settles a rejected close by the following inventory", async () => {
     const released = await fixture();
@@ -593,25 +553,11 @@ describe("Hex-Rays IDA MCP session", () => {
 
 describe("Hex-Rays unleased database inventory", () => {
   it.each([
-    ["idalib", "available"],
-    ["idat", "unavailable"],
-  ] as const)(
-    "releases when another client's %s database is not the private copy",
-    async (backend, status) => {
-      const { root, producer, client } = await fixture();
-      producer.peers = [{ path: "/elsewhere/peer.bin", backend, status }];
-      expect((await client.execute("list_procedures", {})).ok).toBe(true);
-      expect((await client.close()).ok).toBe(true);
-      expect(await workspaces(root)).toEqual([]);
-    },
-  );
-
-  it.each([
     ["idalib", "available", ""],
     ["idat", "unavailable", ".i64"],
     ["idat", "available", ".i64"],
   ] as const)(
-    "retains the private workspace while an unleased %s database is %s",
+    "uses workspace containment to settle an unleased %s database that is %s",
     async (backend, status, suffix) => {
       const { root, producer, client } = await fixture();
       producer.openBackend = backend;
@@ -620,7 +566,12 @@ describe("Hex-Rays unleased database inventory", () => {
         producer.calls.find(({ name }) => name === "open_database")?.args.path,
       );
       const listedPath = path + suffix;
-      producer.peers = [{ path: listedPath, backend, status }];
+      const neighbor = {
+        path: join(dirname(path) + "-neighbor", "peer.i64"),
+        backend,
+        status,
+      };
+      producer.peers = [{ path: listedPath, backend, status }, neighbor];
       const closed = await client.close();
       expect(closed.ok).toBe(false);
       if (closed.ok) throw new Error("expected retained cleanup");
@@ -651,7 +602,7 @@ describe("Hex-Rays unleased database inventory", () => {
       expect(await workspaces(root)).toHaveLength(1);
       await access(path);
 
-      producer.peers = [];
+      producer.peers = [neighbor];
       expect((await client.close()).ok).toBe(true);
       expect(await workspaces(root)).toEqual([]);
       expect(

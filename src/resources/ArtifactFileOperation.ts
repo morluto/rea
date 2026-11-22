@@ -23,7 +23,10 @@ import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
 } from "./AnalysisCleanupLease.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisCleanupObservation,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
 import type { ArtifactLimitBoundary } from "../domain/artifactOperationError.js";
 import { ParseFailureError, type LimitRef } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -102,6 +105,35 @@ export class ArtifactFileCleanupFailure<
   }
 }
 
+/** A primary file failure with unresolved cleanup from sibling operations. */
+export class ArtifactFileFailureGroup extends ArtifactReaderFailure {
+  constructor(
+    readonly primary: unknown,
+    readonly siblingCleanup: AnalysisCleanupObservation,
+    leases: readonly AnalysisCleanupLease[] | undefined,
+  ) {
+    const report = ArtifactReaderFailure.withCleanup(
+      primary,
+      siblingCleanup,
+      undefined,
+      leases,
+    );
+    super(
+      report.reason,
+      report.message,
+      {
+        ...report.primaryFacts(),
+        cause: primary,
+        cleanup: report.cleanup,
+        cleanupLeases: report.cleanupLeases,
+        partialObservation: report.partialObservation,
+        cancellation: report.cancellation,
+      },
+      report.details,
+    );
+  }
+}
+
 /** Errnos raised while the caller-selected artifact path is being resolved. */
 export type ArtifactSelectedPathErrno =
   | "ENOENT"
@@ -133,6 +165,16 @@ export const mapArtifactFileFailure = (
   cause: unknown,
   classify: (cause: unknown) => unknown,
 ): unknown => {
+  if (cause instanceof ArtifactFileFailureGroup) {
+    const primary = mapArtifactFileFailure(cause.primary, classify);
+    return Object.is(primary, cause.primary)
+      ? cause
+      : new ArtifactFileFailureGroup(
+          primary,
+          cause.siblingCleanup,
+          cause.cleanupLeases,
+        );
+  }
   if (!(cause instanceof ArtifactFileCleanupFailure)) return classify(cause);
   const physical = cause.fileCleanupFailure;
   if (physical.outcome.kind !== "failed") return cause;
@@ -160,6 +202,8 @@ export interface ArtifactFilePrimaryFacts {
 export const artifactFilePrimaryFacts = (
   cause: unknown,
 ): ArtifactFilePrimaryFacts => {
+  if (cause instanceof ArtifactFileFailureGroup)
+    return artifactFilePrimaryFacts(cause.primary);
   while (cause instanceof ArtifactFileCleanupFailure) {
     const physical = cause.fileCleanupFailure;
     if (physical.outcome.kind !== "failed") break;

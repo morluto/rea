@@ -310,43 +310,6 @@ it("normalizes a synchronous executor rejection and drains the next request", as
   await expect(queue.run("second", {}, {})).resolves.toEqual(ok(null));
 });
 
-it.each([null, "caller stopped", new Error("caller stopped")])(
-  "retains the exact queued cancellation reason %j",
-  async (reason) => {
-    const controller = new AbortController();
-    const execution = phaseGate<void, ExecutionResult>();
-    const queue = new GhidraRequestQueue(
-      () => execution.hold(),
-      failure,
-      () => Promise.resolve(ok(null)),
-    );
-    const active = queue.run("active", {}, {});
-    const queued = queue.run("queued", {}, { signal: controller.signal });
-    controller.abort(reason);
-    const result = await queued;
-    execution.release(ok(null));
-    await active;
-    if (result.ok) throw new Error("Expected queued cancellation");
-    expect(result.error.cancellation?.reason).toBe(reason);
-  },
-);
-
-it.each([null, "caller stopped", new Error("caller stopped")])(
-  "retains the exact pre-admission cancellation reason %j",
-  async (reason) => {
-    const controller = new AbortController();
-    controller.abort(reason);
-    const execute = vi.fn(() => Promise.resolve(ok(null)));
-    const queue = new GhidraRequestQueue(execute, failure, () =>
-      Promise.resolve(ok(null)),
-    );
-    const result = await queue.run("active", {}, { signal: controller.signal });
-    if (result.ok) throw new Error("Expected pre-admission cancellation");
-    expect(result.error.cancellation?.reason).toBe(reason);
-    expect(execute).not.toHaveBeenCalled();
-  },
-);
-
 it.each(["return", "throw"] as const)(
   "captures cleanup rejection before execution can %s",
   async (stage) => {

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   open,
   type FileHandle,
@@ -567,6 +568,14 @@ describe("binary target I/O: OpenStep app plist escapes", () => {
         value: {
           executable: join(programs, "Main"),
           infoPlist: join(app, "Contents", "Info.plist"),
+          bundleExecutableSelection: {
+            canonical_path: app,
+            layout: "contents",
+            declared_executable: "Main",
+            info_plist_sha256: createHash("sha256")
+              .update(plistContent)
+              .digest("hex"),
+          },
         },
       });
     },
@@ -1929,6 +1938,34 @@ it.each([
     bytes.copy(bytes, 768, 512, 600);
     bytes.writeUInt32LE(796, 768 + 24);
     bytes.write("other.pdb", 796 + 24);
+    await writeFile(path, bytes);
+    const resolved = await parseBinaryTarget(path);
+    if (!resolved.ok) throw resolved.error;
+    const buffered = parseExecutableHeader(bytes, "x64");
+    if (!buffered.ok) throw new Error(buffered.error);
+    for (const metadata of [resolved.value, buffered.value])
+      expect(metadata.format === "pe" ? metadata.codeView?.pdbPath : null).toBe(
+        expected,
+      );
+  },
+);
+
+it.each([
+  { source: "RVA", rawPointer: 0, expected: undefined },
+  { source: "file pointer", rawPointer: 512 + 28, expected: "app.pdb" },
+])(
+  "uses the correct section bound for a CodeView $source",
+  async ({ rawPointer, expected }) => {
+    const directory = await createTestTempDirectory(
+      "rea-codeview-section-size-",
+    );
+    const path = join(directory, "symbols.exe");
+    const bytes = Buffer.alloc(1024);
+    pe(0x8664, 64, 0x0002, false, { pdbPath: "app.pdb" }).copy(bytes);
+    const sectionTable = 64 + 24 + 240;
+    // The virtual extent holds the debug directory but ends before the payload.
+    bytes.writeUInt32LE(28, sectionTable + 8);
+    bytes.writeUInt32LE(rawPointer, 512 + 24);
     await writeFile(path, bytes);
     const resolved = await parseBinaryTarget(path);
     if (!resolved.ok) throw resolved.error;

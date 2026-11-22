@@ -5,6 +5,7 @@ import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
 import {
   v8CodeCacheFixture,
+  withSyntheticLegacyHeader,
   withSyntheticNarrowHeader,
 } from "../../src/v8/V8CodeCache.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -13,17 +14,19 @@ import { cliTest } from "../support/cli/cliFixture.js";
 const outputSchema = toolContract("inspect_v8_code_cache").outputSchema;
 
 cliTest(
-  "reports wide and synthetic narrow header extents through the public CLI",
+  "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-v8-cli-");
     const wide = v8CodeCacheFixture();
     const narrow = withSyntheticNarrowHeader(wide);
+    const legacy = withSyntheticLegacyHeader(wide);
     const payloadDigest = createHash("sha256")
       .update(wide.subarray(32))
       .digest("hex");
     for (const [bytes, headerBytes] of [
       [wide, 32],
       [narrow, 28],
+      [legacy, 24],
     ] as const) {
       const path = join(root, `header-${String(headerBytes)}.jsc`);
       await writeFile(path, bytes);

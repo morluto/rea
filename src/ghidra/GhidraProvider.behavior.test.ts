@@ -21,6 +21,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
+  ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   limitationsFor,
   type GhidraSessionSource,
@@ -4385,6 +4386,31 @@ describe("Ghidra empty instruction reference facets", () => {
     const limitations = await executeInspect(definedData([compactReference()]));
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
+  });
+
+  it("names the code seed recovery when the address is not in Ghidra's listing", async () => {
+    const limitations = await executeInspect({
+      ...compactInstruction(),
+      status: "not-in-listing",
+      bytes: null,
+      length: null,
+      mnemonic: null,
+      raw_disassembly: null,
+      incoming_references: [compactReference()],
+    });
+    expect(
+      limitations.filter((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toEqual([ghidraNotInListingLimitation("fresh-import")]);
+  });
+
+  it.each([
+    ["decoded", instruction([compactReference()], [compactReference()])],
+    ["data", definedData([compactReference()])],
+  ])("adds no seed recovery to a %s instruction answer", async (_, result) => {
+    const limitations = await executeInspect(result);
+    expect(
+      limitations.some((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toBe(false);
   });
 });
 
