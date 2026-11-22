@@ -19,9 +19,9 @@ fields this reader does not decode. The
 - Report the recorded executable name, the four-byte name-hash as lowercase
   hexadecimal, the declared file size beside the observed size, the recorded run
   count and whether a last-run timestamp is present.
-- Parse the v17 and v23 fixed headers. Both keep the run count at the same
-  offset in the file-information block; report a value the file does not reach
-  as `null` rather than zero.
+- Parse the v17 and v23 fixed headers. The run count is generation-specific:
+  v23's longer file-information block moves it eight bytes past v17's. Report a
+  value the file does not reach as `null` rather than zero.
 - Refuse v26 and MAM containers with an explicit unsupported-container failure,
   so a supported generation is never reported as corrupt.
 - Do not decode last-run times, volumes or the read-ahead file list. State that in

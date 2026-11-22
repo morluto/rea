@@ -11,7 +11,12 @@ const MAM = Buffer.from("MAM", "ascii");
 const MAM_VERSION = 4;
 const MAM_CHECKSUM_FLAG = 0x80;
 const NAME_BYTES = 60;
-const RUN_COUNT_OFFSET = 0x98;
+/** The run count is generation-specific: v23's file information is longer than
+ * v17's, moving the field eight bytes later (0x90/0x98). */
+const RUN_COUNT_OFFSETS: Readonly<Record<string, number>> = {
+  "17": 0x90,
+  "23": 0x98,
+};
 
 export interface PrefetchFixtureOptions {
   readonly version: (typeof PREFETCH_VERSIONS)[number];
@@ -53,10 +58,12 @@ export const prefetchFixture = ({
   bytes.writeUInt32LE(bytes.length, 0x0c);
   bytes.write(`${name}\0`, 0x10, NAME_BYTES, "utf16le");
   bytes.writeUInt32LE(hash, 0x4c);
-  // File information starts with a 12-byte metrics array, then the FILETIME of
-  // the last run, then the run count.
+  // File information begins at 0x54 after the 84-byte header. The run count is
+  // written at the generation's own offset below.
   bytes.writeUInt32LE(runTimeSlots > 0 ? 1 : 0, 0x54 + 0x10);
-  bytes.writeUInt32LE(runCount, RUN_COUNT_OFFSET);
+  // Write the run count where the parser reads it for this generation, so a
+  // v17 fixture exercises v17's offset rather than v23's.
+  bytes.writeUInt32LE(runCount, RUN_COUNT_OFFSETS[version] ?? 0x98);
   return bytes;
 };
 

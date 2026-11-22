@@ -64,8 +64,12 @@ it("reports the v23 run count and last-run presence as declared", async () => {
   }
 });
 
-it("reports the v17 run count from the same field", async () => {
-  const reader = await readerFor(prefetchFixture({ version: "17" }));
+it("reports the v17 run count from its own offset", async () => {
+  // v17 keeps the run count at 0x90; 0x98 is v23's offset. Write a decoy at
+  // 0x98 so a reader that used v23's offset for v17 would report 99, not 7.
+  const bytes = prefetchFixture({ version: "17", runCount: 7 });
+  bytes.writeUInt32LE(99, 0x98);
+  const reader = await readerFor(bytes);
   try {
     await inventory(reader);
     expect(reader.formatMetadata()).toMatchObject({
@@ -293,9 +297,9 @@ it("rejects Prefetch sizes the parser cannot report", async () => {
 
 it("rejects run facts a capture this small could not report", async () => {
   // A capture reports the last-run FILETIME only from 128 bytes (v17) or 136
-  // (v23), and the run count only from 156. Members are reachable only once the
-  // bytes reach them, so these combinations are impossible Evidence even though
-  // each member alone is in range.
+  // (v23), and the run count only from 148 (v17) or 156 (v23). Members are
+  // reachable only once the bytes reach them, so these combinations are
+  // impossible Evidence even though each member alone is in range.
   const facts = {
     kind: "windows-prefetch",
     version: "23",
@@ -337,17 +341,30 @@ it("rejects run facts a capture this small could not report", async () => {
       }),
     ).toMatchObject({ run_time_slots: 1 });
   }
-  expect(() =>
-    prefetchMetadataSchema.parse({ ...facts, file_bytes: 155, run_count: 7 }),
-  ).toThrow();
-  expect(
-    prefetchMetadataSchema.parse({
-      ...facts,
-      file_bytes: 156,
-      run_count: 7,
-      run_time_slots: 1,
-    }),
-  ).toMatchObject({ run_count: 7, run_time_slots: 1 });
+  // The run count is generation-specific: v17 reaches it at 0x94 (148 bytes),
+  // v23 at 0x9c (156). A capture one byte short of the field cannot report it.
+  for (const [version, runCountBytes] of [
+    ["17", 148],
+    ["23", 156],
+  ] as const) {
+    expect(() =>
+      prefetchMetadataSchema.parse({
+        ...facts,
+        version,
+        file_bytes: runCountBytes - 1,
+        run_count: 7,
+      }),
+    ).toThrow();
+    expect(
+      prefetchMetadataSchema.parse({
+        ...facts,
+        version,
+        file_bytes: runCountBytes,
+        run_count: 7,
+        run_time_slots: 1,
+      }),
+    ).toMatchObject({ run_count: 7, run_time_slots: 1 });
+  }
 });
 
 it("rejects a name hash that is not eight lowercase hex digits", async () => {

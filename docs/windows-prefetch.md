@@ -27,9 +27,10 @@ For the v17 and v23 generations this reader reports:
 
 - the recorded executable name and the four-byte name-hash, as lowercase
   hexadecimal;
-- the recorded run count, which both generations keep at the same offset, and
-  whether a last-run timestamp is present, which requires the eight FILETIME
-  bytes at the generation's own offset (0x78 for v17, 0x80 for v23);
+- the recorded run count, which sits at the generation's own offset (0x90 for
+  v17, 0x98 for v23), and whether a last-run timestamp is present, which
+  requires the eight FILETIME bytes at the generation's own offset (0x78 for
+  v17, 0x80 for v23);
 - the declared file size, kept beside the observed size so a truncated or padded
   capture is visible.
 

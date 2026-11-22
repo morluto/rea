@@ -309,7 +309,8 @@ export const prefetchMetadataSchema = z
   // this small cannot report are impossible Evidence rather than unknown ones.
   .refine(
     (facts) =>
-      facts.run_count === null || facts.file_bytes >= PREFETCH_RUN_COUNT_BYTES,
+      facts.run_count === null ||
+      facts.file_bytes >= PREFETCH_RUN_COUNT_BYTES[facts.version],
     { path: ["run_count"] },
   )
   .refine(

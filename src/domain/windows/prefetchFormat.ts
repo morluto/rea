@@ -29,25 +29,34 @@ const EXECUTABLE_NAME_BYTES = 60;
 const EXECUTABLE_HASH_OFFSET = 0x4c;
 
 /**
- * File information follows the common header: a 12-byte metrics array at 0x54,
- * the FILETIME of the last run, then the run count. Version 23 appends a
- * directory strings array, which moves its FILETIME eight bytes later than
- * version 17's; the run count stays put.
+ * File information follows the common header at 0x54: the FILETIME of the last
+ * run, then the run count. Version 23's file information is longer than version
+ * 17's (156 bytes against 68), so both the FILETIME and the run count sit eight
+ * bytes later. The run count is generation-specific; reading v17 at v23's
+ * offset reports unrelated file-metrics bytes.
  */
 const RUN_TIME_OFFSETS: Readonly<Record<ParsedPrefetchVersion, number>> = {
   "17": 0x78,
   "23": 0x80,
 };
-const RUN_COUNT_OFFSET = 0x98;
+const RUN_COUNT_OFFSETS: Readonly<Record<ParsedPrefetchVersion, number>> = {
+  "17": 0x90,
+  "23": 0x98,
+};
 
 /** One FILETIME slot occupies eight bytes; its value is not decoded. */
 const RUN_TIME_SLOT_BYTES = 8;
 
 /**
  * Smallest capture that can report each run fact: the run count needs its DWORD
- * whole, and the last-run FILETIME is generation-specific.
+ * whole, and both the run count and the last-run FILETIME are generation-specific.
  */
-export const PREFETCH_RUN_COUNT_BYTES = RUN_COUNT_OFFSET + 4;
+export const PREFETCH_RUN_COUNT_BYTES: Readonly<
+  Record<ParsedPrefetchVersion, number>
+> = {
+  "17": RUN_COUNT_OFFSETS["17"] + 4,
+  "23": RUN_COUNT_OFFSETS["23"] + 4,
+};
 export const PREFETCH_RUN_TIME_BYTES: Readonly<
   Record<ParsedPrefetchVersion, number>
 > = {
@@ -231,14 +240,14 @@ export const parsePrefetchFile = (
   // that ends inside the metrics array has no run time to report yet.
   const runTimeSlots: 1 | null =
     end >= PREFETCH_RUN_TIME_BYTES[version] ? 1 : null;
-  // The run count sits at the same offset in both generations; only its
-  // presence depends on the file reaching the end of the file-information
-  // block.
-  if (end < PREFETCH_RUN_COUNT_BYTES)
+  // The run count is generation-specific, like the last-run FILETIME: version
+  // 23's file information is longer, so both fields shift. A capture that ends
+  // before the field has no run total to report.
+  if (end < PREFETCH_RUN_COUNT_BYTES[version])
     limitations.push(
       "The file ends before the run count field, so the recorded run total is unknown.",
     );
-  else runCount = reader.u32(RUN_COUNT_OFFSET);
+  else runCount = reader.u32(RUN_COUNT_OFFSETS[version]);
   if (runTimeSlots === null)
     limitations.push(
       "The file ends before the last-run timestamp, so no run time is reported.",
