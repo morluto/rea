@@ -423,23 +423,28 @@ export class ToolResultDelivery {
       targetContent,
     );
     let candidateProjection = projected;
-    while (!encoded.ok) {
+    const remaining = [...unretainedEvidenceCandidates(candidateProjection)]
+      .map((candidate) => ({
+        candidate,
+        size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
+      }))
+      .sort((left, right) => right.size - left.size);
+    while (!encoded.ok && remaining.length > 0) {
       const limit = encoded;
-      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
-        .map((candidate) => ({
-          candidate,
-          size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
-        }))
-        .sort((left, right) => right.size - left.size);
       let next: AnalysisErrorProjection | undefined;
-      for (const { candidate } of candidates) {
+      let nextIndex = -1;
+      for (let index = 0; index < remaining.length; index += 1) {
+        const { candidate } = remaining[index]!;
         const compact = omitUnretainedEvidenceFromError(
           candidateProjection,
           limit,
           candidate,
         );
         if (compact === undefined) continue;
-        next ??= compact;
+        if (next === undefined) {
+          next = compact;
+          nextIndex = index;
+        }
         const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
@@ -456,6 +461,7 @@ export class ToolResultDelivery {
       if (encoded.ok) break;
       if (next === undefined) break;
       candidateProjection = next;
+      remaining.splice(nextIndex, 1);
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.

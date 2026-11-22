@@ -114,16 +114,43 @@ export const readSessionStatus = async (
   let availabilityResults: Awaited<ReturnType<typeof probeSessionAvailability>>;
   let status: JsonValue;
   try {
-    availabilityResults = await probeSessionAvailability(
+    const availabilityPromise = probeSessionAvailability(
       options,
       context.mcpReq.signal,
       (family) => server.advertisesFamily(family),
     );
-    status = await session.status({
+    const statusPromise = session.status({
       signal: context.mcpReq.signal,
       detail: input.detail,
       refreshCandidates: input.refresh_candidates,
     });
+    const [availabilityOutcome, statusOutcome] = await Promise.allSettled([
+      availabilityPromise,
+      statusPromise,
+    ]);
+    if (availabilityOutcome.status === "rejected") {
+      let primary: unknown = availabilityOutcome.reason;
+      if (
+        statusOutcome.status === "rejected" &&
+        statusOutcome.reason !== primary &&
+        statusOutcome.reason instanceof AnalysisError &&
+        statusOutcome.reason.cleanupIncomplete
+      ) {
+        primary = analysisErrorWithCleanupDependencies(
+          primary instanceof AnalysisError
+            ? primary
+            : new ProviderAdapterError("rea", "binary_session", {
+                cause: primary,
+              }),
+          statusOutcome.reason,
+          "binary_session",
+        );
+      }
+      throw primary;
+    }
+    if (statusOutcome.status === "rejected") throw statusOutcome.reason;
+    availabilityResults = availabilityOutcome.value;
+    status = statusOutcome.value;
   } catch (cause) {
     if (!(cause instanceof AnalysisError)) throw cause;
     return err(cause);
