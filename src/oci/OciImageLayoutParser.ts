@@ -1686,8 +1686,32 @@ const inventoryOciImageLayout = async (
       const path = unverifiedBlobPath(digest);
       if (path !== undefined) referencedPaths.add(path);
       const entry = path === undefined ? undefined : byPath.get(path);
-      if (path !== undefined && entry?.kind === "file")
-        checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
+      if (path !== undefined) {
+        // Presence defects are independent of whether the digest can be
+        // verified, so they get the same findings a supported digest gets.
+        if (entry === undefined)
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is missing.`,
+            digest,
+            path,
+          );
+        else if (entry.kind === "symlink")
+          recordFindingOnce(
+            "symlink_blob",
+            `Blob ${digest} is a symlink and was not followed.`,
+            digest,
+            path,
+          );
+        else if (entry.kind !== "file")
+          recordFindingOnce(
+            "missing_blob",
+            `Referenced blob ${digest} is not a regular file.`,
+            digest,
+            path,
+          );
+        else checkDeclaredSizes(digest, path, entry, reference.declaredSizes);
+      }
       blobs.push(
         blobRecord(
           digest,

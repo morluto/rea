@@ -1607,6 +1607,59 @@ it("checks declared sizes and records observed_size for unsupported-digest blobs
   });
 });
 
+it("reports missing and symlinked unsupported-digest blobs as presence defects", async () => {
+  const missingRoot = await createTestTempDirectory("rea-oci-sha1-missing-");
+  const missing = await writeSha1LayerLayout(missingRoot, 5);
+  await unlink(join(missingRoot, "blobs", "sha1", missing.hex));
+  const missingReport = await inspectLayout(missingRoot);
+  expect(missingReport.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "unsupported_digest_algorithm",
+        digest: missing.digest,
+      }),
+      expect.objectContaining({
+        kind: "missing_blob",
+        digest: missing.digest,
+        path: `blobs/sha1/${missing.hex}`,
+      }),
+    ]),
+  );
+  expect(
+    missingReport.blobs.find((blob) => blob.digest === missing.digest),
+  ).toMatchObject({ kind: "missing", present: false });
+
+  const linkRoot = await createTestTempDirectory("rea-oci-sha1-symlink-");
+  const linked = await writeSha1LayerLayout(linkRoot, 5);
+  const blobPath = join(linkRoot, "blobs", "sha1", linked.hex);
+  await unlink(blobPath);
+  await writeFile(join(linkRoot, "outside"), "layer");
+  await symlink(join(linkRoot, "outside"), blobPath);
+  const linkReport = await inspectLayout(linkRoot);
+  expect(linkReport.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "unsupported_digest_algorithm",
+        digest: linked.digest,
+      }),
+      expect.objectContaining({
+        kind: "symlink_blob",
+        digest: linked.digest,
+        path: `blobs/sha1/${linked.hex}`,
+      }),
+    ]),
+  );
+  expect(
+    linkReport.findings.some(
+      (finding) =>
+        finding.digest === linked.digest && finding.kind === "missing_blob",
+    ),
+  ).toBe(false);
+  expect(
+    linkReport.blobs.find((blob) => blob.digest === linked.digest),
+  ).toMatchObject({ kind: "symlink", present: false });
+});
+
 it("refuses a missing oci-layout as malformed input", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-");
   await mkdir(root, { recursive: true });
