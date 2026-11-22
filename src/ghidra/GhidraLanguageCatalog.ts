@@ -59,9 +59,13 @@ export const parseGhidraLanguageDefinitions = (
   return definitions;
 };
 
-const languageDirectories = async (installDir: string): Promise<string[]> => {
+const languageDirectories = async (
+  installDir: string,
+  signal: AbortSignal | undefined,
+): Promise<string[]> => {
   const directories: string[] = [];
   for (const root of LANGUAGE_ROOTS) {
+    assertArtifactReadActive(signal);
     let modules: string[];
     try {
       modules = await readdir(join(installDir, root));
@@ -217,8 +221,10 @@ export const readGhidraLanguageCatalog = (
   signal?: AbortSignal,
 ): Promise<readonly GhidraLanguageDefinition[]> =>
   resources.run(async () => {
-    const directories = await languageDirectories(installDir);
+    const directories = await languageDirectories(installDir, signal);
     const files = await discoverLanguageDefinitionFiles(directories, signal);
+    // An empty scan starts no definition reads that could observe cancellation.
+    assertArtifactReadActive(signal);
     const results: Array<readonly GhidraLanguageDefinition[]> = new Array(
       files.length,
     );
