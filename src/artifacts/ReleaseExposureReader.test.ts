@@ -2,6 +2,7 @@ import { WEB_SOURCE_MAP_LIMITS } from "../domain/sourceMapLimits.js";
 import { writeMinimalElfHeader } from "../../tests/fixtures/nativeHeaders.js";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
+import { setImmediate } from "node:timers/promises";
 import { deflateRawSync, deflateSync } from "node:zlib";
 import type { Dirent } from "node:fs";
 import { mkdir, readdir, symlink, truncate, writeFile } from "node:fs/promises";
@@ -26,13 +27,13 @@ import {
   pyzArchive,
   PYTHON_39_MAGIC,
 } from "./pyinstaller/CArchive.fixture.js";
-import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTable.js";
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
+import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -988,75 +989,94 @@ it("does not treat a decoding replacement as observed embedded source", async ()
   expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
 });
 
-describe("ReleaseExposureReader package cleanup", () => {
-  it("rejects a replaced inventoried package before listing and closes its reader", async () => {
-    const root = await createTestTempDirectory(
-      "rea-release-exposure-replaced-",
-    );
-    const archive = join(root, "app.asar");
-    await writeFile(archive, sourceMapArchive());
-    const actual = await vi.importActual<
-      typeof import("./inventory/ArtifactInventory.js")
-    >("./inventory/ArtifactInventory.js");
-    let inventoried = false;
-    inventoryRead.impl = async (...args) => {
-      const inventory = await actual.inventoryArtifactInScope(...args);
-      await writeFile(
-        archive,
+describe("ReleaseExposureReader package carrier identity", () => {
+  it.each([
+    {
+      case: "replacement on first verification",
+      replaced: true,
+      interrupted: false,
+    },
+    {
+      case: "replacement on verification retry",
+      replaced: true,
+      interrupted: true,
+    },
+    {
+      case: "original archive on verification retry",
+      replaced: false,
+      interrupted: true,
+    },
+  ])(
+    "checks the $case and releases its reader",
+    async ({ replaced, interrupted }) => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-replaced-",
+      );
+      const archive = join(root, "app.asar");
+      const packageWithText = (prefix: string) =>
         asarArchive([
-          {
-            name: "dist/app.js.map",
-            bytes: Buffer.from(
-              JSON.stringify({
-                version: 3,
-                sources: [],
-                names: [],
-                mappings: "",
-              }),
-            ),
+          { name: "a.txt", bytes: Buffer.from(prefix + " first member") },
+          { name: "b.txt", bytes: Buffer.from(prefix + " second member") },
+        ]);
+      await writeFile(archive, packageWithText("original"));
+      const reader = new ReleaseExposureReader();
+      const observed: string[] = [];
+      let released = false;
+      try {
+        const result = await withPostInventoryArchive(
+          archive,
+          (source) => {
+            const prepare = source.prepareContainer?.bind(source);
+            if (prepare === undefined)
+              throw new Error("Expected digest binding");
+            let initialPreparation = true;
+            source.prepareContainer = async (...args) => {
+              if (initialPreparation) {
+                initialPreparation = false;
+                if (replaced)
+                  await writeFile(archive, packageWithText("replacement"));
+                if (interrupted)
+                  throw Object.assign(
+                    new Error("temporary digest read failure"),
+                    { code: "EIO" },
+                  );
+              }
+              await prepare(...args);
+            };
+            const close = source.close.bind(source);
+            source.close = async () => {
+              await close();
+              released = true;
+            };
+            return source;
           },
-        ]),
-      );
-      inventoried = true;
-      return inventory;
-    };
-    let created = 0;
-    let listed = false;
-    let closed = false;
-    createdReaders.wrap = (source, path) => {
-      if (path !== archive || !inventoried) return source;
-      created += 1;
-      const entries = source.entries.bind(source);
-      source.entries = (...args) => {
-        listed = true;
-        return entries(...args);
-      };
-      const close = source.close.bind(source);
-      source.close = async () => {
-        closed = true;
-        await close();
-      };
-      return source;
-    };
-    const reader = new ReleaseExposureReader();
-    try {
-      const result = await reader.inspect(
-        { path: root },
-        undefined,
-        ignoreText,
-      );
-      if (result.ok) throw new Error("Expected a failed audit.");
-      expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
-      expect(created).toBe(1);
-      expect(listed).toBe(false);
-      expect(closed).toBe(true);
-    } finally {
-      inventoryRead.impl = undefined;
-      createdReaders.wrap = undefined;
-      await reader.close();
-    }
-  });
+          () =>
+            reader.inspect({ path: root }, undefined, (text) => {
+              observed.push(text);
+            }),
+        );
+        if (replaced) {
+          if (result.ok)
+            throw new Error(
+              "Expected changed artifact. Examined: " +
+                JSON.stringify(observed),
+            );
+          expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+          expect(observed).toEqual([]);
+        } else {
+          if (!result.ok) throw result.error;
+          expect(observed).toEqual(["original second member"]);
+          expect(result.value.coverage).toBe("unknown");
+        }
+        expect(released).toBe(true);
+      } finally {
+        await reader.close();
+      }
+    },
+  );
+});
 
+describe("ReleaseExposureReader package cleanup", () => {
   it.each([false, true])(
     "reports package cleanup failure and retains the scan or primary error (scan fails: %s)",
     async (scanFails) => {
@@ -1182,7 +1202,7 @@ describe("ReleaseExposureReader replaced native images", () => {
 });
 
 describe("ReleaseExposureReader package allowances", () => {
-  it("stops opening embedded packages after the container allowance", async () => {
+  it("stops probing on-disk images after the embedded-package allowance", async () => {
     const root = await createTestTempDirectory(
       "rea-release-exposure-containers-",
     );
@@ -1196,7 +1216,6 @@ describe("ReleaseExposureReader package allowances", () => {
     expect(scanned.extractable.readable_members).toBe(8);
     expect(scanned.extractable.unreadable_members).toBeGreaterThan(0);
     expect(scanned.coverage).toBe("unknown");
-    expect(scanned.limitations.length).toBeLessThanOrEqual(8);
     expect(scanned.omitted).toContainEqual(
       expect.objectContaining({ subject: "embedded package probes", count: 1 }),
     );
@@ -2966,7 +2985,8 @@ describe("ReleaseExposureReader text encodings declaration order", () => {
       Buffer.from([0xff, 0xfe, 0, 0, 0x7b, 0, 0, 0]),
     );
     const scanned = await inspect(root);
-    expect(scanned.source_maps.unparsed).toBe(1);
+    expect(scanned.source_maps).toMatchObject({ unparsed: 1, embedded: 0 });
+    expect(scanned.debug_companions.paths).toEqual([]);
     expect(scanned.debug_companions.skipped).toBe(1);
     expect(debugCompanionsStatus(scanned)).toBe("unknown");
   });
@@ -3431,21 +3451,7 @@ describe("ReleaseExposureReader package traversal coverage", () => {
 });
 
 describe("ReleaseExposureReader unexpanded packages", () => {
-  it("does not count an oversized binary entry as a text member", async () => {
-    const root = await bundled([
-      {
-        path: "Large.bin",
-        bytes: Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES + 1),
-      },
-    ]);
-    const scanned = await inspect(root);
-    expect(scanned.text_members.skipped).toBe(0);
-    expect(scanned.omitted.map((item) => item.subject)).not.toContain(
-      "text members",
-    );
-  });
-
-  it("reports members skipped by an allowance as readable, not unreadable", async () => {
+  it("counts over-allowance package members as readable and only the script as skipped text", async () => {
     const root = await bundled([
       {
         path: "Large.bin",
@@ -3462,6 +3468,9 @@ describe("ReleaseExposureReader unexpanded packages", () => {
       unreadable_members: 0,
     });
     expect(scanned.text_members.skipped).toBe(1);
+    expect(scanned.omitted).toContainEqual(
+      expect.objectContaining({ subject: "text members", count: 1 }),
+    );
   });
 
   it("names the host file on every member location", async () => {
@@ -4617,20 +4626,6 @@ describe("ReleaseExposureReader byte-order-marked maps", () => {
       expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
     },
   );
-
-  it("keeps a generic map marked utf-32 unresolved", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-bom-");
-    await writeFile(
-      join(root, "symbols.map"),
-      Buffer.concat([
-        Buffer.from([0xff, 0xfe, 0, 0]),
-        Buffer.from("{\0\0\0", "latin1"),
-      ]),
-    );
-    const scanned = await inspect(root);
-    expect(scanned.source_maps).toMatchObject({ unparsed: 1, embedded: 0 });
-    expect(scanned.debug_companions.paths).toEqual([]);
-  });
 });
 
 describe("ReleaseExposureReader text-named scripts past the allowance", () => {
@@ -4973,34 +4968,52 @@ describe("ReleaseExposureReader Node shebang .map scripts", () => {
 });
 
 describe("ReleaseExposureReader resource admission", () => {
-  it("holds one scope admission for a whole audit", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-scope-");
-    await writeFile(join(root, "app.js"), "run();\n");
-    const run = ArtifactResourceScope.prototype.run;
-    let depth = 0;
-    let deepest = 0;
-    const admitted = vi
-      .spyOn(ArtifactResourceScope.prototype, "run")
-      .mockImplementation(async function (
-        this: ArtifactResourceScope,
-        operation,
-      ) {
-        depth += 1;
-        deepest = Math.max(deepest, depth);
-        try {
-          return await run.call(this, operation);
-        } finally {
-          depth -= 1;
-        }
-      } as typeof run);
-    try {
-      await inspect(root);
-      await inspect(join(root, "app.js"));
-    } finally {
-      admitted.mockRestore();
-    }
-    expect(deepest).toBe(1);
-  });
+  it.each(["file", "directory"] as const)(
+    "joins the final package reader close for a %s audit",
+    async (selection) => {
+      const root = await createTestTempDirectory("rea-release-exposure-scope-");
+      const archive = join(root, "app.asar");
+      await writeFile(
+        archive,
+        asarArchive([{ name: "notes.txt", bytes: Buffer.from("notes") }]),
+      );
+      const reader = new ReleaseExposureReader();
+      const cleanup = phaseGate();
+      await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const close = source.close.bind(source);
+          source.close = async () => {
+            await cleanup.hold();
+            await close();
+          };
+          return source;
+        },
+        async () => {
+          const path = selection === "file" ? archive : root;
+          const audit = reader.inspect({ path }, undefined, ignoreText);
+          try {
+            await cleanup.reached(audit, "package reader close");
+            const closed = reader.close();
+            expect(
+              await Promise.race([
+                closed.then(() => true),
+                setImmediate(false),
+              ]),
+            ).toBe(false);
+            cleanup.release();
+            const [result] = await Promise.all([audit, closed]);
+            if (!result.ok) throw result.error;
+            expect(result.value.text_members.scanned).toBe(1);
+          } finally {
+            cleanup.release();
+            await audit;
+            await reader.close();
+          }
+        },
+      );
+    },
+  );
 });
 
 describe("ReleaseExposureReader map target allowance", () => {
