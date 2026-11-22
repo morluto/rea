@@ -2,7 +2,7 @@ import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setImmediate } from "node:timers/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, onTestFinished } from "vitest";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
@@ -79,7 +79,7 @@ it.each([false, true])(
         );
         stagedBytes = staged?.size ?? 0;
       }
-      await setImmediate();
+      if (stagedBytes === 0) await delay(10);
     }
     expect(stagedBytes).toBeGreaterThan(0);
     controller.abort(new Error("SDK export cancellation verification"));
