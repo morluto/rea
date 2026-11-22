@@ -509,8 +509,7 @@ interface ManifestDraft {
   signaturesSize: number | null;
   minorVersion: number;
   partitions: PartitionDraft[];
-  maxTimestamp: number | null;
-  maxTimestampOutOfRange: boolean;
+  maxTimestamp: bigint | string | null;
   partialUpdate: boolean | null;
   securityPatchLevel: string | null;
   groups: GroupDraft[];
@@ -870,7 +869,6 @@ const decodeManifest = (
     minorVersion: 0,
     partitions: [],
     maxTimestamp: null,
-    maxTimestampOutOfRange: false,
     partialUpdate: null,
     securityPatchLevel: null,
     groups: [],
@@ -918,9 +916,8 @@ const decodeManifest = (
       return;
     }
     if (field === 14 && wire === WireType.Varint) {
-      const timestamp = asSafeInt(reader.int64());
-      if (timestamp === null) draft.maxTimestampOutOfRange = true;
-      else draft.maxTimestamp = timestamp;
+      // Protobuf singular scalars keep the last occurrence.
+      draft.maxTimestamp = reader.int64();
       return;
     }
     if (field === 15 && wire === WireType.LengthDelimited) {
@@ -1153,7 +1150,9 @@ export const parseAndroidOtaPayload = (
     ),
   ))
     limitations.push(androidOtaExtractRefusalLimitation(refusal));
-  if (manifest.value.maxTimestampOutOfRange)
+  const rawTimestamp = manifest.value.maxTimestamp;
+  const maxTimestamp = rawTimestamp === null ? null : asSafeInt(rawTimestamp);
+  if (rawTimestamp !== null && maxTimestamp === null)
     limitations.push(
       "max_timestamp is outside the exact integer range this reader reports.",
     );
@@ -1164,7 +1163,7 @@ export const parseAndroidOtaPayload = (
     blockSize: manifest.value.blockSize,
     minorVersion: manifest.value.minorVersion,
     payloadKind: manifest.value.minorVersion === 0 ? "full" : "delta",
-    maxTimestamp: manifest.value.maxTimestamp,
+    maxTimestamp,
     partialUpdate: manifest.value.partialUpdate,
     securityPatchLevel: manifest.value.securityPatchLevel,
     signaturesOffset: manifest.value.signaturesOffset,

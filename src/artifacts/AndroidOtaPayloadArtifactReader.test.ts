@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
+import { BinaryWriter, WireType } from "@bufbuild/protobuf/wire";
 import { expect, it } from "vitest";
 
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
@@ -113,11 +114,49 @@ it("inventories full-payload partitions, groups, signatures and extractable imag
   });
 });
 
+it.each([
+  ["outside", 1_700_000_000n, 1n << 53n, null],
+  ["within", 1n << 53n, 1_700_000_000n, 1_700_000_000],
+] as const)(
+  "reports the last OTA timestamp when it is %s the exact integer range",
+  async (_label, first, last, expected) => {
+    const manifest = new BinaryWriter()
+      .tag(14, WireType.Varint)
+      .int64(first)
+      .tag(14, WireType.Varint)
+      .int64(last)
+      .finish();
+    const header = Buffer.alloc(24);
+    header.write("CrAU");
+    header.writeBigUInt64BE(2n, 4);
+    header.writeBigUInt64BE(BigInt(manifest.length), 12);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeCarrier("payload.bin", Buffer.concat([header, manifest])),
+    );
+    expect(
+      snapshot.occurrences.find(({ logical_path }) => logical_path === "."),
+    ).toMatchObject({
+      format_metadata: { kind: "android-ota-payload", max_timestamp: expected },
+    });
+    expect(
+      snapshot.limitations.some((note) => note.includes("max_timestamp")),
+    ).toBe(expected === null);
+  },
+);
+
 it("inventories a delta payload and leaves non-extractable partitions unread", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier("delta.bin", deltaAndroidOtaPayload()),
   );
   expect(snapshot.manifest.root_format).toBe("android-ota-payload");
+  expect(
+    snapshot.occurrences.find(({ logical_path }) => logical_path === "."),
+  ).toMatchObject({
+    format_metadata: { kind: "android-ota-payload", max_timestamp: null },
+  });
+  expect(
+    snapshot.limitations.some((note) => note.includes("max_timestamp")),
+  ).toBe(false);
   const vendor = snapshot.occurrences.find(
     (row) => row.logical_path === "vendor.img",
   );
