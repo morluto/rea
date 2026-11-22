@@ -723,6 +723,7 @@
 * **setup:** consolidate backup, skill recovery and consent journeys ([#13498](https://github.com/morluto/rea/issues/13498)) ([1ad48ef](https://github.com/morluto/rea/commit/1ad48ef3c0179a5d25cbca2ab6ab504f454e927d))
 * **setup:** consolidate client cleanup and shared registration coverage ([#13503](https://github.com/morluto/rea/issues/13503)) ([10c21a6](https://github.com/morluto/rea/commit/10c21a608cd0c92050750e270a5fcf1b4bb003da))
 * **setup:** consolidate configuration transaction and recovery checks ([#13289](https://github.com/morluto/rea/issues/13289)) ([d0cbb20](https://github.com/morluto/rea/commit/d0cbb20a6c735b70f4cd2e98e36fcd51c65ba9c2))
+* **setup:** consolidate Cursor JSONC uninstall coverage ([#13533](https://github.com/morluto/rea/issues/13533)) ([03a9b54](https://github.com/morluto/rea/commit/03a9b549e117f266220f8628558c261d6eacd821))
 * **setup:** consolidate Hopper download failure coverage ([#12928](https://github.com/morluto/rea/issues/12928)) ([1c2ad52](https://github.com/morluto/rea/commit/1c2ad52b285c24a26873bef16abb0f2630a0410c))
 * **setup:** consolidate installer consent and plan disclosure checks ([#12869](https://github.com/morluto/rea/issues/12869)) ([234cae0](https://github.com/morluto/rea/commit/234cae0592ca4ef6ef002598a3e39396e1739501))
 * **setup:** consolidate malformed dry-run CLI coverage ([6bc96f3](https://github.com/morluto/rea/commit/6bc96f3f9900dcebd9c502592d325cd495d554ae))
