@@ -1,3 +1,5 @@
+import { constants as bufferConstants } from "node:buffer";
+
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 import type {
   AndroidVbmetaDescriptor,
@@ -121,6 +123,12 @@ const AUTHENTICATION_BLOCK_LIMIT = "Android vbmeta authentication block";
 const AUXILIARY_BLOCK_LIMIT = "Android vbmeta auxiliary block";
 const DESCRIPTOR_BYTES_LIMIT = "Android vbmeta descriptor bytes";
 const DESCRIPTOR_COUNT_LIMIT = "Android vbmeta descriptor count";
+const HEX_FIELD_LIMIT = "Android vbmeta hex field bytes";
+
+/** Host string bound for hex-encoded fields; tests lower it to avoid huge allocations. */
+export const androidVbmetaHostBounds = {
+  maxStringLength: bufferConstants.MAX_STRING_LENGTH,
+};
 
 /**
  * Parser limit names and the admission setting each one reports. libavb and
@@ -291,12 +299,27 @@ const decodeText = (bytes: Buffer): string | null => {
   }
 };
 
+/** Hex needs two characters per byte, so check before encoding. */
+const hexField = (bytes: Buffer, field: string, at: number): string => {
+  const maximum = Math.floor(androidVbmetaHostBounds.maxStringLength / 2);
+  if (bytes.length > maximum)
+    capacity(
+      `${field} of ${String(bytes.length)} bytes exceeds the ${String(maximum)}-byte host string bound for hex encoding`,
+      { name: HEX_FIELD_LIMIT, maximum, required: bytes.length },
+      field,
+      at,
+    );
+  return bytes.toString("hex");
+};
+
 const textField = (
   bytes: Buffer,
-): { readonly text: string | null; readonly hex: string } => ({
-  text: decodeText(bytes),
-  hex: bytes.toString("hex"),
-});
+  field: string,
+  at: number,
+): { readonly text: string | null; readonly hex: string } => {
+  const hex = hexField(bytes, field, at);
+  return { text: decodeText(bytes), hex };
+};
 
 /** NUL-terminated fixed field. The hex is the whole field, including padding. */
 const cStringField = (
@@ -308,7 +331,7 @@ const cStringField = (
   if (nul === -1) malformed(`${name} is not NUL-terminated`, name, at);
   return {
     text: decodeText(field.subarray(0, nul)),
-    hex: field.toString("hex"),
+    hex: hexField(field, name, at),
   };
 };
 
@@ -525,7 +548,9 @@ const tailParts = (
 
 const partitionName = (
   bytes: Buffer,
-): { readonly text: string | null; readonly hex: string } => textField(bytes);
+  at: number,
+): { readonly text: string | null; readonly hex: string } =>
+  textField(bytes, "partition name", at);
 
 const parseProperty = (body: Buffer, at: number): AndroidVbmetaDescriptor => {
   requireBody(body, 16, "property", at);
@@ -561,8 +586,12 @@ const parseProperty = (body: Buffer, at: number): AndroidVbmetaDescriptor => {
       "property",
       at,
     );
-  const key = textField(body.subarray(keyStart, keyNul));
-  const value = textField(body.subarray(valueStart, valueNul));
+  const key = textField(body.subarray(keyStart, keyNul), "property key", at);
+  const value = textField(
+    body.subarray(valueStart, valueNul),
+    "property value",
+    at,
+  );
   return {
     tag: AVB_DESCRIPTOR_TAG.PROPERTY,
     tag_name: "PROPERTY",
@@ -602,7 +631,7 @@ const parseHashtree = (
     "hash algorithm",
     at + 16 + 56,
   );
-  const partition = partitionName(name!);
+  const partition = partitionName(name!, at);
   return {
     reserved: body.subarray(104, 164),
     descriptor: {
@@ -623,8 +652,8 @@ const parseHashtree = (
       fec_size: u64Decimal(body, 48),
       hash_algorithm: algorithm.text,
       hash_algorithm_bytes_hex: algorithm.hex,
-      salt_hex: salt!.toString("hex"),
-      root_digest_hex: digest!.toString("hex"),
+      salt_hex: hexField(salt!, "salt", at),
+      root_digest_hex: hexField(digest!, "digest", at),
       flags: u32(body, 100),
       flag_names: flagNames(u32(body, 100), HASHTREE_FLAGS),
     },
@@ -658,7 +687,7 @@ const parseHash = (
     "hash algorithm",
     at + 16 + 8,
   );
-  const partition = partitionName(name!);
+  const partition = partitionName(name!, at);
   const flags = u32(body, 52);
   return {
     reserved: body.subarray(56, 116),
@@ -672,8 +701,8 @@ const parseHash = (
       image_size: u64Decimal(body, 0),
       hash_algorithm: algorithm.text,
       hash_algorithm_bytes_hex: algorithm.hex,
-      salt_hex: salt!.toString("hex"),
-      digest_hex: digest!.toString("hex"),
+      salt_hex: hexField(salt!, "salt", at),
+      digest_hex: hexField(digest!, "digest", at),
       flags,
       flag_names: flagNames(flags, HASH_FLAGS),
     },
@@ -691,7 +720,7 @@ const parseCmdline = (body: Buffer, at: number): AndroidVbmetaDescriptor => {
     "kernel cmdline",
     at,
   );
-  const text = textField(cmdline!);
+  const text = textField(cmdline!, "kernel cmdline", at);
   return {
     tag: AVB_DESCRIPTOR_TAG.KERNEL_CMDLINE,
     tag_name: "KERNEL_CMDLINE",
@@ -732,7 +761,7 @@ const parseChain = (
     "chain partition",
     at,
   );
-  const partition = partitionName(name!);
+  const partition = partitionName(name!, at);
   const flags = u32(body, 12);
   return {
     reserved: body.subarray(16, 76),

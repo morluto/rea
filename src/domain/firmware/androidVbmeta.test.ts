@@ -11,6 +11,7 @@ import {
   AVB_DESCRIPTOR_TAG,
   AVB_HEADER_FLAG,
   AVB_UNKNOWN_TAGS_NAMED,
+  androidVbmetaHostBounds,
   parseAndroidVbmeta,
   type AndroidVbmetaImage,
 } from "./androidVbmeta.js";
@@ -456,6 +457,39 @@ it("admits a descriptor table past the default count when the caller raises it",
       authentication_block_bytes: DEFAULTS.authentication_block_bytes + 64,
     }).failure,
   ).toMatchObject({ kind: "truncated", field: "image" });
+});
+
+it("refuses a raised-limit kernel cmdline too long to hex-encode as a capacity failure", () => {
+  const maxStringLength = 100;
+  const cmdline = Buffer.alloc(maxStringLength / 2 + 1, 0x61);
+  const fixed = Buffer.alloc(8);
+  fixed.writeUInt32BE(cmdline.length, 4);
+  const bytes = buildAndroidVbmeta({
+    descriptorBytes: androidVbmetaDescriptor(
+      AVB_DESCRIPTOR_TAG.KERNEL_CMDLINE,
+      Buffer.concat([fixed, cmdline]),
+    ),
+  });
+  const original = androidVbmetaHostBounds.maxStringLength;
+  androidVbmetaHostBounds.maxStringLength = maxStringLength;
+  try {
+    const failure = failed(bytes, bytes.length, {
+      ...DEFAULTS,
+      descriptor_bytes: bytes.length,
+      auxiliary_block_bytes: bytes.length,
+    }).failure;
+    expect(failure).toMatchObject({
+      kind: "limit",
+      field: "kernel cmdline",
+      limit: {
+        name: "Android vbmeta hex field bytes",
+        maximum: maxStringLength / 2,
+        required: cmdline.length,
+      },
+    });
+  } finally {
+    androidVbmetaHostBounds.maxStringLength = original;
+  }
 });
 
 it("refuses header ranges, alignment, truncation, and ceilings", () => {
