@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, vi } from "vitest";
 import { registerArtifactCommands } from "../../../src/cli/artifactCommands.js";
@@ -31,7 +31,7 @@ const registry = () => {
         ]),
       }) as const,
   );
-  const cli = Cli.create("empty-target-admission", { sync: false });
+  const cli = createCommandCli();
   registerArtifactCommands(cli, silentLogger, runProviderAnalysis);
   registerCoreBinaryCommands(cli, silentLogger, runDirectAnalysis, {});
   registerCoreNativeCommands(cli, silentLogger, runDirectAnalysis);

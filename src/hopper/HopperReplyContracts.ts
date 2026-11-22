@@ -216,8 +216,7 @@ export type ValueKeepingContracts<Contracts extends HopperReplyContracts> = {
 };
 
 /** The production table, checked to keep every reply value unchanged. */
-export const hopperBridgeReplyContracts: ValueKeepingContracts<HopperBridgeReplyContracts> =
-  hopperReplySchemas;
+hopperReplySchemas satisfies ValueKeepingContracts<HopperBridgeReplyContracts>;
 
 /** The validated reply a contract table assigns to one method. */
 export type HopperContractReply<

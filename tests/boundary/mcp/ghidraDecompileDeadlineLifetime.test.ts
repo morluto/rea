@@ -14,7 +14,6 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { ghidraProfileInstallationHost } from "../../../src/ghidra/GhidraInstallation.fixture.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
-import { ghidraDecompileTimeoutRecovery } from "../../../src/ghidra/GhidraProviderClient.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -60,7 +59,10 @@ const expectReleased = async (launcher: GhidraFixtureLauncher) => {
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
 };
 
-const cliFailure = z.object({ message: z.string() });
+const cliFailure = z.object({
+  message: z.string(),
+  remediation: z.object({ action: z.string() }),
+});
 
 /** Facts about the enforced deadline, independent of the caller's lifetime. */
 const enforcedLimit = {
@@ -109,21 +111,25 @@ it("tells a finished CLI invocation to rerun with the launch setting, not to reu
   );
   // The invocation has already released the Program the guidance describes.
   await expectReleased(launcher);
-  const recovery = ghidraDecompileTimeoutRecovery(1, "fresh-import");
   expect(projected).toMatchObject({
     error: "Analysis failed",
     code: "provider_timeout",
     category: "timeout",
     retryable: true,
     recovery: { kind: "inspect_timeout_state", timeout_ms: 1000 },
-    // The owner's invocation recovery for the effective 1-second deadline.
-    remediation: { action: recovery.remediationAction },
+    remediation: {
+      action: expect.stringContaining("REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS"),
+    },
     details: {
       diagnostics: { remote_code: "decompile_timed_out" },
       limit: invocationLimit,
+      related_operations: ["analyze_function"],
     },
   });
-  const { message } = cliFailure.parse(projected);
+  const { message, remediation } = cliFailure.parse(projected);
+  expect(remediation.action).not.toMatch(
+    /update_analysis_settings|rea function/u,
+  );
   expect(message.startsWith(BRIDGE_MESSAGE)).toBe(true);
   expect(message).not.toContain(GHIDRA_SESSION_RETAINED);
 });
@@ -151,10 +157,10 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
       retryable: true,
       recovery: { kind: "inspect_timeout_state", timeout_ms: 1000 },
       remediation: {
-        action: ghidraDecompileTimeoutRecovery(1, "fresh-import")
-          .continuingRemediationAction,
+        action: expect.stringContaining("update_analysis_settings"),
       },
       details: {
+        related_operations: ["analyze_function"],
         limit: {
           ...enforcedLimit,
           applies_at: "next_operation",
@@ -162,6 +168,10 @@ it("keeps same-session and runtime-update guidance for a continuing MCP connecti
         },
       },
     });
+    expect(timedOut.remediation.action).toContain(
+      "next operation on this Program",
+    );
+    expect(timedOut.remediation.action).not.toContain("rea function");
     expect(timedOut.details?.limit).not.toHaveProperty("environment");
     expect(timedOut.message.startsWith(BRIDGE_MESSAGE)).toBe(true);
     expect(timedOut.message.endsWith(` ${GHIDRA_SESSION_RETAINED}`)).toBe(true);

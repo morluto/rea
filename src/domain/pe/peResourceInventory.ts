@@ -1,7 +1,11 @@
 import {
+  PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
+  PE_RESOURCE_ENTRY_LIMIT,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  peResourceRangeFits,
+  readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
@@ -10,6 +14,7 @@ import {
 import { createHash } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import type { ArtifactLimitBoundary } from "../artifactOperationError.js";
+import { BinaryReader } from "../binaryContainer.js";
 import { jsonParts } from "../jsonSerialization.js";
 import type {
   InspectPeResourcesInput,
@@ -17,11 +22,8 @@ import type {
   PeResources,
 } from "../native/peResources.js";
 import { decodeLimit, type LimitRef } from "../parseFailure.js";
-import {
-  peFailure,
-  readPeResourceLayout,
-  requirePeRange,
-} from "./peResourceLayout.js";
+import { peFailure, requirePeRange } from "./peImageHeaders.js";
+import { readPeResourceLayout } from "./peResourceLayout.js";
 
 type PeResourceLayout = ReturnType<typeof readPeResourceLayout>;
 
@@ -30,12 +32,9 @@ type OccupiedRange = Range & {
   kind: "directory" | "name" | "data-entry" | "payload";
 };
 /** Complete PE resource result retained before a refusal. */
-export const PE_RESOURCE_METADATA_BYTES = 8 * 1024 * 1024;
-const METADATA_BYTES = PE_RESOURCE_METADATA_BYTES;
+const METADATA_BYTES = 8 * 1024 * 1024;
 /** The fixed allowance for retained resource metadata. */
 const METADATA_LIMIT = "pe_resource_metadata_bytes";
-/** The caller-selected resource directory entry budget. */
-const ENTRY_LIMIT = "max_entries";
 const limit = (message: string, name: string, maximum: number): never => {
   throw decodeLimit("pe", message, { name, maximum });
 };
@@ -46,7 +45,7 @@ export const peResourceLimitBoundary = (
 ): ArtifactLimitBoundary | undefined =>
   limit.name === METADATA_LIMIT
     ? "memory"
-    : limit.name === ENTRY_LIMIT
+    : limit.name === PE_RESOURCE_ENTRY_LIMIT
       ? "capacity"
       : undefined;
 /** Count bytes through the canonical bounded JSON writer. */
@@ -108,7 +107,7 @@ export const parsePeResources = async (
   };
   const root = layout.size === 0 ? 0 : layout.map(layout.rva, layout.size);
   const relative = (at: number, length: number): number => {
-    if (at > layout.size - length || at < 0)
+    if (!peResourceRangeFits(at, length, layout.size))
       peFailure(
         "Resource directory offset leaves the declared resource interval.",
       );
@@ -136,8 +135,8 @@ export const parsePeResources = async (
     const { utf16Units, payloadBytes: length } = readPeResourceNameFacts(
       bytes.subarray(start, start + PE_RESOURCE_NAME_PREFIX_BYTES),
     );
-    reserveDecodedName(utf16Units);
     relative(at, PE_RESOURCE_NAME_PREFIX_BYTES + length);
+    reserveDecodedName(utf16Units);
     const raw = bytes.subarray(
       start + PE_RESOURCE_NAME_PREFIX_BYTES,
       start + PE_RESOURCE_NAME_PREFIX_BYTES + length,
@@ -171,7 +170,7 @@ export const parsePeResources = async (
     if (count > input.max_entries - examined)
       limit(
         "PE resource directory entry budget exceeded; no partial inventory was returned.",
-        ENTRY_LIMIT,
+        PE_RESOURCE_ENTRY_LIMIT,
         input.max_entries,
       );
     examined += count;
@@ -193,6 +192,7 @@ export const parsePeResources = async (
     account(directory);
     directories.push(directory);
     const keys = new Set<string>();
+    let previousId = -1;
     const nested = new Set([...ancestors, at]);
     for (let index = 0; index < count; index++) {
       if (index % 128 === 0) {
@@ -213,6 +213,11 @@ export const parsePeResources = async (
       if (keys.has(key))
         peFailure("Duplicate identity within a resource directory.");
       keys.add(key);
+      if (identity.kind === "id") {
+        if (identity.id < previousId)
+          peFailure("PE resource directory numeric IDs are out of order.");
+        previousId = identity.id;
+      }
       const next = [...path, identity];
       const locations = [
         ...entryLocations,
@@ -230,9 +235,10 @@ export const parsePeResources = async (
           peFailure(
             "Unsupported resource leaf outside the type/name/language profile.",
           );
-        const data = relative(offset, 16);
-        const rva = bytes.readUInt32LE(data);
-        const size = bytes.readUInt32LE(data + 4);
+        const data = relative(offset, PE_RESOURCE_DATA_ENTRY_BYTES);
+        const { rva, size, codePage, reserved } = readPeResourceDataEntryFacts(
+          bytes.subarray(data, data + PE_RESOURCE_DATA_ENTRY_BYTES),
+        );
         const payloadOffset = layout.map(rva, size);
         const [type, name, language] = next;
         if (type === undefined || name === undefined || language === undefined)
@@ -243,9 +249,13 @@ export const parsePeResources = async (
           name,
           language,
           entry_locations: locations,
-          data_entry_location: recordRange(data, 16, "data-entry"),
-          code_page: bytes.readUInt32LE(data + 8),
-          reserved: bytes.readUInt32LE(data + 12),
+          data_entry_location: recordRange(
+            data,
+            PE_RESOURCE_DATA_ENTRY_BYTES,
+            "data-entry",
+          ),
+          code_page: codePage,
+          reserved,
           payload: {
             rva,
             location: recordRange(payloadOffset, size, "payload"),
@@ -360,19 +370,20 @@ const readIconGroups = (
     )
     .map((group) => {
       const { offset, bytes: size } = group.payload.location;
-      if (
-        size < 6 ||
-        bytes.readUInt16LE(offset) !== 0 ||
-        bytes.readUInt16LE(offset + 2) !== 1
-      )
+      const reader = new BinaryReader(
+        bytes.subarray(offset, offset + size),
+        true,
+        "pe",
+      );
+      if (size < 6 || reader.u16(0) !== 0 || reader.u16(2) !== 1)
         peFailure("Malformed RT_GROUP_ICON header.");
-      const count = bytes.readUInt16LE(offset + 4);
+      const count = reader.u16(4);
       if (size !== 6 + count * 14)
         peFailure("RT_GROUP_ICON length does not match its image count.");
       const images: PeResources["icon_groups"][number]["images"] = [];
       for (let index = 0; index < count; index++) {
-        const at = offset + 6 + index * 14;
-        const id = bytes.readUInt16LE(at + 12);
+        const at = 6 + index * 14;
+        const id = reader.u16(at + 12);
         const candidates = imagesById.get(id) ?? [];
         const exact = candidates.find(
           (resource) =>
@@ -381,15 +392,15 @@ const readIconGroups = (
         // Indices are uint32 values and each needs at most ten decimal digits
         // plus a comma. Check the expanded candidate list before allocating it.
         ensureCapacity(302 + candidates.length * 11);
-        const declaredBytes = bytes.readUInt32LE(at + 8);
+        const declaredBytes = reader.u32(at + 8);
         const image = {
-          location: { offset: at, bytes: 14 },
-          width: bytes[at] ?? 0,
-          height: bytes[at + 1] ?? 0,
-          color_count: bytes[at + 2] ?? 0,
-          reserved: bytes[at + 3] ?? 0,
-          planes: bytes.readUInt16LE(at + 4),
-          bit_count: bytes.readUInt16LE(at + 6),
+          location: { offset: offset + at, bytes: 14 },
+          width: reader.u8(at),
+          height: reader.u8(at + 1),
+          color_count: reader.u8(at + 2),
+          reserved: reader.u8(at + 3),
+          planes: reader.u16(at + 4),
+          bit_count: reader.u16(at + 6),
           declared_bytes: declaredBytes,
           resource_id: id,
           candidate_resource_indices: candidates.map(({ index }) => index),

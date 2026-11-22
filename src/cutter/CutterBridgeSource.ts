@@ -5,14 +5,9 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import type { CutterBridgeSource } from "../domain/cutterDiscovery.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
-const PACKAGED_PLUGIN = new URL(
-  "../../bridge/cutter/rea_bridge.py",
-  import.meta.url,
+const PACKAGED_PLUGIN = fileURLToPath(
+  new URL("../../bridge/cutter/rea_bridge.py", import.meta.url),
 );
-
-/** Packaged plugin path a user copies into Cutter's `plugins/python` directory. */
-export const packagedCutterPluginPath = (plugin = PACKAGED_PLUGIN): string =>
-  fileURLToPath(plugin);
 
 /**
  * What to do when a session does not run the packaged plugin. A plugin with
@@ -20,16 +15,15 @@ export const packagedCutterPluginPath = (plugin = PACKAGED_PLUGIN): string =>
  */
 export const cutterBridgeSourceRecovery = (
   source: CutterBridgeSource,
-  plugin = PACKAGED_PLUGIN,
 ): string | undefined => {
   if (source === "packaged") return undefined;
-  const recopy = `Copy ${packagedCutterPluginPath(plugin)} into Cutter's plugins/python directory, restart Cutter, and list sessions again.`;
+  const recopy = `Copy ${PACKAGED_PLUGIN} into Cutter's plugins/python directory, restart Cutter, and list sessions again.`;
   return source === "unknown"
     ? `The running plugin publishes no SHA-256, so its source is unknown. ${recopy}`
     : recopy;
 };
 
-const packagedDigests = new Map<string, string>();
+let packagedDigest: string | undefined;
 
 /**
  * SHA-256 of the packaged Cutter plugin bytes. The user copies the plugin into
@@ -38,14 +32,13 @@ const packagedDigests = new Map<string, string>();
  * plugin is a broken REA installation, reported as such rather than hiding
  * the live session that asked for the comparison.
  */
-const packagedCutterPluginDigest = (operation: string, plugin: URL): string => {
-  const cached = packagedDigests.get(plugin.href);
-  if (cached !== undefined) return cached;
+const packagedCutterPluginDigest = (operation: string): string => {
+  if (packagedDigest !== undefined) return packagedDigest;
   let bytes: Buffer;
   try {
-    bytes = readFileSync(plugin);
+    bytes = readFileSync(PACKAGED_PLUGIN);
   } catch (cause: unknown) {
-    const remediation = `Reinstall REA so ${packagedCutterPluginPath(plugin)} is present and readable, then retry. REA could not compare the running Cutter plugin with it, and no command was sent.`;
+    const remediation = `Reinstall REA so ${PACKAGED_PLUGIN} is present and readable, then retry. REA could not compare the running Cutter plugin with it, and no command was sent.`;
     throw new AnalysisCapabilityUnavailableError(
       "cutter",
       operation,
@@ -53,9 +46,8 @@ const packagedCutterPluginDigest = (operation: string, plugin: URL): string => {
       { cause, remediationAction: remediation, userMessage: remediation },
     );
   }
-  const digest = sha256Hex(bytes);
-  packagedDigests.set(plugin.href, digest);
-  return digest;
+  packagedDigest = sha256Hex(bytes);
+  return packagedDigest;
 };
 
 /**
@@ -65,11 +57,10 @@ const packagedCutterPluginDigest = (operation: string, plugin: URL): string => {
 export const cutterBridgeSource = (
   advertisedSha256: string | null | undefined,
   operation: string,
-  plugin = PACKAGED_PLUGIN,
 ): CutterBridgeSource => {
   if (advertisedSha256 === undefined || advertisedSha256 === null)
     return "unknown";
-  return advertisedSha256 === packagedCutterPluginDigest(operation, plugin)
+  return advertisedSha256 === packagedCutterPluginDigest(operation)
     ? "packaged"
     : "modified";
 };

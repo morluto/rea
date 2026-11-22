@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { open, type FileHandle } from "node:fs/promises";
 
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -91,11 +91,7 @@ export async function mapHopperFileOffset(
     unavailable,
     publish,
     withCleanup: (primary, marker) =>
-      analysisErrorWithCleanupFailure(
-        primary,
-        publish(marker),
-        OPERATION,
-      ).bindCleanupDependencies([marker]),
+      analysisErrorWithCleanupDependencies(primary, publish(marker), OPERATION),
   };
   try {
     const captured = await snapshotFromPath(

@@ -110,7 +110,8 @@ describe.each(["attached", "headless"] as const)(
 
     it.each<IdentityCase>([
       { label: "address", fields: { address: "invalid", addr: "invalid" } },
-      { label: "name", fields: { name: null } },
+      { label: "null name", fields: { name: null } },
+      { label: "empty name", fields: { name: "" } },
     ])("rejects malformed $label despite unused size", async ({ fields }) => {
       const fixture = await session(mode, {
         ...fields,
@@ -147,3 +148,30 @@ describe.each(["attached", "headless"] as const)(
     });
   },
 );
+
+it("preserves unknown native instruction body bounds despite an upstream size", async () => {
+  const { client, lookupObservation } = await session("attached", {
+    size: { bytes: 32 },
+  });
+  try {
+    const result = await client.execute("read_function_instructions", {
+      procedure: "main",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toMatchObject({
+      procedure: {
+        address: "0x1000",
+        name: "main",
+        body: {
+          available: false,
+          reason: expect.stringContaining("complete function body ranges"),
+        },
+      },
+    });
+    expect(observation(result.value.rawResult, "lookup_funcs")).toEqual(
+      lookupObservation,
+    );
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});

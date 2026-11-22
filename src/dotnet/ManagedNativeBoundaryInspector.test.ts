@@ -10,6 +10,7 @@ import { createHash } from "node:crypto";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { inspectManagedNativeBoundariesBytes } from "./ManagedNativeBoundaryInspector.js";
+import { buildManagedMemberSelectionCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
 import {
   buildManagedPeFixture,
   buildNativePeFixture,
@@ -17,6 +18,29 @@ import {
 } from "./ManagedPe.fixture.js";
 
 describe("managed native boundaries", () => {
+  it("retains P/Invoke and source locations alongside a large diagnostic inventory", () => {
+    const rowCount = 140_000;
+    const bytes = buildManagedPeFixture({
+      pinvoke: {},
+      customAttributeRowCount: rowCount,
+      customAttributeTypeRaw: 0,
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+
+    expect(result.pinvoke_imports).toHaveLength(1);
+    expect(result.coverage.state).toBe("partial");
+    const issues = result.coverage.issues.filter(({ scope }) =>
+      scope.startsWith("metadata.CustomAttribute:"),
+    );
+    expect(issues).toHaveLength(rowCount);
+    expect(new Set(issues.map(({ scope }) => scope)).size).toBe(rowCount);
+    expect(issues.every(({ offset }) => offset !== null)).toBe(true);
+    expect(new Set(issues.map(({ offset }) => offset)).size).toBe(rowCount);
+  });
+
   it("inspects managed/native PInvoke declarations without verifying native exports", () => {
     const bytes = buildManagedPeFixture({
       pinvoke: {
@@ -210,25 +234,36 @@ it.each([0, 2])(
   },
 );
 
-it("reports field imports as declarations without inventing method implementations", () => {
-  const bytes = buildManagedPeFixture({ pinvoke: { memberForwardedRaw: 2 } });
-  const result = inspectManagedNativeBoundariesBytes(
-    bytes,
-    managedPeFixtureTarget(bytes),
-  );
-  expect(result.pinvoke_imports).toMatchObject([
-    {
-      member_kind: "field",
-      member_token: "0x04000001",
-      member_name: "counter",
-    },
-  ]);
-  expect(
-    result.native_implementations.every((item) =>
-      item.token.startsWith("0x06"),
-    ),
-  ).toBe(true);
-});
+it.each([
+  { fieldName: "counter", memberName: "counter", status: "complete" },
+  { fieldName: "", memberName: null, status: "partial" },
+])(
+  "preserves a field import declaration with a $status FieldDef name observation",
+  ({ fieldName, memberName, status }) => {
+    const bytes = buildManagedPeFixture({
+      fieldName,
+      pinvoke: { memberForwardedRaw: 2 },
+    });
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.pinvoke_imports).toMatchObject([
+      {
+        member_kind: "field",
+        member_token: "0x04000001",
+        member_name: memberName,
+        import_name: "MessageBoxW",
+      },
+    ]);
+    expect(result.metadata.status).toBe(status);
+    expect(
+      result.native_implementations.every((item) =>
+        item.token.startsWith("0x06"),
+      ),
+    ).toBe(true);
+  },
+);
 
 describe("managed native boundary inspection", () => {
   it("reports absent or malformed member metadata", () => {
@@ -808,5 +843,81 @@ it("retains an ImplMap method identity independently of its unreadable name", ()
         scope: "metadata.#Strings",
       }),
     ],
+  });
+});
+
+describe("native boundary predicate pushdown", () => {
+  it("preserves inventory issues and skips non-boundary Field and MethodDef rows", () => {
+    const bytes = buildManagedPeFixture({
+      fieldRowCount: 4,
+      methodRowCount: 6,
+      distinctMemberNames: true,
+      methodFlags: 0x0016,
+      references: ["System.Runtime", "Broken.Ref"],
+      malformedAssemblyReferenceRows: [2],
+      malformedCustomAttributeRows: [1],
+      pinvoke: { memberForwardedRaw: (2 << 1) | 1 },
+    });
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI fixture");
+    const layout = readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
+      pe.cli.metadata.size,
+    );
+    // Corrupt names of unreferenced Field row 1 and ordinary IL MethodDef row 1.
+    bytes.writeUInt16LE(0xffff, metadataRowOffset(layout, 4, 1) + 2);
+    bytes.writeUInt16LE(0xffff, metadataRowOffset(layout, 6, 1) + 8);
+    // Row 2 is ImplMap-referenced with IL flags (already 0x0016).
+    // Rows 3..6 exercise PinvokeImpl, InternalCall, native, and unmanaged flags.
+    bytes.writeUInt16LE(0x2016, metadataRowOffset(layout, 6, 3) + 6);
+    bytes.writeUInt16LE(0x1000, metadataRowOffset(layout, 6, 4) + 4);
+    bytes.writeUInt16LE(0x0001, metadataRowOffset(layout, 6, 5) + 4);
+    bytes.writeUInt16LE(0x0004, metadataRowOffset(layout, 6, 6) + 4);
+
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+    );
+    expect(result.pinvoke_imports).toMatchObject([
+      {
+        member_token: "0x06000002",
+        member_kind: "method",
+        member_name: "Method1",
+        import_name: "MessageBoxW",
+      },
+    ]);
+    expect(
+      result.native_implementations.map(({ token, boundary_kind }) => ({
+        token,
+        boundary_kind,
+      })),
+    ).toEqual([
+      { token: "0x06000002", boundary_kind: "pinvoke" },
+      { token: "0x06000003", boundary_kind: "pinvoke" },
+      { token: "0x06000004", boundary_kind: "runtime-provided" },
+      { token: "0x06000005", boundary_kind: "native-body" },
+      { token: "0x06000006", boundary_kind: "unmanaged-method" },
+    ]);
+    // Inventory diagnostics survive pushdown while skipped non-boundary rows stay unexamined.
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({ code: "invalid-heap-index" }),
+        expect.objectContaining({ code: "invalid-row" }),
+      ],
+    });
+  });
+
+  it("stays under a tight budget on a large non-pinvoke member inventory", () => {
+    const bytes = buildManagedMemberSelectionCapacityFixture();
+    const result = inspectManagedNativeBoundariesBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      40_000_000,
+    );
+    expect(result.coverage).toEqual({ state: "complete", issues: [] });
+    expect(result.pinvoke_imports).toEqual([]);
+    expect(result.native_implementations).toEqual([]);
   });
 });

@@ -1,3 +1,4 @@
+import type { ElfDebugLink } from "./native/elfDebugLink.js";
 import type { InterfaceBuilderAnalysis } from "./apple/interfaceBuilderGraph.js";
 import type { PartialTaskMeasurement } from "./desktop/taskDifficulty.js";
 import type { AppleIpsPartialObservation } from "./native/appleIps.js";
@@ -645,6 +646,7 @@ import type {
   ElectronPagePartialObservation,
 } from "./javascript/electronObservation.js";
 import type { AndroidPartialObservation } from "./android/androidPartialObservation.js";
+import type { UefiPartialObservation } from "./uefi/uefiFirmwareAnalysis.js";
 import type { FirmwarePartialObservation } from "./firmware/firmwareAnalysis.js";
 import type {
   AdbActivityStartPartialObservation,
@@ -654,6 +656,7 @@ import type {
 } from "./adb/adbDeviceAnalysis.js";
 import type {
   InspectMacho,
+  InspectPlist,
   InspectSignature,
 } from "./native/nativeInspection.js";
 import type { NativeUiObservationResult } from "./native/nativeUiObservation.js";
@@ -686,6 +689,7 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | ElfDebugLink
   | InterfaceBuilderAnalysis
   | PartialTaskMeasurement
   | {
@@ -738,9 +742,11 @@ export type AnalysisPartialObservation =
   | RecordedCrashPartialObservation
   | AndroidPartialObservation
   | FirmwarePartialObservation
+  | UefiPartialObservation
   | NativeUiObservationResult
   | InspectSignature
   | InspectMacho
+  | InspectPlist
   | ElectronPagePartialObservation
   | ElectronPageInspection
   | AdbActivityStartPartialObservation

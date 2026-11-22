@@ -231,25 +231,25 @@ cliTest(
 // commit point, as evidenceOutputPublicationCli does for successful results.
 const publishPartialWithSeam = async (
   cli: TestCli,
-  detail: "summary" | "complete",
   publication: Record<string, unknown>,
 ) => {
   const root = await application();
   const work = await createTestTempDirectory("rea-js-failure-seam-");
   const destination = join(work, "partial.json");
+  const marker = join(work, "signal.json");
   const reply = await cli.run({
     cwd: work,
     arguments: timeoutArguments(
       root,
       "--detail",
-      detail,
+      "summary",
       "--evidence_output",
       destination,
     ),
     environment: {
       REA_TEST_EVIDENCE_PUBLICATION: JSON.stringify({
         prefix: join(await realpath(work), ".rea-write-"),
-        marker: join(work, "signal.json"),
+        marker,
         ...publication,
       }),
       NODE_OPTIONS: `--max-old-space-size=2048 --import=${pathToFileURL(resolve("tests/fixtures/evidencePublicationPreload.mjs")).href}`,
@@ -262,14 +262,16 @@ const publishPartialWithSeam = async (
   const [record] = parseEvidenceBundle(JSON.parse(bytes.toString())).records;
   if (record === undefined)
     throw new Error("The published bundle lacks the partial Evidence");
-  return { reply, destination, staging, bytes: bytes.length, record };
+  const proof = JSON.parse(await readFile(marker, "utf8")) as unknown;
+  return { reply, destination, staging, bytes: bytes.length, record, proof };
 };
 
 cliTest(
   "retains the original failure and committed receipt when staging cleanup stays incomplete",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", { cleanup_failures: 1_000 });
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, { cleanup_failures: 1_000 });
+    expect(proof).toEqual({ cleanup_failure: "EBUSY" });
     expect(reply.exitCode).toBe(1);
     const failure = failureSchema
       .extend({
@@ -307,8 +309,9 @@ cliTest(
 cliTest(
   "delivers the receipt once a failed staging cleanup is confirmed by retry",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", { cleanup_failures: 1 });
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, { cleanup_failures: 1 });
+    expect(proof).toEqual({ cleanup_failure: "EBUSY" });
     expect(reply.exitCode).toBe(1);
     const failure = failureSchema.parse(reply.json);
     expect(failure.details.diagnostics?.evidence_bundle).toEqual({
@@ -328,12 +331,18 @@ cliTest(
 cliTest(
   "keeps the original failure and the committed receipt when SIGINT arrives after commit",
   async ({ cli }) => {
-    const { reply, destination, staging, bytes, record } =
-      await publishPartialWithSeam(cli, "summary", {
+    const delivery = process.platform === "win32" ? "event" : "os";
+    const { reply, destination, staging, bytes, record, proof } =
+      await publishPartialWithSeam(cli, {
         phase: "cleanup",
         signal: "SIGINT",
-        delivery: process.platform === "win32" ? "event" : "os",
+        delivery,
       });
+    expect(proof).toMatchObject({
+      phase: "cleanup",
+      signal: "SIGINT",
+      delivery,
+    });
     expect(reply.exitCode).toBe(130);
     const failure = failureSchema.parse(reply.json);
     expect(failure.details.diagnostics?.evidence_bundle).toEqual({

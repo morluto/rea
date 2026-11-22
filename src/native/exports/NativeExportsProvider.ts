@@ -1,4 +1,7 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   imageFileSizeRemediation,
   projectSelectedArtifactFileFailure,
@@ -12,6 +15,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
 } from "../../resources/index.js";
 import type { NativeExportsPort } from "../../ports/binaryDiagnostics/NativeExportsPort.js";
@@ -36,6 +40,7 @@ import {
   NATIVE_EXPORT_LIMITS,
   type NativeExportLimit,
   parseNativeExports,
+  parseNativeExportsCooperative,
 } from "../../domain/native/nativeExportParser.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
@@ -59,23 +64,32 @@ export class NativeExportsProvider implements NativeExportsPort {
   }
 
   async inspect(input: InspectNativeExportsInput, options?: ExecutionOptions) {
+    const signal = options?.signal;
     let snapshot: StableArtifactSnapshot | undefined;
     try {
       return await this.#resources.run(async () => {
         snapshot = await readStableArtifact(
           input.path,
           input.max_file_bytes,
-          options?.signal,
+          signal,
           undefined,
           this.#resources,
         );
-        assertArtifactReadActive(options?.signal);
-        const report = parseNativeExports(snapshot.bytes, {
+        assertArtifactReadActive(signal);
+        const artifact = {
           path: input.path,
           sha256: snapshot.sha256,
           bytes: snapshot.bytes.length,
-        });
-        assertArtifactReadActive(options?.signal);
+        };
+        const report =
+          signal === undefined
+            ? parseNativeExports(snapshot.bytes, artifact)
+            : await parseNativeExportsCooperative(
+                snapshot.bytes,
+                artifact,
+                () => yieldArtifactRead(signal),
+              );
+        assertArtifactReadActive(signal);
         return ok(report);
       });
     } catch (cause) {
@@ -126,19 +140,13 @@ const nativeExportsFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof BinaryResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes },
-      {
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      ...limitRecovery(
+        binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
         cause,
-        ...limitRecovery(
-          binaryResourceAllowance(cause, NATIVE_EXPORT_LIMITS),
-          cause,
-        ),
-      },
-    );
+      ),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (

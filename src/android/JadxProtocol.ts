@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { AndroidOperation } from "../domain/android/androidAnalysis.js";
 import {
   androidMethodSelectorSchema,
@@ -53,13 +54,9 @@ export const jadxHeapExhausted = (text: string): boolean =>
 export const parseJadxFailure = (
   text: string,
 ): z.infer<typeof bridgeFailureSchema> | undefined => {
-  let candidate: unknown;
-  try {
-    candidate = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  const parsed = bridgeFailureSchema.safeParse(candidate);
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) return undefined;
+  const parsed = bridgeFailureSchema.safeParse(decoded.value);
   return parsed.success ? parsed.data : undefined;
 };
 /** Values observed inside the exact JVM producing the analysis. */
@@ -95,7 +92,7 @@ const jadxClassPageSchema = z
     limit: count,
     items: z.array(z.string()),
   })
-  .catchall(jsonValueSchema);
+  .catchall(ownedJsonValueSchema);
 export type JadxClassPage = z.infer<typeof jadxClassPageSchema>;
 
 /** Validate a decoded page without dropping observed JSON members such as __proto__. */
@@ -142,18 +139,28 @@ export const jadxExternalReferenceSummarySchema = z.object({
   observed_method_count: count,
   prototypes: z.array(jadxMethodMetadataSchema).min(1),
 });
-export const jadxMethodSchema = z.object({
+const jadxMethodIdentity = {
   class_name: z.string(),
   method_name: z.string(),
   full_name: z.string(),
   overload_index: count,
   overload_count: count,
   dex_descriptor: dexDescriptorSchema,
-  mode: z.enum(["java", "smali"]),
-  fell_back: z.boolean(),
-  markers: z.array(z.string()),
-  body: z.string(),
-});
+};
+export const jadxMethodSchema = z.discriminatedUnion("mode", [
+  z.object({
+    ...jadxMethodIdentity,
+    mode: z.enum(["java", "smali"]),
+    fell_back: z.boolean(),
+    markers: z.array(z.string()),
+    body: z.string(),
+  }),
+  z.strictObject({
+    ...jadxMethodIdentity,
+    mode: z.literal("unavailable"),
+    body_unavailable_reason: z.string().min(1),
+  }),
+]);
 export const jadxXrefsSchema = z.object({
   target: z.string(),
   reference_target: z.literal("external").optional(),
@@ -165,27 +172,38 @@ export const jadxXrefsSchema = z.object({
   count,
   resolve_line: z.literal(false),
   items: z.array(
-    z.object({
-      kind: z.string(),
-      name: z.string(),
-      full_name: z.string(),
-      containing_class: z.string(),
-      top_class: z.string(),
-      def_pos: z.int(),
-      source_selector: androidMethodSelectorSchema.optional(),
-      direct_invokes_exhaustive: z.boolean().optional(),
-      direct_invokes: z
-        .array(
-          z.object({
-            dex_entry: z.string().min(1),
-            source_raw_method_id: z.string().min(1),
-            dex_code_unit_offset: count,
-            dex_method_index: count,
-            opcode: z.string().regex(/^INVOKE_/u),
-          }),
-        )
-        .optional(),
-    }),
+    z
+      .object({
+        kind: z.string(),
+        name: z.string(),
+        full_name: z.string(),
+        containing_class: z.string(),
+        top_class: z.string(),
+        def_pos: z.int(),
+        source_selector: androidMethodSelectorSchema.optional(),
+        direct_invokes_exhaustive: z.boolean().optional(),
+        direct_invokes: z
+          .array(
+            z.object({
+              dex_entry: z.string().min(1),
+              source_raw_method_id: z.string().min(1),
+              dex_code_unit_offset: count,
+              dex_method_index: count,
+              opcode: z.string().regex(/^INVOKE_/u),
+            }),
+          )
+          .optional(),
+      })
+      // The bridge emits or removes the site list and its coverage together.
+      .refine(
+        (item) =>
+          item.direct_invokes_exhaustive === undefined ||
+          item.direct_invokes !== undefined,
+        {
+          message: "Invoke coverage requires a direct invoke site list",
+          path: ["direct_invokes_exhaustive"],
+        },
+      ),
   ),
 });
 const toolResponse = z
@@ -193,11 +211,11 @@ const toolResponse = z
     content: z.tuple([
       z
         .object({ type: z.literal("text"), text: z.string() })
-        .catchall(jsonValueSchema),
+        .catchall(ownedJsonValueSchema),
     ]),
     isError: z.boolean().exactOptional(),
   })
-  .catchall(jsonValueSchema);
+  .catchall(ownedJsonValueSchema);
 
 /** Parse the upstream text-only envelope, preserving errors at the producing boundary. */
 export const parseJadxEnvelope = (
@@ -218,9 +236,22 @@ export const parseJadxEnvelope = (
 export const parseJadxJson = (
   text: string,
   operation: AndroidOperation,
-): z.infer<typeof jsonValueSchema> => {
+): z.infer<typeof ownedJsonValueSchema> => {
+  const decoded = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!decoded.ok) {
+    if (decoded.duplicate !== undefined)
+      throw new AnalysisOutputError(
+        operation,
+        `JADX returned JSON with duplicate member ${JSON.stringify(decoded.duplicate.name)}`,
+      );
+    throw new AnalysisOutputError(
+      operation,
+      "JADX returned malformed JSON text",
+      { cause: decoded.cause },
+    );
+  }
   try {
-    return jsonValueSchema.parse(JSON.parse(text));
+    return ownedJsonValueSchema.parse(decoded.value);
   } catch (cause) {
     throw new AnalysisOutputError(
       operation,

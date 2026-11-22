@@ -21,11 +21,11 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
-  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
 import {
+  detachedEvidenceBundleSchema,
   evidenceBundleForTarget,
   evidenceBundleSchema,
   parseEvidenceBundle,
@@ -40,6 +40,8 @@ import {
   type EvidenceLocation,
 } from "./evidence.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
@@ -52,46 +54,13 @@ import {
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  BINARY_TARGET_FORMATS,
+} from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const formatSchema = z.enum([
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "ines",
-  "godot-pck",
-  "unityfs",
-  "wxapkg",
-  "dmg",
-  "pkg",
-  "intel-hex",
-  "srec",
-  "esp-image",
-  "uf2",
-  "dfuse",
-  "esp-flash-image",
-  "fit",
-  "ntfs-mft",
-  "plist",
-  "javascript",
-  "source-map",
-  "uimage",
-]);
+const formatSchema = z.enum(BINARY_TARGET_FORMATS);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 type SnapshotFormat = z.infer<typeof formatSchema>;
 /** The selection each format's open targets make inside their bytes. */
@@ -173,25 +142,36 @@ const bindingSchema = z
         message: "Snapshot binding provider does not match analysis profile",
       });
   });
-const entrySchema = z.object({
-  query_id: prefixedDigestSchema("query"),
-  operation: z.string().min(1),
-  parameters: jsonObjectSchema,
-  execution: z.object({
-    result: jsonValueSchema,
-    raw_result: jsonValueSchema.nullable(),
-    provider: committedProviderSchema,
-    limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
-    locations: z.array(evidenceLocationSchema),
-    subject: evidenceSubjectSchema,
-  }),
-});
-const workflowEntrySchema = entrySchema.extend({
-  execution: entrySchema.shape.execution.extend({
-    analysis_profile: analysisProfileSchema,
-  }),
-});
+const createEntrySchema = (
+  valueSchema: typeof jsonValueSchema,
+  objectSchema: typeof jsonObjectSchema,
+) =>
+  z.object({
+    query_id: prefixedDigestSchema("query"),
+    operation: z.string().min(1),
+    parameters: objectSchema,
+    execution: z.object({
+      result: valueSchema,
+      raw_result: valueSchema.nullable(),
+      provider: committedProviderSchema,
+      limitations: z.array(z.string()),
+      relationship_coverage: relationshipCoverageSchema.nullable(),
+      locations: z.array(evidenceLocationSchema),
+      subject: evidenceSubjectSchema,
+    }),
+  });
+
+const createWorkflowEntrySchema = (
+  baseEntrySchema: ReturnType<typeof createEntrySchema>,
+) =>
+  baseEntrySchema.extend({
+    execution: baseEntrySchema.shape.execution.extend({
+      analysis_profile: analysisProfileSchema,
+    }),
+  });
+
+const entrySchema = createEntrySchema(jsonValueSchema, jsonObjectSchema);
+const workflowEntrySchema = createWorkflowEntrySchema(entrySchema);
 
 /** Provider- and profile-exact cache of successful immutable analysis calls. */
 export const analysisSnapshotSchema = z.object({
@@ -200,6 +180,18 @@ export const analysisSnapshotSchema = z.object({
   entries: z.array(entrySchema),
   workflow_entries: z.array(workflowEntrySchema),
   evidence_bundle: evidenceBundleSchema,
+});
+
+const detachedEntrySchema = createEntrySchema(
+  detachedJsonValueSchema,
+  detachedJsonObjectSchema,
+);
+const detachedWorkflowEntrySchema =
+  createWorkflowEntrySchema(detachedEntrySchema);
+const detachedAnalysisSnapshotSchema = analysisSnapshotSchema.extend({
+  entries: z.array(detachedEntrySchema),
+  workflow_entries: z.array(detachedWorkflowEntrySchema),
+  evidence_bundle: detachedEvidenceBundleSchema,
 });
 
 export type AnalysisSnapshot = z.infer<typeof analysisSnapshotSchema>;
@@ -687,10 +679,11 @@ const validatedSnapshots = new WeakMap<object, AnalysisSnapshot>();
 
 /** Parse a provider/profile-exact snapshot and verify its entries and evidence. */
 export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  authenticateSnapshot(input).parsed;
+  authenticateSnapshot(input, true).parsed;
 
 const authenticateSnapshot = (
   input: unknown,
+  detach: boolean,
 ): {
   readonly parsed: AnalysisSnapshot;
   readonly restored: AnalysisSnapshot;
@@ -699,7 +692,9 @@ const authenticateSnapshot = (
     const owned = validatedSnapshots.get(input);
     if (owned !== undefined) return { parsed: owned, restored: owned };
   }
-  const parsed = analysisSnapshotSchema.parse(input);
+  const parsed = (
+    detach ? detachedAnalysisSnapshotSchema : analysisSnapshotSchema
+  ).parse(input);
   const restored = restoreSnapshot(
     parsed,
     parseSnapshotBundle(parsed.evidence_bundle, parseEvidenceBundle),
@@ -727,7 +722,7 @@ const authenticateSnapshot = (
 
 /** Own an authenticated immutable cache while preserving mutable caller exports. */
 export const immutableAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  sealSnapshot(authenticateSnapshot(input).restored);
+  sealSnapshot(authenticateSnapshot(input, false).restored);
 
 const sealSnapshot = (snapshot: AnalysisSnapshot): AnalysisSnapshot => {
   for (const entry of [...snapshot.entries, ...snapshot.workflow_entries]) {
@@ -1020,4 +1015,4 @@ const evidenceContentMetadata = (evidence: Evidence) => {
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>
-  `${canonicalJson(parseAnalysisSnapshot(snapshot))}\n`;
+  `${canonicalJson(authenticateSnapshot(snapshot, false).parsed)}\n`;

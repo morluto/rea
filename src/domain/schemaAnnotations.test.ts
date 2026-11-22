@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
 
 import {
@@ -12,6 +12,11 @@ const alternatives = () =>
     z.strictObject({ mode: z.literal("a"), a: z.string() }),
     z.strictObject({ mode: z.literal("b").optional(), b: z.string() }),
   ] as const;
+
+type DiscriminatedSchema = z.ZodUnion<ReturnType<typeof alternatives>>;
+expectTypeOf<
+  Parameters<typeof presentRootDiscriminator<DiscriminatedSchema>>[1]
+>().toEqualTypeOf<"mode">();
 
 it("keeps a root discriminator out of the canonical JSON Schema", () => {
   const schema = presentRootDiscriminator(z.union(alternatives()), "mode");
@@ -38,9 +43,4 @@ it("annotates a copy as a complete observation, leaving the source canonical", (
   expect(z.toJSONSchema(operand)).toEqual(z.toJSONSchema(source));
   expect(operand.parse({ id: "x" })).toEqual({ id: "x" });
   expect(() => operand.parse({})).toThrow();
-});
-
-it("accepts only a property the alternatives declare", () => {
-  // @ts-expect-error The alternatives do not declare this property.
-  presentRootDiscriminator(z.union(alternatives()), "missing");
 });

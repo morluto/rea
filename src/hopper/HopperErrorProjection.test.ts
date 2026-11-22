@@ -10,6 +10,7 @@ import {
   HopperTimeoutError,
   HopperCancelledError,
   HopperProtocolError,
+  hopperAppleEventsAuthorizationRejection,
   hopperErrorCatalogue,
 } from "./HopperErrors.js";
 import {
@@ -45,13 +46,11 @@ describe("analysis error projection: Hopper provider failures", () => {
         operation: "trace_feature",
         request_id: 42,
         provider_state: "busy",
+        retry_action: "wait",
         timeout_ms: 30_000,
       },
     });
     expect(projected.message).toContain("binary_session.analysis_activity");
-    expect(projected.remediation.action).toContain(
-      "wait for the active Hopper request",
-    );
   });
 
   it("identifies the REA session that already owns a Hopper target", () => {
@@ -64,9 +63,7 @@ describe("analysis error projection: Hopper provider failures", () => {
       category: "unavailable",
       message: expect.stringContaining("session-owner"),
       remediation: {
-        action: expect.stringContaining(
-          "Use the active REA session session-owner",
-        ),
+        action: expect.stringContaining("session-owner"),
       },
     });
   });
@@ -74,10 +71,7 @@ describe("analysis error projection: Hopper provider failures", () => {
   it("projects an Apple Events denial as unavailable and not retryable from the same client", () => {
     const projected = projectAnalysisError(
       new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure: {
           exit_code: 2,
           signal: null,
@@ -103,6 +97,9 @@ describe("analysis error projection: Hopper provider failures", () => {
         launch_rejection: {
           boundary: "apple_events_authorization",
           reason: "not_authorized",
+          responsibility: "client_or_disclaimed_runtime",
+          settings_pane: "privacy_security_automation",
+          entitlement_id: "com.apple.security.automation.apple-events",
         },
         launcher: { exit_code: 2, signal: null },
       },
@@ -349,9 +346,11 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unreachable.message).toMatch(
       /unreachable.*process exit was not observed/iu,
     );
-    expect(unreachable.remediation.action).toMatch(
-      /close_binary.*Evidence and Unknown history.*export_evidence_bundle/iu,
+    expect(unreachable.remediation.action).toContain("close_binary");
+    expect(unreachable.remediation.action).toContain(
+      "Evidence and Unknown history",
     );
+    expect(unreachable.remediation.action).toContain("export_evidence_bundle");
   });
 });
 
@@ -413,8 +412,16 @@ describe("analysis error projection: caller lifetime", () => {
         ),
       },
     );
-    expect(projectAnalysisError(error).remediation.action).toMatch(
-      /update_analysis_settings.*hopper\.startup_timeout_ms.*without restarting REA/u,
+    const continuing = projectAnalysisError(error);
+    expect(continuing.details?.limit).toMatchObject({
+      setting: "hopper.startup_timeout_ms",
+      effective_value: 30_000,
+      applies_at: "next_startup",
+      update_mode: "runtime",
+    });
+    expect(continuing.remediation.action).toContain("update_analysis_settings");
+    expect(continuing.remediation.action).toContain(
+      "hopper.startup_timeout_ms",
     );
     const invocation = projectAnalysisError(error, "invocation");
     expect(invocation.remediation.action).toBe(
@@ -525,6 +532,7 @@ describe("Hopper error catalogue", () => {
         "remote",
         "authorization",
         "invalid_request",
+        "selector_not_found",
         "capability_unavailable",
         "bridge_exception",
       ] as const
@@ -540,10 +548,7 @@ describe("Hopper error catalogue", () => {
     [
       "Apple Events authorization denied",
       new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
       }),
     ],
   ] as const)(

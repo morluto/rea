@@ -5,7 +5,7 @@ import {
 } from "./skillManifest.js";
 
 const manifest = (metadata: string, body = "\n# Instructions\n") =>
-  `---\nname: reverse-engineer-anything\nmetadata:\n${metadata}---\n${body}`;
+  `---\nname: reverse-engineer-anything\ndescription: Inspect programs.\nmetadata:\n${metadata}---\n${body}`;
 
 it.each(["'49'", '"49"'])(
   "reads semantic metadata with version %s",

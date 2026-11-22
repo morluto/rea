@@ -5,7 +5,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { execFileFailureCapturedOutput } from "../process/ExecFileOutput.js";
+import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { collectNumericIssues } from "./AdbNumericIssues.js";
 import {
   adbFilesystemErrorCode,
@@ -35,6 +35,7 @@ import {
   type AnalysisExecution,
 } from "../ports/AnalysisProvider.js";
 import { providerConfigurationRefusal } from "../domain/providerConfigurationRefusal.js";
+import { ADB_DEVICE_OBSERVATION_AUTHORITY } from "../domain/adb/adbDeviceAnalysis.js";
 import type {
   AdbDisplayNumericIssues,
   AdbDisplayPartialObservation,
@@ -69,7 +70,10 @@ import {
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCleanupFailure,
+} from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -99,7 +103,8 @@ import {
   runtimeControlCapabilityError,
 } from "../domain/runtimeControlUnavailableError.js";
 import {
-  adbCommandOutputFailure,
+  adbExitedRunOf,
+  adbExitFailure,
   adbArguments,
   runAdb,
   runAdbCapture,
@@ -108,12 +113,13 @@ import {
   probeAdbPathExistence,
   type AdbRunLimits,
 } from "./AdbCommand.js";
+import type { AdbCommandHost } from "./AdbProcess.js";
+import { startAdbServer } from "./AdbServer.js";
 import {
   AdbConfigurationFailure,
   adbConfigurationAvailability,
   inspectAdbClient,
   resolveAdbBinary,
-  type AdbBinarySelection,
   type AdbClientIdentity,
 } from "./AdbConfiguration.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -181,6 +187,41 @@ const SCREEN_TIMEOUT_MS = 60_000;
 const SCREEN_MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
 const BUGREPORT_TIMEOUT_MS = 600_000;
 const BUGREPORT_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+/**
+ * Commit an ADB observation as Evidence that names the device's authority. Every
+ * retained receipt and partial travels through here so none can fall back to the
+ * subject-derived default for a target REA does not own.
+ */
+const createObservationEvidence = (
+  operation: string,
+  parameters: Record<string, JsonValue>,
+  execution: AnalysisExecution,
+) =>
+  createAnalysisExecutionEvidence(
+    operation,
+    parameters,
+    {
+      ...execution,
+      authority: execution.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+    },
+    "observed",
+  );
+
+/**
+ * Stamp the device's authority on every successful execution at the adapter
+ * boundary, so a caller-projected or retained observation cannot fall back to a
+ * subject-derived authority for a target REA does not own.
+ */
+const observedExecution = (
+  result: Result<AnalysisExecution, AnalysisError>,
+): Result<AnalysisExecution, AnalysisError> =>
+  result.ok
+    ? ok({
+        ...result.value,
+        authority: result.value.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
+      })
+    : result;
 
 /** Carry the exact digest owner through caller-specific partial-result mapping. */
 class AdbDigestFailure extends Error {
@@ -650,16 +691,24 @@ const runtimeRootLease = (
   root: AdbRuntimeRoot,
   children: ArtifactResourceScope,
 ): AnalysisCleanupLease =>
-  new AnalysisCleanupLease(async () => {
-    await children.close();
-    await root.close();
-  });
+  new AnalysisCleanupLease(
+    async () => {
+      await children.close();
+      await root.close();
+    },
+    {
+      get cleanupResources() {
+        return [root.path, ...children.cleanupResources];
+      },
+    },
+  );
 
 interface PendingOutputDirectoryCleanup {
   readonly operation: "pull_adb_package" | "collect_adb_bugreport";
   readonly path: string;
   readonly primary: AnalysisError;
   readonly remove: () => Promise<void>;
+  readonly resources?: () => readonly string[];
   readonly lease: AnalysisCleanupLease;
 }
 
@@ -843,8 +892,12 @@ export class AdbProvider {
       ((rootOptions) => PrivateRuntimeRoot.create(rootOptions));
   }
 
-  private selection(signal?: AbortSignal): Promise<AdbBinarySelection> {
-    return resolveAdbBinary(this.environment, this.platform, signal);
+  /** The selected adb binary, with this provider retaining its commands' unfinished cleanup. */
+  private async selection(signal?: AbortSignal): Promise<AdbCommandHost> {
+    return {
+      ...(await resolveAdbBinary(this.environment, this.platform, signal)),
+      resources: this.#resources,
+    };
   }
 
   /** Probe the selected adb binary; never contacts devices or the server. */
@@ -856,8 +909,12 @@ export class AdbProvider {
         "inspect_adb_client",
         isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
       );
+    if (signal?.aborted === true)
+      throw cancelledBy("inspect_adb_client", signal);
     const release = this.#beginOperation();
     try {
+      const retried = await this.#retryPendingCleanup("inspect_adb_client", {});
+      if (!retried.ok) throw retried.error;
       const selection = await this.selection(signal);
       await inspectAdbClient(selection, signal);
       return {
@@ -968,12 +1025,7 @@ export class AdbProvider {
     const partialObservation =
       execution === undefined
         ? undefined
-        : createAnalysisExecutionEvidence(
-            operation,
-            parameters,
-            execution,
-            "observed",
-          );
+        : createObservationEvidence(operation, parameters, execution);
     return new ProviderCleanupError(
       ADB_PROVIDER_IDENTITY.id,
       resources,
@@ -1084,15 +1136,11 @@ export class AdbProvider {
               ],
             );
             rootLease.bindCleanupError(cleanup);
+            cleanup.bindCleanupResourceOwner(rootLease);
             throw cleanup;
           },
           partial: (completed) =>
-            createAnalysisExecutionEvidence(
-              operation,
-              parameters,
-              completed,
-              "observed",
-            ),
+            createObservationEvidence(operation, parameters, completed),
         },
       ),
     );
@@ -1102,19 +1150,36 @@ export class AdbProvider {
     owner: Omit<PendingOutputDirectoryCleanup, "lease">,
     cleanup: ProviderCleanupError,
   ): AnalysisError {
-    const lease = new AnalysisCleanupLease(async () => {
-      await owner.remove();
-      if (owner.primary.cleanupIncomplete)
-        throw new Error(
-          "ADB output directory primary cleanup remains incomplete",
-        );
-    });
+    const liveResources = () => [
+      ...new Set([
+        owner.path,
+        ...(owner.resources?.() ?? []),
+        ...(owner.primary.cleanupIncomplete
+          ? owner.primary.cleanupResources
+          : []),
+      ]),
+    ];
+    const lease = new AnalysisCleanupLease(
+      async () => {
+        await owner.remove();
+        if (owner.primary.cleanupIncomplete)
+          throw new Error(
+            "ADB output directory primary cleanup remains incomplete",
+          );
+      },
+      {
+        get cleanupResources() {
+          return liveResources();
+        },
+      },
+    );
     const error = analysisErrorWithCleanupFailure(
       owner.primary,
       cleanup,
       owner.operation,
     );
     lease.bindCleanupError(error);
+    error.bindCleanupResourceOwner(lease);
     this.#pendingOutputDirectoryCleanup.add({ ...owner, lease });
     return error;
   }
@@ -1139,7 +1204,7 @@ export class AdbProvider {
       } catch (cause: unknown) {
         const cleanup = new ProviderCleanupError(
           ADB_PROVIDER_IDENTITY.id,
-          [owner.path],
+          owner.lease.cleanupResources ?? [owner.path],
           {
             reason: errorMessage(cause),
           },
@@ -1151,6 +1216,7 @@ export class AdbProvider {
           owner.operation,
         );
         owner.lease.bindCleanupError(error);
+        error.bindCleanupResourceOwner(owner.lease);
         failures.push(error);
       }
     }
@@ -1201,46 +1267,58 @@ export class AdbProvider {
       return err(cancelledBy(request.operation, OwnerCancellation.ownerClosed));
     const release = this.#beginOperation();
     try {
-      try {
-        await this.#resources.retryCleanup();
-      } catch (cause: unknown) {
-        const error = this.#cleanupError(
-          request.operation,
-          jsonObjectSchema.parse(request.input),
-          [cause],
-          this.#cleanupResources(cause, "ADB provider-owned resource"),
-        );
-        const leases =
-          cause instanceof ArtifactResourceRetryFailure
-            ? cause.cleanupLeases
-            : undefined;
-        if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
-        return err(error);
-      }
-      if (this.#pendingOutputDirectoryCleanup.size > 0) {
-        try {
-          await this.#retryOutputDirectoryCleanup();
-        } catch (cause: unknown) {
-          return err(
-            cause instanceof AnalysisError
-              ? cause
-              : new ProviderCleanupError(
-                  ADB_PROVIDER_IDENTITY.id,
-                  [...this.#pendingOutputDirectoryCleanup].map(
-                    ({ path }) => path,
-                  ),
-                  {
-                    reason: errorMessage(cause),
-                  },
-                  { operation: request.operation, cause },
-                ),
-          );
-        }
-      }
-      return await this.#executeOperation(request, options);
+      const retried = await this.#retryPendingCleanup(
+        request.operation,
+        jsonObjectSchema.parse(request.input),
+      );
+      if (!retried.ok) return retried;
+      return observedExecution(await this.#executeOperation(request, options));
     } finally {
       release();
     }
+  }
+
+  async #retryPendingCleanup(
+    operation: AdbRequest["operation"],
+    input: Readonly<Record<string, JsonValue>>,
+  ): Promise<Result<null, AnalysisError>> {
+    try {
+      await this.#resources.retryCleanup();
+    } catch (cause: unknown) {
+      const error = this.#cleanupError(
+        operation,
+        input,
+        [cause],
+        this.#cleanupResources(cause, "ADB provider-owned resource"),
+      );
+      const leases =
+        cause instanceof ArtifactResourceRetryFailure
+          ? cause.cleanupLeases
+          : undefined;
+      if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+      return err(error);
+    }
+    if (this.#pendingOutputDirectoryCleanup.size > 0) {
+      try {
+        await this.#retryOutputDirectoryCleanup();
+      } catch (cause: unknown) {
+        return err(
+          cause instanceof AnalysisError
+            ? cause
+            : new ProviderCleanupError(
+                ADB_PROVIDER_IDENTITY.id,
+                [...this.#pendingOutputDirectoryCleanup].map(
+                  ({ path }) => path,
+                ),
+                {
+                  reason: errorMessage(cause),
+                },
+                { operation, cause },
+              ),
+        );
+      }
+    }
+    return ok(null);
   }
 
   async #executeOperation(
@@ -1250,7 +1328,7 @@ export class AdbProvider {
     const signal = options?.signal;
     if (signal?.aborted === true)
       return err(cancelledBy(request.operation, signal));
-    let selection: AdbBinarySelection;
+    let selection: AdbCommandHost;
     let identity: AdbClientIdentity;
     try {
       selection = await this.selection(signal);
@@ -1279,6 +1357,23 @@ export class AdbProvider {
           { cause },
         ),
       );
+    }
+    // Device operations reach the shared adb server, which REA may start
+    // once local inputs/outputs are admitted, and never stops.
+    let serverStarted:
+      | Promise<Result<{ readonly daemonStarted: boolean }, AnalysisError>>
+      | undefined;
+    if (request.operation !== "inspect_adb_client") {
+      const baseSelection = selection;
+      selection = {
+        ...baseSelection,
+        startServer: () =>
+          (serverStarted ??= startAdbServer(
+            request.operation,
+            baseSelection,
+            signal,
+          )),
+      };
     }
     const client = clientIdentityResult(selection, identity);
     const provider: AdbProviderIdentity = {
@@ -1815,7 +1910,7 @@ export class AdbProvider {
 
   private async pullPackage(
     operation: "pull_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2058,6 +2153,29 @@ export class AdbProvider {
         signal,
       );
       if (!pulled.ok) {
+        if (pulled.error.cleanupIncomplete) {
+          pulled.error.retainPartialObservation({
+            provider_id: "adb",
+            operation,
+            result: {
+              client,
+              serial,
+              package_name: packageName,
+              output_directory: directory.value,
+              artifacts,
+              failures: [
+                ...observedFailures(),
+                {
+                  device_path: entry.device_path,
+                  stage: "pull",
+                  message: `Pull cleanup remains incomplete; any incomplete file is retained at ${localPath}. Remaining APKs were not attempted.`,
+                },
+              ],
+              coverage: "partial",
+            },
+          });
+          return err(pulled.error);
+        }
         if (pulled.error instanceof AnalysisCancelledError)
           return cancelledPackagePull(
             pulled.error,
@@ -2206,7 +2324,7 @@ export class AdbProvider {
 
   private async pullFile(
     operation: "pull_adb_file",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2322,7 +2440,7 @@ export class AdbProvider {
 
   private async pushFile(
     operation: "push_adb_file",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2359,11 +2477,12 @@ export class AdbProvider {
           operation,
           signal,
         );
+        const scopedSelection: AdbCommandHost = { ...selection, resources };
         const directoryProbe = await probeAdbPathDirectory(
           operation,
           input.serial,
           input.device_path,
-          selection,
+          scopedSelection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2375,7 +2494,7 @@ export class AdbProvider {
           operation,
           input.serial,
           devicePath,
-          selection,
+          scopedSelection,
           { timeoutMs: SETTINGS_TIMEOUT_MS, maxOutputBytes: 1024 },
           signal,
         );
@@ -2395,7 +2514,7 @@ export class AdbProvider {
             path: input.device_path,
             localPath: digest.path,
           },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, ["push", digest.path, input.device_path]),
           { timeoutMs: PULL_TIMEOUT_MS, maxOutputBytes: PULL_MAX_OUTPUT_BYTES },
           signal,
@@ -2449,7 +2568,7 @@ export class AdbProvider {
         const deviceDigest = await runAdb(
           operation,
           { device: input.serial, path: devicePath },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, ["shell", "sha256sum", devicePath]),
           {
             timeoutMs: SHELL_TIMEOUT_MS,
@@ -2462,6 +2581,7 @@ export class AdbProvider {
         if (!deviceDigest.ok) {
           const cancelled =
             deviceDigest.error instanceof AnalysisCancelledError;
+          const cleanupIncomplete = deviceDigest.error.cleanupIncomplete;
           // The check never started and the push already completed, so a
           // retryable error would invite a repeat that overwrite=false refuses.
           const hostCapacity =
@@ -2469,6 +2589,7 @@ export class AdbProvider {
             deviceDigest.error.resource === "capacity";
           const verificationFailed =
             cancelled ||
+            cleanupIncomplete ||
             (!hostCapacity &&
               (deviceDigest.error instanceof AnalysisResourceConstraintError ||
                 deviceDigest.error instanceof AnalysisTimeoutError));
@@ -2496,6 +2617,8 @@ export class AdbProvider {
                   limitations: completed.limitations,
                   locations: completed.locations,
                   confidence: "observed",
+                  authority:
+                    completed.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
                 },
               ),
             );
@@ -2540,6 +2663,8 @@ export class AdbProvider {
                     limitations: completed.limitations,
                     locations: completed.locations,
                     confidence: "observed",
+                    authority:
+                      completed.authority ?? ADB_DEVICE_OBSERVATION_AUTHORITY,
                   },
                 ),
               },
@@ -2552,7 +2677,7 @@ export class AdbProvider {
 
   private async installPackage(
     operation: "install_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2587,10 +2712,11 @@ export class AdbProvider {
           operation,
           signal,
         );
+        const scopedSelection: AdbCommandHost = { ...selection, resources };
         const installed = await runAdb(
           operation,
           { device: input.serial, path: apkPath, localPath: digest.path },
-          selection,
+          scopedSelection,
           adbArguments(input.serial, [
             "install",
             ...(input.replace ? ["-r"] : []),
@@ -2653,7 +2779,7 @@ export class AdbProvider {
 
   private async uninstallPackage(
     operation: "uninstall_adb_package",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2720,7 +2846,7 @@ export class AdbProvider {
 
   private async startApp(
     operation: "start_adb_app",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2776,7 +2902,7 @@ export class AdbProvider {
 
   private async startActivity(
     operation: "start_adb_activity",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: {
@@ -2838,7 +2964,7 @@ export class AdbProvider {
 
   private async runAmStart(
     operation: "start_adb_app" | "start_adb_activity",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     serial: string,
@@ -2846,6 +2972,34 @@ export class AdbProvider {
     resultFields: Record<string, unknown>,
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    const buildActivityObservation = (
+      verdict: ReturnType<typeof parseAmStartOutput>,
+    ): {
+      readonly result: Record<string, unknown>;
+      readonly partialObservation: AdbActivityStartPartialObservation;
+    } => {
+      const result = {
+        ...resultFields,
+        started_activity: verdict.startedActivity,
+        reported_activity: verdict.activity,
+        reported_status: verdict.reportedStatus,
+      };
+      return {
+        result,
+        partialObservation:
+          operation === "start_adb_app"
+            ? {
+                provider_id: "adb",
+                operation,
+                result: adbResultSchemas.start_adb_app.parse(result),
+              }
+            : {
+                provider_id: "adb",
+                operation,
+                result: adbResultSchemas.start_adb_activity.parse(result),
+              },
+      };
+    };
     const started = await runAdb(
       operation,
       { device: serial },
@@ -2853,57 +3007,38 @@ export class AdbProvider {
       adbArguments(serial, ["shell", "am", "start", "-W", ...arguments_]),
       { timeoutMs: SHELL_TIMEOUT_MS, maxOutputBytes: PM_PATH_MAX_OUTPUT_BYTES },
       signal,
+      (run) => {
+        if (run.exitCode === 0) return undefined;
+        const failure = adbExitFailure(operation, { device: serial }, run);
+        // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
+        // emits its refusal report on stdout. Other exits remain command errors.
+        if (adbExitedRunOf(failure) === undefined || run.exitCode !== 1)
+          return failure;
+        // Stderr carries adb transport diagnostics, not the Activity Manager
+        // report, so it cannot establish a target refusal on this path.
+        const verdict = parseAmStartOutput(run.capturedOutput.stdout);
+        if (verdict.status !== "refused" || verdict.startedActivity === null)
+          return failure;
+        const { partialObservation } = buildActivityObservation(verdict);
+        return new AnalysisUnsupportedTargetError(
+          operation,
+          serial,
+          verdict.reason ?? "am start refused the intent",
+          { capturedOutput: run.capturedOutput, partialObservation },
+        );
+      },
     );
-    let stdout: string;
-    let stderr: string;
-    let capturedOutput: ReturnType<typeof execFileFailureCapturedOutput>;
-    let verdict: ReturnType<typeof parseAmStartOutput>;
-    if (started.ok) {
-      stdout = started.value.stdout;
-      stderr = started.value.stderr;
-      capturedOutput = { stdout, stderr, truncated: false };
-      verdict = parseAmStartOutput(stdout, stderr);
-    } else {
-      const commandFailure = adbCommandOutputFailure(started.error);
-      // AOSP ActivityManagerShellCommand returns 1 for class-not-found and
-      // emits its refusal report on stdout. Other exits remain command errors.
-      if (
-        commandFailure === undefined ||
-        commandFailure.code !== 1 ||
-        commandFailure.signal !== null ||
-        commandFailure.killed ||
-        commandFailure.outputTruncated ||
-        commandFailure.collectionFailure === true
-      )
-        return started;
-      stdout = commandFailure.stdout;
-      stderr = commandFailure.stderr;
-      capturedOutput = execFileFailureCapturedOutput(commandFailure);
-      // Stderr carries adb transport diagnostics, not the Activity Manager
-      // report, so it cannot establish a target refusal on this path.
-      verdict = parseAmStartOutput(stdout);
-      if (verdict.status !== "refused" || verdict.startedActivity === null)
-        return started;
-    }
-    const result = {
-      ...resultFields,
-      started_activity: verdict.startedActivity,
-      reported_activity: verdict.activity,
-      reported_status: verdict.reportedStatus,
+    if (!started.ok) return started;
+    const stdout = started.value.stdout;
+    const stderr = started.value.stderr;
+    const capturedOutput: AnalysisCapturedOutput = {
+      stdout,
+      stderr,
+      truncated: false,
     };
+    const verdict = parseAmStartOutput(stdout, stderr);
+    const { result, partialObservation } = buildActivityObservation(verdict);
     if (verdict.status === "refused") {
-      const partialObservation: AdbActivityStartPartialObservation =
-        operation === "start_adb_app"
-          ? {
-              provider_id: "adb",
-              operation,
-              result: adbResultSchemas.start_adb_app.parse(result),
-            }
-          : {
-              provider_id: "adb",
-              operation,
-              result: adbResultSchemas.start_adb_activity.parse(result),
-            };
       return err(
         new AnalysisUnsupportedTargetError(
           operation,
@@ -2928,7 +3063,7 @@ export class AdbProvider {
 
   private async stopApp(
     operation: "stop_adb_app",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly package: string },
@@ -2962,7 +3097,7 @@ export class AdbProvider {
 
   private async captureScreen(
     operation: "capture_adb_screen",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
@@ -3054,7 +3189,7 @@ export class AdbProvider {
           {
             limitations: [
               "The capture is one frame at read time; no recording or interaction occurred",
-              "PNG signature, IHDR framing, checksum, and dimensions are validated; encoding and image contents are not validated",
+              "PNG signature, IHDR framing, checksum, dimensions, and encoding fields are validated. Pixel data remains undecoded",
               ...(usedExclusiveFallback
                 ? [
                     "The exclusive-create fallback makes the output path visible while its bytes are being written",
@@ -3081,7 +3216,7 @@ export class AdbProvider {
 
   private async collectBugreport(
     operation: "collect_adb_bugreport",
-    selection: AdbBinarySelection,
+    selection: AdbCommandHost,
     client: AdbClientResult,
     provider: AdbProviderIdentity,
     input: { readonly serial: string; readonly output_directory: string },
@@ -3109,10 +3244,12 @@ export class AdbProvider {
         ),
       );
     }
+    const commandResources = new ArtifactResourceScope();
     const collectedResult = await (async (): Promise<
       Result<AnalysisExecution, AnalysisError>
     > => {
       let reportedPath: string | null = null;
+      let commandFailure: AnalysisError | undefined;
       try {
         const created = await lstat(stagingDirectory);
         if (!created.isDirectory() || created.isSymbolicLink())
@@ -3127,7 +3264,7 @@ export class AdbProvider {
         const collected = await runAdb(
           operation,
           { device: input.serial },
-          selection,
+          { ...selection, resources: commandResources },
           adbArguments(input.serial, ["bugreport", stagingDirectory]),
           {
             timeoutMs: BUGREPORT_TIMEOUT_MS,
@@ -3135,14 +3272,24 @@ export class AdbProvider {
           },
           signal,
         );
-        if (!collected.ok) return collected;
-        reportedPath = parseBugreportCopiedPath(collected.value.stdout);
+        if (!collected.ok) commandFailure = collected.error;
+        const completedStdout = collected.ok
+          ? collected.value.stdout
+          : collected.error.capturedOutput?.exit_code === 0 &&
+              !collected.error.capturedOutput.truncated
+            ? collected.error.capturedOutput.stdout
+            : undefined;
+        if (completedStdout === undefined)
+          return collected as Result<never, AnalysisError>;
+        reportedPath = parseBugreportCopiedPath(completedStdout);
         if (reportedPath === null)
-          return err(
-            new AnalysisProtocolError(
-              "adb bugreport did not report an archive path; the build may use an unsupported format",
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  "adb bugreport did not report an archive path; the build may use an unsupported format",
+                ),
+              )
+            : collected;
         const reportedParent = await stat(
           dirname(absoluteCallerPath(reportedPath)),
         );
@@ -3151,18 +3298,22 @@ export class AdbProvider {
           reportedParent.dev !== stagingIdentity.dev ||
           reportedParent.ino !== stagingIdentity.ino
         )
-          return err(
-            new AnalysisProtocolError(
-              `adb bugreport reported an archive outside its staging directory: ${reportedPath}`,
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  `adb bugreport reported an archive outside its staging directory: ${reportedPath}`,
+                ),
+              )
+            : collected;
         const archive = await lstat(reportedPath);
         if (!archive.isFile() || archive.isSymbolicLink())
-          return err(
-            new AnalysisProtocolError(
-              `adb bugreport did not report a regular archive file: ${reportedPath}`,
-            ),
-          );
+          return collected.ok
+            ? err(
+                new AnalysisProtocolError(
+                  `adb bugreport did not report a regular archive file: ${reportedPath}`,
+                ),
+              )
+            : collected;
         retainedObservation = {
           provider_id: "adb",
           operation,
@@ -3177,18 +3328,30 @@ export class AdbProvider {
         try {
           publishedPath = await publishBugreport(reportedPath, directory.value);
         } catch (cause) {
-          return err(
-            new AnalysisOutputError(
-              operation,
-              `The reported bugreport archive could not be published: ${reportedPath}`,
-              { cause, partialObservation: retainedObservation },
-            ),
+          const publishError = new AnalysisOutputError(
+            operation,
+            `The reported bugreport archive could not be published: ${reportedPath}`,
+            { cause, partialObservation: retainedObservation },
           );
+          if (!collected.ok) {
+            collected.error.retainPartialObservation(retainedObservation);
+            return err(
+              collected.error.retainSecondaryFailure(publishError, {}),
+            );
+          }
+          return err(publishError);
         }
         retainedObservation = {
           ...retainedObservation,
           result: { ...retainedObservation.result, local_path: publishedPath },
         };
+        if (
+          !collected.ok &&
+          collected.error instanceof AnalysisCancelledError
+        ) {
+          collected.error.retainPartialObservation(retainedObservation);
+          return collected;
+        }
         const digest = await hashAdbFile(
           publishedPath,
           operation,
@@ -3208,6 +3371,10 @@ export class AdbProvider {
           operation,
           result: report,
         };
+        if (!collected.ok) {
+          collected.error.retainPartialObservation(retainedObservation);
+          return collected;
+        }
         return ok(
           createAnalysisExecution(report, provider, {
             limitations: [
@@ -3216,23 +3383,39 @@ export class AdbProvider {
           }),
         );
       } catch (cause) {
-        if (
-          retainedObservation !== undefined &&
-          cause instanceof AdbDigestFailure
-        )
-          return err(adbDigestError(cause, operation, retainedObservation));
-        if (cause instanceof AnalysisCancelledError) {
+        const readbackFailure =
+          retainedObservation !== undefined && cause instanceof AdbDigestFailure
+            ? adbDigestError(cause, operation, retainedObservation)
+            : cause instanceof AnalysisCancelledError
+              ? (() => {
+                  if (retainedObservation !== undefined)
+                    cause.retainPartialObservation(retainedObservation);
+                  return cause;
+                })()
+              : new AnalysisOutputError(
+                  operation,
+                  `The reported bugreport archive could not be read back: ${reportedPath ?? stagingDirectory}`,
+                  { cause, partialObservation: retainedObservation },
+                );
+        if (readbackFailure.partialObservation !== undefined)
+          retainedObservation =
+            readbackFailure.partialObservation as AdbAcquiredFilePartialObservation;
+        if (commandFailure !== undefined) {
           if (retainedObservation !== undefined)
-            cause.retainPartialObservation(retainedObservation);
-          return err(cause);
+            commandFailure.retainPartialObservation(retainedObservation);
+          return err(
+            readbackFailure.cleanupIncomplete
+              ? analysisErrorWithCleanupDependencies(
+                  commandFailure,
+                  readbackFailure,
+                  operation,
+                )
+              : readbackFailure instanceof AnalysisCancelledError
+                ? analysisErrorWithCancellation(commandFailure, readbackFailure)
+                : commandFailure.retainSecondaryFailure(readbackFailure, {}),
+          );
         }
-        return err(
-          new AnalysisOutputError(
-            operation,
-            `The reported bugreport archive could not be read back: ${reportedPath ?? stagingDirectory}`,
-            { cause, partialObservation: retainedObservation },
-          ),
-        );
+        return err(readbackFailure);
       }
     })();
     const retainCancellation = (failure: AnalysisError | undefined) =>
@@ -3246,13 +3429,36 @@ export class AdbProvider {
         : failure;
     // A completed acquisition becomes caller evidence even if publication fails.
     // Its staging directory must not enter automatic cleanup or cleanup retries.
-    if (retainedObservation !== undefined && publishedPath === undefined)
+    if (retainedObservation !== undefined && publishedPath === undefined) {
+      if (commandResources.hasPending)
+        this.#resources.retain({
+          kind: "lease",
+          resource: `${stagingDirectory} (ADB bugreport command)`,
+          lease: AnalysisCleanupLease.forCloseOwner(
+            {
+              close: () => commandResources.retryCleanup(),
+              get cleanupResources() {
+                return commandResources.cleanupResources;
+              },
+            },
+            `${stagingDirectory} (ADB bugreport command)`,
+          ),
+        });
       return collectedResult.ok
         ? collectedResult
         : err(
             retainCancellation(collectedResult.error) ?? collectedResult.error,
           );
+    }
+    const removeStaging = async () => {
+      await commandResources.retryCleanup();
+      await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
+    };
     try {
+      if (commandResources.hasPending)
+        throw new Error(
+          "ADB bugreport command cleanup remains unconfirmed; retaining staging directory",
+        );
       await removeOwnedOutputDirectory(stagingDirectory, stagingIdentity);
     } catch (cause) {
       const primary =
@@ -3271,12 +3477,18 @@ export class AdbProvider {
             operation,
             path: stagingDirectory,
             primary,
-            remove: () =>
-              removeOwnedOutputDirectory(stagingDirectory, stagingIdentity),
+            remove: removeStaging,
+            resources: () => commandResources.cleanupResources,
           },
           new ProviderCleanupError(
             ADB_PROVIDER_IDENTITY.id,
-            [stagingDirectory],
+            [
+              ...new Set([
+                stagingDirectory,
+                ...commandResources.cleanupResources,
+                ...(primary.cleanupIncomplete ? primary.cleanupResources : []),
+              ]),
+            ],
             { reason: errorMessage(cause) },
             { operation, cause },
           ),

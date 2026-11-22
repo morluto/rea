@@ -1,6 +1,9 @@
 import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../kernel/isRecord.js";
+import { KunaDocumentError } from "./KunaDocumentError.js";
 
 /**
  * One function block in a `kuna decompile-project` `.c` file. The span covers
@@ -50,6 +53,19 @@ interface KeptLine {
   readonly text: string;
 }
 
+/** Decode only the selected source bytes and retain their starting offset. */
+export const decodeKunaProjectText = (
+  bytes: Uint8Array,
+  offset: number,
+): Result<string, KunaDocumentError> => {
+  try {
+    return ok(decodeStrictUtf8(bytes, "preserve"));
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) throw cause;
+    return err(new KunaDocumentError("invalid_utf8", { byte_offset: offset }));
+  }
+};
+
 /**
  * Stream a file's lines, keeping the text of only the lines whose first
  * `headBytes` bytes `keep` accepts. Every other line is skipped without being
@@ -68,45 +84,91 @@ const scanLines = async (
   const lines: KeptLine[] = [];
   let offset = 0;
   let lineStart = 0;
-  // The current line's bytes while it is undecided or kept; undefined once skipped.
-  let line: Buffer[] | undefined = [];
+  // Cross-chunk fragments of the active line while it is undecided or kept.
+  const line: Buffer[] = [];
   let lineBytes = 0;
   let decided = false;
+  let skipped = false;
+  const recordLine = (bytes: Buffer): string | undefined => {
+    const decoded = decodeKunaProjectText(bytes, lineStart);
+    if (!decoded.ok)
+      return `the structural line at byte ${String(lineStart)} is not valid UTF-8`;
+    lines.push({ offset: lineStart, text: decoded.value });
+    return undefined;
+  };
   for await (const chunk of chunks) {
     let position = 0;
     while (position < chunk.length) {
       const newline = chunk.indexOf(0x0a, position);
       const end = newline === -1 ? chunk.length : newline;
-      if (line !== undefined) {
+      if (!skipped && line.length === 0) {
         const segment = chunk.subarray(position, end);
+        if (newline !== -1) {
+          if (keep(segment.subarray(0, headBytes))) {
+            if (segment.length > MAX_KEPT_LINE_BYTES)
+              return err(`the line at byte ${String(lineStart)} is too long`);
+            const failure = recordLine(segment);
+            if (failure !== undefined) return err(failure);
+          }
+          position = newline + 1;
+          lineStart = offset + position;
+          continue;
+        }
+        if (segment.length >= headBytes) {
+          decided = true;
+          if (!keep(segment.subarray(0, headBytes))) {
+            skipped = true;
+            break;
+          }
+        }
+        if (segment.length > MAX_KEPT_LINE_BYTES)
+          return err(`the line at byte ${String(lineStart)} is too long`);
         line.push(segment);
-        lineBytes += segment.length;
+        lineBytes = segment.length;
+        break;
+      }
+      if (!skipped) {
+        const segment = chunk.subarray(position, end);
+        if (segment.length > 0) {
+          line.push(segment);
+          lineBytes += segment.length;
+        }
+        let assembled: Buffer | undefined;
         if (!decided && (lineBytes >= headBytes || newline !== -1)) {
           decided = true;
-          if (!keep(Buffer.concat(line).subarray(0, headBytes)))
-            line = undefined;
+          assembled = line.length === 1 ? line[0]! : Buffer.concat(line);
+          if (!keep(assembled.subarray(0, headBytes))) {
+            skipped = true;
+            line.length = 0;
+          }
         }
-        if (line !== undefined && lineBytes > MAX_KEPT_LINE_BYTES)
-          return err(`the line at byte ${String(lineStart)} is too long`);
+        if (!skipped) {
+          if (lineBytes > MAX_KEPT_LINE_BYTES)
+            return err(`the line at byte ${String(lineStart)} is too long`);
+          if (newline !== -1) {
+            const failure = recordLine(
+              assembled ?? (line.length === 1 ? line[0]! : Buffer.concat(line)),
+            );
+            if (failure !== undefined) return err(failure);
+          }
+        }
       }
       if (newline === -1) break;
-      if (line !== undefined)
-        lines.push({
-          offset: lineStart,
-          text: Buffer.concat(line).toString("utf8"),
-        });
       position = newline + 1;
       lineStart = offset + position;
-      line = [];
+      line.length = 0;
       lineBytes = 0;
       decided = false;
+      skipped = false;
     }
     offset += chunk.length;
   }
-  if (line !== undefined && lineBytes > 0) {
-    const head = Buffer.concat(line);
-    if (decided || keep(head.subarray(0, headBytes)))
-      lines.push({ offset: lineStart, text: head.toString("utf8") });
+  if (!skipped && lineBytes > 0) {
+    const tail = line.length === 1 ? line[0]! : Buffer.concat(line);
+    if (decided || keep(tail.subarray(0, headBytes))) {
+      const failure = recordLine(tail);
+      if (failure !== undefined) return err(failure);
+    }
   }
   return ok({ lines, bytes: offset });
 };
@@ -194,6 +256,25 @@ export interface KunaInventoryFunction {
   readonly size: number;
 }
 
+const isLowerHexPrefixed = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length < 3) return false;
+  if (value.charCodeAt(0) !== 48 || value.charCodeAt(1) !== 120) return false;
+  for (let i = 2; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102)))
+      return false;
+  }
+  return true;
+};
+
+const isStringArray = (value: unknown): value is readonly string[] => {
+  if (!Array.isArray(value)) return false;
+  for (let i = 0; i < value.length; i += 1) {
+    if (typeof value[i] !== "string") return false;
+  }
+  return true;
+};
+
 /** Parse the callable-symbol inventory `kuna functions --json` writes. */
 export const parseKunaInventory = (
   text: string,
@@ -203,6 +284,33 @@ export const parseKunaInventory = (
     value = JSON.parse(text);
   } catch {
     return err("the function inventory is not JSON");
+  }
+  if (isRecord(value) && Array.isArray(value.functions)) {
+    const rawFunctions: unknown[] = value.functions;
+    const functions: KunaInventoryFunction[] = new Array(rawFunctions.length);
+    let valid = true;
+    for (let i = 0; i < rawFunctions.length; i += 1) {
+      const entry = rawFunctions[i];
+      if (
+        !isRecord(entry) ||
+        typeof entry.name !== "string" ||
+        !isLowerHexPrefixed(entry.address_hex) ||
+        !isStringArray(entry.aliases) ||
+        typeof entry.size !== "number" ||
+        !Number.isSafeInteger(entry.size) ||
+        entry.size < 0
+      ) {
+        valid = false;
+        break;
+      }
+      functions[i] = {
+        name: entry.name,
+        address: entry.address_hex,
+        aliases: entry.aliases,
+        size: entry.size,
+      };
+    }
+    if (valid) return ok(functions);
   }
   const parsed = inventorySchema.safeParse(value);
   if (!parsed.success)

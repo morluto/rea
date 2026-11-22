@@ -27,20 +27,29 @@ export const registerProcessCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
-  registerCliCommand(cli, CLI_COMMANDS.captureProcess, {
-    description: "Capture one caller-selected process scenario",
-    args: z.object({
-      scenario: localPathStringSchema.describe("Scenario JSON path"),
-    }),
-    run: ({ args }) =>
-      withCommandCancellation((signal) =>
-        logCliCommand(logger, "capture-process", () =>
-          captureProcessScenarioFile(args.scenario, environment, signal).catch(
-            projectProcessCliInputCleanupError,
+  registerCliCommand(
+    cli,
+    CLI_COMMANDS.captureProcess,
+    {
+      description: "Capture one caller-selected process scenario",
+      args: z.object({
+        scenario: localPathStringSchema.describe("Scenario JSON path"),
+      }),
+      run: ({ args }) =>
+        withCommandCancellation((signal) =>
+          logCliCommand(logger, "capture-process", () =>
+            captureProcessScenarioFile(
+              args.scenario,
+              environment,
+              signal,
+            ).catch(projectProcessCliInputCleanupError),
           ),
         ),
-      ),
-  });
+    },
+    {
+      operations: [{ name: "capture_process_scenario", flags: {} }],
+    },
+  );
   registerContractCommand(
     cli as CliInstance,
     logger,

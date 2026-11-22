@@ -1,5 +1,5 @@
 import { readProcessInspectionFile } from "../ProcessInspectionFile.js";
-import { readdir } from "node:fs/promises";
+import { readdir, readlink } from "node:fs/promises";
 import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
 import type { ProcessLifecycle } from "../ProcessLifecycle.js";
 import {
@@ -29,10 +29,14 @@ export interface SampledProcessNode extends SampledProcessRow {
   readonly children: readonly number[] | undefined;
 }
 
+export type LinuxProcessStatRow = SampledProcessRow & {
+  readonly startTime: string;
+};
+
 export const readLinuxProcessStat = async (
   pid: number,
   signal: AbortSignal,
-): Promise<SamplingObservation<SampledProcessRow | undefined>> => {
+): Promise<SamplingObservation<LinuxProcessStatRow | undefined>> => {
   const path = `/proc/${String(pid)}/stat`;
   const read = await readProcSamplingSource(path, signal, () =>
     readProcessInspectionFile(path, signal),
@@ -141,29 +145,20 @@ export const readLinuxChildren = async (
   );
 };
 
-/** Identity brackets own attribution for both procfs and ps-discovered candidates. */
-const inspectStableLinuxProcess = async <T>(
-  pid: number,
-  expectedParent: number | undefined,
-  signal: AbortSignal,
-  identities: ReadonlyMap<number, string>,
-  readDetails: () => Promise<SamplingObservation<T>>,
+/** Attribute details to an initial Linux process observation only while its identity and parent agree. */
+export const readStableLinuxProcessDetails = async <T>(
+  before: SamplingObservation<LinuxProcessStatRow | undefined>,
+  readStat: () => Promise<SamplingObservation<LinuxProcessStatRow | undefined>>,
+  readDetails: (row: LinuxProcessStatRow) => Promise<SamplingObservation<T>>,
 ): Promise<
   SamplingObservation<
-    { readonly row: SampledProcessRow; readonly details: T } | undefined
+    { readonly row: LinuxProcessStatRow; readonly details: T } | undefined
   >
 > => {
-  const before = await readLinuxProcessStat(pid, signal);
-  if (before.value === undefined || before.value.startTime === undefined)
+  if (before.value === undefined)
     return samplingObservation(undefined, before.diagnostics);
-  const existing = identities.get(pid);
-  if (
-    (existing !== undefined && existing !== before.value.startTime) ||
-    (expectedParent !== undefined && before.value.parent_pid !== expectedParent)
-  )
-    return samplingObservation(undefined, before.diagnostics);
-  const details = await readDetails();
-  const after = await readLinuxProcessStat(pid, signal);
+  const details = await readDetails(before.value);
+  const after = await readStat();
   const diagnostics = mergeSamplingDiagnostics(
     before.diagnostics,
     details.diagnostics,
@@ -171,9 +166,9 @@ const inspectStableLinuxProcess = async <T>(
   );
   if (
     after.value === undefined ||
+    before.value.pid !== after.value.pid ||
     before.value.startTime !== after.value.startTime ||
-    before.value.parent_pid !== after.value.parent_pid ||
-    (expectedParent !== undefined && after.value.parent_pid !== expectedParent)
+    before.value.parent_pid !== after.value.parent_pid
   )
     return samplingObservation(undefined, diagnostics);
   return samplingObservation(
@@ -182,7 +177,30 @@ const inspectStableLinuxProcess = async <T>(
   );
 };
 
-const readLinuxCommand = async (
+/** Admit the first stat row against the capture's already-established lineage. */
+const inspectStableLinuxProcess = async <T>(
+  pid: number,
+  signal: AbortSignal,
+  lineage: {
+    readonly expectedParent: number | undefined;
+    readonly identities: ReadonlyMap<number, string>;
+  },
+  readDetails: () => Promise<SamplingObservation<T>>,
+) => {
+  const readStat = () => readLinuxProcessStat(pid, signal);
+  const before = await readStat();
+  const { expectedParent, identities } = lineage;
+  const existing = identities.get(pid);
+  if (
+    (existing !== undefined && existing !== before.value?.startTime) ||
+    (expectedParent !== undefined &&
+      before.value?.parent_pid !== expectedParent)
+  )
+    return samplingObservation(undefined, before.diagnostics);
+  return readStableLinuxProcessDetails(before, readStat, readDetails);
+};
+
+export const readLinuxCommand = async (
   pid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<string>> => {
@@ -196,6 +214,68 @@ const readLinuxCommand = async (
   );
 };
 
+/** Procfs file-descriptor operations remain injectable below error classification and composition. */
+export interface LinuxOpenFilesHost {
+  descriptors(pid: number, signal: AbortSignal): Promise<readonly string[]>;
+  readlink(
+    pid: number,
+    descriptor: string,
+    signal: AbortSignal,
+  ): Promise<string>;
+}
+
+const systemLinuxOpenFilesHost: LinuxOpenFilesHost = {
+  descriptors(pid) {
+    return readdir(`/proc/${String(pid)}/fd`);
+  },
+  readlink(pid, descriptor) {
+    return readlink(`/proc/${String(pid)}/fd/${descriptor}`);
+  },
+};
+
+/** Read named file targets from procfs. Callers attribute them through the process identity bracket. */
+export const readLinuxOpenFiles = async (
+  pid: number,
+  signal: AbortSignal,
+  host: LinuxOpenFilesHost = systemLinuxOpenFilesHost,
+): Promise<SamplingObservation<readonly string[]>> => {
+  const directory = `/proc/${String(pid)}/fd`;
+  const listing = await readProcSamplingSource(directory, signal, () =>
+    host.descriptors(pid, signal),
+  );
+  if (listing.value === undefined)
+    return samplingObservation([], listing.diagnostics);
+  const descriptors = listing.value;
+  if (descriptors.length === 0)
+    return samplingObservation([], listing.diagnostics);
+  const paths: string[] = [];
+  let diagnostics = listing.diagnostics;
+  let offset = 0;
+  for (
+    ;
+    offset < descriptors.length && !signal.aborted;
+    offset += PROC_READ_CONCURRENCY
+  ) {
+    const targets = await settleSamplingReads(
+      descriptors
+        .slice(offset, offset + PROC_READ_CONCURRENCY)
+        .map((descriptor) =>
+          readProcSamplingSource(`${directory}/${descriptor}`, signal, () =>
+            host.readlink(pid, descriptor, signal),
+          ),
+        ),
+    );
+    for (const target of targets) {
+      diagnostics = mergeSamplingDiagnostics(diagnostics, target.diagnostics);
+      if (target.value?.startsWith("/"))
+        paths.push(target.value.replace(/ \(deleted\)$/u, ""));
+    }
+  }
+  if (offset < descriptors.length && signal.aborted)
+    diagnostics = mergeSamplingDiagnostics(diagnostics, samplingInterrupted());
+  return samplingObservation(paths, diagnostics);
+};
+
 /** Inspect a ps-discovered PID without trusting ps for Linux identity or command. */
 export const inspectLinuxProcessMetadata = async (
   pid: number,
@@ -205,9 +285,8 @@ export const inspectLinuxProcessMetadata = async (
 ): Promise<SamplingObservation<SampledProcessRow | undefined>> => {
   const observed = await inspectStableLinuxProcess(
     pid,
-    expectedParent,
     signal,
-    identities,
+    { expectedParent, identities },
     () => readLinuxCommand(pid, signal),
   );
   return samplingObservation(
@@ -230,9 +309,8 @@ export const inspectLinuxProcess = async (
 ): Promise<SamplingObservation<SampledProcessNode | undefined>> => {
   const observed = await inspectStableLinuxProcess(
     pid,
-    expectedParent,
     signal,
-    identities,
+    { expectedParent, identities },
     async () => {
       const [command, children] = await settleSamplingReads([
         readLinuxCommand(pid, signal),

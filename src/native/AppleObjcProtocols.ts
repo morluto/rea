@@ -39,10 +39,10 @@ export const createObjcProtocolReader = (input: {
   const visited = new Set<bigint>();
   const name = (address: bigint) => read.string(read.pointer(address + 8n));
   /** Own the list pointer field as well as the list's count and entries. */
-  const readList = (
+  function* protocolEntries(
     field: bigint,
     onTruncated?: () => void,
-  ): ObjcProtocolListResult => {
+  ): Generator<bigint, ObjcProtocolListResult, void> {
     const names: string[] = [];
     try {
       const address = read.pointer(field);
@@ -61,7 +61,7 @@ export const createObjcProtocolReader = (input: {
         }
         const protocol = read.pointer(address + 8n + index * 8n);
         names.push(name(protocol));
-        record(protocol);
+        yield protocol;
       }
       return ok(names);
     } catch (cause: unknown) {
@@ -72,7 +72,7 @@ export const createObjcProtocolReader = (input: {
         reason: errorMessage(cause),
       });
     }
-  };
+  }
   const methods = (
     address: bigint,
     required: boolean,
@@ -122,7 +122,7 @@ export const createObjcProtocolReader = (input: {
     }
     return output;
   };
-  const record = (address: bigint) => {
+  function* readProtocol(address: bigint): Generator<bigint, void, void> {
     if (address === 0n || visited.has(address) || !read.admit()) return;
     visited.add(address);
     try {
@@ -139,7 +139,7 @@ export const createObjcProtocolReader = (input: {
       const onTruncated = () => {
         budgetTruncated = true;
       };
-      const adopted = readList(address + 16n, onTruncated);
+      const adopted = yield* protocolEntries(address + 16n, onTruncated);
       if (!adopted.ok)
         failures.push(
           `Protocol 0x${address.toString(16)} adopted protocol list: ${adopted.error.reason}`,
@@ -240,6 +240,32 @@ export const createObjcProtocolReader = (input: {
       failures.push(
         `Protocol 0x${address.toString(16)}: ${errorMessage(cause)}`,
       );
+    }
+  }
+
+  /** Resume each declaration after its adopted declarations finish. */
+  const record = (address: bigint): void => {
+    const pending = [readProtocol(address)];
+    for (
+      let current = pending.at(-1);
+      current !== undefined;
+      current = pending.at(-1)
+    ) {
+      const next = current.next();
+      if (next.done) pending.pop();
+      else pending.push(readProtocol(next.value));
+    }
+  };
+
+  const readList = (
+    field: bigint,
+    onTruncated?: () => void,
+  ): ObjcProtocolListResult => {
+    const entries = protocolEntries(field, onTruncated);
+    for (;;) {
+      const next = entries.next();
+      if (next.done) return next.value;
+      record(next.value);
     }
   };
   return { readList, record };

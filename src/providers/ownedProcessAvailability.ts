@@ -2,7 +2,10 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
-import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import {
+  OwnedCommandFailure,
+  preparationHostCapacityFailure,
+} from "../process/OwnedCommand.js";
 import {
   DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
@@ -54,6 +57,7 @@ const darwinPrerequisiteRefusal = (
     current = current.preparationFailure;
   }
   return current instanceof DarwinProcessOwnershipInspectionError &&
+    preparationHostCapacityFailure(current) === undefined &&
     current.cleanupFailure === undefined &&
     current.cleanupOwner === undefined &&
     current.cancellation === undefined

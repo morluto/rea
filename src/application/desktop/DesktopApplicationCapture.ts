@@ -22,6 +22,7 @@ import {
   checkpointTaken,
   type DesktopApplicationCapture,
   type DesktopCaptureEvent,
+  type DesktopCheckpoint,
   type DesktopSession,
 } from "../../domain/desktop/desktopCapture.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -216,7 +217,8 @@ const admit = async (
     signal,
   );
   if (!inspected.ok) throw applicationRefusal(inspected.error);
-  const { inventory, limitations, signingKeys } = inspected.value;
+  const { inventory, envProgramIndex, limitations, signingKeys } =
+    inspected.value;
   const windows = host.desktop.observeWindows(xprop, host.environment);
   const windowMatching = applicationWindowMatching(inventory);
   const running = await host.desktop.runningApplicationWindows(
@@ -240,6 +242,7 @@ const admit = async (
     home: await canonicalCallerPath(home),
     output: prepared.path,
     inventory,
+    envProgramIndex,
     limitations,
     signingKeys,
     windows,
@@ -269,9 +272,17 @@ const recordCapture = async (
     store,
   );
   const recorder = new CheckpointRecorder(scope, store, host.desktop.walkHome);
-  const acknowledge = async (titles: readonly string[] = []) => {
-    const taken = recorder.checkpoints.at(-1);
-    if (taken === undefined) return;
+  let committedOmissions = 0;
+  const recordCheckpoint = async (
+    name: string,
+    trigger: DesktopCheckpoint["trigger"],
+    atMs: number,
+    titles: readonly string[] = [],
+  ) => {
+    const taken = await recorder.record(name, trigger, atMs, signal);
+    // A cancelled walk can leave observations in the content store that
+    // have no published checkpoint to establish when they were observed.
+    committedOmissions = store.omissions.length;
     const event = checkpointTaken(
       taken,
       home,
@@ -284,11 +295,13 @@ const recordCapture = async (
     );
   };
   await host.report("Recording the starting state.");
-  await recorder.record("baseline", "baseline", 0, signal);
-  await acknowledge();
+  await recordCheckpoint("baseline", "baseline", 0);
   await host.report(`Launching ${inventory.argv.join(" ")}.`);
   const outcome = await host.desktop.runSession({
     argv: inventory.argv,
+    ...(admitted.envProgramIndex === undefined
+      ? {}
+      : { envProgramIndex: admitted.envProgramIndex }),
     workingDirectory: inventory.working_directory,
     environment: host.environment,
     windows: admitted.windows,
@@ -300,8 +313,7 @@ const recordCapture = async (
     checkpoint: async (name, trigger, atMs, seen) => {
       await host.report(`Recording checkpoint ${name}.`);
       recorder.openedFiles = seen.openedFiles;
-      await recorder.record(name, trigger, atMs, signal);
-      await acknowledge(seen.titles);
+      await recordCheckpoint(name, trigger, atMs, seen.titles);
     },
     report: host.report,
     signal,
@@ -331,7 +343,7 @@ const recordCapture = async (
       checkpoints: recorder.checkpoints,
       content_files: store.files,
       content_bytes: store.bytes,
-      omitted_content: [...store.omissions],
+      omitted_content: store.omissions.slice(0, committedOmissions),
       unretained_opened_directories: [...unretained],
     },
     limitations: [

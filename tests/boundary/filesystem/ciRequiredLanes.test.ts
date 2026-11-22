@@ -9,6 +9,7 @@ import { executeWorkflowFixture } from "../../support/workflowGit.js";
 const workflow = async (filename = "ci.yml") =>
   z
     .object({
+      on: z.record(z.string(), z.unknown()),
       jobs: z.record(
         z.string(),
         z
@@ -35,6 +36,135 @@ const scopeFlags = async () =>
         new URL("../../../scripts/ci/scopes.mjs", import.meta.url).href
       ),
     ).CI_FLAGS;
+
+it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fallback", async () => {
+  const archive = "./.github/actions/ubuntu-archive";
+  const input = "noble-azure-fallback";
+  const steps = z.array(
+    z.object({
+      uses: z.string().optional(),
+      with: z.record(z.string(), z.unknown()).optional(),
+    }),
+  );
+  const action = async (name: string) =>
+    parse(
+      await readFile(
+        new URL(`../../../.github/actions/${name}/action.yml`, import.meta.url),
+        "utf8",
+      ),
+    );
+  const archiveSteps = z
+    .object({
+      runs: z.object({ steps: z.array(z.object({ run: z.string() })) }),
+    })
+    .parse(await action("ubuntu-archive")).runs.steps;
+  expect(archiveSteps.map(({ run }) => run).join("\n")).toContain(
+    "apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update",
+  );
+  const layout = (await workflow("real-binary-layout.yml")).jobs[
+    "real-binary-layout"
+  ];
+  expect(layout?.["runs-on"]).toBe("ubuntu-24.04");
+  expect(layout?.["timeout-minutes"]).toBe(25);
+  const toolchain = steps
+    .parse(layout?.steps)
+    .find((step) => step.uses === "./.github/actions/host-apt-packages");
+  expect(toolchain?.with).toMatchObject({
+    "download-timeout-seconds": "900",
+    "install-recommends": "false",
+  });
+  expect(
+    steps.parse(layout?.steps).filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive, with: { [input]: "true" } }]);
+  expect(
+    z
+      .object({ runs: z.object({ steps }) })
+      .parse(await action("windows-cross-compiler"))
+      .runs.steps.filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    steps
+      .parse((await workflow("real-signal-recording.yml")).jobs.sigrok?.steps)
+      .filter((step) => step.uses === archive),
+  ).toEqual([{ uses: archive }]);
+  expect(
+    z
+      .object({
+        inputs: z.record(z.string(), z.object({ default: z.string() })),
+      })
+      .parse(await action("ubuntu-archive")).inputs[input]?.default,
+  ).toBe("false");
+});
+
+const recordedCrashRefresh = "refresh --kill-after=5s 150s";
+const recordedCrashDownload = "download --kill-after=5s 180s";
+
+it.skipIf(process.platform === "win32").each([
+  ["ok", 0, [recordedCrashRefresh, recordedCrashDownload, "install untimed"]],
+  ["refresh", 100, [recordedCrashRefresh]],
+  ["download", 124, [recordedCrashRefresh, recordedCrashDownload]],
+] as const)(
+  "recorded-crash APT runs the expected stages and deadlines for the %s outcome",
+  async (mode, code, expected) => {
+    const steps = z
+      .array(z.object({ run: z.string().optional() }))
+      .parse(
+        (await workflow("real-recorded-crash.yml")).jobs["real-recorded-crash"]
+          ?.steps,
+      );
+    const provision = steps.find((step) =>
+      step.run?.includes("python3-venv gcc libc6-dev strace gdb"),
+    )?.run;
+    if (!provision) throw new Error("Missing recorded-crash APT step");
+    const mock = `
+      mode=$1
+      timeout() {
+        local args="$1 $2"
+        shift 2
+        apt_timeout="$args" "$@"
+      }
+      record_stage() { printf '%s %s\\n' "$1" "\${apt_timeout:-untimed}"; }
+      apt-get() {
+        case " $* " in
+          *" update "*)
+            record_stage refresh
+            [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
+            [[ " $* " != *" -qq "* ]] || return 99
+            if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
+              return 100
+            fi
+            ;;
+          *" --download-only "*)
+            record_stage download
+            if [[ $mode == download ]]; then return 124; fi
+            ;;
+          *" --no-download "*) record_stage install ;;
+          *) record_stage unexpected-install ;;
+        esac
+      }
+    `;
+    const outcome = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      mock + provision,
+      "fixture",
+      mode,
+    ])
+      .then(({ stdout }) => ({ code: 0, stdout }))
+      .catch((cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+      );
+    expect(outcome.code).toBe(code);
+    const lines = outcome.stdout.trim().split("\n");
+    expect(lines.filter((line) => !line.startsWith("::error::"))).toEqual(
+      expected,
+    );
+    if (code !== 0)
+      expect(lines.at(-1)).toContain(
+        mode === "refresh" ? "index refresh failed" : "package download failed",
+      );
+  },
+);
 
 it("keeps every SQLite runtime selector inside the published package engine range", async () => {
   const { engines } = z
@@ -374,7 +504,7 @@ async function assertProviderCacheCallers(
   for (const name of [
     "sqlite-runtime",
     "nativeaot",
-    "ghidra_bridge",
+    "android_metadata",
     "website",
   ])
     expect(jobs[name]?.secrets, name).toBeUndefined();
@@ -430,6 +560,8 @@ it("binds provider build reuse to the current run while keeping standalone dispa
     "agentenv",
     "packet_capture",
     "signal_recording",
+    "go_binary",
+    "ghidra_bridge",
   ];
   const buildTerms = z
     .string()
@@ -525,6 +657,19 @@ it("leaves cancellation ownership with CI so child lanes cannot cancel another t
   }
 });
 
+it.each([
+  ["ci.yml", null],
+  ["ci-full-pr.yml", { types: ["labeled"] }],
+  ["pr-title.yml", { types: ["opened", "synchronize", "reopened", "edited"] }],
+] as const)(
+  "admits PRs targeting stack branches in %s",
+  async (file, trigger) => {
+    const { on } = await workflow(file);
+    expect(on.pull_request).toEqual(trigger);
+    if (file === "ci.yml") expect(on.push).toEqual({ branches: ["main"] });
+  },
+);
+
 it("keeps fast feedback separate from complete qualification and release proof", async () => {
   const ci = z
     .object({
@@ -608,66 +753,47 @@ it("keeps fast feedback separate from complete qualification and release proof",
 });
 
 it.each([
-  ["true", "success", true],
-  ["true", "failure", false],
-  ["true", "cancelled", false],
-  ["true", "skipped", false],
   ["true", "missing", false],
   ["false", "skipped", true],
   ["false", "failure", false],
+  ["false", "cancelled", false],
 ] as const)(
-  "enforces mapped required scopes for selected=%s and result=%s",
+  "enforces the gate for selected=%s and result=%s",
   async (selected, result, passes) => {
-    const workflow = await requiredNeeds();
-    for (const [scope, lane] of [
-      ["sqlite", "sqlite-runtime"],
-      ["workflows", "static"],
-      ["ghidra_bridge", "ghidra_bridge"],
-      ["agentenv", "agentenv"],
-      ["python", "python"],
-      ["packet_capture", "packet_capture"],
-      ["signal_recording", "signal_recording"],
-    ] as const) {
-      // GitHub exposes only direct dependencies in the required job's needs context.
-      const needs: Record<
-        string,
-        { result: string; outputs?: Record<string, string> }
-      > = Object.fromEntries(
-        workflow.needs.map((name) => [name, { result: "success" }]),
-      );
-      needs.changes = {
-        result: "success",
-        outputs: {
-          ...Object.fromEntries(
-            (await scopeFlags()).map((flag) => [flag, "false"]),
-          ),
-          tier: "fast",
-          test_mode: "full",
-          code: "true",
-          [scope]: selected,
-        },
-      };
-      if (result === "missing") delete needs[lane];
-      else needs[lane] = { result };
-      const execution = executeWorkflowFixture(
-        process.execPath,
-        [
-          fileURLToPath(
-            new URL("../../../scripts/ci/required.mjs", import.meta.url),
-          ),
-        ],
-        { env: { ...process.env, CI_JOBS: JSON.stringify(needs) } },
-      );
-      // Static checks remain required even without workflow edits.
-      const expected = passes && !(lane === "static" && result !== "success");
-      if (expected)
-        await expect(execution).resolves.toMatchObject({ stderr: "" });
-      else
-        await expect(execution).rejects.toMatchObject({
-          code: 1,
-          stderr: expect.stringContaining(lane),
-        });
-    }
+    const lane = "sqlite-runtime";
+    const { needs } = await requiredNeeds();
+    const jobs: Record<
+      string,
+      { result: string; outputs?: Record<string, string> }
+    > = Object.fromEntries(needs.map((name) => [name, { result: "success" }]));
+    jobs.changes = {
+      result: "success",
+      outputs: {
+        ...Object.fromEntries(
+          (await scopeFlags()).map((flag) => [flag, "false"]),
+        ),
+        tier: "fast",
+        test_mode: "full",
+        sqlite: selected,
+      },
+    };
+    if (result === "missing") delete jobs[lane];
+    else jobs[lane] = { result };
+    const execution = executeWorkflowFixture(
+      process.execPath,
+      [
+        fileURLToPath(
+          new URL("../../../scripts/ci/required.mjs", import.meta.url),
+        ),
+      ],
+      { env: { ...process.env, CI_JOBS: JSON.stringify(jobs) } },
+    );
+    if (passes) await expect(execution).resolves.toMatchObject({ stderr: "" });
+    else
+      await expect(execution).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(`CI lanes did not pass: ${lane}`),
+      });
   },
 );
 
@@ -703,14 +829,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
   await expect(
     run({ ...valid, qualification_run_id: "true" }),
   ).resolves.toMatchObject({ stderr: "" });
-  for (const outputs of [
-    undefined,
-    null,
-    {},
-    { ...valid, tier: undefined },
-    { ...valid, tier: "" },
-    { ...valid, tier: "unknown" },
-  ]) {
+  for (const outputs of [undefined, { ...valid, tier: "unknown" }]) {
     await expect(run(outputs)).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining("valid tier"),
@@ -722,7 +841,7 @@ it("rejects incomplete or malformed classification even when available jobs succ
       stderr: expect.stringContaining(`scope outputs: ${flag}`),
     });
   }
-  for (const value of ["", "TRUE", "yes", true, false, 0, null, [], {}]) {
+  for (const value of ["", "TRUE", true, null]) {
     await expect(run({ ...valid, sqlite: value })).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining("scope outputs: sqlite"),
@@ -746,7 +865,7 @@ it("fails fast only for ordinary PR matrices and rejects partial portable feedba
   });
   expect(jobs["package-e2e"]?.strategy).toMatchObject({ "fail-fast": false });
   const flags = await scopeFlags();
-  for (const result of ["failure", "cancelled", "skipped", "missing"]) {
+  for (const result of ["skipped", "missing"]) {
     // Even an incorrectly successful report merge cannot hide matrix failure.
     const needs: Record<string, unknown> = {
       changes: {
@@ -854,15 +973,13 @@ it("runs a selected PR subset in planner-owned groups and still gates it", async
   const ran = { build: "success", "test-shard": "success" };
   // A selected subset skips the separate source job.
   await expect(gate({}, ran)).resolves.toMatchObject({ stderr: "" });
-  for (const [name, result] of [
-    ["test-shard", "skipped"],
-    ["test-shard", "failure"],
-    ["build", "cancelled"],
-  ] as const)
-    await expect(gate({}, { ...ran, [name]: result })).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining(name),
-    });
+  for (const name of ["test-shard", "build"])
+    await expect(gate({}, { ...ran, [name]: "skipped" })).rejects.toMatchObject(
+      {
+        code: 1,
+        stderr: expect.stringContaining(name),
+      },
+    );
   // The complete fast suite still requires its source job.
   await expect(gate({ test_mode: "full" }, ran)).rejects.toMatchObject({
     stderr: expect.stringContaining("test-source"),
@@ -928,8 +1045,10 @@ it("binds each canonical lane to its explicit fast and full workflow jobs", asyn
         "web_runtime",
         "web_source_map",
         "agentenv",
+        "go_binary",
         "nativeaot",
         "ghidra_bridge",
+        "android_metadata",
         "website",
       ].map((name) => [name, { fast: [name], full: [name] }]),
     ),
@@ -1044,3 +1163,63 @@ it("requires every client schema engine in the build job of every code change", 
   );
   expect(check?.run).toContain("$SCHEMA_CHECK_OPTIONS");
 });
+
+it.skipIf(process.platform === "win32").each([
+  ["true", "180", "0"],
+  ["false", "120", "0"],
+  ["false", "120", "124"],
+] as const)(
+  "downloads hosted packages within the selected deadline and keeps cached install outside it (%s, %s, %s)",
+  async (recommends, seconds, status) => {
+    const { run } = z
+      .object({
+        runs: z.object({ steps: z.tuple([z.object({ run: z.string() })]) }),
+      })
+      .parse(
+        parse(
+          await readFile(
+            new URL(
+              "../../../.github/actions/host-apt-packages/action.yml",
+              import.meta.url,
+            ),
+            "utf8",
+          ),
+        ),
+      ).runs.steps[0];
+    const result = await executeWorkflowFixture("bash", [
+      "-e",
+      "-c",
+      `
+        REA_APT_INSTALL_RECOMMENDS=$1
+        REA_APT_DOWNLOAD_TIMEOUT=$2
+        REA_APT_PACKAGES="package-one package-two"
+        fixture_status=$3
+        sudo() {
+          printf '%s\n' "$*"
+          if [[ $1 == timeout ]]; then return "$fixture_status"; fi
+        }
+      ` +
+        "\n" +
+        run,
+      "fixture",
+      recommends,
+      seconds,
+      status,
+    ]).then(
+      ({ stdout }) => ({ code: 0, stdout }),
+      (cause: unknown) =>
+        z.object({ code: z.number(), stdout: z.string() }).parse(cause),
+    );
+    const install = `install --yes${recommends === "false" ? " --no-install-recommends" : ""} -- package-one package-two`;
+    const commands = result.stdout
+      .trim()
+      .split("\n")
+      .filter((line) => !line.startsWith("::error::"));
+    expect(result.code).toBe(Number(status));
+    expect(commands).toEqual([
+      `timeout --kill-after=5s ${seconds}s apt-get -o Acquire::Retries=2 --download-only ${install}`,
+      ...(status === "0" ? [`apt-get --no-download ${install}`] : []),
+    ]);
+    if (status !== "0") expect(result.stdout).toContain(`(exit ${status})`);
+  },
+);

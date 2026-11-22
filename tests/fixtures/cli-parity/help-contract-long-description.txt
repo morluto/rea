@@ -10,7 +10,7 @@ Arguments:
   address  Procedure name or address. Supply at least one of the positional address or --procedure. Alternatively, use --file-offset alone.
 
 Options:
-  --analysis <independent_fresh>                     Request a new independent decompile, bypassing project and snapshot results. Use only when the routed provider's procedure_pseudo_code capability declares independent_decompile; otherwise the request is refused. This may use different analysis context.
+  --analysis <independent_fresh|call_destination>    Select standalone analysis. independent_fresh requires independent_decompile. call_destination requires call_destination_decompile and an exact address.
   --detail <complete|summary>                        Deliver complete Evidence, or a summary with --evidence_output (default: complete)
   --snapshot <string>                                Load and update a local analysis snapshot
   --target-format <dos-com|raw-binary|gamecube-dol>  Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection
@@ -29,6 +29,7 @@ Global Options:
   --format <toon|json|yaml|md|jsonl|csv|tsv>  Output format
   --full-output                               Show full output envelope
   --help                                      Show help
+  --json                                      Shorthand for --format json
   --llms, --llms-full                         Print LLM-readable manifest
   --schema                                    Show JSON Schema for command
   --token-count                               Print token count of output (instead of output)

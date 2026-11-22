@@ -1,3 +1,9 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
+
+import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
+import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
+import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
 import type { AdbDeviceAnalysisService } from "../application/adb/AdbDeviceAnalysisService.js";
 import type { AnalysisSettings } from "../application/AnalysisSettings.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
@@ -34,6 +40,7 @@ import type { AppleIpsService } from "../application/binaryDiagnostics/AppleIpsS
 import type { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import type { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import type { DevicetreeService } from "../application/binaryDiagnostics/DevicetreeService.js";
+import type { ElfDebugLinkService } from "../application/binaryDiagnostics/ElfDebugLinkService.js";
 import type { ElfNotesService } from "../application/binaryDiagnostics/ElfNotesService.js";
 import type { ElfUnwindRangesService } from "../application/binaryDiagnostics/ElfUnwindRangesService.js";
 import type { KernelBuildConfigService } from "../application/binaryDiagnostics/KernelBuildConfigService.js";
@@ -127,7 +134,7 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -441,7 +448,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 
@@ -449,7 +456,7 @@ const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
 const jsonValueResult = <Error>(
   result: Result<unknown, Error>,
 ): Result<JsonValue, Error> =>
-  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
+  result.ok ? ok(ownedJsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,
@@ -492,6 +499,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<ElfNotesService>,
+  elfDebugLink: ((service) => ({
+    inspect_elf_debug_link: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDebugLinkService>,
   nativeInitializers: ((service) => ({
     inspect_native_initializers: {
       admission: "sdk",
@@ -606,6 +619,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options, retention),
     },
   })) satisfies Bind<RustBinaryService>,
+  nugetNupkg: ((service) => ({
+    inspect_nuget_nupkg: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<NugetNupkgService>,
   pythonPyc: ((service) => ({
     inspect_python_pyc: {
       admission: "application",
@@ -683,6 +702,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
@@ -846,6 +871,24 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  mavenGradleMetadata: ((service) => ({
+    inspect_maven_gradle_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MavenGradleMetadataService>,
+  dwarfUnits: ((service) => ({
+    inspect_dwarf_units: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<DwarfUnitsService>,
+  elfDependencies: ((service) => ({
+    inspect_elf_dependencies: {
+      admission: "application",
+      summary: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<ElfDependenciesService>,
   guidance: ((resources) => ({
     search_guidance: {
       admission: "application",
@@ -2124,7 +2167,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

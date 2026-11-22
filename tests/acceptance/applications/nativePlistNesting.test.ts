@@ -98,7 +98,10 @@ describe.skipIf(process.platform !== "darwin")(
               retryable: false,
               details: {
                 resource: "memory",
-                reported_limits: { maximum_nesting_depth: 997 },
+                reported_limits: {
+                  boundary: "plist-nesting-depth",
+                  maximum: 997,
+                },
               },
               remediation: {
                 action: expect.stringMatching(/\S/u),
@@ -115,7 +118,13 @@ describe.skipIf(process.platform !== "darwin")(
             const captured_output = {
               exit_code: native.exitCode,
               stdout: native.stdout,
-              stderr: native.stderr,
+              // Native commands inspect a private snapshot, so they can name
+              // a different operand in raw diagnostics.
+              stderr: native.stderr.includes(path)
+                ? expect.stringContaining(
+                    native.stderr.replace(path, "").trim(),
+                  )
+                : native.stderr,
             };
             // The CLI selects the plist as its target; MCP selects it with
             // the `path` input. Each failure names the input that chose it.

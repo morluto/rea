@@ -63,6 +63,9 @@ import {
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
 
+/** A completed upstream tool reply that reported failure, as opposed to an unreadable or missing reply. */
+export class IdaToolRejection extends AnalysisProtocolError {}
+
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
   connect(): Promise<readonly string[]>;
@@ -200,14 +203,14 @@ const parseIdaTextReply = (text: string): JsonValue => {
  */
 export const decodeIdaToolResult = (
   input: unknown,
-  protocol?: "native",
+  protocol?: "native" | "hexrays",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
   if (result.isError === true) {
     const reason = diagnostic.blocks(blocks);
-    throw new AnalysisProtocolError(
+    throw new IdaToolRejection(
       diagnostic.message("IDA MCP tool failed: ", reason),
       {
         diagnostics: { reason },
@@ -710,7 +713,18 @@ export const createIdaMcpConnection = (
     async connect() {
       await client
         .connect(transport, { timeout: config.timeoutMs })
-        .catch((cause: unknown) => transportFailure(cause, "ida_mcp_connect"));
+        .catch(async (cause: unknown) => {
+          // A launcher can close stdin before its diagnostic reaches stderr.
+          // Join the SDK's bounded teardown before taking the diagnostic snapshot.
+          if (
+            stdio !== undefined &&
+            cause instanceof Error &&
+            "code" in cause &&
+            cause.code === "EPIPE"
+          )
+            await stdio.close();
+          return transportFailure(cause, "ida_mcp_connect");
+        });
       const catalog = await client
         .listTools(undefined, {
           timeout: config.timeoutMs,

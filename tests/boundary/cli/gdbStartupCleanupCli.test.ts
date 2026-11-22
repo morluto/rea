@@ -1,3 +1,5 @@
+import { createCommandCli } from "../../support/cli/commandCli.js";
+import { cliCommand } from "../../../src/cli/commandRegistry.js";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { spawnFailure } from "../../support/process/spawnFailure.js";
@@ -9,45 +11,15 @@ import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
 import { CLI_COMMANDS } from "../../../src/contracts/cliCommandNames.js";
-import type { CliInstance } from "../../../src/cli/types.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { answerFakeGdbStartup } from "../providers/gdbTestHelpers.js";
 
-const registerGdbCommand = (
-  createManager: () => GdbSessionManager,
-): {
-  run(input: {
-    args: { command: string };
-    options: { inferiorTty: string };
-  }): Promise<unknown>;
-} => {
-  const commands = new Map<
-    string,
-    {
-      run(input: {
-        args: { command: string };
-        options: { inferiorTty: string };
-      }): Promise<unknown>;
-    }
-  >();
-  const cli = {
-    command: (
-      name: string,
-      definition: {
-        run(input: {
-          args: { command: string };
-          options: { inferiorTty: string };
-        }): Promise<unknown>;
-      },
-    ) => {
-      commands.set(name, definition);
-      return cli;
-    },
-  } as unknown as CliInstance;
+const registerGdbCommand = (createManager: () => GdbSessionManager) => {
+  const cli = createCommandCli();
   registerReverseEngineeringCommands(cli, pino({ enabled: false }), {}, () =>
     createManager(),
   );
-  const command = commands.get(CLI_COMMANDS.debugWithGdb);
+  const command = cliCommand(cli, CLI_COMMANDS.debugWithGdb)?.definition;
   if (command === undefined)
     throw new Error("GDB CLI command was not registered");
   return command;
@@ -67,6 +39,7 @@ it.each([
   } as unknown as GdbSessionManager;
   const command = registerGdbCommand(() => manager);
   const result = await command.run({
+    formatExplicit: false,
     args: { command: inputCommand },
     options: { inferiorTty: "/dev/pts/42" },
   });
@@ -97,6 +70,7 @@ it("retries retained GDB cleanup when CLI session startup fails", async () => {
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -125,6 +99,7 @@ it("marks the CLI failed when retained GDB cleanup remains incomplete", async ()
 
   try {
     const result = await command.run({
+      formatExplicit: false,
       args: { command: "info files" },
       options: { inferiorTty: "/dev/pts/42" },
     });
@@ -158,6 +133,7 @@ it.each(["ENOENT", "EACCES", "EPERM"] as const)(
     const previousExitCode = process.exitCode;
     try {
       const result = await command.run({
+        formatExplicit: false,
         args: { command: "show version" },
         options: { inferiorTty: "/dev/pts/42" },
       });
@@ -293,6 +269,7 @@ it.each(["incomplete", "interrupt", "control"] as const)(
     try {
       process.exitCode = 0;
       const result = await command.run({
+        formatExplicit: false,
         args: { command: "info files" },
         options: { inferiorTty: "/dev/pts/7" },
       });

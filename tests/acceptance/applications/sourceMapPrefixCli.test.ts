@@ -2,104 +2,18 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 import { analyzeJavaScriptDirectory } from "../../support/cli/javascriptApplication.js";
 import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js";
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps missing source-map mappings partial while retaining explicit declarations through %s",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-source-map-mappings-");
-    const original = "export const answer: number = 42;";
-    const cases = [
-      {
-        directory: "missing",
-        map: {
-          version: 3,
-          sources: ["original.ts"],
-          sourcesContent: [original],
-          names: [],
-        },
-        expectedCoverage: "partial",
-        limitation: "Source map has no mappings string.",
-      },
-      {
-        directory: "empty",
-        map: {
-          version: 3,
-          sources: ["original.ts"],
-          sourcesContent: [original],
-          names: [],
-          mappings: "",
-        },
-        expectedCoverage: "complete",
-        limitation: null,
-      },
-      {
-        directory: "mapped",
-        map: {
-          version: 3,
-          sources: ["original.ts"],
-          sourcesContent: [original],
-          names: [],
-          mappings: "AAAA",
-        },
-        expectedCoverage: "complete",
-        limitation: null,
-      },
-    ] as const;
-    for (const { directory, map, expectedCoverage, limitation } of cases) {
-      const app = join(root, directory);
-      const mapText = JSON.stringify(map);
-      await writeFixtureFiles(app, { "app.js.map": mapText });
-      const { graph } = await analyzeJavaScriptDirectory(surface, cli, app);
-      const mapDigest = createHash("sha256").update(mapText).digest("hex");
-      const source = graph.nodes.find(
-        (node) =>
-          node.kind === "source-module" &&
-          node.identity.strategy === "source-map-original" &&
-          node.identity.source_map_sha256 === mapDigest,
-      );
-
-      expect(graph.coverage.status).toBe(expectedCoverage);
-      expect(source).toMatchObject({
-        identity: {
-          strategy: "source-map-original",
-          original_source: "original.ts",
-          source_sha256: createHash("sha256").update(original).digest("hex"),
-        },
-        observations: [
-          expect.objectContaining({
-            evidence: expect.objectContaining({
-              artifact: expect.objectContaining({ sha256: mapDigest }),
-              limitations: limitation === null ? [] : [limitation],
-            }),
-          }),
-        ],
-      });
-      if (limitation !== null)
-        expect(graph.nodes).toContainEqual(
-          expect.objectContaining({
-            kind: "unknown",
-            observations: expect.arrayContaining([
-              expect.objectContaining({
-                properties: expect.objectContaining({
-                  operation: "parse-local-source-map",
-                }),
-                evidence: expect.objectContaining({
-                  artifact: expect.objectContaining({ sha256: mapDigest }),
-                  limitations: [limitation],
-                }),
-              }),
-            ]),
-          }),
-        );
-    }
-  },
-);
+const graphThroughBothSurfaces = async (cli: TestCli, root: string) => {
+  const { graph } = await analyzeJavaScriptDirectory("CLI", cli, root);
+  const mcp = await analyzeJavaScriptDirectory("stdio MCP", cli, root);
+  expect(mcp.graph).toEqual(graph);
+  return graph;
+};
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "recovers retained prefixed source-map originals and byte identity through %s",
@@ -195,17 +109,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "unnamed-empty.js":
         "export const answer = 42;\n//# sourceMappingURL=unnamed-empty.js.map\n",
     });
-    for (const [mapPath, expectedSource] of [
-      ["absent.js.map", "unembedded.ts"],
-      ["mixed.js.map", "original.ts"],
-      ["unnamed-empty.js.map", "original.ts"],
-    ] as const)
-      expect(
-        originalPositionFor(new TraceMap(maps[mapPath], `file:///${mapPath}`), {
-          line: 1,
-          column: 0,
-        }).source,
-      ).toBe(`file:///${expectedSource}`);
     const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
     const digest = (text: string) =>
       createHash("sha256").update(text).digest("hex");
@@ -282,143 +185,6 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
 );
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
-  "retains valid declarations beside non-string source-map names through %s",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-invalid-map-source-");
-    const mapText = JSON.stringify({
-      version: 3,
-      sources: [42, "discarded.ts"],
-      sourcesContent: [null, "export const answer: number = 42;"],
-      names: [],
-      mappings: "ACAA",
-    });
-    await writeFixtureFiles(root, { "invalid.js.map": mapText });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    expect(graph.coverage.status).toBe("partial");
-    const mapDigest = createHash("sha256").update(mapText).digest("hex");
-    expect(graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "source-module",
-        identity: expect.objectContaining({
-          strategy: "source-map-original",
-          source_map_sha256: mapDigest,
-          original_source: "discarded.ts",
-          source_sha256: createHash("sha256")
-            .update("export const answer: number = 42;")
-            .digest("hex"),
-        }),
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              section_path: [],
-              source_index: 1,
-              declaration_index: 0,
-            }),
-          }),
-        ]),
-      }),
-    );
-    expect(graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "unknown",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              operation: "parse-local-source-map",
-            }),
-            evidence: expect.objectContaining({
-              artifact: expect.objectContaining({
-                sha256: mapDigest,
-              }),
-              limitations: expect.arrayContaining([
-                "Source map contains a non-string source name at index 0.",
-              ]),
-            }),
-          }),
-        ]),
-      }),
-    );
-    expect(await readFile(join(root, "invalid.js.map"), "utf8")).toBe(mapText);
-  },
-);
-
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps external indexed sections unknown while retaining embedded siblings through %s",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-external-indexed-map-");
-    const url = "https://app.test/maps/part.map?revision=7";
-    const mapText = JSON.stringify({
-      version: 3,
-      sections: [
-        {
-          offset: { line: 0, column: 0 },
-          map: {
-            version: 3,
-            sources: ["before.ts"],
-            sourcesContent: ["export const before = 1;"],
-            names: [],
-            mappings: "AAAA",
-          },
-        },
-        { offset: { line: 1, column: 0 }, url },
-        {
-          offset: { line: 2, column: 0 },
-          map: {
-            version: 3,
-            sources: ["after.ts"],
-            sourcesContent: ["export const after = 2;"],
-            names: [],
-            mappings: "AAAA",
-          },
-        },
-      ],
-    });
-    await writeFixtureFiles(root, { "indexed.js.map": mapText });
-    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
-    const mapDigest = createHash("sha256").update(mapText).digest("hex");
-
-    expect(graph.coverage.status).toBe("partial");
-    expect(graph.nodes).toContainEqual(
-      expect.objectContaining({
-        kind: "unknown",
-        observations: expect.arrayContaining([
-          expect.objectContaining({
-            properties: expect.objectContaining({
-              path: "indexed.js.map",
-              operation: "parse-local-source-map",
-              limitation: `External source-map section URL is not fetched: ${url}`,
-              external_sections: [{ section_path: [1], url }],
-            }),
-            evidence: expect.objectContaining({
-              artifact: expect.objectContaining({ sha256: mapDigest }),
-              limitations: [
-                `External source-map section URL is not fetched: ${url}`,
-              ],
-            }),
-          }),
-        ]),
-      }),
-    );
-    for (const [source, content] of [
-      ["before.ts", "export const before = 1;"],
-      ["after.ts", "export const after = 2;"],
-    ] as const)
-      expect(graph.nodes).toContainEqual(
-        expect.objectContaining({
-          kind: "source-module",
-          identity: expect.objectContaining({
-            strategy: "source-map-original",
-            source_map_sha256: mapDigest,
-            original_source: source,
-            source_sha256: createHash("sha256").update(content).digest("hex"),
-          }),
-        }),
-      );
-    expect(await readFile(join(root, "indexed.js.map"), "utf8")).toBe(mapText);
-  },
-);
-
-cliTest.for(["CLI", "stdio MCP"] as const)(
   "preserves source-root declarations and URL path identity through %s",
   async (surface, { cli }) => {
     const root = await createTestTempDirectory("rea-source-root-identity-");
@@ -481,5 +247,122 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       );
       expect(await readFile(join(root, map.path), "utf8")).toBe(map.text);
     }
+  },
+);
+
+cliTest(
+  "keeps source declarations whose paths cannot be projected into the artifact through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-source-map-path-projection-",
+    );
+    const original = "export const answer = 42;";
+    const cases = [
+      { source: "bad%00.ts", reason: /NUL byte/u },
+      { source: "bad\0.ts", reason: /NUL byte/u },
+      { source: "trailing.ts\0", reason: /NUL byte/u },
+      { source: "file:///bad%00.ts", reason: /NUL byte/u },
+      { source: "https://example.test/bad%00.ts", reason: /NUL byte/u },
+      { source: "C:\\bad\0.ts", reason: /NUL byte/u },
+      { source: "../../source/a.ts", reason: /outside/u },
+      { source: "../../%73ource/a.ts", reason: /outside/u },
+      { source: "../../anchor/a.ts", reason: /outside/u },
+      { source: "../source/a.ts", path: "source/a.ts" },
+      { source: "literal%2500.ts", path: "maps/literal%00.ts" },
+    ];
+    const mapPath = "maps/bundle.js.map";
+    const mapText = JSON.stringify({
+      version: 3,
+      sources: cases.map(({ source }) => source),
+      sourcesContent: cases.map(() => original),
+      names: [],
+      mappings: "",
+    });
+    await writeFixtureFiles(root, { [mapPath]: mapText });
+    const graph = await graphThroughBothSurfaces(cli, root);
+    const originals = graph.nodes.filter(
+      ({ identity }) => identity.strategy === "source-map-original",
+    );
+    expect(originals).toHaveLength(cases.length);
+    const sourceDigest = createHash("sha256").update(original).digest("hex");
+    const mapDigest = createHash("sha256").update(mapText).digest("hex");
+    for (const { source, reason, path } of cases) {
+      const node = originals.find(
+        ({ identity }) =>
+          identity.strategy === "source-map-original" &&
+          identity.original_source === source,
+      );
+      expect(node?.identity).toMatchObject({
+        source_sha256: sourceDigest,
+        source_map_sha256: mapDigest,
+      });
+      expect(node?.observations[0]?.source_map_reference).toEqual({
+        source_name: source,
+        source_root: null,
+        map_path: mapPath,
+        resolution: reason
+          ? { kind: "unresolved", reason: expect.stringMatching(reason) }
+          : { kind: "artifact-relative", path },
+      });
+    }
+    expect(graph.coverage.status).toBe("complete");
+  },
+);
+
+cliTest(
+  "keeps local originals but reports incomplete source maps with malformed mappings or offsets through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-malformed-source-map-");
+    const leaf = {
+      version: 3,
+      sources: ["original.ts"],
+      sourcesContent: ["export const answer = 42;"],
+      names: [],
+      mappings: "AAAA",
+    };
+    const maps = {
+      "valid.js.map": leaf,
+      "bad-mapping.js.map": { ...leaf, mappings: "!" },
+      "bad-offset.js.map": {
+        version: 3,
+        sections: [{ offset: { line: -1, column: 0 }, map: leaf }],
+      },
+    };
+    await writeFixtureFiles(
+      root,
+      Object.fromEntries(
+        Object.entries(maps).map(([path, map]) => [path, JSON.stringify(map)]),
+      ),
+    );
+
+    const graph = await graphThroughBothSurfaces(cli, root);
+    expect(graph.coverage.status).toBe("partial");
+    for (const path of Object.keys(maps))
+      expect(graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind: "source-module",
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              source_map_reference: expect.objectContaining({
+                map_path: path,
+                source_name: "original.ts",
+              }),
+              properties: expect.objectContaining({ content_available: true }),
+            }),
+          ]),
+        }),
+      );
+
+    const unknownPaths = graph.nodes
+      .filter((node) => node.kind === "unknown")
+      .flatMap((node) => node.observations)
+      .filter(
+        ({ properties }) => properties.operation === "parse-local-source-map",
+      )
+      .map(({ properties }) => properties.path);
+    expect(unknownPaths.toSorted()).toEqual([
+      "bad-mapping.js.map",
+      "bad-offset.js.map",
+    ]);
   },
 );

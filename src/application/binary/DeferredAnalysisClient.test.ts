@@ -583,3 +583,40 @@ it("retries only unresolved prerequisite and native owners across mixed cleanup 
     await client.close();
   }
 });
+
+it("settles deferred client close failure when the underlying owned resource lease releases", async () => {
+  let released = false;
+  const underlyingOwner = {
+    get cleanupResources() {
+      return released ? [] : ["owned-descriptor"];
+    },
+  };
+  const underlyingClaim = {
+    get cleanupReleased() {
+      return released;
+    },
+  };
+  const client = new DeferredAnalysisClient(
+    async () =>
+      child(async () => {
+        if (released) return ok(null);
+        return err(
+          new ProviderCleanupError(identity.id, ["owned-descriptor"], {
+            reason: "descriptor close denied",
+          })
+            .bindCleanupResourceOwner(underlyingOwner)
+            .bindCleanupReleaseClaim(underlyingClaim),
+        );
+      }),
+    identity.id,
+  );
+  const executed = await client.execute("analyze_function", {});
+  expect(executed.ok).toBe(true);
+  const closed = await client.close();
+  if (closed.ok) throw new Error("Expected retained close failure");
+  expect(closed.error.cleanupIncomplete).toBe(true);
+  expect(closed.error.cleanupResources).toEqual(["owned-descriptor"]);
+  released = true;
+  expect(closed.error.cleanupIncomplete).toBe(false);
+  expect(closed.error.cleanupResources).toEqual([]);
+});

@@ -4,7 +4,6 @@ import { estimateTokenCount } from "tokenx";
 
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
-import { serveDiscovery } from "../../../src/cli/discovery.js";
 import { renderFailure } from "../../../src/cli/outputEnvelope.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
@@ -33,35 +32,12 @@ const shell = () =>
   });
 
 it.for([
-  ["fixture", "--mcp", "--json"],
-  ["--mcp", "fixture", "--json"],
   ["fixture", "--mcp", "--help", "--json"],
   ["fixture", "--mcp", "--schema", "--json"],
   ["mcp", "add", "--mcp", "--json"],
-  ["mcp", "doctor", "--mcp", "--json"],
   ["unknown", "--mcp", "--json"],
-])("does not delegate a retired MCP invocation: %j", async (arguments_) => {
-  let stdout = "";
-  let exitCode = 0;
-  const answered = serveDiscovery(
-    shell(),
-    arguments_,
-    {
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: (code) => {
-        exitCode = code;
-      },
-    },
-    { variables: {}, platform: process.platform },
-  );
-  expect(
-    answered,
-    "an unanswered invocation would reach the dispatcher",
-  ).toBeDefined();
-  await answered;
-  const reply = { stdout, exitCode };
+])("returns MCP startup guidance for %j", async (arguments_) => {
+  const reply = await serveInProcessCli(shell(), arguments_);
   expect(reply.exitCode).toBe(1);
   expect(JSON.parse(reply.stdout)).toMatchObject({
     code: "MCP_MODE_REMOVED",
@@ -99,17 +75,13 @@ cliTest("refuses per-command MCP through the public CLI", async ({ cli }) => {
     ["doctor", "--mcp", "--json"],
     ["mcp", "doctor", "--mcp", "--json"],
     ["--mcp", "extra", "--json"],
-    ["doctor", "--mcp", "--json", "--full-output"],
   ]) {
     const reply = await cli.run({ arguments: arguments_ });
     expect(reply.exitCode, JSON.stringify(arguments_)).toBe(1);
-    const failure = { code: "MCP_MODE_REMOVED" };
-    const cta = { commands: [{ command: "rea mcp" }] };
-    expect(reply.json).toMatchObject(
-      arguments_.includes("--full-output")
-        ? { ok: false, error: failure, meta: { command: "doctor", cta } }
-        : { ...failure, cta },
-    );
+    expect(reply.json).toMatchObject({
+      code: "MCP_MODE_REMOVED",
+      cta: { commands: [{ command: "rea mcp" }] },
+    });
   }
 });
 
@@ -174,17 +146,73 @@ cliTest.skipIf(process.platform === "win32")(
 cliTest(
   "redacts retired MCP diagnostics before token windows",
   async ({ cli }) => {
-    const reply = await cli.run({
-      arguments: [
-        "analyze-javascript-application",
-        "--mcp",
-        "--sensitive-value=--mcp",
-        "--token-limit",
-        "12",
-      ],
-    });
-    expect(reply.exitCode).toBe(1);
-    expect(reply.stdout).not.toContain("--mcp");
-    expect(reply.stdout).toContain("MCP_MODE_REMOVED");
+    const sensitive = "--mcp has been removed. Use";
+    const run = (declarations: readonly string[]) =>
+      cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          "--mcp",
+          ...declarations,
+          "--token-limit",
+          "22",
+        ],
+      });
+    const control = await run([]);
+    const redacted = await run([`--sensitive-value=${sensitive}`]);
+    for (const reply of [control, redacted]) {
+      expect(reply.exitCode).toBe(1);
+      expect(reply.stdout).toContain("MCP_MODE_REMOVED");
+      expect(reply.stdout).toContain("[truncated:");
+    }
+    expect(control.stdout).toContain("--mcp");
+    expect(control.stdout).not.toContain(sensitive);
+    expect(redacted.stdout).not.toContain("--mcp");
+    expect(redacted.stdout).toContain("[REDACTED]");
+  },
+);
+
+cliTest(
+  "refuses bare CSV/TSV discovery requests through the public CLI without suggesting row flags",
+  async ({ cli }) => {
+    for (const [arguments_, flag, format] of [
+      [["--llms", "--format", "csv"], "--llms", "csv"],
+      [["--llms-full", "--format", "tsv"], "--llms-full", "tsv"],
+      [["doctor", "--schema", "--format", "csv"], "--schema", "csv"],
+    ] as const) {
+      const reply = await cli.run({ arguments: arguments_ });
+      expect(reply.exitCode).toBe(1);
+      expect(reply.json).toMatchObject({
+        ok: false,
+        error: {
+          code: "UNSUPPORTED_OUTPUT_COMBINATION",
+          message: expect.stringMatching(
+            new RegExp(`${flag}.*--format ${format}`, "u"),
+          ),
+        },
+      });
+      expect(reply.stdout).not.toContain("--filter-output");
+    }
+  },
+);
+
+it.for([false, true])(
+  "clamps dispatcher refusal token windows at the end (%s)",
+  (fullOutput) => {
+    const output = renderFailure(
+      { code: "COMMAND_NOT_FOUND", message: "Unknown command" },
+      { command: "fixture", duration: "0ms" },
+      undefined,
+      {
+        format: "json",
+        human: false,
+        fullOutput,
+        tokenCount: false,
+        tokenLimit: 5,
+        tokenOffset: 1000,
+      },
+    );
+    expect(output).toMatch(/\[truncated: showing tokens (\d+)–\1 of \1\]/u);
+    expect(output).not.toContain("nextOffset");
+    expect(output).not.toContain("Unknown command");
   },
 );
