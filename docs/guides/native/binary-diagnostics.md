@@ -478,6 +478,8 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   means the symbol-version table could not be read. A hidden version is not
   the default version that a by-name `dlsym` lookup selects.
   Definition names take precedence when both tables name the same index.
+  A selected name that cannot be read remains unknown. An incomplete chain
+  leaves earlier names unknown when its unread records could replace them.
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
