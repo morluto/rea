@@ -1,20 +1,33 @@
-import { readFile, stat } from "node:fs/promises";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { LabviewArtifactPort } from "../ports/labview/LabviewArtifactPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ArtifactResourceScope } from "../resources/index.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisInputError,
   cancelledBy,
   type AnalysisCancelledError,
 } from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import type {
   InspectLabviewArtifactInput,
   LabviewArtifact,
+  LabviewArtifactPresence,
 } from "../domain/labview/labviewArtifact.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  readStableArtifact,
+  translateArtifactFailure,
+} from "../resources/index.js";
 import { LABVIEW_PROVIDER_IDENTITY } from "./LabviewProviderIdentity.js";
-import { findEmbeddedRsrcContainers } from "./LabviewPeContainer.js";
+import {
+  findEmbeddedRsrcContainers,
+  type EmbeddedRsrc,
+} from "./LabviewPeContainer.js";
 import { parseLabviewRsrc } from "./LabviewRsrc.js";
 
 const OPERATION = "inspect_labview_artifact";
@@ -29,9 +42,59 @@ const inputFailure = (message: string, cause?: unknown): AnalysisInputError =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
+/** Display name for one deterministic parser or walk allowance. */
+const allowanceName = (name: string): string => {
+  switch (name) {
+    case "labview_rsrc_blocks":
+      return "The LabVIEW RSRC block allowance";
+    case "labview_rsrc_sections_per_block":
+      return "The LabVIEW RSRC per-block section allowance";
+    case "labview_rsrc_total_sections":
+      return "The LabVIEW RSRC total section allowance";
+    case "pe_resource_directory_visits":
+      return "The PE resource-directory walk allowance";
+    case "pe_resource_directory_entries":
+      return "The PE resource-directory entry allowance";
+    case "pe_embedded_rsrc_containers":
+      return "The embedded RSRC container allowance";
+    default:
+      return "The LabVIEW inspection allowance";
+  }
+};
+
+/** The limit this parse error stopped at, if it stopped at one. */
+const limitCause = (
+  error: ParseFailureError,
+): ParseFailureError<"limit"> | undefined =>
+  error.failure.kind === "limit"
+    ? (error as ParseFailureError<"limit">)
+    : undefined;
+
+/** One parser or walk limit, with the fixed allowance that owns its recovery. */
+const limitFailure = (cause: ParseFailureError<"limit">) => {
+  const { format, limit } = cause.failure;
+  return parseLimitConstraint(OPERATION, "capacity", cause, {
+    diagnostics: { format, kind: "limit", boundary: limit.name },
+    ...fixedAllowanceOptions(allowanceName(limit.name), "count", {
+      limit: limit.maximum,
+      unit: "entries",
+    }),
+  });
+};
+
 /** Stable in-process RSRC inspection without a LabVIEW installation or any execution. */
 export class LabviewArtifactProvider implements LabviewArtifactPort {
   readonly identity = LABVIEW_PROVIDER_IDENTITY;
+  readonly #resources: ArtifactResourceScope;
+
+  /**
+   * The scope owns descriptor cleanup whose close could not be proved. Callers
+   * that already track artifact resources may pass theirs; otherwise this
+   * reader owns one for its own lifetime.
+   */
+  constructor(resources: ArtifactResourceScope = new ArtifactResourceScope()) {
+    this.#resources = resources;
+  }
 
   /** This reader owns no retained resource; close is a no-op for lifecycle parity. */
   close(): Promise<void> {
@@ -42,53 +105,40 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     input: InspectLabviewArtifactInput,
     options?: ExecutionOptions,
   ): Promise<Result<LabviewArtifact, AnalysisError>> {
-    const cancellation = (): AnalysisCancelledError | undefined => {
-      const signal = options?.signal;
-      return signal?.aborted === true
-        ? cancelledBy(OPERATION, signal)
-        : undefined;
-    };
+    const signal = options?.signal;
+    const cancellation = (): AnalysisCancelledError | undefined =>
+      signal?.aborted === true ? cancelledBy(OPERATION, signal) : undefined;
     const firstCancellation = cancellation();
     if (firstCancellation !== undefined) return err(firstCancellation);
-    let size: number;
+
+    // One stable read binds identity and size to the bytes actually inspected,
+    // and rejects a replacement or in-place change between admission and read.
+    let snapshot: { readonly bytes: Buffer; readonly sha256: string };
     try {
-      const facts = await stat(input.path);
-      if (!facts.isFile()) return err(inputFailure("Expected a regular file."));
-      size = facts.size;
+      snapshot = await readStableArtifact(
+        input.path,
+        MAX_BYTES,
+        signal,
+        undefined,
+        this.#resources,
+      );
     } catch (cause) {
-      return err(
-        inputFailure(
-          "The selected path is not a readable regular file.",
-          cause,
-        ),
-      );
-    }
-    if (size > MAX_BYTES)
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["path"],
-            reason: "out_of_range",
-            message: `The selected artifact is ${String(size)} bytes; this reader accepts at most ${String(MAX_BYTES)} bytes.`,
-            maximum: MAX_BYTES,
-          },
-        ]),
-      );
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(input.path);
-    } catch (cause) {
-      return err(
-        inputFailure("The selected artifact could not be read.", cause),
-      );
+      const cancelled = cancellation();
+      if (cancelled !== undefined) return err(cancelled);
+      return err(translateArtifactFailure(OPERATION, cause));
     }
     const laterCancellation = cancellation();
     if (laterCancellation !== undefined) return err(laterCancellation);
 
-    const containers =
-      bytes.subarray(0, 6).toString("latin1") === RSRC_MAGIC
-        ? [{ offset: 0, bytes }]
-        : findEmbeddedRsrcContainers(bytes);
+    const bytes = snapshot.bytes;
+    let containers: readonly EmbeddedRsrc[];
+    if (bytes.subarray(0, 6).toString("latin1") === RSRC_MAGIC) {
+      containers = [{ offset: 0, bytes }];
+    } else {
+      const scan = findEmbeddedRsrcContainers(bytes);
+      if (!scan.ok) return err(limitFailure(scan.failure));
+      containers = scan.containers;
+    }
     if (containers.length === 0)
       return err(
         inputFailure(
@@ -99,29 +149,69 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
       candidate.bytes.length > largest.bytes.length ? candidate : largest,
     );
     const parsed = parseLabviewRsrc(Buffer.from(chosen.bytes));
-    if (!parsed.ok)
-      return err(
-        inputFailure(
-          `The selected LabVIEW RSRC container could not be parsed: ${parsed.reason}.`,
-        ),
+    if (!parsed.ok) {
+      const limit = limitCause(parsed.failure);
+      if (limit !== undefined) return err(limitFailure(limit));
+      const error = parseFailureAnalysisError(
+        OPERATION,
+        input.path,
+        parsed.failure,
       );
+      if (error !== undefined) return err(error);
+      throw parsed.failure;
+    }
     const value = parsed.value;
-    const sha256 = sha256Hex(bytes);
+
+    // A container that carries an embedded program tree, or a file whose other
+    // containers were not examined, cannot establish that a heap is absent.
+    // Absence is claimed only for a fully examined artifact.
+    const unexamined =
+      containers.length > 1 ||
+      value.blocks.some(({ identifier }) => identifier === "LVzp");
+    const presence = (prefix: string): LabviewArtifactPresence =>
+      value.blocks.some(({ identifier }) => identifier.startsWith(prefix))
+        ? "present"
+        : unexamined
+          ? "unknown"
+          : "absent";
+
     const limitations = [
       "Stored section bytes are inventoried; only zlib-coded sections are decoded, and no section payload is returned.",
-      ...(value.blockDiagram === "absent"
+      ...(containers.length > 1
         ? [
-            "The block-diagram heap block (BDH*) is absent; source-level block diagrams are not present in this artifact.",
+            `The file carries ${String(containers.length)} embedded RSRC containers; only the largest was inventoried, and the others were not examined.`,
           ]
         : []),
-      ...(value.frontPanel === "absent"
+      ...(value.blocks.some(({ identifier }) => identifier === "LVzp")
         ? [
-            "The front-panel heap block (FPH*) is absent; front-panel object details are not present in this artifact.",
+            "The inspected container carries an embedded program tree (LVzp) that this reader does not decode.",
           ]
         : []),
+      ...(presence("BDH") === "absent"
+        ? [
+            "The inspected container has no block-diagram heap block (BDH*); source-level block diagrams are not present in that container.",
+          ]
+        : presence("BDH") === "unknown"
+          ? [
+              "No block-diagram heap block (BDH*) was found in the inspected container, and unexamined content could still hold one, so diagram presence is unknown.",
+            ]
+          : []),
+      ...(presence("FPH") === "absent"
+        ? [
+            "The inspected container has no front-panel heap block (FPH*); front-panel object details are not present in that container.",
+          ]
+        : presence("FPH") === "unknown"
+          ? [
+              "No front-panel heap block (FPH*) was found in the inspected container, and unexamined content could still hold one, so front-panel presence is unknown.",
+            ]
+          : []),
     ];
     return ok({
-      artifact: { path: input.path, sha256, bytes: bytes.length },
+      artifact: {
+        path: input.path,
+        sha256: snapshot.sha256,
+        bytes: bytes.length,
+      },
       container: {
         kind: chosen.offset === 0 ? "rsrc" : "pe-rcdata-rsrc",
         embedded_containers: containers.length,
@@ -134,8 +224,8 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
         info_bytes: value.infoBytes,
       },
       labview_version: value.labviewVersion,
-      block_diagram: value.blockDiagram,
-      front_panel: value.frontPanel,
+      block_diagram: presence("BDH"),
+      front_panel: presence("FPH"),
       blocks: value.blocks.map((block) => ({
         identifier: block.identifier,
         sections: block.sections.map((section) => ({

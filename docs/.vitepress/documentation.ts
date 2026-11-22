@@ -190,7 +190,7 @@ export const documentationSections = [
       },
       {
         text: "LabVIEW RSRC containers",
-        source: "labview-analysis.md",
+        source: "guides/native/labview-analysis.md",
         route: "/labview-analysis",
       },
       {

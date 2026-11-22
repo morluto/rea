@@ -97,6 +97,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "decode_interface_builder"
       | "inspect_asset_catalog"
       | "inspect_keyed_archive"
+      | "inspect_labview_artifact"
       | "trace_dylib_resolution"
       | "export_web_scripts"
       | "trace_web_module_imports"

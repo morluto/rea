@@ -1468,7 +1468,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/labview/LabviewRsrc.test.ts",
-        "reports caller cancellation before the selected artifact is read",
+        "reports cancellation that arrives after the read starts",
       ),
     ),
   ),

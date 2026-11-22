@@ -36,6 +36,10 @@ export const labviewBlockSchema = z.strictObject({
   sections: z.array(labviewSectionSchema),
 });
 
+/** Whether a heap block was observed, or whether unexamined content could hold one. */
+export const labviewPresenceSchema = z.enum(["present", "absent", "unknown"]);
+export type LabviewArtifactPresence = z.infer<typeof labviewPresenceSchema>;
+
 /** One static RSRC observation: container facts and the block inventory. */
 export const labviewArtifactSchema = z.strictObject({
   artifact: z.strictObject({
@@ -58,9 +62,9 @@ export const labviewArtifactSchema = z.strictObject({
   /** LabVIEW version recorded by the container's vers block; null when absent. */
   labview_version: z.string().nullable(),
   /** Whether a block-diagram heap block (BDH*) is present. */
-  block_diagram: z.enum(["present", "absent"]),
+  block_diagram: labviewPresenceSchema,
   /** Whether a front-panel heap block (FPH*) is present. */
-  front_panel: z.enum(["present", "absent"]),
+  front_panel: labviewPresenceSchema,
   blocks: z.array(labviewBlockSchema),
   limitations: z.array(z.string()),
 });

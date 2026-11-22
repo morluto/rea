@@ -7,13 +7,14 @@ import { LabviewArtifactProvider } from "./LabviewArtifactProvider.js";
 import {
   buildLabviewRsrc,
   labviewContainer,
+  labviewVersionSection,
 } from "../../tests/fixtures/labview/rsrc.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 describe("parseLabviewRsrc", () => {
   it("inventories blocks and section codings from one container", () => {
     const parsed = parseLabviewRsrc(labviewContainer());
-    if (!parsed.ok) throw new Error(parsed.reason);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value).toMatchObject({
       formatVersion: 3,
       fileType: "LVAR",
@@ -46,7 +47,7 @@ describe("parseLabviewRsrc", () => {
         { ident: "FPHb", sections: [Buffer.from("panel")] },
       ]),
     );
-    if (!parsed.ok) throw new Error(parsed.reason);
+    if (!parsed.ok) throw new Error(parsed.failure.message);
     expect(parsed.value.blockDiagram).toBe("present");
     expect(parsed.value.frontPanel).toBe("present");
     expect(parsed.value.blocks[0]?.sections[0]).toMatchObject({
@@ -95,20 +96,45 @@ describe("LabviewArtifactProvider", () => {
     await provider.close();
   });
 
-  it("reports caller cancellation before the selected artifact is read", async () => {
+  it("reports cancellation that arrives after the read starts", async () => {
+    const root = await createTestTempDirectory("rea-labview-cancel-");
+    const path = join(root, "fixture.vi");
+    await writeFile(path, labviewContainer());
     const controller = new AbortController();
     const reason = { request: "cancel LabVIEW inspection" };
-    controller.abort(reason);
     const provider = new LabviewArtifactProvider();
-    const result = await provider.inspect(
-      { path: "/nonexistent/fixture.vi" },
-      { signal: controller.signal },
-    );
+    // Start the inspection, then cancel while its stable read is in flight.
+    const pending = provider.inspect({ path }, { signal: controller.signal });
+    controller.abort(reason);
+    const result = await pending;
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.cause).toBe(reason);
     }
+    await provider.close();
+  });
+
+  it("reports heap presence as unknown when content was not examined", async () => {
+    const root = await createTestTempDirectory("rea-labview-unknown-");
+    const path = join(root, "fixture.vi");
+    await writeFile(
+      path,
+      buildLabviewRsrc([
+        { ident: "vers", sections: [labviewVersionSection()] },
+        { ident: "LVzp", sections: [Buffer.from("\x00\x00\x00\x01tree")] },
+      ]),
+    );
+    const provider = new LabviewArtifactProvider();
+    const result = await provider.inspect({ path });
+    if (!result.ok) throw result.error;
+    // The embedded program tree was inventoried but not decoded, so neither
+    // heap can be called absent from the artifact.
+    expect(result.value.block_diagram).toBe("unknown");
+    expect(result.value.front_panel).toBe("unknown");
+    expect(result.value.limitations.join(" ")).toContain(
+      "unexamined content could still hold one",
+    );
     await provider.close();
   });
 });
