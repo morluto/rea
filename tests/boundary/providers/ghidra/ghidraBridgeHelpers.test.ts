@@ -27,6 +27,9 @@ const requireProbe = (): CompiledBridgeProbe => {
   return probe;
 };
 
+const splitProbeLines = (output: string): string[] =>
+  output.trim().split(/\r?\n/u);
+
 beforeAll(async () => {
   if (jdk === undefined) return;
   workspace = await createTestWorkspace("rea-ghidra-bridge-helpers-");
@@ -65,7 +68,7 @@ describe.skipIf(jdk === undefined)(
         .map(([char]) => char.charCodeAt(0).toString(16).padStart(4, "0"))
         .join("\n");
       const stdout = await runBridgeProbe(requireProbe(), "fold-char", stdin);
-      const observed = stdout.trim().split("\n").map(Number);
+      const observed = splitProbeLines(stdout).map(Number);
       expect(observed).toEqual(cases.map(([, expected]) => expected));
     });
 
@@ -145,7 +148,7 @@ describe.skipIf(jdk === undefined)(
         "literal-batch",
         stdin,
       );
-      const observed = stdout.trim().split("\n");
+      const observed = splitProbeLines(stdout);
       expect(observed).toHaveLength(pairs.length);
 
       for (let index = 0; index < pairs.length; index += 1) {
@@ -175,7 +178,7 @@ describe.skipIf(jdk === undefined)(
           `1|${encodeUtf16Hex("abc")}|${encodeUtf16Hex("ab")}`,
         ].join("\n"),
       );
-      expect(invalidAndEdge.trim().split("\n")).toEqual([
+      expect(splitProbeLines(invalidAndEdge)).toEqual([
         "1",
         "ERR:invalid_request:ASCII candidate contains a non-ASCII character",
         "0",
@@ -191,7 +194,7 @@ describe.skipIf(jdk === undefined)(
           `${encodeUtf16Hex("\ud83d\ude00")}|${encodeUtf16Hex("a\ud83d\ude00b")}`,
         ].join("\n"),
       );
-      expect(direct.trim().split("\n")).toEqual(["1", "0", "1", "1"]);
+      expect(splitProbeLines(direct)).toEqual(["1", "0", "1", "1"]);
     });
   },
 );
@@ -255,7 +258,7 @@ describe.skipIf(jdk === undefined)(
         "write-response",
         stdin,
       );
-      const lines = stdout.trim().split("\n");
+      const lines = splitProbeLines(stdout);
       expect(lines).toHaveLength(payloads.length);
 
       for (let index = 0; index < payloads.length; index += 1) {
@@ -263,7 +266,7 @@ describe.skipIf(jdk === undefined)(
         const wireBytes = Buffer.from(lines[index]!, "base64");
         const wireText = decodeStrictUtf8(wireBytes, "preserve");
         expect(wireText.endsWith("\n")).toBe(true);
-        const frame = wireText.slice(0, -1);
+        const frame = wireText.replace(/\r?\n$/u, "");
         expect(frame).not.toContain("\n");
         expect(frame).not.toContain("\r");
         expect(frame).not.toContain("\u0000");
@@ -304,13 +307,10 @@ describe.skipIf(jdk === undefined)(
         "surrogate-writer",
       );
       const writerEntries = Object.fromEntries(
-        writerOut
-          .trim()
-          .split("\n")
-          .map((line) => {
-            const eq = line.indexOf("=");
-            return [line.slice(0, eq), line.slice(eq + 1)];
-          }),
+        splitProbeLines(writerOut).map((line) => {
+          const eq = line.indexOf("=");
+          return [line.slice(0, eq), line.slice(eq + 1)];
+        }),
       );
       expect(writerEntries.no_early_flush).toBe("true");
       expect(writerEntries.bounds_checks).toBe("true");
@@ -323,7 +323,7 @@ describe.skipIf(jdk === undefined)(
       );
 
       const failureOut = await runBridgeProbe(requireProbe(), "write-failures");
-      const failures = failureOut.trim().split("\n");
+      const failures = splitProbeLines(failureOut);
       expect(failures).toEqual([
         "unwrap_write_io=OK:simulated write failure",
         "newline_io=OK:simulated newline failure",
@@ -396,7 +396,7 @@ describe.skipIf(jdk === undefined)(
         "resolve-procedures",
         stdin,
       );
-      const rows = stdout.trim().split("\n");
+      const rows = splitProbeLines(stdout);
       expect(rows).toHaveLength(expected.length);
 
       for (let index = 0; index < expected.length; index += 1) {
