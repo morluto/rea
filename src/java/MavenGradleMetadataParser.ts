@@ -7,8 +7,7 @@ import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
-  countXmlNodes,
-  parseXmlDocument,
+  parseXmlDocumentWithinNodeLimit,
   opensLikeXml,
 } from "../domain/xmlDocument.js";
 import {
@@ -289,20 +288,17 @@ const parsePom = (
   artifact: { path: string; sha256: string; bytes: number },
 ): MavenGradleMetadata => {
   const limitations: string[] = [...BASE_LIMITATIONS];
-  // Count nodes as a stream first, so the tree is never built past its allowance.
-  const nodes = countXmlNodes(xml, MAVEN_GRADLE_METADATA_XML_NODES);
-  if (nodes > MAVEN_GRADLE_METADATA_XML_NODES)
+  // Maven applies XML 1.0 end-of-line handling to property and coordinate text.
+  const parsed = parseXmlDocumentWithinNodeLimit(xml, {
+    lineEndings: "normalize",
+    maximumNodes: MAVEN_GRADLE_METADATA_XML_NODES,
+  });
+  if (!parsed.ok && parsed.error.kind === "node-limit")
     throw metadataReportLimit(
       "xml_nodes",
-      MAVEN_GRADLE_METADATA_XML_NODES,
-      nodes,
+      parsed.error.maximum,
+      parsed.error.required,
     );
-  // Maven's XML reader applies XML 1.0 end-of-line handling, so a POM saved
-  // with CRLF yields the same property and coordinate text as one with LF.
-  const parsed = parseXmlDocument(xml, {
-    doctype: "reject",
-    lineEndings: "normalize",
-  });
   if (!parsed.ok)
     throw parsed.error.kind === "unsupported"
       ? unsupportedInput(
