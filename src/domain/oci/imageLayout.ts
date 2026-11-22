@@ -184,7 +184,7 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
     .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_CONFIG_BYTES)
     .default(67108864)
     .describe(
-      "Maximum config bytes expanded into image facts across the layout, counted once per image so a shared config counts once per manifest that uses it (default 64 MiB); exceeding the budget fails without partial success",
+      "Maximum serialized bytes of config-derived image facts across the layout, counted once per image so a shared config counts once per manifest that uses it (default 64 MiB); exceeding the budget fails without partial success",
     ),
   max_descriptor_bytes: z
     .number()

@@ -70,9 +70,11 @@ to 1 MiB by default (16 MiB maximum). Directory enumeration is limited by
 manifest and layer descriptors are limited separately by `max_descriptors` to
 65536 by default (1048576 maximum); a layer shared by many manifests is one
 file but counts once per manifest that references it. Each config blob is read
-once, but every image carries its own config facts, so the config bytes behind
-each image spend `max_config_bytes` (64 MiB by default, 512 MiB maximum); a
-config shared by many manifests counts once per image. Index entries keep
+once, but every image carries its own config facts, so the serialized JSON
+size of the facts behind each image spends `max_config_bytes` (64 MiB by
+default, 512 MiB maximum); a config shared by many manifests counts once per
+image. The facts are charged rather than the config file, since sparse history
+entries expand into records with null fields. Index entries keep
 their digests, media types, platforms and annotations in the report across all
 indexes, accepted subjects, configs and layers keep their digests and media
 types once per manifest or index that references them, and findings retain the

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { digestCanonicalValue } from "../domain/canonicalDigest.js";
+import { jsonByteLength } from "../domain/jsonSerialization.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { Budget } from "../domain/budget.js";
 import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
@@ -1077,8 +1078,10 @@ const inventoryOciImageLayout = async (
 
   // Each config blob is read and parsed once; images sharing it reuse those
   // facts. Every image still carries its own copy of them in the report, so
-  // the config bytes behind each image spend max_config_bytes before the
-  // image is added.
+  // the serialized size of those facts spends max_config_bytes once per image
+  // before the image is added. The facts are charged rather than the source
+  // document because they can be larger: each `{}` history entry becomes a
+  // record with four null fields.
   const configs = new Map<
     string,
     { facts: ConfigFacts; bytes: number } | undefined
@@ -1601,7 +1604,10 @@ const inventoryOciImageLayout = async (
               `Config ${configDescriptor.digest} ${defect}.`,
               configDescriptor.digest,
             );
-          config = { facts: parsedConfig.facts, bytes: configDocument.bytes };
+          config = {
+            facts: parsedConfig.facts,
+            bytes: jsonByteLength(parsedConfig.facts),
+          };
         }
         configs.set(configKey, config);
       }

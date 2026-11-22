@@ -17,6 +17,7 @@ import {
   ociImageLayoutSchema,
   parseOciDigest,
 } from "../domain/oci/imageLayout.js";
+import { jsonByteLength } from "../domain/jsonSerialization.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { parseEvidence } from "../domain/evidence.js";
@@ -2089,12 +2090,12 @@ const writeSharedLayerLayout = async (
   root: string,
   manifestCount: number,
   layerCount: number,
-): Promise<void> => {
-  const config = `${JSON.stringify({
+  config = `${JSON.stringify({
     architecture: "amd64",
     os: "linux",
     rootfs: { type: "layers", diff_ids: [] },
-  })}\n`;
+  })}\n`,
+): Promise<void> => {
   const configDigest = await putOciBlob(root, config);
   const layers = [];
   for (let layer = 0; layer < layerCount; layer += 1) {
@@ -2506,17 +2507,74 @@ it("refuses rejected descriptor text that accumulates past max_descriptor_bytes"
   expect(report.indexes[0]?.entries).toHaveLength(1);
 });
 
+/** Serialized bytes of the config facts one image carries in the report. */
+const configFactBytes = (image: Record<string, unknown>): number => {
+  const {
+    digest: _digest,
+    media_type: _mediaType,
+    config_digest: _configDigest,
+    layers: _layers,
+    ...facts
+  } = image;
+  return jsonByteLength(facts);
+};
+
 it("refuses a layout whose shared config expands past max_config_bytes", async () => {
   const root = await createTestTempDirectory("rea-oci-config-bytes-");
   await writeSharedLayerLayout(root, 5, 1);
-  const configBytes = Buffer.byteLength(
-    `${JSON.stringify({
-      architecture: "amd64",
-      os: "linux",
-      rootfs: { type: "layers", diff_ids: [] },
-    })}\n`,
-  );
+  const reader = new DirectoryArtifactReader(root);
+  let configBytes: number;
+  try {
+    const report = await parseOciImageLayout(
+      reader,
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    const image = report.images[0];
+    if (image === undefined) throw new Error("expected an image");
+    configBytes = configFactBytes(image);
+  } finally {
+    await reader.close();
+  }
   const maximum = configBytes * 2;
+  await expectConfigBudgetRefusal(root, maximum, configBytes * 3);
+});
+
+it("charges expanded history records rather than config source bytes", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-history-");
+  const config = `${JSON.stringify({
+    architecture: "amd64",
+    os: "linux",
+    rootfs: { type: "layers", diff_ids: [] },
+    history: Array.from({ length: 256 }, () => ({})),
+  })}\n`;
+  await writeSharedLayerLayout(root, 1, 1, config);
+  const sourceBytes = Buffer.byteLength(config);
+  // Each `{}` becomes a record with four null fields, so the facts are many
+  // times the source. A budget that covers the source must still refuse.
+  const maximum = sourceBytes * 4;
+  const reader = new DirectoryArtifactReader(root);
+  let factBytes: number;
+  try {
+    const report = await parseOciImageLayout(
+      reader,
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    const image = report.images[0];
+    if (image === undefined) throw new Error("expected an image");
+    expect(image.history).toHaveLength(256);
+    factBytes = configFactBytes(image);
+  } finally {
+    await reader.close();
+  }
+  expect(factBytes).toBeGreaterThan(maximum);
+  await expectConfigBudgetRefusal(root, maximum, factBytes);
+});
+
+const expectConfigBudgetRefusal = async (
+  root: string,
+  maximum: number,
+  required: number,
+): Promise<void> => {
   const reader = new DirectoryArtifactReader(root);
   try {
     await expect(
@@ -2535,7 +2593,7 @@ it("refuses a layout whose shared config expands past max_config_bytes", async (
         limit: {
           name: "max_config_bytes",
           maximum,
-          required: configBytes * 3,
+          required,
         },
       });
       return true;
@@ -2559,7 +2617,7 @@ it("refuses a layout whose shared config expands past max_config_bytes", async (
   } finally {
     await provider.close();
   }
-});
+};
 
 it("reports invalid rootfs.diff_ids members and keeps the other image facts", async () => {
   const root = await createTestTempDirectory("rea-oci-diff-ids-");
