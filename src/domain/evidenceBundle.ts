@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  detachedEvidenceSchema,
   evidenceFileTarget,
   evidenceSchema,
   immutableEvidence,
@@ -63,6 +64,11 @@ export const evidenceBundleSchema = z.strictObject({
   captures: z.array(captureManifestSchema),
   unknowns: z.array(residualUnknownSchema),
   records: z.array(evidenceSchema),
+});
+
+/** Strict bundle parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceBundleSchema = evidenceBundleSchema.extend({
+  records: z.array(detachedEvidenceSchema),
 });
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;

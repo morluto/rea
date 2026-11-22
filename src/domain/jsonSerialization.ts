@@ -44,14 +44,54 @@ export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
 
+const validateRemainingJson = (
+  frames: ContainerFrame[],
+  ancestors: Set<object>,
+  pending?: unknown,
+  hasPending = false,
+): void => {
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      if (typeof pending !== "object" || pending === null) {
+        if (!isValidJsonScalar(pending))
+          throw new TypeError("JSON output requires ordinary JSON values");
+      } else {
+        if (ancestors.has(pending))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!isImmutableJsonSnapshot(pending))
+          frames.push(openContainer(pending, frames.length, ancestors, false));
+      }
+    }
+    const frame = frames.at(-1);
+    if (frame === undefined) return;
+    const member = nextMember(frame);
+    if (member === undefined) {
+      ancestors.delete(frame.value);
+      frames.pop();
+      continue;
+    }
+    pending = member.item;
+    hasPending = true;
+  }
+};
+
 /** Compare ordinary JSON text iteratively, fast-pathing identical immutable subtrees. */
 export const equalJsonText = (left: unknown, right: unknown): boolean => {
   const ancestorsLeft = new Set<object>();
   const ancestorsRight = new Set<object>();
-  const stack: {
-    readonly left: ContainerFrame;
-    readonly right: ContainerFrame;
-  }[] = [];
+  const leftFrames: ContainerFrame[] = [];
+  const rightFrames: ContainerFrame[] = [];
+  const finishMismatch = (
+    pendingA?: unknown,
+    hasA = false,
+    pendingB?: unknown,
+    hasB = false,
+  ): false => {
+    validateRemainingJson(leftFrames, ancestorsLeft, pendingA, hasA);
+    validateRemainingJson(rightFrames, ancestorsRight, pendingB, hasB);
+    return false;
+  };
   let pendingLeft = left;
   let pendingRight = right;
   let hasPending = true;
@@ -66,49 +106,53 @@ export const equalJsonText = (left: unknown, right: unknown): boolean => {
       if (!objA && !objB) {
         if (!isValidJsonScalar(a) || !isValidJsonScalar(b))
           throw new TypeError("JSON output requires ordinary JSON values");
-        if (a !== b) return false;
+        if (a !== b) return finishMismatch();
       } else if (objA && objB) {
         if (ancestorsLeft.has(a) || ancestorsRight.has(b))
           throw new TypeError("JSON output contains a circular reference");
         if (!(a === b && isImmutableJsonSnapshot(a))) {
-          const frameA = openContainer(a, stack.length, ancestorsLeft, false);
-          const frameB = openContainer(b, stack.length, ancestorsRight, false);
-          if (frameA.array !== frameB.array) return false;
-          stack.push({ left: frameA, right: frameB });
+          const frameA = openContainer(
+            a,
+            leftFrames.length,
+            ancestorsLeft,
+            false,
+          );
+          const frameB = openContainer(
+            b,
+            rightFrames.length,
+            ancestorsRight,
+            false,
+          );
+          leftFrames.push(frameA);
+          rightFrames.push(frameB);
+          if (frameA.array !== frameB.array) return finishMismatch();
         }
       } else {
-        if (objA) openContainer(a, stack.length, ancestorsLeft, false);
-        else if (!isValidJsonScalar(a))
-          throw new TypeError("JSON output requires ordinary JSON values");
-        if (objB) openContainer(b, stack.length, ancestorsRight, false);
-        else if (!isValidJsonScalar(b))
-          throw new TypeError("JSON output requires ordinary JSON values");
-        return false;
+        return finishMismatch(a, true, b, true);
       }
     }
 
-    const pair = stack.at(-1);
-    if (pair === undefined) return true;
-    const memberA = nextMember(pair.left);
-    const memberB = nextMember(pair.right);
+    const frameA = leftFrames.at(-1);
+    const frameB = rightFrames.at(-1);
+    if (frameA === undefined || frameB === undefined) return true;
+    const memberA = nextMember(frameA);
+    const memberB = nextMember(frameB);
     if (memberA === undefined || memberB === undefined) {
-      if (memberA !== memberB) {
-        // Validate the extra array element if an array ended on only one side.
-        const extra = memberA ?? memberB;
-        if (
-          extra !== undefined &&
-          (typeof extra.item !== "object" || extra.item === null) &&
-          !isValidJsonScalar(extra.item)
-        )
-          throw new TypeError("JSON output requires ordinary JSON values");
-        return false;
-      }
-      ancestorsLeft.delete(pair.left.value);
-      ancestorsRight.delete(pair.right.value);
-      stack.pop();
+      if (memberA !== memberB)
+        return finishMismatch(
+          memberA?.item,
+          memberA !== undefined,
+          memberB?.item,
+          memberB !== undefined,
+        );
+      ancestorsLeft.delete(frameA.value);
+      ancestorsRight.delete(frameB.value);
+      leftFrames.pop();
+      rightFrames.pop();
       continue;
     }
-    if (memberA.key !== memberB.key) return false;
+    if (memberA.key !== memberB.key)
+      return finishMismatch(memberA.item, true, memberB.item, true);
     pendingLeft = memberA.item;
     pendingRight = memberB.item;
     hasPending = true;
