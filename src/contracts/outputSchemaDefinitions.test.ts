@@ -223,3 +223,75 @@ it("advertises the analysis view output without large inline alternatives", () =
     INLINE_ALTERNATIVE_BYTES,
   );
 });
+
+describe("shareOutputDefinitions incremental merge & length bounds", () => {
+  it("preserves earliest definition order when an earlier dirty entry matches a later entry", () => {
+    const shared = shareOutputDefinitions({
+      type: "object",
+      properties: {
+        first: { $ref: "#/$defs/outerEarly" },
+        second: { $ref: "#/$defs/outerLate" },
+      },
+      $defs: {
+        leafA: { type: "integer", minimum: 1 },
+        outerEarly: { type: "array", items: { $ref: "#/$defs/leafB" } },
+        outerLate: { type: "array", items: { $ref: "#/$defs/leafA" } },
+        leafB: { type: "integer", minimum: 1 },
+      },
+    });
+    expect(shared).toEqual({
+      type: "object",
+      properties: {
+        first: { $ref: "#/$defs/outerEarly" },
+        second: { $ref: "#/$defs/outerEarly" },
+      },
+      $defs: {
+        leafA: { type: "integer", minimum: 1 },
+        outerEarly: { type: "array", items: { $ref: "#/$defs/leafA" } },
+      },
+    });
+  });
+
+  it("hoists alternatives strictly past INLINE_ALTERNATIVE_BYTES including escapes", () => {
+    const exactBase = {
+      type: "object",
+      properties: { p: { type: "string", description: "" } },
+    };
+    const overhead = JSON.stringify(exactBase).length;
+    const exactFit = {
+      ...exactBase,
+      properties: {
+        p: {
+          type: "string",
+          description: "x".repeat(INLINE_ALTERNATIVE_BYTES - overhead),
+        },
+      },
+    };
+    const oneOver = {
+      ...exactBase,
+      properties: {
+        p: {
+          type: "string",
+          description: `${"x".repeat(INLINE_ALTERNATIVE_BYTES - overhead)}\n`,
+        },
+      },
+    };
+    expect(JSON.stringify(exactFit).length).toBe(INLINE_ALTERNATIVE_BYTES);
+    expect(JSON.stringify(oneOver).length).toBe(INLINE_ALTERNATIVE_BYTES + 2);
+    const shared = shareOutputDefinitions({
+      type: "object",
+      properties: {
+        u: { anyOf: [exactFit, oneOver] },
+      },
+      $defs: { unused: { type: "boolean" } },
+    });
+    const branches = (
+      (shared.properties as Record<string, Record<string, unknown>>).u!
+        .anyOf as unknown[]
+    ).map((b) => JSON.stringify(b));
+    expect(branches).toEqual([
+      JSON.stringify(exactFit),
+      '{"$ref":"#/$defs/__branch0"}',
+    ]);
+  });
+});

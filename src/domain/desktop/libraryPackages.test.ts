@@ -572,6 +572,23 @@ describe("libraryClosure search paths", () => {
     });
   });
 
+  it.each(["$LIB", "${LIB}", "$PLATFORM", "${PLATFORM}"])(
+    "leaves absolute DT_NEEDED with %s unresolved even when the literal path exists",
+    async (token) => {
+      const literal = `/opt/deps/${token}/libcore.so`;
+      const closure = await libraryClosure(
+        app(elf([literal])),
+        [],
+        host({ [literal]: elf([]) }),
+        10,
+      );
+      expect(closure.libraries).toEqual([]);
+      expect(closure.unreadable).toMatchObject([
+        { path: "/opt/app/bin/app", reason: expect.stringContaining(literal) },
+      ]);
+    },
+  );
+
   it("normalizes $ORIGIN/.. before telling the app's own folder from system libraries", async () => {
     const closure = await libraryClosure(
       {

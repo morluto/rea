@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { Budget } from "../domain/budget.js";
 import { jsonParts } from "../domain/jsonSerialization.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import {
   SQLITE_ROW_LIMIT_DEFAULT,
   sqliteSchemaHasObjectDeclaration,
@@ -174,12 +175,21 @@ const sqliteNameBytes = (
     );
   return row?.name;
 };
-const textEncoding = (encoding: DatabaseEncoding): string =>
-  encoding === "UTF-8"
-    ? "utf-8"
-    : encoding === "UTF-16le"
-      ? "utf-16le"
-      : "utf-16be";
+// Stateless one-shot TextDecoder instances reset state after every decode()
+// call (including throws on fatal decoders), so sharing one per encoding and
+// fatal mode is equivalent to allocating fresh decoders per cell/schema field.
+const FATAL_UTF16_DECODERS: Readonly<
+  Record<Exclude<DatabaseEncoding, "UTF-8">, TextDecoder>
+> = {
+  "UTF-16le": new TextDecoder("utf-16le", { fatal: true, ignoreBOM: true }),
+  "UTF-16be": new TextDecoder("utf-16be", { fatal: true, ignoreBOM: true }),
+};
+
+const LENIENT_TEXT_DECODERS: Readonly<Record<DatabaseEncoding, TextDecoder>> = {
+  "UTF-8": new TextDecoder("utf-8", { ignoreBOM: true }),
+  "UTF-16le": new TextDecoder("utf-16le", { ignoreBOM: true }),
+  "UTF-16be": new TextDecoder("utf-16be", { ignoreBOM: true }),
+};
 
 const decodeSchemaText = (
   value: Uint8Array,
@@ -187,10 +197,9 @@ const decodeSchemaText = (
   label: string,
 ): string => {
   try {
-    return new TextDecoder(textEncoding(encoding), {
-      fatal: true,
-      ignoreBOM: true,
-    }).decode(value);
+    return encoding === "UTF-8"
+      ? decodeStrictUtf8(value, "preserve")
+      : FATAL_UTF16_DECODERS[encoding].decode(value);
   } catch (cause: unknown) {
     throw new SqliteInspectionFailure(
       "format",
@@ -232,9 +241,7 @@ const cell = (
     );
   return {
     type: "text",
-    value: new TextDecoder(textEncoding(encoding), { ignoreBOM: true }).decode(
-      Buffer.from(hex, "hex"),
-    ),
+    value: LENIENT_TEXT_DECODERS[encoding].decode(Buffer.from(hex, "hex")),
     bytes_hex: hex,
     encoding,
   };
@@ -1039,6 +1046,7 @@ const readRows = (
       rows.values.push(values);
     }
     rows.truncated =
+      rows.values.length === limit &&
       db
         .prepare(`SELECT 1 FROM ${source}${clause} LIMIT 1 OFFSET ?`)
         .get(offset + rows.values.length) !== undefined;

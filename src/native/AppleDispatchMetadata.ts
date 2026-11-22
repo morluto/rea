@@ -216,7 +216,7 @@ export function* decodeAppleDispatchMetadataSteps(
   };
   const readers = {
     u32,
-    i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
+    i32: (address: bigint) => metadata.i32(offset(address, 4)),
     u64,
     pointer,
     resolvePointer: decodePointer,
@@ -235,7 +235,6 @@ export function* decodeAppleDispatchMetadataSteps(
     objcListScanTruncated,
     objcClassListScanTruncated,
   } = decodeObjcDispatchFacets({
-    bytes,
     sections,
     segments,
     readers,
@@ -244,7 +243,6 @@ export function* decodeAppleDispatchMetadataSteps(
     result,
   });
   const swiftRelative = createSwiftRelativeReader({
-    bytes,
     readers,
     budget,
     result,

@@ -61,6 +61,7 @@ export interface CliRuntime {
 export const loadCliRuntime = async (
   global: CliGlobalArguments | undefined,
   environment: NodeJS.ProcessEnv,
+  savedDefaults: ReadonlySet<string> | undefined,
 ): Promise<CliRuntime> => {
   const ids = selectCliRegistrations(
     global,
@@ -69,7 +70,8 @@ export const loadCliRuntime = async (
   if (ids === undefined) {
     const { createCli, closeCliResources } = await import("../cli.js");
     return {
-      createCli: (resultOutput) => createCli(environment, resultOutput),
+      createCli: (resultOutput) =>
+        createCli(environment, resultOutput, undefined, savedDefaults),
       closeCliResources,
     };
   }
@@ -87,6 +89,7 @@ export const loadCliRuntime = async (
     createCli: (resultOutput) =>
       createCliShell({
         selectedEnvironment: environment,
+        savedDefaults,
         resultOutput,
         registrations: selected.map((registration, index) => ({
           registration,
