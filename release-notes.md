@@ -138,6 +138,7 @@
 * **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
 * **reference:** render invalid Git config path with native separators ([0d71123](https://github.com/morluto/rea/commit/0d7112321d52013fb2be5a593b5bfbe7006a8888))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
+* **release-exposure:** settle cancellation and package cleanup together ([#13383](https://github.com/morluto/rea/issues/13383)) ([3daf6aa](https://github.com/morluto/rea/commit/3daf6aacdd327b3cf5a23c9b92c2567a3dfe001f))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
 * **setup:** accept hyphenated client names and suggest the closest one ([ed5c3dd](https://github.com/morluto/rea/commit/ed5c3dd10d937eb5e6bb8c41afa44eb6b0af2052))
 * **setup:** keep incomplete Windows roots unresolved ([#13298](https://github.com/morluto/rea/issues/13298)) ([c34bdab](https://github.com/morluto/rea/commit/c34bdabeae5ed0e38edc7a854abb624f73595368))
