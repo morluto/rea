@@ -543,6 +543,10 @@ describe("headless IDA procedure lookup failures", () => {
         expect(projected.code, "the public code is invalid_request").toBe(
           "invalid_request",
         );
+        expect(projected).not.toHaveProperty("recovery");
+        expect(projected.remediation.action).toContain(
+          "--kind procedures --mode regex --provider ida",
+        );
         expect(projected.category, "the category is invalid_input").toBe(
           "invalid_input",
         );
@@ -555,9 +559,11 @@ describe("headless IDA procedure lookup failures", () => {
           "the operation and exactly one issue that names the procedure in its message",
         ).toMatchObject({
           operation,
+          related_operations: ["list_procedures", "search_procedures"],
           issues: [
             {
-              path: [],
+              path: ["procedure"],
+              observed: { procedure },
               reason: "invalid_value",
               message: `IDA could not resolve procedure ${JSON.stringify(procedure)}: ${upstream}.`,
             },
@@ -582,7 +588,9 @@ describe("headless IDA procedure lookup failures", () => {
       }
     },
   );
+});
 
+describe("headless IDA invalid lookup replies", () => {
   it.each([
     ["an upstream exception text", lookup("main", null, "Database is closed")],
     ["a function with an error", lookup("main", knownFunction, "Not found")],
