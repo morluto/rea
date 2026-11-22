@@ -2605,6 +2605,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         } else {
             entries = names();
         }
+        monitor.checkCancelled();
         return out -> writeNameEntries(out, entries);
     }
 
