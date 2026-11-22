@@ -147,7 +147,18 @@ cliTest.for([16, 17] as const)(
         });
         expect(response.isError).toBe(true);
         expect(parseMcpToolError(response)).toMatchObject({
-          error: { code: "invalid_request", category: "invalid_input" },
+          error: {
+            code: "invalid_request",
+            category: "invalid_input",
+            details: {
+              partial_observation: {
+                kind: "file-snapshot-hash",
+                path,
+                bytes: bytes.length,
+                sha256,
+              },
+            },
+          },
         });
       } else {
         expect(result.exitCode, result.stderr).toBe(0);
