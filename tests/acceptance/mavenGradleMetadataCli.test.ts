@@ -6,7 +6,11 @@ import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import { MAVEN_GRADLE_METADATA_TOOL_CONTRACTS } from "../../src/contracts/java/mavenGradleMetadataToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "../../src/contracts/sessionToolContracts.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
+import {
+  connectLocalToolsMcp,
+  lazyLocalToolsMcp,
+} from "../fixtures/localToolsMcp.js";
 import {
   gradleModuleFixture,
   mavenPomFixture,
@@ -444,25 +448,59 @@ cliTest(
   },
 );
 
-cliTest("fails closed on malformed XML", async ({ cli }) => {
-  const root = await createTestTempDirectory("rea-maven-cli-malformed-");
-  const path = join(root, "pom.xml");
-  const corrupt = Buffer.from("<project><artifactId>demo</project>", "utf8");
-  await writeFile(path, corrupt);
-  const result = await cli.run({
-    arguments: ["inspect-maven-gradle-metadata", path, "--json"],
-  });
-  expect(result.exitCode).toBe(1);
-  expect(result.json).toMatchObject({
-    code: "invalid_request",
-    details: {
-      operation: "inspect_maven_gradle_metadata",
-      partial_observation: {
-        kind: "file-snapshot-hash",
-        path,
-        bytes: corrupt.length,
-        sha256: createHash("sha256").update(corrupt).digest("hex"),
+const malformedPomMcp = lazyLocalToolsMcp();
+
+cliTest.for([
+  {
+    label: "invalid XML syntax",
+    source: "<project><artifactId>demo</project>",
+    issue: "not well-formed XML",
+  },
+  {
+    label: "markup inside the project version",
+    source:
+      '<project xmlns:x="urn:example"><artifactId>demo</artifactId><version>1<x:ignored/>2</version></project>',
+    issue: "<version> must contain text without nested elements",
+  },
+  {
+    label: "markup inside a property value",
+    source:
+      "<project><artifactId>demo</artifactId><properties><revision>1<ignored/>2</revision></properties></project>",
+    issue: "<revision> must contain text without nested elements",
+  },
+])(
+  "preserves the selected file identity when refusing $label",
+  async ({ source, issue }, { cli }) => {
+    const root = await createTestTempDirectory("rea-maven-cli-malformed-");
+    const path = join(root, "pom.xml");
+    const bytes = Buffer.from(source, "utf8");
+    await writeFile(path, bytes);
+    const expected = {
+      code: "invalid_request",
+      details: {
+        operation: "inspect_maven_gradle_metadata",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: expect.stringContaining(issue),
+          },
+        ],
+        partial_observation: {
+          kind: "file-snapshot-hash",
+          path,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        },
       },
-    },
-  });
-});
+    };
+    const result = await cli.run({
+      arguments: ["inspect-maven-gradle-metadata", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { call } = await malformedPomMcp();
+    const response = await call("inspect_maven_gradle_metadata", { path });
+    expect(parseMcpToolError(response).error).toMatchObject(expected);
+  },
+);

@@ -96,23 +96,30 @@ const nonempty = (value: string | null | undefined): string | null => {
   return trimmed === "" ? null : trimmed;
 };
 
-const elementText = (element: Element): string => {
+/** Maven coordinates and property values are text declarations, not XML trees. */
+const mavenText = (element: Element): string => {
   const parts: string[] = [];
   for (
     let child = element.firstChild;
     child !== null;
     child = child.nextSibling
-  )
+  ) {
+    if (isElement(child))
+      throw malformedInput(
+        MAVEN_GRADLE_METADATA_FORMAT,
+        `Maven POM <${element.tagName}> must contain text without nested elements.`,
+      );
     // Text (3) and CDATA section (4) nodes both carry character data.
     if (child.nodeType === 3 || child.nodeType === 4)
       parts.push(child.nodeValue ?? "");
+  }
   return parts.join("");
 };
 
 const childText = (element: Element, local: string): string | null => {
   const child = soleNamed(element, local);
   if (child === undefined) return null;
-  const text = elementText(child);
+  const text = mavenText(child);
   // Maven's model reader applies Java String.trim() to these fields.
   let start = 0;
   let end = text.length;
@@ -350,7 +357,7 @@ const parsePom = (
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
-          } = redactRecordedTransportUrl(nonempty(elementText(property)));
+          } = redactRecordedTransportUrl(nonempty(mavenText(property)));
           // Maven property keys are the written qualified names, not XML
           // expanded names: different prefixes remain different keys.
           return { name: property.tagName, value, value_credentials_redacted };

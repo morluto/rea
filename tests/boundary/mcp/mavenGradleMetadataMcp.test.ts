@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -160,32 +159,3 @@ mcpTest(
     }
   },
 );
-
-mcpTest("reports malformed XML as invalid input", async ({ mcp }) => {
-  const { client, session } = await connect(mcp);
-  try {
-    const root = await createTestTempDirectory("rea-maven-malformed-");
-    const path = join(root, "pom.xml");
-    const corrupt = Buffer.from("<project><artifactId>demo</project>", "utf8");
-    await writeFile(path, corrupt);
-    const response = await client.callTool({
-      name: "inspect_maven_gradle_metadata",
-      arguments: { path },
-    });
-    expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "inspect_maven_gradle_metadata",
-        partial_observation: {
-          kind: "file-snapshot-hash",
-          path,
-          bytes: corrupt.length,
-          sha256: createHash("sha256").update(corrupt).digest("hex"),
-        },
-      },
-    });
-  } finally {
-    await session.close();
-  }
-});
