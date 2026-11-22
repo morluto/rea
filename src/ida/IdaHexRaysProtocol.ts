@@ -103,16 +103,12 @@ const queryBridge = () => {
 const bootstrappedLeases = new WeakMap<IdaMcpConnection, Set<string>>();
 
 const isMissingBridgeError = (error: unknown): boolean => {
-  if (error instanceof IdaToolRejection && error.message.includes("_rea_query"))
-    return true;
-  if (error instanceof Error) {
-    if (error.message.includes("_rea_query")) return true;
-    const cause = error.cause;
-    if (typeof cause === "string" && cause.includes("_rea_query")) return true;
-    if (cause instanceof Error && cause.message.includes("_rea_query"))
-      return true;
-  }
-  return false;
+  if (!(error instanceof IdaToolRejection)) return false;
+  const reason = error.diagnostics?.reason;
+  const detail = typeof reason === "string" ? reason : error.message;
+  return /(?:^|\n)NameError: name '_rea_query' is not defined$/u.test(
+    detail.trimEnd(),
+  );
 };
 
 /**
