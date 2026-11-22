@@ -11,7 +11,10 @@ import {
 } from "../../../src/domain/analysisResourceLimits.js";
 import { pe } from "../../../src/domain/binaryTarget.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
-import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
+import {
+  gpuCodeObjectsPartialSchema,
+  gpuCodeObjectsSchema,
+} from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { GpuInventory } from "../../../src/gpu/GpuInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -116,6 +119,52 @@ it.each(["none", "zstd", "lz4"] as const)(
     ]);
   },
 );
+
+it("keeps each kernel resource location in its own payload", async () => {
+  const inspected = await inspect(cudaFixture("none"));
+  if (!inspected.ok) throw inspected.error;
+  const report = inspected.value;
+  const kernelIndex = report.kernels.findIndex(
+    ({ representation }) => representation === "cuda-elf-metadata",
+  );
+  const kernel = report.kernels[kernelIndex];
+  const sibling = report.objects.find(({ kind }) => kind === "ptx");
+  if (
+    !kernel?.sources.parameters ||
+    sibling === undefined ||
+    sibling.decoded_size === null ||
+    sibling.decoded_size < 1
+  )
+    throw new Error(
+      "Fixture needs a CUBIN parameter site and a decoded PTX sibling",
+    );
+  expect(kernel.sources.parameters.container_id).toBe(kernel.object_id);
+  for (const container_id of [null, sibling.id]) {
+    const replacement = {
+      container_id,
+      offset: 0,
+      size: 1,
+      section_index: null,
+      section_name: null,
+    };
+    const kernels = report.kernels.with(kernelIndex, {
+      ...kernel,
+      sources: { ...kernel.sources, parameters: replacement },
+    });
+    expect(
+      gpuCodeObjectsSchema.safeParse({ ...report, kernels }),
+    ).toMatchObject({
+      success: false,
+      error: {
+        issues: [
+          expect.objectContaining({
+            path: ["kernels", kernelIndex, "sources", "parameters"],
+          }),
+        ],
+      },
+    });
+  }
+});
 
 it("observes cancellation during a cubin kernel directory read", async () => {
   const cubin = cubinFixture();

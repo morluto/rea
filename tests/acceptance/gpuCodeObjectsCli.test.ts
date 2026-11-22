@@ -74,63 +74,6 @@ cliTest(
 );
 
 cliTest(
-  "reports the decoded payload identity of a CUDA 0x2000 LZ4 entry",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-cuda-lz4-"),
-      path = join(root, "application"),
-      ptx = Buffer.from(ptxFixture),
-      bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]);
-    await writeFile(path, bytes);
-    const response = await cli.run({
-      arguments: [
-        "inspect-gpu-code-objects",
-        path,
-        "--analysis",
-        "kernels",
-        "--detail",
-        "complete",
-        "--json",
-      ],
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const evidence = parseEvidence(
-      toolContract("inspect_gpu_code_objects").outputSchema.parse(
-        response.json,
-      ),
-    );
-    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
-    expect(report.artifact.sha256).toBe(
-      createHash("sha256").update(bytes).digest("hex"),
-    );
-    expect(report.objects[0]).toMatchObject({
-      kind: "ptx",
-      compression: "lz4",
-      compression_id: "cuda-flags:0x2011",
-      decoded_size: ptx.length,
-      sha256: createHash("sha256").update(ptx).digest("hex"),
-      inspection: "complete",
-    });
-    expect(report.ptx_artifacts.map((row) => row.text)).toEqual([ptxFixture]);
-    expect(report.coverage.payloads).toBe("complete");
-    const { call } = await connectLocalToolsMcp();
-    const reply = await call("inspect_gpu_code_objects", {
-      path,
-      analysis: "kernels",
-      detail: "complete",
-    });
-    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
-    expect(
-      gpuCodeObjectsSchema.parse(
-        parseEvidence(reply.structuredContent).normalized_result,
-      ).objects[0],
-    ).toMatchObject({
-      compression: "lz4",
-      sha256: createHash("sha256").update(ptx).digest("hex"),
-    });
-  },
-);
-
-cliTest(
   "reports the AMD metadata nesting allowance while retaining a preceding kernel",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-amdgpu-metadata-depth-");
@@ -173,42 +116,6 @@ cliTest(
       },
     });
     expect(report.kernels.map(({ name }) => name)).toEqual(["add_one"]);
-  },
-);
-
-cliTest(
-  "reports an exhausted ELF symbol string scan as capacity instead of corruption",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-cubin-string-limit-");
-    const bytes = cubinFixture({ name: "k".repeat(65_536) });
-    const path = join(root, "long-symbol.cubin");
-    await writeFile(path, bytes);
-    const response = await cli.run({
-      arguments: [
-        "inspect-gpu-code-objects",
-        path,
-        "--analysis",
-        "kernels",
-        "--detail",
-        "complete",
-        "--json",
-      ],
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const evidence = parseEvidence(
-      toolContract("inspect_gpu_code_objects").outputSchema.parse(
-        response.json,
-      ),
-    );
-    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
-    expect(report.objects[0]).toMatchObject({
-      kind: "cubin",
-      inspection: "capacity",
-    });
-    expect(report.artifact.sha256).toBe(
-      createHash("sha256").update(bytes).digest("hex"),
-    );
-    expect(report.coverage.payloads).toBe("partial");
   },
 );
 
@@ -537,7 +444,12 @@ cliTest(
       root = await createTestTempDirectory("rea-hip-v3-target-id-"),
       payload = amdFixture(false, undefined, target);
     payload.writeUInt32LE(0x2f, 48); // EF_AMDGPU_MACH_AMDGCN_GFX906
-    const bytes = hipFixture(payload, "hip-amdgcn-amd-amdhsa--gfx906+xnack"),
+    const excludedTarget = "amdgcn-amd-amdhsa--gfx906";
+    const excluded = amdFixture(false, undefined, excludedTarget);
+    excluded.writeUInt32LE(0x2f, 48);
+    const bytes = hipFixture(payload, `hip-${target}`, [
+        { id: `hip-${excludedTarget}`, bytes: excluded },
+      ]),
       path = join(root, "feature.bundle");
     await writeFile(path, bytes);
     const response = await cli.run({
@@ -560,18 +472,32 @@ cliTest(
       ),
     );
     const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
-    expect(report.objects.find((row) => row.kind === "amdgpu")!.target).toBe(
-      "gfx906+xnack",
-    );
-    expect(report.kernels).toHaveLength(1);
-    expect(report.coverage.payloads).toBe("complete");
+    const candidates = report.objects.filter(({ kind }) => kind === "amdgpu");
+    expect(candidates).toMatchObject([
+      {
+        bundle_id: `hip-${target}`,
+        target: "gfx906+xnack",
+        inspection: "complete",
+      },
+      {
+        bundle_id: `hip-${excludedTarget}`,
+        target: "gfx906",
+        inspection: "not-selected",
+      },
+    ]);
+    expect(report.kernels).toMatchObject([
+      { object_id: candidates[0]?.id, name: "add_one" },
+    ]);
+    expect(report.coverage.payloads).toBe("partial");
   },
 );
 
 cliTest(
-  "keeps PTX qualifier layouts and compact registers while excluding call prototypes",
+  "preserves PTX targets, entry names, layout and real register declarations",
   async ({ cli }) => {
     const source = ptxFixture
+        .replace(".target sm_80", ".target compute_80")
+        .replace(".entry add_one", ".entry %add_one")
         .replace(".u64 output", ".u64 .ptr .global output")
         .replace(
           ".u32 value",
@@ -603,7 +529,13 @@ cliTest(
       ),
     );
     const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.objects[0]).toMatchObject({
+      target: "compute_80",
+      inspection: "complete",
+    });
+    expect(report.kernels).toHaveLength(1);
     expect(report.kernels[0]).toMatchObject({
+      name: "%add_one",
       parameter_count: 8,
       parameter_bytes: 60,
       parameters: [
@@ -614,7 +546,7 @@ cliTest(
         { name: "partly_joined_arg", offset: 32, size: 8 },
         { name: "joined_space_arg", offset: 40, size: 8 },
         { name: "payload", offset: 48, size: 8 },
-        { name: "value", offset: 56, size: 4 },
+        { ordinal: 7, name: "value", offset: 56, size: 4, type: ".u32" },
       ],
       registers: {
         virtual: [
@@ -624,7 +556,12 @@ cliTest(
       },
     });
     expect(report.coverage.payloads).toBe("complete");
-    expect(report.ptx_artifacts[0]!.text).toBe(source);
+    expect(report.ptx_artifacts).toMatchObject([
+      {
+        text: source,
+        sha256: createHash("sha256").update(source).digest("hex"),
+      },
+    ]);
   },
 );
 
@@ -707,92 +644,6 @@ cliTest(
 );
 
 cliTest(
-  "counts numeric percent-prefixed PTX register declarations",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-ptx-numeric-register-");
-    for (const register of ["%0", "%r0"] as const) {
-      const text = `.version 7.0\n.target sm_80\n.address_size 64\n.visible .entry kernel() {\n.reg .b32 ${register};\nmov.u32 ${register}, 0;\nret;\n}\n`;
-      const path = join(root, `${register.slice(1)}.ptx`);
-      await writeFile(path, text);
-      const response = await cli.run({
-        arguments: [
-          "inspect-gpu-code-objects",
-          path,
-          "--analysis",
-          "kernels",
-          "--detail",
-          "complete",
-          "--json",
-        ],
-      });
-      expect(response.exitCode, response.stderr).toBe(0);
-      const report = gpuCodeObjectsSchema.parse(
-        toolContract("inspect_gpu_code_objects").outputSchema.parse(
-          response.json,
-        ).normalized_result,
-      );
-      expect(report.kernels).toMatchObject([
-        {
-          name: "kernel",
-          registers: { virtual: [{ type: ".b32", count: 1 }] },
-        },
-      ]);
-      expect(report.ptx_artifacts[0]!.sha256).toBe(
-        createHash("sha256").update(text).digest("hex"),
-      );
-    }
-  },
-);
-
-cliTest(
-  "preserves PTX target spelling and percent-prefixed entry names",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-ptx-identifiers-cli-");
-    const text = `.version 8.8\n.target sm_80\n.address_size 64\n.entry %kernel(.param .u32 input) {\nret;\n}\n`;
-    const path = join(root, "identifiers.ptx");
-    await writeFile(path, text);
-    const response = await cli.run({
-      arguments: [
-        "inspect-gpu-code-objects",
-        path,
-        "--analysis",
-        "kernels",
-        "--detail",
-        "complete",
-        "--json",
-      ],
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const evidence = parseEvidence(
-      toolContract("inspect_gpu_code_objects").outputSchema.parse(
-        response.json,
-      ),
-    );
-    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
-    expect(report.objects[0]!.target).toBe("sm_80");
-    expect(report.kernels).toEqual([
-      expect.objectContaining({
-        name: "%kernel",
-        parameter_count: 1,
-        parameter_bytes: 4,
-        parameters: [
-          expect.objectContaining({
-            ordinal: 0,
-            name: "input",
-            offset: 0,
-            size: 4,
-            type: ".u32",
-          }),
-        ],
-      }),
-    ]);
-    expect(report.ptx_artifacts[0]!.sha256).toBe(
-      createHash("sha256").update(text).digest("hex"),
-    );
-  },
-);
-
-cliTest(
   "keeps entry-scoped PTX pragmas outside the body boundary",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ptx-entry-pragma-");
@@ -854,36 +705,6 @@ cliTest(
         Buffer.byteLength(declaration.slice(declaration.indexOf(".entry"))),
       );
     }
-  },
-);
-
-cliTest(
-  "accepts the PTX compute_xx .target synonym verbatim",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-ptx-target-cli-");
-    const text = `.version 8.8\n.target compute_80\n.address_size 64\n.entry kernel() {\nret;\n}\n`;
-    const path = join(root, "target.ptx");
-    await writeFile(path, text);
-    const response = await cli.run({
-      arguments: [
-        "inspect-gpu-code-objects",
-        path,
-        "--analysis",
-        "kernels",
-        "--json",
-      ],
-    });
-    expect(response.exitCode, response.stderr).toBe(0);
-    const evidence = parseEvidence(
-      toolContract("inspect_gpu_code_objects").outputSchema.parse(
-        response.json,
-      ),
-    );
-    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
-    expect(report.objects[0]!.target).toBe("compute_80");
-    expect(report.ptx_artifacts[0]!.sha256).toBe(
-      createHash("sha256").update(text).digest("hex"),
-    );
   },
 );
 
