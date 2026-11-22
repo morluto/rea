@@ -154,7 +154,7 @@ export const prepareOwnedCommand = async (
 };
 
 /** Both preparation stages preserve physical failures, opaque cancellation and exact owners. */
-function throwCommandPreparationFailure(
+export function throwCommandPreparationFailure(
   cause: unknown,
   interruption: "cancelled" | "timeout" | undefined,
 ): never {

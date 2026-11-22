@@ -2,28 +2,34 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import {
   OwnedCommandFailure,
   ownedCommandResources,
   prepareOwnedCommand,
+  throwCommandPreparationFailure,
 } from "../process/OwnedCommand.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import {
+  type ProviderProcessSnapshot,
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import {
   processInspectionFailure,
+  retainArtifactCommandCleanup,
   retainProcessInspectionCleanup,
 } from "../providers/OwnedCommandCleanup.js";
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
@@ -38,6 +44,31 @@ import {
   lzmaReplySchema,
 } from "./UefiLzmaProtocol.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+
+const workerAbortFailure = (
+  signal: AbortSignal,
+  snapshot: ProviderProcessSnapshot | null = null,
+): unknown =>
+  signal.reason instanceof AnalysisError
+    ? signal.reason
+    : new OwnedCommandFailure(
+        "cancelled",
+        "Command cancelled.",
+        snapshot,
+        null,
+        {
+          cancellation: { reason: signal.reason },
+        },
+      );
+
+const throwIfWorkerAborted = (
+  signal: AbortSignal,
+  snapshot: ProviderProcessSnapshot | null = null,
+): void => {
+  if (signal.aborted) {
+    throw workerAbortFailure(signal, snapshot);
+  }
+};
 
 class ActiveWorkerReader {
   #chunks: Buffer[] = [];
@@ -88,7 +119,7 @@ class ActiveWorkerReader {
   async readExact(length: number, signal: AbortSignal): Promise<Buffer> {
     if (length === 0) return Buffer.alloc(0);
     while (this.#buffered < length) {
-      signal.throwIfAborted();
+      throwIfWorkerAborted(signal, this.supervisor.snapshot());
       if (this.#error !== undefined) {
         throw new OwnedCommandFailure(
           "process",
@@ -112,7 +143,7 @@ class ActiveWorkerReader {
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {
           this.#waiter = undefined;
-          reject(signal.reason);
+          reject(workerAbortFailure(signal, this.supervisor.snapshot()));
         };
         if (signal.aborted) {
           onAbort();
@@ -168,7 +199,7 @@ class ActiveWorkerStdin {
   }
 
   async writeFrame(frame: Buffer, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
+    throwIfWorkerAborted(signal, this.supervisor.snapshot());
     if (this.#error !== undefined) {
       throw this.#processFailure(this.#error);
     }
@@ -183,7 +214,9 @@ class ActiveWorkerStdin {
         outcome();
       };
       const onAbort = (): void => {
-        finish(() => reject(signal.reason));
+        finish(() =>
+          reject(workerAbortFailure(signal, this.supervisor.snapshot())),
+        );
       };
       const onStreamError = (cause: Error): void => {
         finish(() => reject(this.#processFailure(cause)));
@@ -261,25 +294,19 @@ export class UefiLzmaSession {
     maxOutputBytes: number,
     signal: AbortSignal,
   ): Promise<UefiDecodeResult> {
-    signal.throwIfAborted();
+    throwIfWorkerAborted(signal);
     let active: ActiveLzmaWorker;
     try {
       active = await this.#ensureWorker(signal);
     } catch (cause: unknown) {
-      let primary = classifyProviderFailure(
+      const primary = classifyProviderFailure(
         cause,
         uefiFailureDialect(this.operation, this.workerModulePath),
       );
       const preparation = processInspectionFailure(cause);
-      if (preparation !== undefined) {
-        primary = retainProcessInspectionCleanup(
-          preparation,
-          primary,
-          this.resources,
-          this.operation,
-        );
-      }
-      throw primary;
+      throw preparation === undefined
+        ? primary
+        : this.#retainInspectionCleanup(preparation, primary);
     }
 
     try {
@@ -342,7 +369,7 @@ export class UefiLzmaSession {
           message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
         };
       }
-      signal.throwIfAborted();
+      throwIfWorkerAborted(signal, active.supervisor?.snapshot() ?? null);
       return {
         ok: true,
         outcome: {
@@ -358,12 +385,7 @@ export class UefiLzmaSession {
       );
       const preparation = processInspectionFailure(cause);
       if (preparation !== undefined) {
-        primary = retainProcessInspectionCleanup(
-          preparation,
-          primary,
-          this.resources,
-          this.operation,
-        );
+        primary = this.#retainInspectionCleanup(preparation, primary);
       }
       await this.close(primary);
       throw primary;
@@ -437,21 +459,33 @@ export class UefiLzmaSession {
 
     try {
       const { NODE_OPTIONS: _ambientNodeOptions, ...environment } = process.env;
-      const spawned = await spawnOwnedProviderProcess({
-        command: process.execPath,
-        arguments: [
-          "--max-old-space-size=256",
-          "--disable-wasm-trap-handler",
-          this.workerModulePath,
-          "--stdio",
-        ],
-        cwd: root.path,
-        expectedCommand: null,
-        runId: `rea-uefi-lzma-${randomUUID()}`,
-        hostEnvironment: environment,
-        stdin: "pipe",
-        signal,
-      });
+      let spawned: Awaited<ReturnType<typeof spawnOwnedProviderProcess>>;
+      try {
+        spawned = await spawnOwnedProviderProcess({
+          command: process.execPath,
+          arguments: [
+            "--max-old-space-size=256",
+            "--disable-wasm-trap-handler",
+            this.workerModulePath,
+            "--stdio",
+          ],
+          cwd: root.path,
+          expectedCommand: null,
+          runId: `rea-uefi-lzma-${randomUUID()}`,
+          hostEnvironment: environment,
+          stdin: "pipe",
+          signal,
+        });
+      } catch (cause: unknown) {
+        throwCommandPreparationFailure(
+          cause,
+          signal.aborted
+            ? signal.reason instanceof AnalysisTimeoutError
+              ? "timeout"
+              : "cancelled"
+            : undefined,
+        );
+      }
       processResources = ownedCommandResources(spawned.ownership, root.path);
       supervisor = new ProviderProcessSupervisor(
         {
@@ -496,12 +530,7 @@ export class UefiLzmaSession {
       );
       const preparation = processInspectionFailure(cause);
       if (preparation !== undefined) {
-        primary = retainProcessInspectionCleanup(
-          preparation,
-          primary,
-          this.resources,
-          this.operation,
-        );
+        primary = this.#retainInspectionCleanup(preparation, primary);
       }
       const released = await this.resources.release(workspace);
       if (released.kind === "failed") {
@@ -520,5 +549,37 @@ export class UefiLzmaSession {
       }
       throw primary;
     }
+  }
+
+  #retainInspectionCleanup(
+    preparation: ProcessInspectionFailure,
+    primary: AnalysisError,
+  ): AnalysisError {
+    if (primary instanceof AnalysisTimeoutError) {
+      if (
+        preparation instanceof DarwinProcessOwnershipInspectionError &&
+        preparation.capturedOutput !== undefined
+      ) {
+        primary.retainCapturedOutput(preparation.capturedOutput);
+      }
+      for (const failure of retainArtifactCommandCleanup(
+        preparation,
+        this.resources,
+        this.operation,
+      )) {
+        primary = analysisErrorWithCleanupDependencies(
+          primary,
+          failure,
+          this.operation,
+        );
+      }
+      return primary;
+    }
+    return retainProcessInspectionCleanup(
+      preparation,
+      primary,
+      this.resources,
+      this.operation,
+    );
   }
 }

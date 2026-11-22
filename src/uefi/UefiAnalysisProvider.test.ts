@@ -874,6 +874,91 @@ it("keeps worker stdin errors owned across cancellation of an in-flight frame wr
   }
 });
 
+it("preserves caller cancellation and cleans up the runtime root when worker startup aborts before launch", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-startup-cancel-");
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(
+      Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00]),
+    ),
+  });
+  const imagePath = join(directory, "startup-cancel.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const controller = new AbortController();
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  let createdRootPath: string | undefined;
+  const creating = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      const root = await createRoot(options);
+      createdRootPath = root.path;
+      controller.abort("caller cancelled during startup");
+      return root;
+    });
+  const provider = new UefiAnalysisProvider();
+  try {
+    const result = await provider.execute(inspectRequest(imagePath), {
+      signal: controller.signal,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.category).toBe("cancelled");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.secondaryFailures).toEqual([]);
+    }
+    expect(createdRootPath).toBeDefined();
+    expect(existsSync(createdRootPath!)).toBe(false);
+  } finally {
+    creating.mockRestore();
+    await provider.close();
+  }
+});
+
+it("preserves provider_timeout and cleans up the runtime root when the deadline expires during worker startup", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-startup-timeout-");
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(
+      Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00]),
+    ),
+  });
+  const imagePath = join(directory, "startup-timeout.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  let createdRootPath: string | undefined;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const creating = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      const root = await createRoot(options);
+      createdRootPath = root.path;
+      vi.advanceTimersByTime(UEFI_FIRMWARE_LIMITS.timeoutMs);
+      return root;
+    });
+  const provider = new UefiAnalysisProvider();
+  try {
+    const result = await provider.execute(inspectRequest(imagePath));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisTimeoutError");
+      expect(result.error.category).toBe("provider_timeout");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.secondaryFailures).toEqual([]);
+    }
+    expect(createdRootPath).toBeDefined();
+    expect(existsSync(createdRootPath!)).toBe(false);
+  } finally {
+    creating.mockRestore();
+    vi.useRealTimers();
+    await provider.close();
+  }
+});
+
 it("rolls back a tree acquired during failed publication setup without publishing", async () => {
   const { imagePath, directory } = await writeTestImage();
   const provider = new UefiAnalysisProvider();
