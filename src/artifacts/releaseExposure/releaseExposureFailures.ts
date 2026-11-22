@@ -103,7 +103,11 @@ const releaseExposureFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return readerIntegrityFailure(RELEASE_EXPOSURE_AUDIT_OPERATION, path, cause);
+    return readerIntegrityFailure(
+      RELEASE_EXPOSURE_AUDIT_OPERATION,
+      path,
+      cause,
+    );
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -120,31 +124,46 @@ const releaseExposureFailurePrimary = (
     if (cause.reason === "limit")
       return releaseExposureLimitFailure(cause, maxFileBytes);
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(RELEASE_EXPOSURE_AUDIT_OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        RELEASE_EXPOSURE_AUDIT_OPERATION,
+        { cause },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(RELEASE_EXPOSURE_AUDIT_OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(RELEASE_EXPOSURE_AUDIT_OPERATION, { cause }, [
+      return new AnalysisAccessDeniedError(
+        RELEASE_EXPOSURE_AUDIT_OPERATION,
+        path,
+        cause.code,
         {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
+          cause,
         },
-      ]);
+      );
+    if (isSelectedRegularFileError(cause))
+      return new AnalysisInputError(
+        RELEASE_EXPOSURE_AUDIT_OPERATION,
+        { cause },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
+          },
+        ],
+      );
   }
-  return new ProviderAdapterError(PROVIDER_ID, RELEASE_EXPOSURE_AUDIT_OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
+  return new ProviderAdapterError(
+    PROVIDER_ID,
+    RELEASE_EXPOSURE_AUDIT_OPERATION,
+    {
+      cause,
+      diagnostics: {
+        path,
+        reason: errorMessage(cause),
+      },
     },
-  });
+  );
 };
 
 export const releaseExposureFailure = (
