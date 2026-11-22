@@ -257,6 +257,8 @@ const namedMapReference = (
 interface OpenContainer {
   readonly path: string;
   readonly reader: ArtifactReader;
+  /** An owned reader can still need to verify its carrier before listing or reading. */
+  unverifiedSha256: string | undefined;
   listing: ContainerListing | null;
 }
 
@@ -3223,30 +3225,37 @@ const openContainer = async (
   state: ScanState,
   signal: AbortSignal | undefined,
 ): Promise<OpenContainer | null> => {
-  const cached = containers.get(id);
-  if (cached !== undefined) return cached;
-  if (containers.size >= OPEN_CONTAINER_LIMIT) {
-    pushLimitation(
-      state,
-      `Stopped opening package readers after ${String(OPEN_CONTAINER_LIMIT)} containers.`,
-    );
-    return null;
+  let container = containers.get(id);
+  if (container === undefined) {
+    if (containers.size >= OPEN_CONTAINER_LIMIT) {
+      pushLimitation(
+        state,
+        `Stopped opening package readers after ${String(OPEN_CONTAINER_LIMIT)} containers.`,
+      );
+      return null;
+    }
+    if (signal?.aborted) throw cancelledBy(OPERATION, signal);
+    const reader = createArtifactReader(filePath, format, {
+      environment: process.env,
+      unreadableDirectories: "omit",
+      asarHeaderAdmission: state.asarHeaderAdmission,
+    });
+    if (reader === undefined) return null;
+    container = {
+      path: filePath,
+      reader,
+      unverifiedSha256: expectedSha256,
+      listing: null,
+    };
+    containers.set(id, container);
   }
-  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-  const reader = createArtifactReader(filePath, format, {
-    environment: process.env,
-    unreadableDirectories: "omit",
-    asarHeaderAdmission: state.asarHeaderAdmission,
-  });
-  if (reader === undefined) return null;
-  const container: OpenContainer = {
-    path: filePath,
-    reader,
-    listing: null,
-  };
-  containers.set(id, container);
-  if (expectedSha256 !== undefined)
-    await reader.prepareContainer?.(expectedSha256, signal);
+  if (container.unverifiedSha256 !== undefined) {
+    await container.reader.prepareContainer?.(
+      container.unverifiedSha256,
+      signal,
+    );
+    container.unverifiedSha256 = undefined;
+  }
   return container;
 };
 
