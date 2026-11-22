@@ -3,6 +3,7 @@ import {
   type AnalysisInputIssue,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import type { BinaryLayout } from "../native/binaryLayout.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -43,6 +44,32 @@ const layoutUnknowns = (layout: BinaryLayout): readonly string[] => {
   return unknowns;
 };
 
+const layoutNameIndexes = new WeakMap<
+  readonly object[],
+  ReadonlyMap<string, readonly number[]>
+>();
+
+const layoutNameIndex = <Row extends { readonly name: LayoutName }>(
+  rows: readonly Row[],
+): ReadonlyMap<string, readonly number[]> | undefined => {
+  if (!isImmutableJsonSnapshot(rows)) return undefined;
+  let index = layoutNameIndexes.get(rows);
+  if (index === undefined) {
+    const built = new Map<string, number[]>();
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i]!;
+      if (row.name.unknown_reason !== null || row.name.bytes_base64 === null)
+        continue;
+      const bucket = built.get(row.name.bytes_base64);
+      if (bucket === undefined) built.set(row.name.bytes_base64, [i]);
+      else bucket.push(i);
+    }
+    index = built;
+    layoutNameIndexes.set(rows, index);
+  }
+  return index;
+};
+
 const namedMatches = <Row extends { readonly name: LayoutName }>(
   rows: readonly Row[],
   name: string,
@@ -51,11 +78,19 @@ const namedMatches = <Row extends { readonly name: LayoutName }>(
   // Display text may replace malformed source bytes or use provider formatting.
   if (bytes.toString("utf8") !== name) return [];
   const encoded = bytes.toString("base64");
-  return rows.flatMap((row, index) =>
-    row.name.unknown_reason === null && row.name.bytes_base64 === encoded
-      ? [{ index, row }]
-      : [],
-  );
+  const indexed = layoutNameIndex(rows);
+  if (indexed !== undefined) {
+    const positions = indexed.get(encoded);
+    if (positions === undefined) return [];
+    return positions.map((index) => ({ index, row: rows[index]! }));
+  }
+  const matches: { readonly index: number; readonly row: Row }[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (row.name.unknown_reason === null && row.name.bytes_base64 === encoded)
+      matches.push({ index, row });
+  }
+  return matches;
 };
 
 const selectNamed = <Row extends { readonly name: LayoutName }>(
