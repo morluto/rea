@@ -2364,6 +2364,31 @@ it("reads a config shared by many manifests once", async () => {
   expect(report.coverage.json_bytes_read).toBe(expected);
 });
 
+it("counts a malformed config in json_bytes_read", async () => {
+  const root = await createTestTempDirectory("rea-oci-malformed-config-bytes-");
+  const written = await writeOciImageLayoutFixture(root);
+  const blobPath = (digest: string): string => {
+    const parsed = parseOciDigest(digest);
+    if (parsed === undefined) throw new Error(`bad digest ${digest}`);
+    return join(root, "blobs", parsed.algorithm, parsed.hex);
+  };
+  const malformed = Buffer.from(`{"architecture": "amd64",${" ".repeat(4096)}`);
+  await writeFile(blobPath(written.configDigest), malformed);
+  const expected =
+    (await readFile(join(root, "oci-layout"))).length +
+    (await readFile(join(root, "index.json"))).length +
+    (await readFile(blobPath(written.manifestDigest))).length +
+    malformed.length;
+  const report = await inspectLayout(root);
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "malformed_blob_json",
+      digest: written.configDigest,
+    }),
+  );
+  expect(report.coverage.json_bytes_read).toBe(expected);
+});
+
 it("refuses index entry text that accumulates past max_descriptor_bytes", async () => {
   const root = await createTestTempDirectory("rea-oci-descriptor-bytes-");
   const written = await writeOciImageLayoutFixture(root);

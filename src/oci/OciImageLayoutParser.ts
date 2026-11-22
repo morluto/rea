@@ -1243,15 +1243,19 @@ const inventoryOciImageLayout = async (
       return undefined;
     }
     try {
-      const document = await readJsonDocument(
+      // The bytes count once the read completes, before decoding, so a
+      // malformed document still shows in json_bytes_read.
+      return await readJsonFile(
         reader,
         entry,
         input.max_json_bytes,
         signal,
         label,
+        (file) => {
+          jsonBytesRead += file.bytes;
+          return decodeJsonDocument(file, label);
+        },
       );
-      jsonBytesRead += document.bytes;
-      return document;
     } catch (cause: unknown) {
       // Only a format failure is a finding about the blob. Reader failures,
       // including a close failure after a complete read, keep their own
