@@ -504,6 +504,7 @@
 * **evaluation:** consolidate transcript and claim grounding checks ([#12883](https://github.com/morluto/rea/issues/12883)) ([c2c8ad3](https://github.com/morluto/rea/commit/c2c8ad3d701e4ca7384cb6bb541e3b36c0d34a76))
 * **evidence:** avoid recursive matching at the recorded array depth limit ([#12819](https://github.com/morluto/rea/issues/12819)) ([edf33a4](https://github.com/morluto/rea/commit/edf33a448b4f0a1fc3e757d37ff5365ff63a8942))
 * **evidence:** consolidate analysis view source failure coverage ([#13461](https://github.com/morluto/rea/issues/13461)) ([72a227d](https://github.com/morluto/rea/commit/72a227d56f8bd1beec1ab97344f2a02cc034a4c0))
+* **evidence:** consolidate bundle authentication and cleanup coverage ([#13521](https://github.com/morluto/rea/issues/13521)) ([d979c18](https://github.com/morluto/rea/commit/d979c1849c897a1da7b42095266e9b76b484fc1a))
 * **evidence:** consolidate bundle comparison proof at the MCP boundary ([#12813](https://github.com/morluto/rea/issues/12813)) ([adb8e2e](https://github.com/morluto/rea/commit/adb8e2ea35877ccccfa68678289a7a4997c04c14))
 * **evidence:** consolidate composed workflow provenance checks ([#12975](https://github.com/morluto/rea/issues/12975)) ([0e70522](https://github.com/morluto/rea/commit/0e70522b6d796cabe3d10da4a110e99107e72fb9))
 * **evidence:** consolidate input admission and schema examples ([#13322](https://github.com/morluto/rea/issues/13322)) ([2718131](https://github.com/morluto/rea/commit/27181314cbd37809a2090f7c8a9de3251152c70f))
