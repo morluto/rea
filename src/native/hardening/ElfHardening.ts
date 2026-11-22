@@ -25,7 +25,10 @@ import {
 } from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import { elfSymbolSize } from "../../domain/elfSymbol.js";
+import {
+  elfSymbolSize,
+  readElfSymbolFieldsAt,
+} from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -633,23 +636,25 @@ const readSymbolNames = (
   stringFileOffset: number,
 ): SymbolScan => {
   const width = elfSymbolSize(bits);
-  const infoOffset = bits === 32 ? 12 : 4;
-  const shndxOffset = bits === 32 ? 14 : 6;
-  const reader = new BinaryReader(bytes, little, "elf");
   let stackProtector: SymbolName | undefined;
   let fortify: SymbolName | undefined;
   let scanned = 0;
   let unterminated = false;
   for (let index = 0; index < count; index += 1) {
-    const at = offset + index * width;
-    const nameOffset = reader.u32(at);
-    if (nameOffset === 0) continue;
-    // SHN_UNDEF is an import. A defined export of the same name is not a sign
-    // that this image references the protector.
-    if (reader.u16(at + shndxOffset) !== 0) continue;
-    // An STB_LOCAL symbol is never resolved against another object, so it
-    // does not establish an external import.
-    if (reader.u8(at + infoOffset) >>> 4 === STB_LOCAL) continue;
+    const symbol = readElfSymbolFieldsAt(
+      bytes,
+      offset + index * width,
+      bits,
+      little,
+    );
+    if (symbol === null) malformed("ELF symbol record is truncated");
+    if (
+      symbol.name_offset === 0 ||
+      symbol.section_index !== 0 ||
+      symbol.binding === STB_LOCAL
+    )
+      continue;
+    const nameOffset = symbol.name_offset;
     const observed = observeElfStringTableEntry(
       strings,
       nameOffset,
@@ -670,10 +675,10 @@ const readSymbolNames = (
       unterminated = true;
       continue;
     }
-    // Both hardening predicates require a "__" prefix (min length 6 for "__*_chk").
+    // The "__" prefix and "_chk" suffix can overlap in "__chk".
     if (
       (stackProtector === undefined || fortify === undefined) &&
-      observed.contentBytes >= 6 &&
+      observed.contentBytes >= 5 &&
       strings[nameOffset] === 0x5f &&
       strings[nameOffset + 1] === 0x5f
     ) {
