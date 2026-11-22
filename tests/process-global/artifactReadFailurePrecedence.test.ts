@@ -8,6 +8,8 @@ import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 import { createPackageWithOptions } from "@electron/asar";
 import { Readable } from "node:stream";
+import { setImmediate } from "node:timers/promises";
+import { phaseGate } from "../support/lifecycleHarness.js";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const fault = vi.hoisted(() => ({
@@ -18,6 +20,7 @@ const fault = vi.hoisted(() => ({
   abortAfterRead: false,
   abortAtFinalIdentity: false,
   readFinished: false,
+  onRead: undefined as (() => Promise<void>) | undefined,
   opened: [] as FileHandle[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -56,6 +59,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
           bytesRead: number;
           buffer: Buffer;
         };
+        if (result.bytesRead > 0) await fault.onRead?.();
         if (result.bytesRead === 0) {
           fault.readFinished = true;
           if (fault.abortAfterRead) fault.controller?.abort(fault.reason);
@@ -81,6 +85,7 @@ beforeEach(() => {
   fault.abortAfterRead = false;
   fault.abortAtFinalIdentity = false;
   fault.readFinished = false;
+  fault.onRead = undefined;
   fault.opened = [];
 });
 afterEach(async () => {
@@ -168,6 +173,8 @@ it.each(["idle", "active", "read-failure"])(
     await writeFile(join(input, "member.bin"), "unpacked member bytes");
     await createPackageWithOptions(input, archive, { unpack: "*.bin" });
     const reader = new AsarArtifactReader(archive);
+    const activeRead = stage === "active" ? phaseGate() : undefined;
+    if (activeRead !== undefined) fault.onRead = () => activeRead.hold();
     try {
       const entries = [];
       for await (const entry of reader.entries()) entries.push(entry);
@@ -188,7 +195,15 @@ it.each(["idle", "active", "read-failure"])(
         stage === "idle"
           ? new Promise<unknown>((resolve) => source.once("error", resolve))
           : buffer(source).catch((cause: unknown) => cause);
+      if (activeRead !== undefined)
+        await activeRead.reached(result, "ASAR descriptor read completion");
       if (stage !== "read-failure") fault.controller.abort(fault.reason);
+      if (activeRead !== undefined) {
+        await setImmediate();
+        expect(source.destroyed).toBe(false);
+        expect(fault.opened[0]?.fd).toBeGreaterThanOrEqual(0);
+        activeRead.release();
+      }
       if (stage === "read-failure")
         await expect(result).resolves.toMatchObject({
           reason: "io",
@@ -203,6 +218,7 @@ it.each(["idle", "active", "read-failure"])(
       await reader.close();
       expect(fault.opened[0]?.fd).toBe(-1);
     } finally {
+      activeRead?.release();
       fault.failure = undefined;
       await reader.close();
     }
