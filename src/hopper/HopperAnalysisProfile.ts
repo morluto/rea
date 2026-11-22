@@ -15,7 +15,12 @@ import {
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 
-import { assertRegularFileActive } from "../filesystem/RegularFile.js";
+import type { BigIntStats } from "node:fs";
+import { stat } from "node:fs/promises";
+import {
+  assertRegularFileActive,
+  sameRegularFileState,
+} from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import type {
@@ -337,17 +342,46 @@ const readMachoMagic = (
       }),
   );
 
-const sha256File = (
+const verifiedLauncherDigests = new Map<
+  string,
+  { readonly state: BigIntStats; readonly sha256: string }
+>();
+
+const sha256File = async (
   path: string,
   resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
-): Promise<Result<string, AnalysisError>> =>
-  readHopperProfileFile(
+): Promise<Result<string, AnalysisError>> => {
+  const beforeStat = await stat(path, { bigint: true }).catch(() => undefined);
+  const cached = verifiedLauncherDigests.get(path);
+  if (
+    signal?.aborted !== true &&
+    beforeStat !== undefined &&
+    beforeStat.isFile() &&
+    cached !== undefined &&
+    sameRegularFileState(cached.state, beforeStat)
+  )
+    return ok(cached.sha256);
+  const hashed = await readHopperProfileFile(
     { path, kind: "launcher" },
     resources,
     signal,
     async (options) => (await hashStableFile(path, options)).sha256,
   );
+  if (hashed.ok && beforeStat !== undefined && beforeStat.isFile()) {
+    const afterStat = await stat(path, { bigint: true }).catch(() => undefined);
+    if (
+      afterStat !== undefined &&
+      sameRegularFileState(beforeStat, afterStat)
+    ) {
+      verifiedLauncherDigests.set(path, {
+        state: afterStat,
+        sha256: hashed.value,
+      });
+    }
+  }
+  return hashed;
+};
 
 /** Both profile reads retain the exact descriptor through final close and retry. */
 const readHopperProfileFile = async <Value>(
