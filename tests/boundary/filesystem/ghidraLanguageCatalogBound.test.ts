@@ -43,48 +43,27 @@ afterEach(() => {
   readBytes.value = 0;
 });
 
-it("skips an oversized definition without buffering it beyond the catalog limit", async () => {
+it("reads an exact-limit definition while skipping its oversized sibling with bounded I/O", async () => {
   const root = await createTestTempDirectory("rea-ghidra-ldefs-bound-");
-  const module = (name: string) =>
-    join(root, "Ghidra/Processors", name, "data/languages");
-  await mkdir(module("huge"), { recursive: true });
-  await mkdir(module("x86"), { recursive: true });
+  const directory = join(root, "Ghidra/Processors/x86/data/languages");
+  await mkdir(directory, { recursive: true });
+  const definition = (id: string, size: number) => {
+    const bytes = Buffer.alloc(size, 0x20);
+    bytes.write(
+      `<language_definitions><language id="${id}:LE:32:default"/></language_definitions>`,
+    );
+    return bytes;
+  };
   await writeFile(
-    join(module("huge"), OVERSIZED),
-    Buffer.concat([
-      Buffer.from(
-        '<language_definitions><language id="huge:LE:32:default"/></language_definitions>',
-      ),
-      Buffer.alloc(2 * LIMIT, 0x20),
-    ]),
+    join(directory, OVERSIZED),
+    definition("huge", LIMIT + 64 * 1024),
   );
-  await writeFile(
-    join(module("x86"), "x86.ldefs"),
-    '<language_definitions><language id="x86:LE:32:default"/></language_definitions>',
-  );
-
-  expect(
-    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
-  expect(readBytes.value).toBeGreaterThan(0);
-  expect(readBytes.value).toBeLessThanOrEqual(LIMIT + 1);
-});
-
-it("keeps a definition at exactly the catalog limit", async () => {
-  const root = await createTestTempDirectory("rea-ghidra-ldefs-limit-");
-  const languages = join(root, "Ghidra/Processors/edge/data/languages");
-  await mkdir(languages, { recursive: true });
-  const document = Buffer.from(
-    '<language_definitions><language id="edge:LE:32:default"/></language_definitions>',
-  );
-  await writeFile(
-    join(languages, "edge.ldefs"),
-    Buffer.concat([document, Buffer.alloc(LIMIT - document.length, 0x20)]),
-  );
+  await writeFile(join(directory, "edge.ldefs"), definition("edge", LIMIT));
 
   expect(
     await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
   ).toEqual([{ id: "edge:LE:32:default", compilerSpecIds: [] }]);
+  expect(readBytes.value).toBeLessThanOrEqual(LIMIT + 1);
 });
 
 it("follows a symlinked definition file", async () => {
