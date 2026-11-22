@@ -193,21 +193,43 @@ const storedPlistPayload = (
   return { type, payload: bytes.subarray(start, end) };
 };
 
+const WIDE_DECODERS = {
+  "utf-16le": {
+    strip: {
+      fatal: new TextDecoder("utf-16le", { fatal: true, ignoreBOM: false }),
+      lossy: new TextDecoder("utf-16le", { fatal: false, ignoreBOM: false }),
+    },
+    keep: {
+      fatal: new TextDecoder("utf-16le", { fatal: true, ignoreBOM: true }),
+      lossy: new TextDecoder("utf-16le", { fatal: false, ignoreBOM: true }),
+    },
+  },
+  "utf-16be": {
+    strip: {
+      fatal: new TextDecoder("utf-16be", { fatal: true, ignoreBOM: false }),
+      lossy: new TextDecoder("utf-16be", { fatal: false, ignoreBOM: false }),
+    },
+    keep: {
+      fatal: new TextDecoder("utf-16be", { fatal: true, ignoreBOM: true }),
+      lossy: new TextDecoder("utf-16be", { fatal: false, ignoreBOM: true }),
+    },
+  },
+} as const;
+
 /** Decode declared wide text while preserving readable portions on a malformed input. */
 const storedWideText = (
   payload: Buffer,
   encoding: "utf-16le" | "utf-16be",
   ignoreBOM: boolean,
 ): BinaryPlistText => {
+  const decoders = WIDE_DECODERS[encoding][ignoreBOM ? "keep" : "strip"];
   try {
-    const text = new TextDecoder(encoding, { fatal: true, ignoreBOM }).decode(
-      payload,
-    );
+    const text = decoders.fatal.decode(payload);
     return { text, complete: true };
   } catch (cause: unknown) {
     if (!(cause instanceof TypeError)) throw cause;
     return {
-      text: new TextDecoder(encoding, { ignoreBOM }).decode(payload),
+      text: decoders.lossy.decode(payload),
       complete: false,
     };
   }
