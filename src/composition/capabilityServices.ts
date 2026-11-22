@@ -184,6 +184,9 @@ export interface CapabilityServiceOptions {
   readonly reverseEngineering?: ReverseEngineeringService;
 }
 
+// Reuse a PATH probe for bursts of status calls and recheck installs/removals.
+const TSHARK_AVAILABILITY_CACHE_MS = 1_000;
+
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
   try {
     return (
@@ -561,23 +564,27 @@ const modules = {
             readonly path: string | undefined;
             readonly pathExt: string | undefined;
             readonly locatable: boolean;
+            readonly expiresAt: number;
           }
         | undefined;
       const locatable = (): boolean => {
         const command = environment.REA_TSHARK_COMMAND;
         const path = environment.PATH;
         const pathExt = environment.PATHEXT;
+        const now = performance.now();
         if (
           cached === undefined ||
           cached.command !== command ||
           cached.path !== path ||
-          cached.pathExt !== pathExt
+          cached.pathExt !== pathExt ||
+          now >= cached.expiresAt
         ) {
           cached = {
             command,
             path,
             pathExt,
             locatable: tsharkLocatable(environment),
+            expiresAt: now + TSHARK_AVAILABILITY_CACHE_MS,
           };
         }
         return cached.locatable;
