@@ -316,7 +316,8 @@ const searchClasses = async (
       page.items.length > page.next_offset - offset ||
       (request.input.query === "" &&
         page.items.length !== page.next_offset - offset) ||
-      page.items.some((name) => !name.includes(request.input.query))
+      (request.input.query !== "" &&
+        page.items.some((name) => !name.includes(request.input.query)))
     )
       throw new AnalysisOutputError(
         request.operation,

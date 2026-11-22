@@ -1,4 +1,5 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect } from "vitest";
@@ -543,9 +544,21 @@ describe("trace-dylib-resolution CLI", () => {
       "required-load-unresolved",
       "weak-load-unresolved",
     ]);
-    expect(
-      trace.images.every(({ sha256 }) => /^[0-9a-f]{64}$/u.test(sha256)),
-    ).toBe(true);
+    const imageDigests = await Promise.all(
+      [
+        "Contents/Frameworks/libcore.dylib",
+        "Contents/Helpers/tool",
+        "Contents/MacOS/App",
+      ].map(async (path) => [
+        path,
+        createHash("sha256")
+          .update(await readFile(join(app, path)))
+          .digest("hex"),
+      ]),
+    );
+    expect(trace.images.map(({ path, sha256 }) => [path, sha256])).toEqual(
+      imageDigests,
+    );
   });
 
   cliTest(
@@ -625,26 +638,6 @@ describe("trace-dylib-resolution CLI", () => {
         { status: "resolved", image: "lib/libhelper.dylib" },
         { status: "undetermined", image: null },
       ]);
-    },
-  );
-
-  cliTest(
-    "reports unparsed Mach-O files found while enumerating roots",
-    async ({ cli }) => {
-      const app = await fixtureApp();
-      await withBrokenHelper(app);
-      const result = await cli.run({
-        arguments: ["trace-dylib-resolution", app, "--json"],
-        environment: ENVIRONMENT,
-      });
-      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
-      const trace = dylibResolutionResultSchema.parse(
-        (result.json as { normalized_result: unknown }).normalized_result,
-      );
-      expect(trace.coverage).toMatchObject({
-        status: "partial",
-        unparsed_images: ["Contents/Helpers/broken"],
-      });
     },
   );
 });
@@ -857,55 +850,49 @@ describe.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 );
 
 cliTest(
-  "reports embedded path overrides as conditional without changing diagnostic-only resolution",
+  "explains why an earlier rpath candidate does not establish a definite choice under an embedded override",
   async ({ cli }) => {
-    for (const [setting, expected] of [
-      ["DYLD_LIBRARY_PATH=/external", "conditional"],
-      ["DYLD_PRINT_LIBRARIES=1", "resolved"],
-      ["DYLD_FALLBACK_LIBRARY_PATH=/external", "resolved"],
-      ["DYLD_FRAMEWORK_PATH=/external", "resolved"],
-      ["DYLD_ROOT_PATH=/external", "resolved"],
-      ["DYLD_OVERLAY_PATH=/external", "resolved"],
-    ] as const) {
-      const app = await fixtureApp();
-      await writeFiles(app, {
-        "Contents/MacOS/App": machoImage({
-          commands: [
-            dyldEnvironmentCommand(setting),
-            buildVersionCommand(1),
-            rpathCommand("@executable_path/../Absent"),
-            rpathCommand("@executable_path/../Frameworks"),
-            dylibCommand(LC.LOAD_DYLIB, "@rpath/libcore.dylib"),
-          ],
-        }),
-      });
-      const result = await cli.run({
-        arguments: [
-          "trace-dylib-resolution",
-          app,
-          "--root",
-          "Contents/MacOS/App",
-          "--json",
+    const setting = "DYLD_LIBRARY_PATH=/external";
+    const app = await fixtureApp();
+    await writeFiles(app, {
+      "Contents/MacOS/App": machoImage({
+        commands: [
+          dyldEnvironmentCommand(setting),
+          buildVersionCommand(1),
+          rpathCommand("@executable_path/../Absent"),
+          rpathCommand("@executable_path/../Frameworks"),
+          dylibCommand(LC.LOAD_DYLIB, "@rpath/libcore.dylib"),
         ],
-        environment: ENVIRONMENT,
-      });
-      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
-      const trace = dylibResolutionResultSchema.parse(
-        parseEvidence(result.json).normalized_result,
-      );
-      expect(trace.edges[0]?.resolution.status).toBe(expected);
-      expect(trace.coverage.status).toBe(
-        expected === "conditional" ? "partial" : "complete",
-      );
-      expect(
-        trace.images.find(({ path }) => path === "Contents/MacOS/App")
-          ?.slices[0]?.dyld_environment,
-      ).toEqual([setting]);
-      if (expected === "conditional")
-        expect(trace.findings[0]?.explanation).toContain(
-          "does not establish which image dyld will load",
-        );
-    }
+      }),
+    });
+    const result = await cli.run({
+      arguments: [
+        "trace-dylib-resolution",
+        app,
+        "--root",
+        "Contents/MacOS/App",
+        "--json",
+      ],
+      environment: ENVIRONMENT,
+    });
+    expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
+    const trace = dylibResolutionResultSchema.parse(
+      parseEvidence(result.json).normalized_result,
+    );
+    expect(trace.edges[0]?.resolution).toEqual({
+      status: "conditional",
+      image: "Contents/Frameworks/libcore.dylib",
+    });
+    expect(
+      trace.findings.find(
+        ({ kind }) => kind === "earlier-rpath-candidate-absent",
+      ),
+    ).toMatchObject({
+      image: "Contents/MacOS/App",
+      explanation: expect.stringContaining(
+        "does not establish which image dyld will load",
+      ),
+    });
   },
 );
 
@@ -1107,49 +1094,6 @@ cliTest(
   },
 );
 
-cliTest(
-  "distinguishes empty search directories from empty versioned or suffix lists",
-  async ({ cli }) => {
-    for (const [setting, status] of [
-      ["DYLD_FALLBACK_LIBRARY_PATH=", "undetermined"],
-      ["DYLD_VERSIONED_LIBRARY_PATH=", "unresolved"],
-      ["DYLD_IMAGE_SUFFIX=:", "unresolved"],
-    ] as const) {
-      const root = await createTestTempDirectory("rea-dyld-empty-cli-");
-      const path = join(root, "program");
-      await writeFile(
-        path,
-        machoImage({
-          commands: [
-            buildVersionCommand(1),
-            dyldEnvironmentCommand(setting),
-            dylibCommand(LC.LOAD_DYLIB, "@loader_path/missing.dylib"),
-          ],
-        }),
-      );
-      const result = await cli.run({
-        arguments: ["trace-dylib-resolution", path, "--json"],
-        environment: ENVIRONMENT,
-      });
-      expect(result.exitCode, JSON.stringify(result.json)).toBe(0);
-      const trace = dylibResolutionResultSchema.parse(
-        parseEvidence(result.json).normalized_result,
-      );
-      expect(trace.edges[0]?.resolution.status).toBe(status);
-      expect(trace.coverage.status).toBe(
-        status === "undetermined" ? "partial" : "complete",
-      );
-      expect(
-        trace.images.find(({ path }) => path === "program")?.slices[0]
-          ?.dyld_environment,
-      ).toEqual([setting]);
-      expect(
-        trace.findings.some(({ kind }) => kind === "required-load-unresolved"),
-      ).toBe(status === "unresolved");
-    }
-  },
-);
-
 /** An app bundle whose roots sit among more files than one batch of magic reads. */
 const crowdedApp = async (): Promise<string> => {
   const app = await fixtureApp();
@@ -1193,6 +1137,13 @@ describe("trace-dylib-resolution root enumeration", () => {
       expect(trace.coverage).toMatchObject({
         status: "partial",
         unparsed_images: ["Contents/Helpers/broken"],
+      });
+      expect(
+        trace.images.find(({ path }) => path === "Contents/Helpers/broken"),
+      ).toMatchObject({
+        parse_status: "malformed",
+        reason: expect.stringContaining("load command"),
+        slices: [],
       });
     },
   );

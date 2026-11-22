@@ -290,11 +290,12 @@ const documentsProblem = (
   state: EnvironmentState,
   documents: ParsedDocument["documents"],
 ): AnalysisInputIssue | undefined => {
+  const initialByTool = new Map(
+    state.documents.map((candidate) => [candidate.tool, candidate]),
+  );
   const tools = new Set<string>();
   for (const [index, document] of documents.entries()) {
-    const initial = state.documents.find(
-      (candidate) => candidate.tool === document.tool,
-    );
+    const initial = initialByTool.get(document.tool);
     if (
       state.views.get(document.tool)?.shape !== "document" ||
       initial === undefined ||
@@ -379,19 +380,22 @@ const heldContent = (
       record_ordinals: unchanged ? recorded.record_ordinals : [],
     };
   }),
-  documents: document.documents.map(({ tool, path, value }) => {
-    const recorded = state.documents.find(
-      (candidate) => candidate.tool === tool,
+  documents: (() => {
+    const recordedByTool = new Map(
+      state.documents.map((candidate) => [candidate.tool, candidate]),
     );
-    return {
-      tool,
-      path,
-      value,
-      ...(recorded !== undefined && same(value, recorded.value)
-        ? { record_ordinal: recorded.record_ordinal }
-        : {}),
-    };
-  }),
+    return document.documents.map(({ tool, path, value }) => {
+      const recorded = recordedByTool.get(tool);
+      return {
+        tool,
+        path,
+        value,
+        ...(recorded !== undefined && same(value, recorded.value)
+          ? { record_ordinal: recorded.record_ordinal }
+          : {}),
+      };
+    });
+  })(),
 });
 
 /**

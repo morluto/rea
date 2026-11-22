@@ -30,7 +30,7 @@ import {
 import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
@@ -756,7 +756,7 @@ const completedFirmwareObservation = (
 ): FirmwarePartialObservation => ({
   kind: "firmware",
   result: execution.result,
-  provenance: jsonValueSchema.parse({
+  provenance: ownedJsonValueSchema.parse({
     raw_result: execution.rawResult,
     provider: execution.provider,
     subject: execution.subject,

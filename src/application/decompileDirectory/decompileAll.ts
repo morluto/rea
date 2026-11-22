@@ -1,3 +1,4 @@
+import type { WorkflowAnalysisPort } from "../WorkflowEvidence.js";
 import { ExportPublishedCleanupFailure } from "./exportResources.js";
 import { join } from "node:path";
 import { z } from "zod";
@@ -111,7 +112,7 @@ interface PublishState {
  * caller cancels.
  */
 export const decompileAll = async (
-  analysis: AnalysisOperationPort,
+  analysis: WorkflowAnalysisPort,
   input: DecompileDirectoryInput,
   signal?: AbortSignal,
 ): Promise<Result<JsonValue, AnalysisError>> => {
@@ -380,7 +381,7 @@ const identityFrom = (
 };
 
 interface PublishInput {
-  readonly analysis: AnalysisOperationPort;
+  readonly analysis: WorkflowAnalysisPort;
   readonly session: DecompileExport;
   readonly procedures: readonly SelectedProcedure[];
   readonly identity: ExportIdentity;
@@ -506,7 +507,7 @@ const attemptOne = async (
 };
 
 const publishOne = async (input: {
-  readonly analysis: AnalysisOperationPort;
+  readonly analysis: WorkflowAnalysisPort;
   readonly session: DecompileExport;
   readonly procedure: SelectedProcedure;
   readonly identity: ExportIdentity;
@@ -561,6 +562,7 @@ const publishOne = async (input: {
     observationMismatch(input.identity, decompiled.value) === undefined
   ) {
     const original = decompiled.value;
+    input.analysis.recordItemLimitations?.("procedure_pseudo_code", original);
     const originalSource: NonNullable<
       DecompileDirectoryFunctionRecord["provider_source"]
     > =
@@ -616,6 +618,10 @@ const publishOne = async (input: {
       bodySupport: body.support,
     };
   }
+  input.analysis.recordItemLimitations?.(
+    "procedure_pseudo_code",
+    decompiled.value,
+  );
   const caveats = [
     ...new Set([
       ...infoCaveats,
@@ -734,7 +740,7 @@ const publishOne = async (input: {
 };
 
 const readBody = async (
-  analysis: AnalysisOperationPort,
+  analysis: WorkflowAnalysisPort,
   address: string,
   identity: ExportIdentity,
   signal: AbortSignal | undefined,
@@ -746,8 +752,8 @@ const readBody = async (
       readonly support: "unknown" | "unavailable";
       /**
        * Caveats of a procedure_info observation for this export's target and
-       * profile. An observation for another target or profile is foreign and
-       * contributes none.
+       * profile. An observation for another target or profile, or with a
+       * validated different entry point, contributes no caveats.
        */
       readonly limitations?: readonly string[];
       /**
@@ -800,19 +806,19 @@ const readBody = async (
       support,
     };
   const parsed = procedureInfoSchema.safeParse(observed.value.result);
-  if (!parsed.success)
-    return {
-      kind: "body",
-      fact: unavailableBody("procedure_info returned an invalid body."),
-      support,
-      limitations: observed.value.limitations,
-    };
-  if (!sameAddress(parsed.data.entrypoint, address))
+  if (parsed.success && !sameAddress(parsed.data.entrypoint, address))
     return {
       kind: "body",
       fact: unavailableBody(
         "procedure_info described a different entry point than this function.",
       ),
+      support,
+    };
+  analysis.recordItemLimitations?.("procedure_info", observed.value);
+  if (!parsed.success)
+    return {
+      kind: "body",
+      fact: unavailableBody("procedure_info returned an invalid body."),
       support,
       limitations: observed.value.limitations,
     };

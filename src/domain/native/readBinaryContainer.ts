@@ -1,5 +1,6 @@
 import {
   BinaryFormatFailure,
+  hasElfMagic,
   type BinaryContainer,
 } from "../binaryContainer.js";
 import {
@@ -12,10 +13,6 @@ import { readElfImage, readElfImageCooperative } from "./elfImage.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
 import { readPeImage } from "./peImage.js";
 import { readMachoImage } from "../apple/machoImage.js";
-
-const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.subarray(0, ELF_MAGIC.length).equals(ELF_MAGIC);
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (

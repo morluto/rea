@@ -200,7 +200,9 @@ const UTF8 = strictUtf8Decoder("preserve");
 /** True when the first four bytes are the U-Boot legacy magic. */
 export const hasUImageMagic = (prefix: Buffer): boolean =>
   prefix.length >= 4 &&
-  new BinaryReader(prefix, false, "uimage").u32(0) === UIMAGE_MAGIC;
+  ((prefix[0]! << 24) | (prefix[1]! << 16) | (prefix[2]! << 8) | prefix[3]!) >>>
+    0 ===
+    UIMAGE_MAGIC;
 
 /**
  * Parse the 64-byte header and verify its CRC32 (computed over the header

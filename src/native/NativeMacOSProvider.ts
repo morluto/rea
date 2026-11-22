@@ -96,7 +96,11 @@ import {
   AnalysisError,
   resolvedAnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   projectPlistValue,
   nonFiniteRealLimitation,
@@ -752,7 +756,7 @@ class NativeMacOSClient implements AnalysisClient {
               limitations,
             });
             return ok({
-              result: jsonValueSchema.parse(result),
+              result: ownedJsonValueSchema.parse(result),
               limitations,
               locations: architectureLocations(result.architectures.items),
             });
@@ -799,7 +803,7 @@ class NativeMacOSClient implements AnalysisClient {
       limitations: [],
     });
     return ok({
-      result: jsonValueSchema.parse(result),
+      result: ownedJsonValueSchema.parse(result),
       limitations: [],
       locations: [],
     });
@@ -2290,7 +2294,7 @@ const nativePlistObservation = (input: {
     limitations: parsed.limitations,
   });
   return {
-    result: jsonValueSchema.parse(result),
+    result: ownedJsonValueSchema.parse(result),
     limitations: parsed.limitations,
     locations: [{ kind: "artifact-path", path }],
   };

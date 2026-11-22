@@ -11,7 +11,7 @@ import {
   InterfaceBuilderDecodeBudget,
   interfaceBuilderDecodeBudgetExceeded,
 } from "./InterfaceBuilderDecodeBudget.js";
-import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
+import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { isRecord } from "../../kernel/isRecord.js";
 
 const DEFAULT_DECODE_BUDGET_BYTES = 128 * 1024 * 1024;
@@ -566,7 +566,7 @@ const decodeUtf8 = (
 ): string => {
   try {
     // These are length-prefixed names, not standalone text documents.
-    return strictUtf8Decoder("preserve").decode(bytes.subarray(start, end));
+    return decodeStrictUtf8(bytes.subarray(start, end), "preserve");
   } catch (cause: unknown) {
     throw malformedInput(
       "nib-archive",

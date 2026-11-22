@@ -38,7 +38,16 @@ import {
   asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
-import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
+import {
+  decodeDeclaredText,
+  decodeMemberText,
+  declaresTextEncoding,
+  getCachedTextDecoder,
+  hasNonUtf8Nul,
+  type MemberText,
+} from "./releaseExposure/memberTextDecoding.js";
+import { nodeShebang } from "./releaseExposure/nodeShebang.js";
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import {
   InternalInvariantError,
   invariantViolation,
@@ -74,7 +83,6 @@ import {
   inspectPeCodeViewFromBuffer,
   parsePeRecordStructure,
 } from "../domain/binaryTarget.js";
-import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type {
   ArtifactAdmissionLimit,
@@ -213,11 +221,8 @@ const SCAN_INTERRUPTED =
 const SCAN_CANCELLED =
   "The member scan was cancelled. Members it did not reach are unknown.";
 /** Decoded representation bound for one binary plist text member. */
-const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 /** Bytes of a member that decide how its NULs are read. */
-const MEMBER_ENCODING_HEADER_BYTES = 512;
 /** One header byte in this many being NUL is too many for UTF-8 text. */
-const WIDE_TEXT_NUL_DIVISOR = 8;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 /** Markup that `htmlArtifactReferences` reads for scripts. SVG can carry them too. */
@@ -649,6 +654,7 @@ const scanOccurrences = async (
           packageKind,
           containers,
           state,
+          shaOf(occurrence, nodeSha),
         );
       continue;
     }
@@ -1508,7 +1514,7 @@ const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return !hasVisibleNonMapPrefix(
-      new TextDecoder(encoding ?? "utf-8").decode(prefix),
+      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
     );
   }
 };
@@ -1798,164 +1804,6 @@ const hasNodeShebang = (prefix: Buffer): boolean =>
  * `${NAME}` the scan cannot resolve, such as `${NODE_BIN}`, may be Node, so
  * it is undefined rather than false.
  */
-const nodeShebang = (prefix: Buffer): boolean | undefined => {
-  if (prefix.toString("latin1", 0, 2) !== "#!") return false;
-  const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
-  const [, interpreter = "", operands = ""] =
-    /^(\S*)[ \t]*(.*)$/su.exec(line.trim()) ?? [];
-  const program =
-    basename(interpreter) === "env"
-      ? envProgram(operands)
-      : { text: interpreter, expands: false };
-  if (program === undefined) return false;
-  const name = basename(program.text);
-  if (/^node(?:js)?$/u.test(name)) return true;
-  return program.expands && name.includes("${") ? undefined : false;
-};
-
-/** One `env` field, and whether `env -S` expands a `${NAME}` inside it. */
-interface EnvField {
-  readonly text: string;
-  readonly expands: boolean;
-}
-
-/** `env` options whose argument is the next field, as in `-u NODE_OPTIONS`. */
-const ENV_OPTION_WITH_ARGUMENT = new Set([
-  "-u",
-  "--unset",
-  "-C",
-  "--chdir",
-  "-P",
-]);
-
-/**
- * The program an `env` shebang runs: the first field that is neither an
- * option, an option's argument, nor a `NAME=value` setting. `-S` takes the
- * rest of the line as one string and splits it as `env` does, so quoted
- * spaces stay inside their field.
- */
-const envProgram = (operands: string): EnvField | undefined => {
-  const fields: EnvField[] = [];
-  let rest = operands;
-  const next = (): EnvField | undefined => {
-    if (fields.length > 0) return fields.shift();
-    const [, field, after = ""] = /^[ \t]*([^ \t]+)(.*)$/su.exec(rest) ?? [];
-    rest = after;
-    return field === undefined ? undefined : { text: field, expands: false };
-  };
-  for (let entry = next(); entry !== undefined; entry = next()) {
-    const field = entry.text;
-    // Past `--` nothing is an option, but settings still come first.
-    if (field === "--") {
-      for (let word = next(); word !== undefined; word = next())
-        if (!word.text.includes("=")) return word;
-      return undefined;
-    }
-    if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
-      next();
-      continue;
-    }
-    const attached =
-      /^-[0iv]*S(.*)$/su.exec(field)?.[1] ??
-      (field.startsWith("--split-string=")
-        ? field.slice("--split-string=".length)
-        : undefined);
-    if (attached !== undefined) {
-      // The kernel passes the whole line as one operand, so an `-S` read from
-      // the line itself owns everything after it, separators included.
-      const fromLine = fields.length === 0;
-      const words = splitEnvString(fromLine ? attached + rest : attached);
-      if (words === undefined) return undefined;
-      if (fromLine) rest = "";
-      fields.unshift(...words);
-      continue;
-    }
-    if (field.startsWith("-") || field.includes("=")) continue;
-    return entry;
-  }
-  return undefined;
-};
-
-/** Escapes `env -S` accepts outside single quotes, as GNU coreutils reads them. */
-const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
-  "\\": "\\",
-  "'": "'",
-  '"': '"',
-  "#": "#",
-  $: "$",
-  f: "\f",
-  n: "\n",
-  r: "\r",
-  t: "\t",
-  v: "\v",
-};
-
-/**
- * Split an `env -S` string on its unquoted spaces and tabs. Single quotes keep
- * text literally but for `\\` and `\'`; double quotes and bare text take the
- * escapes above, `\_` separates fields outside quotes and is a space inside
- * them, `\c` ends the string, and a `#` that starts a field begins a comment.
- * `${NAME}` stays as written: it can only change a value, never which field is
- * the program, so its field is marked as expanding. A string `env` itself
- * rejects, such as an unterminated quote or an unknown escape, runs nothing.
- */
-const splitEnvString = (text: string): EnvField[] | undefined => {
-  const fields: EnvField[] = [];
-  let field: string | null = null;
-  let expands = false;
-  let quote: "'" | '"' | null = null;
-  const end = (): void => {
-    if (field !== null) fields.push({ text: field, expands });
-    field = null;
-    expands = false;
-  };
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index] ?? "";
-    if (quote === "'") {
-      const escaped = text[index + 1];
-      if (character === "'") quote = null;
-      else if (character === "\\" && (escaped === "\\" || escaped === "'")) {
-        field += escaped;
-        index += 1;
-      } else field += character;
-      continue;
-    }
-    if (character === "\\") {
-      const escaped = text[index + 1];
-      index += 1;
-      if (escaped === "c") {
-        if (quote !== null) return undefined;
-        break;
-      }
-      if (escaped === "_") {
-        if (quote === null) end();
-        else field += " ";
-        continue;
-      }
-      const value =
-        escaped === undefined ? undefined : ENV_SPLIT_ESCAPES[escaped];
-      if (value === undefined) return undefined;
-      field = (field ?? "") + value;
-      continue;
-    }
-    if (character === "$" && text[index + 1] === "{") expands = true;
-    if (quote === '"') {
-      if (character === '"') quote = null;
-      else field += character;
-      continue;
-    }
-    if (character === " " || character === "\t") end();
-    else if (character === "#" && field === null) break;
-    else if (character === "'" || character === '"') {
-      quote = character;
-      field ??= "";
-    } else field = (field ?? "") + character;
-  }
-  if (quote !== null) return undefined;
-  end();
-  return fields;
-};
-
 /**
  * A name is not a format: a package member called `payload.json` or
  * `payload.js.map` can be a PE or an ASAR, and a script or map declaration
@@ -2417,70 +2265,6 @@ const noteUnreachedTargets = (state: ScanState): void => {
       )
     )
       state.skippedMaps += 1;
-};
-
-/** Text decoded from a member; `complete` is false when part of it went unread. */
-interface MemberText {
-  readonly text: string;
-  readonly complete: boolean;
-}
-
-/**
- * A binary plist that cannot be fully decoded keeps its raw bytes in the scan,
- * for the ASCII strings they show, beside whatever text it did decode, but its
- * other strings were not examined.
- */
-const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
-  try {
-    const decoded = decodeBinaryPlistText(
-      bytes,
-      RELEASE_EXPOSURE_PLIST_DECODE_BYTES,
-    );
-    return decoded.complete
-      ? decoded
-      : { text: `${decoded.text}\n${bytes.toString("utf8")}`, complete: false };
-  } catch (cause: unknown) {
-    // A broken internal assumption is a REA defect, not an undecodable plist.
-    if (cause instanceof InternalInvariantError) throw cause;
-    return { text: bytes.toString("utf8"), complete: false };
-  }
-};
-
-/**
- * Bytes that name their own text encoding, whose NULs are that encoding's
- * structure rather than a sign of binary data. `decodeMemberText` reads each of
- * these; a probe that admits on NULs alone would drop them unexamined.
- */
-const declaresTextEncoding = (bytes: Buffer): boolean =>
-  byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
-
-/** Retain visible text after a decoding error without calling the read complete. */
-const decodeDeclaredText = (bytes: Buffer, encoding: string): MemberText => {
-  try {
-    return {
-      text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
-      complete: true,
-    };
-  } catch (cause) {
-    if (!(cause instanceof TypeError)) throw cause;
-    return { text: new TextDecoder(encoding).decode(bytes), complete: false };
-  }
-};
-
-/**
- * The text a member's bytes encode, or null when they cannot be read as text.
- * A member's kind says nothing about its encoding: wide text has no byte order
- * mark to explain its NULs, and a scan of it would match nothing and still count
- * as complete. A NUL inside UTF-8 text does not change how the rest of it reads.
- * A binary plist has its own object encoding, so its owner decodes it.
- */
-const decodeMemberText = (bytes: Buffer): MemberText | null => {
-  const encoding = byteOrderMarkEncoding(bytes);
-  if (encoding === "utf-32") return null;
-  if (encoding !== null) return decodeDeclaredText(bytes, encoding);
-  if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
-  if (hasNonUtf8Nul(bytes)) return null;
-  return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
 };
 
 const scanText = (
@@ -3018,6 +2802,7 @@ const scanEmbeddedPackage = async (
     probe.format,
     containers,
     state,
+    state.nativeDigests.get(filePath),
   );
 };
 
@@ -3028,6 +2813,7 @@ const scanUnexpandedContainer = async (
   format: PackageFormat,
   containers: Map<string, OpenContainer>,
   state: ScanState,
+  expectedSha256?: string,
 ): Promise<void> => {
   let listing: ContainerListing;
   try {
@@ -3036,9 +2822,10 @@ const scanUnexpandedContainer = async (
       occurrence.occurrence_id,
       filePath,
       format,
-      input.inventory?.nodes.find(
-        (node) => node.artifact_id === occurrence.artifact_id,
-      )?.sha256,
+      expectedSha256 ??
+        input.inventory?.nodes.find(
+          (node) => node.artifact_id === occurrence.artifact_id,
+        )?.sha256,
       state,
       input.signal,
     );
@@ -3413,7 +3200,7 @@ const readSpan = async (
             { integrityCheck: "member-identity" },
           );
         state.memberBytesRead += bytes.length - charged;
-        return Buffer.from(bytes);
+        return bytes;
       },
     );
   } catch (cause) {
@@ -3786,14 +3573,7 @@ const sniffNativeFormat = (
   bytes: Buffer,
   size: number | null = bytes.length,
 ): NativeFormat | null => {
-  if (
-    bytes.length >= 4 &&
-    bytes[0] === 0x7f &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x4c &&
-    bytes[3] === 0x46
-  )
-    return "elf";
+  if (hasElfMagic(bytes)) return "elf";
   if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
   const universal = sniffFatFormat(bytes, size);
   if (universal !== null) return universal;
@@ -3810,20 +3590,6 @@ const targetKind = (
   if (format === "asar") return "asar";
   if (NATIVE.has(format) || EXTRACTABLE.has(format)) return "executable";
   return "file";
-};
-
-/**
- * Wide text is valid UTF-8 when its characters are ASCII, so validity alone
- * cannot separate it from UTF-8 holding a NUL. Density can: UTF-16 puts a NUL in
- * every other byte of each ASCII character, and a stray NUL is one byte of many.
- */
-const hasNonUtf8Nul = (bytes: Buffer): boolean => {
-  const header = bytes.subarray(0, MEMBER_ENCODING_HEADER_BYTES);
-  const nuls = header.reduce((count, byte) => count + (byte === 0 ? 1 : 0), 0);
-  return (
-    nuls > 0 &&
-    (nuls * WIDE_TEXT_NUL_DIVISOR >= header.length || !isUtf8(bytes))
-  );
 };
 
 const pushSample = (samples: string[], value: string): void => {

@@ -17,7 +17,7 @@ const sources = {
 };
 const event = (
   extraRequest: Record<string, string>,
-  extraInitiator: Record<string, string> = {},
+  extraInitiator: Record<string, unknown> = {},
 ) => ({
   method: "Network.requestWillBeSent",
   params: {
@@ -45,6 +45,26 @@ it("budgets retained request facts independently of discarded POST bodies", () =
     reported_initiator: { type: "parser" },
   });
   expect(JSON.stringify(retained)).not.toContain("postData");
+});
+
+it("keeps retained initiator facts independent of a returned result", () => {
+  const requests = new CdpRuntimeRequests(sources);
+  requests.ingest(
+    receiveCdpEvent(event({}, { extension: { label: "producer" } })),
+  );
+  const initiator = requests.result()[0]?.reported_initiator;
+  const extension = initiator?.extension;
+  if (
+    typeof extension !== "object" ||
+    extension === null ||
+    Array.isArray(extension)
+  )
+    throw new Error("Missing producer extension");
+  extension.label = "changed by caller";
+  expect(requests.result()[0]?.reported_initiator).toEqual({
+    type: "parser",
+    extension: { label: "producer" },
+  });
 });
 
 it("preserves a typed resource refusal for oversized retained initiator facts", () => {

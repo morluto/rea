@@ -1,3 +1,4 @@
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import {
   parseFailureAnalysisError,
   parseLimitConstraint,
@@ -112,7 +113,7 @@ export const readBinaryHardening = async (
       images: [await readElfHardeningCooperative(bytes, signal)],
       limitations: [...BINARY_HARDENING_LIMITATIONS],
     };
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
+  if (hasDosMzMagic(bytes))
     return {
       artifact,
       format: "pe",
