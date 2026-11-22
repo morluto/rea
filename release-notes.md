@@ -238,6 +238,7 @@
 * **website:** restore shared theme script formatting ([#13117](https://github.com/morluto/rea/issues/13117)) ([a1c8f67](https://github.com/morluto/rea/commit/a1c8f67e9934efc0153b3bc2864c13370389b5d3))
 * **website:** use the blue REA wordmark for site icons ([2c4776d](https://github.com/morluto/rea/commit/2c4776d9aa9c1167da96f75a27645a23ef3a348e))
 * **website:** verify markdown fragments from parsed headings ([#13265](https://github.com/morluto/rea/issues/13265)) ([88d1d9b](https://github.com/morluto/rea/commit/88d1d9b8b5245ce25165f5da3a5eea19740f4886))
+* **windows-shortcuts:** preserve unread target uncertainty ([#13653](https://github.com/morluto/rea/issues/13653)) ([8018344](https://github.com/morluto/rea/commit/8018344145b2d6f77a2379f015c81205312cd542))
 
 
 ### Performance Improvements
