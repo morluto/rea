@@ -50,10 +50,11 @@ guessing a compatible profile:
 | `EF_RISCV_TSO`                                                                   | refused; the total-store-order memory model is unverified here                                                                  |
 | Reserved or newer `e_flags` bits                                                 | refused with the offending bits named                                                                                           |
 | One NOBITS section covering an `ET_EXEC` code section from its start             | admitted if no other section overlaps either; REA prepares the [memory map](#load-layout) before analysis                       |
-| Any other `ET_EXEC` section overlap involving executable code                    | refused; the reason names the two sections that cause the refusal, with their ranges                                            |
+| The same reservation in a position-independent executable (PIE)                  | refused; REA verifies that preparation for `ET_EXEC` images only                                                                |
+| Any other section overlap involving executable code                              | refused; the reason names the two sections that cause the refusal, with their ranges                                            |
 | A section table that cannot be read, or with more than 65,280 allocated sections | refused with the read failure or the count; REA rejects most malformed tables when it opens the file                            |
 
-`e_type`, program headers and, for fixed-address images, the
+`e_type`, program headers and, for executables, the
 [section overlaps](#load-layout) decide the load model this lane reads. A
 fixed-address `ET_EXEC` declaration does **not** establish static linkage:
 dynamic dependencies are not inspected, and the session records that boundary
@@ -267,9 +268,10 @@ the lane admits.
 
 ## Load layout
 
-Section addresses are load addresses in a fixed-address image, so the target
-reader also checks whether an executable section shares allocated addresses
-with another section. The check keeps at most 65,280 allocated sections
+Section addresses are load addresses in an `ET_EXEC` image and fixed offsets
+from the load base in a PIE, so an overlap does not depend on the base. The
+target reader checks both for an executable section that shares allocated
+addresses with another section; relocatable sections have no addresses yet. The check keeps at most 65,280 allocated sections
 (`SHN_LORESERVE`); a table with more is refused like a table that cannot be
 read. ESP-IDF builds such overlaps. For ESP32-C5, C6, C61, H2, H21
 and H4, flash text and rodata share one virtual window from `0x42000020`, and

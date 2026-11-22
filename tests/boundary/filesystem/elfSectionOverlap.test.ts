@@ -271,7 +271,9 @@ describe("ELF section overlaps at target resolution", () => {
       elf([code, reservation], { type: 1 }),
     );
     expect(overlap).toBeUndefined();
-    expect(refusal).toContain("fixed-address ET_EXEC only");
+    expect(refusal).toContain(
+      "relocatable images need separate load verification",
+    );
   });
 });
 

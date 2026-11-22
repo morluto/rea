@@ -224,11 +224,14 @@ const witnessLabel = (witness: ElfSectionWitness): string =>
  */
 const ghidraRiscvSectionOverlapRefusal = (
   overlap: ElfSectionOverlap | undefined,
+  loadModel: GhidraRiscvLoadModel,
 ): string | null => {
   if (overlap === undefined)
     return "This RISC-V lane requires the image's section table, which was not inspected; overlapping sections decide where Ghidra loads code.";
   if (overlap.status === "unavailable")
     return `This RISC-V lane requires a readable section table: ${overlap.reason}.`;
+  if (overlap.status === "code-reservation" && loadModel === "pie")
+    return `Section ${sectionLabel(overlap.reservation)} reserves the addresses of executable section ${sectionLabel(overlap.code)}; this lane verifies that preparation for fixed-address ET_EXEC images only, so a position-independent executable (PIE) with it needs separate load verification.`;
   if (overlap.status !== "unsupported") return null;
   const [first, second] = overlap.witnesses;
   return `Sections ${witnessLabel(first)} and ${witnessLabel(second)} share addresses, so Ghidra 12.1.4's ELF loader would put one of them in an overlay address space. This lane prepares only one NOBITS section that starts at an executable PROGBITS section's address and covers it, with no other section overlapping either; see docs/providers/ghidra-riscv.md.`;
@@ -278,7 +281,9 @@ export const ghidraRiscvUnsupportedReason = (
     lane.callingConvention === undefined
       ? null
       : ghidraRiscvIsaRefusal(metadata.isa);
-  return isa ?? ghidraRiscvSectionOverlapRefusal(metadata.sectionOverlap);
+  return (
+    isa ?? ghidraRiscvSectionOverlapRefusal(metadata.sectionOverlap, loadModel)
+  );
 };
 
 /** The memory-map preparation an admitted target's sections need, if any. */

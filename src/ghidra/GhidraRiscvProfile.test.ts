@@ -816,26 +816,34 @@ const canonical: GhidraRiscvLoadPreparationReport = {
   code: { ...movedCode, space_before: "ram" },
 };
 
-// Profiles of images without a section overlap, as main 2885347cd commits them.
-const UNCHANGED_DIGESTS = {
-  ilp32: "728ff911222c1d6dfe4f99126030028bb5f109abed249cb1c76c9406d9c015c4",
-  double64: "687953088295bc6eee57d97256a18b979fe76159ab5ec8cf0ccb778b86af7b5d",
-} as const;
-
 describe("RISC-V load preparation admission", () => {
-  it("keeps the profile of every image without an overlap byte for byte", async () => {
-    for (const [name, value] of [
-      ["ilp32", ilp32()],
-      ["double64", target()],
-    ] as const) {
+  it("commits no load preparation for an image without an overlap", async () => {
+    for (const value of [
+      ilp32(),
+      target(),
+      target({ type: 3, hasInterpreter: true }),
+    ]) {
       const resolved = await ghidra().resolveAnalysisProfile(value);
       if (!resolved.ok || resolved.value.profile === null)
         throw new Error("expected a RISC-V profile");
       expect(resolved.value.profile.parameters).not.toHaveProperty(
         "elf_load_preparation",
       );
-      expect(resolved.value.profile.digest).toBe(UNCHANGED_DIGESTS[name]);
+      expect(ghidraRiscvLoadPreparation(value)).toBeUndefined();
     }
+  });
+
+  it("refuses a PIE whose sections need the reservation preparation", () => {
+    const pie = esp({ type: 3, hasInterpreter: true });
+    expect(ghidraRiscvLoadPreparation(pie)).toBeUndefined();
+    expect(ghidraRiscvUnsupportedReason(pie)).toContain(
+      "fixed-address ET_EXEC images only",
+    );
+    expect(
+      ghidraRiscvUnsupportedReason(
+        uninspected(target({ type: 3, hasInterpreter: true })),
+      ),
+    ).toContain("section table, which was not inspected");
   });
 
   it("commits ESP-IDF's code reservation to the profile", async () => {

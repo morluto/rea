@@ -284,8 +284,7 @@ export async function buildRiscvFixture(directory, bits, buildOptions = {}) {
       flags: elf.flags,
       isa: elf.isa,
       ...(pie ? { hasInterpreter: true } : {}),
-      // Section addresses are load addresses only in fixed-address images.
-      ...(pie ? {} : { sectionOverlap: sectionOverlapOf(elf.sections) }),
+      sectionOverlap: sectionOverlapOf(elf.sections),
     },
     symbols,
     linkerSymbols,
