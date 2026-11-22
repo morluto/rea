@@ -277,18 +277,22 @@ export type UnreportedArtifactPathStatus =
   | { readonly status: "unknown"; readonly limitation: string }
   | { readonly status: "unobserved" };
 
+/** Classifier for paths a comparison omitted from `changes`. */
+export type UnreportedArtifactPathClassifier = (
+  logicalPath: string,
+) => UnreportedArtifactPathStatus;
+
 /**
- * Classify a path the comparison omitted from `changes` against the exact
- * inventories it compared. Only a path observed once on each side of a fully
- * covered comparison is unchanged; this matches the paths counted in
- * `summary.unchanged`. A path neither inventory observed is not evidence of
- * equality.
+ * Validate the exact inventories a comparison cited once, then classify any
+ * number of paths it omitted from `changes`. Only a path observed once on each
+ * side of a fully covered comparison is unchanged; this matches the paths
+ * counted in `summary.unchanged`. A path neither inventory observed is not
+ * evidence of equality.
  */
-export const unreportedArtifactPathStatus = (
+export const prepareUnreportedArtifactPaths = (
   result: ArtifactComparisonResult,
   sources: { readonly left: unknown; readonly right: unknown },
-  logicalPath: string,
-): UnreportedArtifactPathStatus => {
+): UnreportedArtifactPathClassifier => {
   const left = retainedComparisonInventory(sources.left);
   const right = retainedComparisonInventory(sources.right);
   if (
@@ -298,23 +302,22 @@ export const unreportedArtifactPathStatus = (
     throw new EvidenceIntegrityError(
       "Artifact comparison source inventories disagree with its manifests",
     );
-  const count = (inventory: InventorySet) =>
-    inventory.occurrences.filter(
-      ({ logical_path: path }) => path === logicalPath,
-    ).length;
-  const leftCount = count(left);
-  const rightCount = count(right);
-  if (leftCount === 0 && rightCount === 0) return { status: "unobserved" };
-  if (
-    comparisonCoverage(left, right).fullyCovered &&
-    leftCount === 1 &&
-    rightCount === 1
-  )
-    return { status: "unchanged" };
-  return {
-    status: "unknown",
-    limitation:
-      "The selected artifact path matched across inventories without complete comparison coverage; it is not established as unchanged.",
+  const { fullyCovered } = comparisonCoverage(left, right);
+  const leftByPath = occurrencesByPath(left.occurrences);
+  const rightByPath = occurrencesByPath(right.occurrences);
+  return (logicalPath) => {
+    // The index holds only observed paths; absence on both sides is unobserved.
+    const leftMatches = leftByPath.get(logicalPath);
+    const rightMatches = rightByPath.get(logicalPath);
+    if (leftMatches === undefined && rightMatches === undefined)
+      return { status: "unobserved" };
+    if (fullyCovered && leftMatches?.length === 1 && rightMatches?.length === 1)
+      return { status: "unchanged" };
+    return {
+      status: "unknown",
+      limitation:
+        "The selected artifact path matched across inventories without complete comparison coverage; it is not established as unchanged.",
+    };
   };
 };
 
