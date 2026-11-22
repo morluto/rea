@@ -25,13 +25,20 @@ interface FileControl {
 // that releases synchronized closes only after all of them are pending.
 const { controls, barrier } = vi.hoisted(() => {
   const state = { expected: 0, arrived: 0, release: () => {} };
-  const gate = new Promise<void>((resolve) => {
+  let gate = new Promise<void>((resolve) => {
     state.release = resolve;
   });
   return {
     controls: new Map<string, FileControl>(),
     barrier: {
       state,
+      reset: (expected: number) => {
+        state.expected = expected;
+        state.arrived = 0;
+        gate = new Promise<void>((resolve) => {
+          state.release = resolve;
+        });
+      },
       arrive: async () => {
         state.arrived += 1;
         if (state.arrived >= state.expected) state.release();
@@ -257,4 +264,53 @@ it("retains an invalidated descriptor owner and keeps later reads blocked", asyn
   // The owner refuses to re-close an invalidated descriptor it never confirmed.
   expect(broken.closeCalls).toBe(1);
   expect(resources.hasPending).toBe(true);
+});
+
+it("merges sibling cleanup observations and leases across concurrent definition failures", async () => {
+  const resources = scope();
+  const root = await createTestTempDirectory("rea-ghidra-ldefs-multi-");
+  for (let index = 0; index < 10; index += 1) {
+    const name = `mod_${String(index).padStart(2, "0")}`;
+    const languages = join(root, "Ghidra/Processors", name, "data/languages");
+    await mkdir(languages, { recursive: true });
+    await writeFile(
+      join(languages, `${name}.ldefs`),
+      `<language_definitions><language id="${name}:LE:32:default"/></language_definitions>`,
+    );
+  }
+  const first = control("mod_01.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  const second = control("mod_03.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  barrier.reset(2);
+
+  const failure = await readGhidraLanguageCatalog(root, resources).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({
+    cleanup: {
+      resources: [
+        expect.stringContaining("mod_01.ldefs"),
+        expect.stringContaining("mod_03.ldefs"),
+      ],
+    },
+  });
+  if (failure instanceof ArtifactReaderFailure)
+    expect(failure.cleanupLeases).toHaveLength(2);
+  expect(resources.hasPending).toBe(true);
+
+  first.closeFails = false;
+  second.closeFails = false;
+  expect(
+    await readGhidraLanguageCatalog(await installation("x86"), resources),
+  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
+  expect(first.closeCalls).toBe(2);
+  expect(second.closeCalls).toBe(2);
+  expect(resources.hasPending).toBe(false);
+  expect(await readGhidraLanguageCatalog(root, resources)).toHaveLength(10);
 });
