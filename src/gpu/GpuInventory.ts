@@ -33,8 +33,10 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  hasElfMagic,
   isBinaryStringReadLimit,
 } from "../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../domain/dosMz.js";
 import {
   readElfSectionDirectory,
   readPeSectionDirectory,
@@ -194,10 +196,7 @@ export class GpuInventory {
       await this.#hip(source, depth);
       return "hip-bundle";
     }
-    if (
-      prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
-      (prefix[0] === 0x4d && prefix[1] === 0x5a)
-    ) {
+    if (hasElfMagic(prefix) || hasDosMzMagic(prefix)) {
       const elf = prefix[0] === 0x7f;
       const directory = await readGpuNativeDirectory(
         source,

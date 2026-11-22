@@ -12,6 +12,7 @@ import {
   type FatSliceHeaderEvidence,
 } from "../domain/apple/machoContainer.js";
 import {
+  hasDosMzMagic,
   observeMzWindowsHeader,
   type MzWindowsHeaderRecordEvidence,
   type MzWindowsHeaderSignatureEvidence,
@@ -299,7 +300,7 @@ export const createArtifactClassificationProbe = (
       if (!mzHeaderChecked && retainedBytes >= 64) {
         mzHeaderChecked = true;
         const prefix = retainedPrefix();
-        if (prefix[0] === 0x4d && prefix[1] === 0x5a) {
+        if (hasDosMzMagic(prefix)) {
           const windowsHeader = observeMzWindowsHeader(
             prefix,
             Number.MAX_SAFE_INTEGER,

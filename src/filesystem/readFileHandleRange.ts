@@ -41,3 +41,35 @@ export const readFileHandleRange = async (
   }
   return bytes.subarray(0, filled);
 };
+
+/**
+ * Serve positional reads from an already-admitted prefix when covered, falling
+ * back to `readFileHandleRange` for ranges beyond the prefix.
+ */
+export const createCachedPrefixReader =
+  (
+    handle: Pick<FileHandle, "read">,
+    prefix: Buffer,
+    fileSize: number,
+    assertActive: (bytesRead: number) => void = () => {},
+  ): ((position: number, length: number) => Promise<Buffer>) =>
+  async (position, length) => {
+    assertActive(0);
+    if (position >= 0 && length >= 0) {
+      if (position + length <= prefix.length)
+        return prefix.subarray(position, position + length);
+      if (prefix.length >= fileSize)
+        return prefix.subarray(
+          Math.min(position, fileSize),
+          Math.min(position + length, fileSize),
+        );
+    }
+    const bytes = await readFileHandleRange(
+      handle,
+      position,
+      length,
+      assertActive,
+    );
+    assertActive(bytes.length);
+    return bytes;
+  };
