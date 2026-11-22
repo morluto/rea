@@ -195,6 +195,37 @@ it("loads exact names atomically and emits one notification for a batch", async 
   expect(f.changed).toHaveBeenCalledTimes(1);
 });
 
+it("accepts its own advertised name like an already-loaded tool", async () => {
+  const f = await connect();
+  const advertised = (await f.client.listTools()).tools.find(
+    ({ name }) => name === "discover_tools",
+  );
+  const self = await f.discover({ names: ["discover_tools"] });
+  expect(self.isError).not.toBe(true);
+  expect(self.structuredContent).toMatchObject({
+    inventory_count: 4,
+    loaded_count: 2,
+    total_matches: 1,
+    tools: [{ name: "discover_tools", input_schema: advertised?.inputSchema }],
+  });
+  expect(f.changed).not.toHaveBeenCalled();
+  expect(
+    (await f.discover({ names: ["discover_tools", "missing"] })).isError,
+  ).toBe(true);
+  expect(f.changed).not.toHaveBeenCalled();
+  const mixed = await f.discover({ names: ["alpha_sqlite", "discover_tools"] });
+  expect(mixed.structuredContent).toMatchObject({
+    loaded_count: 3,
+    tools: [{ name: "alpha_sqlite" }, { name: "discover_tools" }],
+  });
+  expect((await f.client.listTools()).tools.map(({ name }) => name)).toEqual([
+    "binary_session",
+    "alpha_sqlite",
+    "discover_tools",
+  ]);
+  expect(f.changed).toHaveBeenCalledTimes(1);
+});
+
 it("rejects every malformed discovery without changing visibility", async () => {
   const f = await connect();
   const initial = await f.client.listTools();
