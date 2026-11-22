@@ -40,6 +40,25 @@ export interface UefiFlashProbeKnownInput {
   readonly prefix?: Buffer;
 }
 
+/** Extend previously observed bytes without allocating a second tail buffer. */
+const extendPrefix = async (
+  handle: FileHandle,
+  prefix: Buffer,
+  length: number,
+  assertActive: () => void,
+): Promise<Buffer> => {
+  const bytes = Buffer.alloc(length);
+  prefix.copy(bytes);
+  const tail = await readFileHandleRange(
+    handle,
+    prefix.length,
+    length - prefix.length,
+    assertActive,
+    bytes.subarray(prefix.length),
+  );
+  return bytes.subarray(0, prefix.length + tail.length);
+};
+
 /**
  * Detect a PI flash image through an aligned `_FVH` plausibility probe over
  * the declared admission prefix (1 MiB). The prefix decides most misses
@@ -67,13 +86,12 @@ export async function probeUefiFlashImage(
   if (known?.prefix !== undefined && known.prefix.length >= probeBytes) {
     prefix = known.prefix.subarray(0, probeBytes);
   } else if (known?.prefix !== undefined && known.prefix.length > 0) {
-    const tail = await readFileHandleRange(
+    prefix = await extendPrefix(
       handle,
-      known.prefix.length,
-      probeBytes - known.prefix.length,
+      known.prefix,
+      probeBytes,
       throwIfCancelled,
     );
-    prefix = Buffer.concat([known.prefix, tail]);
   } else {
     prefix = await readFileHandleRange(handle, 0, probeBytes, throwIfCancelled);
   }
@@ -82,18 +100,10 @@ export async function probeUefiFlashImage(
     return false;
 
   const readLimit = Math.min(UEFI_FIRMWARE_LIMITS.inputBytes, size);
-  let observed: Buffer;
-  if (readLimit <= prefix.length) {
-    observed = prefix;
-  } else {
-    const tail = await readFileHandleRange(
-      handle,
-      prefix.length,
-      readLimit - prefix.length,
-      throwIfCancelled,
-    );
-    observed = Buffer.concat([prefix, tail]);
-  }
+  const observed =
+    readLimit <= prefix.length
+      ? prefix
+      : await extendPrefix(handle, prefix, readLimit, throwIfCancelled);
   throwIfCancelled();
   return admitUefiFlashImage(observed, prefix.length);
 }
