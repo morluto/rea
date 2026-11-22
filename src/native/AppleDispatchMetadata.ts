@@ -325,7 +325,7 @@ export function* decodeAppleDispatchMetadataSteps(
     vtables: vtables.facts(),
     swift,
   });
-  return objcSwiftMetadataSchema.parse(result);
+  return result;
 }
 
 const OPERATION = "inspect_native_dispatch_metadata";
