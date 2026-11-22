@@ -11,6 +11,7 @@ import {
   unretainedOpenedLimitation,
   unreadDconfLimitation,
 } from "./appExportUnowned.js";
+import { stateFilesByHomePath } from "./appExport.js";
 import type { DesktopStatePath } from "./desktopState.js";
 
 const version = (index: number) => ({
@@ -54,7 +55,7 @@ const file = (
       ],
 });
 
-it("gives recovery for missing dconf bytes separately from a selected reader failure", () => {
+it("reports the distinct recovery for each unread dconf seed", () => {
   const path = ".config/dconf/user";
   const retained = {
     ...version(1),
@@ -69,6 +70,12 @@ it("gives recovery for missing dconf bytes separately from a selected reader fai
       stderr: "selected reader exited",
     },
   } as const;
+  const baseline: DesktopStatePath["versions"][number] = {
+    ...version(0),
+    format: "dconf",
+    sha256: "b".repeat(64),
+    view: { groups: {}, other_groups: [] },
+  };
   for (const [snapshot, recovery] of [
     [
       retained,
@@ -78,15 +85,44 @@ it("gives recovery for missing dconf bytes separately from a selected reader fai
       { ...version(1), view_error: "content not retained" },
       "Capture again with the changed dconf database retained.",
     ],
+    [
+      {
+        ...retained,
+        view_error: "no reader selected",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "not-installed",
+          code: "ENOENT",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export again where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf.",
+    ],
+    [
+      {
+        ...retained,
+        view_error: "cannot open the saved database descriptor",
+        view_failure: {
+          ...retained.view_failure,
+          kind: "descriptor-unavailable",
+          exit_code: null,
+          stderr: null,
+        },
+      },
+      "Export on Linux with readable /proc file descriptors to recover these settings.",
+    ],
   ] as const) {
-    const database = {
+    const database: DesktopStatePath = {
       ...file("shared_desktop"),
-      versions: [version(0), snapshot],
+      format: "dconf",
+      versions: [baseline, snapshot],
     };
-    const limitation = unreadDconfLimitation(new Map([[path, database]]), 1);
+    const { dconf } = stateFilesByHomePath([database], () => path);
+    expect(unreadDconfLimitation(dconf, 0)).toBeUndefined();
+    const limitation = unreadDconfLimitation(dconf, 1);
     expect(limitation).toContain(snapshot.view_error);
-    expect(limitation).toContain(recovery);
-    expect(limitation).not.toContain("where dconf-cli is installed");
+    expect(limitation?.split("are not seeded. ")[1]).toBe(recovery);
   }
 });
 
