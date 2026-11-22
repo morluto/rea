@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { AndroidAnalysisService } from "../../../src/application/android/AndroidAnalysisService.js";
 import { JadxProvider } from "../../../src/android/JadxProvider.js";
+import { JADX_RELEASE } from "../../../src/android/JadxRelease.js";
 import { JadxSession } from "../../../src/android/JadxSession.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -397,16 +398,126 @@ it("reuses immutable engine state while keeping each Evidence observation separa
   expect(JSON.stringify(first.value)).toBe(preserved);
   expect(second.value.raw_result).toMatchObject({
     loaded: { class_count: 401 },
-    calls: [
-      expect.objectContaining({ operation: "rea_jvm_status" }),
-      expect.objectContaining({ operation: "get_class_summary" }),
-    ],
+    calls: [expect.objectContaining({ operation: "get_class_summary" })],
   });
   expect(
     androidResultSchemas.inspect_android_class.parse(
       second.value.normalized_result,
     ).engine.heap_limit_mib,
   ).toBe(8192);
+  await provider.close();
+  await verifyCleanup(launches);
+});
+
+it("does not cache failed or wrong-version rea_jvm_status and preserves engine_version on warm failures", async () => {
+  const { apk } = await setup();
+  const target = await parseBinaryTarget(apk);
+  if (!target.ok) throw target.error;
+  const fixturePath = fileURLToPath(
+    new URL("../../fixtures/android/jadx-mcp.mjs", import.meta.url),
+  );
+  const startSession = async (mode: string) => {
+    const workspace = await createTestTempDirectory("rea-jadx-runtime-cache-");
+    return new JadxSession(
+      {
+        command: process.execPath,
+        arguments: [],
+        cwd: workspace,
+        hostEnvironment: process.env,
+        signal: new AbortController().signal,
+      },
+      (options) =>
+        spawnOwnedProviderProcess({
+          ...options,
+          command: process.execPath,
+          arguments: [fixturePath],
+          expectedCommand: process.execPath,
+          env: { ...options.env, REA_FAKE_JADX_MODE: mode },
+        }),
+    );
+  };
+  const baseContext = {
+    target: target.value,
+    snapshot: apk,
+    jarHash: "0".repeat(64),
+    bridgeHash: "0".repeat(64),
+    bridgeIdentity: packagedJadxBridgeIdentity(),
+    signal: new AbortController().signal,
+    timeoutMs: 10_000,
+    resources: new ArtifactResourceScope(),
+    deadline: new AbortController().signal,
+  };
+
+  const wrongVersion = await startSession("engine-version");
+  onTestFinished(() => wrongVersion.close());
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(
+        wrongVersion.execute({
+          ...baseContext,
+          request: {
+            operation: "inspect_android_package",
+            input: { path: apk },
+          },
+        }),
+      ).rejects.toMatchObject({ _tag: "AnalysisCapabilityUnavailableError" });
+      expect(wrongVersion.partialObservation()).toMatchObject({
+        provider_facts: { engine_version: "0.7.0" },
+        calls: [expect.objectContaining({ operation: "rea_jvm_status" })],
+      });
+    }
+  } finally {
+    await wrongVersion.close();
+  }
+
+  const healthy = await startSession("normal");
+  onTestFinished(() => healthy.close());
+  try {
+    await healthy.execute({
+      ...baseContext,
+      request: { operation: "inspect_android_package", input: { path: apk } },
+    });
+    await expect(
+      healthy.execute({
+        ...baseContext,
+        request: {
+          operation: "inspect_android_class",
+          input: { path: apk, class_name: "fixture.Missing" },
+        },
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisInputError" });
+    expect(healthy.partialObservation()).toMatchObject({
+      provider_facts: { engine_version: JADX_RELEASE.version },
+      calls: [expect.objectContaining({ operation: "get_class_summary" })],
+    });
+  } finally {
+    await healthy.close();
+  }
+});
+
+it("re-queries rea_jvm_status when JadxProvider replaces a session", async () => {
+  const { service, apk, launches, provider, environment } = await setup();
+  const cold = await service.execute("inspect_android_package", { path: apk });
+  if (!cold.ok) throw cold.error;
+  expect(cold.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+    ]) as unknown,
+  });
+  environment.JAVA_TOOL_OPTIONS = "-Xmx8g";
+  const replaced = await service.execute("inspect_android_class", {
+    path: apk,
+    class_name: "fixture.Target",
+  });
+  if (!replaced.ok) throw replaced.error;
+  expect(launches).toHaveLength(2);
+  expect(replaced.value.raw_result).toMatchObject({
+    calls: expect.arrayContaining([
+      expect.objectContaining({ operation: "rea_jvm_status" }),
+      expect.objectContaining({ operation: "load_apk" }),
+      expect.objectContaining({ operation: "get_class_summary" }),
+    ]) as unknown,
+  });
   await provider.close();
   await verifyCleanup(launches);
 });

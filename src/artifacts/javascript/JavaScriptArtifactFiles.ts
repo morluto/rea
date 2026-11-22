@@ -54,6 +54,7 @@ interface ReadContext {
   readonly signal: AbortSignal | undefined;
   readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly selectedPaths: ReadonlyMap<string, number> | undefined;
+  readonly verifiedAsarReaders: ReadonlySet<AsarArtifactReader>;
   textBytes: number;
   invalidUtf8: number;
 }
@@ -114,6 +115,7 @@ export const readJavaScriptArtifactFiles = async (
       undefined,
       issues,
     );
+  const verifiedAsarReaders = new Set<AsarArtifactReader>();
   if (reader instanceof AsarArtifactReader) {
     const root = snapshot.nodes.find(
       ({ artifact_id }) => artifact_id === snapshot.manifest.root_artifact_id,
@@ -124,11 +126,8 @@ export const readJavaScriptArtifactFiles = async (
         "Root artifact node is missing",
         { integrityCheck: "inventory-node" },
       );
-    await verifyEntryBytes(
-      await reader.openContainer(signal),
-      { path: ".", sha256: root.sha256, bytes: root.size },
-      signal,
-    );
+    await reader.prepareContainer(root.sha256, signal, root.size);
+    verifiedAsarReaders.add(reader);
   }
   if (inventory.ambiguousPath !== undefined)
     throw new ArtifactReaderFailure(
@@ -159,6 +158,7 @@ export const readJavaScriptArtifactFiles = async (
     signal,
     asarHeaderAdmission,
     selectedPaths,
+    verifiedAsarReaders,
     textBytes: 0,
     invalidUtf8: 0,
   };
@@ -285,13 +285,19 @@ const visitReader = async (
             : { headerAdmission: context.asarHeaderAdmission },
         );
         ownedReaders.push({ reader: nested, path });
+        await nested.prepareContainer(
+          inventory.sha256,
+          context.signal,
+          inventory.bytes,
+        );
+        // Safe to mutate local Set initialized in readJavaScriptArtifactFiles.
+        (context.verifiedAsarReaders as Set<AsarArtifactReader>).add(nested);
         stack.push({
           reader: nested,
           prefix: path,
           containerSha256: inventory.sha256,
           iterator: nested.entries(context.signal)[Symbol.asyncIterator](),
         });
-        await nested.prepareContainer(inventory.sha256, context.signal);
         continue;
       }
       const expected = context.expected.get(path);
@@ -362,19 +368,11 @@ const readText = async (
   ) {
     // Keep the inventory/acquisition identity check without allocating or
     // decoding an unrelated source's text.
-    await verifyEntryBytes(
-      await input.reader.open(input.entry, context.signal),
-      input.expected,
-      context.signal,
-    );
+    await verifyUnselectedOrBinaryEntry(context, input);
     return { included: false, reason: "outside-analysis-scope" };
   }
   if (input.expected.kind === "native-addon") {
-    await verifyEntryBytes(
-      await input.reader.open(input.entry, context.signal),
-      input.expected,
-      context.signal,
-    );
+    await verifyUnselectedOrBinaryEntry(context, input);
     return { included: false, reason: "not-applicable" };
   }
   const bytes = await readAll(
@@ -404,6 +402,31 @@ const readText = async (
     context.invalidUtf8 += 1;
     return { included: false, reason: "invalid-utf8" };
   }
+};
+
+const verifyUnselectedOrBinaryEntry = async (
+  context: ReadContext,
+  input: ReadTextInput,
+): Promise<void> => {
+  abortIfNeeded(context.signal);
+  if (
+    input.reader instanceof AsarArtifactReader &&
+    context.verifiedAsarReaders.has(input.reader) &&
+    !input.entry.unpacked
+  ) {
+    if (input.entry.declaredSize !== input.expected.bytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `Artifact entry changed after inventory: ${input.expected.path}`,
+        { integrityCheck: "member-identity" },
+      );
+    return;
+  }
+  await verifyEntryBytes(
+    await input.reader.open(input.entry, context.signal),
+    input.expected,
+    context.signal,
+  );
 };
 
 const verifyEntryBytes = async (
@@ -667,6 +690,9 @@ const readAll = async (
     bytes += chunk.length;
     chunks.push(chunk);
   }
+  if (chunks.length === 0) return Buffer.alloc(0);
+  const first = chunks[0];
+  if (chunks.length === 1 && first !== undefined) return first;
   return Buffer.concat(chunks, bytes);
 };
 

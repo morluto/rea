@@ -1132,10 +1132,73 @@ public class ReaJadxMetadataRegression {
       verifyInitializers(holder, config, constructor, handle, initializerApk);
       verifyDirectInvokes(holder, config, constructor, handle,
           Path.of(args[3]), Path.of(args[2]));
+      verifyLargeOverloadedClass(holder, config, constructor, handle, Path.of(args[2]));
       verifyRootManifests(holder, config, constructor, handle, Path.of(args[2]));
     } finally {
       BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
           (scope, continuation) -> holder.unload(continuation));
     }
+  }
+
+  private static void verifyLargeOverloadedClass(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path output) throws Exception {
+    Path source = output.resolve("LargeOverloaded.smali");
+    StringBuilder text = new StringBuilder(".class public Lfixture/LargeOverloaded;\n.super Ljava/lang/Object;\n");
+    for (int index = 0; index < 2495; index++) {
+      text.append(".method public static m").append(index).append("()V\n.registers 0\nreturn-void\n.end method\n");
+    }
+    text.append(".method public static pick()I\n.registers 1\nconst/16 v0, 101\nreturn v0\n.end method\n")
+        .append(".method public static pick(I)I\n.registers 1\nconst/16 v0, 102\nreturn v0\n.end method\n")
+        .append(".method public static pick(Ljava/lang/String;)I\n.registers 1\nconst/16 v0, 103\nreturn v0\n.end method\n")
+        .append(".method public static pick(II)I\n.registers 2\nconst/16 v0, 104\nreturn v0\n.end method\n")
+        .append(".method public static pick(J)I\n.registers 2\nconst/16 v0, 105\nreturn v0\n.end method\n")
+        .append(".method public static usePick(Ljava/lang/String;)I\n.registers 1\n"
+            + "invoke-static {p0}, Lfixture/LargeOverloaded;->pick(Ljava/lang/String;)I\n"
+            + "move-result v0\nreturn v0\n.end method\n");
+    Files.writeString(source, text, StandardCharsets.UTF_8);
+    Path dex = output.resolve("large-overloaded.dex");
+    SmaliOptions options = new SmaliOptions();
+    options.apiLevel = 28;
+    options.jobs = 1;
+    options.outputDexFile = dex.toString();
+    require(Smali.assemble(options, List.of(source.toString())), "Large overloaded assembly failed");
+    Path apk = output.resolve("large-overloaded.apk");
+    try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(apk))) {
+      zip.putNextEntry(new ZipEntry("classes.dex"));
+      Files.copy(dex, zip);
+      zip.closeEntry();
+    }
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    Object bridge = constructor.newInstance(holder);
+    ClassNode node = holder.current().getClasses().get(0).getClassNode();
+    require(node.getState() == ProcessState.NOT_LOADED, "Large class preload generated source");
+    JsonObject summary = call(handle, bridge, "get_class_summary", arguments("fixture.LargeOverloaded"));
+    require(summary.get("method_count").getAsInt() == 2501, "Wrong large method count");
+    require(node.getState() == ProcessState.NOT_LOADED, "Large class summary generated source");
+    String[] expectedDescriptors = { "()I", "(I)I", "(II)I", "(J)I", "(Ljava/lang/String;)I" };
+    String[] expectedConstants = { "101", "102", "104", "105", "103" };
+    for (int index = 0; index < expectedDescriptors.length; index++) {
+      JsonObject req = arguments("fixture.LargeOverloaded");
+      req.addProperty("method_name", "pick");
+      req.addProperty("overload_index", index);
+      JsonObject body = call(handle, bridge, "get_method_body", req);
+      require(body.get("dex_descriptor").getAsString().equals(expectedDescriptors[index])
+          && body.get("overload_count").getAsInt() == 5
+          && body.get("body").getAsString().contains(expectedConstants[index]),
+          "Overload resolution mismatch in 2500-method class at index " + index + ": " + body);
+    }
+    JsonObject lateReq = methodArguments("fixture.LargeOverloaded", "m2490");
+    JsonObject lateBody = call(handle, bridge, "get_method_body", lateReq);
+    require(lateBody.get("dex_descriptor").getAsString().equals("()V"), "Late method lookup failed");
+    JsonObject xrefReq = arguments("fixture.LargeOverloaded");
+    xrefReq.addProperty("method_name", "pick");
+    xrefReq.addProperty("overload_index", 4);
+    JsonObject xrefs = call(handle, bridge, "get_xrefs_to_method", xrefReq);
+    require(xrefs.get("count").getAsInt() == 1
+        && xrefs.getAsJsonArray("items").get(0).getAsJsonObject().get("name").getAsString().equals("usePick"),
+        "Overloaded xref resolution failed in 2500-method class: " + xrefs);
   }
 }
