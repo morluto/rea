@@ -212,6 +212,7 @@
 
 ### Performance Improvements
 
+* **adapters/server:** use ownedJsonValueSchema for freshly constructed internal results ([#13459](https://github.com/morluto/rea/issues/13459)) ([6c6005c](https://github.com/morluto/rea/commit/6c6005ca9a9330dc28138d69021d7510d9e49ae6))
 * **adapters:** eliminate hot-path overhead across WASM, EVM, Frida, web modules, and HAR ([#13356](https://github.com/morluto/rea/issues/13356)) ([26465e8](https://github.com/morluto/rea/commit/26465e8ae63045372f28383b1dcc4856e9b41644))
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
 * **artifacts/android:** reuse ASAR snapshot descriptors and index JADX bridge lookups ([#13361](https://github.com/morluto/rea/issues/13361)) ([4d7a971](https://github.com/morluto/rea/commit/4d7a9710fe19af7e70693ea56c1e5d3a0268baa1))
@@ -237,6 +238,7 @@
 * **ghidra:** eliminate non-ASCII search flood, compact bridge inventories, and stream JSON responses ([#13305](https://github.com/morluto/rea/issues/13305)) ([297630c](https://github.com/morluto/rea/commit/297630cbf37dad6b08b196b77e1ff1cf5cd2930e))
 * **ghidra:** fuse project snapshot I/O, parallelize language catalog, drop double validation, and add callTool progress heartbeats ([#13310](https://github.com/morluto/rea/issues/13310)) ([5b3ef76](https://github.com/morluto/rea/commit/5b3ef76e4db8f128f3632693cd45b9f99ecf7d25))
 * **ghidra:** skip redundant leaf matching in ReaGhidraBridge literal searches ([#13439](https://github.com/morluto/rea/issues/13439)) ([beff3a2](https://github.com/morluto/rea/commit/beff3a284280692a27aeea0048793c876b475bd7))
+* **ghidra:** stream inventory and search replies directly via JsonWriter ([#13453](https://github.com/morluto/rea/issues/13453)) ([1df51e3](https://github.com/morluto/rea/commit/1df51e3247bf6ed40b7e52b08cb878192ff965d1))
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **ida/hopper:** push required regex literal candidates to provider bridges ([#13438](https://github.com/morluto/rea/issues/13438)) ([acb714a](https://github.com/morluto/rea/commit/acb714aaf53c9f196319df76760586fda7d827ee))
 * **ida:** avoid double full-binary SHA-256 re-hashing and redundant observation cloning ([#13445](https://github.com/morluto/rea/issues/13445)) ([d8a0e06](https://github.com/morluto/rea/commit/d8a0e06c61b2295eeaedf0f43a89a781e678505d))
