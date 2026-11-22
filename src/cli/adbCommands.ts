@@ -13,11 +13,11 @@ import {
 } from "../domain/adb/adbDeviceAnalysis.js";
 import { publishArgvInput } from "./options.js";
 import type { CliInstance } from "./types.js";
-import {
-  contractNamed,
-  type CliContractProjection,
-  type ContractField,
-} from "./contractCliDescription.js";
+import { contractNamed } from "./contractCliDescription.js";
+import type {
+  CliContractProjection,
+  ContractField,
+} from "./contractCliDescriptionTypes.js";
 import {
   analyzeWithService,
   registerContractCommand,

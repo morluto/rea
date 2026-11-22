@@ -56,7 +56,6 @@ import type {
   ContractCliAdmission,
   ContractCliDescription,
 } from "./contractCliDescriptionTypes.js";
-export type * from "./contractCliDescriptionTypes.js";
 
 /**
  * The command a projection registers: the contract's own command, which the
