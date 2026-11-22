@@ -143,6 +143,7 @@
 * **javascript:** share settled ambient call continuations ([#13010](https://github.com/morluto/rea/issues/13010)) ([2e45687](https://github.com/morluto/rea/commit/2e45687dfde28274a5451223695a14f0ae6e5afd))
 * **mcp:** filter prompt completions before sorting ([#13251](https://github.com/morluto/rea/issues/13251)) ([0299413](https://github.com/morluto/rea/commit/0299413e86660456f5abd4f0c46921a16cbb1102))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
+* **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 * **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
 
