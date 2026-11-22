@@ -116,8 +116,20 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     FLOAT_INTEGER,
     OTHER,
     /** The psABI's class cannot be known, so it matches no storage the prototype gives. */
-    UNKNOWN
+    UNKNOWN,
+    /**
+     * Two fields in registers, one of which does not start a 4-byte part of the value. The psABI
+     * puts each field at bit 0 of its own register; the prototype's join gives each register the
+     * part as laid out in memory, so it shifts that field. It matches no storage the prototype
+     * gives.
+     */
+    SHIFTED
   }
+
+  /** One flattened field: whether it is a float, and its first bit within the outer value. */
+  private record Field(boolean floating, long bit) {}
+
+  private static final int PART_BITS = 32;
 
   /**
    * The bytes a value's fields hold, and whether Ghidra left any untyped. Ghidra's DWARF import
@@ -612,21 +624,38 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   private Kind psabiKind(DataType type) {
     Held held = held(type);
     if (held.bytes() <= 8 && held.untyped()) return Kind.UNKNOWN;
-    List<Boolean> fields = new ArrayList<>();
+    List<Field> fields = new ArrayList<>();
     // C passes no array by value, so an array here is a GNU vector, which Ghidra imports as one.
     DataType value = strip(type);
-    if (!(value instanceof Union) && !(value instanceof Array) && flatten(type, fields)) {
-      long floats = fields.stream().filter(Boolean::booleanValue).count();
+    if (!(value instanceof Union) && !(value instanceof Array) && flatten(type, 0, fields)) {
+      long floats = fields.stream().filter(Field::floating).count();
       // DWARF omits unnamed bit-fields of nonzero width, which the psABI still counts:
       // `struct { float f; unsigned : 1; }` takes fa0 and a0, yet Ghidra sees one float.
       // Bytes that natural alignment does not explain may hold one, so a float there has no
       // known class. An unnamed bit-field inside a named one's storage unit leaves no trace.
       if (floats > 0 && unexplainedBytes(type)) return Kind.UNKNOWN;
+      // A C++ empty member before a field, a packed layout or a bit-field above bit 0 of its part
+      // moves a field off the start of its part, where the psABI's register holds it at bit 0.
+      if (floats > 0 && !partAligned(fields)) return Kind.SHIFTED;
       if (fields.size() == 1 && floats == 1) return Kind.FLOAT;
       if (fields.size() == 2 && floats == 2) return Kind.FLOAT_PAIR;
       if (fields.size() == 2 && floats == 1) return Kind.FLOAT_INTEGER;
     }
     return type.getLength() > 8 ? Kind.REFERENCE : Kind.INTEGER;
+  }
+
+  /**
+   * Whether the fields that take registers start the 4-byte parts the prototype reads them from:
+   * one field at bit 0, or two fields that each start their own part.
+   */
+  private static boolean partAligned(List<Field> fields) {
+    if (fields.size() == 1) return fields.get(0).bit() == 0;
+    if (fields.size() != 2) return true;
+    long first = fields.get(0).bit();
+    long second = fields.get(1).bit();
+    return first % PART_BITS == 0
+        && second % PART_BITS == 0
+        && first / PART_BITS != second / PART_BITS;
   }
 
   /**
@@ -671,9 +700,11 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
    * imports a flexible array member, which uses the integer convention, and a trailing `[0]`,
    * which is ignored, alike, so both are treated as the flexible array and fail closed. Either
    * can start inside the structure's padding, so the position among the members decides. Other
-   * empty members, zero-length arrays and zero-width bit-fields are ignored.
+   * empty members, zero-length arrays and zero-width bit-fields are ignored. Each field records
+   * its first bit within the outer value, starting from {@code bit}: a C++ empty member is
+   * ignored as a field but keeps its byte, so the next field starts after it.
    */
-  private static boolean flatten(DataType type, List<Boolean> fields) {
+  private static boolean flatten(DataType type, long bit, List<Field> fields) {
     type = strip(type);
     if (type instanceof Structure structure) {
       DataTypeComponent[] components = structure.getDefinedComponents();
@@ -683,12 +714,14 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
               && component == components[components.length - 1]) return false;
           continue;
         }
+        long start = bit + 8L * component.getOffset();
         if (component.getDataType() instanceof BitFieldDataType bitField) {
           if (bitField.getBitSize() == 0) continue;
           // The width counts, not the declared type: `unsigned long long b : 1` is one word.
           if (bitField.getBitSize() > 32) return false;
-          fields.add(false);
-        } else if (!flatten(component.getDataType(), fields)) return false;
+          // RISC-V is little-endian: the offset counts from the component's first byte.
+          fields.add(new Field(false, start + bitField.getBitOffset()));
+        } else if (!flatten(component.getDataType(), start, fields)) return false;
         if (fields.size() > 2) return false;
       }
       return true;
@@ -697,22 +730,26 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       int count = array.getNumElements();
       if (count == 0) return true;
       // One element's fields stand for every element, so a long array costs one visit.
-      List<Boolean> element = new ArrayList<>();
-      if (!flatten(array.getDataType(), element) || element.isEmpty()) return false;
+      List<Field> element = new ArrayList<>();
+      if (!flatten(array.getDataType(), 0, element) || element.isEmpty()) return false;
       if (fields.size() + (long) count * element.size() > 2) return false;
-      for (int index = 0; index < count; index += 1) fields.addAll(element);
+      long stride = 8L * array.getElementLength();
+      for (int index = 0; index < count; index += 1)
+        for (Field field : element)
+          fields.add(new Field(field.floating(), bit + index * stride + field.bit()));
       return true;
     }
     if (type instanceof Union union) return union.getNumDefinedComponents() == 0;
     if (type instanceof AbstractComplexDataType) {
       if (type.getLength() > 8) return false;
-      fields.add(true);
-      fields.add(true);
+      long half = 4L * type.getLength();
+      fields.add(new Field(true, bit));
+      fields.add(new Field(true, bit + half));
       return true;
     }
     if (type instanceof AbstractFloatDataType) {
       if (type.getLength() > 4) return false;
-      fields.add(true);
+      fields.add(new Field(true, bit));
       return true;
     }
     if (type instanceof Pointer
@@ -720,7 +757,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
         || type instanceof FunctionDefinition
         || type.getLength() <= 0
         || type.getLength() > 4) return false;
-    fields.add(false);
+    fields.add(new Field(false, bit));
     return true;
   }
 
