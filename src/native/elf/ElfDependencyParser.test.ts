@@ -454,6 +454,66 @@ it("falls back to PT_DYNAMIC and DT_* virtual addresses when section headers are
   );
 });
 
+it.each([
+  { table: "version_requirements", tag: 0x6ffffffen, leading: 48 },
+  { table: "version_definitions", tag: 0x6ffffffcn, leading: 28 },
+] as const)(
+  "keeps only the mapped $table prefix when a later load translates differently",
+  ({ table, tag, leading }) => {
+    const original = elfDependencyFixture({
+      stripped: true,
+      verdef: [
+        { name: "libdemo.so.1", index: 1, flags: 1 },
+        { name: "DEMO_1.0", index: 5 },
+      ],
+    });
+    const headers = elf64ProgramHeaders(original);
+    const start = elf64DynamicTags(original, headers.programHeaders).get(tag);
+    if (start === undefined)
+      throw new Error("Expected the selected dynamic version table");
+    const { bytes, alias } = appendElf64ZeroFill(original, headers);
+    const boundary = start + BigInt(leading);
+    for (const field of [16, 24])
+      bytes.writeBigUInt64LE(boundary, alias + field);
+    bytes.writeBigUInt64LE(1n, alias + 32);
+    bytes.writeBigUInt64LE(boundary, alias + 8);
+    const intact = parse(bytes);
+    expect(intact.coverage.status).toBe("complete");
+
+    // Readable bytes in the original file no longer establish this virtual address.
+    bytes.writeBigUInt64LE(0n, alias + 8);
+    const blocked = parse(bytes);
+    const expectedTable = intact[table];
+    expect(blocked[table]).toMatchObject({
+      status: "unreadable",
+      location: { offset: Number(start), bytes: leading },
+      ...("files" in expectedTable
+        ? { files: expectedTable.files.slice(0, 1) }
+        : { names: expectedTable.names.slice(0, 1) }),
+    });
+    expect(blocked.coverage.status).toBe("partial");
+    expect(blocked.needed).toEqual(intact.needed);
+    expect(blocked.imports).toEqual(
+      table === "version_definitions"
+        ? intact.imports
+        : intact.imports.map((row) =>
+            row.name === "_ZSt4cout"
+              ? {
+                  ...row,
+                  version: {
+                    index: 4,
+                    hidden: false,
+                    name: null,
+                    file: null,
+                    status: "unknown",
+                  },
+                }
+              : row,
+          ),
+    );
+  },
+);
+
 it("reads a stripped DT_HASH that crosses two adjacent PT_LOAD mappings", () => {
   const report = parse(
     elfDependencyFixture({ stripped: true, splitLoadAtHash: true }),

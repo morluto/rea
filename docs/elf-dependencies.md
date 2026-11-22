@@ -61,6 +61,11 @@ that share one unambiguous file translation. It stops at the first slot that
 cannot be admitted, even if later slots map independently. Later import
 versions remain unexamined and coverage is `partial`.
 
+When a GNU version requirement or definition is located through its dynamic
+address alone, decoding stays inside the starting load's contiguous
+file-mapped prefix. A conflict later in that span leaves earlier complete
+records available and limits the reported range to the admitted bytes.
+
 A missing `PT_DYNAMIC` is an observed empty load-time dependency inventory. It
 is not proof another overlay or container carried dynamic linking metadata.
 `DT_*` entries are the load-time facts. A section header can locate a table
