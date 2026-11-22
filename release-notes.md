@@ -178,6 +178,7 @@
 * **release-exposure:** settle cancellation and package cleanup together ([#13383](https://github.com/morluto/rea/issues/13383)) ([3daf6aa](https://github.com/morluto/rea/commit/3daf6aacdd327b3cf5a23c9b92c2567a3dfe001f))
 * **release:** bind checkpoint references to frozen history ([#13392](https://github.com/morluto/rea/issues/13392)) ([16732c6](https://github.com/morluto/rea/commit/16732c6b721d5570df20d7399ce535630ce69c4a))
 * **rizin:** report the required inferior terminal field ([#13019](https://github.com/morluto/rea/issues/13019)) ([d84652e](https://github.com/morluto/rea/commit/d84652e55b43ad7c494efe67d8324b35d4a05695))
+* **rust:** admit valid reports at the configured byte limit ([#13570](https://github.com/morluto/rea/issues/13570)) ([0b1dcb4](https://github.com/morluto/rea/commit/0b1dcb413d8c1a7f64f3bebbf664c4f2f419718f))
 * **setup:** accept hyphenated client names and suggest the closest one ([ed5c3dd](https://github.com/morluto/rea/commit/ed5c3dd10d937eb5e6bb8c41afa44eb6b0af2052))
 * **setup:** attribute malformed environment keys to their source ([#13522](https://github.com/morluto/rea/issues/13522)) ([4657cdd](https://github.com/morluto/rea/commit/4657cdd2196eaec8bc2915fd347798d094e6cf6d))
 * **setup:** keep incomplete Windows roots unresolved ([#13298](https://github.com/morluto/rea/issues/13298)) ([c34bdab](https://github.com/morluto/rea/commit/c34bdabeae5ed0e38edc7a854abb624f73595368))
