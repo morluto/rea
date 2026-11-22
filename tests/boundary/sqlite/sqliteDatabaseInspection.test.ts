@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
-import { expect, it as nativeTest, onTestFinished } from "vitest";
+import { describe, expect, it as nativeTest, onTestFinished } from "vitest";
 import {
   createSqliteApplicationCollationFixture,
   createSqliteLongNameFixture,
@@ -1084,3 +1084,127 @@ it.each(["inventory", "selected_table", "database"] as const)(
     expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );
+
+describe("SQLite short-page truncation and reusable TextDecoder codecs", () => {
+  it("skips redundant truncation probes on short pages while classifying exact-fit pages accurately", async () => {
+    const path = await createDatabase(`
+      CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT);
+      INSERT INTO items (label) VALUES ('first'), ('second'), ('third');
+    `);
+
+    const shortPage = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "items",
+      row_limit: 10,
+    });
+    expect(shortPage.rows).toMatchObject({
+      row_offset: 0,
+      row_limit: 10,
+      truncated: false,
+      next_row_offset: null,
+    });
+    expect(shortPage.rows?.values).toHaveLength(3);
+
+    const exactNonTruncated = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "items",
+      row_limit: 3,
+    });
+    expect(exactNonTruncated.rows).toMatchObject({
+      row_limit: 3,
+      truncated: false,
+      next_row_offset: null,
+    });
+    expect(exactNonTruncated.rows?.values).toHaveLength(3);
+
+    const exactTruncated = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "items",
+      row_limit: 2,
+    });
+    expect(exactTruncated.rows).toMatchObject({
+      row_limit: 2,
+      truncated: true,
+      next_row_offset: 2,
+    });
+    expect(exactTruncated.rows?.values).toHaveLength(2);
+
+    const offsetShortPage = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "items",
+      row_offset: 2,
+      row_limit: 5,
+    });
+    expect(offsetShortPage.rows).toMatchObject({
+      row_offset: 2,
+      row_limit: 5,
+      truncated: false,
+      next_row_offset: null,
+    });
+    expect(offsetShortPage.rows?.values).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      encoding: "UTF-8",
+      markerBytes: Buffer.from("schema-marker", "utf8"),
+      corruptBytes: [0xff],
+    },
+    {
+      encoding: "UTF-16le",
+      markerBytes: Buffer.from("schema-marker", "utf16le"),
+      corruptBytes: [0x00, 0xd8],
+    },
+    {
+      encoding: "UTF-16be",
+      markerBytes: Buffer.from("schema-marker", "utf16le").swap16(),
+      corruptBytes: [0xd8, 0x00],
+    },
+  ] as const)(
+    "resets shared %s fatal and lenient decoders cleanly after malformed schema errors",
+    async ({ encoding, markerBytes, corruptBytes }) => {
+      const badPath = await createDatabase(
+        `PRAGMA encoding='${encoding}'; CREATE TABLE records(value TEXT /*schema-marker*/);`,
+      );
+      const raw = await readFile(badPath);
+      const index = raw.indexOf(markerBytes);
+      expect(index).toBeGreaterThanOrEqual(0);
+      corruptBytes.forEach((byte, offset) => {
+        raw[index + offset] = byte;
+      });
+      await writeFile(badPath, raw);
+
+      expect(() =>
+        inspectSqliteDatabaseSnapshot(badPath, {
+          path: badPath,
+          schema_scope: "database",
+        }),
+      ).toThrowError(
+        expect.objectContaining({
+          reason: "format",
+          message: expect.stringContaining(`malformed ${encoding} text`),
+        }),
+      );
+
+      const goodPath = await createDatabase(`
+        PRAGMA encoding='${encoding}';
+        CREATE TABLE "t_é𝄞" (label TEXT);
+        INSERT INTO "t_é𝄞" VALUES ('\uFEFFalpha'), ('bravo𝄞');
+      `);
+      for (let pass = 0; pass < 2; pass++) {
+        const result = inspectSqliteDatabaseSnapshot(goodPath, {
+          path: goodPath,
+          table: "t_é𝄞",
+          schema_scope: "database",
+        });
+        expect(result.database_encoding).toBe(encoding);
+        expect(result.schema.tables).toMatchObject([{ name: "t_é𝄞" }]);
+        expect(
+          result.rows?.values.map((row) =>
+            row.map((entry) => ("value" in entry ? entry.value : entry.type)),
+          ),
+        ).toEqual([["\uFEFFalpha"], ["bravo𝄞"]]);
+      }
+    },
+  );
+});
