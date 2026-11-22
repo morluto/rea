@@ -64,6 +64,8 @@ export class OciImageLayoutRefusal extends ParseFailureError {
 /** Traversal identity of index.json, kept outside the blob digest keys. */
 const ROOT_INDEX_IDENTITY = "root:index.json";
 
+const OCI_INDEX_MEDIA_TYPE = "application/vnd.oci.image.index.v1+json";
+
 const BASE_LIMITATIONS = [
   OCI_IMAGE_LAYOUT_LIMITATIONS.directoryOnly,
   OCI_IMAGE_LAYOUT_LIMITATIONS.noLayerContents,
@@ -1470,9 +1472,14 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
-    // The root index.json is admitted under its own declaration.
-    if (identity !== ROOT_INDEX_IDENTITY)
-      checkDeclaredMediaType("Index", digest, mediaType, document.value);
+    // No descriptor names the root index.json, so it is admitted as an index:
+    // an index declaration of either family stands, and any other declared
+    // type is checked against the OCI index type like a nested index.
+    const admitted =
+      identity !== ROOT_INDEX_IDENTITY || isOciIndexMediaType(mediaType)
+        ? mediaType
+        : OCI_INDEX_MEDIA_TYPE;
+    checkDeclaredMediaType("Index", digest, admitted, document.value);
     await rememberSubject("Index", digest, document.value.subject, depth);
     const schemaVersion =
       typeof document.value.schemaVersion === "number" &&
@@ -1757,7 +1764,7 @@ const inventoryOciImageLayout = async (
   const topMediaType =
     nonempty(indexRoot.mediaType) ??
     nonempty(indexRoot.media_type) ??
-    "application/vnd.oci.image.index.v1+json";
+    OCI_INDEX_MEDIA_TYPE;
   const rootDigest = `sha256:${indexDocument.sha256}`;
   // index.json is its own file, not the blob stored under its digest. A
   // descriptor naming that digest reads and walks the blob, whose bytes may

@@ -81,8 +81,9 @@ entries expand into records with null fields. Index entries keep
 their digests, media types, platforms and annotations in the report across all
 indexes, accepted subjects, configs and layers keep their digests and media
 types once per manifest or index that references them, and findings retain the
-digest text of rejected index entries, subjects, configs and layers; together
-that text spends `max_descriptor_bytes`
+digest text of rejected index entries, subjects, configs and layers and the
+unknown media types an index or manifest declares in its own `mediaType`;
+together that text spends `max_descriptor_bytes`
 (64 MiB by default, 512 MiB maximum). Exceeding any of these
 budgets refuses the inspect and names the allowance. Nested indexes beyond
 `max_index_depth` become findings and are not walked further.

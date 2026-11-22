@@ -3740,3 +3740,97 @@ it("keeps unreferenced blobs definite when the declared type is the same documen
     false,
   );
 });
+
+it("checks the root index.json declaration against the index document kind", async () => {
+  // A root that declares the manifest type carries manifest members the
+  // index walk never reads, so the blobs they name cannot be unreferenced.
+  const manifestRoot = await createTestTempDirectory(
+    "rea-oci-root-manifest-declared-",
+  );
+  await writeOciImageLayoutFixture(manifestRoot);
+  const config = await putOciBlob(manifestRoot, "{}\n");
+  const layer = await putOciBlob(manifestRoot, "layer\n");
+  await writeFile(
+    join(manifestRoot, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.manifest.v1+json",
+      manifests: [],
+      config: {
+        mediaType: "application/vnd.oci.image.config.v1+json",
+        digest: config,
+        size: 3,
+      },
+      layers: [
+        {
+          mediaType: "application/vnd.oci.image.layer.v1.tar+gzip",
+          digest: layer,
+          size: 6,
+        },
+      ],
+    })}\n`,
+  );
+  const asManifest = await inspectLayout(manifestRoot);
+  expect(asManifest.coverage.status).toBe("partial");
+  expect(
+    asManifest.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    asManifest.findings.some(
+      (finding) =>
+        finding.kind === "malformed_blob_json" &&
+        finding.message.includes("conflicts with its descriptor media type"),
+    ),
+  ).toBe(true);
+  for (const digest of [config, layer])
+    expect(
+      asManifest.blobs.find((blob) => blob.digest === digest)?.referenced,
+    ).toBeNull();
+
+  // An unknown root declaration is diagnosed and leaves the graph incomplete.
+  const unknownRoot = await createTestTempDirectory(
+    "rea-oci-root-unknown-declared-",
+  );
+  await writeOciImageLayoutFixture(unknownRoot);
+  const unknownStray = await putOciBlob(unknownRoot, "stray\n");
+  await writeFile(
+    join(unknownRoot, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.example.unknown",
+      manifests: [],
+    })}\n`,
+  );
+  const asUnknown = await inspectLayout(unknownRoot);
+  expect(asUnknown.coverage.status).toBe("partial");
+  expect(asUnknown.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "unknown_media_type" }),
+    ]),
+  );
+  expect(
+    asUnknown.blobs.find((blob) => blob.digest === unknownStray)?.referenced,
+  ).toBeNull();
+
+  // A Docker manifest list root is an index and keeps definite status.
+  const dockerRoot = await createTestTempDirectory(
+    "rea-oci-root-docker-list-declared-",
+  );
+  await writeOciImageLayoutFixture(dockerRoot);
+  const dockerStray = await putOciBlob(dockerRoot, "stray\n");
+  await writeFile(
+    join(dockerRoot, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.docker.distribution.manifest.list.v2+json",
+      manifests: [],
+    })}\n`,
+  );
+  const asDocker = await inspectLayout(dockerRoot);
+  expect(
+    asDocker.findings.some((finding) => finding.kind === "malformed_blob_json"),
+  ).toBe(false);
+  expect(
+    asDocker.blobs.find((blob) => blob.digest === dockerStray)?.referenced,
+  ).toBe(false);
+});
