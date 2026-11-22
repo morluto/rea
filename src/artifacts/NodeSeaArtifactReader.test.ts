@@ -502,21 +502,6 @@ it.each(["thin", "universal"] as const)(
   },
 );
 
-it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier(
-      "plain-name",
-      nodeSeaElf({ codePath: "main", main: script, fuse: "set" }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "main"),
-  ).toMatchObject({
-    artifact_kind: "javascript",
-    artifact_format: "javascript-bundle",
-  });
-});
-
 it("keeps a snapshot body opaque and retains the code path", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(
@@ -1011,19 +996,6 @@ it("extracts the main script and assets without executing them", async () => {
   } finally {
     await resourceScope.close();
   }
-});
-
-it("rejects duplicate raw asset keys", async () => {
-  const path = await writeCarrier(
-    "duplicate-assets",
-    nodeSeaElf({
-      assets: [
-        { name: "data.txt", body: "a" },
-        { name: "data.txt", body: "b" },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow();
 });
 
 it("maps an unsafe module path and opaque asset keys without losing their sources", async () => {

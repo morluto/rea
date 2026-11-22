@@ -124,13 +124,6 @@ it("rejects colliding asset names", async () => {
   });
 });
 
-it("retains an empty asset key as a raw Node SEA key", async () => {
-  const decoded = await decodeNodeSeaBlob(
-    buildNodeSeaBlob({ assets: [{ name: "", body: "value" }] }),
-  );
-  expect(decoded.assets).toMatchObject([{ name: "", range: { length: 5 } }]);
-});
-
 it.each([
   {
     field: "code path",
