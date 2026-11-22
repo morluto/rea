@@ -53,7 +53,37 @@ it("binds the selected bytes to retained declarations", async () => {
   expect(result.value.evidence.operation).toBe("inspect_maven_pom");
   // Selection fields never change the published result or its identity.
   expect(result.value.evidence.parameters).toMatchObject({ path });
+  // A caller who supplied only `path` leaves the defaults unrecorded, so saved
+  // Evidence distinguishes a chosen control from one the app filled in.
+  expect(result.value.evidence.parameters).toEqual({ path });
   expect(result.value.observation.sha256).toBe(value.artifact.sha256);
+});
+
+it("records only the controls the caller actually selected", async () => {
+  const path = await writePom(pomBytes);
+  const result = await inspectMavenPomEvidence(
+    { path, max_file_bytes: 4_000_000 },
+    new ArtifactResourceScope(),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.parameters).toEqual({
+    path,
+    max_file_bytes: 4_000_000,
+  });
+});
+
+it("reports a file-size refusal as the file-size resource, not memory", async () => {
+  const path = await writePom(pomBytes);
+  const result = await inspectMavenPomEvidence(
+    { path, max_file_bytes: 64 },
+    new ArtifactResourceScope(),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a resource failure");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect((result.error as AnalysisResourceConstraintError).resource).toBe(
+    "file-size",
+  );
 });
 
 it("refuses a document type declaration without reading anything it names", async () => {

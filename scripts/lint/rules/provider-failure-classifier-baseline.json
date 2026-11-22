@@ -1,5 +1,7 @@
 {
-  "owners": ["src/providers/classifyProviderFailure.ts"],
+  "owners": [
+    "src/providers/classifyProviderFailure.ts"
+  ],
   "counts": {
     "src/android/AndroidMappingFile.ts": 3,
     "src/android/JadxConfiguration.ts": 1,
@@ -16,7 +18,6 @@
     "src/application/desktop/DesktopCaptureFailure.ts": 1,
     "src/application/desktop/DesktopCaptureRefusals.ts": 1,
     "src/application/desktop/DesktopTaskReaderCleanup.ts": 2,
-    "src/application/mavenPom/MavenPomService.ts": 1,
     "src/application/ntfs/NtfsJournalService.ts": 1,
     "src/application/process/ProcessCli.ts": 1,
     "src/artifacts/ReleaseExposureReader.ts": 1,

@@ -84,6 +84,10 @@ export const mavenPomDiagnosticSchema = z.strictObject({
     "unresolved-property",
     "unsupported-construct",
     "invalid-exclusion",
+    /** A text field declared nested elements, which Maven does not admit. */
+    "nested-content",
+    /** A section that Maven admits once appears more than once, hiding content. */
+    "repeated-section",
   ]),
   message: z.string(),
   source_pointer: z.string(),
@@ -106,12 +110,16 @@ export const mavenPropertyReferenceSchema = z.strictObject({
    */
   resolution: z.enum(["resolved", "unresolved", "cycle", "work-limit"]),
   resolved: z.string().nullable(),
+  /** True when transport credentials were stripped from the returned value. */
+  credentials_redacted: z.boolean(),
   source_pointer: z.string(),
 });
 
 export const mavenRepositorySchema = z.strictObject({
   id: z.string().nullable(),
   url: z.string().nullable(),
+  /** True when transport credentials were stripped from the URL. */
+  url_credentials_redacted: z.boolean(),
   layout: z.string().nullable(),
   source_pointer: z.string(),
   line: z.int().positive().nullable(),
@@ -131,6 +139,8 @@ export const mavenPomSchema = z.strictObject({
     z.strictObject({
       name: z.string(),
       value: z.string(),
+      /** True when transport credentials were stripped from the value. */
+      value_credentials_redacted: z.boolean(),
       source_pointer: z.string(),
     }),
   ),

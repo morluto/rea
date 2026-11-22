@@ -3,8 +3,6 @@ import { isAbsolute } from "node:path";
 import type { Element } from "@xmldom/xmldom";
 import {
   ArtifactReaderFailure,
-  artifactFileCancellationCause,
-  artifactFilePrimaryFacts,
   projectStableArtifactFailure,
   readStableArtifact,
   stableArtifactInputRecovery,
@@ -12,13 +10,9 @@ import {
 } from "../../resources/index.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
-  AnalysisArtifactChangedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
 import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -41,7 +35,10 @@ import {
   parseXmlDocument,
   XmlDocumentNodeLimitError,
 } from "../../domain/xmlDocument.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
@@ -162,8 +159,9 @@ const decodePom = (
 
 /**
  * A file read the artifact reader refused at one of its own allowances. The
- * reader names the bound it enforced, so the refusal is built here from that
- * fact instead of restating it beside the constructor.
+ * reader names the bound it enforced and the resource it bounds, so the
+ * refusal keeps that boundary rather than relabelling every limit as memory
+ * (`max_file_bytes` is `file-size`; other bounds name their own category).
  */
 const fileReadLimitFailure = (
   cause: ArtifactReaderFailure,
@@ -172,7 +170,7 @@ const fileReadLimitFailure = (
   const boundary = cause.boundary ?? "file-size";
   return parseLimitConstraint(
     operation,
-    "memory",
+    boundary,
     decodeLimit("maven-pom", cause.message, {
       name: boundary === "file-size" ? "max_file_bytes" : boundary,
       maximum: input.max_file_bytes,
@@ -180,49 +178,9 @@ const fileReadLimitFailure = (
     {
       retryable: false,
       remediationAction:
-        "Select a POM within max_file_bytes; paging does not change this file admission.",
-    },
-  );
-};
-
-const readFailure = (
-  failure: unknown,
-  input: InspectMavenPomInput,
-): AnalysisError => {
-  const { cause, origin } = artifactFilePrimaryFacts(failure);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "cancelled")
-      return cancelledBy(
-        operation,
-        carriedReason(artifactFileCancellationCause(cause)),
-      );
-    if (cause.reason === "integrity")
-      return new AnalysisArtifactChangedError(
-        operation,
-        input.path,
-        cause.message,
-        { cause },
-      );
-    if (cause.reason === "limit") return fileReadLimitFailure(cause, input);
-    if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(cause.message, cause);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
-        cause,
-      });
-  }
-  return new ArtifactOperationError(
-    operation,
-    "io",
-    undefined,
-    "POM read failed.",
-    {
-      cause: failure,
+        boundary === "file-size"
+          ? "Select a POM within max_file_bytes; paging does not change this file admission."
+          : "Select a POM whose declarations fit the reported allowance; the ceiling is not adjustable and paging does not change it.",
     },
   );
 };
@@ -245,7 +203,23 @@ const readPom = async (
       ),
     );
   } catch (failure: unknown) {
-    const primary = readFailure(failure, input);
+    // The shared classifier owns cancellation, integrity, selected-file and
+    // file-size-limit projections; this provider supplies only its dialect.
+    const primary = classifyProviderFailure(failure, {
+      providerId: MAVEN_POM_PROVIDER.id,
+      operation,
+      file: {
+        path: input.path,
+        description: "POM",
+        fileSize: (cause: ArtifactReaderFailure) =>
+          fileReadLimitFailure(cause, input),
+        retainCompletedIdentity: true,
+      },
+      unclassified: (cause) =>
+        new ArtifactOperationError(operation, "io", undefined, "POM read failed.", {
+          cause,
+        }),
+    });
     return err(
       projectStableArtifactFailure(
         failure,
@@ -270,6 +244,9 @@ export const inspectMavenPomEvidence = async (
   resources: ArtifactResourceScope,
   options: { readonly signal?: AbortSignal } = {},
 ): Promise<Result<MavenPomInspection, AnalysisError>> => {
+  // Capture what the caller selected before defaults are resolved, so saved
+  // Evidence distinguishes a chosen control from one the app filled in.
+  const selectedParameters = callerAnalysisParameters(rawInput);
   const admitted = parseAnalysisInput(
     operation,
     rawInput,
@@ -312,11 +289,11 @@ export const inspectMavenPomEvidence = async (
       {
         operation,
         predicateType: "rea.maven-pom-inventory",
-        parameters: {
+        parameters: selectedParameters({
           path: input.path,
           format: input.format,
           max_file_bytes: input.max_file_bytes,
-        },
+        }),
         result,
         confidence: "observed",
         limitations: result.limitations,

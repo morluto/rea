@@ -183,6 +183,7 @@ describe("properties and profiles", () => {
       {
         name: "guava.version",
         value: "33.2.1-jre",
+        value_credentials_redacted: false,
         source_pointer: "/properties[0]/guava.version[0]",
       },
     ]);
@@ -204,6 +205,7 @@ describe("properties and profiles", () => {
       declared: null,
       resolution: "unresolved",
       resolved: null,
+      credentials_redacted: false,
       source_pointer: "/project",
     });
     expect(result.diagnostics.map((d) => d.code)).toContain(
@@ -261,6 +263,7 @@ describe("repositories and diagnostics", () => {
       {
         id: "internal",
         url: "https://repo.example.invalid/maven",
+        url_credentials_redacted: false,
         layout: null,
         source_pointer: "/repositories[0]/repository[0]",
         line: expect.any(Number),
@@ -688,5 +691,166 @@ describe("property reference coverage", () => {
     expect(
       result.property_references.map((reference) => reference.name).sort(),
     ).toEqual(["b", "excluded.group", "revision"]);
+  });
+});
+
+describe("declaration fidelity against Maven's model reader", () => {
+  it("redacts transport credentials a property or repository URL carries", () => {
+    const result = parse(
+      pom(`
+  <properties>
+    <repo.url>https://user:password@repo.example/maven</repo.url>
+  </properties>
+  <repositories>
+    <repository>
+      <id>internal</id>
+      <url>https://token:secret@private.example/maven</url>
+    </repository>
+  </repositories>
+  <dependencies>
+    <dependency>
+      <groupId>g</groupId>
+      <artifactId>a</artifactId>
+      <version>\${repo.url}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    expect(result.properties).toEqual([
+      expect.objectContaining({
+        name: "repo.url",
+        value: "https://repo.example/maven",
+        value_credentials_redacted: true,
+      }),
+    ]);
+    expect(result.repositories[0]).toMatchObject({
+      url: "https://private.example/maven",
+      url_credentials_redacted: true,
+    });
+    const reference = result.property_references.find(
+      (entry) => entry.name === "repo.url",
+    );
+    expect(reference).toMatchObject({
+      resolution: "resolved",
+      resolved: "https://repo.example/maven",
+    });
+    // The property value is redacted before it is stored, so the resolved
+    // reference carries the already-clean value and re-reports nothing.
+    expect(reference?.credentials_redacted).toBe(false);
+    expect(reference?.resolved).not.toContain("password");
+  });
+
+  it("keeps a property key's written prefix so namespaced keys stay distinct", () => {
+    const result = parse(
+      pom(`
+  <properties>
+    <revision>0</revision>
+    <a:revision xmlns:a="urn:a">11</a:revision>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>g</groupId>
+      <artifactId>a</artifactId>
+      <version>\${a:revision}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    expect(result.properties.map((property) => property.name).sort()).toEqual([
+      "a:revision",
+      "revision",
+    ]);
+    const reference = result.property_references.find(
+      (entry) => entry.name === "a:revision",
+    );
+    expect(reference).toMatchObject({ declared: "11", resolution: "resolved" });
+  });
+
+  it("applies Java trim() so a non-breaking space is a kept character", () => {
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency>
+      <groupId>g</groupId>
+      <artifactId>a</artifactId>
+      <version>&#xA0;1.0&#xA0;</version>
+    </dependency>
+  </dependencies>`),
+    );
+    // U+00A0 survives Java's trim(); JavaScript's trim() would have removed it.
+    expect(result.dependencies[0]?.version).toBe(" 1.0 ");
+  });
+
+  it("reports a text field that holds nested elements instead of flattening it", () => {
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency>
+      <groupId>g</groupId>
+      <artifactId>a</artifactId>
+      <version>1<unexpected/>2</version>
+    </dependency>
+  </dependencies>`),
+    );
+    // Maven reads a text value here; a nested element means the declared value
+    // is not the plain "12" that flattening would produce.
+    expect(result.dependencies[0]?.version).toBeNull();
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "nested-content",
+    );
+    expect(result.source_coverage.status).toBe("partial");
+  });
+
+  it("reports a repeated section instead of hiding its later declarations", () => {
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency><groupId>g</groupId><artifactId>first</artifactId></dependency>
+  </dependencies>
+  <dependencies>
+    <dependency><groupId>g</groupId><artifactId>second</artifactId></dependency>
+  </dependencies>`),
+    );
+    expect(result.dependencies.map((d) => d.artifact_id)).toEqual(["first"]);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "repeated-section",
+    );
+    expect(result.source_coverage.status).toBe("partial");
+  });
+
+  it("shares one expansion across many references to the same alias", () => {
+    // A value referenced by many names must be expanded once (memoized) and
+    // charged against one parse-wide allowance, not re-expanded per reference.
+    const alias = Array.from({ length: 40 }, () => "${leaf}").join("");
+    const uses = Array.from(
+      { length: 200 },
+      (_, index) =>
+        `<dependency><groupId>g</groupId><artifactId>a${String(index)}</artifactId><version>\${shared}</version></dependency>`,
+    ).join("");
+    const result = parse(
+      pom(
+        `<properties><leaf>x</leaf><shared>${alias}</shared></properties><dependencies>${uses}</dependencies>`,
+      ),
+    );
+    // Every reference to the shared alias resolves to the same value: the
+    // memoized expansion is reused rather than recomputed (and never cut off
+    // by a per-reference allowance that a fresh expansion would trip).
+    const shared = result.property_references.filter(
+      (reference) => reference.name === "shared",
+    );
+    expect(shared).toHaveLength(1);
+    expect(shared[0]).toMatchObject({
+      resolution: "resolved",
+      resolved: "x".repeat(40),
+    });
+  });
+
+  it("still bounds one expansion that outgrows the parse-wide allowance", () => {
+    const result = parse(
+      pom(
+        `<properties><p>${"x".repeat(400_000)}</p><wide>${"${p}".repeat(64)}</wide></properties><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId><version>\${wide}</version></dependency></dependencies>`,
+      ),
+    );
+    expect(
+      result.property_references.find((reference) => reference.name === "wide"),
+    ).toMatchObject({ resolution: "work-limit", resolved: null });
   });
 });
