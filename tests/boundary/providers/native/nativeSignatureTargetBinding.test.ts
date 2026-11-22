@@ -22,7 +22,7 @@ import {
 import { resolvedAnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   withSignatureTarget,
   verifySignatureTarget,
@@ -31,7 +31,7 @@ import {
   NativeCommandFailure,
   XcrunCommandRunner,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { inspectSignatureSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
@@ -95,10 +95,11 @@ const registerSignatureObservationCases = () => {
       signed: true,
       identifier: "com.example.fixture",
       designated_requirement: "identifier com.example.fixture",
-      limitations: expect.arrayContaining([
-        "Inspected a digest-verified Mach-O byte snapshot; filesystem-bound signing context and trust validation are not examined.",
-        expect.stringContaining("Partial signature coverage:"),
-      ]),
+      slices: {
+        architectures: target.availableArchitectures,
+        checked: target.availableArchitectures,
+        unsigned: [],
+      },
     });
   });
 
@@ -263,7 +264,7 @@ it.each([
     const { path, target } = await fixture();
     const replay = new NativeFixtureRunner();
     const unsigned: NativeCommandRunner = {
-      async run(tool, args, options) {
+      async run(tool, args) {
         const diagnostic = `${args.at(-1)}: code object is not signed at all\n`;
         const capture = await new NativeFixtureRunner(
           { codesign: diagnostic },
@@ -379,10 +380,12 @@ it("returns typed cancellation at binding entry and final verification", async (
     ok: false,
     error: { _tag: "AnalysisCancelledError" },
   });
-  await withSignatureTarget(
+  let inspected = false;
+  const finalVerification = await withSignatureTarget(
     target,
     new ArtifactResourceScope(),
     async (binding) => {
+      inspected = true;
       const result = await verifySignatureTarget(target, binding, signal);
       expect(result).toMatchObject({
         ok: false,
@@ -391,6 +394,11 @@ it("returns typed cancellation at binding entry and final verification", async (
       return result.ok ? ok(signatureInspectionFixture()) : result;
     },
   );
+  expect(inspected).toBe(true);
+  expect(finalVerification).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
 });
 
 it("preserves cancellation after a capture instead of classifying it as invalid output", async () => {
@@ -597,10 +605,12 @@ it("copies and hashes the same bytes across multiple snapshot chunks", async () 
   const bytes = Buffer.alloc(128 * 1024 + 13, 42);
   await writeFile(path, bytes);
   const target = await nativeMachoTargetForFile(path);
-  await withSignatureTarget(
+  let inspected = false;
+  const result = await withSignatureTarget(
     target,
     new ArtifactResourceScope(),
     async (binding) => {
+      inspected = true;
       expect(Buffer.compare(await readFile(binding.snapshotPath), bytes)).toBe(
         0,
       );
@@ -608,6 +618,9 @@ it("copies and hashes the same bytes across multiple snapshot chunks", async () 
       return verified.ok ? ok(signatureInspectionFixture()) : verified;
     },
   );
+  expect(inspected).toBe(true);
+  if (!result.ok) throw result.error;
+  expect(result.value).toEqual(signatureInspectionFixture());
 });
 
 it.skipIf(process.platform === "win32")(
@@ -789,5 +802,6 @@ for (const cleanupFails of [false, true])
       _tag: "AnalysisCancelledError",
       cause: reason,
     });
+    expect(resolvedAnalysisError(result.error).cause).toBe(reason);
     await expect(lstat(root)).rejects.toMatchObject({ code: "ENOENT" });
   });

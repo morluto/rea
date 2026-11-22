@@ -1,12 +1,12 @@
-import { lstat, open, rename, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, rename, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactEntry } from "../../../src/artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const sampleEntry = async (
   reader: DirectoryArtifactReader,
@@ -25,35 +25,34 @@ const fixture = async () => {
 };
 
 describe("DirectoryArtifactReader.open", () => {
-  it("preserves native path and handle identity while streaming an unchanged file", async () => {
+  it("preserves enumerated file identity through positional inspection and streaming", async () => {
     const { path, reader } = await fixture();
     try {
       const entry = await sampleEntry(reader);
       const metadata = await lstat(path, { bigint: true });
-      const handle = await open(path, "r");
-      try {
-        const observed = await handle.stat({ bigint: true });
-        expect(entry.sourceIdentity).toEqual({
-          device: metadata.dev,
-          inode: metadata.ino,
-          size: metadata.size,
-          mode: metadata.mode,
-          mtimeNs: metadata.mtimeNs,
-          ctimeNs: metadata.ctimeNs,
-        });
-        expect({
-          device: observed.dev,
-          inode: observed.ino,
-          size: observed.size,
-          mode: observed.mode,
-          mtimeNs: observed.mtimeNs,
-          ctimeNs: observed.ctimeNs,
-        }).toEqual(entry.sourceIdentity);
-      } finally {
-        await handle.close();
-      }
+      expect(entry.sourceIdentity).toEqual({
+        device: metadata.dev,
+        inode: metadata.ino,
+        size: metadata.size,
+        mode: metadata.mode,
+        mtimeNs: metadata.mtimeNs,
+        ctimeNs: metadata.ctimeNs,
+      });
+      const inspected = await reader.inspectFile(entry, async (file) => {
+        const opened = await file.stat({ bigint: true });
+        return {
+          device: opened.dev,
+          inode: opened.ino,
+          contents: await file.readFile("utf8"),
+        };
+      });
+      expect(inspected).toEqual({
+        device: metadata.dev,
+        inode: metadata.ino,
+        contents: "test payload\n",
+      });
       expect((await buffer(await reader.open(entry))).toString("utf8")).toBe(
-        "test payload\n",
+        inspected.contents,
       );
     } finally {
       await reader.close();
@@ -87,7 +86,7 @@ describe("DirectoryArtifactReader.open", () => {
         expect(after.ino).toBe(before.ino);
         await expect(reader.open(entry)).rejects.toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("changed before open"),
+          integrityCheck: "member-identity",
         });
       } finally {
         await reader.close();
@@ -129,42 +128,38 @@ describe("DirectoryArtifactReader.open", () => {
         }
         expect(failure).toMatchObject({
           reason: "integrity",
-          message: expect.stringContaining("changed during read"),
+          integrityCheck: "member-identity",
         });
         expect(observedBytes).toBeLessThanOrEqual(originalBytes + 1);
       } finally {
         await reader.close();
-        await rm(root, { recursive: true, force: true });
       }
     },
   );
 });
 
 describe("DirectoryArtifactReader input identity", () => {
-  it.each(["zero", "another"] as const)(
-    "requires the enumerated %s device to match the opened file",
-    async (kind) => {
-      const { reader } = await fixture();
-      try {
-        const entry = await sampleEntry(reader);
-        const identity = entry.sourceIdentity;
-        if (identity === undefined)
-          throw new Error("Fixture omitted source identity");
-        if (kind === "zero" && identity.device === 0n) {
-          expect(
-            (await buffer(await reader.open(entry))).toString("utf8"),
-          ).toBe("test payload\n");
-          return;
-        }
-        const device = kind === "zero" ? 0n : identity.device === 1n ? 2n : 1n;
+  it("refuses a different captured device, including zero when it differs", async () => {
+    const { reader } = await fixture();
+    try {
+      const entry = await sampleEntry(reader);
+      const identity = entry.sourceIdentity;
+      if (identity === undefined)
+        throw new Error("Fixture omitted source identity");
+      const differentDevices = [0n, identity.device + 1n].filter(
+        (device) => device !== identity.device,
+      );
+      for (const device of differentDevices)
         await expect(
           reader.open({ ...entry, sourceIdentity: { ...identity, device } }),
-        ).rejects.toMatchObject({ reason: "integrity" });
-      } finally {
-        await reader.close();
-      }
-    },
-  );
+        ).rejects.toMatchObject({
+          reason: "integrity",
+          integrityCheck: "member-identity",
+        });
+    } finally {
+      await reader.close();
+    }
+  });
 
   it("rejects a file without enumerated source identity", async () => {
     const { reader } = await fixture();
@@ -172,6 +167,7 @@ describe("DirectoryArtifactReader input identity", () => {
       const { sourceIdentity: _identity, ...entry } = await sampleEntry(reader);
       await expect(reader.open(entry)).rejects.toMatchObject({
         reason: "integrity",
+        integrityCheck: "entry-metadata",
       });
     } finally {
       await reader.close();

@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../jsonPointer.js";
 import { canonicalJson } from "../comparisonSemantics.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compareUnicodeCodePoints as compare } from "../unicodeCodePointOrder.js";
@@ -183,7 +184,7 @@ export const mintedFor = (
 
 /** The first member a pointer names, which holds the entity rather than the envelope. */
 const pointerRoot = (pointer: string): string =>
-  pointer.slice(1).split("/")[0]!.replaceAll("~1", "/").replaceAll("~0", "~");
+  unescapeJsonPointerToken(pointer.slice(1).split("/")[0]!);
 
 /** Of these names, the top-level members a body carries outside the entity at `pointer`, or anywhere in a document (no pointer); none when the entity is the whole body. */
 export const envelopeMembers = (

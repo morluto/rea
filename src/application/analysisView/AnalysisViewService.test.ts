@@ -1,3 +1,5 @@
+import { fileSubjectTarget } from "../../../tests/fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,7 +23,7 @@ import {
   parseEvidence,
   rebindEvidenceToTargetPath,
 } from "../../domain/evidence.js";
-import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../../domain/analysisView/analysisViewRequest.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import {
@@ -45,7 +47,7 @@ import {
 } from "../../../tests/fixtures/browserScenarioCapture.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/ArtifactResourceScope.js";
 import * as queuedInterrupts from "../../process/queuedInterrupts.js";
 import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import * as evidenceFileSource from "./evidenceFileSource.js";
@@ -188,9 +190,9 @@ it.each(["inline", "retained-evidence", "invalid"] as const)(
   },
 );
 
-it.each([false, true])(
-  "summarizes the selected observation path rather than older retained display metadata (history=%s)",
-  (history) => {
+it.each(["new observation", "changed path", "changed name"] as const)(
+  "summarizes selected display metadata for %s",
+  (scenario) => {
     const makeParent = (path: string) =>
       createEvidence(
         { path, format: "pe", sha256: "c".repeat(64) },
@@ -202,21 +204,29 @@ it.each([false, true])(
         },
       );
     const previous = makeParent("/old/fixture.exe");
-    const selected = makeParent("/selected/fixture.exe");
+    const selected =
+      scenario === "changed name"
+        ? rebindEvidenceToTargetPath(previous, {
+            ...fileSubjectTarget(previous.subject),
+            name: "selected display",
+          })
+        : makeParent("/selected/fixture.exe");
     expect(selected.evidence_id).toBe(previous.evidence_id);
     const ledger = new EvidenceLedger();
-    if (history) expect(ledger.record(previous).ok).toBe(true);
+    if (scenario !== "new observation")
+      expect(ledger.record(previous).ok).toBe(true);
     const summary = summarizeRetainedAnalysis(selected, {
       recordEvidence: (evidence) => ledger.record(evidence),
       evidenceById: (id) => ledger.forAnalysis(id),
     });
     if (!summary.ok) throw summary.error;
     expect(summary.value.evidence_links).toEqual([selected.evidence_id]);
-    expect(summary.value.subject?.local_path).toBe(
-      selected.subject?.local_path,
-    );
-    expect(ledger.get(selected.evidence_id)?.subject?.local_path).toBe(
-      history ? previous.subject?.local_path : selected.subject?.local_path,
+    expect(summary.value.subject).toEqual({
+      ...selected.subject,
+      name: scenario === "changed name" ? "selected display" : "fixture.exe",
+    });
+    expect(ledger.get(selected.evidence_id)?.subject).toEqual(
+      scenario === "new observation" ? selected.subject : previous.subject,
     );
   },
 );
@@ -229,14 +239,10 @@ it("keeps retained admission and payload ownership for a large capture when only
   expect(ledger.record(parent).ok).toBe(true);
   const retained = ledger.forAnalysis(parent.evidence_id)!;
   const payload = retained.normalized_result;
-  const subject = retained.subject!;
+  const subject = retained.subject;
   const selected = rebindEvidenceToTargetPath(retained, {
+    ...fileSubjectTarget(subject),
     path: "/selected/capture.har",
-    sha256: subject.digest.sha256,
-    format: subject.format,
-    ...(subject.architecture === null
-      ? {}
-      : { architecture: subject.architecture }),
   });
   const retention = {
     recordEvidence: (evidence: Evidence) => ledger.record(evidence),
@@ -362,7 +368,7 @@ it("reports inline Evidence identity failures at the complete source path", asyn
           {
             path: ["source", "evidence", "evidence_id"],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -491,6 +497,15 @@ it("never seals a view as more certain than its parent Evidence", async () => {
         { kind: "summary" },
       ),
     ];
+    // The item view returns one selected section, not the whole collection.
+    expect(views[0]).toMatchObject({
+      ok: true,
+      value: {
+        normalized_result: {
+          coverage: { examined: 1, total: 1, exhausted: true },
+        },
+      },
+    });
     for (const view of views) {
       if (!view.ok) throw view.error;
       expect(view.value.confidence).toBe(expected);
@@ -574,7 +589,7 @@ it("rejects stale retained IDs and unsupported parent operations", async () => {
     },
   });
   const unsupported = createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation: "inspect_recorded_crash",
@@ -604,12 +619,16 @@ it("rejects stale retained IDs and unsupported parent operations", async () => {
 it("preserves an absent parent subject instead of guessing its format", async () => {
   const analysis = analysisViewJavaScriptAnalysisWithSource();
   const original = analysisViewJavaScriptEvidence(analysis);
-  const parent = createEvidence(undefined, original.provider, {
-    operation: original.operation,
-    parameters: {},
-    result: original.normalized_result,
-    limitations: original.limitations,
-  });
+  const parent = createEvidence(
+    unknownTarget("not-observed"),
+    original.provider,
+    {
+      operation: original.operation,
+      parameters: {},
+      result: original.normalized_result,
+      limitations: original.limitations,
+    },
+  );
   const result = await inspectAnalysisView(
     {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
@@ -618,7 +637,7 @@ it("preserves an absent parent subject instead of guessing its format", async ()
     () => parent,
   );
   if (!result.ok) throw result.error;
-  expect(result.value.subject).toBeNull();
+  expect(result.value.subject.identity.kind).toBe("unknown");
   expect(result.value.locations).toEqual([
     { kind: "artifact-path", path: analysis.input_path },
   ]);
@@ -729,7 +748,7 @@ it("seals inferred and literal HAR pages, including a null artifact digest", asy
     });
     if (!result.ok) throw result.error;
     expect(result.value.confidence).toBe(confidence);
-    expect(result.value.subject).toBeNull();
+    expect(result.value.subject.identity.kind).toBe("unknown");
     expect(parseEvidence(result.value)).toEqual(result.value);
   }
   expect(
@@ -832,7 +851,7 @@ it("seals an inferred environment manifest and a derived manifest without templa
   });
   if (!derived.ok) throw derived.error;
   expect(derived.value.confidence).toBe("derived");
-  expect(derived.value.subject).toBeNull();
+  expect(derived.value.subject.identity.kind).toBe("unknown");
   expect(derived.value.normalized_result).toMatchObject({
     templated_groups: 0,
     tools: [{ name: "get_org" }, { name: "get_search" }, { name: "get_user" }],
@@ -1644,7 +1663,7 @@ it.each(["file", "bundle"] as const)(
   "preserves a produced %s projection failure when cancellation arrives",
   async (kind) => {
     const parent = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "inspect_recorded_crash",

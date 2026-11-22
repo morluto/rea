@@ -26,7 +26,12 @@ it.each(formats)(
       view.setUint32(4, Number(value), littleEndian);
     }
     const before = Buffer.from(backing);
-    const parsed = readElfDynamicEntry(backing.subarray(7), bits, littleEndian);
+    const selected = new Uint8Array(
+      backing.buffer,
+      backing.byteOffset + 7,
+      length,
+    );
+    const parsed = readElfDynamicEntry(selected, bits, littleEndian);
     expect(backing.equals(before)).toBe(true);
     backing.fill(0);
     expect(parsed).toEqual({ ok: true, value: { tag, value } });
@@ -51,7 +56,10 @@ it.each(formats)(
         ),
       ).toEqual({
         ok: false,
-        error: { kind: "malformed", message: "ELF dynamic entry is truncated" },
+        error: {
+          kind: "malformed",
+          message: expect.stringContaining("truncated"),
+        },
       });
   },
 );

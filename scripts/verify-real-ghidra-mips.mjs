@@ -1,20 +1,15 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  mkdtemp,
   mkdir,
   readFile,
   readdir,
   realpath,
-  rm,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -38,14 +33,23 @@ import {
   buildPspFixture,
   assertPspLoadedImage,
   assertPspProbe,
+  PSP_VFPU_DECODE_CASES,
+  assertPspVfpuProbe,
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import {
   requireMcpToolError,
   requireMcpOperationResult,
   requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -73,10 +77,21 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-mips-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain(psp ? "psp" : "mips");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-mips-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -92,6 +107,20 @@ const env = {
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
 }
+// CLI launches share one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
+
+/** stdout and stderr of an owned command that exited nonzero. */
+const commandFailureOutput = (cause) => {
+  const snapshot = cause?.snapshot;
+  if (typeof snapshot?.stdout?.text === "string")
+    return {
+      code: cause.code,
+      stdout: snapshot.stdout.text,
+      stderr: snapshot.stderr.text,
+    };
+  return cause;
+};
 
 /** Observe an existing project, and verify REA never alters the caller's copy. */
 async function verifyExistingMipsProject(fixture, byteOrder) {
@@ -165,7 +194,7 @@ async function verifyExistingMipsProject(fixture, byteOrder) {
     );
     assert.ok(Array.isArray(observation.normalized_result));
     const parameters = observation.analysis_profile?.parameters;
-    assert.equal(parameters?.import_mode, "existing-project-private-copy-v1");
+    assert.equal(parameters?.import_mode, "existing-project-private-copy");
     assert.equal(parameters?.mips_elf?.byte_order, byteOrder);
     assert.equal(parameters?.mips_support_lane, undefined);
     assert.deepEqual(parameters?.original_analysis, {
@@ -282,7 +311,6 @@ try {
       const call = async (name, args = {}) => {
         const reply = await client.callTool(
           { name, arguments: args },
-          undefined,
           { timeout: 180000 },
         );
         return requireMcpOperationResult(reply, name);
@@ -335,18 +363,18 @@ try {
         const snapshot = parseAnalysisSnapshot(
           JSON.parse(await readFile(snapshotPath, "utf8")),
         );
-        assert.equal(snapshot.target.architecture, "mips");
+        assert.equal(snapshot.target.identity.architecture, "mips");
         const parameters = snapshot.binding.analysis_profile.parameters;
         assert.equal(
           parameters.language_id,
           `MIPS:${byteOrder === "little" ? "LE" : "BE"}:32:default`,
         );
-        assert.equal(parameters.language_selection, "provider-pinned-v1");
+        assert.equal(parameters.language_selection, "provider-pinned");
         assert.equal(
           parameters.mips_support_lane,
-          "elf32-exec-arch32-legacy-pinned-v1",
+          "elf32-exec-arch32-legacy-pinned",
         );
-        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption-v1");
+        assert.equal(parameters.mips_abi_basis, "inferred-o32-assumption");
         assert.ok(
           snapshot.evidence_bundle.records.some((record) =>
             parseEvidence(record).limitations.some((item) =>
@@ -471,7 +499,7 @@ try {
         assert.match(JSON.stringify(error), /PSP_EXTENSION_UNAVAILABLE/u);
         let cliError;
         try {
-          await execute(
+          await commands.exec(
             process.execPath,
             [
               entrypoint,
@@ -487,18 +515,19 @@ try {
         } catch (cause) {
           cliError = cause;
         }
+        const cliOutput = commandFailureOutput(cliError);
         assert.ok(
-          cliError && Number.isInteger(cliError.code) && cliError.code !== 0,
+          cliOutput && Number.isInteger(cliOutput.code) && cliOutput.code !== 0,
           "Expected a typed public rejection, not a timeout or success",
         );
         assert.match(
-          `${cliError.stdout}\n${cliError.stderr}`,
+          `${cliOutput.stdout}\n${cliOutput.stderr}`,
           /PSP_EXTENSION_UNAVAILABLE/u,
         );
         reports.push({
           path: fixture.path,
           status: "expected-missing-extension-refusal",
-          cli_exit: cliError.code,
+          cli_exit: cliOutput.code,
           mcp_error: error,
         });
         continue;
@@ -541,6 +570,47 @@ try {
       });
       if (psp) assertPspProbe(move, branch);
       else assertMipsProbe(move, branch, byteOrder, probe);
+      let vfpuCoverage;
+      if (psp) {
+        const vfpuAddress = BigInt(independent.symbols.rea_psp_vfpu_probe);
+        const vfpuInstructions = [];
+        for (const { index } of PSP_VFPU_DECODE_CASES) {
+          vfpuInstructions.push(
+            await call("inspect_native_instruction", {
+              address: `0x${(vfpuAddress + 4n * BigInt(index)).toString(16)}`,
+            }),
+          );
+        }
+        assertPspVfpuProbe(vfpuInstructions);
+        const vfpuDossier = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: independent.symbols.rea_psp_vfpu_probe,
+            detail: "complete",
+          }),
+        );
+        assert.equal(BigInt(vfpuDossier.procedure.address), vfpuAddress);
+        const flow = vfpuDossier.native_value_flow;
+        const hasHighPcode = flow?.available === true;
+        vfpuCoverage = {
+          decoded_instructions: vfpuInstructions.length,
+          prefix_sites: 4,
+          vadd_sites: 3,
+          high_pcode: hasHighPcode ? "observed" : "unavailable",
+          opaque_high_pcode_operations: hasHighPcode
+            ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER")
+                .length
+            : null,
+          truncated: hasHighPcode ? flow.truncated : null,
+          unavailable_reason:
+            flow?.available === false
+              ? flow.reason
+              : hasHighPcode
+                ? null
+                : "Ghidra did not report a HighFunction value flow",
+          pseudocode_nonempty: vfpuDossier.pseudocode.trim().length > 0,
+          numeric_vector_semantics: "not_verified",
+        };
+      }
       const global = await call("read_bytes", {
         address: independent.symbols[`${prefix}_global`],
         length: 4,
@@ -607,7 +677,7 @@ try {
       const snapshot = parseAnalysisSnapshot(
         JSON.parse(await readFile(snapshotPath, "utf8")),
       );
-      assert.equal(snapshot.target.architecture, "mips");
+      assert.equal(snapshot.target.identity.architecture, "mips");
       assert.deepEqual(
         snapshot.binding.analysis_profile.parameters.mips_elf,
         expectedMipsElfProfile(independent.mips),
@@ -644,7 +714,10 @@ try {
         );
       }
       for (const evidence of snapshot.evidence_bundle.records)
-        assert.equal(parseEvidence(evidence).subject?.architecture, "mips");
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "mips",
+        );
       await call("open_binary", {
         path: fixture.path,
         provider_id: "ghidra",
@@ -699,7 +772,7 @@ try {
       }
 
       // Same public operation through CLI, not a private injected provider.
-      const cli = await execute(
+      const cli = await commands.exec(
         process.execPath,
         [
           entrypoint,
@@ -713,8 +786,8 @@ try {
         { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
       );
       const evidence = parseEvidence(JSON.parse(cli.stdout));
-      assert.equal(evidence.subject?.architecture, "mips");
-      assert.equal(evidence.subject?.digest.sha256, fixture.sha256);
+      assert.equal(evidence.subject?.identity.architecture, "mips");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
       const cliDossier = functionDossierSchema.parse(
         evidence.normalized_result,
       );
@@ -757,7 +830,7 @@ try {
         assertMipsCarvedTargetRefusal(carvedError, openedPath, carve.reason);
         let carvedCliError;
         try {
-          await execute(
+          await commands.exec(
             process.execPath,
             [
               entrypoint,
@@ -773,14 +846,15 @@ try {
         } catch (cause) {
           carvedCliError = cause;
         }
+        const carvedOutput = commandFailureOutput(carvedCliError);
         assert.ok(
-          carvedCliError &&
-            Number.isInteger(carvedCliError.code) &&
-            carvedCliError.code !== 0,
+          carvedOutput &&
+            Number.isInteger(carvedOutput.code) &&
+            carvedOutput.code !== 0,
           "Expected a target-opening refusal, not a timeout or success",
         );
         assertMipsCarvedTargetRefusal(
-          JSON.parse(carvedCliError.stdout),
+          JSON.parse(carvedOutput.stdout),
           openedPath,
           carve.reason,
         );
@@ -791,7 +865,7 @@ try {
           section_header_offset: carve.sectionOffset,
           status: "expected-target-refusal",
           reason: carve.reason,
-          cli_exit: carvedCliError.code,
+          cli_exit: carvedOutput.code,
           mcp_error: carvedError,
         };
       }
@@ -807,6 +881,9 @@ try {
           "independent ELF/ABI and symbols",
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
+          ...(psp
+            ? ["VFPU prefix/vadd opcode decoding (not arithmetic equivalence)"]
+            : []),
           psp
             ? "Allegrex BITREV decoding and A-B-A target identity"
             : "conditional branch destination",
@@ -816,6 +893,7 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
+        ...(vfpuCoverage === undefined ? {} : { vfpu_decode: vfpuCoverage }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
         carved: carved ?? {
@@ -841,21 +919,40 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
-const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `MIPS command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "MIPS verification and command cleanup both failed",
+            ),
+    },
   );
+const completed = await completeVerifierRun(run);
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  throw retainWorkspace(
+    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
+    { cause: primaryFailure ?? cause },
+  );
+}
 if (primaryFailure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `MIPS verification failed; retained workspace: ${workspace}`,
     {
       cause: primaryFailure,
     },
   );
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

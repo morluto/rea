@@ -102,8 +102,10 @@ const columns = (
   row: object,
   fields: readonly string[],
 ): Record<string, JsonValue> => {
-  const source = row as Record<string, JsonValue>;
-  return Object.fromEntries(fields.map((field) => [field, source[field]!]));
+  const selected = new Set(fields);
+  return Object.fromEntries(
+    Object.entries(row).filter(([field]) => selected.has(field)),
+  );
 };
 
 /** Page facts owned by a complete comparison; page exhaustion does not upgrade source coverage. */
@@ -160,7 +162,7 @@ export const projectSourceToBundleView = (
       view,
       ...shared,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   const paths = selected(view.source_paths),
     ids = selected(view.mapping_ids),

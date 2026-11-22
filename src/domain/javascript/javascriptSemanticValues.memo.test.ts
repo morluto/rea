@@ -2,14 +2,21 @@ import { expect, it, vi } from "vitest";
 
 import {
   analyzeJavaScriptSemantics,
-  indexJavaScriptBindingsSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
+import {
+  completeSemanticSteps,
+  traverseJavaScriptAst,
+} from "./javascriptSemanticTraversal.js";
+import { indexJavaScriptBindingsSteps } from "../../../tests/fixtures/javascriptSemanticIndex.js";
 import { SemanticDependencyProofs } from "./javascriptSemanticDependencies.js";
-import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
+import { JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS } from "./javascriptSemanticPrecision.js";
 import type { JavaScriptSemanticValue } from "./javascriptSemanticValueTypes.js";
 import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
+  evaluateSemanticExpression,
   evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
@@ -62,7 +69,8 @@ it("reuses dependency-aware read snapshots across a reconvergent value chain", (
 
 it("preserves the remaining depth budget when reusing a read snapshot", () => {
   const depth = 12;
-  const nesting = SEMANTIC_EXPRESSION_DEPTH_LIMIT - depth;
+  const nesting =
+    JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth - depth;
   const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
 const root={shallow:a${depth},deep:${"[".repeat(nesting)}a${depth}${"]".repeat(nesting)},after:a${depth}};
 ${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
@@ -95,7 +103,7 @@ ${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
 });
 
 it("bounds reconvergent read work when the expression depth budget is exhausted", () => {
-  const depth = SEMANTIC_EXPRESSION_DEPTH_LIMIT;
+  const depth = JAVASCRIPT_SEMANTIC_PRECISION_DEFAULTS.expression_depth;
   const source = `let a0=1;${Array.from({ length: depth }, (_, index) => `let a${index + 1}=a${index}+a${index};`).join("")}
 const saved=a${depth};${Array.from({ length: depth + 1 }, (_, index) => `a${index}=0;`).join("")}`;
   const parsed = parseJavaScriptSource(source, "snapshot-limit.js");
@@ -496,3 +504,98 @@ it("releases query union ownership when state-owned values are invalidated", () 
     spy.mockRestore();
   }
 });
+
+it.each([false, true])(
+  "keeps array read-presence snapshots query-owned (prewarmed: %s)",
+  (prewarmed) => {
+    const reads = 16;
+    const items = Array.from({ length: 128 }, (_, index) => index).join(",");
+    const parsed = parseJavaScriptSource(
+      `const config=[${items}]; let selected;${"[selected]=config;".repeat(reads)} config[0]=999;`,
+      "array-presence.js",
+    );
+    if (parsed === null) throw new Error("Expected parsed source");
+    const index = completeSemanticSteps(
+      indexJavaScriptBindingsWithReceiversSteps(parsed.program),
+    );
+    completeSemanticSteps(index.indexMemberMutationFactsSteps());
+    const state = index.bindings;
+    const binding = [...state.bindingsById.values()].find(
+      ({ name }) => name === "config",
+    );
+    if (binding === undefined) throw new Error("Missing source binding");
+
+    // Track aggregate values only in snapshots owned by the analysis state.
+    const stateCaptures = new WeakSet<object>();
+    const stateSnapshots = new WeakSet<object>();
+    let aggregateAccesses = 0;
+    const observeOwner = (owner: object, key: unknown, value: unknown) => {
+      if (key === state && value instanceof WeakMap) stateCaptures.add(value);
+      if (stateCaptures.has(owner) && value instanceof Map)
+        stateSnapshots.add(value);
+    };
+    const observeAggregate = (owner: object, key: unknown, value: unknown) => {
+      if (
+        stateSnapshots.has(owner) &&
+        key === binding.bindingId &&
+        value !== null &&
+        typeof value === "object" &&
+        "status" in value &&
+        value.status === "array"
+      )
+        aggregateAccesses += 1;
+    };
+    const weakGet = WeakMap.prototype.get;
+    const weakSet = WeakMap.prototype.set;
+    const mapGet = Map.prototype.get;
+    const mapSet = Map.prototype.set;
+    try {
+      WeakMap.prototype.get = function (key) {
+        const value = weakGet.call(this, key);
+        observeOwner(this, key, value);
+        return value;
+      };
+      WeakMap.prototype.set = function (key, value) {
+        observeOwner(this, key, value);
+        return weakSet.call(this, key, value);
+      };
+      Map.prototype.get = function (key) {
+        const value = mapGet.call(this, key);
+        observeAggregate(this, key, value);
+        return value;
+      };
+      Map.prototype.set = function (key, value) {
+        observeAggregate(this, key, value);
+        return mapSet.call(this, key, value);
+      };
+      if (prewarmed) {
+        traverseJavaScriptAst(parsed.program, {
+          enter: (node) => {
+            if (
+              node.type === "AssignmentExpression" &&
+              node.left.type === "ArrayPattern"
+            )
+              evaluateSemanticExpression(node.right, state, node.right);
+          },
+        });
+        expect(aggregateAccesses).toBeGreaterThan(0);
+        aggregateAccesses = 0;
+      }
+      const operations = collectJavaScriptSemanticObjects(
+        parsed.program,
+        state,
+        [],
+      ).filter(({ kind }) => kind === "destructure");
+      expect(operations).toHaveLength(reads);
+      expect(
+        operations.every(({ sourcePresence }) => sourcePresence === "present"),
+      ).toBe(true);
+      expect(aggregateAccesses).toBe(0);
+    } finally {
+      WeakMap.prototype.get = weakGet;
+      WeakMap.prototype.set = weakSet;
+      Map.prototype.get = mapGet;
+      Map.prototype.set = mapSet;
+    }
+  },
+);

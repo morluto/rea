@@ -13,6 +13,28 @@ const arrayExpression = (raw) => {
   return node;
 };
 
+/** The object of `Object.values(object).flat()`, a static grouping of arrays. */
+const flattenedObjectValues = (node) => {
+  if (
+    node?.type !== "CallExpression" ||
+    node.arguments.length !== 0 ||
+    node.callee.type !== "MemberExpression" ||
+    node.callee.computed ||
+    node.callee.property.name !== "flat"
+  )
+    return undefined;
+  const values = node.callee.object;
+  return values.type === "CallExpression" &&
+    values.arguments.length === 1 &&
+    values.callee.type === "MemberExpression" &&
+    !values.callee.computed &&
+    values.callee.object.type === "Identifier" &&
+    values.callee.object.name === "Object" &&
+    values.callee.property.name === "values"
+    ? values.arguments[0]
+    : undefined;
+};
+
 /** Read only source composition, never execute the runtime contract catalog. */
 export const collectToolCatalogSources = (
   entryPath,
@@ -68,7 +90,10 @@ export const collectToolCatalogSources = (
     active.add(key);
     const facts = moduleFacts(path);
     const array = arrayExpression(facts.exports.get(name));
-    if (array?.type !== "ArrayExpression")
+    if (
+      array?.type !== "ArrayExpression" &&
+      flattenedObjectValues(array) === undefined
+    )
       throw new Error(`Expected exported tool catalog array: ${path}#${name}`);
     const source = withoutExtension(path);
     const names = catalogs.get(source) ?? new Set();
@@ -80,6 +105,35 @@ export const collectToolCatalogSources = (
         for (const element of expression.elements)
           if (element?.type === "SpreadElement")
             composition(element.argument, localPath);
+        return;
+      }
+      // A static object of groups contributes each property value.
+      if (expression?.type === "ObjectExpression") {
+        for (const property of expression.properties) {
+          if (property.type === "SpreadElement")
+            composition(property.argument, localPath);
+          else if (property.type === "ObjectProperty")
+            composition(property.value, localPath);
+          else
+            throw new Error(
+              `Unsupported catalog group member: ${path}#${name}`,
+            );
+        }
+        return;
+      }
+      const grouped = flattenedObjectValues(expression);
+      if (grouped !== undefined) {
+        let object = arrayExpression(grouped);
+        const seen = new Set();
+        while (object?.type === "Identifier") {
+          if (seen.has(object.name) || !facts.locals.has(object.name))
+            throw new Error(`Expected static catalog groups: ${path}#${name}`);
+          seen.add(object.name);
+          object = arrayExpression(facts.locals.get(object.name));
+        }
+        if (object?.type !== "ObjectExpression")
+          throw new Error(`Expected static catalog groups: ${path}#${name}`);
+        composition(object, localPath);
         return;
       }
       // Calls such as HOPPER_MEMORY_TOOL_DEFINITIONS.map(official) construct

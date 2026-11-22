@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -13,7 +14,7 @@ cliTest(
   "inline reconstruction distinguishes an authenticated record from a corrupt bundle",
   async ({ cli }) => {
     const record = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
         operation: "observe",
@@ -61,7 +62,7 @@ cliTest(
             {
               path: scenario.path,
               reason: "invalid_value",
-              message: expect.stringContaining("one Evidence record"),
+              observed: { detected_kind: "evidence-record" },
             },
           ],
         },
@@ -71,11 +72,7 @@ cliTest(
       };
       expect(result.json).toMatchObject(expected);
       expect(response.isError).toBe(true);
-      // The advertised MCP schema rejects the wrong shape before the domain reader.
-      expect(parseMcpToolError(response).error).toMatchObject({
-        code: "invalid_request",
-        category: "invalid_input",
-      });
+      expect(parseMcpToolError(response).error).toMatchObject(expected);
     }
 
     // A record with a changed payload is not authenticated as a standalone record.
@@ -95,12 +92,11 @@ cliTest(
       malformed,
     );
     expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
+    const integrity = {
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
-    });
-    expect(parseMcpToolError(response).error).toMatchObject({
-      code: "invalid_request",
-    });
+    };
+    expect(result.json).toMatchObject(integrity);
+    expect(parseMcpToolError(response).error).toMatchObject(integrity);
   },
 );

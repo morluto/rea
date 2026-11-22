@@ -1,5 +1,7 @@
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../../resources/index.js";
 import {
   type BinaryHardeningImage,
   type BinaryHardeningRow,
@@ -13,11 +15,11 @@ import {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
-} from "../metadata/BinaryContainer.js";
+} from "../../domain/binaryContainer.js";
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
-import { readPeImage } from "../metadata/PeImage.js";
-import { parsePeLoadConfig } from "../pe/PeLoadConfigParser.js";
+import { readPeImage } from "../../domain/native/peImage.js";
+import { parsePeLoadConfigFromImage } from "../pe/PeLoadConfigParser.js";
 
 const IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA = 0x0020;
 const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040;
@@ -78,8 +80,9 @@ export const readPeHardening = async (
   let loadConfig: PeLoadConfig | undefined;
   let loadConfigFailure = "";
   try {
-    loadConfig = await parsePeLoadConfig(
+    loadConfig = await parsePeLoadConfigFromImage(
       bytes,
+      image,
       artifact,
       {
         path: artifact.path,

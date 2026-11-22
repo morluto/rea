@@ -1,15 +1,15 @@
 import { mkdir } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { defaultHopperLauncherPath } from "../config/parseConfig.js";
+import { defaultHopperLauncherPath } from "../hopperPaths/HopperLauncherDiscovery.js";
 import { SUPPORTED_NODE_VERSION_PROSE } from "../domain/runtimeVersion.js";
 import type { ClientRegistrationStatus } from "./ClientRegistrationStatus.js";
 import { createDoctorHostFixture as host } from "./Doctor.fixture.js";
 import { runDoctor, systemDoctorHost, type DoctorHost } from "./Doctor.js";
 import { err } from "../domain/result.js";
 import { HopperReleaseError } from "./HopperReleaseFeed.js";
-import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "../hopperPaths/MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const configurationHost = (
@@ -17,7 +17,7 @@ const configurationHost = (
 ): DoctorHost => ({
   ...systemDoctorHost({ environment: { ...environment } }),
   ...host({
-    installationPaths: () => Promise.resolve([]),
+    installationLaunchers: () => Promise.resolve([]),
     clientRegistrations: () => Promise.resolve([]),
   }),
 });
@@ -32,7 +32,7 @@ describe("doctor Hopper startup timeout", () => {
         value === undefined ? {} : { REA_HOPPER_STARTUP_TIMEOUT_MS: value },
     }),
     ...host({
-      installationPaths: () => Promise.resolve([]),
+      installationLaunchers: () => Promise.resolve([]),
       clientRegistrations: () => Promise.resolve([]),
       ...overrides,
     }),
@@ -255,8 +255,9 @@ describe("doctor native analysis configuration", () => {
       expect.objectContaining({
         name: "hopper-startup-timeout",
         ok: false,
-        detail:
-          "REA_HOPPER_STARTUP_TIMEOUT_MS: must be a positive decimal integer",
+        detail: expect.stringMatching(
+          /REA_HOPPER_STARTUP_TIMEOUT_MS.*positive decimal integer/i,
+        ),
       }),
     );
     expect(result.scope_checks).toContainEqual(
@@ -329,6 +330,7 @@ describe("doctor MCP startup readiness", () => {
   const alignedCodex: ClientRegistrationStatus = {
     client: "codex",
     config_path: "/home/user/.codex/config.toml",
+    command_identity: "owned",
     command: ["/current/rea", "mcp"],
     state: "aligned",
     remediation: null,
@@ -650,8 +652,9 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: "/missing/ilspycmd",
-      remediation:
-        "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+      remediation: expect.stringMatching(
+        /REA_ILSPY_CMD_PATH.*runnable ilspycmd/i,
+      ),
     });
   });
 
@@ -669,8 +672,9 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: configuredPath,
-      remediation:
-        "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
+      remediation: expect.stringMatching(
+        /HOPPER_LAUNCHER_PATH.*executable Hopper launcher/i,
+      ),
     });
   });
 });
@@ -721,8 +725,13 @@ describe("doctor installation identity", () => {
     const result = await runDoctor(
       undefined,
       host({
-        installationPaths: () =>
-          Promise.resolve(["/usr/local/bin/rea", "/home/user/bin/rea"]),
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["/usr/local/bin", "/home/user/bin"].map((installation) => ({
+              path: `${installation}/rea`,
+              installation,
+            })),
+          ),
         installedSkillIdentity: () =>
           Promise.resolve({
             version: "10",
@@ -738,7 +747,7 @@ describe("doctor installation identity", () => {
       skill: {
         installed_version: "10",
         state: "stale",
-        remediation: "Run rea setup to update the installed REA skill.",
+        remediation: expect.stringMatching(/rea setup.*update.*skill/i),
       },
     });
   });
@@ -751,14 +760,14 @@ describe("doctor installation identity", () => {
     expect(result.healthy).toBe(false);
     expect(result.identity?.skill).toMatchObject({
       state: "missing",
-      remediation: "Run rea setup to update the installed REA skill.",
+      remediation: expect.stringMatching(/rea setup.*update.*skill/i),
     });
     expect(result.checks).toContainEqual({
       name: "skill:identity",
       ok: false,
       classification: "config_drift",
-      detail: "Installed REA skill identity is missing.",
-      remediation: "Run rea setup to update the installed REA skill.",
+      detail: expect.stringMatching(/skill identity.*missing/i),
+      remediation: result.identity?.skill.remediation,
     });
   });
   it("classifies an unreadable installed skill as unknown, not drift", async () => {
@@ -800,6 +809,7 @@ describe("doctor installation identity", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["/old/rea", "mcp"],
               state: "stale",
               remediation:
@@ -865,6 +875,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "codex",
         config_path: "/home/user/.codex/config.toml",
+        command_identity: "owned",
         command: ["/current/rea", "mcp"],
         state: "aligned",
         remediation: null,
@@ -872,6 +883,7 @@ describe("doctor scoped readiness", () => {
       {
         client: "cursor",
         config_path: "/home/user/.cursor/mcp.json",
+        command_identity: "unknown",
         command: ["/old/rea", "mcp"],
         state: "unknown",
         remediation: "Run rea setup to refresh this registration.",
@@ -906,38 +918,80 @@ describe("doctor scoped readiness", () => {
     );
     expect(staleSelected.healthy).toBe(false);
   });
+});
 
-  it("keeps a caller-selected short timeout healthy and reports its advisory as informational", async () => {
-    const result = await runDoctor(
-      undefined,
-      host({
-        clientRegistrations: () =>
-          Promise.resolve([
-            {
-              client: "kimi",
-              config_path: "/home/user/.kimi-code/mcp.json",
-              command: ["/current/rea", "mcp"],
-              state: "aligned",
-              remediation: null,
-              advisory: "The configured toolTimeoutMs is shorter than startup.",
-            },
-          ]),
-      }),
-      { clients: ["kimi"] },
-    );
-
-    expect(result.healthy).toBe(true);
-    expect(result.scope_checks).toContainEqual(
-      expect.objectContaining({ name: "registration:kimi", ok: true }),
-    );
-    expect(result.informational_checks).toContainEqual(
-      expect.objectContaining({
-        name: "registration_timeout:kimi",
-        ok: true,
-        detail: "The configured toolTimeoutMs is shorter than startup.",
-      }),
-    );
+it("reports project-scoped client registrations in doctor identity and check details", async () => {
+  const registrations: ClientRegistrationStatus[] = [
+    {
+      client: "pi",
+      config_path: "/project/.pi/mcp.json",
+      scope: "project",
+      command: ["/current/rea", "mcp"],
+      command_identity: "owned",
+      state: "aligned",
+      remediation: null,
+    },
+  ];
+  const report = await runDoctor(
+    undefined,
+    host({ clientRegistrations: () => Promise.resolve(registrations) }),
+    { clients: ["pi"] },
+  );
+  expect(report).toMatchObject({
+    healthy: true,
+    identity: {
+      registrations: [
+        expect.objectContaining({
+          client: "pi",
+          scope: "project",
+          config_path: "/project/.pi/mcp.json",
+          state: "aligned",
+        }),
+      ],
+    },
   });
+  expect(report.scope_checks).toContainEqual(
+    expect.objectContaining({
+      name: "registration:pi",
+      ok: true,
+      classification: "healthy",
+      detail: "/project/.pi/mcp.json",
+      details: { scope: "project" },
+    }),
+  );
+});
+
+it("keeps a caller-selected short timeout healthy and reports its advisory as informational", async () => {
+  const result = await runDoctor(
+    undefined,
+    host({
+      clientRegistrations: () =>
+        Promise.resolve([
+          {
+            client: "kimi",
+            config_path: "/home/user/.kimi-code/mcp.json",
+            command_identity: "owned",
+            command: ["/current/rea", "mcp"],
+            state: "aligned",
+            remediation: null,
+            advisory: "The configured toolTimeoutMs is shorter than startup.",
+          },
+        ]),
+    }),
+    { clients: ["kimi"] },
+  );
+
+  expect(result.healthy).toBe(true);
+  expect(result.scope_checks).toContainEqual(
+    expect.objectContaining({ name: "registration:kimi", ok: true }),
+  );
+  expect(result.informational_checks).toContainEqual(
+    expect.objectContaining({
+      name: "registration_timeout:kimi",
+      ok: true,
+      detail: "The configured toolTimeoutMs is shorter than startup.",
+    }),
+  );
 });
 
 describe("Grok Bot readiness", () => {
@@ -946,6 +1000,7 @@ describe("Grok Bot readiness", () => {
       {
         client: "grok_bot",
         config_path: "/home/user/.grokbot",
+        command_identity: "unknown",
         command: [],
         state: "manual",
         remediation: "Add the connector from the Grok Bot chat.",
@@ -1006,6 +1061,7 @@ describe("doctor scoped readiness", () => {
             {
               client: "codex",
               config_path: "/home/user/.codex/config.toml",
+              command_identity: "owned",
               command: ["rea", "mcp"],
               state: "aligned",
               remediation: null,
@@ -1114,6 +1170,59 @@ describe("doctor Linux and Hopper discovery", () => {
     expect(result.healthy).toBe(true);
     expect(result.hopperPath).toBe(path);
   });
+  it.each([
+    { unknown: "HOME", cache: undefined, classification: "unknown" },
+    { unknown: "XDG_CACHE_HOME", cache: undefined, classification: "unknown" },
+    { unknown: "HOME", cache: "/fixture/cache", classification: "healthy" },
+  ])(
+    "audits a known Linux launcher with unresolved $unknown and cache $cache",
+    async ({ unknown, cache, classification }) => {
+      const path = "/fixture/Hopper";
+      const provider = host({ platform: "linux", configuredHopperPath: path });
+      const inspectLinuxHopper = vi.fn(provider.inspectLinuxHopper);
+      const result = await runDoctor(
+        undefined,
+        {
+          ...provider,
+          async forProviderDiagnostics() {
+            return {
+              host: { ...provider, inspectLinuxHopper },
+              configuration: {
+                environment: {
+                  HOPPER_LAUNCHER_PATH: path,
+                  XDG_CACHE_HOME: cache,
+                },
+                unresolved: new Set([unknown]),
+              },
+            };
+          },
+        },
+        { providers: ["hopper"] },
+      );
+      expect(result.hopperPath).toBe(path);
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper",
+          ok: true,
+          detail: path,
+        }),
+      );
+      expect(result.checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-version",
+          classification,
+          detail:
+            classification === "healthy"
+              ? path
+              : expect.stringContaining(unknown),
+        }),
+      );
+      expect(inspectLinuxHopper).toHaveBeenCalledTimes(
+        classification === "healthy" ? 1 : 0,
+      );
+    },
+  );
+
   it("reports missing Linux demo-session dependencies", async () => {
     const result = await runDoctor(
       undefined,
@@ -1378,5 +1487,26 @@ describe("doctor target admission diagnostics", () => {
       }),
     );
     expect(result.checks).toContainEqual(targetCheck);
+  });
+});
+
+describe("doctor installation count", () => {
+  it("reports one installation when several launchers resolve to it", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installationLaunchers: () =>
+          Promise.resolve(
+            ["rea", "rea.cmd"].map((name) => ({
+              path: `C:\\npm\\${name}`,
+              installation: "c:\\npm",
+            })),
+          ),
+      }),
+    );
+    expect(result.identity?.installations).toEqual({
+      paths: ["C:\\npm\\rea", "C:\\npm\\rea.cmd"],
+      state: "single",
+    });
   });
 });

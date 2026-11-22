@@ -1,0 +1,33 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --block-size 100  # stdout is a terminal
+exit: 1
+--- stdout
+Error: invalid value for --block-size: Too small: expected number to be >=256
+Error: invalid value for --block-size: Block size must be a power of two.
+See below for usage.
+
+rea inspect-byte-entropy — Inspect file-wide and block byte entropy without executing the file
+
+Usage: rea inspect-byte-entropy <path> [options]
+
+Arguments:
+  path  Local file
+
+Options:
+  --block-size <value>  Power-of-two block size from 256 to 65536 bytes (default: 4096)
+  --offset <value>      Window start as a decimal file byte offset (default: 0)
+  --length <value>      Window length in bytes; omit to extend through EOF
+
+Global Options:
+  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --full-output                       Show full output envelope
+  --help                              Show help
+  --json                              Shorthand for --format json
+  --llms, --llms-full                 Print LLM-readable manifest
+  --schema                            Show JSON Schema for command
+  --token-count                       Print token count of output (instead of output)
+  --token-limit <n>                   Limit output to n tokens
+  --token-offset <n>                  Skip first n tokens of output
+<end>
+--- stderr
+<end>

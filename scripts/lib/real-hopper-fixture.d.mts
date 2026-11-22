@@ -24,6 +24,7 @@ export interface RealHopperFixtureTargets {
   readonly manifestPath: string;
   readonly primary: RealHopperFixtureTarget;
   readonly secondary: RealHopperFixtureTarget;
+  readonly unicode?: RealHopperFixtureTarget;
   readonly large: RealHopperFixtureTarget;
   readonly oracle: RealHopperFixtureOracle;
   readonly largeOracle: RealHopperLargeFixtureOracle;

@@ -1,3 +1,6 @@
+import { parseFailureFromCause } from "../domain/parseFailure.js";
+import { LC } from "../domain/apple/machoLoadCommandCodes.js";
+import type { BundleExecutableProvenance } from "../domain/apple/bundleExecutableProvenance.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -11,29 +14,31 @@ import {
 } from "../domain/native/nativeInspection.js";
 import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
+import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { MachoSliceSelectionRefusal } from "../domain/apple/machoSliceSelection.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
+import { chainedImportNames } from "../domain/apple/appleMachoFixups.js";
 import {
-  MACHO_ARCHITECTURE_POLICIES,
-  machoToolArchitectureName,
-  selectMachoArchitecture,
-} from "./MachoArchitectureSelection.js";
+  architectureBaseName,
+  selectLipoArchitecture,
+  type SelectedLipoArchitecture,
+} from "../domain/apple/machoArchitectureSelection.js";
 import {
   parseDyldExportAddressRow,
   parseDyldExports,
   parseDyldImports,
 } from "./parsers/dyldInfo.js";
-import { parseLipoCapture, type LipoArchitecture } from "./parsers/lipo.js";
+import { parseLipoCapture } from "./parsers/lipo.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 import {
   projectMachoBinary,
   type BinaryMachoProjection,
 } from "./MachoBinaryProjection.js";
-import type { MachoCommandNames } from "./MachoCommandNames.js";
+import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import type { ResolvedMachoSlice } from "./NativeMachoSelectedSlice.js";
 import { reconcileMachoUuid } from "./parsers/machoUuid.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { machoCpuSubtypeBase } from "../domain/apple/machoCpuIdentity.js";
 import type {
   MachoEncryptionFacts,
   MachoSliceEncryption,
@@ -45,10 +50,17 @@ import {
   isVtoolContainerRefusal,
   nativeCommandOperand,
   nativeMachoCapturedOutput,
-  missingUuidLimitation,
+  dyldRefusalLimitation,
+  dyldSliceRefusal,
   parseDyldFileTypeRefusal,
   unusableNativeCommandOutput,
 } from "./NativeMachoCommandDiagnostics.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
+import {
+  lipoDescribesCpu,
+  type LipoArchitecture,
+} from "../domain/apple/lipo.js";
 
 interface NativeMachoObservation {
   readonly result: JsonValue;
@@ -63,6 +75,7 @@ export type MachoEncryptionRead =
 
 interface NativeMachoInspectionContext {
   readonly target: BinaryTarget;
+  readonly bundleProvenance?: BundleExecutableProvenance;
   readonly signal?: AbortSignal;
   /** Read load-command encryption facts from the bytes the tools inspect. */
   readonly readEncryption: (
@@ -77,9 +90,16 @@ interface NativeMachoInspectionContext {
   readonly invocation: (
     capture: NativeCommandCapture,
   ) => NativeCommandInvocation;
-  readonly resolveSlice?: (
+  readonly resolveSlice: (
     selected: LipoArchitecture,
   ) => Promise<ResolvedMachoSlice>;
+  /** Read an exact selected-slice range from the same bytes as the tools. */
+  readonly readSliceRange?: (
+    offset: number,
+    size: number | null,
+    at: number,
+    length: number,
+  ) => Promise<Uint8Array>;
   /** Borrow binary framing from the same identity-bound target as the tools. */
   readonly readCommandNames: (
     offset: number,
@@ -87,6 +107,49 @@ interface NativeMachoInspectionContext {
     selected: ResolvedMachoSlice | undefined,
   ) => Promise<MachoCommandNames>;
 }
+
+/**
+ * Exact names from the selected slice's chained-fixup import table by import
+ * ordinal, or why that table cannot stand in for the symbol-table inventory.
+ * Undefined when the context has no slice reader.
+ */
+const readChainedImportNames = async (
+  context: NativeMachoInspectionContext,
+  binary: MachoCommandNames,
+  offset: number,
+  size: number | null,
+): Promise<Result<readonly (string | null)[], string> | undefined> => {
+  if (context.readSliceRange === undefined) return undefined;
+  const chainedFixups = uniqueKeyed(
+    keyedBy(binary.commands, ({ command }) => command),
+    LC.DYLD_CHAINED_FIXUPS,
+  );
+  if (!chainedFixups.ok)
+    return err(
+      `the slice declares ${String(chainedFixups.error.ordinals.length)} LC_DYLD_CHAINED_FIXUPS commands`,
+    );
+  const fields = chainedFixups.value?.fixedFields;
+  const at = fields?.dataoff;
+  const length = fields?.datasize;
+  if (at === undefined || length === undefined)
+    return err("its load command fields are not decoded");
+  if (length > NATIVE_COMMAND_OUTPUT_BUDGET_BYTES)
+    return err(
+      `its ${length}-byte payload exceeds the ${NATIVE_COMMAND_OUTPUT_BUDGET_BYTES}-byte native read budget`,
+    );
+  const bytes = await context.readSliceRange(offset, size, at, length);
+  try {
+    return ok(
+      chainedImportNames(
+        Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+      ),
+    );
+  } catch (cause) {
+    const failure = parseFailureFromCause(cause);
+    if (failure !== undefined) return err(failure.message);
+    throw cause;
+  }
+};
 
 const DISCOVERY_COMMANDS = [["lipo", ["-detailed_info"]]] as const;
 
@@ -108,7 +171,7 @@ const OPTIONAL_VTOOL_COMMAND = ["vtool", ["-show-build"]] as const;
 const VTOOL_UNAVAILABLE_LIMITATION =
   "vtool is unavailable; build metadata is normalized from binary load commands.";
 /** Recorded when vtool refuses the universal container and slice facts remain. */
-export const VTOOL_CONTAINER_REFUSAL_LIMITATION =
+const VTOOL_CONTAINER_REFUSAL_LIMITATION =
   "vtool declined the universal container as not Mach-O; build metadata is normalized from binary load commands.";
 /** Inspect one Mach-O with the required native commands and normalized output. */
 export const inspectNativeMacho = async (
@@ -121,11 +184,11 @@ export const inspectNativeMacho = async (
       [...prefix, context.target.path],
       context.signal,
     );
-    if (!captured.ok) return err(captured.error);
+    if (!captured.ok) return captured;
     captures.push(captured.value);
   }
   const lipo = captures.find(({ tool }) => tool === "lipo");
-  if (lipo === undefined) throw new TypeError("Missing lipo capture");
+  if (lipo === undefined) throw invariantViolation("Missing lipo capture");
   const parsedLipo = parseLipoCapture(
     lipo,
     "inspect_macho",
@@ -133,23 +196,13 @@ export const inspectNativeMacho = async (
   );
   if (!parsedLipo.ok) return parsedLipo;
   const { format, architectures } = parsedLipo.value;
-  const selection = selectArchitecture(context.target, architectures);
-  if (selection.status === "absent")
+  const lipoSelection = selectArchitecture(context.target, architectures);
+  if (!lipoSelection.ok)
     return err(
-      new AnalysisOutputError(
-        "inspect_macho",
-        `lipo did not list ${selection.architecture}; refusing to read another slice`,
-      ),
+      new AnalysisOutputError("inspect_macho", lipoSelection.error.message),
     );
-  if (selection.status === "ambiguous")
-    return err(
-      new AnalysisOutputError(
-        "inspect_macho",
-        `lipo listed multiple slices addressable as ${selection.architecture}; refusing to associate a slice offset with an ambiguous tool selection`,
-      ),
-    );
-  const selectedArchitecture =
-    selection.status === "selected" ? selection.toolName : null;
+  const selection = lipoSelection.value;
+  const selectedArchitecture = selection?.toolName ?? null;
   const runSliceCommand = ([tool, prefix]: readonly [
     string,
     readonly string[],
@@ -164,7 +217,7 @@ export const inspectNativeMacho = async (
       context.signal,
       tool === "dyld_info"
         ? (capture) =>
-            isMissingUuidDyldFailure(capture) ||
+            dyldSliceRefusal(capture) !== null ||
             isUnbackedTextDyldFailure(capture) ||
             parseDyldFileTypeRefusal(capture) !== null
         : tool === "vtool" && format === "fat"
@@ -185,10 +238,10 @@ export const inspectNativeMacho = async (
     vtoolSelectsSlice ? runSliceCommand(OPTIONAL_VTOOL_COMMAND) : null,
   ]);
   for (const captured of required) {
-    if (!captured.ok) return err(captured.error);
+    if (!captured.ok) return captured;
     if (
       (captured.value.exitCode !== 0 || captured.value.signal !== null) &&
-      !isMissingUuidDyldFailure(captured.value) &&
+      dyldSliceRefusal(captured.value) === null &&
       !isUnbackedTextDyldFailure(captured.value) &&
       parseDyldFileTypeRefusal(captured.value) === null
     )
@@ -212,9 +265,9 @@ export const inspectNativeMacho = async (
   const nmIndex = captures.findIndex(({ tool }) => tool === "nm");
   const dyldExports = captures.filter(({ tool }) => tool === "dyld_info")[1];
   if (nmIndex < 0 || dyldExports === undefined)
-    throw new TypeError("Missing nm or dyld_info export capture");
+    throw invariantViolation("Missing nm or dyld_info export capture");
   const selected =
-    selection.status === "selected"
+    selection !== null
       ? selection.architecture
       : architectures.length === 1
         ? architectures[0]
@@ -229,16 +282,7 @@ export const inspectNativeMacho = async (
   const range =
     format === "thin"
       ? { offset: 0, size: null }
-      : context.resolveSlice !== undefined
-        ? await context.resolveSlice(selected!)
-        : { offset: selected!.file_offset, size: selected!.size };
-  if (range.offset === null || (format === "fat" && range.size === null))
-    return err(
-      new AnalysisOutputError(
-        "inspect_macho",
-        "The selected binary slice range is unavailable",
-      ),
-    );
+      : await context.resolveSlice(selected!);
   if (
     format === "fat" &&
     (selected!.file_offset === null || selected!.size === null)
@@ -300,11 +344,11 @@ export const inspectNativeMacho = async (
   // Only then does llvm-nm's dyld-info pass add names, and its exact names
   // disambiguate dyld_info rows. Refusals above are not export rows.
   if (
-    !isMissingUuidDyldFailure(dyldExports) &&
+    dyldSliceRefusal(dyldExports) === null &&
     !namesEveryExport(captures[nmIndex]!.stdout, dyldExports)
   ) {
     const withDyldInfo = await runSliceCommand(DYLD_INFO_EXPORTS);
-    if (!withDyldInfo.ok) return err(withDyldInfo.error);
+    if (!withDyldInfo.ok) return withDyldInfo;
     captures[nmIndex] = withDyldInfo.value;
   }
   const dyldImports = captures.find(
@@ -312,7 +356,7 @@ export const inspectNativeMacho = async (
       tool === "dyld_info" && arguments_[0] === "-imports",
   );
   if (dyldImports === undefined)
-    throw new TypeError("Missing dyld_info import capture");
+    throw invariantViolation("Missing dyld_info import capture");
   const hasChainedFixups = load.commands.some(
     ({ kind }) => kind === "LC_DYLD_CHAINED_FIXUPS",
   );
@@ -320,22 +364,38 @@ export const inspectNativeMacho = async (
     sliceOutput(dyldImports),
     hasChainedFixups,
   );
-  if (
-    !isMissingUuidDyldFailure(dyldImports) &&
-    parsedImports.needsNameInventory
-  ) {
-    const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
-    if (!importNames.ok) return err(importNames.error);
-    captures.push(importNames.value);
-    parsedImports = parseDyldImports(
-      sliceOutput(dyldImports),
-      hasChainedFixups,
-      new Set(parseNmSymbolNames(importNames.value.stdout)),
-    );
+  if (parsedImports.needsNameInventory) {
+    // Chained rows print entries of the binary's own import table by ordinal.
+    // Its exact names settle the ordinal spacing even for imports that the
+    // symbol table omits or lists as defined, such as weak-def coalescing.
+    const chainedTable = hasChainedFixups
+      ? await readChainedImportNames(context, binary, offset, size)
+      : undefined;
+    if (chainedTable?.ok === true)
+      parsedImports = parseDyldImports(
+        sliceOutput(dyldImports),
+        hasChainedFixups,
+        undefined,
+        chainedTable.value,
+      );
+    else {
+      if (chainedTable !== undefined)
+        limitations.push(
+          `The chained-fixup import table is unusable (${chainedTable.error}); chained import names are matched against the undefined symbol table instead.`,
+        );
+      const importNames = await runSliceCommand(SYMBOL_TABLE_IMPORTS);
+      if (!importNames.ok) return importNames;
+      captures.push(importNames.value);
+      parsedImports = parseDyldImports(
+        sliceOutput(dyldImports),
+        hasChainedFixups,
+        new Set(parseNmSymbolNames(importNames.value.stdout)),
+      );
+    }
   }
   const encryption = await context.readEncryption(context.signal);
   const selectedArchitectureName =
-    (selection.status === "selected" ? selection.architecture.name : null) ??
+    selection?.architecture.name ??
     (architectures.length === 1 ? (architectures[0]?.name ?? null) : null);
   const containerOffset =
     selectedArchitectureName === null ? undefined : offset;
@@ -414,7 +474,12 @@ export const inspectNativeMacho = async (
             limitations: [...normalized.limitations, ...locationLimitations],
           });
   return ok({
-    result: jsonValueSchema.parse(result),
+    result: jsonValueSchema.parse({
+      ...result,
+      ...(context.bundleProvenance === undefined
+        ? {}
+        : { bundle_provenance: context.bundleProvenance }),
+    }),
     limitations: result.limitations,
     locations: fileOffsetLocations(result, containerOffset, binary.sliceSize),
   });
@@ -444,9 +509,10 @@ const normalizeMacho = (
   const byTool = captureLookup(captures);
   const dyldImportsCapture = byTool("dyld_info", 0);
   const dyldExportsCapture = byTool("dyld_info", 1);
-  const missingImportsUuid = isMissingUuidDyldFailure(dyldImportsCapture);
-  const missingExportsUuid = isMissingUuidDyldFailure(dyldExportsCapture);
-  const imports = missingImportsUuid ? [] : parsedImports.map(withRuntimeName);
+  const importsRefusal = dyldSliceRefusal(dyldImportsCapture);
+  const exportsRefusal = dyldSliceRefusal(dyldExportsCapture);
+  const imports =
+    importsRefusal === null ? parsedImports.map(withRuntimeName) : [];
   const imageBase =
     load.segments.find(
       (segment) =>
@@ -456,13 +522,11 @@ const normalizeMacho = (
         segment.file_size <= sliceSize,
     )?.vm_address ?? null;
   const nmExports = parseNmExports(exportNames.stdout);
-  const dyldExports = missingExportsUuid
-    ? []
-    : parseDyldExports(
-        sliceOutput(dyldExportsCapture),
-        imageBase,
-        new Set(nmExports.map(({ name }) => name)),
-      );
+  const dyldExports = parseDyldExports(
+    sliceOutput(dyldExportsCapture),
+    imageBase,
+    new Set(nmExports.map(({ name }) => name)),
+  );
   const exports = uniqueSymbols([...dyldExports, ...nmExports]).map(
     withRuntimeName,
   );
@@ -493,8 +557,12 @@ const normalizeMacho = (
         ]
       : []),
     ...additionalLimitations,
-    ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
-    ...(missingExportsUuid ? [missingUuidLimitation("exports")] : []),
+    ...(importsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("imports", importsRefusal)]),
+    ...(exportsRefusal === null
+      ? []
+      : [dyldRefusalLimitation("exports", exportsRefusal)]),
     ...uuid.limitations,
     ...(imageBase === null &&
     /^\s*offset\s+symbol\s*$/mu.test(sliceOutput(byTool("dyld_info", 1)))
@@ -532,7 +600,9 @@ const normalizeMacho = (
     ),
     imports: covered(imports, false, [
       "dyld_info textual imports may omit chained or toolchain-unsupported metadata.",
-      ...(missingImportsUuid ? [missingUuidLimitation("imports")] : []),
+      ...(importsRefusal === null
+        ? []
+        : [dyldRefusalLimitation("imports", importsRefusal)]),
       ...(imports.some(({ name_status }) => name_status === "ambiguous")
         ? [
             "Import text contains name, flags, library, or addend boundaries whose split is ambiguous.",
@@ -540,11 +610,11 @@ const normalizeMacho = (
         : []),
     ]),
     exports: covered(exports, false, [
-      ...(missingExportsUuid
-        ? [missingUuidLimitation("exports")]
-        : [
+      ...(exportsRefusal === null
+        ? [
             "Merged nm/dyld_info results may be incomplete for stripped binaries.",
-          ]),
+          ]
+        : [dyldRefusalLimitation("exports", exportsRefusal)]),
       ...(dyldExports.some(({ sourceSymbol }) => sourceSymbol !== undefined)
         ? [
             "Renamed re-exports are listed under their exported name; the source library's symbol name is not reported.",
@@ -611,14 +681,7 @@ const lipoDescribesSlice = (
     ? format === "thin" && slice.container_file_offset === 0
     : architecture.file_offset === slice.container_file_offset) &&
   (architecture.size === null || architecture.size === slice.size) &&
-  (architecture.cpu_type_code === null ||
-    slice.cpu_type === null ||
-    architecture.cpu_type_code === slice.cpu_type) &&
-  (slice.cpu_subtype === null ||
-    (architecture.cpu_subtype_code === null
-      ? architecture.cpu_subtype_base === null ||
-        architecture.cpu_subtype_base === machoCpuSubtypeBase(slice.cpu_subtype)
-      : architecture.cpu_subtype_code === slice.cpu_subtype));
+  lipoDescribesCpu(architecture, slice.cpu_type, slice.cpu_subtype);
 
 const encryptionLimitation = (slice: MachoSliceEncryption): string[] => {
   const name =
@@ -649,7 +712,8 @@ const captureLookup =
   (captures: readonly NativeCommandCapture[]) =>
   (tool: string, occurrence = 0): NativeCommandCapture => {
     const capture = captures.filter((item) => item.tool === tool)[occurrence];
-    if (capture === undefined) throw new TypeError(`Missing ${tool} capture`);
+    if (capture === undefined)
+      throw invariantViolation(`Missing ${tool} capture`);
     return capture;
   };
 
@@ -783,15 +847,6 @@ export const architectureLocations = (
   return locations;
 };
 
-/**
- * lipo appends the pointer-auth ABI version to arm64e (`arm64e.v1`). Only
- * dyld_info accepts that spelling; the other Apple tools select the slice by
- * its CPU-family name. Other variants are distinct subtypes (`arm64e.x1`)
- * that the tools address only by their exact name.
- */
-const architectureBaseName = (architecture: string): string =>
-  architecture.replace(/\.v\d+$/u, "");
-
 const toolArchitectureName = (tool: string, architecture: string): string =>
   tool === "dyld_info" ? architecture : architectureBaseName(architecture);
 
@@ -806,53 +861,24 @@ const selectedArchitectureArguments = (
     : ["-arch", toolArchitecture];
 };
 
-type ArchitectureSelection =
-  | { readonly status: "unfiltered" }
-  | {
-      readonly status: "selected";
-      readonly architecture: LipoArchitecture;
-      readonly toolName: string;
-    }
-  | { readonly status: "ambiguous"; readonly architecture: string }
-  | { readonly status: "absent"; readonly architecture: string };
-
+/** The lipo record slice tools read; null when tools read the file unfiltered. */
 const selectArchitecture = (
   target: BinaryTarget,
   available: readonly LipoArchitecture[],
-): ArchitectureSelection => {
+): Result<SelectedLipoArchitecture | null, MachoSliceSelectionRefusal> =>
   // BinaryTarget lists CPU families and lipo lists slices. A universal file
   // can hold several slices of one family (arm64e and arm64e.x1), and slice
   // tools without -arch print every slice.
-  if (
-    target.kind !== "executable" ||
-    (target.availableArchitectures.length < 2 && available.length < 2)
-  )
-    return { status: "unfiltered" };
-  const normalized =
-    target.architecture === "x86" ? "i386" : target.architecture;
-  const policy = MACHO_ARCHITECTURE_POLICIES[target.architecture];
-  const selected =
-    policy === undefined
-      ? available.find(({ name }) => name === normalized)
-      : selectMachoArchitecture(policy, available);
-  if (selected !== undefined) {
-    const toolName =
-      policy === undefined
-        ? selected.name
-        : machoToolArchitectureName(policy, selected);
-    const selector = architectureBaseName(toolName);
-    if (
-      available.some((candidate) => {
-        if (candidate === selected) return false;
-        const candidateName =
-          policy === undefined
-            ? candidate.name
-            : machoToolArchitectureName(policy, candidate);
-        return architectureBaseName(candidateName) === selector;
-      })
-    )
-      return { status: "ambiguous", architecture: selector };
-    return { status: "selected", architecture: selected, toolName };
-  }
-  return { status: "absent", architecture: normalized };
-};
+  target.kind !== "executable" ||
+  (target.availableArchitectures.length < 2 && available.length < 2)
+    ? ok(null)
+    : selectLipoArchitecture(
+        target.format === "mach-o-universal"
+          ? {
+              mode: "admitted",
+              architecture: target.architecture,
+              slice: target.universalSlice,
+            }
+          : { mode: "architecture", architecture: target.architecture },
+        available,
+      );

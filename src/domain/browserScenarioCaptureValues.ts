@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { z } from "zod";
 import { utcDateTimeSchema } from "./offsetDateTime.js";
 
@@ -8,9 +6,13 @@ import {
   browserNetworkBodySchema,
   browserNetworkHeadersSchema,
 } from "./browserNetworkEvidence.js";
-import { sanitizedBrowserUrlSchema } from "./browserObservation.js";
+import {
+  browserResponseStatusSchema,
+  sanitizedBrowserUrlSchema,
+} from "./browserObservation.js";
 import { webScreenshotArtifactSchema } from "./webScreenshot.js";
 import { digestSchema } from "./../domain/digests.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const textArtifactSchema = z
   .strictObject({
@@ -20,7 +22,7 @@ const textArtifactSchema = z
   })
   .superRefine((artifact, context) => {
     const bytes = Buffer.from(artifact.text);
-    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const sha256 = sha256Hex(bytes);
     if (bytes.byteLength !== artifact.bytes || sha256 !== artifact.sha256)
       context.addIssue({
         code: "custom",
@@ -166,7 +168,7 @@ const networkEventShape = {
   ...eventBase,
   transaction_id: z.string().min(1),
   redirected_from_transaction_id: z.string().min(1).nullable(),
-  /** Distinguishes a captured root from an unobserved predecessor for null links. */
+  /** Present exactly when the predecessor ID is null: a captured root or an unobserved predecessor. */
   redirected_from_transaction_state: z.enum(["root", "unknown"]).optional(),
   method: z.string().min(1),
   url: sanitizedBrowserUrlSchema,
@@ -210,7 +212,7 @@ export const browserScenarioEventSchema = z
     z.strictObject({
       ...networkEventShape,
       kind: z.literal("response"),
-      status: z.int().min(100).max(999),
+      status: browserResponseStatusSchema,
       failure: z.null(),
     }),
     z.strictObject({
@@ -282,15 +284,15 @@ export const browserScenarioEventSchema = z
     }),
   ])
   .superRefine((event, context) => {
-    if (
-      "redirected_from_transaction_id" in event &&
-      event.redirected_from_transaction_id !== null &&
-      event.redirected_from_transaction_state !== undefined
-    )
+    if (!("redirected_from_transaction_id" in event)) return;
+    const linked = event.redirected_from_transaction_id !== null;
+    const stated = event.redirected_from_transaction_state !== undefined;
+    if (linked === stated)
       context.addIssue({
         code: "custom",
-        message:
-          "Redirect state is valid only when the predecessor transaction ID is null",
+        message: linked
+          ? "Redirect state is valid only when the predecessor transaction ID is null"
+          : "Redirect state is required when the predecessor transaction ID is null",
         path: ["redirected_from_transaction_state"],
       });
   });

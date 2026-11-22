@@ -10,14 +10,17 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+  ArtifactReaderFailure,
+  ArtifactResourceScope,
+} from "../../resources/index.js";
 import { RegularFileCleanupFailure } from "../../filesystem/OwnedRegularFile.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { DECOMPILE_DIRECTORY_JOURNAL_NAME } from "../../contracts/decompileDirectory.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
@@ -26,7 +29,29 @@ import {
   stableFileHashCause,
 } from "../../filesystem/StableFileHash.js";
 import type { OwnedLease } from "../../process/OwnedLease.js";
-import type { RetainedResourceScope } from "../AnalysisProvider.js";
+import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
+
+/** Publication committed before its staging cleanup failed. */
+export class ExportPublishedCleanupFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly publishedPath: string,
+    failure: ArtifactReaderFailure,
+  ) {
+    super(
+      failure.reason,
+      failure.message,
+      {
+        cause: failure,
+        ...failure.primaryFacts(),
+        cancellation: failure.cancellation,
+        cleanup: failure.cleanup,
+        cleanupLeases: failure.cleanupLeases,
+        partialObservation: failure.partialObservation,
+      },
+      failure.details,
+    );
+  }
+}
 
 /** Own every descriptor and staging area until cleanup, then release the directory lease. */
 export class ExportResources {
@@ -159,8 +184,12 @@ export class ExportResources {
       outcome = { kind: "failed", cause };
     }
     const released = await this.#files.release(owner);
-    if (released.kind === "failed")
-      throw this.#files.cleanupFailure(outcome, [released]);
+    if (released.kind === "failed") {
+      const failure = this.#files.cleanupFailure(outcome, [released]);
+      throw outcome.kind === "completed"
+        ? new ExportPublishedCleanupFailure(destination, failure)
+        : failure;
+    }
     if (outcome.kind === "failed") throw outcome.cause;
   }
 
@@ -173,11 +202,11 @@ export class ExportResources {
     return closed.ok
       ? err(error)
       : err(
-          analysisErrorWithCleanupFailure(
+          analysisErrorWithCleanupDependencies(
             error,
             closed.error,
             "decompile_all",
-          ).bindCleanupDependencies([closed.error]),
+          ),
         );
   }
 

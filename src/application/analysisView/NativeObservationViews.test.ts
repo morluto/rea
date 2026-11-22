@@ -1,3 +1,4 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { nativeGraphViewItemsSchema } from "../../domain/analysisView/nativeObservationSchemas.js";
@@ -13,11 +14,11 @@ import {
   nativeCallGraphSchema,
   type NativeCallGraph,
 } from "../../domain/native/nativeCallGraph.js";
+import type { AnalysisViewRequest } from "../../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewResultSchema,
-  type AnalysisViewRequest,
   type AnalysisViewResult,
-} from "../../domain/analysisView/analysisView.js";
+} from "../../domain/analysisView/analysisViewResult.js";
 import {
   inspectAnalysisView,
   projectRetainedAnalysis,
@@ -225,7 +226,7 @@ it("pages complete context fields and changes its digest when source profile or 
 });
 
 it("keeps absent profile and inapplicable result caveats distinct from observed empty data", async () => {
-  const source = createEvidence(undefined, provider, {
+  const source = createEvidence(unknownTarget("not-observed"), provider, {
     operation: "procedure_address",
     parameters: {},
     result: "0x0000",
@@ -323,7 +324,7 @@ it("reconstructs every graph field from dictionary pages without changing nulls,
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect(row.source_index).toBe(0);
-    expect(row.level).toBe(["01", "10", "2"][offset]);
+    expect(row.level).toBe(["2", "10", "01"][offset]);
     expect(value.coverage).toMatchObject({ total: 3, exhausted: offset === 2 });
     if (row.status !== "ok") throw new Error("Expected recorded node");
     const coverage = row.relationship_coverage;
@@ -483,6 +484,45 @@ it("keeps graph row identity stable when source object key insertion order chang
   );
 });
 
+it("orders canonical numeric graph depths before nonnumeric keys across pages", async () => {
+  const node = graph().graph["2"]![0]!;
+  const source = parent("get_call_graph", {
+    graph: {
+      beta: [node],
+      "01": [node],
+      "9007199254740993": [node],
+      "9007199254740992": [node],
+      "10": [node],
+      "2": [node],
+      "1": [node],
+      "0": [node],
+    },
+    limitations: [],
+  });
+  const pages = [];
+  for (const offset of [0, 4]) {
+    const { value } = await project(source, {
+      kind: "native-observation",
+      offset,
+      limit: 4,
+    });
+    if (
+      value.kind !== "native-observation" ||
+      value.parent_operation !== "get_call_graph"
+    )
+      throw new Error("Expected graph page");
+    expect(value.items.rows.every((row) => row.source_index === 0)).toBe(true);
+    expect(value.coverage).toMatchObject({
+      total: 8,
+      exhausted: offset === 4,
+    });
+    pages.push(value.items.rows.map((row) => row.level));
+  }
+  expect(pages).toEqual([
+    ["0", "1", "2", "10"],
+    ["9007199254740992", "9007199254740993", "01", "beta"],
+  ]);
+});
 it("keeps context identity across authenticated target path aliases while preserving selected paths", async () => {
   const original = parent("procedure_callers", []);
   const rebound = rebindEvidenceToTargetPath(original, {
@@ -573,7 +613,7 @@ it.each([
 ])(
   "keeps $status relationship coverage on every context facet",
   async (coverage) => {
-    const source = createEvidence(undefined, provider, {
+    const source = createEvidence(unknownTarget("not-observed"), provider, {
       operation: "procedure_callees",
       parameters: {},
       result: [],

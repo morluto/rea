@@ -34,8 +34,8 @@ reopened with `inspect-evidence-bundle`; its `records` contain the complete
 Evidence. `inspect_analysis_view`'s `evidence-file` source accepts either one
 Evidence record or an exported bundle with the selected `evidence_id`.
 Views do not reopen source files or
-reconnect to a browser. Historical Evidence without `route_inventory` is
-unmeasured, rather than an empty route set.
+reconnect to a browser. A parent without `route_inventory` is unmeasured,
+rather than an empty route set.
 
 ## Page captured endpoint observations and inferences
 
@@ -93,8 +93,9 @@ filename-only discoveries have no invented AST range.
 
 The shared parser handles literal router calls, nested route objects, typed
 `_$` trees with explicitly inferred property-name fallbacks, Next App Router
-page paths, and navigation targets. It follows stable lexical bindings and
-keeps unresolved parents, mutations, spreads, and dynamic fields explicit.
+page paths, Expo Router `require.context` keys, and navigation targets. It
+follows stable lexical bindings and keeps unresolved parents, mutations,
+spreads, and dynamic fields explicit.
 Index-route flags use the same value-at-read boundary as path fields: erased
 type wrappers and initialized stable boolean aliases preserve `true`/`false`;
 uninitialized or unresolved flags retain an interpretation unknown instead of
@@ -151,6 +152,23 @@ which maps `%5F` to `_`; private-folder checks apply to the source spelling
 before that escape is mapped. When classifying a chunk URL, REA reads its
 pathname, then applies these same Next-specific rules. This is static source-path
 interpretation, not browser request-path decoding or reachability.
+
+Metro compiles `require.context` into
+`Object.defineProperties({}, {"./file.tsx": getter, ...})`, and Expo Router web
+exports bundle the app directory this way. When every key of such a map is a
+`./`-relative `.js`, `.jsx`, `.ts` or `.tsx` file and at least one is a
+`_layout` or `+` file, each other key becomes an `expo-router-context-key`
+occurrence at the key literal. Expo Router file conventions convert it: groups,
+including `(a,b)` group arrays, contribute no segment; `[id]` maps to `:id` and
+`[...rest]` to `:rest+`; a trailing `index` names its directory; platform
+extensions select the same route; and `+api` files keep their API path.
+Layouts and other `+` files, such as `+not-found` and `+html`, are not URL
+patterns. These occurrences have low confidence and `inferred` derivation. A
+bundled key does not establish which platform, navigator or server serves the
+file, so it adds no classification of its own; the existing path-name
+heuristic still applies, and `./login.tsx` becomes `/login`, classified
+`system` by `path-name-heuristic`. A file map without a layout or `+` file
+keeps an interpretation unknown instead of becoming routes.
 
 Known capture omissions remain inline in `summary.reported_capture_omissions`
 and queryable as `unknowns` of kind `capture-omission`. Each keeps a stable gap ID,

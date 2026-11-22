@@ -1,11 +1,11 @@
-import { analysisErrorProjectionSchema } from "./errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import { z } from "zod";
 import {
   analysisSettingIds,
   analysisSettingIdSchema,
   analysisSettingValueSchema,
 } from "../domain/analysisSettingDefinitions.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import { toolContractMetadata, toolEffects } from "./toolEffects.js";
 import type { ToolContract } from "./toolContractTypes.js";
 
 export const inspectAnalysisSettingsInputSchema = z.strictObject({
@@ -44,10 +44,17 @@ const descriptor = z.strictObject({
   default_value: z.number().nullable(),
   source: z.enum(["default", "setting", "runtime", "invalid"]),
   configuration_error: analysisErrorProjectionSchema.optional(),
-  unit: z.enum(["bytes", "ms", "seconds", "MiB"]),
+  unit: z.enum(["bytes", "ms", "seconds", "MiB", "count"]),
   minimum: z.number(),
   maximum: z.number(),
   applies_at: z.enum(["next_operation", "next_worker", "next_startup"]),
+  update_mode: z.enum(["runtime", "restart"]),
+  pending_restart: z
+    .boolean()
+    .optional()
+    .describe(
+      "Whether an accepted configuration is waiting for restart. Omitted when the launch value is invalid and there is no accepted runtime override.",
+    ),
   provider: z.string(),
   operations: z.array(z.string()),
   environment: z.string().optional(),
@@ -83,12 +90,12 @@ export const updateAnalysisSettingsResultSchema =
       }),
     ),
     active_work_changed: z.literal(false),
-    rea_restart_required: z.literal(false),
+    pending_restart: z.literal(false),
   });
 export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
   {
     name: "inspect_analysis_settings",
-    ...toolContractMetadata("inspect_analysis_settings"),
+    ...toolContractMetadata("inspect_analysis_settings", toolEffects()),
     kind: "application",
     description:
       "Inspect REA's editable runtime admission sizes, deadlines and worker heaps, their bounds, launch values and application points. No active target is required. Filters intersect. If an error already names a setting and its bounds, update_analysis_settings can be called directly. Explicit per-call arguments override runtime defaults. Active worker values are not observed by this configuration view.",
@@ -103,10 +110,13 @@ export const ANALYSIS_SETTINGS_TOOL_CONTRACTS = [
   },
   {
     name: "update_analysis_settings",
-    ...toolContractMetadata("update_analysis_settings"),
+    ...toolContractMetadata(
+      "update_analysis_settings",
+      toolEffects({ mutatesSession: true }),
+    ),
     kind: "application",
     description:
-      "When REA names an adjustable limit, atomically set or reset its runtime default, then retry once work and cleanup have settled. No inspection call is required when the error supplies the bounds. Changes apply only to new work, survive target close/open, and disappear on REA restart. Reset restores launch configuration. Does not edit files, restart providers, raise host limits, or override explicit per-call arguments.",
+      "Atomically set or reset editable runtime defaults for new work. Changes survive target close/open but disappear on REA restart; reset restores launch configuration. Follow an error's named setting/bounds directly, then retry after work and cleanup settle; no inspection is needed when they are supplied. Does not change active work, edit files, restart providers, raise client limits or override explicit per-call arguments.",
     inputSchema: updateAnalysisSettingsInputSchema,
     outputSchema: updateAnalysisSettingsResultSchema,
     examples: [

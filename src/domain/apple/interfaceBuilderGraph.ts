@@ -1,6 +1,5 @@
 import { z } from "zod";
 import {
-  bundleResourceRootSchema,
   bundleResourceBoundResultSchema,
   type BundleResourceRoot,
 } from "./bundleResourceRoot.js";
@@ -40,6 +39,10 @@ export const interfaceBuilderAnalysisSchema = bundleResourceBoundResultSchema(
     limitations: z.array(z.string()),
   },
 );
+
+export type InterfaceBuilderAnalysis = z.output<
+  typeof interfaceBuilderAnalysisSchema
+>;
 
 export interface InterfaceBuilderDocumentInput {
   readonly relativePath: string;

@@ -8,7 +8,7 @@ and rejects undeclared record inputs or unsupported source containers.
 This record accompanies [#8293](https://github.com/morluto/rea/issues/8293) and
 the real Ghidra input-capacity regression
 [#8281](https://github.com/morluto/rea/issues/8281).
-The [machine-readable receipt](evidence-input-composition-2026-10-31.json)
+The [machine-readable receipt](https://github.com/morluto/rea/blob/main/docs/verification/evidence-input-composition-2026-10-31.json)
 retains all fourteen model attempts, artifact identities, oracle provenance,
 tool profiles, actual usage, resource measurements and limitations. It also
 records the thirteen subsequent scripted public-transport attempts below.

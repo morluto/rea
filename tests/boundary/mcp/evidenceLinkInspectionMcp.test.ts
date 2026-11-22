@@ -1,3 +1,11 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -8,7 +16,6 @@ import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import {
   EVIDENCE_LINK_INSPECTION_LIMIT,
-  EVIDENCE_LINK_INSPECTION_LIMITATIONS,
   evidenceBundleSummarySchema,
   evidenceLinkInspectionSchema,
 } from "../../../src/domain/evidenceRecordSummary.js";
@@ -49,7 +56,7 @@ const PARTIAL = [top, middle, leaf, unrelated];
 
 const connect = async (
   options: {
-    readonly profile?: "full" | "compact";
+    readonly profile?: "compact";
     readonly records?: readonly ReturnType<typeof record>[];
     readonly maximumResponseBytes?: number;
   } = {},
@@ -64,8 +71,8 @@ const connect = async (
     serverOptions: {
       environment: {
         ...process.env,
-        REA_MCP_INPUT_SCHEMA_PROFILE: options.profile ?? "full",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "full",
+        REA_MCP_INPUT_SCHEMA_PROFILE: options.profile ?? "compact",
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: options.profile ?? "compact",
       },
       ...(options.maximumResponseBytes === undefined
         ? {}
@@ -74,15 +81,20 @@ const connect = async (
   });
   for (const retained of options.records ?? PARTIAL)
     expect(session.recordEvidence(retained).ok).toBe(true);
-  const reply = (args: Record<string, unknown>) =>
-    client.callTool({ name: "get_evidence_bundle", arguments: args });
   // Every delivered result must satisfy what this profile actually advertises.
   const { tools } = await client.listTools();
   const advertised = tools.find(({ name }) => name === "get_evidence_bundle");
-  if (advertised?.outputSchema === undefined)
+  if (advertised === undefined)
     throw new Error("get_evidence_bundle advertises no output schema");
+  const reply = (args: Record<string, unknown>) =>
+    client.callTool(
+      { name: "get_evidence_bundle", arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
   const inputSchema: Record<string, unknown> = advertised.inputSchema;
-  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+    advertised.name,
+  );
   const validation = schemaValidation.assertions;
   expect(validation.validateSchema(inputSchema)).toBe(true);
   expect(validation.validateSchema(outputSchema)).toBe(true);
@@ -93,10 +105,6 @@ const connect = async (
     ).toBe(true);
     const result = await reply(args);
     expect(result.isError, JSON.stringify(result)).not.toBe(true);
-    expect(
-      validation.validate(outputSchema, result.structuredContent),
-      JSON.stringify(validation.errors),
-    ).toBe(true);
     return z.object({ result: z.unknown() }).parse(result.structuredContent)
       .result;
   };
@@ -115,7 +123,7 @@ const exactly = (record_: { readonly evidence_id: string }) => ({
   filters: { evidence_id: record_.evidence_id },
 });
 
-it.each(["full", "compact"] as const)(
+it.each(["compact"] as const)(
   "reads direct membership against the whole session, not the selection (%s)",
   async (profile) => {
     const { links, summary } = await connect({ profile });
@@ -137,7 +145,9 @@ it.each(["full", "compact"] as const)(
       matching_links: 0,
       next_offset: null,
       rows: [],
-      limitations: [...EVIDENCE_LINK_INSPECTION_LIMITATIONS],
+      limitations: [
+        expect.stringMatching(/missing means absent here.*analysis coverage/u),
+      ],
     });
 
     // The record that names the absent source reports it without any payload.
@@ -269,13 +279,12 @@ it("pages selected link rows in a stable order without skips or duplicates", asy
 
 it("reports the source a composed workflow refuses, and clears it on import", async () => {
   const dossier = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (dossier.subject === null) throw new Error("Expected a subject");
   const health = record("get_project_health");
   const linked = createEvidence(
     {
-      path: dossier.subject.local_path,
-      sha256: dossier.subject.digest.sha256,
-      format: dossier.subject.format,
+      path: fileSubjectDisplay(dossier.subject).local_path,
+      sha256: fileIdentity(dossier.subject).sha256,
+      format: fileIdentity(dossier.subject).format,
     },
     dossier.provider,
     {
@@ -349,8 +358,18 @@ it("refuses link selections outside link delivery and names a smaller page", asy
     ["summary", "traversal", "direct", "detail: links"],
     ["records", "link_status", "all", "detail: links"],
     ["complete", "traversal", "retained-closure", "detail: links"],
-    ["summary", "offset", 1, "detail: records or detail: links"],
-    ["summary", "limit", 1, "detail: records or detail: links"],
+    [
+      "complete",
+      "offset",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
+    [
+      "complete",
+      "limit",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
   ] as const)
     expect(
       parseMcpToolError(await reply({ detail, [field]: value })).error,

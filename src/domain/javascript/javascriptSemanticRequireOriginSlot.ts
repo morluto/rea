@@ -5,7 +5,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 /** An unshadowed literal require and the member path selected from its result. */
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
+  readonly call: t.CallExpression | t.OptionalCallExpression;
 }
 
 export type JavaScriptRequireLoaderFact =
@@ -33,11 +33,18 @@ type RequireLoaderReader = (
  */
 export const semanticRequireOriginReaders: {
   origin: RequireOriginReader | undefined;
+  candidate: RequireOriginReader | undefined;
   loader: RequireLoaderReader | undefined;
-} = { origin: undefined, loader: undefined };
+} = { origin: undefined, candidate: undefined, loader: undefined };
 
 export const readSemanticRequireOrigin: RequireOriginReader = (node, state) =>
   semanticRequireOriginReaders.origin?.(node, state);
+
+/** Includes conditional requests whose unbound wrapper is not established. */
+export const readSemanticRequireOriginCandidate: RequireOriginReader = (
+  node,
+  state,
+) => semanticRequireOriginReaders.candidate?.(node, state);
 
 export const readSemanticRequireLoader: RequireLoaderReader = (
   node,

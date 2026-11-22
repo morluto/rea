@@ -237,6 +237,7 @@ const selectedItems = (
           "body_bytes",
           "dossier_evidence_id",
           "evidence_links",
+          "limitations",
         ];
   const fields = new Set<string>(view.fields ?? defaults);
   const columns = (row: Readonly<Record<string, JsonValue>>) =>
@@ -313,7 +314,7 @@ export const projectNativeFunctionMatchingView = (
       view,
       ...shared,
       summary: context,
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   if (view.collection === "byte-sources") {
     if (entry.report.byte_sources === undefined)

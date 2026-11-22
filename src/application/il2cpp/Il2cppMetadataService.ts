@@ -1,23 +1,24 @@
 import { parseAnalysisInput } from "../AnalysisInput.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type {
   Il2cppSeedOutput,
   Il2cppSeedWriterPort,
   Il2cppSeedReceipt,
-} from "./Il2cppSeedWriterPort.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+} from "../../ports/il2cpp/Il2cppSeedWriterPort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   requireAnalysisViewRetention,
   summarizeRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
-import type { Il2cppMetadataPort } from "./Il2cppMetadataPort.js";
+import type { Il2cppMetadataPort } from "../../ports/il2cpp/Il2cppMetadataPort.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
+  isAborted,
 } from "../../domain/analysisErrorCore.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
@@ -27,6 +28,7 @@ import {
   type Il2cppMetadataProviderInput,
 } from "../../domain/il2cpp/il2cppMetadata.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_il2cpp_metadata";
 const NO_RETENTION: AnalysisViewRetention = {
@@ -57,19 +59,14 @@ export class Il2cppMetadataService {
                 this.provider.identity.id,
                 [],
                 {
-                  reason:
-                    cause instanceof Error ? cause.message : String(cause),
+                  reason: errorMessage(cause),
                 },
                 { cause, operation: OPERATION },
               );
         failure =
           failure === undefined
             ? next
-            : analysisErrorWithCleanupFailure(
-                failure,
-                next,
-                OPERATION,
-              ).bindCleanupDependencies([failure, next]);
+            : analysisErrorWithCleanupDependencies(failure, next, OPERATION);
       }
     }
     if (failure !== undefined) throw failure;
@@ -106,32 +103,6 @@ export class Il2cppMetadataService {
       options?.signal,
     );
     if (!input.ok) return input;
-    if (
-      input.value.binary_architecture !== undefined &&
-      input.value.binary_path === undefined
-    )
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["binary_architecture"],
-            reason: "invalid_value",
-            message: "binary_architecture selects a slice of binary_path.",
-          },
-        ]),
-      );
-    if (
-      input.value.generic_instances === true &&
-      input.value.binary_path === undefined
-    )
-      return err(
-        new AnalysisInputError(OPERATION, undefined, [
-          {
-            path: ["generic_instances"],
-            reason: "invalid_value",
-            message: "generic_instances links generic methods in binary_path.",
-          },
-        ]),
-      );
     if (output !== undefined) {
       if (input.value.binary_path === undefined)
         return err(
@@ -140,7 +111,7 @@ export class Il2cppMetadataService {
               path: ["ghidra_seeds"],
               reason: "invalid_value",
               message:
-                "--ghidra-seeds needs --binary to link method addresses.",
+                "Ghidra seed output links method addresses in binary_path.",
             },
           ]),
         );
@@ -179,17 +150,16 @@ export class Il2cppMetadataService {
     const value = report.data;
     const evidence = this.#evidence(value, providerInput, output);
     let seedReceipt: Il2cppSeedReceipt | undefined;
-    const cancelled = () =>
+    const cancelled = (signal: AbortSignal) =>
       err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options?.signal?.reason,
+        cancelledBy(OPERATION, signal, {
           partialObservation: evidence,
           ...(seedReceipt === undefined
             ? {}
             : { diagnostics: { published_seed_output: { ...seedReceipt } } }),
         }),
       );
-    if (options?.signal?.aborted) return cancelled();
+    if (isAborted(options?.signal)) return cancelled(options.signal);
     if (output !== undefined && this.seeds !== undefined) {
       const written = await this.seeds.write(value, output, options);
       if (!written.ok) {
@@ -198,7 +168,7 @@ export class Il2cppMetadataService {
       }
       seedReceipt = written.value;
     }
-    if (options?.signal?.aborted) return cancelled();
+    if (isAborted(options?.signal)) return cancelled(options.signal);
     return detail === "summary"
       ? summarizeRetainedAnalysis(evidence, retention)
       : ok(evidence);

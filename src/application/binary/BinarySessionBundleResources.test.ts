@@ -1,13 +1,14 @@
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 
 import {
   createAnalysisExecution,
   type AnalysisClient,
   type ProviderIdentity,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
@@ -26,6 +27,7 @@ import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { createTestProviderRouter } from "../../../tests/fixtures/binarySession.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const identity: ProviderIdentity = {
   id: "bundle-resource-fixture",
@@ -37,7 +39,6 @@ const binaryIdentity: ProviderIdentity = {
   name: "Fixture analysis provider",
   version: "1",
 };
-const temporaryDirectories: string[] = [];
 
 const expectResourceSnapshotRefusal = (
   error: AnalysisError,
@@ -57,19 +58,10 @@ const expectResourceSnapshotRefusal = (
   });
 };
 
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories
-      .splice(0)
-      .map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
-
 it.skipIf(process.platform === "win32")(
   "refuses invalid selected traversal before creating a bundle resource client",
   async () => {
-    const root = await mkdtemp(join(tmpdir(), "rea-resource-selected-"));
-    temporaryDirectories.push(root);
+    const root = await createTestTempDirectory("rea-resource-selected-");
     await mkdir(join(root, "Fixture.app"));
     await writeFile(
       join(root, "Fixture.app", "Info.plist"),
@@ -95,8 +87,7 @@ it.skipIf(process.platform === "win32")(
 );
 
 it("opens a resource-only bundle without executable identity and keeps snapshot operations inapplicable", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-session-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-session-");
   await writeFile(
     join(rootPath, "Info.plist"),
     '<?xml version="1.0"?><plist><dict/></plist>',
@@ -132,7 +123,6 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   );
 
   const opened = await session.openBundleResources(rootPath);
-  expect(opened.ok).toBe(true);
   if (!opened.ok) throw opened.error;
   expect(session.allowsSnapshotReplay("inspect_plist")).toBe(false);
   expect(opened.value.executableSha256).toBeNull();
@@ -146,9 +136,11 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
     path: opened.value.canonicalPath,
     caller_path: opened.value.callerPath,
   });
-  expect(session.activeBundleResourceRoot()?.canonicalPath).toBe(
-    opened.value.canonicalPath,
-  );
+  expect(await session.status()).toMatchObject({
+    open: true,
+    session_kind: "bundle_resources",
+    resource_root: { canonical_path: opened.value.canonicalPath },
+  });
   expect(
     bundleResourceRootSchema.parse({
       caller_path: opened.value.callerPath,
@@ -167,6 +159,7 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   expect(await session.status()).toMatchObject({
     open: true,
     session_kind: "bundle_resources",
+    analysis_provider_candidates_observed: "not_applicable",
     resource_root: { canonical_path: opened.value.canonicalPath },
   });
   const snapshot = session.exportAnalysisSnapshot();
@@ -187,8 +180,7 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
 });
 
 it("keeps the exact caller reason for cancellation before resource-root resolution", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-pre-cancel-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-pre-cancel-");
   const reason = { origin: "caller-pre-aborted" };
   const controller = new AbortController();
   controller.abort(reason);
@@ -214,8 +206,7 @@ it("keeps the exact caller reason for cancellation before resource-root resoluti
 });
 
 it("retains ownership when an unhealthy resource client cannot be closed", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-cleanup-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-cleanup-");
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let closeAttempts = 0;
   const client: AnalysisClient = {
@@ -246,8 +237,7 @@ it("retains ownership when an unhealthy resource client cannot be closed", async
 });
 
 it("cancels a resource switch during prior-client retirement and closes its candidate", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-cancel-switch-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-cancel-switch-");
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
 
   let closeStarted!: () => void;
@@ -321,10 +311,9 @@ it("cancels a resource switch during prior-client retirement and closes its cand
 it.each([false, true])(
   "keeps cancellation primary through resource retirement retry (live cleanup: %s)",
   async (liveCleanup) => {
-    const rootPath = await mkdtemp(
-      join(tmpdir(), "rea-resource-cancel-close-failure-"),
+    const rootPath = await createTestTempDirectory(
+      "rea-resource-cancel-close-failure-",
     );
-    temporaryDirectories.push(rootPath);
     await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
     let closeStarted!: () => void;
     const closing = new Promise<void>((resolve) => {
@@ -366,7 +355,7 @@ it.each([false, true])(
                   await closeGate;
                 }
                 if (oldCloseAttempts < 3) return err(cleanupFailure);
-                if (liveCleanup) cleanupFailure.resolveCleanup();
+                if (liveCleanup) releaseOwnedCleanup(cleanupFailure);
                 return { ok: true, value: null };
               },
             },
@@ -395,7 +384,6 @@ it.each([false, true])(
     releaseClose();
 
     const result = await opening;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failed resource switch");
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -415,10 +403,9 @@ it.each([false, true])(
 );
 
 it("keeps an earlier resource close failure primary when a later cleanup is cancelled", async () => {
-  const rootPath = await mkdtemp(
-    join(tmpdir(), "rea-resource-close-before-cancel-"),
+  const rootPath = await createTestTempDirectory(
+    "rea-resource-close-before-cancel-",
   );
-  temporaryDirectories.push(rootPath);
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let candidateCloseStarted!: () => void;
   const candidateClosing = new Promise<void>((resolve) => {
@@ -481,7 +468,6 @@ it("keeps an earlier resource close failure primary when a later cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource switch");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -490,10 +476,9 @@ it("keeps an earlier resource close failure primary when a later cleanup is canc
 });
 
 it("keeps cancellation primary when binary retirement fails before opening resources", async () => {
-  const rootPath = await mkdtemp(
-    join(tmpdir(), "rea-binary-close-cancel-resource-"),
+  const rootPath = await createTestTempDirectory(
+    "rea-binary-close-cancel-resource-",
   );
-  temporaryDirectories.push(rootPath);
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let closeStarted!: () => void;
   const closing = new Promise<void>((resolve) => {
@@ -570,7 +555,6 @@ it("keeps cancellation primary when binary retirement fails before opening resou
   releaseClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -585,10 +569,9 @@ it("keeps cancellation primary when binary retirement fails before opening resou
 });
 
 it("keeps an earlier resource close failure primary when binary candidate cleanup is cancelled", async () => {
-  const rootPath = await mkdtemp(
-    join(tmpdir(), "rea-resource-close-before-binary-cancel-"),
+  const rootPath = await createTestTempDirectory(
+    "rea-resource-close-before-binary-cancel-",
   );
-  temporaryDirectories.push(rootPath);
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let candidateCloseStarted!: () => void;
   const candidateClosing = new Promise<void>((resolve) => {
@@ -662,7 +645,6 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed binary open");
   expect(result.selection).toEqual({ kind: "none" });
   expect(result.error).toBe(originalFailure);
@@ -678,10 +660,9 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
 });
 
 it("keeps an earlier binary close failure primary when candidate cleanup is cancelled", async () => {
-  const rootPath = await mkdtemp(
-    join(tmpdir(), "rea-binary-close-before-cancel-"),
+  const rootPath = await createTestTempDirectory(
+    "rea-binary-close-before-cancel-",
   );
-  temporaryDirectories.push(rootPath);
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let candidateCloseStarted!: () => void;
   const candidateClosing = new Promise<void>((resolve) => {
@@ -766,7 +747,6 @@ it("keeps an earlier binary close failure primary when candidate cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -777,8 +757,7 @@ it("keeps an earlier binary close failure primary when candidate cleanup is canc
 });
 
 it("cancels a binary switch during resource retirement and retains null-subject Evidence", async () => {
-  const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-cancel-binary-"));
-  temporaryDirectories.push(rootPath);
+  const rootPath = await createTestTempDirectory("rea-resource-cancel-binary-");
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   let resourceCloseStarted!: () => void;
   const closing = new Promise<void>((resolve) => {
@@ -837,10 +816,9 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   );
   expect((await session.openBundleResources(rootPath)).ok).toBe(true);
   const observed = await session.execute("inspect_plist", {});
-  expect(observed.ok).toBe(true);
   if (!observed.ok) throw observed.error;
   const recorded = session.recordEvidence(
-    createEvidence(undefined, identity, {
+    createEvidence(unknownTarget("not-observed"), identity, {
       operation: "inspect_plist",
       parameters: {},
       result: observed.value.result,
@@ -868,24 +846,24 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   releaseResourceClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled binary open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(await session.status()).toMatchObject({ open: false });
   expect(session.exportEvidenceBundle().records).toHaveLength(1);
-  expect(session.evidenceById(evidenceId)).toMatchObject({ subject: null });
+  expect(session.evidenceById(evidenceId)).toMatchObject({
+    subject: { identity: { kind: "unknown" } },
+  });
   expect(await session.status()).toMatchObject({ cleanup_pending: true });
   expect(await session.close()).toMatchObject({ ok: true });
   expect(resourceCloseAttempts).toBe(2);
 });
 
 it("tracks independent pending resource owners after a failed session replacement", async () => {
-  const rootPath = await mkdtemp(
-    join(tmpdir(), "rea-resource-pending-owners-"),
+  const rootPath = await createTestTempDirectory(
+    "rea-resource-pending-owners-",
   );
-  temporaryDirectories.push(rootPath);
   await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
   const failures = [
     new ProviderCleanupError(identity.id, ["previous-reader"], {}),
@@ -908,7 +886,7 @@ it("tracks independent pending resource owners after a failed session replacemen
             execute: async () => ok(createAnalysisExecution(null, identity)),
             close: async () => {
               if (!released[index]) return err(failure);
-              failure.resolveCleanup();
+              releaseOwnedCleanup(failure);
               return ok(null);
             },
           },
@@ -973,7 +951,7 @@ it.each([false, true])(
         close: async () => {
           attempts += 1;
           if (attempts === 1) return err(cleanup);
-          if (liveCleanup) cleanup.resolveCleanup();
+          if (liveCleanup) releaseOwnedCleanup(cleanup);
           return ok(null);
         },
       })),
@@ -998,10 +976,9 @@ it.each([false, true])(
 it.each([0, 1])(
   "retains unknown cleanup completion alongside a retryable owner (unknown owner: %s)",
   async (unknownOwner) => {
-    const rootPath = await mkdtemp(
-      join(tmpdir(), "rea-resource-mixed-cleanup-"),
+    const rootPath = await createTestTempDirectory(
+      "rea-resource-mixed-cleanup-",
     );
-    temporaryDirectories.push(rootPath);
     await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
     const ownedFailure = new ProviderCleanupError(
       identity.id,
@@ -1032,7 +1009,7 @@ it.each([0, 1])(
                   return err(
                     owner === unknownOwner ? unknownFailure : ownedFailure,
                   );
-                if (owner !== unknownOwner) ownedFailure.resolveCleanup();
+                if (owner !== unknownOwner) releaseOwnedCleanup(ownedFailure);
                 return ok(null);
               },
             },
@@ -1071,7 +1048,7 @@ it.each([
     const closeOwner = async (owner: "client" | "files") => {
       if (!failCleanup) return ok(null);
       if (!released) return err(owner === unknownOwner ? unknown : tracked);
-      if (owner !== unknownOwner) tracked.resolveCleanup();
+      if (owner !== unknownOwner) releaseOwnedCleanup(tracked);
       return ok(null);
     };
     const client: AnalysisClient = {
@@ -1093,8 +1070,7 @@ it.each([
     if (targetKind === "binary") {
       expect(await session.open(process.execPath)).toMatchObject({ ok: true });
     } else {
-      const rootPath = await mkdtemp(join(tmpdir(), "rea-resource-close-"));
-      temporaryDirectories.push(rootPath);
+      const rootPath = await createTestTempDirectory("rea-resource-close-");
       await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
       expect(await session.openBundleResources(rootPath)).toMatchObject({
         ok: true,
@@ -1115,10 +1091,9 @@ it.each([
 it.each(["health", "cancellation"] as const)(
   "updates early resource-open %s cleanup after its candidate retries",
   async (failureStage) => {
-    const rootPath = await mkdtemp(
-      join(tmpdir(), "rea-resource-early-cleanup-"),
+    const rootPath = await createTestTempDirectory(
+      "rea-resource-early-cleanup-",
     );
-    temporaryDirectories.push(rootPath);
     await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
     const primary = new ProviderAdapterError(identity.id, "health");
     const cleanup = new ProviderCleanupError(
@@ -1143,7 +1118,7 @@ it.each(["health", "cancellation"] as const)(
             },
             close: async () => {
               if (++closeAttempts === 1) return err(cleanup);
-              cleanup.resolveCleanup();
+              releaseOwnedCleanup(cleanup);
               return ok(null);
             },
           },

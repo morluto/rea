@@ -1,15 +1,16 @@
-import { createHash } from "node:crypto";
-
 import canonicalize from "canonicalize";
 import { z } from "zod";
-
-import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 
 import {
   compareUnicodeCodePoints,
   compositeKey,
 } from "./unicodeCodePointOrder.js";
-import { localPathStringSchema } from "./localPath.js";
+import {
+  binaryTargetIdentity,
+  fileTargetIdentitySchema,
+  sameTargetIdentity,
+  type FileTargetSelection,
+} from "./targetIdentity.js";
 
 import {
   analysisProfileSchema,
@@ -24,19 +25,23 @@ import {
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
 import {
+  detachedEvidenceBundleSchema,
   evidenceBundleForTarget,
   evidenceBundleSchema,
   parseEvidenceBundle,
   parseImmutableEvidenceBundle,
 } from "./evidenceBundle.js";
 import {
+  evidenceFileTarget,
   evidenceLocationSchema,
+  evidenceSubjectSchema,
   rebindEvidenceToTargetPath,
   type Evidence,
   type EvidenceLocation,
-  type EvidenceSubjectTarget,
 } from "./evidence.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
@@ -45,98 +50,80 @@ import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import {
-  binaryArchitectureSchema,
-  rawBinaryEntryPointSchema,
-} from "./rawBinary.js";
-import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  BINARY_TARGET_FORMATS,
+} from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const formatSchema = z.enum([
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "ines",
-  "godot-pck",
-  "unityfs",
-  "wxapkg",
-  "dmg",
-  "pkg",
-  "intel-hex",
-  "srec",
-  "esp-image",
-  "uf2",
-  "dfuse",
-  "esp-flash-image",
-  "fit",
-  "plist",
-  "javascript",
-  "source-map",
-  "uimage",
-]);
+const formatSchema = z.enum(BINARY_TARGET_FORMATS);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
-const subjectBaseSchema = z.object({
-  path: localPathStringSchema,
-  sha256: digestSchema,
-});
-const subjectSchema = withEvidenceSubjectDeclaration(subjectBaseSchema);
-const targetIdentitySchema = z.object({
-  sha256: digestSchema,
-  kind: kindSchema,
-  architecture: architectureSchema.nullable(),
-});
-const targetSchema = z.discriminatedUnion("format", [
-  targetIdentitySchema.extend({
-    format: z.enum(
-      formatSchema.options.filter(
-        (format) =>
-          format !== "raw-binary" &&
-          format !== "gamecube-dol" &&
-          format !== "esp-flash-image",
-      ),
-    ),
-    architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
-      .nullable(),
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("raw-binary"),
-    kind: z.literal("executable"),
-    architecture: binaryArchitectureSchema,
-    entry_point: rawBinaryEntryPointSchema,
-  }),
-  targetIdentitySchema.extend({
-    format: z.literal("gamecube-dol"),
-    kind: z.literal("executable"),
-    architecture: z.literal("powerpc"),
-    entry_point: rawBinaryEntryPointSchema,
-  }),
+type SnapshotFormat = z.infer<typeof formatSchema>;
+/** The selection each format's open targets make inside their bytes. */
+const SNAPSHOT_SELECTION_KINDS: Partial<
+  Record<SnapshotFormat, FileTargetSelection["kind"]>
+> = {
+  "raw-binary": "entry-point",
+  "gamecube-dol": "entry-point",
   // The caller's inputs select how the dump is read, so they are identity.
-  targetIdentitySchema.extend({
-    format: z.literal("esp-flash-image"),
-    kind: z.literal("archive"),
-    architecture: z.null(),
-    flash_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-    partition_table_offset: z.number().int().min(0).max(0xffff_ffff).nullable(),
-  }),
-]);
+  "esp-flash-image": "esp-flash",
+  "mach-o-universal": "universal-slice",
+};
+const RAW_ONLY = new Set<string>(RAW_ONLY_ARCHITECTURES);
+/** Whether a format admits an architecture, as `binaryTargetIdentity` produces it. */
+const snapshotArchitectureAllowed = (
+  format: SnapshotFormat,
+  architecture: string | null,
+): boolean =>
+  format === "raw-binary"
+    ? architecture !== null
+    : format === "gamecube-dol"
+      ? architecture === "powerpc"
+      : format === "esp-flash-image"
+        ? architecture === null
+        : architecture === null || !RAW_ONLY.has(architecture);
+/**
+ * The persisted target: the path-free identity `binaryTargetIdentity`
+ * produces, plus the binary kind that query IDs commit to.
+ */
+const targetSchema = z
+  .strictObject({
+    kind: kindSchema,
+    identity: fileTargetIdentitySchema.extend({
+      format: formatSchema,
+      architecture: architectureSchema.nullable(),
+    }),
+  })
+  .superRefine(({ kind, identity }, context) => {
+    // Query IDs commit to the kind, so a kind the format cannot have would
+    // admit entries that no live lookup or export of this target can reach.
+    if (kind !== BINARY_TARGET_FORMAT_KINDS[identity.format])
+      context.addIssue({
+        code: "custom",
+        path: ["kind"],
+        message: `Snapshot target kind ${kind} does not match format ${identity.format}`,
+      });
+    if (!snapshotArchitectureAllowed(identity.format, identity.architecture))
+      context.addIssue({
+        code: "custom",
+        path: ["identity", "architecture"],
+        message: `Snapshot target architecture ${String(identity.architecture)} does not apply to format ${identity.format}`,
+      });
+    const expected = SNAPSHOT_SELECTION_KINDS[identity.format] ?? null;
+    if ((identity.selection?.kind ?? null) !== expected)
+      context.addIssue({
+        code: "custom",
+        path: ["identity", "selection"],
+        message:
+          expected === null
+            ? `Snapshot target format ${identity.format} makes no selection`
+            : `Snapshot target format ${identity.format} requires a ${expected} selection`,
+      });
+  });
 const bindingSchema = z
   .object({
     provider: committedProviderSchema,
@@ -155,25 +142,36 @@ const bindingSchema = z
         message: "Snapshot binding provider does not match analysis profile",
       });
   });
-const entrySchema = z.object({
-  query_id: prefixedDigestSchema("query"),
-  operation: z.string().min(1),
-  parameters: jsonObjectSchema,
-  execution: z.object({
-    result: jsonValueSchema,
-    raw_result: jsonValueSchema.nullable(),
-    provider: committedProviderSchema,
-    limitations: z.array(z.string()),
-    relationship_coverage: relationshipCoverageSchema.nullable(),
-    locations: z.array(evidenceLocationSchema),
-    subject: subjectSchema.nullable(),
-  }),
-});
-const workflowEntrySchema = entrySchema.extend({
-  execution: entrySchema.shape.execution.extend({
-    analysis_profile: analysisProfileSchema,
-  }),
-});
+const createEntrySchema = (
+  valueSchema: typeof jsonValueSchema,
+  objectSchema: typeof jsonObjectSchema,
+) =>
+  z.object({
+    query_id: prefixedDigestSchema("query"),
+    operation: z.string().min(1),
+    parameters: objectSchema,
+    execution: z.object({
+      result: valueSchema,
+      raw_result: valueSchema.nullable(),
+      provider: committedProviderSchema,
+      limitations: z.array(z.string()),
+      relationship_coverage: relationshipCoverageSchema.nullable(),
+      locations: z.array(evidenceLocationSchema),
+      subject: evidenceSubjectSchema,
+    }),
+  });
+
+const createWorkflowEntrySchema = (
+  baseEntrySchema: ReturnType<typeof createEntrySchema>,
+) =>
+  baseEntrySchema.extend({
+    execution: baseEntrySchema.shape.execution.extend({
+      analysis_profile: analysisProfileSchema,
+    }),
+  });
+
+const entrySchema = createEntrySchema(jsonValueSchema, jsonObjectSchema);
+const workflowEntrySchema = createWorkflowEntrySchema(entrySchema);
 
 /** Provider- and profile-exact cache of successful immutable analysis calls. */
 export const analysisSnapshotSchema = z.object({
@@ -182,6 +180,18 @@ export const analysisSnapshotSchema = z.object({
   entries: z.array(entrySchema),
   workflow_entries: z.array(workflowEntrySchema),
   evidence_bundle: evidenceBundleSchema,
+});
+
+const detachedEntrySchema = createEntrySchema(
+  detachedJsonValueSchema,
+  detachedJsonObjectSchema,
+);
+const detachedWorkflowEntrySchema =
+  createWorkflowEntrySchema(detachedEntrySchema);
+const detachedAnalysisSnapshotSchema = analysisSnapshotSchema.extend({
+  entries: z.array(detachedEntrySchema),
+  workflow_entries: z.array(detachedWorkflowEntrySchema),
+  evidence_bundle: detachedEvidenceBundleSchema,
 });
 
 export type AnalysisSnapshot = z.infer<typeof analysisSnapshotSchema>;
@@ -276,6 +286,27 @@ const snapshotFileHeaderSchema = z.object({
   evidence_bundle: z.unknown(),
 });
 
+/**
+ * The bundle is validated on its own, so locate its schema issues within the
+ * snapshot document, as entry issues are.
+ */
+const parseSnapshotBundle = <Bundle>(
+  value: unknown,
+  parse: (value: unknown) => Bundle,
+): Bundle => {
+  try {
+    return parse(value);
+  } catch (cause: unknown) {
+    if (!(cause instanceof z.ZodError)) throw cause;
+    throw new z.ZodError(
+      cause.issues.map((issue) => ({
+        ...issue,
+        path: ["evidence_bundle", ...issue.path],
+      })),
+    );
+  }
+};
+
 /** Reconstruct file entries only from fully authenticated matching Evidence. */
 export const parsePreparedAnalysisSnapshot = (
   input: unknown,
@@ -283,7 +314,10 @@ export const parsePreparedAnalysisSnapshot = (
   workflowEntries: readonly PreparedSnapshotEntry[],
 ): AnalysisSnapshot => {
   const header = snapshotFileHeaderSchema.parse(input);
-  const bundle = parseImmutableEvidenceBundle(header.evidence_bundle);
+  const bundle = parseSnapshotBundle(
+    header.evidence_bundle,
+    parseImmutableEvidenceBundle,
+  );
   const providerRows = entries.map((handle) => {
     const row = preparedEntries.get(handle);
     if (row?.kind !== "provider")
@@ -326,15 +360,7 @@ const snapshotContentDigest = (
   const metadata = jsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            local_path: execution.subject.path,
-            sha256: execution.subject.sha256,
-            format: execution.subject.format,
-            architecture: execution.subject.architecture,
-          },
+    subject: subjectContent(execution.subject),
     relationship_coverage: execution.relationship_coverage,
   });
   return contentDigest({
@@ -343,6 +369,12 @@ const snapshotContentDigest = (
     raw_result: rawResult,
   });
 };
+
+/** The subject facts a snapshot content digest commits to; the display name is not one. */
+const subjectContent = (subject: Evidence["subject"]) => ({
+  identity: subject.identity,
+  local_path: subject.local_path,
+});
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
@@ -364,7 +396,7 @@ interface SnapshotExecution {
   readonly limitations: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage | null | undefined;
   readonly locations: readonly EvidenceLocation[];
-  readonly subject: EvidenceSubjectTarget | null;
+  readonly subject: Evidence["subject"];
 }
 
 type SnapshotExecutionProjection = Pick<
@@ -390,13 +422,7 @@ const snapshotExecutionProjection = (
     limitations: execution.limitations,
     relationship_coverage: execution.relationshipCoverage ?? null,
     locations: execution.locations,
-    subject:
-      execution.subject === null
-        ? null
-        : {
-            ...execution.subject,
-            architecture: execution.subject.architecture ?? null,
-          },
+    subject: execution.subject,
   });
 
 const canonicalJson = (value: unknown): string => {
@@ -407,39 +433,12 @@ const canonicalJson = (value: unknown): string => {
   return encoded;
 };
 
-/** Project a binary into the path-free identity used for cache invalidation. */
+/** The persisted snapshot target of an open binary: its target identity and kind. */
 export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
-  target.format === "raw-binary"
-    ? {
-        sha256: target.sha256,
-        kind: target.kind,
-        architecture: target.architecture,
-        format: target.format,
-        entry_point: target.entryPoint,
-      }
-    : target.format === "gamecube-dol"
-      ? {
-          sha256: target.sha256,
-          kind: target.kind,
-          architecture: target.architecture,
-          format: target.format,
-          entry_point: target.entryPoint,
-        }
-      : target.format === "esp-flash-image"
-        ? {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: null,
-            format: target.format,
-            flash_offset: target.espFlash.flashOffset,
-            partition_table_offset: target.espFlash.partitionTableOffset,
-          }
-        : {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: target.architecture ?? null,
-            format: target.format,
-          };
+  targetSchema.parse({
+    kind: target.kind,
+    identity: binaryTargetIdentity(target),
+  });
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -455,21 +454,7 @@ export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  snapshot.sha256 === target.sha256 &&
-  snapshot.kind === target.kind &&
-  snapshot.format === target.format &&
-  snapshot.architecture === (target.architecture ?? null) &&
-  (snapshot.format !== "raw-binary" ||
-    (target.format === "raw-binary" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "gamecube-dol" ||
-    (target.format === "gamecube-dol" &&
-      snapshot.entry_point === target.entryPoint)) &&
-  (snapshot.format !== "esp-flash-image" ||
-    (target.format === "esp-flash-image" &&
-      snapshot.flash_offset === target.espFlash.flashOffset &&
-      snapshot.partition_table_offset ===
-        target.espFlash.partitionTableOffset));
+  sameTargetIdentity(snapshot.identity, binaryTargetIdentity(target));
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -586,7 +571,7 @@ export const snapshotEvidenceForQuery = (
   for (const record of snapshot.evidence_bundle.records) {
     if (
       !(
-        record.subject?.digest.sha256 === target.sha256 &&
+        evidenceFileTarget(record)?.sha256 === target.sha256 &&
         record.operation === operation &&
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
@@ -663,9 +648,7 @@ export const analysisQueryId = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
-  `query_${createHash("sha256")
-    .update(canonicalJson({ target, binding, operation, parameters }))
-    .digest("hex")}`;
+  `query_${sha256Hex(canonicalJson({ target, binding, operation, parameters }))}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */
 export const createAnalysisSnapshotEntry = (input: {
@@ -696,10 +679,11 @@ const validatedSnapshots = new WeakMap<object, AnalysisSnapshot>();
 
 /** Parse a provider/profile-exact snapshot and verify its entries and evidence. */
 export const parseAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  authenticateSnapshot(input).parsed;
+  authenticateSnapshot(input, true).parsed;
 
 const authenticateSnapshot = (
   input: unknown,
+  detach: boolean,
 ): {
   readonly parsed: AnalysisSnapshot;
   readonly restored: AnalysisSnapshot;
@@ -708,10 +692,12 @@ const authenticateSnapshot = (
     const owned = validatedSnapshots.get(input);
     if (owned !== undefined) return { parsed: owned, restored: owned };
   }
-  const parsed = analysisSnapshotSchema.parse(input);
+  const parsed = (
+    detach ? detachedAnalysisSnapshotSchema : analysisSnapshotSchema
+  ).parse(input);
   const restored = restoreSnapshot(
     parsed,
-    parseEvidenceBundle(parsed.evidence_bundle),
+    parseSnapshotBundle(parsed.evidence_bundle, parseEvidenceBundle),
     parsed.entries.map((entry) => ({
       kind: "provider",
       entry,
@@ -736,7 +722,7 @@ const authenticateSnapshot = (
 
 /** Own an authenticated immutable cache while preserving mutable caller exports. */
 export const immutableAnalysisSnapshot = (input: unknown): AnalysisSnapshot =>
-  sealSnapshot(authenticateSnapshot(input).restored);
+  sealSnapshot(authenticateSnapshot(input, false).restored);
 
 const sealSnapshot = (snapshot: AnalysisSnapshot): AnalysisSnapshot => {
   for (const entry of [...snapshot.entries, ...snapshot.workflow_entries]) {
@@ -754,7 +740,10 @@ const restoreSnapshot = (
   providerRows: readonly Extract<PreparedEntry, { kind: "provider" }>[],
   workflowRows: readonly Extract<PreparedEntry, { kind: "workflow" }>[],
 ): AnalysisSnapshot => {
-  const scopedEvidence = evidenceBundleForTarget(bundle, header.target.sha256);
+  const scopedEvidence = evidenceBundleForTarget(
+    bundle,
+    header.target.identity.sha256,
+  );
   if (
     scopedEvidence.records.length !== bundle.records.length ||
     scopedEvidence.unknowns.length !== bundle.unknowns.length
@@ -773,7 +762,7 @@ const restoreSnapshot = (
     if (
       evidence.predicate_type !== "rea.analysis" ||
       evidence.authority !== "shipped-artifact" ||
-      evidence.subject?.digest.sha256 !== header.target.sha256 ||
+      evidenceFileTarget(evidence)?.sha256 !== header.target.identity.sha256 ||
       evidence.analysis_profile === null ||
       (evidence.confidence !== "observed" && evidence.confidence !== "derived")
     )
@@ -897,6 +886,21 @@ const hasCanonicalQueryOrder = (
   return true;
 };
 
+/**
+ * Whether Evidence is about the snapshot target's bytes. A subject in the
+ * target's own format is the target, so its whole identity, including the
+ * selection that the query IDs commit to, must agree with the header.
+ */
+const subjectNamesSnapshotTarget = (
+  evidence: Evidence,
+  target: AnalysisSnapshotTarget,
+): boolean => {
+  const file = evidenceFileTarget(evidence);
+  const expected = target.identity;
+  if (file === undefined || file.sha256 !== expected.sha256) return false;
+  return file.format !== expected.format || sameTargetIdentity(file, expected);
+};
+
 const isCorrespondingEvidence = (
   evidence: Evidence,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
@@ -904,7 +908,7 @@ const isCorrespondingEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "observed" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -980,7 +984,7 @@ const isWorkflowEvidence = (
   evidence.predicate_type === "rea.analysis" &&
   evidence.confidence === "derived" &&
   evidence.authority === "shipped-artifact" &&
-  evidence.subject?.digest.sha256 === snapshot.target.sha256 &&
+  subjectNamesSnapshotTarget(evidence, snapshot.target) &&
   evidence.analysis_profile !== null &&
   analysisProfilesEqual(
     evidence.analysis_profile,
@@ -1005,18 +1009,10 @@ const evidenceContentMetadata = (evidence: Evidence) => {
     limitations: evidence.limitations,
     relationship_coverage: evidence.relationship_coverage,
     locations: evidence.locations,
-    subject:
-      evidence.subject === null
-        ? null
-        : {
-            local_path: evidence.subject.local_path,
-            sha256: evidence.subject.digest.sha256,
-            format: evidence.subject.format,
-            architecture: evidence.subject.architecture,
-          },
+    subject: subjectContent(evidence.subject),
   };
 };
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>
-  `${canonicalJson(parseAnalysisSnapshot(snapshot))}\n`;
+  `${canonicalJson(authenticateSnapshot(snapshot, false).parsed)}\n`;

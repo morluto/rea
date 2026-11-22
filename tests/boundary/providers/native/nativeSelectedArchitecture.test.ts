@@ -11,9 +11,9 @@ import { err } from "../../../../src/domain/result.js";
 import {
   NativeCommandFailure,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
-import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../../src/ports/AnalysisProvider.js";
 import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
@@ -244,8 +244,10 @@ it.each([
       selected_architecture: { name: "arm64e.v1", container_file_offset: 4096 },
     });
     if (architecture === "arm64e.v2")
-      expect(result.value.limitations).toContain(
-        "dwarfdump --uuid returned no row for selected architecture arm64e.v1; using the unambiguous binary load commands LC_UUID.",
+      expect(result.value.limitations).toContainEqual(
+        expect.stringMatching(
+          /dwarfdump --uuid.*no row.*arm64e\.v1.*unambiguous.*LC_UUID/iu,
+        ),
       );
   },
 );
@@ -322,6 +324,39 @@ it("uses the uniquely matching FAT entry when lipo omits the selected slice offs
     selected_architecture: { container_file_offset: 8192 },
   });
 });
+
+it.each([
+  ["offset 8192\n", "offset 12288\n"],
+  ["offset 8192\n size 4096\n", "offset 8192\n size 4095\n"],
+] as const)(
+  "refuses lipo slice facts that disagree with the selected FAT entry",
+  async (original, replacement) => {
+    const fixture = await makeFat(["x86_64", "arm64"]);
+    const lipo = fixture.lipo.replace(original, replacement);
+    expect(lipo).not.toBe(fixture.lipo);
+    const result = await inspect(
+      new NativeMacOSProvider(
+        {},
+        new NativeFixtureRunner({ lipo }),
+        "darwin",
+      ).createClient(fixture.target),
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Mismatched FAT slice was admitted");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining(
+            "Selected lipo slice does not identify exactly one FAT entry",
+          ),
+        },
+      ],
+    });
+  },
+);
 
 it("reports the selected 32-bit slice's word size and byte order", async () => {
   const fixture = await makeFat(["x86_64", "i386"]);

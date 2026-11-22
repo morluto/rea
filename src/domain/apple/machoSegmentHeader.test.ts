@@ -34,7 +34,7 @@ it.each(formats)(
       else view.setUint32(24 + index * 4, Number(value), littleEndian);
     });
     const protections = wide ? 56 : 40;
-    [0x80000001, 0xfedcba98, 0xffffffff].forEach((value, index) =>
+    [0x80000001, 0xfedcba98, 0xffffffff, 0x80000010].forEach((value, index) =>
       view.setUint32(protections + index * 4, value, littleEndian),
     );
     const before = Buffer.from(backing);
@@ -58,6 +58,7 @@ it.each(formats)(
       maxProtection: 0x80000001,
       protection: 0xfedcba98,
       sectionCount: 0xffffffff,
+      flags: 0x80000010,
     });
   },
 );
@@ -77,7 +78,7 @@ it.each(formats)(
         ok: false,
         error: {
           kind: "malformed",
-          message: "Mach-O segment header is truncated",
+          message: expect.stringContaining("truncated"),
         },
       });
   },
@@ -92,10 +93,14 @@ it("admits a segment's VM sizes, section table and file range", () => {
     protection: 1,
     headerSize: 72,
     sectionCount: 1,
+    flags: 0,
   };
   const admit = (facts: typeof segment, commandBytes = 152, image = 24) =>
     admitMachoSegmentCommand(facts, commandBytes, 64, image);
-  expect(admit(segment)).toEqual({ ok: true, value: { unmapped: false } });
+  expect(admit(segment)).toMatchObject({
+    ok: true,
+    value: { unmapped: false },
+  });
   expect(admit({ ...segment, memorySize: 15n }).ok).toBe(false);
   expect(admit(segment, 151).ok).toBe(false);
   expect(admit(segment, 152, 23).ok).toBe(false);

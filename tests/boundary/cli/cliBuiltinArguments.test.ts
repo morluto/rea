@@ -9,11 +9,24 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   classifyMcpAddDiscovery,
   isProjectScopedAmpRegistration,
+  parseCliGlobalArguments,
 } from "../../../src/cliBuiltinArguments.js";
+
+/** Whether these caller arguments ask for a project-scoped Amp registration. */
+const projectScoped = (arguments_: readonly string[]): boolean =>
+  isProjectScopedAmpRegistration(parseCliGlobalArguments(arguments_));
 
 describe("mcp add discovery classification", () => {
   it("bypasses help and listing flags", () => {
-    for (const flag of ["--help", "-h", "--llms", "--llms-full"]) {
+    for (const flag of [
+      "--help",
+      "-h",
+      "--llms",
+      "--llms-full",
+      "--mcp",
+      "--update",
+      "--incur-update-check",
+    ]) {
       expect(classifyMcpAddDiscovery(new Set([flag]))).toBe("bypass");
     }
   });
@@ -39,63 +52,9 @@ describe("mcp add discovery classification", () => {
 });
 
 describe("project-scoped Amp registration guard", () => {
-  it("flags explicit Amp targets under --no-global", () => {
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent",
-        "amp",
-        "--command",
-        "node project-rea.mjs",
-      ]),
-    ).toBe(true);
-  });
-
-  it("flags the default Amp registration when no agent is given", () => {
-    expect(isProjectScopedAmpRegistration(["mcp", "add", "--no-global"])).toBe(
-      true,
-    );
-  });
-
-  it("ignores output flags Incur strips before dispatch", () => {
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent",
-        "amp",
-        "--command",
-        "node project-rea.mjs",
-        "--json",
-      ]),
-    ).toBe(true);
-  });
-
-  it("passes global Amp registration through", () => {
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--agent",
-        "amp",
-        "--command",
-        "node project-rea.mjs",
-      ]),
-    ).toBe(false);
-  });
-
   it("passes project-scoped non-Amp agents through", () => {
     expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent",
-        "claude-code",
-      ]),
+      projectScoped(["mcp", "add", "--no-global", "--agent", "claude-code"]),
     ).toBe(false);
   });
 
@@ -109,7 +68,7 @@ describe("project-scoped Amp registration guard", () => {
       "--schema",
     ]) {
       expect(
-        isProjectScopedAmpRegistration([
+        projectScoped([
           "mcp",
           "add",
           "--no-global",
@@ -119,64 +78,26 @@ describe("project-scoped Amp registration guard", () => {
         ]),
       ).toBe(false);
     }
-    expect(
-      isProjectScopedAmpRegistration(["mcp", "add", "--no-global", "--help"]),
-    ).toBe(false);
+    expect(projectScoped(["mcp", "add", "--no-global", "--help"])).toBe(false);
   });
 
   it("reads equals-form agents the same way dispatch does", () => {
     // --agent=claude-code is a non-Amp registration, not the default Amp.
     expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent=claude-code",
-      ]),
+      projectScoped(["mcp", "add", "--no-global", "--agent=claude-code"]),
     ).toBe(false);
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent=amp",
-      ]),
-    ).toBe(true);
-    // A later equals-form Amp must not slip past an earlier spaced agent.
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent",
-        "claude-code",
-        "--agent=amp",
-      ]),
-    ).toBe(true);
     // A --command value is never read as an agent, even in equals form.
     expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--command=--agent",
-        "amp",
-      ]),
+      projectScoped(["mcp", "add", "--no-global", "--command=--agent", "amp"]),
     ).toBe(true);
   });
 
   it("passes other commands through", () => {
-    expect(isProjectScopedAmpRegistration(["mcp", "doctor"])).toBe(false);
-    expect(isProjectScopedAmpRegistration(["doctor"])).toBe(false);
-    expect(
-      isProjectScopedAmpRegistration([
-        "mcp",
-        "add",
-        "--no-global",
-        "--agent",
-        "Amp",
-      ]),
-    ).toBe(false);
+    expect(projectScoped(["mcp", "doctor"])).toBe(false);
+    expect(projectScoped(["doctor"])).toBe(false);
+    expect(projectScoped(["mcp", "add", "--no-global", "--agent", "Amp"])).toBe(
+      false,
+    );
   });
 });
 

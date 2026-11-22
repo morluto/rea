@@ -8,8 +8,8 @@ application code.
 
 - Source: <https://github.com/1013503897/jadx-headless-mcp>
 - Submodule: `third_party/jadx-headless-mcp`
-- Release: `v0.7.1`
-- Commit: `5844800a486d2248fa949b74c9896285f5b54de2`
+- Release: `v0.8.0`
+- Commit: `2b2a560e8035169f75e3c4f1695e773f9c0eebd0`
 - License: Apache-2.0; see the submodule's `LICENSE`.
 - Release identity: `src/android/JadxRelease.ts`.
 - REA integration: `src/android/`; no upstream patches in this version.
@@ -22,8 +22,14 @@ git submodule update --init third_party/jadx-headless-mcp
 
 Normal REA builds and installed npm packages do not require this submodule or a
 Gradle build. Supply a separately obtained JAR with `REA_JADX_MCP_JAR`; REA never
-downloads engines during an analysis operation. The audited release JAR is
-identified by SHA-256. A caller-supplied build reporting the supported protocol
+downloads engines during an analysis operation. Only a JAR from the pinned
+source above — `github.com/1013503897/jadx-headless-mcp`, release `v0.7.1`,
+SHA-256 `6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75`,
+as recorded in `src/android/JadxRelease.ts` — matches what REA documents;
+do not search npm for a package named `jadx-headless-mcp`: an unrelated,
+independently maintained project shares the name (and obtains an unverified
+platform binary at runtime), so an identically named install is not this JAR.
+The audited release JAR is identified by SHA-256. A caller-supplied build reporting the supported protocol
 version retains its actual digest and an unknown source revision unless its
 bytes match the audited release.
 
@@ -37,7 +43,7 @@ audited source revision.
 `npm run fixtures:android` (`scripts/fixtures/android/fetch.mjs`) downloads the audited engine and
 Appium ApiDemos v6.0.18 into ignored `_reference/apk-integration/`. Both downloads
 are checked against fixed SHA-256 values. Fixture provenance is recorded in
-`scripts/fixtures/android-apidemos.json`; the source uses Apache-2.0. This is a
+`scripts/fixtures/android/apidemos.json`; the source uses Apache-2.0. This is a
 static analysis fixture: no emulator, device, SDK installation or app execution
 is needed. APKs and JARs are neither tracked nor included in npm packages.
 
@@ -57,4 +63,4 @@ extractors or download/install firmware engines during analysis.
 
 On updates: inspect actual pinned CLI and report producers, preserve licenses,
 update gitlinks/release records, run report regressions and the real firmware
-lane. See [firmware setup and coverage](../docs/firmware-analysis.md).
+lane. See [firmware setup and coverage](../docs/guides/firmware/firmware-analysis.md).

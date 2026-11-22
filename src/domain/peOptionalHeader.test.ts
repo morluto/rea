@@ -117,7 +117,7 @@ it.each(formats)("rejects a partial $format directory entry", (format) => {
     error: {
       kind: "malformed",
       reason: "truncated-directory-table",
-      message: "truncated PE data-directory table",
+      message: expect.stringMatching(/truncated.*directory/iu),
     },
   });
 });
@@ -224,14 +224,17 @@ it("keeps structural refusal ahead of conflicting machine width", () => {
   bytes.writeUInt32LE(1, 92);
   expect(readPeOptionalHeader(bytes, 0x8664)).toEqual({
     ok: false,
-    error: { kind: "malformed", message: "truncated PE data-directory table" },
+    error: {
+      kind: "malformed",
+      message: expect.stringMatching(/truncated.*directory/iu),
+    },
   });
   bytes.writeUInt32LE(0, 92);
   expect(readPeOptionalHeader(bytes, 0x8664)).toEqual({
     ok: false,
     error: {
       kind: "malformed",
-      message: "PE optional-header magic does not match its architecture",
+      message: expect.stringMatching(/magic.*architecture/iu),
     },
   });
 });

@@ -4,12 +4,12 @@ Owned request/snapshot/reply paths are supplied by REA. No host target-process l
 user configuration initialization, debugger startup, or dependency installation.
 """
 import base64
+import gc
 import importlib.metadata
 import io
 import json
 import os
 from pathlib import Path
-import resource
 import sys
 
 PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
@@ -135,13 +135,28 @@ def inspect_elf(path, cache):
     from pwnlib.context import context
     with context.local(cache_dir=str(cache), log_level="warning"):
         from elftools.common.exceptions import ELFError
+        from elftools.common.utils import struct_parse
         from elftools.elf.elffile import ELFFile
         from pwnlib.elf import ELF
+        from pwnlib.elf import elf as upstream_elf
         try:
             headers = ELFFile(io.BytesIO(content))
             section_count = headers.num_sections()
             if section_count:
+                if headers.header.e_shentsize < headers.structs.Elf_Shdr.sizeof():
+                    raise LayoutFailure("format", "ELF section-header entry is shorter than the required structure.")
                 location(headers.header.e_shoff, section_count * headers.header.e_shentsize, len(content))
+            # Upstream symbol, relocation and dynamic access reads stored stream
+            # bytes, while this profile reports logical names and file coordinates.
+            # A string table is read only when it names sections or symbols.
+            raw_headers = []
+            for index in range(section_count):
+                raw_header = struct_parse(headers.structs.Elf_Shdr, headers.stream,
+                                          stream_pos=headers.header.e_shoff + index * headers.header.e_shentsize)
+                raw_headers.append(raw_header)
+                if raw_header.sh_flags & 0x800 and raw_header.sh_type in (
+                        "SHT_SYMTAB", "SHT_DYNSYM", "SHT_REL", "SHT_RELA", "SHT_RELR", "SHT_DYNAMIC"):
+                    raise LayoutFailure("unsupported-target", f"ELF section {index} ({raw_header.sh_type}) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
             segment_count = headers.num_segments()
             if segment_count:
                 location(headers.header.e_phoff, segment_count * headers.header.e_phentsize, len(content))
@@ -153,12 +168,22 @@ def inspect_elf(path, cache):
             section_name_index = headers.get_shstrndx()
             if raw_name_index == 0xffff and section_name_index < 0xff00:
                 raise LayoutFailure("format", f"ELF SHN_XINDEX resolves to ordinary index {section_name_index}; the escape requires an index at least SHN_LORESERVE (0xff00).")
+            consumed_strings = set()
             if section_name_index != 0:
                 if section_name_index >= section_count:
                     raise LayoutFailure("format", f"ELF section-name table index {section_name_index} lies outside the declared section count {section_count}.")
                 names_header = headers._get_section_header(section_name_index)
                 if names_header.sh_type != "SHT_STRTAB":
                     raise LayoutFailure("format", f"ELF section-name table {section_name_index} is not SHT_STRTAB.")
+                consumed_strings.add(section_name_index)
+            for header in raw_headers:
+                if header.sh_type in ("SHT_SYMTAB", "SHT_DYNSYM"):
+                    consumed_strings.add(header.sh_link)
+            for index, raw_header in enumerate(raw_headers):
+                if (raw_header.sh_flags & 0x800 and raw_header.sh_type == "SHT_STRTAB"
+                        and index in consumed_strings):
+                    raise LayoutFailure("unsupported-target", f"ELF section {index} (SHT_STRTAB) is SHF_COMPRESSED; logical metadata and its source coordinates are not decoded by this profile.")
+            if section_name_index != 0:
                 location(names_header.sh_offset, names_header.sh_size, len(content))
         except (ELFError, ValueError, OverflowError, AssertionError, IndexError) as error:
             raise LayoutFailure("format", str(error)) from error
@@ -175,6 +200,34 @@ def inspect_elf(path, cache):
                 # Kernel banner decoding is outside this report too.
                 return None
 
+            def _populate_plt(self):
+                # Upstream emulates each present PLT section (.plt, .plt.got,
+                # .plt.sec, .MIPS.stubs) in a new Unicorn instance with a
+                # 1 GiB virtual map. Unicorn hook closures keep each instance
+                # in a reference cycle, so its map stays reserved until a
+                # cyclic collection. Under the selected address-space limit,
+                # the third section of a CET x86-64 image then fails
+                # upstream's 1 GiB probe, and upstream keeps the truncated map
+                # with only a warning. Collect after each section so the limit
+                # is charged one emulator at a time. Upstream resolves this
+                # module global per section and offers no instance hook
+                # between sections, so this is the adapter's one scoped global
+                # substitution; finally restores it in this single-request
+                # bridge process.
+                emulate = upstream_elf.emulate_plt_instructions
+
+                def emulate_then_release(*args, **kwargs):
+                    try:
+                        return emulate(*args, **kwargs)
+                    finally:
+                        gc.collect()
+
+                upstream_elf.emulate_plt_instructions = emulate_then_release
+                try:
+                    return super()._populate_plt()
+                finally:
+                    upstream_elf.emulate_plt_instructions = emulate
+
             def _get_section_name(self, header):
                 # SHN_UNDEF declares no names; upstream would otherwise read
                 # strings at the inactive section-zero offset.
@@ -183,7 +236,8 @@ def inspect_elf(path, cache):
             # pyelftools 0.33 calls these documented filters internally;
             # pwntools 4.15.0's cached overrides do not accept the argument.
             # Forward the filter on this adapter instance, without modifying
-            # either upstream package or process-global methods.
+            # either upstream package or process-global methods (the scoped
+            # PLT-pass substitution above is the only global exception).
             def iter_segments(self, type=None):
                 return (segment for segment in super().iter_segments()
                         if type is None or segment.header.p_type == type)

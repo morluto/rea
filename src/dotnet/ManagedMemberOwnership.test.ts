@@ -3,18 +3,18 @@ import { describe, expect, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
+import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
+import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
+import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedMemberPointerFixture,
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 
 const metadataLayout = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);

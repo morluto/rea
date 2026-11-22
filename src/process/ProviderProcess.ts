@@ -1,4 +1,15 @@
+import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
+import type { AnalysisCleanupReleaseClaim } from "../domain/analysisErrorBase.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenReader.js";
+import {
+  processInspectionCleanupFailures,
+  type ProcessInspectionCleanupFailure,
+} from "./ProcessInspectionCleanup.js";
+import { assertProcessOwnershipInspectionActive } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
+import { nameSpawnedExecutable } from "./launchFailure.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -6,8 +17,10 @@ import type { Readable, Writable } from "node:stream";
 import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
 
 import {
+  materializeProcessOutputToken,
   ProcessOutputTokenScanner,
   type ProviderProcessOutputToken,
+  type RawProcessOutputToken,
 } from "./ProcessOutputTokenScanner.js";
 
 import type {
@@ -22,6 +35,14 @@ import {
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
+import {
+  RUNTIME_EXHAUSTION_TOKENS,
+  runtimeExhaustion,
+  type ManagedRuntime,
+  type RuntimeExhaustion,
+} from "./RuntimeExhaustion.js";
+import { isStrictUtf8 } from "../domain/strictUtf8.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -61,6 +82,19 @@ export interface SpawnedOwnedProviderProcess {
   readonly process: ProviderProcessHandle;
   readonly ownership: OwnedProcessGroup;
   readonly cleanup?: () => Promise<ProcessCleanupResult>;
+  /** See the owned `ProviderProcessLaunch.requestStop`. */
+  readonly requestStop?: (signal: NodeJS.Signals) => boolean;
+}
+
+/**
+ * A command's own stop request before owned cleanup: `signal` goes to the
+ * launched process group, and cleanup waits up to `graceMs` for the leader to
+ * exit before it kills what remains. For a command that rolls back work it
+ * started when asked to stop, such as `hdiutil attach` on SIGTERM.
+ */
+export interface ProcessTerminationPolicy {
+  readonly signal: NodeJS.Signals;
+  readonly graceMs: number;
 }
 
 /** Process events and streams required by provider lifecycle supervision. */
@@ -96,6 +130,13 @@ export type ProviderProcessLaunch =
       readonly ownsProcessLifetime: true;
       readonly ownership?: OwnedProcessGroup;
       readonly cleanup?: () => Promise<ProcessCleanupResult>;
+      /**
+       * Signal the launched process group while its leader is unreaped, so the
+       * leader's PID still names the group this launch created. False when
+       * nothing was signaled, such as after the leader exited or on a host
+       * without process groups.
+       */
+      readonly requestStop?: (signal: NodeJS.Signals) => boolean;
     };
 
 /**
@@ -139,6 +180,11 @@ export interface ProviderProcessSnapshot {
   readonly stopRequested?: true;
   /** Present when a provider stream was destroyed before all bytes were observed. */
   readonly outputIncomplete?: true;
+  /**
+   * The latest memory exhaustion report of the supervised runtime, observed
+   * from every drained byte regardless of the retention budget.
+   */
+  readonly runtimeExhaustion?: RuntimeExhaustion;
 }
 
 declare const processOutputCheckpointBrand: unique symbol;
@@ -211,19 +257,44 @@ export interface ProviderProcessSupervisorOptions {
    * stream's latest, where a failing command's last words are.
    */
   readonly diagnosticRetention?: "head" | "tail";
-  /**
-   * Single-line token ending at a non-ASCII-word byte or EOF, located before retention
-   * applies, so its latest occurrence survives an exhausted budget.
-   */
-  readonly outputToken?: string;
   readonly onDiagnostic?: (event: ProviderProcessDiagnostic) => void;
 }
+
+/** One output token located before retention applies, so it survives an exhausted budget. */
+export type ProviderProcessOutputTokenOptions =
+  | {
+      /**
+       * Single-line token ending at a non-ASCII-word byte or EOF; its latest
+       * occurrence is reported as a marker.
+       */
+      readonly outputToken?: string;
+      readonly runtime?: never;
+    }
+  | {
+      /**
+       * The managed runtime this process hosts. Its memory exhaustion report is
+       * the scanned token and is surfaced as `runtimeExhaustion`.
+       */
+      readonly runtime: ManagedRuntime;
+      readonly outputToken?: never;
+    };
 
 /** Optional result of provider-specific cleanup performed before stop. */
 export interface ProviderProcessStopOptions {
   readonly cleanupResult?: ProcessCleanupResult;
   readonly terminationGraceMs?: number;
   readonly killGraceMs?: number;
+  /** The command's own stop request before owned group cleanup. */
+  readonly termination?: ProcessTerminationPolicy;
+}
+
+/** Non-JSON snapshot of the exact inspection facts retained by a stop attempt. */
+export interface ProviderProcessInspectionCleanup {
+  readonly causes: readonly unknown[];
+  readonly failures: readonly {
+    readonly failure: ProcessInspectionCleanupFailure;
+    readonly cause: unknown;
+  }[];
 }
 
 /** Exact disposition of one owned process stop attempt. */
@@ -240,6 +311,8 @@ export type ProviderProcessStopResult =
       readonly status: "incomplete";
       readonly reason: string;
       readonly cleanupResult?: ProcessCleanupFailure;
+      /** Current retained capabilities and their exact originating inspection facts; never JSON diagnostics. */
+      readonly inspectionCleanup?: ProviderProcessInspectionCleanup;
     };
 
 const incompleteCleanup = (
@@ -259,10 +332,10 @@ const incompleteCleanup = (
 export const spawnOwnedProviderProcess = async (
   options: OwnedProviderProcessSpawnOptions,
 ): Promise<SpawnedOwnedProviderProcess> => {
-  options.signal?.throwIfAborted();
+  assertProcessOwnershipInspectionActive(options.signal);
   await prepareProcessOwnershipInspection(options.signal);
-  options.signal?.throwIfAborted();
-  const platform = options.platform ?? process.platform;
+  assertProcessOwnershipInspectionActive(options.signal);
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const sweepTokenOwnedProcesses =
     options.sweepTokenOwnedProcesses === true && platform !== "win32";
   let captureBaseline: ProcessOwnershipBaseline | undefined;
@@ -271,7 +344,7 @@ export const spawnOwnedProviderProcess = async (
     if (capture === undefined)
       throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
-    options.signal?.throwIfAborted();
+    assertProcessOwnershipInspectionActive(options.signal);
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const selectedEnvironment = mergeEnvironmentOverrides(
@@ -286,7 +359,7 @@ export const spawnOwnedProviderProcess = async (
     { REA_PROCESS_RUN_ID: options.runId },
     platform,
   );
-  if (platform === "win32" && process.platform === "win32") {
+  if (platform === "win32" && HOST_PLATFORM.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
       options.arguments,
@@ -313,15 +386,20 @@ export const spawnOwnedProviderProcess = async (
   }
   if (options.memoryLimitBytes !== undefined)
     throw new ProcessAdmissionError("memory_limit_unsupported");
-  const child = spawn(options.command, [...options.arguments], {
-    shell: false,
-    windowsHide: true,
-    stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
-    detached: platform !== "win32",
-    windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
-    env: environment,
-    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(options.command, [...options.arguments], {
+      shell: false,
+      windowsHide: true,
+      stdio: [options.stdin ?? "ignore", "pipe", "pipe"],
+      detached: platform !== "win32",
+      windowsVerbatimArguments: options.windowsVerbatimArguments ?? false,
+      env: environment,
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    });
+  } catch (cause: unknown) {
+    throw nameSpawnedExecutable(cause, options.command);
+  }
   await waitForSpawn(child);
   const pid = child.pid;
   if (pid === undefined)
@@ -342,7 +420,29 @@ export const spawnOwnedProviderProcess = async (
       ? {}
       : { expectedCommand: options.expectedCommand ?? options.command }),
   };
-  return { process: child, ownership };
+  return {
+    process: child,
+    ownership,
+    requestStop: (signal) => signalUnreapedGroup(child, pid, signal),
+  };
+};
+
+/**
+ * Node sets exitCode or signalCode in the callback that reaps the leader, so
+ * until then the leader's PID still names the group the launch created.
+ */
+const signalUnreapedGroup = (
+  child: ChildProcess,
+  processGroupId: number,
+  signal: NodeJS.Signals,
+): boolean => {
+  if (child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    process.kill(-processGroupId, signal);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 /**
@@ -353,7 +453,8 @@ export const spawnOwnedProviderProcess = async (
  * bounded TERM-to-KILL escalation for a directly owned child.
  */
 export class ProviderProcessSupervisor {
-  readonly #options: ProviderProcessSupervisorOptions;
+  readonly #options: ProviderProcessSupervisorOptions &
+    ProviderProcessOutputTokenOptions;
   readonly #stdout = new ProcessOutputCapture();
   readonly #stderr = new ProcessOutputCapture();
   readonly #exit = deferred<ProviderProcessExitObservation>();
@@ -395,11 +496,13 @@ export class ProviderProcessSupervisor {
   ): void => {
     this.#recordExit(code, signal);
     this.#outputClosed = true;
-    if (!this.#disposed)
-      this.#options.onDiagnostic?.({
-        type: "output-close",
-        snapshot: this.snapshot(),
-      });
+    const onDiagnostic = this.#options.onDiagnostic;
+    if (!this.#disposed && onDiagnostic !== undefined) {
+      const raw = this.#captureSnapshotRaw();
+      onDiagnostic(
+        diagnosticEventWithLazySnapshot({ type: "output-close" }, raw),
+      );
+    }
     this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
@@ -412,16 +515,26 @@ export class ProviderProcessSupervisor {
   #exitObservation: ProviderProcessExitObservation | undefined;
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #stopRequested = false;
+  readonly #release = new AnalysisCleanupRelease();
   #disposed = false;
   #maxAggregateDiagnosticBytes: number | undefined;
   readonly #maxStreamDiagnosticBytes:
     | Exclude<ProcessDiagnosticBudget, number>
     | undefined;
   #outputEpoch = 0;
+  readonly #inspectionCleanup = new Map<
+    object,
+    {
+      readonly failure: ProcessInspectionCleanupFailure;
+      readonly origin: unknown;
+      cause: unknown;
+    }
+  >();
 
   constructor(
     readonly launch: ProviderProcessLaunch,
-    options: ProviderProcessSupervisorOptions = {},
+    options: ProviderProcessSupervisorOptions &
+      ProviderProcessOutputTokenOptions = {},
   ) {
     this.#options = options;
     const budget = options.maxDiagnosticBytes;
@@ -474,6 +587,27 @@ export class ProviderProcessSupervisor {
         : {}),
       ...(this.#stopRequested ? { stopRequested: true } : {}),
       ...(outputIncomplete ? { outputIncomplete: true } : {}),
+      ...this.#runtimeExhaustionWithin({ stdout: 0, stderr: 0 }),
+    };
+  }
+
+  /** Capture event-time bytes and flags without materializing UTF-8 strings yet. */
+  #captureSnapshotRaw(): RawProviderProcessSnapshot {
+    const outputIncomplete =
+      this.#outputIncomplete || this.launch.process.outputIncomplete === true;
+    return {
+      diagnosticTruncated: this.#diagnosticTruncated || outputIncomplete,
+      stdout: this.#stdout.snapshotRaw(this.#stdoutObservedBytes),
+      stderr: this.#stderr.snapshotRaw(this.#stderrObservedBytes),
+      exitCode: this.#exitObservation?.code,
+      signal: this.#exitObservation?.signal,
+      memoryLimitReached: this.launch.process.memoryLimitReached === true,
+      stopRequested: this.#stopRequested,
+      outputIncomplete,
+      runtimeExhaustion: this.#captureRuntimeExhaustionWithin({
+        stdout: 0,
+        stderr: 0,
+      }),
     };
   }
 
@@ -537,6 +671,7 @@ export class ProviderProcessSupervisor {
           ? { memoryLimitReached: true }
           : {}),
         ...(incomplete ? { outputIncomplete: true } : {}),
+        ...this.#runtimeExhaustionWithin(position),
       },
       complete: !incomplete,
       ...this.#markersWithin(position),
@@ -566,8 +701,44 @@ export class ProviderProcessSupervisor {
     return markers.length === 0 ? {} : { markers };
   }
 
+  /** The runtime's exhaustion report after a position; stderr is preferred. */
+  #captureRuntimeExhaustionWithin(position: {
+    readonly stdout: number;
+    readonly stderr: number;
+  }): RawRuntimeExhaustion | undefined {
+    const runtime = this.#options.runtime;
+    if (runtime === undefined) return undefined;
+    const stderr = this.#stderrMarker?.snapshotLatestWithin(
+      position.stderr,
+      this.#stderrObservedBytes,
+    );
+    if (stderr !== undefined)
+      return { runtime, stream: "stderr", token: stderr };
+    const stdout = this.#stdoutMarker?.snapshotLatestWithin(
+      position.stdout,
+      this.#stdoutObservedBytes,
+    );
+    return stdout === undefined
+      ? undefined
+      : { runtime, stream: "stdout", token: stdout };
+  }
+
+  #runtimeExhaustionWithin(position: {
+    readonly stdout: number;
+    readonly stderr: number;
+  }): Pick<ProviderProcessSnapshot, "runtimeExhaustion"> {
+    const raw = this.#captureRuntimeExhaustionWithin(position);
+    return raw === undefined
+      ? {}
+      : { runtimeExhaustion: materializeRuntimeExhaustion(raw) };
+  }
+
   #resetMarkers(): void {
-    const marker = this.#options.outputToken;
+    const runtime = this.#options.runtime;
+    const marker =
+      runtime === undefined
+        ? this.#options.outputToken
+        : RUNTIME_EXHAUSTION_TOKENS[runtime];
     this.#stdoutMarker =
       marker === undefined ? undefined : new ProcessOutputTokenScanner(marker);
     this.#stderrMarker =
@@ -638,13 +809,87 @@ export class ProviderProcessSupervisor {
     }
   }
 
+  /** Adopt only explicit inspection capabilities into this process owner's existing lifetime. */
+  retainInspectionFailure(cause: unknown): void {
+    for (const failure of processInspectionCleanupFailures(cause)) {
+      const owner =
+        failure instanceof DarwinProcessOwnershipInspectionError
+          ? failure.cleanupOwner
+          : failure.owner;
+      const key = owner ?? failure;
+      if (this.#inspectionCleanup.has(key)) continue;
+      this.#inspectionCleanup.set(key, {
+        failure,
+        origin: cause,
+        cause:
+          failure instanceof DarwinProcessOwnershipInspectionError
+            ? (failure.cleanupFailure ?? failure)
+            : failure.cleanupCause,
+      });
+    }
+  }
+
+  async #retryInspectionCleanup(): Promise<void> {
+    for (const [key, retained] of this.#inspectionCleanup) {
+      const owner =
+        retained.failure instanceof DarwinProcessOwnershipInspectionError
+          ? retained.failure.cleanupOwner
+          : retained.failure.owner;
+      if (owner === undefined) continue;
+      try {
+        await owner.close();
+        this.#inspectionCleanup.delete(key);
+      } catch (cause: unknown) {
+        retained.cause = cause;
+      }
+    }
+  }
+
+  #inspectionCleanupSnapshot(): ProviderProcessInspectionCleanup {
+    const retained = [...this.#inspectionCleanup.values()];
+    return {
+      causes: [...new Set(retained.map(({ origin }) => origin))],
+      failures: retained.map(({ failure, cause }) => ({ failure, cause })),
+    };
+  }
+
+  /** Retry only held inspection resources; success makes no process-cleanup claim. */
+  async retryInspectionCleanup(): Promise<
+    Result<void, ProviderProcessInspectionCleanup>
+  > {
+    await this.#retryInspectionCleanup();
+    return this.#inspectionCleanup.size === 0
+      ? ok(undefined)
+      : err(this.#inspectionCleanupSnapshot());
+  }
+
+  #inspectionStopFailure(reason: string): ProviderProcessStopResult {
+    return {
+      status: "incomplete",
+      reason,
+      ...(this.#inspectionCleanup.size === 0
+        ? {}
+        : { inspectionCleanup: this.#inspectionCleanupSnapshot() }),
+    };
+  }
+
+  /**
+   * Confirmed once a stop proves this process ended; errors reporting the
+   * process read it instead of being told.
+   */
+  get cleanupRelease(): AnalysisCleanupReleaseClaim {
+    return this.#release;
+  }
+
   /** Share each stop attempt; incomplete cleanup retains ownership and permits retry. */
   stop(
     options: ProviderProcessStopOptions = {},
   ): Promise<ProviderProcessStopResult> {
-    this.#stopRequested = true;
+    if (this.launch.ownsProcessLifetime && this.#exitObservation === undefined)
+      this.#stopRequested = true;
     this.#stopPromise ??= this.#stop(options).then((result) => {
       if (result.status === "incomplete") this.#stopPromise = undefined;
+      else if (result.status !== "not-owned") this.#release.confirm();
       return result;
     });
     return this.#stopPromise;
@@ -717,7 +962,23 @@ export class ProviderProcessSupervisor {
   ): Promise<ProviderProcessStopResult> {
     try {
       if (!this.launch.ownsProcessLifetime) return { status: "not-owned" };
+      await this.#retryInspectionCleanup();
+      if (this.#inspectionCleanup.size > 0)
+        return this.#inspectionStopFailure(
+          [...this.#inspectionCleanup.values()]
+            .map(({ cause }) => errorMessage(cause))
+            .join("; "),
+        );
       if (this.launch.cleanup !== undefined) {
+        // The command's own stop request comes first; owned cleanup then
+        // kills whatever remains, so the grace period only delays it.
+        if (
+          options.termination !== undefined &&
+          options.cleanupResult === undefined &&
+          this.#exitObservation === undefined &&
+          this.launch.requestStop?.(options.termination.signal) === true
+        )
+          await this.waitForExit(options.termination.graceMs);
         const graceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
         const exitObservedBeforeCleanup = this.#exitObservation !== undefined;
         const cleanup = await this.#ownedCleanup(options.cleanupResult);
@@ -762,13 +1023,12 @@ export class ProviderProcessSupervisor {
         reason: "owned provider process did not exit after SIGKILL",
       };
     } catch (cause: unknown) {
-      return {
-        status: "incomplete",
-        reason:
-          cause instanceof Error
-            ? cause.message
-            : "owned provider process cleanup failed",
-      };
+      this.retainInspectionFailure(cause);
+      return this.#inspectionStopFailure(
+        cause instanceof Error
+          ? cause.message
+          : "owned provider process cleanup failed",
+      );
     }
   }
 
@@ -872,17 +1132,131 @@ export class ProviderProcessSupervisor {
     if (this.#exitObservation !== undefined) return;
     this.#exitObservation = { code, signal };
     this.#exit.resolve(this.#exitObservation);
-    this.#options.onDiagnostic?.({
-      type: "exit",
-      code,
-      signal,
-      snapshot: this.snapshot(),
-    });
+    const onDiagnostic = this.#options.onDiagnostic;
+    if (onDiagnostic === undefined) return;
+    const raw = this.#captureSnapshotRaw();
+    onDiagnostic(
+      diagnosticEventWithLazySnapshot({ type: "exit", code, signal }, raw),
+    );
   }
 }
 
+interface RawRuntimeExhaustion {
+  readonly runtime: ManagedRuntime;
+  readonly stream: "stdout" | "stderr";
+  readonly token: RawProcessOutputToken;
+}
+
+interface RawOutputCapture {
+  readonly chunks: readonly Buffer[];
+  readonly bytes: number;
+  readonly observedBytes: number;
+}
+
+interface RawProviderProcessSnapshot {
+  readonly diagnosticTruncated: boolean;
+  readonly stdout: RawOutputCapture;
+  readonly stderr: RawOutputCapture;
+  readonly exitCode: number | null | undefined;
+  readonly signal: NodeJS.Signals | null | undefined;
+  readonly memoryLimitReached: boolean;
+  readonly stopRequested: boolean;
+  readonly outputIncomplete: boolean;
+  readonly runtimeExhaustion: RawRuntimeExhaustion | undefined;
+}
+
+const materializeRuntimeExhaustion = (
+  raw: RawRuntimeExhaustion,
+): RuntimeExhaustion =>
+  runtimeExhaustion(
+    raw.runtime,
+    raw.stream,
+    materializeProcessOutputToken(raw.token),
+  );
+
+const materializeProviderProcessSnapshot = (
+  raw: RawProviderProcessSnapshot,
+): ProviderProcessSnapshot => ({
+  ...(raw.diagnosticTruncated ? { diagnosticTruncated: true } : {}),
+  stdout: materializeCapturedOutput(
+    raw.stdout.chunks,
+    raw.stdout.bytes,
+    raw.stdout.observedBytes,
+  ),
+  stderr: materializeCapturedOutput(
+    raw.stderr.chunks,
+    raw.stderr.bytes,
+    raw.stderr.observedBytes,
+  ),
+  exitCode: raw.exitCode,
+  signal: raw.signal,
+  ...(raw.memoryLimitReached ? { memoryLimitReached: true } : {}),
+  ...(raw.stopRequested ? { stopRequested: true } : {}),
+  ...(raw.outputIncomplete ? { outputIncomplete: true } : {}),
+  ...(raw.runtimeExhaustion === undefined
+    ? {}
+    : {
+        runtimeExhaustion: materializeRuntimeExhaustion(raw.runtimeExhaustion),
+      }),
+});
+
+const diagnosticEventWithLazySnapshot = <
+  Event extends { readonly type: "exit" | "output-close" },
+>(
+  fields: Event,
+  raw: RawProviderProcessSnapshot,
+): Event & { readonly snapshot: ProviderProcessSnapshot } => {
+  let pending: RawProviderProcessSnapshot | undefined = raw;
+  let snapshot: ProviderProcessSnapshot | undefined;
+  return Object.defineProperty({ ...fields }, "snapshot", {
+    enumerable: true,
+    get() {
+      if (snapshot === undefined) {
+        snapshot = materializeProviderProcessSnapshot(pending!);
+        pending = undefined;
+      }
+      return snapshot;
+    },
+  }) as Event & { readonly snapshot: ProviderProcessSnapshot };
+};
+
+const EMPTY_CHUNKS: readonly Buffer[] = [];
+const EMPTY_OUTPUT_BUFFER = Buffer.alloc(0);
+
+const materializeCapturedOutput = (
+  chunks: readonly Buffer[],
+  bytes: number,
+  observedBytes: number,
+): ProviderProcessSnapshot["stdout"] => {
+  const buffer =
+    chunks.length === 0
+      ? EMPTY_OUTPUT_BUFFER
+      : chunks.length === 1
+        ? chunks[0]!
+        : Buffer.concat(chunks, bytes);
+  return snapshotOutputBuffer(buffer, observedBytes);
+};
+
+const snapshotOutputBuffer = (
+  buffer: Buffer,
+  observedBytes: number,
+): ProviderProcessSnapshot["stdout"] => {
+  if (buffer.byteLength === 0) return { text: "", bytes: 0, observedBytes };
+  const text = buffer.toString("utf8");
+  const invalidUtf8 = !isStrictUtf8(buffer);
+  return {
+    text,
+    bytes: buffer.byteLength,
+    observedBytes,
+    ...(invalidUtf8 ? { invalidUtf8: true } : {}),
+  };
+};
+
 class ProcessOutputCapture {
-  readonly #chunks: Buffer[] = [];
+  #chunks: Buffer[] = [];
+  // Copy-on-write: shared with pending lazy snapshots until the next mutation or reset.
+  #sharedChunks = false;
+  // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
   #start = 0;
@@ -891,15 +1265,28 @@ class ProcessOutputCapture {
     return this.#bytes;
   }
 
+  #mutableChunks(): Buffer[] {
+    if (this.#sharedChunks) {
+      this.#chunks = this.#chunks.slice();
+      this.#sharedChunks = false;
+    }
+    return this.#chunks;
+  }
+
   reset(): void {
-    this.#chunks.length = 0;
+    if (this.#sharedChunks) {
+      this.#chunks = [];
+      this.#sharedChunks = false;
+    } else {
+      this.#chunks.length = 0;
+    }
     this.#bytes = 0;
     this.#start = 0;
   }
 
   append(chunk: Buffer): void {
     this.#bytes += chunk.byteLength;
-    this.#chunks.push(Buffer.from(chunk));
+    this.#mutableChunks().push(Buffer.from(chunk));
   }
 
   /**
@@ -932,8 +1319,9 @@ class ProcessOutputCapture {
         ((first[drop] ?? 0) & 0xc0) === 0x80
       )
         drop += 1;
-      if (drop === first.byteLength) this.#chunks.shift();
-      else if (drop > 0) this.#chunks[0] = Buffer.from(first.subarray(drop));
+      if (drop === first.byteLength) this.#mutableChunks().shift();
+      else if (drop > 0)
+        this.#mutableChunks()[0] = Buffer.from(first.subarray(drop));
       this.#bytes -= drop;
       this.#start += drop;
       remaining -= Math.min(remaining, drop);
@@ -941,11 +1329,19 @@ class ProcessOutputCapture {
     }
   }
 
-  snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    return this.#snapshotBuffer(
-      Buffer.concat(this.#chunks, this.#bytes),
+  snapshotRaw(observedBytes: number): RawOutputCapture {
+    if (this.#chunks.length === 0)
+      return { chunks: EMPTY_CHUNKS, bytes: 0, observedBytes };
+    this.#sharedChunks = true;
+    return {
+      chunks: this.#chunks,
+      bytes: this.#bytes,
       observedBytes,
-    );
+    };
+  }
+
+  snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
+    return materializeCapturedOutput(this.#chunks, this.#bytes, observedBytes);
   }
 
   snapshotRange(
@@ -968,29 +1364,10 @@ class ProcessOutputCapture {
     }
     const buffer = Buffer.concat(chunks, availableEnd - availableStart);
     return {
-      stream: this.#snapshotBuffer(buffer, Math.max(0, end - start)),
+      stream: snapshotOutputBuffer(buffer, Math.max(0, end - start)),
       complete:
         start === end ||
         (start >= this.#start && start <= retainedEnd && end <= retainedEnd),
-    };
-  }
-
-  #snapshotBuffer(
-    buffer: Buffer,
-    observedBytes: number,
-  ): ProviderProcessSnapshot["stdout"] {
-    const text = buffer.toString("utf8");
-    let invalidUtf8 = false;
-    try {
-      new TextDecoder("utf-8", { fatal: true }).decode(buffer);
-    } catch {
-      invalidUtf8 = true;
-    }
-    return {
-      text,
-      bytes: buffer.byteLength,
-      observedBytes,
-      ...(invalidUtf8 ? { invalidUtf8: true } : {}),
     };
   }
 }

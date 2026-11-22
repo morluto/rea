@@ -36,7 +36,7 @@ it("bounds repeated capture checks while preserving unindexed and escaped unknow
   const first = sites[0];
   if (first === undefined || !t.isIdentifier(first.arguments[0]))
     throw new Error("Expected capture");
-  expect(index.referenceMayHaveChangedAt(first, first.arguments[0])).toBe(true);
+  expect(index.mayObserve(first, first.arguments[0])).toBe(true);
   completeSemanticSteps(index.indexMemberMutationFactsSteps());
   const binding = index.bindingForReferenceAt(first.arguments[0]);
   if (binding === undefined) throw new Error("Expected local binding");
@@ -51,7 +51,7 @@ it("bounds repeated capture checks while preserving unindexed and escaped unknow
   const changed = sites.map((site) => {
     const reference = site.arguments[0];
     if (!t.isIdentifier(reference)) throw new Error("Expected local reference");
-    return index.referenceMayHaveChangedAt(site, reference, ["webPreferences"]);
+    return index.mayObserve(site, reference, ["webPreferences"]);
   });
   expect(changed).toEqual([
     false,
@@ -258,7 +258,7 @@ if (globalThis.register) {
 const conditionalAlias = conditional;
 conditionalAlias.handle("conditional-alias:ping", () => "local");
 `;
-  const parsed = parseJavaScriptSource(text, "aliases.js");
+  const parsed = parseJavaScriptSource(text, "aliases.cjs");
   if (parsed === null) throw new Error("Expected parsed source");
 
   const index = completeSemanticSteps(
@@ -267,6 +267,21 @@ conditionalAlias.handle("conditional-alias:ping", () => "local");
   const electron = completeSemanticSteps(
     indexJavaScriptElectronIdentitySteps(parsed.program, index.bindings),
   );
+  const unknown = parseJavaScriptSource(text, "aliases.js");
+  if (unknown === null) throw new Error("Expected unknown-host source");
+  const unknownIndex = completeSemanticSteps(
+    indexJavaScriptBindingsWithReceiversSteps(unknown.program),
+  );
+  const candidates = completeSemanticSteps(
+    indexJavaScriptElectronIdentitySteps(
+      unknown.program,
+      unknownIndex.bindings,
+    ),
+  );
+  expect(candidates.bindings.size).toBe(0);
+  expect(candidates.candidateBindings.get(text.indexOf("Win({"))).toEqual([
+    "BrowserWindow",
+  ]);
   expect([...electron.bindings]).toEqual([
     [text.indexOf("Win({"), ["BrowserWindow"]],
     [text.indexOf("bridge.exposeInMainWorld"), ["contextBridge"]],

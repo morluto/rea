@@ -1,3 +1,5 @@
+import { bindSessionEvidenceExecution } from "./SessionEvidenceReuse.js";
+import { admitCompletedAnalysis } from "../investigation/admitCompletedAnalysis.js";
 import { randomUUID } from "node:crypto";
 import {
   writeEvidenceBundle,
@@ -5,9 +7,13 @@ import {
 } from "../EvidenceBundleFiles.js";
 import type { ResetInvestigationReceipt } from "../../domain/investigationLifecycle.js";
 
-import { retainSavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+import {
+  retainSavedAnalysisSnapshot,
+  type SavedAnalysisSnapshot,
+} from "../../domain/savedAnalysisSnapshot.js";
 
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import { AnalysisCleanupRelease } from "../../domain/analysisCleanupRelease.js";
 import {
   analysisProfilesEqual,
   type AnalysisProfileCommitment,
@@ -16,6 +22,9 @@ import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
+  isAborted,
+  cancelledBy,
+  OwnerCancellation,
 } from "../../domain/analysisErrorCore.js";
 import {
   AnalysisError,
@@ -32,12 +41,11 @@ import type {
   AnalysisOperationPort,
   ProviderIdentity,
   AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type {
   BinarySessionPort,
   BinaryOpenResult,
   OpenSelectionReceipt,
-  SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
@@ -50,8 +58,12 @@ import {
 } from "./SessionProviderPolicy.js";
 import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
+import { recoverProviderSourceFailure } from "../investigation/sourcePublicationRecovery.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
-import { binarySessionStatus } from "./BinarySessionStatus.js";
+import {
+  binarySessionStatus,
+  currentRouteCapability,
+} from "./BinarySessionStatus.js";
 import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
@@ -67,8 +79,13 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
-import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  analysisErrorWithCloseRejection,
+  analysisErrorWithCloseRejections,
+} from "../../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -79,15 +96,13 @@ import {
   parseBinaryTarget,
   type BinaryTargetResolverOptions,
 } from "../BinaryTargetResolver.js";
-import {
-  resolveAppBundleResourceRoot,
-  type ResolvedAppBundleResourceRoot,
-} from "../AppBundleExecutable.js";
-import {
-  BUNDLE_RESOURCE_OPERATIONS,
-  type ActiveBundleResourceSession,
-  type BundleResourceClientFactory,
+import { resolveAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
+import type {
+  ActiveBundleResourceSession,
+  BundleResourceClientFactory,
 } from "./BundleResourceSession.js";
+import { BUNDLE_RESOURCE_OPERATIONS } from "../../ports/BundleResourceOperations.js";
 
 interface SessionRun {
   readonly client: AnalysisClient;
@@ -106,18 +121,6 @@ interface CleanupFailureTracker {
   readonly error: AnalysisError | undefined;
   readonly onFailure: (failure: AnalysisError) => void;
 }
-
-/** Compose live cleanup facts without treating an unowned rejection as completion. */
-const sessionCleanupFailure = (
-  primary: AnalysisError,
-  cleanup: AnalysisError,
-  operation: string,
-): AnalysisError => {
-  const failure = analysisErrorWithCleanupFailure(primary, cleanup, operation);
-  return cleanup.cleanupIncomplete
-    ? failure.bindCleanupDependencies([primary, cleanup])
-    : failure;
-};
 
 const trackCleanupFailures = (
   signal: AbortSignal | undefined,
@@ -140,22 +143,25 @@ const trackCleanupFailures = (
         return;
       observed.add(failure);
       if (cleanupFailure === undefined) {
-        if (isAborted(signal))
-          cancellation = new AnalysisCancelledError(operation, {
-            cause: signal?.reason,
-          });
+        if (isAborted(signal)) cancellation = cancelledBy(operation, signal);
         cleanupFailure = failure;
       } else {
         // Both operands are cleanup observations here. An earlier rejection
         // without a live lifecycle must not disappear when a later owner resolves.
-        cleanupFailure = cleanupFailure.cleanupIncomplete
-          ? sessionCleanupFailure(cleanupFailure, failure, operation)
-          : analysisErrorWithCleanupFailure(cleanupFailure, failure, operation);
+        cleanupFailure = analysisErrorWithCloseRejections(
+          cleanupFailure,
+          failure,
+          operation,
+        );
       }
       error =
         cancellation === undefined
           ? cleanupFailure
-          : sessionCleanupFailure(cancellation, cleanupFailure, operation);
+          : analysisErrorWithCloseRejection(
+              cancellation,
+              cleanupFailure,
+              operation,
+            );
     },
   };
 };
@@ -188,7 +194,8 @@ export class BinarySession
     | {
         readonly run: SessionRun;
         readonly retainDocument: boolean;
-        readonly failures: Set<AnalysisError>;
+        /** Confirmed by the client's close; failures it reported read it. */
+        readonly release: AnalysisCleanupRelease;
       }
     | undefined;
   #transition: Promise<void> = Promise.resolve();
@@ -215,21 +222,25 @@ export class BinarySession
     this.#bundleResourceFactory = bundleResourceFactory;
   }
 
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession(): BinarySession {
+    return new BinarySession(this.#providerRouter.auxiliaryOnly());
+  }
+
   /** Open an app resource root without requiring CFBundleExecutable. */
   openBundleResources(
     path: string,
     options: Pick<ExecutionOptions, "signal"> = {},
   ): Promise<Result<ResolvedAppBundleResourceRoot, AnalysisError>> {
     return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_bundle_resources");
+      const refused = this.#targetAcquisitionRefused(
+        "open_bundle_resources",
+        options.signal,
+      );
       if (refused !== undefined) return refused;
       await this.#drainCalls(admittedThrough);
       if (isAborted(options.signal))
-        return err(
-          new AnalysisCancelledError("open_bundle_resources", {
-            cause: options.signal?.reason,
-          }),
-        );
+        return err(cancelledBy("open_bundle_resources", options.signal));
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
         return err(this.#externalMutationCleanupFailure);
       if (this.#bundleResourceFactory === undefined)
@@ -243,22 +254,14 @@ export class BinarySession
       const resolved = await resolveAppBundleResourceRoot(path);
       if (!resolved.ok) return resolved;
       if (isAborted(options.signal))
-        return err(
-          new AnalysisCancelledError("open_bundle_resources", {
-            cause: options.signal?.reason,
-          }),
-        );
+        return err(cancelledBy("open_bundle_resources", options.signal));
       const pendingClosed = await this.#retryPendingCleanup();
       if (!pendingClosed.ok) return pendingClosed;
       const pendingResourcesClosed =
         await this.#retryPendingBundleResourceCleanup();
       if (!pendingResourcesClosed.ok) return pendingResourcesClosed;
       if (isAborted(options.signal))
-        return err(
-          new AnalysisCancelledError("open_bundle_resources", {
-            cause: options.signal?.reason,
-          }),
-        );
+        return err(cancelledBy("open_bundle_resources", options.signal));
       const runId = randomUUID();
       let bundleClient: Awaited<
         ReturnType<BundleResourceClientFactory["createClient"]>
@@ -291,7 +294,7 @@ export class BinarySession
         return err(
           closed.ok
             ? started.error
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 started.error,
                 closed.error,
                 "open_bundle_resources",
@@ -299,15 +302,13 @@ export class BinarySession
         );
       }
       if (isAborted(options.signal)) {
-        const cancelled = new AnalysisCancelledError("open_bundle_resources", {
-          cause: options.signal?.reason,
-        });
+        const cancelled = cancelledBy("open_bundle_resources", options.signal);
         this.#pendingBundleResourceCleanup.push(candidate);
         const closed = await this.#retryPendingBundleResourceCleanup();
         return err(
           closed.ok
             ? cancelled
-            : sessionCleanupFailure(
+            : analysisErrorWithCloseRejection(
                 cancelled,
                 closed.error,
                 "open_bundle_resources",
@@ -330,7 +331,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? primary
-              : analysisErrorWithCleanupFailure(
+              : analysisErrorWithCloseRejections(
                   primary,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -338,9 +339,7 @@ export class BinarySession
         );
       }
       if (isAborted(options.signal)) {
-        const cancelled = new AnalysisCancelledError("open_bundle_resources", {
-          cause: options.signal?.reason,
-        });
+        const cancelled = cancelledBy("open_bundle_resources", options.signal);
         this.#pendingBundleResourceCleanup.push(candidate);
         const candidateClosed = await this.#retryPendingBundleResourceCleanup(
           undefined,
@@ -350,7 +349,7 @@ export class BinarySession
           cleanupFailures.error ??
             (candidateClosed.ok
               ? cancelled
-              : sessionCleanupFailure(
+              : analysisErrorWithCloseRejection(
                   cancelled,
                   candidateClosed.error,
                   "open_bundle_resources",
@@ -378,16 +377,14 @@ export class BinarySession
   ): Promise<Result<BinaryTarget, AnalysisError> | undefined> {
     const live = await this.#retainedClientLive(retained.client, options);
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     if (!live) return undefined;
     if (options.snapshot !== undefined) {
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -401,10 +398,6 @@ export class BinarySession
     if (operation === "decompile_all") return false;
     if (this.#activeBundleResources !== undefined) return false;
     return routeAllowsSnapshotReplay(this.#active?.route, operation);
-  }
-
-  invalidateSnapshotForExternalMutation(): void {
-    this.invalidateSnapshot();
   }
 
   /** Return the selected immutable profile, optionally scoped to an operation. */
@@ -449,13 +442,7 @@ export class BinarySession
     options: BinarySessionOpenOptions = {},
   ): Promise<Result<ResolvedSessionOpen, AnalysisError>> {
     if (isAborted(options.signal))
-      return Promise.resolve(
-        err(
-          new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
-          }),
-        ),
-      );
+      return Promise.resolve(err(cancelledBy("open_binary", options.signal)));
     return resolveSessionTarget({
       router: this.#providerRouter,
       current: this.#active,
@@ -465,11 +452,7 @@ export class BinarySession
         this.snapshotMismatch(target, profile),
     }).then((resolved) =>
       resolved.ok && isAborted(options.signal)
-        ? err(
-            new AnalysisCancelledError("open_binary", {
-              cause: options.signal?.reason,
-            }),
-          )
+        ? err(cancelledBy("open_binary", options.signal))
         : resolved,
     );
   }
@@ -527,7 +510,10 @@ export class BinarySession
       const attempt = async (): Promise<
         Result<BinaryTarget, AnalysisError>
       > => {
-        const refused = this.#targetAcquisitionRefused("open_binary");
+        const refused = this.#targetAcquisitionRefused(
+          "open_binary",
+          options.signal,
+        );
         if (refused !== undefined) return refused;
         const admitted = await this.#withLoadedSnapshot(options);
         if (!admitted.ok) return admitted;
@@ -558,6 +544,9 @@ export class BinarySession
         kind: "binary",
         path: this.#active.target.path,
         sha256: this.#active.target.sha256,
+        ...(this.#active.target.callerInputPath === undefined
+          ? {}
+          : { caller_input_path: this.#active.target.callerInputPath }),
       };
     if (this.#activeBundleResources !== undefined)
       return {
@@ -574,11 +563,7 @@ export class BinarySession
   ): Promise<Result<BinarySessionOpenOptions, AnalysisError>> {
     if (options.loadSnapshot === undefined) return ok(options);
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const loaded = await options.loadSnapshot();
     if (!loaded.ok) return loaded;
     const { loadSnapshot: _loaded, ...rest } = options;
@@ -593,21 +578,14 @@ export class BinarySession
     if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true)
       return err(this.#externalMutationCleanupFailure);
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const resolved = await resolve();
     if (!resolved.ok) return resolved;
-    const { target, route, sameTarget } = resolved.value;
-    const { profile } = route;
+    const { target, sameTarget } = resolved.value;
+    let { route } = resolved.value;
+    let { profile } = route;
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const activeProfile = this.#active?.profile;
     const sameProfile =
       activeProfile === null || activeProfile === undefined
@@ -615,22 +593,14 @@ export class BinarySession
         : profile !== null && analysisProfilesEqual(activeProfile, profile);
     await this.#drainCalls(admittedThrough);
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const pendingClosed = await this.#retryPendingCleanup();
     if (!pendingClosed.ok) return pendingClosed;
     const pendingResourcesClosed =
       await this.#retryPendingBundleResourceCleanup();
     if (!pendingResourcesClosed.ok) return pendingResourcesClosed;
     if (isAborted(options.signal))
-      return err(
-        new AnalysisCancelledError("open_binary", {
-          cause: options.signal?.reason,
-        }),
-      );
+      return err(cancelledBy("open_binary", options.signal));
     const retained = sameTarget && sameProfile ? this.#active : undefined;
     if (retained !== undefined) {
       const fastPath = await this.#tryRetainedFastPath(
@@ -651,13 +621,11 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
-              new AnalysisCancelledError("open_binary", {
-                cause: options.signal?.reason,
-              }),
+            analysisErrorWithCleanupDependencies(
+              cancelledBy("open_binary", options.signal),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }
@@ -666,11 +634,32 @@ export class BinarySession
       return err(
         await this.#restoreAfterFailedOpen(
           previous,
-          new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
-          }),
+          cancelledBy("open_binary", options.signal),
         ),
       );
+    if (previous !== undefined) {
+      const refreshed = await this.#providerRouter.refreshAfterRetirement(
+        route,
+        target,
+        options.signal,
+      );
+      const admitted = refreshed.ok
+        ? validateResolvedSessionTarget({
+            target,
+            route: refreshed.value,
+            current: previous,
+            options,
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
+          })
+        : refreshed;
+      if (!admitted.ok)
+        return err(
+          await this.#restoreAfterFailedOpen(previous, admitted.error),
+        );
+      route = admitted.value.route;
+      profile = route.profile;
+    }
     const runId = randomUUID();
     const client = route.createClient(target, {
       runId,
@@ -685,9 +674,7 @@ export class BinarySession
         await this.#failedOpen(
           run,
           previous,
-          new AnalysisCancelledError("open_binary", {
-            cause: options.signal?.reason,
-          }),
+          cancelledBy("open_binary", options.signal),
         ),
       );
     }
@@ -711,9 +698,7 @@ export class BinarySession
       }
     }
     if (isAborted(options.signal)) {
-      const cancelled = new AnalysisCancelledError("open_binary", {
-        cause: options.signal?.reason,
-      });
+      const cancelled = cancelledBy("open_binary", options.signal);
       const failed = await this.#failedOpen(
         run,
         previous,
@@ -763,6 +748,15 @@ export class BinarySession
       failure: AnalysisError | undefined,
     ) => Promise<Result<null, AnalysisError>>,
   ): Promise<Result<Result<Value, AnalysisError>, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(
+        err(
+          cancelledBy(
+            operationName,
+            isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
+          ),
+        ),
+      );
     return this.#serialize(async (admittedThrough) => {
       if (this.#activeBundleResources !== undefined)
         return err(
@@ -772,15 +766,9 @@ export class BinarySession
             "External mutation requires an active executable analysis target.",
           ),
         );
-      if (isAborted(signal))
-        return err(
-          new AnalysisCancelledError(operationName, { cause: signal?.reason }),
-        );
+      if (isAborted(signal)) return err(cancelledBy(operationName, signal));
       await this.#drainCalls(admittedThrough);
-      if (isAborted(signal))
-        return err(
-          new AnalysisCancelledError(operationName, { cause: signal?.reason }),
-        );
+      if (isAborted(signal)) return err(cancelledBy(operationName, signal));
 
       if (this.#externalMutationCleanupFailure?.cleanupIncomplete === true) {
         if (cleanupRecovery === undefined)
@@ -793,9 +781,7 @@ export class BinarySession
             isAborted(signal)
               ? analysisErrorWithCancellation(
                   recovered.error,
-                  new AnalysisCancelledError(operationName, {
-                    cause: signal?.reason,
-                  }),
+                  cancelledBy(operationName, signal),
                 )
               : recovered.error,
           );
@@ -804,9 +790,7 @@ export class BinarySession
             isAborted(signal)
               ? analysisErrorWithCancellation(
                   this.#externalMutationCleanupFailure,
-                  new AnalysisCancelledError(operationName, {
-                    cause: signal?.reason,
-                  }),
+                  cancelledBy(operationName, signal),
                 )
               : this.#externalMutationCleanupFailure,
           );
@@ -819,16 +803,11 @@ export class BinarySession
           isAborted(signal)
             ? analysisErrorWithCancellation(
                 pendingCleanup.error,
-                new AnalysisCancelledError(operationName, {
-                  cause: signal?.reason,
-                }),
+                cancelledBy(operationName, signal),
               )
             : pendingCleanup.error,
         );
-      if (isAborted(signal))
-        return err(
-          new AnalysisCancelledError(operationName, { cause: signal?.reason }),
-        );
+      if (isAborted(signal)) return err(cancelledBy(operationName, signal));
 
       const activeAtDispatch = this.#active;
       if (activeAtDispatch?.route.binding?.identity.id === "ghidra")
@@ -852,19 +831,17 @@ export class BinarySession
           const primary = completionFailure(value, retired.error);
           const failure =
             retired.error.cleanupIncomplete && primary !== retired.error
-              ? analysisErrorWithCleanupFailure(
+              ? analysisErrorWithCleanupDependencies(
                   primary,
                   retired.error,
                   operationName,
-                ).bindCleanupDependencies([primary, retired.error])
+                )
               : primary;
           return err(
             isAborted(signal)
               ? analysisErrorWithCancellation(
                   failure,
-                  new AnalysisCancelledError(operationName, {
-                    cause: signal?.reason,
-                  }),
+                  cancelledBy(operationName, signal),
                 )
               : failure,
           );
@@ -872,12 +849,7 @@ export class BinarySession
       }
       if (isAborted(signal))
         return err(
-          completionFailure(
-            value,
-            new AnalysisCancelledError(operationName, {
-              cause: signal?.reason,
-            }),
-          ),
+          completionFailure(value, cancelledBy(operationName, signal)),
         );
       return ok(value);
     });
@@ -894,9 +866,15 @@ export class BinarySession
 
   #targetAcquisitionRefused(
     operation: "open_binary" | "open_bundle_resources",
+    signal?: AbortSignal,
   ): Result<never, AnalysisCancelledError> | undefined {
     if (!this.#shutdownStarted) return undefined;
-    return err(new AnalysisCancelledError(operation));
+    return err(
+      cancelledBy(
+        operation,
+        isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
+      ),
+    );
   }
 
   /** Release the engine and replay state while retaining investigation history. */
@@ -977,15 +955,19 @@ export class BinarySession
   ): Promise<Result<ResetInvestigationReceipt, AnalysisError>> {
     if (this.#shutdownStarted)
       return Promise.resolve(
-        err(new AnalysisCancelledError("reset_investigation")),
+        err(
+          cancelledBy(
+            "reset_investigation",
+            isAborted(options.signal)
+              ? options.signal
+              : OwnerCancellation.ownerClosed,
+          ),
+        ),
       );
     return this.#serialize(async (admittedThrough) => {
       await this.#drainCalls(admittedThrough);
-      const cancelled = () =>
-        new AnalysisCancelledError("reset_investigation", {
-          cause: options.signal?.reason,
-        });
-      if (isAborted(options.signal)) return err(cancelled());
+      if (isAborted(options.signal))
+        return err(cancelledBy("reset_investigation", options.signal));
       const adapterResources = await options.retryCleanup?.();
       if (adapterResources !== undefined && !adapterResources.ok)
         return adapterResources;
@@ -1001,7 +983,8 @@ export class BinarySession
         const candidates = await this.#providerRouter.closeOwnedResources();
         if (!candidates.ok) return candidates;
       }
-      if (isAborted(options.signal)) return err(cancelled());
+      if (isAborted(options.signal))
+        return err(cancelledBy("reset_investigation", options.signal));
       const statistics = this.investigationStatistics();
       let saved: ResetInvestigationReceipt["saved_bundle"];
       if (options.savePath !== undefined) {
@@ -1021,12 +1004,11 @@ export class BinarySession
       // the investigation if cancellation arrived during publication/cleanup.
       if (isAborted(options.signal))
         return err(
-          new AnalysisCancelledError("reset_investigation", {
-            cause: options.signal?.reason,
-            ...(saved === undefined
-              ? {}
-              : { diagnostics: { saved_bundle: saved } }),
-          }),
+          cancelledBy(
+            "reset_investigation",
+            options.signal,
+            saved === undefined ? {} : { diagnostics: { saved_bundle: saved } },
+          ),
         );
       this.clearInvestigationRecords();
       return ok({
@@ -1130,24 +1112,20 @@ export class BinarySession
     let resourceFailure = resourceFailures[0];
     for (const next of resourceFailures.slice(1))
       if (resourceFailure !== undefined) {
-        const previous = resourceFailure;
-        resourceFailure = analysisErrorWithCleanupFailure(
-          previous,
+        resourceFailure = analysisErrorWithCloseRejections(
+          resourceFailure,
           next,
           "close_binary",
         );
-        if (previous.cleanupIncomplete && next.cleanupIncomplete)
-          resourceFailure.bindCleanupDependencies([previous, next]);
       }
     if (!closed.ok && resourceFailure !== undefined) {
-      const combined = analysisErrorWithCleanupFailure(
-        closed.error,
-        resourceFailure,
-        "close_binary",
+      return err(
+        analysisErrorWithCloseRejections(
+          closed.error,
+          resourceFailure,
+          "close_binary",
+        ),
       );
-      if (closed.error.cleanupIncomplete && resourceFailure.cleanupIncomplete)
-        combined.bindCleanupDependencies([closed.error, resourceFailure]);
-      return err(combined);
     }
     if (!closed.ok) return closed;
     return resourceFailure === undefined ? ok(null) : err(resourceFailure);
@@ -1172,20 +1150,14 @@ export class BinarySession
       );
       if (!closed.ok) {
         retained.push(session);
-        const previous = failure;
         failure =
-          previous === undefined
+          failure === undefined
             ? closed.error
-            : analysisErrorWithCleanupFailure(
-                previous,
+            : analysisErrorWithCloseRejections(
+                failure,
                 closed.error,
                 "close_binary",
               );
-        if (
-          previous?.cleanupIncomplete === true &&
-          closed.error.cleanupIncomplete
-        )
-          failure.bindCleanupDependencies([previous, closed.error]);
       }
     }
     this.#pendingBundleResourceCleanup = retained;
@@ -1202,7 +1174,7 @@ export class BinarySession
     this.#pendingCleanup = {
       run,
       retainDocument: options.retainDocument === true,
-      failures: new Set(),
+      release: new AnalysisCleanupRelease(),
     };
     return this.#retryPendingCleanup(
       options.progress,
@@ -1229,18 +1201,15 @@ export class BinarySession
         ...(progress === undefined ? {} : { progress }),
         ...(pending.retainDocument ? { retainDocument: true } : {}),
         onCleanupFailure: (failure) => {
-          if (failure.cleanupIncomplete) pending.failures.add(failure);
+          pending.release.bindUnowned(failure);
           onCleanupFailure?.(failure);
         },
       },
     );
     if (closed.ok) {
-      for (const failure of pending.failures)
-        if (!failure.hasCleanupOwner) failure.resolveCleanup();
+      pending.release.confirm();
       this.#pendingCleanup = undefined;
-    } else if (closed.error.cleanupIncomplete) {
-      pending.failures.add(closed.error);
-    }
+    } else pending.release.bindUnowned(closed.error);
     return closed;
   }
 
@@ -1254,8 +1223,16 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
-      return sessionCleanupFailure(primary, closed.error, "open_binary");
+    if (!closed.ok) {
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
+      return analysisErrorWithCloseRejection(
+        primary,
+        closed.error,
+        "open_binary",
+      );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1265,13 +1242,14 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
       ),
     });
     return restored.error.cleanupIncomplete
-      ? sessionCleanupFailure(primary, restored.error, "open_binary")
+      ? analysisErrorWithCloseRejection(primary, restored.error, "open_binary")
       : primary;
   }
 
@@ -1280,8 +1258,20 @@ export class BinarySession
     options: {
       readonly signal?: AbortSignal;
       readonly detail?: BinarySessionDetail;
+      readonly refreshCandidates?: boolean;
     } = {},
   ): Promise<JsonValue> {
+    return options.refreshCandidates === true
+      ? this.#serialize(() => this.#status(options), { abortPrompts: false })
+      : this.#status(options);
+  }
+
+  /** Keep an explicit candidate refresh ordered with target transitions. */
+  #status(options: {
+    readonly signal?: AbortSignal;
+    readonly detail?: BinarySessionDetail;
+    readonly refreshCandidates?: boolean;
+  }): Promise<JsonValue> {
     const resourceRun = this.#activeBundleResources;
     const run =
       this.#active ??
@@ -1321,11 +1311,6 @@ export class BinarySession
       : structuredClone(this.#active.target);
   }
 
-  activeBundleResourceRoot(): ResolvedAppBundleResourceRoot | undefined {
-    const root = this.#activeBundleResources?.root;
-    return root === undefined ? undefined : structuredClone(root);
-  }
-
   override exportAnalysisSnapshot() {
     if (this.#activeBundleResources !== undefined)
       return err(new ResourceSnapshotMismatchError("export"));
@@ -1352,8 +1337,44 @@ export class BinarySession
     arguments_: Readonly<Record<string, JsonValue>>,
     options?: ExecutionOptions,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    return this.#trackedExecute(name, arguments_, options);
+  }
+
+  /** Preserve the one-shot caller's Evidence identity if source retention fails. */
+  executeForDirectObservation(
+    name: Parameters<AnalysisOperationPort["execute"]>[0],
+    arguments_: Readonly<Record<string, JsonValue>>,
+    evidenceParameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    return this.#trackedExecute(name, arguments_, options, evidenceParameters);
+  }
+
+  #trackedExecute(
+    name: Parameters<AnalysisOperationPort["execute"]>[0],
+    arguments_: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
+  ): Promise<Result<AnalysisExecution, AnalysisError>> {
+    if (this.#shutdownStarted)
+      return Promise.resolve(
+        err(
+          cancelledBy(
+            name,
+            isAborted(options?.signal)
+              ? options.signal
+              : OwnerCancellation.ownerClosed,
+          ),
+        ),
+      );
     const generation = this.#transitionGeneration;
-    const call = this.#execute(name, arguments_, options, this.#transition);
+    const call = this.#execute(
+      name,
+      arguments_,
+      options,
+      this.#transition,
+      recoveryParameters,
+    );
     this.#calls.set(call, generation);
     return call.finally(() => this.#calls.delete(call));
   }
@@ -1366,6 +1387,7 @@ export class BinarySession
   ): Promise<Result<AnalysisExecution, AnalysisError> | undefined> {
     const active = this.#active;
     if (
+      this.#shutdownStarted ||
       this.#transitionPending > 0 ||
       active === undefined ||
       active.client.executeIfReady === undefined
@@ -1397,7 +1419,14 @@ export class BinarySession
     operation: (analysis: AnalysisOperationPort) => Promise<Value>,
   ): Promise<Result<Value, AnalysisError>> {
     if (this.#shutdownStarted)
-      return Promise.resolve(err(new AnalysisCancelledError(operationName)));
+      return Promise.resolve(
+        err(
+          cancelledBy(
+            operationName,
+            isAborted(signal) ? signal : OwnerCancellation.ownerClosed,
+          ),
+        ),
+      );
     const generation = this.#transitionGeneration;
     const transition = this.#transition;
     const call = (async (): Promise<Result<Value, AnalysisError>> => {
@@ -1425,6 +1454,7 @@ export class BinarySession
     arguments_: Readonly<Record<string, JsonValue>>,
     options: ExecutionOptions | undefined,
     transition: Promise<void>,
+    recoveryParameters?: Readonly<Record<string, JsonValue>>,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
     const transitioned = await this.#waitForTransition(
       name,
@@ -1449,12 +1479,15 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    const sessionBinding = this.#active;
     const prepared = prepareSessionExecution({
-      active: this.#active,
+      active: sessionBinding,
       operation: name,
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
-      nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      nativeSourceAdmitted: sessionBinding?.nativeSourceAdmitted === true,
+      isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
+      isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
       lookupSnapshot: (target, profile, operation, parameters) =>
@@ -1467,8 +1500,20 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const call = active.client.execute(name, arguments_, options);
-    const result = unrecordedExecution(await call);
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
+    const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
       name,
@@ -1489,12 +1534,14 @@ export class BinarySession
         : profiled;
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
+    const currentBinding = this.#active;
     if (
       execution.ok &&
       capability.provider.id === "ghidra" &&
-      this.#active === active
+      currentBinding !== undefined &&
+      currentBinding.runId === sessionBinding?.runId
     )
-      this.#active.nativeSourceAdmitted = true;
+      currentBinding.nativeSourceAdmitted = true;
     if (
       this.#runtimeAvailability.observe(
         dispatch,
@@ -1511,34 +1558,73 @@ export class BinarySession
         (source) => this.recordEvidence(source),
         execution.value.sourceEvidence,
       );
-      if (!sourcesRecorded.ok) return sourcesRecorded;
+      if (!sourcesRecorded.ok) {
+        recoverProviderSourceFailure({
+          error: sourcesRecorded.error,
+          operation: name,
+          parameters: recoveryParameters ?? arguments_,
+          execution: {
+            ...execution.value,
+            sourceEvidence: execution.value.sourceEvidence,
+            subject:
+              execution.value.subject === undefined
+                ? active.target
+                : execution.value.subject,
+          },
+          admit: this.admitRecoveryObservation.bind(this),
+          evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
+        });
+        return sourcesRecorded;
+      }
     }
     if (
       execution.ok &&
-      isSourceEvidenceRetainable(
-        name,
-        capability,
-        arguments_,
-        options?.snapshotContext,
-      ) &&
+      isSourceEvidenceRetainable(name, capability, arguments_, {
+        snapshotContext: options?.snapshotContext,
+        requiresSourceEvidence: execution.value.requiresSourceEvidence === true,
+      }) &&
       profile !== undefined
     ) {
+      const evidenceExecution = {
+        ...execution.value,
+        analysisProfile: profile,
+        subject:
+          execution.value.subject === undefined
+            ? active.target
+            : execution.value.subject,
+      };
+      const admitted = admitCompletedAnalysis(
+        name,
+        arguments_,
+        evidenceExecution,
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
+      );
+      if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
         name,
         arguments_,
-        {
-          ...execution.value,
-          analysisProfile: profile,
-          subject:
-            execution.value.subject === undefined
-              ? active.target
-              : execution.value.subject,
-        },
+        evidenceExecution,
         "observed",
+        { callerTarget: active.target },
       );
       const recorded = this.recordEvidence(evidence);
-      if (!recorded.ok) return recorded;
-      const retained = { ...execution.value, evidenceId: evidence.evidence_id };
+      if (!recorded.ok) {
+        // The provider finished. A full ledger must not discard that observation.
+        recorded.error.retainPartialObservation(evidence);
+        return recorded;
+      }
+      const authenticated = this.evidenceForAnalysis(evidence.evidence_id);
+      const retained =
+        authenticated === undefined
+          ? { ...execution.value, evidenceId: evidence.evidence_id }
+          : bindSessionEvidenceExecution(
+              { ...execution.value, evidenceId: evidence.evidence_id },
+              authenticated,
+              active.target.callerInputPath,
+            );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({
           target: active.target,
@@ -1551,6 +1637,20 @@ export class BinarySession
       return ok(retained);
     }
     return execution;
+  }
+
+  /** Whether the active route can run an operation now, as status reports it. */
+  #currentlyAvailable(operation: string): boolean {
+    const active = this.#active;
+    const descriptor = active?.route.capabilities.get(operation);
+    return (
+      descriptor !== undefined &&
+      currentRouteCapability(
+        descriptor,
+        active?.target,
+        this.#runtimeAvailability.entries,
+      ).available
+    );
   }
 
   #clearRuntimeAvailability(): void {
@@ -1580,28 +1680,24 @@ export class BinarySession
 
   #serialize<T>(
     operation: (admittedThrough: number) => Promise<T>,
+    options: { readonly abortPrompts?: boolean } = {},
   ): Promise<T> {
-    for (const controller of this.#promptCompletionControllers)
-      controller.abort();
+    if (options.abortPrompts !== false)
+      for (const controller of this.#promptCompletionControllers)
+        controller.abort(OwnerCancellation.noLongerNeeded);
     this.#transitionPending += 1;
     // Later calls wait for this transition and must not be included in its drain.
     const admittedThrough = this.#transitionGeneration++;
-    const result = this.#transition.then(
-      () => operation(admittedThrough),
-      () => operation(admittedThrough),
-    );
+    const perform = (): Promise<T> => operation(admittedThrough);
+    const result = this.#transition.then(perform, perform);
     this.#transition = result.then(
       () => undefined,
       () => undefined,
     );
-    void result.then(
-      () => {
-        this.#transitionPending -= 1;
-      },
-      () => {
-        this.#transitionPending -= 1;
-      },
-    );
+    const finish = (): void => {
+      this.#transitionPending -= 1;
+    };
+    void result.then(finish, finish);
     return result;
   }
 
@@ -1644,19 +1740,33 @@ export class BinarySession
     }
   }
 
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
+  }
+
   async #restore(
     previous: SessionBinding | undefined,
   ): Promise<Result<null, AnalysisError>> {
     if (previous === undefined) return ok(null);
+    const refreshed = await this.#providerRouter.refreshAfterRetirement(
+      previous.route,
+      previous.target,
+    );
+    if (!refreshed.ok) return refreshed;
+    const route = refreshed.value;
     const runId = randomUUID();
-    const client = previous.route.createClient(previous.target, {
+    const client = route.createClient(previous.target, {
       runId,
     });
-    const run: SessionRun = { client, route: previous.route, runId };
+    const run: SessionRun = { client, route, runId };
     const started = await client.execute("health", {});
     if (started.ok) {
       this.#active = {
         ...previous,
+        profile: route.profile,
         ...run,
         nativeSourceAdmitted: false,
       };
@@ -1666,7 +1776,13 @@ export class BinarySession
     const closed = await this.#retireClient(run);
     return closed.ok
       ? err(started.error)
-      : err(sessionCleanupFailure(started.error, closed.error, "open_binary"));
+      : err(
+          analysisErrorWithCloseRejection(
+            started.error,
+            closed.error,
+            "open_binary",
+          ),
+        );
   }
 
   async #waitForTransition(
@@ -1674,50 +1790,23 @@ export class BinarySession
     signal: AbortSignal | undefined,
     transition: Promise<void>,
   ): Promise<Result<undefined, AnalysisCancelledError>> {
-    if (signal?.aborted === true)
-      return err(
-        new AnalysisCancelledError(operation, { cause: signal.reason }),
-      );
+    if (signal?.aborted === true) return err(cancelledBy(operation, signal));
     if (signal === undefined) {
       await transition;
       return ok(undefined);
     }
     return new Promise((resolve) => {
       const onAbort = (): void => {
-        resolve(
-          err(new AnalysisCancelledError(operation, { cause: signal.reason })),
-        );
+        resolve(err(cancelledBy(operation, signal)));
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      transition.then(
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-        () => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(
-            signal.aborted
-              ? err(
-                  new AnalysisCancelledError(operation, {
-                    cause: signal.reason,
-                  }),
-                )
-              : ok(undefined),
-          );
-        },
-      );
+      const finish = (): void => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(
+          signal.aborted ? err(cancelledBy(operation, signal)) : ok(undefined),
+        );
+      };
+      transition.then(finish, finish);
     });
   }
 }
-
-const isAborted = (signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true;

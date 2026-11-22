@@ -1,3 +1,7 @@
+import {
+  isJavaScriptModuleUnit,
+  isJavaScriptSourceModule,
+} from "./javascriptModuleUnits.js";
 import { posix, win32 } from "node:path";
 
 import type { ApplicationNode } from "./javascriptApplicationGraphSchemas.js";
@@ -156,19 +160,15 @@ const candidateCategory = (
 ): StaticRuntimeCandidate["category"] | null => {
   if (node.kind === "electron-renderer") return "renderer";
   if (
-    node.kind === "javascript-asset" ||
-    (node.kind === "javascript-module" && !isStaticSourceModule(node))
+    isJavaScriptModuleUnit(node) &&
+    (node.kind === "javascript-asset" ||
+      (node.kind === "javascript-module" && !isJavaScriptSourceModule(node)))
   )
     return "javascript";
   if (node.kind === "worker") return "worker";
   if (node.kind === "service-worker") return "service-worker";
   return null;
 };
-
-const isStaticSourceModule = (node: ApplicationNode): boolean =>
-  node.observations.some(
-    ({ properties }) => properties.semantic_role === "source-module",
-  );
 
 const indexStaticPaths = (
   graph: JavaScriptApplicationGraph,

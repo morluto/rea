@@ -1,7 +1,11 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { memberLookup, pairMembers } from "./viewPointer.js";
-import { zipLeavesOut } from "./zipView.js";
+import { holdsTagOnly, pairMembers } from "./memberPairing.js";
+import { memberLookup } from "./viewPointer.js";
+import { zipEntryAt, zipLeavesOut } from "./zipView.js";
+import { isRecord } from "../../kernel/isRecord.js";
+import { boundedList, type BoundedList } from "../boundedList.js";
 
 const MAX_LISTED = 100;
 
@@ -17,14 +21,6 @@ export interface DesktopStateDifference {
   /** False when either view was truncated, so absences may be outside the sample. */
   readonly complete: boolean;
 }
-
-const isRecord = (
-  value: JsonValue | undefined,
-): value is Record<string, JsonValue> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const escapePointer = (segment: string) =>
-  segment.replaceAll("~", "~0").replaceAll("/", "~1");
 
 /** Longest JSON pointer listed; a longer one is only counted, so deep paths never fill the lists. */
 const MAX_LISTED_POINTER = 4096;
@@ -63,6 +59,10 @@ const ownEntry = (value: JsonValue): string => {
 interface WalkOptions {
   readonly keyed?: boolean;
   readonly outermost?: boolean;
+  readonly format?: (
+    pointer: string,
+    older: boolean,
+  ) => string | null | undefined;
 }
 
 /** What a walk notes, and how; `older` when it walks the earlier version against the later one. */
@@ -76,12 +76,33 @@ interface Noting extends WalkOptions {
 const keyedMembers = (
   from: readonly JsonValue[],
   other: JsonValue | undefined,
-  older: boolean,
+  at: {
+    readonly older: boolean;
+    readonly list: string;
+    readonly format: string | null | undefined;
+    readonly otherFormat: string | null | undefined;
+  },
 ) => {
   const others = Array.isArray(other) ? other : [];
-  const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
+  // Different entry formats cannot share selector semantics. Preserve each
+  // side's resolvable positions instead of inventing cross-format identities.
+  if (
+    Array.isArray(other) &&
+    at.format !== at.otherFormat &&
+    at.format != null &&
+    at.otherFormat != null
+  )
+    return from.map((_item, index) => ({
+      key: String(index),
+      counterpart: others[index],
+    }));
+  const hold = holdsTagOnly(at.list);
+  const pairing = at.older
+    ? pairMembers(others, from, hold, at.format)
+    : pairMembers(from, others, hold, at.format);
+  const older = at.older;
   const side = older ? pairing.older : pairing.newer;
-  const lookup = memberLookup(other);
+  const lookup = memberLookup(other, [], at.otherFormat);
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
     // Once the array became another type, a member's counterpart is what its pointer names there.
@@ -111,7 +132,7 @@ const walk = (
   } else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
     note(into.changed, path);
   const visit = (key: string, item: JsonValue, counterpart?: JsonValue) => {
-    const segment = escapePointer(key);
+    const segment = escapeJsonPointerToken(key);
     path.segments.push(segment);
     path.length += segment.length + 1;
     walk(item, counterpart, path, into);
@@ -119,19 +140,44 @@ const walk = (
     path.length -= segment.length + 1;
   };
   if (Array.isArray(from) && into.keyed === true) {
-    const members = keyedMembers(from, other, into.older === true);
+    const members = keyedMembers(from, other, {
+      older: into.older === true,
+      list: path.segments.map((segment) => `/${segment}`).join(""),
+      format: into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older === true,
+      ),
+      otherFormat: into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
+    });
     from.forEach((item, index) => {
       const member = members[index];
       if (member !== undefined) visit(member.key, item, member.counterpart);
     });
   } else if (Array.isArray(from)) {
-    const lookup = memberLookup(other);
+    const lookup = memberLookup(
+      other,
+      [],
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
+    );
     from.forEach((item, index) =>
       visit(String(index), item, lookup(String(index))),
     );
   } else if (isRecord(from)) {
     // The keys go to the lookup together, so an array compared with an object is searched once per field set.
-    const lookup = memberLookup(other, Object.keys(from));
+    const lookup = memberLookup(
+      other,
+      Object.keys(from),
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
+    );
     for (const [key, item] of Object.entries(from))
       visit(key, item, lookup(key));
   }
@@ -163,6 +209,27 @@ const compareTrees = (
   };
 };
 
+/** Each list bounded to `MAX_LISTED`, with how many it held in all. */
+const listed = (
+  added: readonly string[],
+  removed: readonly string[],
+  changed: readonly string[],
+) => {
+  const total = ({ items, omitted }: BoundedList<string>) =>
+    items.length + omitted;
+  const a = boundedList(added, MAX_LISTED);
+  const r = boundedList(removed, MAX_LISTED);
+  const c = boundedList(changed, MAX_LISTED);
+  return {
+    added: a.items,
+    removed: r.items,
+    changed: c.items,
+    added_count: total(a),
+    removed_count: total(r),
+    changed_count: total(c),
+  };
+};
+
 const compareMaps = (
   kind: DesktopStateDifference["kind"],
   before: ReadonlyMap<string, string>,
@@ -179,12 +246,7 @@ const compareMaps = (
   for (const key of before.keys()) if (!after.has(key)) removed.push(key);
   return {
     kind,
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: changed.slice(0, MAX_LISTED),
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: changed.length,
+    ...listed(added, removed, changed),
     complete: true,
   };
 };
@@ -211,12 +273,7 @@ const lineDifference = (
   }
   return {
     kind: "lines",
-    added: added.slice(0, MAX_LISTED),
-    removed: removed.slice(0, MAX_LISTED),
-    changed: [],
-    added_count: added.length,
-    removed_count: removed.length,
-    changed_count: 0,
+    ...listed(added, removed, []),
     complete: true,
   };
 };
@@ -232,7 +289,10 @@ const keyEntries = (view: JsonValue): Map<string, string> => {
   for (const [group, keys] of Object.entries(groups))
     if (isRecord(keys))
       for (const [key, value] of Object.entries(keys))
-        entries.set(`${group}/${escapePointer(key)}`, JSON.stringify(value));
+        entries.set(
+          `${group}/${escapeJsonPointerToken(key)}`,
+          JSON.stringify(value),
+        );
   return entries;
 };
 
@@ -244,6 +304,24 @@ const unreadTables = (view: JsonValue): string[] =>
   Object.entries(tablesOf(view))
     .filter(([, table]) => isRecord(table) && typeof table.error === "string")
     .map(([name]) => name);
+
+/** A nullable SQLite primary key cannot identify a row on its own. */
+export const sqliteRowIdentity = (
+  columns: readonly JsonValue[],
+  key: readonly JsonValue[],
+  row: readonly JsonValue[],
+): { value: string; keyed: boolean } => {
+  const indexes = key.map((column) => columns.indexOf(column));
+  const keyed =
+    indexes.length > 0 &&
+    indexes.every(
+      (index) => index >= 0 && row[index] !== null && row[index] !== undefined,
+    );
+  return {
+    value: JSON.stringify(keyed ? indexes.map((index) => row[index]) : row),
+    keyed,
+  };
+};
 
 /**
  * `table:key` → row for SQLite views, keyed by primary key when there is one.
@@ -258,18 +336,13 @@ const rowEntries = (
     if (skipped.has(name) || !isRecord(table) || !Array.isArray(table.rows))
       continue;
     const columns = Array.isArray(table.columns) ? table.columns : [];
-    const keyColumns = (
-      Array.isArray(table.primary_key) ? table.primary_key : []
-    )
-      .map((column) => columns.indexOf(column))
-      .filter((index) => index >= 0);
+    const keyColumns = Array.isArray(table.primary_key)
+      ? table.primary_key
+      : [];
     const seen = new Map<string, number>();
     for (const row of table.rows) {
       if (!Array.isArray(row)) continue;
-      const identity =
-        keyColumns.length > 0
-          ? JSON.stringify(keyColumns.map((index) => row[index] ?? null))
-          : JSON.stringify(row);
+      const identity = sqliteRowIdentity(columns, keyColumns, row).value;
       // Rows without a key are compared as a multiset of whole rows.
       const occurrence = seen.get(identity) ?? 0;
       seen.set(identity, occurrence + 1);
@@ -294,13 +367,22 @@ const truncatedView = (view: JsonValue): boolean => {
   );
 };
 
-/** Describe how one state file changed between two readable versions. */
+/**
+ * Describe how one state file changed between two readable versions. With
+ * `named`, XML members are listed by the selectors naming them, as a check
+ * names them, and by position only where nothing names them or where only
+ * their order changed, which no selector shows.
+ */
 export const diffStateViews = (
   format: DesktopStateFormat,
   before: JsonValue,
   after: JsonValue,
+  options: { readonly named?: boolean } = {},
 ): DesktopStateDifference => {
-  const difference = compareViews(format, before, after);
+  const difference =
+    (format === "xml" || format === "json") && options.named === true
+      ? namedOrPositional(before, after, format)
+      : compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.
   const flagged = format === "text" || format === "xml" || format === "sqlite";
   const partial =
@@ -308,6 +390,21 @@ export const diffStateViews = (
       ? zipLeavesOut(before) || zipLeavesOut(after)
       : flagged && (truncatedView(before) || truncatedView(after));
   return partial ? { ...difference, complete: false } : difference;
+};
+
+/** An XML change keyed by selector, or by position when keying shows none, as when siblings only moved. */
+const namedOrPositional = (
+  before: JsonValue,
+  after: JsonValue,
+  format: "xml" | "json",
+): DesktopStateDifference => {
+  const named = compareTrees(before, after, {
+    keyed: true,
+    format: () => format,
+  });
+  return named.added_count + named.removed_count + named.changed_count > 0
+    ? named
+    : compareTrees(before, after);
 };
 
 const compareViews = (
@@ -322,7 +419,10 @@ const compareViews = (
     case "xml":
       return compareTrees(before, after);
     case "zip":
-      return compareTrees(before, after, { keyed: true });
+      return compareTrees(before, after, {
+        keyed: true,
+        format: archiveFormat(after, before),
+      });
     case "keyfile":
     case "dconf":
       return compareMaps("keys", keyEntries(before), keyEntries(after));
@@ -339,9 +439,28 @@ const compareViews = (
   }
 };
 
-/** How two zip views differ by name-addressed pointer, a member added or removed whole noted once, without its contents. */
-export const diffZipMembers = (
+/**
+ * How two views differ by name-addressed pointer, a member added or removed
+ * whole noted once, without its contents: an archive's entries, or an XML tree.
+ */
+export const diffNamedMembers = (
   before: JsonValue,
   after: JsonValue,
+  format: "json" | "xml" | "zip" = "xml",
 ): DesktopStateDifference =>
-  compareTrees(before, after, { keyed: true, outermost: true });
+  compareTrees(before, after, {
+    keyed: true,
+    outermost: true,
+    format: format === "zip" ? archiveFormat(after, before) : () => format,
+  });
+
+const archiveFormat =
+  (after: JsonValue, before: JsonValue) =>
+  (pointer: string, older: boolean): string | undefined => {
+    const entry = zipEntryAt(older ? before : after, pointer);
+    return typeof entry === "object" &&
+      entry !== null &&
+      typeof entry.format === "string"
+      ? entry.format
+      : undefined;
+  };

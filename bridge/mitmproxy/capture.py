@@ -5,10 +5,12 @@ The containing mitmdump process and its configuration directory are REA-owned.
 """
 
 import base64
+import errno
 import hashlib
 import ipaddress
 import json
 import math
+import os
 import re
 import resource
 from pathlib import Path
@@ -18,7 +20,6 @@ from mitmproxy import ctx, version
 from mitmproxy.io import tnetstring
 
 PROFILE = "12.3.1"
-OUTPUT_BYTES = 96 * 1024 * 1024
 CREDENTIALS = {b"authorization", b"proxy-authorization", b"cookie", b"set-cookie"}
 
 
@@ -204,7 +205,7 @@ def without_userinfo(value, base_scheme=None):
     raise CaptureFailure("decoder", "Normalized URL authority could not be bound to its source.")
 
 
-def project_record(state, secrets):
+def project_record(state, secrets, max_depth):
     binaries, numbers, redactions = [], [], []
     byte_secrets = []
     for secret in secrets:
@@ -251,8 +252,8 @@ def project_record(state, secrets):
         del redactions[before[2]:]
 
     def visit(value, path, depth=0, credential=False, transport_url=False, base_scheme=None):
-        if depth > 64:
-            raise CaptureFailure("input-limit", "Native capture exceeds the 64-level evidence nesting budget.", path)
+        if depth > max_depth:
+            raise CaptureFailure("input-limit", f"Native capture exceeds max_nesting_depth ({max_depth} levels).", path)
         if credential:
             validate_omitted(value, path, depth)
             redactions.append({"pointer": path, "reason": "transport-credential"})
@@ -337,22 +338,104 @@ def decode(request):
             except CaptureFailure:
                 raise
             except RecursionError:
-                raise CaptureFailure("input-limit", "Native parser exceeded its recursion budget at byte offset " + str(start) + ".") from None
+                raise CaptureFailure("unsupported", "Native parser reached Python's recursion limit at byte offset " + str(start) + ". max_nesting_depth does not raise that upstream limit.") from None
             except (ValueError, IndexError, UnicodeError, EOFError):
                 raise CaptureFailure("format", "Malformed native record at byte offset " + str(start) + ".") from None
             if not isinstance(state, dict):
                 raise CaptureFailure("format", "Native flow record must be a dictionary at byte offset " + str(start) + ".")
-            records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
+            records.append({"ordinal": len(records), "location": {"kind": "byte-range", "offset": start, "bytes": handle.tell() - start}, **project_record(state, request["sensitive_values"], request["budgets"]["depth"]), "limitations": ["Fields are original native states without FlowReader migration. Binary fields contain exact producer bytes; reported UTF-8 strings for those fields are derived display views. Unknown flow/version extensions are retained without interpretation."]})
     return {"decoder": {"id": "mitmproxy-native-tnetstring", "name": "REA offline native mitmproxy adapter", "version": PROFILE}, "container": {"reported": None, "numeric_literals": [], "redactions": [], "records_pointer": None}, "total_records": len(records), "records": records}
 
 
-def failure_reply(error):
+ADDRESS_BUDGET = 768 * 1024 * 1024
+CPU_BUDGET = 30
+EFFECTIVE_CPU_RECORD = "effective-cpu.json"
+
+
+def failure_reply(error, address_limit=None):
     """Keep producer constraints, resource exhaustion and adapter defects distinct."""
     if isinstance(error, CaptureFailure):
         return {"ok": False, "reason": error.reason, "message": str(error), "pointer": error.pointer}
+    if isinstance(error, RecursionError):
+        return {"ok": False, "reason": "unsupported", "message": "Native projection reached Python's recursion limit; max_nesting_depth does not raise that upstream limit.", "pointer": ""}
     if isinstance(error, MemoryError):
+        # The requested 768 MiB budget is not the ceiling when an inherited limit is tighter.
+        if address_limit is not None and address_limit < ADDRESS_BUDGET:
+            return _address_limit_reply(address_limit)
         return {"ok": False, "reason": "resource-limit", "message": "Native decoder exhausted its 768 MiB address-space budget.", "pointer": ""}
     return {"ok": False, "reason": "decoder", "message": "Offline native decoder failed unexpectedly: " + type(error).__name__ + ".", "pointer": ""}
+
+
+def _clamp_resource_limit(kind, requested):
+    """Lower one soft limit. Keep the inherited hard limit, including infinity."""
+    soft, hard = resource.getrlimit(kind)
+    finite = [requested] + [value for value in (soft, hard) if value != resource.RLIM_INFINITY]
+    effective = min(finite)
+    resource.setrlimit(kind, (effective, hard))
+    return effective
+
+
+def _record_cpu_limit(reply_path, effective, requested):
+    """Publish the installed CPU ceiling and the requested decoder budget.
+
+    SIGXCPU ends the process with no reply. The parent reads this sibling of
+    the reply when it observes that signal. Equality means the decoder budget
+    stopped the process; a lower installed value is an inherited ceiling.
+    """
+    target = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD)
+    temporary = Path(reply_path).with_name(EFFECTIVE_CPU_RECORD + ".tmp")
+    payload = json.dumps(
+        {"requested_seconds": requested, "seconds": effective},
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        os.write(descriptor, payload)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, target)
+
+
+def _address_limit_reply(effective):
+    """A memory refusal that names the inherited address-space ceiling."""
+    return {
+        "ok": False,
+        "reason": "fixed-limit",
+        "message": "The effective RLIMIT_AS of " + str(effective) + " bytes stopped the decoder. The requested 768 MiB address-space budget does not raise an inherited limit.",
+        "pointer": "",
+        "boundary": "memory",
+        "ceiling": {
+            "name": "The inherited address-space limit of " + str(effective) + " bytes",
+            "kind": "bytes",
+            "limit": effective,
+            "unit": "bytes",
+            "narrowing": "Raise the process RLIMIT_AS above this capture, or select a smaller capture.",
+        },
+    }
+
+
+def _file_limit_reply(effective):
+    """A reply that fits a tighter inherited file-size limit and names that limit."""
+    return json.dumps(
+        {
+            "ok": False,
+            "reason": "fixed-limit",
+            "message": "The effective RLIMIT_FSIZE of " + str(effective) + " bytes cannot hold the serialized reply. The requested output budget does not raise an inherited limit.",
+            "pointer": "",
+            "boundary": "file-size",
+            "ceiling": {
+                "name": "The inherited file-size limit of " + str(effective) + " bytes",
+                "kind": "bytes",
+                "limit": effective,
+                "unit": "bytes",
+                "narrowing": "Raise the process RLIMIT_FSIZE above the complete reply, or select a capture whose reply fits in the inherited limit.",
+            },
+        },
+        ensure_ascii=True,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("ascii")
 
 
 class OfflineCapture:
@@ -360,22 +443,35 @@ class OfflineCapture:
         loader.add_option("rea_request_path", str, "", "REA private offline capture request")
 
     def running(self):
-        resource.setrlimit(resource.RLIMIT_AS, (768 * 1024 * 1024, 768 * 1024 * 1024))
-        resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (OUTPUT_BYTES, OUTPUT_BYTES))
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-        request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
         try:
-            response = {"ok": True, "value": decode(request)}
-        except Exception as error:
-            response = failure_reply(error)
-        try:
+            address_limit = _clamp_resource_limit(resource.RLIMIT_AS, ADDRESS_BUDGET)
+            cpu_limit = _clamp_resource_limit(resource.RLIMIT_CPU, CPU_BUDGET)
+            # Zero never raises the inherited hard core limit, and it stops descendants from raising it.
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+            request = json.loads(Path(ctx.options.rea_request_path).read_text(encoding="utf-8"))
+            budgets = request["budgets"]
+            if any(type(budgets[key]) is not int or budgets[key] < 1 for key in ("inputBytes", "outputBytes", "depth")):
+                raise ValueError("Invalid admitted capture budgets")
+            output_bytes = budgets["outputBytes"]
+            _record_cpu_limit(request["reply_path"], cpu_limit, CPU_BUDGET)
+            file_limit = _clamp_resource_limit(resource.RLIMIT_FSIZE, output_bytes)
+            try:
+                response = {"ok": True, "value": decode(request)}
+            except Exception as error:
+                response = failure_reply(error, address_limit)
             try:
                 output = json.dumps(response, ensure_ascii=True, allow_nan=False, separators=(",", ":")).encode("ascii")
             except Exception as error:
-                output = json.dumps(failure_reply(error), separators=(",", ":")).encode("ascii")
-            if len(output) > OUTPUT_BYTES:
-                output = b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
+                output = json.dumps(failure_reply(error, address_limit), separators=(",", ":")).encode("ascii")
+            if len(output) > file_limit:
+                # file_limit is never above the requested budget. A lower value is the inherited cap.
+                output = (
+                    _file_limit_reply(file_limit)
+                    if file_limit < output_bytes
+                    else b'{"ok":false,"reason":"limit","message":"Native reply exceeds the complete-evidence output budget.","pointer":""}'
+                )
+            if len(output) > file_limit:
+                raise OSError(errno.EFBIG, "file-size limit cannot hold a limit refusal")
             Path(request["reply_path"]).write_bytes(output)
         finally:
             ctx.master.shutdown()

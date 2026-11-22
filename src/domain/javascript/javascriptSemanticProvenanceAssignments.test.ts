@@ -1,10 +1,13 @@
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const provenance = (source: string, name: string) => {
-  const result = analyzeJavaScriptSemantics(source);
+  const file = parseJavaScriptSource(source, "fixture.cjs");
+  if (file === null) throw new Error("Expected valid CommonJS fixture");
+  const result = analyzeParsedJavaScriptSemantics(file);
   const binding = result.bindings.find((candidate) => candidate.name === name);
   if (binding === undefined) throw new Error(`Missing binding ${name}`);
   return binding.provenance;

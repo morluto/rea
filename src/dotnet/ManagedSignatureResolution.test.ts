@@ -6,30 +6,31 @@ import { describe, expect, it, vi } from "vitest";
 import {
   attachManagedDecodeBudget,
   ManagedDecodeBudget,
-} from "./ManagedDecodeBudget.js";
+} from "../domain/managed/managedDecodeBudget.js";
 import type { ManagedParseIssue } from "../domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
   parseTypes,
-  signature,
+  methodGenericArity,
   readTypeDefinitions,
   type SignatureTypeName,
-} from "./ManagedMemberInspectorCore.js";
+} from "../domain/managed/managedMemberInspectorCore.js";
+import { signature } from "../../tests/fixtures/managedSignature.js";
 import {
   metadataRowOffset,
   readManagedMetadataLayout,
-} from "./ManagedMetadataLayout.js";
+} from "../domain/managed/managedMetadataLayout.js";
 import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { compareManagedMembers } from "../domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { managedSignatureTypeNames } from "./ManagedSignatureTypeNames.js";
-import { metadataCodedIndexCoordinate } from "./ManagedMetadataHeaps.js";
-import { managedTypeReferences } from "./ManagedTypeReferences.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
+import { managedSignatureTypeNames } from "../domain/managed/managedSignatureTypeNames.js";
+import { metadataCodedIndexCoordinate } from "../domain/managed/managedMetadataHeaps.js";
+import { managedTypeReferences } from "../domain/managed/managedTypeReferences.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
 
 // A top-level type's name digest, as ManagedSignatureTypeNames forms it.
 const nameDigest = (name: string): Buffer => {
@@ -59,30 +60,15 @@ const named =
     return name === undefined ? null : nameDigest(name);
   };
 
-describe("layoutless signature coordinates", () => {
-  it.each([
-    [0, 2, 0],
-    [0x25, 1, 9],
-    [0x07, undefined, 1],
-  ] as const)(
-    "keeps layoutless operand %s decoded without admitting a metadata row",
-    (value, table, row) => {
-      const name = vi.fn<SignatureTypeName>(() => Buffer.alloc(32));
-      const result = signature(
-        Buffer.from([0x06, 0x12, value]),
-        undefined,
-        name,
-      );
-
-      expect(result.parse_status).toBe("decoded");
-      expect(result.resolved_sha256).toMatch(/^[0-9a-f]{64}$/u);
-      expect(name).toHaveBeenCalledTimes(1);
-      expect(name).toHaveBeenCalledWith(
-        expect.objectContaining({ value, coordinate: { table, row } }),
-      );
-    },
-  );
-});
+it.each([0, 0x25, 0x07])(
+  "recovers method generic arity without admitting type coordinate %i",
+  (value) => {
+    const layout = metadataLayout(buildManagedPeFixture());
+    expect(
+      methodGenericArity(layout, Buffer.from([0x10, 0x01, 0, 0x12, value])),
+    ).toBe(1);
+  },
+);
 
 describe("resolved member signature digests", () => {
   it("names modifier, class, and generic type operands instead of their rows", () => {
@@ -346,8 +332,8 @@ describe("type operand names", () => {
     });
 
     expect(inspection.fields[0]?.signature.parse_status).toBe("malformed");
-    expect(inspection.fields[0]?.signature.issue).toContain(
-      "coded index selects row 9 in table 1, which has 1 rows",
+    expect(inspection.fields[0]?.signature.issue).toMatch(
+      /row 9.*table 1.*1 rows/iu,
     );
     expect(inspection.fields[0]?.signature.resolved_sha256).toBeNull();
     expect(inspection.coverage.state).toBe("partial");
@@ -616,30 +602,16 @@ describe("signature display name validity", () => {
 });
 
 describe("signature display compatibility and capacity", () => {
-  it("reads historical v1 Evidence without relabelling its raw display", () => {
+  it("refuses the retired v1 signature-resolution attestation", () => {
     const current = inspectDisplayFixture({
       fieldSignature: Buffer.from([0x06, 0x12, 0x04]),
     });
-    const old = {
-      ...current,
-      signature_resolution: "type-names-v1",
-      fields: current.fields.map((field) => ({
-        ...field,
-        signature: { ...field.signature, field_type: "class:4" },
-      })),
-    };
-    const parsed = managedMemberInspectionSchema.parse(old);
-    const comparison = compareManagedMembers(
-      { evidenceId: `ev_${"a".repeat(64)}`, result: parsed },
-      { evidenceId: `ev_${"b".repeat(64)}`, result: current },
-    );
-    expect(comparison.fields[0]?.status).toBe("unchanged");
-    expect(comparison.methods[0]?.status).toBe("unchanged");
-    expect(parsed.signature_resolution).toBe("type-names-v1");
-    expect(parsed.fields[0]?.signature.field_type).toBe("class:4");
-    expect(parsed.fields[0]?.signature.resolved_sha256).toBe(
-      current.fields[0]?.signature.resolved_sha256,
-    );
+    expect(
+      managedMemberInspectionSchema.safeParse({
+        ...current,
+        signature_resolution: "type-names-v1",
+      }).error?.issues[0]?.path,
+    ).toEqual(["signature_resolution"]);
   });
 
   it.each([64, 65])("bounds a real %i-level TypeRef display path", (depth) => {
@@ -747,5 +719,139 @@ describe("signature display property regressions", () => {
       ),
       { seed: 5149, numRuns: 1000 },
     );
+  });
+});
+
+describe("comparison of edges to a TypeSpec-owned member", () => {
+  // call MemberRef(0x0a000001), whose parent is TypeSpec 0x1b000001; a
+  // non-generic TypeSpec has no nominal name, so the edge target has no identity.
+  const body = (token: number) =>
+    Buffer.concat([
+      Buffer.from([(6 << 2) | 2, 0x28]),
+      (() => {
+        const operand = Buffer.alloc(4);
+        operand.writeUInt32LE(token, 0);
+        return operand;
+      })(),
+      Buffer.from([0x2a]),
+    ]);
+  const typeSpecMember = (token: number) =>
+    inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      ilBody: body(token),
+    });
+
+  it("reports unchanged for the same token of the same artifact", () => {
+    const inspection = typeSpecMember(0x0a00_0001);
+    expect(inspection.call_edges[0]?.target_identity_sha256).toBeNull();
+    expect(inspection.call_edges[0]?.target_declaring_type).toBeNull();
+    expect(inspection.call_edges[0]?.target_row_resolved).toBe(true);
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+    );
+    expect(comparison.methods[0]?.status).toBe("unchanged");
+  });
+
+  it("keeps unknown for the same token across different artifacts", () => {
+    const left = typeSpecMember(0x0a00_0001);
+    const right = inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      ilBody: body(0x0a00_0001),
+      mvid: Buffer.alloc(16, 7),
+    });
+    expect(left.artifact.sha256).not.toBe(right.artifact.sha256);
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: left },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: right },
+    );
+    expect(comparison.methods[0]?.status).toBe("unknown");
+    expect(comparison.methods[0]?.dimensions).toContain("availability");
+  });
+
+  it.each([
+    ["missing row", 0x0a00_0002, Buffer.from([0, 0, 1])],
+    ["wrong member kind", 0x0a00_0001, Buffer.from([6, 8])],
+    ["undecoded target signature", 0x0a00_0001, Buffer.from([0, 0, 0x7f])],
+  ] as const)(
+    "keeps a %s unknown in the same artifact",
+    (_name, token, signature) => {
+      const inspection = inspectDisplayFixture({
+        typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+        memberRefParentRaw: (1 << 3) | 4,
+        memberRefSignature: signature,
+        ilBody: body(token),
+      });
+      const comparison = compareManagedMembers(
+        { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+        { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+      );
+      expect(comparison.methods[0]?.status).toBe("unknown");
+    },
+  );
+
+  it.each([
+    ["zero arguments", [0x0a, 0], false],
+    ["wrong argument count", [0x0a, 2, 8, 8], false],
+    ["malformed argument", [0x0a, 1, 0x7f], false],
+    ["unresolved argument", [0x0a, 1, 0x12, 0x19], false],
+    ["resolved argument", [0x0a, 1, 8], true],
+  ] as const)(
+    "validates a TypeSpec-owned MethodSpec with %s independently",
+    (_name, instantiation, resolved) => {
+      const inspection = inspectDisplayFixture({
+        typeSpecSignatures: [Buffer.from([0x1d, 8])],
+        memberRefParentRaw: 12,
+        memberRefSignature: Buffer.from([0x10, 1, 0, 1]),
+        methodSpecMethods: [3],
+        methodSpecInstantiation: Buffer.from(instantiation),
+        ilBody: body(0x2b00_0001),
+      });
+      expect(inspection.call_edges[0]?.target_identity_sha256).toBeNull();
+      expect(inspection.call_edges[0]?.target_row_resolved).toBe(resolved);
+      const comparison = compareManagedMembers(
+        { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+        { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+      );
+      expect(comparison.methods[0]?.status).toBe(
+        resolved ? "unchanged" : "unknown",
+      );
+    },
+  );
+
+  it("refuses an edge that omits its target-row resolution", () => {
+    const inspection = typeSpecMember(0x0a00_0001);
+    expect(
+      managedMemberInspectionSchema.safeParse({
+        ...inspection,
+        call_edges: inspection.call_edges.map(
+          ({ target_row_resolved: _omitted, ...edge }) => edge,
+        ),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("compares a proven TypeSpec field row through the same owner", () => {
+    const operand = Buffer.alloc(4);
+    operand.writeUInt32LE(0x0a00_0001);
+    const inspection = inspectDisplayFixture({
+      typeSpecSignatures: [Buffer.from([0x1d, 0x08])],
+      memberRefParentRaw: (1 << 3) | 4,
+      memberRefSignature: Buffer.from([6, 8]),
+      ilBody: Buffer.concat([
+        Buffer.from([0x1e, 0x7e]),
+        operand,
+        Buffer.from([0x26, 0x2a]),
+      ]),
+    });
+    expect(inspection.field_accesses[0]?.target_identity_sha256).toBeNull();
+    expect(inspection.field_accesses[0]?.target_row_resolved).toBe(true);
+    const comparison = compareManagedMembers(
+      { evidenceId: `ev_${"a".repeat(64)}`, result: inspection },
+      { evidenceId: `ev_${"b".repeat(64)}`, result: inspection },
+    );
+    expect(comparison.methods[0]?.status).toBe("unchanged");
   });
 });
