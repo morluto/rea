@@ -135,9 +135,10 @@ export const waitForPosixObservation = async <Value>(
       return "done";
     }
   };
-  await (options?.interval === undefined
-    ? expect.poll(attempt)
-    : expect.poll(attempt, { interval: options.interval })
+  await (
+    options?.interval === undefined
+      ? expect.poll(attempt)
+      : expect.poll(attempt, { interval: options.interval })
   ).toBe("done");
   if (outcome?.status === "error") throw outcome.cause;
   if (outcome?.status !== "settled")
