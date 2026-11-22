@@ -74,6 +74,10 @@ export interface ApiSurfaceComparisonGroup {
   readonly exactPathOrdinal: (path: string) => number | undefined;
 }
 
+/** Reported once per view when a selected name list cannot be complete. */
+export const UNREADABLE_HEADER_NAMES =
+  "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.";
+
 const sortedNames = (names: Names) =>
   [...names]
     .sort(([a], [b]) => compare(a, b))
@@ -368,11 +372,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
               "Some retained records have unavailable status or content type values.",
             ]
           : []),
-        ...(this.#unreadableHeaderMember
-          ? [
-              "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
-            ]
-          : []),
+        ...(this.#unreadableHeaderMember ? [UNREADABLE_HEADER_NAMES] : []),
       ],
     };
   }

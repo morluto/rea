@@ -8,6 +8,7 @@ import {
   projectAnalysisView,
 } from "./analysisView.js";
 import { projectAnalysisError } from "../analysisErrorProjection.js";
+import { UNREADABLE_HEADER_NAMES } from "./WebNetworkApiSurfaceAccumulator.js";
 
 const project = (
   capture = analysisViewCaptureFixture(),
@@ -240,9 +241,7 @@ it("keeps header names typed when recorded members are malformed", () => {
   });
   expect(JSON.stringify(result.value)).not.toContain("untyped");
   expect(JSON.stringify(result.value)).not.toContain("nameless");
-  expect(result.value.unknowns).toContain(
-    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
-  );
+  expect(result.value.unknowns).toContain(UNREADABLE_HEADER_NAMES);
 });
 
 it("treats a recorded non-array header collection as an unreadable member", () => {
@@ -274,9 +273,7 @@ it("treats a recorded non-array header collection as an unreadable member", () =
     set_cookie_names: [],
   });
   expect(JSON.stringify(result.value)).not.toContain("crafted-cookie-name");
-  expect(result.value.unknowns).toContain(
-    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
-  );
+  expect(result.value.unknowns).toContain(UNREADABLE_HEADER_NAMES);
 });
 
 it("keeps a recorded empty header or cookie name apart from an omitted member", () => {
@@ -311,9 +308,7 @@ it("keeps a recorded empty header or cookie name apart from an omitted member", 
     cookie_names: [{ name: "", record_ordinals: [0] }],
     set_cookie_names: [{ name: "", record_ordinals: [0] }],
   });
-  expect(result.value.unknowns).toContain(
-    "Some retained header, cookie or set-cookie members have no string name, so the selected name lists are incomplete.",
-  );
+  expect(result.value.unknowns).toContain(UNREADABLE_HEADER_NAMES);
 });
 
 it("preserves decoded empty and Unicode query names, plus distinctions and caller ordinal order", () => {
