@@ -53,96 +53,43 @@ type Selection<C extends MemberCollection, T extends Row, K extends keyof T> = {
 };
 
 interface CollectionFilterIndex {
-  readonly byName: ReadonlyMap<string, readonly number[]> | undefined;
-  readonly unresolvedName: readonly number[];
-  readonly byDeclaringType: ReadonlyMap<string, readonly number[]> | undefined;
-  readonly unresolvedDeclaringType: readonly number[];
+  readonly byValue: ReadonlyMap<string, readonly number[]>;
+  readonly unresolved: number;
 }
 
 const managedViewIndexes = new WeakMap<
-  object,
-  Map<string, CollectionFilterIndex>
+  readonly object[],
+  Map<PropertyKey, CollectionFilterIndex>
 >();
-
-const pushRowIndex = (
-  map: Map<string, number[]>,
-  key: string,
-  index: number,
-): void => {
-  let bucket = map.get(key);
-  if (bucket === undefined) {
-    bucket = [];
-    map.set(key, bucket);
-  }
-  bucket.push(index);
-};
 
 const getCollectionFilterIndex = <T extends Row>(
   cacheOwner: object | undefined,
-  collection: string,
   rows: readonly T[],
-  nameKey: keyof T | undefined,
-  declaringTypeKey: keyof T | undefined,
+  key: keyof T,
 ): CollectionFilterIndex | undefined => {
   if (cacheOwner === undefined || !isImmutableJsonSnapshot(cacheOwner))
     return undefined;
-  let byCollection = managedViewIndexes.get(cacheOwner);
-  if (byCollection === undefined) {
-    byCollection = new Map();
-    managedViewIndexes.set(cacheOwner, byCollection);
+  let indexes = managedViewIndexes.get(rows);
+  if (indexes === undefined) {
+    indexes = new Map();
+    managedViewIndexes.set(rows, indexes);
   }
-  let cached = byCollection.get(collection);
+  const cached = indexes.get(key);
   if (cached !== undefined) return cached;
-  const byName =
-    nameKey === undefined ? undefined : new Map<string, number[]>();
-  const unresolvedName: number[] = [];
-  const byDeclaringType =
-    declaringTypeKey === undefined ? undefined : new Map<string, number[]>();
-  const unresolvedDeclaringType: number[] = [];
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row === undefined) continue;
-    if (byName !== undefined && nameKey !== undefined) {
-      const value = row[nameKey];
-      if (typeof value === "string") pushRowIndex(byName, value, index);
-      else unresolvedName.push(index);
-    }
-    if (byDeclaringType !== undefined && declaringTypeKey !== undefined) {
-      const value = row[declaringTypeKey];
-      if (typeof value === "string")
-        pushRowIndex(byDeclaringType, value, index);
-      else unresolvedDeclaringType.push(index);
+  const byValue = new Map<string, number[]>();
+  let unresolved = 0;
+  for (const [index, row] of rows.entries()) {
+    const value = row[key];
+    if (typeof value !== "string") unresolved += 1;
+    else {
+      const bucket = byValue.get(value);
+      if (bucket === undefined) byValue.set(value, [index]);
+      else bucket.push(index);
     }
   }
-  cached = {
-    byName,
-    unresolvedName,
-    byDeclaringType,
-    unresolvedDeclaringType,
-  };
-  byCollection.set(collection, cached);
-  return cached;
-};
-
-const collectFilterIndices = (
-  indexMap: ReadonlyMap<string, readonly number[]>,
-  filter: ReadonlySet<string>,
-  extra?: readonly number[],
-): number[] => {
-  if (filter.size === 1 && (extra === undefined || extra.length === 0)) {
-    const only = filter.values().next().value;
-    const list = only === undefined ? undefined : indexMap.get(only);
-    return list === undefined ? [] : [...list];
-  }
-  const seen = new Set<number>();
-  for (const key of filter) {
-    const list = indexMap.get(key);
-    if (list === undefined) continue;
-    for (let i = 0; i < list.length; i += 1) seen.add(list[i]!);
-  }
-  if (extra !== undefined)
-    for (let i = 0; i < extra.length; i += 1) seen.add(extra[i]!);
-  return [...seen].sort((left, right) => left - right);
+  const built = { byValue, unresolved };
+  indexes.set(key, built);
+  return built;
 };
 
 const collectionPage = (
@@ -292,137 +239,53 @@ const selectRows = <
   if (!filtering && fields === undefined)
     return sliceMemberRows(source.collection, source.rows, view);
   const selected: (Partial<T> & Pick<T, K> & { source_index: number })[] = [];
-  if (filtering) {
-    const idx = getCollectionFilterIndex(
+  if (names?.size === 0 || declaringTypes?.size === 0)
+    return {
+      page: {
+        collection: source.collection,
+        rows: selected,
+        source_count: source.rows.length,
+        unresolved_filter_rows: 0,
+      },
+      total: 0,
+    };
+
+  const filterKey =
+    declaringTypes === undefined
+      ? source.name
+      : names === undefined
+        ? source.declaringType
+        : undefined;
+  const filter = names ?? declaringTypes;
+  if (filterKey !== undefined && filter?.size === 1) {
+    const index = getCollectionFilterIndex(
       source.cacheOwner,
-      source.collection,
       source.rows,
-      source.name,
-      source.declaringType,
+      filterKey,
     );
-    if (idx !== undefined) {
-      // Single-filter fast path: exact matches and unresolved counts come directly from the index.
-      if (
-        names !== undefined &&
-        declaringTypes === undefined &&
-        idx.byName !== undefined
-      ) {
-        const matchedIndices =
-          names.size === 0 ? [] : collectFilterIndices(idx.byName, names);
-        const end = Math.min(view.offset + view.limit, matchedIndices.length);
-        for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
-          const rowIndex = matchedIndices[ordinal]!;
-          selected.push(
-            projectRow(
-              source.rows[rowIndex]!,
-              rowIndex,
-              fields,
-              source.identity,
-            ),
-          );
-        }
-        return {
-          page: {
-            collection: source.collection,
-            rows: selected,
-            source_count: source.rows.length,
-            unresolved_filter_rows:
-              names.size === 0 ? 0 : idx.unresolvedName.length,
-          },
-          total: matchedIndices.length,
-        };
-      }
-      if (
-        declaringTypes !== undefined &&
-        names === undefined &&
-        idx.byDeclaringType !== undefined
-      ) {
-        const matchedIndices =
-          declaringTypes.size === 0
-            ? []
-            : collectFilterIndices(idx.byDeclaringType, declaringTypes);
-        const end = Math.min(view.offset + view.limit, matchedIndices.length);
-        for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
-          const rowIndex = matchedIndices[ordinal]!;
-          selected.push(
-            projectRow(
-              source.rows[rowIndex]!,
-              rowIndex,
-              fields,
-              source.identity,
-            ),
-          );
-        }
-        return {
-          page: {
-            collection: source.collection,
-            rows: selected,
-            source_count: source.rows.length,
-            unresolved_filter_rows:
-              declaringTypes.size === 0
-                ? 0
-                : idx.unresolvedDeclaringType.length,
-          },
-          total: matchedIndices.length,
-        };
-      }
-      if (
-        names !== undefined &&
-        declaringTypes !== undefined &&
-        idx.byName !== undefined &&
-        idx.byDeclaringType !== undefined
-      ) {
-        if (names.size === 0 || declaringTypes.size === 0)
-          return {
-            page: {
-              collection: source.collection,
-              rows: selected,
-              source_count: source.rows.length,
-              unresolved_filter_rows: 0,
-            },
-            total: 0,
-          };
-        const nameCandidates = collectFilterIndices(
-          idx.byName,
-          names,
-          idx.unresolvedName,
+    const value = filter.values().next().value;
+    if (index !== undefined && value !== undefined) {
+      const matches = index.byValue.get(value) ?? [];
+      const end = Math.min(view.offset + view.limit, matches.length);
+      for (let ordinal = view.offset; ordinal < end; ordinal += 1) {
+        const rowIndex = matches[ordinal]!;
+        selected.push(
+          projectRow(source.rows[rowIndex]!, rowIndex, fields, source.identity),
         );
-        const typeCandidates = collectFilterIndices(
-          idx.byDeclaringType,
-          declaringTypes,
-          idx.unresolvedDeclaringType,
-        );
-        const candidates =
-          nameCandidates.length <= typeCandidates.length
-            ? nameCandidates
-            : typeCandidates;
-        let total = 0;
-        let unresolved = 0;
-        for (let i = 0; i < candidates.length; i += 1) {
-          const index = candidates[i]!;
-          const row = source.rows[index]!;
-          const matched = matchRow(row, source, { names, declaringTypes });
-          if (matched === false) continue;
-          if (matched === null) {
-            unresolved++;
-            continue;
-          }
-          const ordinal = total++;
-          if (ordinal < view.offset || selected.length >= view.limit) continue;
-          selected.push(projectRow(row, index, fields, source.identity));
-        }
-        return {
-          page: {
-            collection: source.collection,
-            rows: selected,
-            source_count: source.rows.length,
-            unresolved_filter_rows: unresolved,
-          },
-          total,
-        };
       }
+      return {
+        page: {
+          collection: source.collection,
+          rows: selected,
+          source_count: source.rows.length,
+          unresolved_filter_rows: index.unresolved,
+        },
+        total: matches.length,
+      };
     }
   }
+  // Combined and multi-value filters count matches in a single source-order
+  // scan, with temporary storage bounded by the requested page.
   const start = filtering ? 0 : Math.min(view.offset, source.rows.length);
   const end = filtering
     ? source.rows.length
