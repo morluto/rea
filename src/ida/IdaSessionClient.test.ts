@@ -1348,6 +1348,7 @@ describe("headless IDA completed-database retention", () => {
       retained_database: {
         workspace,
         idb_path: idbPath,
+        save: "pending",
         reason: expect.stringContaining("keeps the workspace"),
       },
     });
@@ -1357,10 +1358,80 @@ describe("headless IDA completed-database retention", () => {
       { name: "idb_close", args: { database, save: true } },
     ]);
     expect(producer.closes).toBe(1);
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: { save: "saved" },
+    });
     expect((await stat(workspace)).isDirectory()).toBe(true);
     expect(await readdir(root)).toEqual(
       expect.arrayContaining(["target.elf", basename(workspace)]),
     );
+  });
+
+  it("finishes cleanup after a lost saved-close reply and reports an unknown save", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    producer.beforeCall = async (name) => {
+      if (name === "list_funcs")
+        decodeIdaToolResult({
+          content: [],
+          structuredContent: { result: [{ name: "main" }] },
+          _meta: { ida_mcp: { output_truncated: true } },
+        });
+    };
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected truncation to fail closed");
+    const database = producer.database;
+    if (database === undefined) throw new Error("Expected the owned worker");
+
+    let closeAttempts = 0;
+    producer.beforeCall = async (name) => {
+      if (name !== "idb_close") return;
+      closeAttempts += 1;
+      if (closeAttempts === 1) {
+        producer.database = undefined;
+        throw new AnalysisTimeoutError("idb_close", 1000);
+      }
+    };
+    producer.overrideCall = (name) =>
+      name === "idb_close"
+        ? { error: `Session not found: ${database}` }
+        : undefined;
+
+    const first = await client.close();
+    expect(first.ok).toBe(false);
+    if (first.ok)
+      throw new Error("Expected incomplete cleanup after a lost reply");
+    expect(first.error.cleanupIncomplete).toBe(true);
+    expect(producer.closes).toBe(0);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+
+    const second = await client.close();
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("Expected an unknown save outcome");
+    expect(second.error.cleanupIncomplete).toBe(false);
+    expect(second.error.message).toContain(
+      "saved state of the retained database is unknown",
+    );
+    expect(second.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        save: "unknown",
+      },
+    });
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: { save: "unknown" },
+    });
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: true } },
+      { name: "idb_close", args: { database, save: true } },
+    ]);
+    expect(producer.closes).toBe(1);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
+    expect((await client.close()).ok).toBe(true);
   });
 
   it("still removes the private workspace when auto-analysis never completed", async () => {

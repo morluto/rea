@@ -509,6 +509,7 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   set(env, result, "protocolStdin", boolean(env, true));
   set(env, result, "jobMemoryLimit", boolean(env, true));
   set(env, result, "runtimeWriteTransient", boolean(env, true));
+  set(env, result, "runtimeKeepFiles", boolean(env, true));
   return result;
 }
 

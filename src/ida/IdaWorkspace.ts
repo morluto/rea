@@ -273,6 +273,7 @@ export class IdaWorkspace {
    */
   async retain(): Promise<void> {
     await this.#files.close();
+    await this.runtime.keepFiles();
   }
 
   /** Delete only this object's privately allocated directory after worker cleanup. */

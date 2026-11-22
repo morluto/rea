@@ -629,6 +629,27 @@ void closeRuntime(Runtime& root) {
   root.closed = true;
 }
 
+// Release owner handles and registration without walking or deleting the tree.
+void keepRuntimeFiles(Runtime& root) {
+  retryRetainedNativeHandles();
+  if (root.closed) return;
+  root.closing = true;
+  for (auto& handle : root.unreleased)
+    requireReleased(handle, "Close retained runtime handle failed", root.path);
+  root.unreleased.clear();
+  for (auto& handle : root.immutableFiles)
+    requireReleased(handle, "Close retained runtime file failed", root.path);
+  root.immutableFiles.clear();
+  if (!root.treeReleased) {
+    requireReleased(root.directory, "Close runtime root handle failed", root.path);
+    root.treeReleased = true;
+  }
+  for (auto& parent : root.parents)
+    requireReleased(parent, "Close runtime parent handle failed", root.path);
+  root.parents.clear();
+  root.closed = true;
+}
+
 struct SnapshotWork {
   napi_env env;
   napi_async_work work = nullptr;
@@ -745,7 +766,7 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
                           const std::vector<napi_value>& args, RuntimeContext& context) {
   if (operation == L"cutter_bridge_verify_directory") return verifyCutterBridgeDirectory(env, args);
   if (operation == L"cutter_bridge_read_descriptor") return readCutterBridgeDescriptor(env, args);
-  const auto expected = operation == L"open" || operation == L"close" || operation == L"runtime_close" || operation == L"runtime_snapshot_cancel" ? 1
+  const auto expected = operation == L"open" || operation == L"close" || operation == L"runtime_close" || operation == L"runtime_keep_files" || operation == L"runtime_snapshot_cancel" ? 1
                       : operation == L"runtime_create" || operation == L"runtime_mkdir" || operation == L"runtime_open" ? 2 : 3;
   require(args.size() == static_cast<size_t>(expected), "Wrong native filesystem argument count", L"", ERROR_INVALID_PARAMETER);
   if (operation == L"open") {
@@ -799,12 +820,13 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
     }
   }
   auto& root = static_cast<Runtime&>(resource(env, args[0], Kind::Runtime));
-  require(!root.closing || operation == L"runtime_close", "Runtime cleanup is pending", root.path, ERROR_BUSY);
+  require(!root.closing || operation == L"runtime_close" || operation == L"runtime_keep_files", "Runtime cleanup is pending", root.path, ERROR_BUSY);
   if (operation == L"runtime_snapshot_cancel") { root.snapshotCancelled.store(true); return null(env); }
   require(!root.snapshotPending, "Runtime snapshot is still pending", root.path, ERROR_BUSY);
   // Reject overlapping operations before snapshot() resets cancellation. The
   // one accepted worker and WindowsPrivateRuntime retain the same root lease.
   if (operation == L"runtime_close") { closeRuntime(root); return null(env); }
+  if (operation == L"runtime_keep_files") { keepRuntimeFiles(root); return null(env); }
   if (operation == L"runtime_mkdir") { directory(root, wide(env, args[1])); return null(env); }
   if (operation == L"runtime_open") {
     const auto path = relativePath(root, wide(env, args[1]));

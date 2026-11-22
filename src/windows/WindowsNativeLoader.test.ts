@@ -17,6 +17,7 @@ const fixture = (
     protocolStdin?: boolean;
     jobMemoryLimit?: unknown;
     runtimeWriteTransient?: unknown;
+    runtimeKeepFiles?: unknown;
     privateBridgeDescriptorAccess?: unknown;
   } = {},
 ) => {
@@ -202,6 +203,36 @@ describe("packaged Windows native compatibility", () => {
     });
     expect(value.loads()).toBe(0);
   });
+});
+
+describe("Windows native keep-files inspection", () => {
+  it("admits an affirmative keep-files capability and keeps earlier artifacts admitted without it", () => {
+    expect(
+      loadWindowsNativeAuthority(
+        fixture({ runtimeKeepFiles: true, protocolStdin: true }).host,
+      ),
+    ).toMatchObject({
+      available: true,
+      authority: { inspection: { runtimeKeepFiles: true } },
+    });
+    const earlier = loadWindowsNativeAuthority(
+      fixture({ protocolStdin: true }).host,
+    );
+    if (!earlier.available) throw new Error(earlier.reason);
+    expect(earlier.authority.inspection.runtimeKeepFiles).toBeUndefined();
+  });
+  it.each([false, "true", 1, null])(
+    "refuses a nonaffirmative keep-files inspection value %j",
+    (runtimeKeepFiles) => {
+      expect(
+        loadWindowsNativeAuthority(fixture({ runtimeKeepFiles }).host),
+      ).toMatchObject({
+        available: false,
+        failureStage: "inspection",
+        reason: expect.stringContaining("runtimeKeepFiles"),
+      });
+    },
+  );
 });
 
 describe("Windows native artifact recovery", () => {

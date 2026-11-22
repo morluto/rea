@@ -275,9 +275,22 @@ describe("headless IDA partial operation evidence", () => {
             },
           },
         });
+        expect(result.error.diagnostics).toMatchObject({
+          retained_database: {
+            workspace: dirname(producer.inputPath),
+            save: "not_requested",
+          },
+        });
       }
     } finally {
+      const database = producer.database;
       expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual(
+        [{ name: "idb_close", args: { database, save: false } }],
+      );
+      expect((await stat(dirname(producer.inputPath))).isDirectory()).toBe(
+        true,
+      );
     }
   });
 
