@@ -158,7 +158,7 @@ const serializeRequest = (
     throw bridgeRequestOversizeError(
       "cutter_command",
       limit,
-      measured,
+      { bytesAtLeast: measured },
       "Cutter",
     );
   const requestBytes = JSON.stringify(requestValue);

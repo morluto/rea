@@ -150,7 +150,7 @@ export class GhidraWire {
       const oversize = bridgeRequestOversizeError(
         method,
         requestLimit,
-        payloadBytes,
+        { bytesAtLeast: payloadBytes },
         "Ghidra",
       );
       return err(
