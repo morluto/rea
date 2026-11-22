@@ -258,7 +258,75 @@ public class ReaJadxExternalReferencesRegression {
     System.out.println("EXTERNAL_SITE_BUDGET_PASS callers=11 partial_sites=true bounded=true replay=true");
   }
 
+  private static void verifyDoubleEscapedStringBytes() {
+    Gson gson = new Gson();
+    String[] samples = {
+        "",
+        "classes.dex",
+        "<init>",
+        "\"quoted\"\\slash",
+        "\b\t\n\f\r\u0000\u001f",
+        "<>&='",
+        "\u2028\u2029",
+        "日本語",
+        "😀",
+        "a\uD800b",
+        "a\uDC00b",
+        "fixture.Caller.notify(Ljava/lang/String;ILandroid/app/Notification;)V"
+    };
+    for (String sample : samples) {
+      long expected = gson.toJson(gson.toJson(sample)).getBytes(StandardCharsets.UTF_8).length - 6L;
+      long actual = ReaJadxBridge.doubleEscapedStringBytes(sample);
+      require(actual == expected,
+          "doubleEscapedStringBytes mismatch for " + gson.toJson(sample)
+              + ": expected=" + expected + " actual=" + actual);
+    }
+  }
+
+  private static void verifyIntermediateExternalQuery(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path output) throws Exception {
+    Path source = output.resolve("MultiExternalTarget.smali");
+    Files.writeString(source,
+        ".class public Lfixture/MultiExternalTarget;\n.super Ljava/lang/Object;\n"
+            + ".method public static useBoth(Landroid/app/NotificationManager;Landroid/app/Notification;Ljava/lang/StringBuilder;Ljava/lang/String;)V\n"
+            + ".registers 5\n"
+            + "const/4 v0, 0x1\n"
+            + "invoke-virtual {p0, v0, p1}, Landroid/app/NotificationManager;->notify(ILandroid/app/Notification;)V\n"
+            + "invoke-virtual {p2, p3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;\n"
+            + "return-void\n.end method\n",
+        StandardCharsets.UTF_8);
+    Path dex = output.resolve("external-intermediate.dex");
+    assemble(dex, List.of(source));
+    Path multiApk = apk(output, "external-intermediate.apk", List.of(dex));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(multiApk.toString(), config, continuation));
+    Object bridge = constructor.newInstance(holder);
+    JsonObject notifySummary = args(API, "notify", null);
+    notifySummary.addProperty("reference_target", true);
+    JsonObject sbSummary = args("java.lang.StringBuilder", "append", null);
+    sbSummary.addProperty("reference_target", true);
+    require(call(handle, bridge, "get_class_summary", notifySummary)
+        .get("observed_method_count").getAsInt() == 1, "Lost notify prototype");
+    require(call(handle, bridge, "get_class_summary", sbSummary)
+        .get("observed_method_count").getAsInt() == 1, "Lost StringBuilder.append prototype");
+    JsonObject notifyXrefs = call(handle, bridge, "get_xrefs_to_method", external(0));
+    require(notifyXrefs.get("target").getAsString().equals(API + ".notify")
+        && notifyXrefs.get("count").getAsInt() == 1
+        && notifyXrefs.getAsJsonArray("items").get(0).getAsJsonObject()
+            .get("containing_class").getAsString().equals("fixture.MultiExternalTarget"),
+        "Intermediate external query corrupted get_xrefs_to_method for notify");
+    JsonObject sbArgs = args("java.lang.StringBuilder", "append", 0);
+    sbArgs.addProperty("reference_target", true);
+    JsonObject sbXrefs = call(handle, bridge, "get_xrefs_to_method", sbArgs);
+    require(sbXrefs.get("target").getAsString().equals("java.lang.StringBuilder.append")
+        && sbXrefs.get("count").getAsInt() == 1,
+        "StringBuilder.append xrefs lost after notify query");
+  }
+
   public static void main(String[] args) throws Exception {
+    verifyDoubleEscapedStringBytes();
     Path output = Path.of(args[1]);
     List<Path> fixtures = fixtures(Path.of(args[0]), output);
     largeFixture(output);
@@ -274,6 +342,7 @@ public class ReaJadxExternalReferencesRegression {
     try {
       verify(holder, config, constructor, handle, fixtures.get(0), "classes.dex");
       verify(holder, config, constructor, handle, fixtures.get(1), "classes2.dex");
+      verifyIntermediateExternalQuery(holder, config, constructor, handle, output);
       verifySiteBudget(holder, config, constructor, handle, siteHeavy);
       verifyPrototypeLimit(holder, config, constructor, handle, oversizedPrototype);
       System.out.println("EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4 overloaded_callers=true nested=true multidex=true no_source=true post_codegen=true");
