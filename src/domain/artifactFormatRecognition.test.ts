@@ -62,6 +62,12 @@ it.each([
     format: "ubi-image",
     reason: expect.stringContaining("erase-counter header CRC mismatch"),
   },
+  {
+    label: "a UBI# file shorter than its erase-counter header",
+    bytes: twoVolumeUbiImage().subarray(0, 32),
+    format: "ubi-image",
+    reason: expect.stringContaining("erase-counter header is truncated"),
+  },
 ])("refuses $label in one place", (row) => {
   expect(recognize(row.bytes)).toEqual({
     state: "refused",

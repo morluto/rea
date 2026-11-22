@@ -158,11 +158,22 @@ export type UbiImageRecognition =
   | { readonly state: "recognized" }
   | { readonly state: "refused"; readonly reason: string };
 
-/** Recognize `UBI#` at offset 0; a bad header CRC or version is a refusal. */
+/**
+ * Recognize `UBI#` at offset 0; a bad header CRC or version, or a file too
+ * short to hold the erase-counter header, is a refusal.
+ */
 export const recognizeUbiImage = (
   prefix: Uint8Array,
+  fileSize: number,
 ): UbiImageRecognition | undefined => {
   if (!hasMagic(prefix, 0, UBI_EC_MAGIC)) return undefined;
+  if (fileSize < UBI_HEADER_BYTES)
+    return {
+      state: "refused",
+      reason: `UBI erase-counter header is truncated: the file holds ${String(fileSize)} of its ${String(UBI_HEADER_BYTES)} bytes`,
+    };
+  // A route that read fewer leading bytes than the header leaves the CRC and
+  // version to the reader, which refuses them when it opens the image.
   if (prefix.length < UBI_HEADER_BYTES) return { state: "recognized" };
   const read = readEcHeader(prefix);
   if (read.state === "invalid")

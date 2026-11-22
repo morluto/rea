@@ -230,13 +230,13 @@ it("keeps the highest sqnum copy of a LEB and truncates a static volume at data_
 
 it("recognizes UBI# with a valid header and refuses a bad CRC or version", () => {
   const bytes = twoVolumeUbiImage();
-  expect(recognizeUbiImage(bytes.subarray(0, 64))).toEqual({
+  expect(recognizeUbiImage(bytes.subarray(0, 64), bytes.length)).toEqual({
     state: "recognized",
   });
-  expect(recognizeUbiImage(Buffer.from("UBI"))).toBeUndefined();
+  expect(recognizeUbiImage(Buffer.from("UBI"), 3)).toBeUndefined();
   const badCrc = Buffer.from(bytes.subarray(0, 64));
   badCrc.writeUInt32BE(0, 60);
-  expect(recognizeUbiImage(badCrc)).toEqual({
+  expect(recognizeUbiImage(badCrc, bytes.length)).toEqual({
     state: "refused",
     reason: expect.stringContaining("erase-counter header CRC mismatch"),
   });
@@ -244,9 +244,26 @@ it("recognizes UBI# with a valid header and refuses a bad CRC or version", () =>
   badVersion[4] = 2;
   // Recompute the CRC so only the version differs.
   badVersion.writeUInt32BE(~crc32(badVersion.subarray(0, 60)) >>> 0, 60);
-  expect(recognizeUbiImage(badVersion)).toEqual({
+  expect(recognizeUbiImage(badVersion, badVersion.length)).toEqual({
     state: "refused",
     reason: expect.stringContaining("version 2 is unsupported"),
+  });
+});
+
+it("refuses a UBI# file too short to hold the erase-counter header", () => {
+  const header = twoVolumeUbiImage().subarray(0, 64);
+  for (const size of [4, 32, 63]) {
+    const truncated = Buffer.from(header.subarray(0, size));
+    expect(recognizeUbiImage(truncated, truncated.length)).toEqual({
+      state: "refused",
+      reason: expect.stringContaining(
+        `erase-counter header is truncated: the file holds ${String(size)} of its 64 bytes`,
+      ),
+    });
+  }
+  // A short prefix read from a longer file still defers to the reader.
+  expect(recognizeUbiImage(header.subarray(0, 8), 4096)).toEqual({
+    state: "recognized",
   });
 });
 

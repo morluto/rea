@@ -120,8 +120,8 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
             reason: ota.reason,
           };
     },
-    ({ prefix }) => {
-      const ubi = recognizeUbiImage(prefix);
+    ({ prefix, fileSize }) => {
+      const ubi = recognizeUbiImage(prefix, fileSize);
       if (ubi === undefined) return undefined;
       return ubi.state === "recognized"
         ? { state: "recognized", format: "ubi-image" }
