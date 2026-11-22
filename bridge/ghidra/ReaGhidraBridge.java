@@ -6110,10 +6110,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // ASCII. When asciiPattern is null, the pattern has a non-ASCII char without
     // an ASCII fold, so only source strings containing non-ASCII (and any
     // required ASCII-foldable substring) stay eligible.
-    private static ValueMatcher literalCandidateMatcher(String asciiPattern) {
-        return literalCandidateMatcher(asciiPattern, null);
-    }
-
     private static ValueMatcher literalCandidateMatcher(String asciiPattern, String asciiSubstring) {
         if (asciiPattern == null) {
             if (asciiSubstring == null || asciiSubstring.isEmpty()) {
