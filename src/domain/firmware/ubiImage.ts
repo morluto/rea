@@ -666,8 +666,8 @@ export const classifyUbiPeb = (
   if (
     (vid.volType !== VOLUME_TYPE_DYNAMIC &&
       vid.volType !== VOLUME_TYPE_STATIC) ||
-    vid.dataSize > geometry.lebSize ||
-    vid.dataPad >= geometry.lebSize
+    vid.dataPad >= geometry.lebSize ||
+    vid.dataSize > geometry.lebSize - vid.dataPad
   )
     return ok({
       state: "corrupt",

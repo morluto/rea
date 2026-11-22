@@ -738,6 +738,80 @@ describe("interrupted wear-leveling copies", () => {
   });
 });
 
+it("classifies a wear-leveling copy with data_size beyond leb_size - data_pad as corrupt", () => {
+  // leb_size 1920 with alignment 1000 gives data_pad 920 and usable LEB 1000.
+  const records: UbiFixtureVolumeRecord[] = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic",
+      reservedPebs: 4,
+      alignment: 1000,
+      dataPad: 920,
+    },
+  ];
+  const original = ubiLebData(0x30, "ORIGINAL");
+  const bytes = ubiImage([
+    ...ubiLayoutPebs(records),
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 0,
+      data: original,
+      sqnum: 2n,
+      dataPad: 920,
+    },
+    {
+      kind: "leb",
+      volId: 0,
+      lnum: 0,
+      data: ubiLebData(0x31, "OVERSIZE"),
+      sqnum: 3n,
+      dataPad: 920,
+      dataSize: 1500,
+      copyFlag: true,
+    },
+  ]);
+  const parsed = image(bytes);
+  const oversizedPeb = classifyUbiPeb(
+    bytes.subarray(
+      3 * parsed.geometry.pebSize,
+      3 * parsed.geometry.pebSize + parsed.geometry.headerReadBytes,
+    ),
+    3,
+    parsed.geometry,
+  );
+  expect(oversizedPeb).toEqual({
+    ok: true,
+    value: {
+      state: "corrupt",
+      reason: expect.stringContaining(
+        "data_size 1500 and data_pad 920, which do not fit a 1920-byte logical eraseblock",
+      ),
+      ec: { eraseCounter: 1n, imageSeq: parsed.geometry.imageSeq },
+    },
+  });
+  expect(parsed).toMatchObject({
+    corruptPebCount: 1,
+    mappedPebCount: 3,
+    staleLebCopyCount: 0,
+    interruptedCopyCount: 0,
+  });
+  expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.corruptPebs);
+  expect(parsed.volumes[0]).toMatchObject({
+    name: "rootfs",
+    usableLebSize: 1000,
+    mappedLebCount: 1,
+    staleLebCopyCount: 0,
+    dataBytes: 1000,
+    extractRefusal: null,
+    ranges: [{ lnum: 0, peb: 2, offset: 2 * 2048 + 128, length: 1000 }],
+  });
+  expect(reassemble(bytes, "rootfs").equals(original.subarray(0, 1000))).toBe(
+    true,
+  );
+});
+
 it("refuses a static volume whose nonfinal LEB is short", () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
