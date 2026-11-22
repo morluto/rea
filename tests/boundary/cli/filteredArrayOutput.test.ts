@@ -4,6 +4,7 @@ import { Writable } from "node:stream";
 
 import { estimateTokenCount } from "tokenx";
 import { expect, it } from "vitest";
+import { parseAllDocuments } from "yaml";
 
 import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
@@ -62,6 +63,20 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it.each(["yaml", "toon", "md"] as const)(
+  "emits a selected null as %s",
+  async (format) => {
+    const stdout = await runFilteredCli({ binding: null }, format, "binding");
+    if (format === "yaml") {
+      const documents = parseAllDocuments(stdout);
+      expect(documents).toHaveLength(1);
+      expect(documents[0]?.toJSON()).toBeNull();
+    } else {
+      expect(stdout).toBe("null\n");
+    }
+  },
+);
 
 it.each(["csv", "tsv"] as const)(
   "exports only explicitly selected %s fields and retains page metadata",
