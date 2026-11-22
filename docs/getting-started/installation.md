@@ -2281,9 +2281,9 @@ release; replace the version when installing a different tag.
 
 ```bash
 rea_version=6.9.0
-curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
-less rea-install.sh
-bash rea-install.sh --version "$rea_version"
+curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh &&
+  less rea-install.sh &&
+  bash rea-install.sh --version "$rea_version"
 ```
 
 The tag pins the selected script revision; `--version` selects the npm package
