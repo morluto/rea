@@ -22,6 +22,7 @@ import {
 } from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { primaryAnalysisError } from "../../../src/domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { AnalysisCleanupRelease } from "../../../src/domain/analysisCleanupRelease.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
@@ -30,6 +31,7 @@ import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { spawnFailure } from "../../support/process/spawnFailure.js";
 import {
   type FakeCommandOptions,
   rizinExecutableFixture,
@@ -1105,6 +1107,34 @@ posix(
     expect(await service.retryCleanup()).toEqual({ ok: true, value: null });
     expect(close).toHaveBeenCalledOnce();
     expect(failed.ok ? undefined : failed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+posix.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
+  "keeps host capacity during probe preparation (%s) a retryable resource constraint",
+  async (code) => {
+    const { executable, path } = await rizinExecutableFixture();
+    // The helper compiler could not start: the shared launch owner, not the
+    // ownership repair, classifies that failure, as for the command.
+    const service = new TestReverseEngineeringService({
+      runOwned: async () => {
+        throw new DarwinProcessOwnershipInspectionError("helper build failed", {
+          cause: spawnFailure(code, "/usr/bin/cc"),
+        });
+      },
+      lookup: lookupExecutable,
+      environment: { REA_RIZIN_COMMAND: executable },
+    });
+    const failed = await service.executeRizinCommand({ path, command: "iI" });
+    if (failed.ok) throw new Error("Expected a capacity failure");
+    expect(projectAnalysisError(failed.error)).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      details: {
+        resource: "capacity",
+        diagnostics: { boundary: "host-capacity", system_code: code },
+      },
+    });
   },
 );
 

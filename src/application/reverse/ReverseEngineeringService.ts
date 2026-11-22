@@ -1480,6 +1480,7 @@ export class ReverseEngineeringService {
     };
     const outcome = await this.#runVersionProbe(
       operation,
+      profile.identity.id,
       profile.repair,
       lookup.path,
       probe,
@@ -1557,6 +1558,7 @@ export class ReverseEngineeringService {
    */
   async #runVersionProbe(
     operation: ReverseEngineeringOperation,
+    providerId: string,
     repair: ReverseEngineeringCommandRepair,
     executable: string,
     probe: NonNullable<ReverseEngineeringProviderCommand["versionProbe"]>,
@@ -1615,18 +1617,31 @@ export class ReverseEngineeringService {
       const cleanupOwner =
         cause instanceof OwnedOutputFailure ? cause.cleanupOwner : undefined;
       // Ownership preparation that failed or stopped ends the call as it would
-      // for the command, and its cleanup joins the same retained scope.
+      // for the command, and its cleanup joins the same retained scope. Host
+      // capacity is classified by the shared launch owner first, so a transient
+      // EAGAIN, EMFILE, ENFILE or ENOMEM stays a retryable resource constraint.
       const preparation = ownershipPreparationFailure(cause);
+      const capacity = preparationHostCapacityFailure(
+        cause instanceof OwnedOutputFailure ? cause.cause : cause,
+      );
       const preparationFailure =
         preparation === undefined
           ? undefined
-          : ownershipPreparationError(
-              preparation,
-              code,
-              operation,
-              timeoutMs,
-              repair,
-            );
+          : capacity === undefined
+            ? ownershipPreparationError(
+                preparation,
+                code,
+                operation,
+                timeoutMs,
+                repair,
+              )
+            : classifyLaunchFailure(capacity, {
+                providerId,
+                operation,
+                command: executable,
+                selection: repair.setting,
+                details: { cause, ...ownedCleanupOptions(cause) },
+              });
       if (preparation !== undefined && preparationFailure !== undefined)
         return err(
           this.#registerCleanupFailure(
