@@ -19,6 +19,7 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import {
@@ -33,7 +34,10 @@ import {
   type InspectWarcArchiveInput,
 } from "../../domain/warcArchive/warcArchiveQuery.js";
 import { parseWarcArchive } from "../../domain/warcArchive/parseWarcArchive.js";
-import { parseAnalysisInput } from "../AnalysisInput.js";
+import {
+  callerAnalysisParameters,
+  parseAnalysisInput,
+} from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
@@ -126,6 +130,16 @@ const readFailure = (
   );
 };
 
+/** Evidence parameters carry only the fields the caller actually selected. */
+const withoutOmitted = (
+  selected: Partial<InspectWarcArchiveInput>,
+): Readonly<Record<string, JsonValue>> => {
+  const parameters: Record<string, JsonValue> = {};
+  for (const [name, value] of Object.entries(selected))
+    if (value !== undefined) parameters[name] = value as JsonValue;
+  return parameters;
+};
+
 /**
  * Remediation for the caller-selected `max_file_bytes` budget. At the schema
  * maximum there is no value left to raise, so the advice names that ceiling
@@ -185,6 +199,9 @@ export const inspectWarcArchiveEvidence = async (
   );
   if (!admitted.ok) return admitted;
   const input = admitted.value;
+  // Evidence keeps what the caller selected; a default resolved for execution
+  // is not a caller choice and must not read as one in a saved record.
+  const selected = callerAnalysisParameters(rawInput)(input);
   if (!isAbsolute(input.path))
     return err(
       inputFailure("Expected an absolute filesystem path on this host."),
@@ -209,13 +226,7 @@ export const inspectWarcArchiveEvidence = async (
     {
       operation,
       predicateType: "rea.warc-archive-inventory",
-      parameters: {
-        path: input.path,
-        format: input.format,
-        max_file_bytes: input.max_file_bytes,
-        max_decoded_bytes: input.max_decoded_bytes,
-        max_records: input.max_records,
-      },
+      parameters: withoutOmitted(selected),
       result: archive,
       confidence: "observed",
       limitations: archive.limitations,

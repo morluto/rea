@@ -168,3 +168,26 @@ it("advises raising a caller-selected max_file_bytes instead of a fixed ceiling"
     await resources.close();
   }
 });
+
+it("keeps omitted limits omitted in Evidence parameters", async () => {
+  // Defaults resolved for execution are not caller choices; a saved record
+  // that lists them cannot tell the two apart.
+  const path = await inputFile("crawl.warc", RECORD);
+  const resources = new ArtifactResourceScope();
+  try {
+    const selected = await inspectWarcArchiveEvidence(
+      { path, max_records: 5 },
+      resources,
+    );
+    if (!selected.ok) throw new Error(`expected inspection: ${selected.error}`);
+    expect(selected.value.evidence.parameters).toEqual({
+      path,
+      max_records: 5,
+    });
+    const bare = await inspectWarcArchiveEvidence({ path }, resources);
+    if (!bare.ok) throw new Error(`expected inspection: ${bare.error}`);
+    expect(bare.value.evidence.parameters).toEqual({ path });
+  } finally {
+    await resources.close();
+  }
+});
