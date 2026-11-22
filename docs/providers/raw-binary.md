@@ -224,10 +224,14 @@ already holds its arguments, and a CLI caller can save its command beside the
 Evidence it writes, together with its `evidence_id`.
 
 These inputs leave a load without them exactly as REA loaded it before: its
-analysis profile, snapshot target and `raw-binary` load image are unchanged, so
-its saved load images stay readable and its snapshots replay wherever they did
-without these inputs. REA versions without these inputs cannot replay a
-snapshot of a load that uses them, because its analysis profile differs.
+analysis profile inputs, snapshot target and `raw-binary` load image are
+unchanged, so its saved load images stay readable. Snapshots still follow the
+[producer rule](ghidra-provider.md#admitted-function-analysis-semantics): every
+analysis profile commits to the REA release and its packaged bridge scripts, so
+a snapshot that an earlier REA release saved is refused after an upgrade, with
+or without these inputs. Open the target again and save a fresh snapshot. A
+snapshot of a load that uses these inputs also has a different analysis profile,
+so REA versions without these inputs cannot replay it.
 
 ## NMOS 6502
 
