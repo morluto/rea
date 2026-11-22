@@ -102,6 +102,7 @@
 * **firmware:** honor the final Android OTA timestamp record ([#13373](https://github.com/morluto/rea/issues/13373)) ([e84668c](https://github.com/morluto/rea/commit/e84668c76be4df40963dbd83f84803ec812f64c5))
 * **frida:** explain refused ptrace seize during injection ([317f90e](https://github.com/morluto/rea/commit/317f90e023a96f18695790efbe903fb39a4e6b85)), closes [#9103](https://github.com/morluto/rea/issues/9103)
 * **frida:** keep ptrace seize guidance from overclaiming ([2337ebe](https://github.com/morluto/rea/commit/2337ebe130dabff210bb55aa6f34c4585bbde73a)), closes [#9103](https://github.com/morluto/rea/issues/9103)
+* **functions:** preserve proven referenced string membership changes ([#13421](https://github.com/morluto/rea/issues/13421)) ([afbbfff](https://github.com/morluto/rea/commit/afbbfff561a9d83689e49f61a5192b98bbfe5c07))
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
 * **ghidra:** link the published installation guide from decompiler remediation ([62ec695](https://github.com/morluto/rea/commit/62ec69530319a17552f52dbfb7bdf3c4575ac85b)), closes [#7018](https://github.com/morluto/rea/issues/7018)
 * **ghidra:** name invalid installed language definition files ([#13401](https://github.com/morluto/rea/issues/13401)) ([1d85f68](https://github.com/morluto/rea/commit/1d85f680f9aeee634ff3da8cd20c9209c6275b9e))
