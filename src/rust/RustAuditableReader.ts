@@ -24,23 +24,22 @@ export const RUST_INFLATE_RATIO = 64;
 export const RUST_UNCOMPRESSED_BYTES = 8 * 1024 * 1024;
 
 const JSON_DEPTH = 32;
-const packageSchema = z.strictObject({
-  name: z.string().min(1),
-  version: z.string().min(1),
-  source: z.string().min(1),
-  kind: z.enum(["runtime", "build"]).optional(),
-  dependencies: z.array(z.int().nonnegative()).optional(),
-  features: z.array(z.string().min(1)).optional(),
-  root: z.boolean().optional(),
-});
+interface AuditablePackage {
+  readonly name: string;
+  readonly version: string;
+  readonly source: string;
+  readonly kind?: "runtime" | "build" | undefined;
+  readonly dependencies?: number[] | undefined;
+  readonly features?: string[] | undefined;
+  readonly root?: boolean | undefined;
+}
+interface AuditableDocument {
+  readonly format?: number | undefined;
+  readonly packages: readonly AuditablePackage[];
+}
 const documentVersionSchema = z.object({
   format: z.int().nonnegative().max(0xffff_ffff).optional(),
 });
-const documentSchema = documentVersionSchema
-  .extend({
-    packages: z.array(packageSchema),
-  })
-  .strict();
 
 /** The ParseFailure format of `cargo auditable` dependency sections. */
 export const RUST_AUDITABLE_FORMAT = "rust-auditable";
@@ -209,7 +208,7 @@ const inflateFailure = (
 const parseDocument = (
   bytes: Buffer,
   maxOutputBytes: number,
-): z.infer<typeof documentSchema> => {
+): AuditableDocument => {
   let text: string;
   try {
     text = decodeStrictUtf8(bytes, "strip-signature");
@@ -235,15 +234,9 @@ const parseDocument = (
       version.error,
     );
   admitGraphExpansion(value, maxOutputBytes);
-  // One malformed package must fail before Zod retains an issue for every field.
-  rejectMalformedPackages(value);
-  const parsed = documentSchema.safeParse(value);
-  if (!parsed.success)
-    throw malformedSection(
-      "Dependency JSON does not match the package schema",
-      parsed.error,
-    );
-  return parsed.data;
+  // Validate top-level shape and every package in a single pass without a
+  // redundant Zod re-validation and deep clone of the packages array.
+  return parseValidatedDocument(value, version.data.format);
 };
 
 // These are lower bounds on the required normalized representation, not
@@ -324,29 +317,43 @@ const PACKAGE_FIELDS = new Set([
   "root",
 ]);
 
-const rejectMalformedPackages = (value: unknown): void => {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("packages" in value) ||
-    !Array.isArray(value.packages)
-  )
-    return;
-  for (const [index, pkg] of value.packages.entries()) {
-    if (!packageRecord(pkg))
+const parseValidatedDocument = (
+  value: unknown,
+  format: number | undefined,
+): AuditableDocument => {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
+      "Dependency JSON does not match the package schema",
+    );
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (key !== "format" && key !== "packages")
+      throw malformedInput(
+        RUST_AUDITABLE_FORMAT,
+        "Dependency JSON does not match the package schema",
+      );
+  }
+  if (!Array.isArray(record.packages))
+    throw malformedInput(
+      RUST_AUDITABLE_FORMAT,
+      "Dependency JSON does not match the package schema",
+    );
+  const packages: readonly unknown[] = record.packages;
+  for (let index = 0; index < packages.length; index += 1) {
+    if (!packageRecord(packages[index]))
       throw malformedInput(
         RUST_AUDITABLE_FORMAT,
         `Dependency package ${String(index)} does not match the package schema`,
       );
   }
+  return {
+    ...(format === undefined ? {} : { format }),
+    packages: packages as readonly AuditablePackage[],
+  };
 };
 
-const packageRecord = (
-  pkg: unknown,
-): pkg is {
-  readonly dependencies?: readonly unknown[];
-  readonly features?: readonly unknown[];
-} => {
+const packageRecord = (pkg: unknown): pkg is AuditablePackage => {
   if (typeof pkg !== "object" || pkg === null || Array.isArray(pkg))
     return false;
   const record = pkg as Record<string, unknown>;
@@ -373,7 +380,9 @@ const packageRecord = (
     (!Array.isArray(dependencies) ||
       !dependencies.every(
         (entry) =>
-          typeof entry === "number" && Number.isInteger(entry) && entry >= 0,
+          typeof entry === "number" &&
+          Number.isSafeInteger(entry) &&
+          entry >= 0,
       ))
   )
     return false;
@@ -415,7 +424,7 @@ const assertDepth = (text: string): void => {
 };
 
 const normalizePackages = (
-  packages: z.infer<typeof documentSchema>["packages"],
+  packages: readonly AuditablePackage[],
 ): RustPackage[] =>
   packages.map((pkg) => ({
     name: pkg.name,
