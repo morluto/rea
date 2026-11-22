@@ -410,12 +410,9 @@ export const writeAnswer = (
   if (plan.response === null || exchange === undefined)
     return err(refused(tool, `Tool ${tool.name} has no recorded response.`));
   const exact =
-    selectReplayExchange(
-      tool,
-      new Map([[exchange.ordinal, exchange]]),
-      args,
-      request.observedQuery,
-    )?.exact === true;
+    selectReplayExchange(tool, new Map([[exchange.ordinal, exchange]]), args, {
+      observedQuery: request.observedQuery,
+    })?.exact === true;
   if (plan.response.shape === "recorded")
     return ok({ ...replayAnswer(serving.source, exchange, exact), state });
   if (typeof rendered !== "function" && "body" in rendered)

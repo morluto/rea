@@ -13,6 +13,7 @@ import {
   selectsRecordedLine,
   type ObservedQuery,
   type ReplayArguments,
+  type ReplaySelection,
 } from "./environmentReplay.js";
 import type {
   EnvironmentManifestTool,
@@ -50,17 +51,20 @@ export const checkedLine = (
   checked: readonly number[],
   args: ReplayArguments,
   observedQuery?: ObservedQuery,
-): RecordedExchange | undefined => {
-  const lines = new Map<number, RecordedExchange>();
+): ReplaySelection | undefined => {
+  const eligible = new Set<number>();
   for (const ordinal of checked) {
     const exchange = source.exchanges.get(ordinal);
     if (
       exchange !== undefined &&
       selectsRecordedLine(tool, exchange, args, observedQuery)
     )
-      lines.set(ordinal, exchange);
+      eligible.add(ordinal);
   }
-  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
+  return selectReplayExchange(tool, source.exchanges, args, {
+    observedQuery,
+    eligibleOrdinals: eligible,
+  });
 };
 
 /** For a list of a whole collection, a call that supplies no query argument answers from a checked line of the collection its path arguments name that only pages it, chosen as replay chooses; a requested page answers from its recording. */
@@ -90,7 +94,7 @@ export const unfilteredLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
+  return selectReplayExchange(tool, lines, args, { observedQuery })?.exchange;
 };
 
 /** A call's query arguments by parameter name. */
@@ -134,5 +138,5 @@ export const queryLine = (
     )
       lines.set(ordinal, exchange);
   }
-  return selectReplayExchange(tool, lines, args, observedQuery)?.exchange;
+  return selectReplayExchange(tool, lines, args, { observedQuery })?.exchange;
 };
