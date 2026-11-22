@@ -576,27 +576,6 @@ it("announces the bound URL even when the log level hides info lines", async () 
   );
 });
 
-it("releases the listener when the server factory fails after the port is bound", async () => {
-  const port = await listenEphemeral();
-  const logs: string[] = [];
-  const logger = pino({ level: "debug" }, { write: (line) => logs.push(line) });
-  const seen: string[] = [];
-  const failing = serveStreamableHttp({
-    host: "127.0.0.1",
-    port,
-    logger,
-    createMcpServer: () => {
-      throw new Error("provider unavailable");
-    },
-  });
-  await expect(failing).rejects.toThrow("provider unavailable");
-  for (const line of logs) seen.push((JSON.parse(line) as { msg: string }).msg);
-  expect(seen).not.toContain("MCP transport listening");
-  await expect(start({ port })).resolves.toMatchObject({
-    served: { close: expect.any(Function) },
-  });
-});
-
 it("classifies loopback from the bound address and lists the configured name beside it", () => {
   const sdk = ["localhost", "127.0.0.1", "[::1]"];
   expect(hostHeaderAllowlist("ip6-localhost", "::1")).toEqual([
@@ -717,20 +696,22 @@ it("keeps a session whose transport shutdown failed so the next close retries it
   }
 });
 
-it("runs the instance's shutdown hook exactly once when the slot closes without a live session", async () => {
-  let hooks = 0;
-  const slot = new McpSessionSlot(
-    createEchoServer(() => {
-      hooks += 1;
-    }),
-    undefined,
-  );
-  await slot.close();
-  await slot.close();
-  expect(hooks).toBe(1);
-  const { served, shutdownHooks } = await start();
+it("retries the instance hook without a live session and closes it once successfully", async () => {
+  const failure = new Error("hook failed once");
+  const hook = vi.fn(() => {
+    if (hook.mock.calls.length === 1) throw failure;
+  });
+  const { served } = await start({
+    createMcpServer: () => createEchoServer(hook),
+  });
+
+  await expect(served.close()).rejects.toBe(failure);
+  await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
+    code: "ECONNREFUSED",
+  });
+  await expect(served.close()).resolves.toBeUndefined();
   await served.close();
-  expect(shutdownHooks()).toBe(1);
+  expect(hook).toHaveBeenCalledTimes(2);
 });
 
 it("answers an oversized sessionless POST promptly instead of stalling on the probe", async () => {
@@ -900,69 +881,43 @@ it("refuses raw fragments without changing an encoded query value", async () => 
   });
 });
 
-it.each([1, 2])(
-  "refuses a %i-message initialize batch without replacing a session",
-  async (size) => {
-    const { served } = await start();
-    const { client } = await connect(served.url);
-    const url = new URL(served.url);
-    const single = JSON.parse(await initializeRequest().text()) as unknown;
-    const batch = await rawHttpRequest(url, {
+it("refuses initialize batches before the first session and during a live session", async () => {
+  const { served } = await start();
+  const url = new URL(served.url);
+  const initialize: unknown = JSON.parse(await initializeRequest().text());
+  const assertRefused = async (messages: readonly unknown[]) => {
+    const refused = await rawHttpRequest(url, {
       method: "POST",
       headers: {
-        host: `127.0.0.1:${url.port}`,
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
       },
-      body: JSON.stringify(
-        size === 1
-          ? [single]
-          : [single, { jsonrpc: "2.0", method: "notifications/initialized" }],
-      ),
+      body: JSON.stringify(messages),
     });
-    expect(batch.status).toBeGreaterThanOrEqual(400);
-    expect(batch.status).toBeLessThan(500);
+    expect(refused.status).toBe(400);
+    expect(JSON.parse(refused.body)).toMatchObject({
+      id: null,
+      error: {
+        code: -32600,
+        message: "Initialize must be a single JSON-RPC object, not a batch",
+      },
+    });
+  };
+
+  await assertRefused([initialize]);
+  const { client } = await connect(served.url);
+  try {
+    await assertRefused([initialize]);
+    await assertRefused([
+      initialize,
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+    ]);
     expect(await echo(client, "not evicted")).toEqual([
       { type: "text", text: "not evicted" },
     ]);
+  } finally {
     await client.close();
-  },
-);
-
-it("refuses an initialize batch before opening the first session", async () => {
-  const { served } = await start();
-  const url = new URL(served.url);
-  const single = JSON.parse(await initializeRequest().text()) as unknown;
-  const response = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host: `127.0.0.1:${url.port}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify([single]),
-  });
-  expect(response.status).toBe(400);
-  const { client } = await connect(served.url);
-  expect(await echo(client, "valid initialization")).toEqual([
-    { type: "text", text: "valid initialization" },
-  ]);
-  await client.close();
-});
-
-it("retries a shutdown hook that threw instead of marking it complete", async () => {
-  let attempts = 0;
-  const slot = new McpSessionSlot(
-    createEchoServer(() => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("hook failed once");
-    }),
-    undefined,
-  );
-  await expect(slot.close()).rejects.toThrow("hook failed once");
-  await expect(slot.close()).resolves.toBeUndefined();
-  await slot.close();
-  expect(attempts).toBe(2);
+  }
 });
 
 it("closes the connection when a route read only part of the body and keeps it after a full read", async () => {
@@ -1108,15 +1063,25 @@ it.each(["replacement", "DELETE"])(
 it.each(["ready", "failure"] as const)(
   "keeps plain routes unavailable while the factory is pending before %s",
   async (outcome) => {
-    const reserved = await start();
-    const url = new URL(reserved.served.url);
-    await reserved.served.close();
+    const port = await listenEphemeral();
+    const url = new URL(`http://127.0.0.1:${port}/mcp`);
+    const announcements: string[] = [];
+    const logger = pino(
+      {},
+      {
+        write(line) {
+          if (line.includes("MCP transport listening"))
+            announcements.push(line);
+        },
+      },
+    );
     const factoryStart = phaseGate();
     const failure = new Error("provider unavailable");
     const handled = vi.fn(() => new Response("ready"));
     const starting = serveStreamableHttp({
       host: "127.0.0.1",
-      port: Number(url.port),
+      port,
+      logger,
       createMcpServer: async () => {
         await factoryStart.hold();
         if (outcome === "failure") throw failure;
@@ -1129,14 +1094,18 @@ it.each(["ready", "failure"] as const)(
       await factoryStart.reached(starting, "factory start");
       expect((await fetch(new URL("/pending", url))).status).toBe(503);
       expect(handled).not.toHaveBeenCalled();
+      expect(announcements).toEqual([]);
       factoryStart.release();
       if (outcome === "failure") {
         await expect(starting).rejects.toBe(failure);
         await expect(rawHttpRequest(url)).rejects.toMatchObject({
           code: "ECONNREFUSED",
         });
+        expect(announcements).toEqual([]);
+        await start({ port });
       } else {
         await starting;
+        expect(announcements).toHaveLength(1);
         expect((await fetch(new URL("/pending", url))).status).toBe(200);
         expect(handled).toHaveBeenCalledTimes(1);
       }
