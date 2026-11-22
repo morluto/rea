@@ -83,6 +83,31 @@ export const investigationValueBytes = (
     includeSerialized: false,
   }).valueBytes;
 
+/**
+ * Admit an unknown mutation against both the caller's input and the larger
+ * Evidence representation derived from it. A mutation repeats parts of its
+ * input (for example the question), so admitting only the input lets an
+ * operation authenticate and seal a record that exceeds the stated bound. The
+ * derived representation is charged in addition to the input, so the check
+ * covers authenticating both working copies rather than whichever is smaller.
+ */
+export const admitUnknownMutationAuthentication = (
+  input: unknown,
+  derived: unknown,
+  operation: string,
+  policy: InvestigationRetentionPolicy,
+): Result<void, AnalysisError> => {
+  const remaining = policy.availableAuthenticationBytes?.() ?? undefined;
+  const estimate = estimateJsonStorage(
+    derived,
+    remaining === undefined ? {} : { maximumValueBytes: remaining },
+  );
+  return admitInvestigationAuthentication(input, operation, policy, {
+    valueBytes: estimate.valueBytes,
+    serializedUtf16Bytes: estimate.serializedUtf16Bytes,
+  });
+};
+
 export const admitInvestigationRetention = (
   operation: string,
   retainedBytes: number,

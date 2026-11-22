@@ -26,6 +26,7 @@ import type {
 } from "./InvestigationRecordPort.js";
 import {
   admitInvestigationAuthentication,
+  admitUnknownMutationAuthentication,
   type InvestigationRetentionPolicy,
 } from "./InvestigationRetention.js";
 
@@ -151,20 +152,19 @@ export class InvestigationRecords
     target?: BinaryTarget,
     providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
-    const admitted = admitInvestigationAuthentication(
+    const mutation = unknownMutationEvidence(
+      target,
+      { operation: "record_unknown", input },
+      providerSelection,
+    );
+    const admitted = admitUnknownMutationAuthentication(
       input,
+      mutation,
       "record_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    return this.#evidence.recordUnknown(
-      input,
-      unknownMutationEvidence(
-        target,
-        { operation: "record_unknown", input },
-        providerSelection,
-      ),
-    );
+    return this.#evidence.recordUnknown(input, mutation);
   }
 
   /** Commit derived Evidence and its Unknown atomically without an implicit subject. */
@@ -173,24 +173,19 @@ export class InvestigationRecords
     input: RecordUnknownInput,
     providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown | null, AnalysisError> {
-    const admitted = admitInvestigationAuthentication(
+    const mutation = unknownMutationEvidence(
+      undefined,
+      { operation: "record_unknown", input },
+      providerSelection,
+    );
+    const admitted = admitUnknownMutationAuthentication(
       input,
+      mutation,
       "record_unknown",
       this.retentionPolicy,
     );
     if (!admitted.ok) return admitted;
-    return this.#evidence.recordWithUnknown(
-      evidence,
-      input,
-      unknownMutationEvidence(
-        undefined,
-        {
-          operation: "record_unknown",
-          input,
-        },
-        providerSelection,
-      ),
-    );
+    return this.#evidence.recordWithUnknown(evidence, input, mutation);
   }
 
   /** Update an optimistic revision with an explicitly supplied Evidence subject. */
@@ -199,17 +194,18 @@ export class InvestigationRecords
     target?: BinaryTarget,
     providerSelection?: ProviderSelectionProvenance,
   ): Result<ResidualUnknown, AnalysisError> {
-    const admitted = admitInvestigationAuthentication(
-      input,
-      "update_unknown",
-      this.retentionPolicy,
-    );
-    if (!admitted.ok) return admitted;
     const evidence = unknownMutationEvidence(
       target,
       { operation: "update_unknown", input },
       providerSelection,
     );
+    const admitted = admitUnknownMutationAuthentication(
+      input,
+      evidence,
+      "update_unknown",
+      this.retentionPolicy,
+    );
+    if (!admitted.ok) return admitted;
     return this.#evidence.updateUnknown(input, evidence);
   }
 

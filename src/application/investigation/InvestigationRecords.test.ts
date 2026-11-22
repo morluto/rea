@@ -14,6 +14,13 @@ import {
 } from "../../domain/residualUnknown.js";
 import { unknownMutationEvidence } from "./UnknownEvidence.js";
 import { InvestigationRecords } from "./InvestigationRecords.js";
+import { estimateJsonStorage } from "../JsonAuthenticationHeadroom.js";
+
+/** Authentication clones the value and hashes its canonical form: two copies. */
+const admissionBytesFor = (value: unknown): number => {
+  const estimate = estimateJsonStorage(value);
+  return (estimate.valueBytes + estimate.serializedUtf16Bytes) * 2;
+};
 
 const unknownInput = (question: string) =>
   recordUnknownInputSchema.parse({
@@ -244,4 +251,31 @@ it("rejects changed creation intent after the original unknown was updated", () 
     });
     expect(records.exportEvidenceBundle()).toEqual(retained);
   }
+});
+
+it("admits an unknown mutation against its expanded Evidence, not only the input", () => {
+  // A record_unknown mutation repeats the question in its Evidence, so the
+  // derived record is larger than the input. An allowance between the two
+  // would authenticate the input and then seal a larger record; the operation
+  // must refuse it instead.
+  const question = "q".repeat(200_000);
+  const input = unknownInput(question);
+  const mutation = unknownMutationEvidence(undefined, {
+    operation: "record_unknown",
+    input,
+  });
+  const inputBytes = admissionBytesFor(input);
+  const mutationBytes = admissionBytesFor(mutation);
+  expect(mutationBytes).toBeGreaterThan(inputBytes);
+
+  const records = new InvestigationRecords({
+    availableAuthenticationBytes: () =>
+      Math.floor((inputBytes + mutationBytes) / 2),
+  });
+  const refused = records.recordUnknown(input);
+  expect(refused).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisResourceConstraintError" },
+  });
+  expect(records.exportEvidenceBundle().records).toHaveLength(0);
 });
