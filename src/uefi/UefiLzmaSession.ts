@@ -1,0 +1,480 @@
+import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
+import type { Readable, Writable } from "node:stream";
+import { BinaryReader } from "../domain/binaryContainer.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
+import type { UefiOperation } from "../domain/uefi/uefiFirmwareAnalysis.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  OwnedCommandFailure,
+  ownedCommandResources,
+  prepareOwnedCommand,
+} from "../process/OwnedCommand.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../process/ProviderProcess.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+  type ArtifactResourceScope,
+} from "../resources/index.js";
+import type { UefiDecodeFormat } from "./FfsSections.js";
+import { uefiFailureDialect } from "./UefiFailures.js";
+import type { UefiDecodeResult } from "./UefiImageScan.js";
+import {
+  encodeLzmaFrame,
+  LZMA_FRAME_HEADER_BYTES,
+  lzmaReplySchema,
+} from "./UefiLzmaProtocol.js";
+import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
+
+class ActiveWorkerReader {
+  #chunks: Buffer[] = [];
+  #buffered = 0;
+  #ended = false;
+  #error: Error | undefined;
+  #waiter: (() => void) | undefined;
+
+  constructor(
+    private readonly stdout: Readable,
+    private readonly supervisor: ProviderProcessSupervisor,
+  ) {
+    stdout.on("data", this.#onData);
+    stdout.once("end", this.#onEnd);
+    stdout.once("error", this.#onError);
+  }
+
+  readonly #onData = (chunk: Buffer): void => {
+    if (chunk.length === 0) return;
+    this.#chunks.push(chunk);
+    this.#buffered += chunk.length;
+    this.#wake();
+  };
+
+  readonly #onEnd = (): void => {
+    this.#ended = true;
+    this.#wake();
+  };
+
+  readonly #onError = (cause: Error): void => {
+    this.#error = cause;
+    this.#wake();
+  };
+
+  #wake(): void {
+    const wake = this.#waiter;
+    this.#waiter = undefined;
+    wake?.();
+  }
+
+  dispose(): void {
+    this.stdout.off("data", this.#onData);
+    this.stdout.off("end", this.#onEnd);
+    this.stdout.off("error", this.#onError);
+    this.#wake();
+  }
+
+  async readExact(length: number, signal: AbortSignal): Promise<Buffer> {
+    if (length === 0) return Buffer.alloc(0);
+    while (this.#buffered < length) {
+      signal.throwIfAborted();
+      if (this.#error !== undefined) {
+        throw new OwnedCommandFailure(
+          "process",
+          `LZMA worker stdout failed: ${this.#error.message}`,
+          this.supervisor.snapshot(),
+          null,
+          { processError: this.#error },
+        );
+      }
+      if (this.#ended || this.supervisor.observedExit() !== undefined) {
+        const snap = this.supervisor.snapshot();
+        const detail = snap.stderr.text.trim();
+        throw new OwnedCommandFailure(
+          "process",
+          detail.length > 0
+            ? `LZMA worker exited before completing reply: ${detail}`
+            : "LZMA worker exited before completing reply.",
+          snap,
+        );
+      }
+      await new Promise<void>((resolve, reject) => {
+        const onAbort = () => {
+          this.#waiter = undefined;
+          reject(signal.reason);
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+        this.#waiter = () => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        };
+      });
+    }
+    const out = Buffer.allocUnsafe(length);
+    let copied = 0;
+    while (copied < length) {
+      const head = this.#chunks[0]!;
+      const take = Math.min(head.length, length - copied);
+      head.copy(out, copied, 0, take);
+      copied += take;
+      this.#buffered -= take;
+      if (take === head.length) {
+        this.#chunks.shift();
+      } else {
+        this.#chunks[0] = head.subarray(take);
+      }
+    }
+    return out;
+  }
+}
+
+const writeWorkerFrame = async (
+  stdin: Writable,
+  frame: Buffer,
+  signal: AbortSignal,
+): Promise<void> => {
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      stdin.off("drain", onDrain);
+      stdin.off("error", onError);
+      reject(signal.reason);
+    };
+    const onError = (cause: Error) => {
+      signal.removeEventListener("abort", onAbort);
+      stdin.off("drain", onDrain);
+      reject(cause);
+    };
+    const onDrain = () => {
+      signal.removeEventListener("abort", onAbort);
+      stdin.off("error", onError);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    stdin.once("error", onError);
+    const flushed = stdin.write(frame, (err) => {
+      if (err != null) onError(err);
+    });
+    if (flushed) {
+      onDrain();
+    } else {
+      stdin.once("drain", onDrain);
+    }
+  });
+};
+
+interface ActiveLzmaWorker {
+  readonly root: PrivateRuntimeRoot;
+  readonly rootLease: AnalysisCleanupLease;
+  readonly workspace: {
+    readonly kind: "lease";
+    readonly resource: string;
+    readonly lease: AnalysisCleanupLease;
+  };
+  supervisor: ProviderProcessSupervisor | undefined;
+  readonly stdin: Writable;
+  readonly reader: ActiveWorkerReader;
+  readonly resources: readonly string[];
+}
+
+/**
+ * Per-scan bounded LZMA worker session. Spawns at most one isolated Node child
+ * inside one `PrivateRuntimeRoot`, streams multiple compressed UEFI sections
+ * over length-prefixed stdio frames, and stops the child before removing its
+ * workspace root.
+ */
+export class UefiLzmaSession {
+  #active: ActiveLzmaWorker | undefined;
+
+  constructor(
+    private readonly workerModulePath: string,
+    private readonly operation: UefiOperation,
+    private readonly resources: ArtifactResourceScope,
+  ) {}
+
+  async decode(
+    payload: Buffer,
+    format: Exclude<UefiDecodeFormat, "zlib">,
+    maxOutputBytes: number,
+    signal: AbortSignal,
+  ): Promise<UefiDecodeResult> {
+    signal.throwIfAborted();
+    let active: ActiveLzmaWorker;
+    try {
+      active = await this.#ensureWorker(signal);
+    } catch (cause: unknown) {
+      let primary = classifyProviderFailure(
+        cause,
+        uefiFailureDialect(this.operation, this.workerModulePath),
+      );
+      const preparation = processInspectionFailure(cause);
+      if (preparation !== undefined) {
+        primary = retainProcessInspectionCleanup(
+          preparation,
+          primary,
+          this.resources,
+          this.operation,
+        );
+      }
+      throw primary;
+    }
+
+    try {
+      const requestHeader = JSON.stringify({
+        format,
+        max_output_bytes: maxOutputBytes,
+      });
+      await writeWorkerFrame(
+        active.stdin,
+        encodeLzmaFrame(requestHeader, payload),
+        signal,
+      );
+      const header = await active.reader.readExact(
+        LZMA_FRAME_HEADER_BYTES,
+        signal,
+      );
+      const headerReader = new BinaryReader(header, false, "LZMA-Frame");
+      const replyBytes = headerReader.u32(0);
+      const outputBytes = headerReader.u32(4);
+      if (
+        replyBytes === 0 ||
+        replyBytes > UEFI_FIRMWARE_LIMITS.diagnosticBytes
+      ) {
+        await this.close();
+        return {
+          ok: false,
+          reason: "decoder",
+          message: "LZMA reply exceeds the diagnostic budget.",
+        };
+      }
+      if (outputBytes > maxOutputBytes) {
+        await this.close();
+        return {
+          ok: false,
+          reason: "output-limit",
+          message: `LZMA worker output (${outputBytes} bytes) exceeds ${maxOutputBytes} byte budget.`,
+        };
+      }
+      const replyJsonBuf = await active.reader.readExact(replyBytes, signal);
+      const decodedBytes = await active.reader.readExact(outputBytes, signal);
+      const reply = lzmaReplySchema.parse(
+        JSON.parse(replyJsonBuf.toString("utf8")),
+      );
+      if (!reply.ok) {
+        return reply;
+      }
+      if (reply.input_bytes_consumed > payload.length) {
+        return {
+          ok: false,
+          reason: "decoder",
+          message: `LZMA worker reported consuming ${reply.input_bytes_consumed} bytes from a ${payload.length}-byte input.`,
+        };
+      }
+      if (
+        decodedBytes.length !== reply.output.bytes ||
+        sha256Hex(decodedBytes) !== reply.output.sha256
+      ) {
+        return {
+          ok: false,
+          reason: "decoder",
+          message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
+        };
+      }
+      signal.throwIfAborted();
+      return {
+        ok: true,
+        outcome: {
+          bytes: decodedBytes,
+          decoderVersion: reply.lzma_version,
+          consumedBytes: reply.input_bytes_consumed,
+        },
+      };
+    } catch (cause: unknown) {
+      let primary = classifyProviderFailure(
+        cause,
+        uefiFailureDialect(this.operation, active.root.path),
+      );
+      const preparation = processInspectionFailure(cause);
+      if (preparation !== undefined) {
+        primary = retainProcessInspectionCleanup(
+          preparation,
+          primary,
+          this.resources,
+          this.operation,
+        );
+      }
+      await this.close(primary);
+      throw primary;
+    }
+  }
+
+  async close(primary?: AnalysisError): Promise<void> {
+    const active = this.#active;
+    if (active === undefined) return;
+    this.#active = undefined;
+    active.reader.dispose();
+    try {
+      active.stdin.end();
+    } catch {
+      // Closing stdin is a polite EOF hint before supervisor.stop() enforces exit.
+    }
+    const released = await this.resources.release(active.workspace);
+    if (released.kind === "failed") {
+      const failure = new ProviderCleanupError(
+        UEFI_PROVIDER_IDENTITY.id,
+        active.rootLease.cleanupResources ?? [active.root.path],
+        { reason: errorMessage(released.cause) },
+        { cause: released.cause, operation: this.operation },
+      );
+      new AnalysisCleanupLeaseGroup(failure, [active.rootLease]);
+      throw primary === undefined
+        ? failure
+        : analysisErrorWithCleanupDependencies(
+            primary,
+            failure,
+            this.operation,
+          );
+    }
+  }
+
+  async #ensureWorker(signal: AbortSignal): Promise<ActiveLzmaWorker> {
+    if (
+      this.#active !== undefined &&
+      this.#active.supervisor?.observedExit() === undefined
+    ) {
+      return this.#active;
+    }
+    if (this.#active !== undefined) {
+      await this.close();
+    }
+    await prepareOwnedCommand(signal);
+    const root = await PrivateRuntimeRoot.create({ prefix: "rea-uefi-lzma-" });
+    let supervisor: ProviderProcessSupervisor | undefined;
+    let processResources: readonly string[] = [];
+    const rootLease = AnalysisCleanupLease.forCloseOwner(
+      {
+        async close() {
+          if (supervisor !== undefined) {
+            const stopped = await supervisor.stop();
+            if (stopped.status === "incomplete") {
+              throw new Error(stopped.reason);
+            }
+            supervisor.dispose();
+            supervisor = undefined;
+            processResources = [];
+          }
+          await root.close();
+        },
+        get cleanupResources() {
+          return [...new Set([...processResources, root.path])];
+        },
+      },
+      root.path,
+    );
+    const workspace = {
+      kind: "lease",
+      resource: root.path,
+      lease: rootLease,
+    } as const;
+
+    try {
+      const { NODE_OPTIONS: _ambientNodeOptions, ...environment } = process.env;
+      const spawned = await spawnOwnedProviderProcess({
+        command: process.execPath,
+        arguments: [
+          "--max-old-space-size=256",
+          "--disable-wasm-trap-handler",
+          this.workerModulePath,
+          "--stdio",
+        ],
+        cwd: root.path,
+        expectedCommand: null,
+        runId: `rea-uefi-lzma-${randomUUID()}`,
+        hostEnvironment: environment,
+        stdin: "pipe",
+        signal,
+      });
+      processResources = ownedCommandResources(spawned.ownership, root.path);
+      supervisor = new ProviderProcessSupervisor(
+        {
+          process: spawned.process,
+          ownsProcessLifetime: true,
+          ownership: spawned.ownership,
+          ...(spawned.cleanup === undefined
+            ? {}
+            : { cleanup: spawned.cleanup }),
+          ...(spawned.requestStop === undefined
+            ? {}
+            : { requestStop: spawned.requestStop }),
+        },
+        {
+          captureStdout: false,
+          maxDiagnosticBytes: UEFI_FIRMWARE_LIMITS.diagnosticBytes,
+          runtime: "v8",
+        },
+      );
+      const stdin = spawned.process.stdin;
+      const stdout = spawned.process.stdout;
+      if (stdin == null || stdout == null) {
+        throw new Error("LZMA worker stdio pipes were not established.");
+      }
+      const reader = new ActiveWorkerReader(stdout, supervisor);
+      const active: ActiveLzmaWorker = {
+        root,
+        rootLease,
+        workspace,
+        supervisor,
+        stdin,
+        reader,
+        resources: processResources,
+      };
+      this.#active = active;
+      return active;
+    } catch (cause: unknown) {
+      let primary = classifyProviderFailure(
+        cause,
+        uefiFailureDialect(this.operation, root.path),
+      );
+      const preparation = processInspectionFailure(cause);
+      if (preparation !== undefined) {
+        primary = retainProcessInspectionCleanup(
+          preparation,
+          primary,
+          this.resources,
+          this.operation,
+        );
+      }
+      const released = await this.resources.release(workspace);
+      if (released.kind === "failed") {
+        const cleanup = new ProviderCleanupError(
+          UEFI_PROVIDER_IDENTITY.id,
+          rootLease.cleanupResources ?? [root.path],
+          { reason: errorMessage(released.cause) },
+          { cause: released.cause, operation: this.operation },
+        );
+        new AnalysisCleanupLeaseGroup(cleanup, [rootLease]);
+        throw analysisErrorWithCleanupDependencies(
+          primary,
+          cleanup,
+          this.operation,
+        );
+      }
+      throw primary;
+    }
+  }
+}

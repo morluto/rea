@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
@@ -663,7 +663,7 @@ it("rolls back staged files if the receipts cannot form a valid extraction resul
 });
 
 it.skipIf(!lzmaWorkerAvailable)(
-  "retains the worker root across a failed descriptor retry and releases its child before root removal",
+  "retains the worker root across a failed child stop retry and stops its child before root removal",
   async () => {
     const driver = buildFfsFile({
       guid: GUID_DRIVER,
@@ -677,11 +677,11 @@ it.skipIf(!lzmaWorkerAvailable)(
     await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
     const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
     const create = PrivateRuntimeRoot.create;
-    const closeHandle = OwnedFileHandle.prototype.close;
+    const stopProcess = ProviderProcessSupervisor.prototype.stop;
     const closeRoot = PrivateRuntimeRoot.prototype.close;
     let root: PrivateRuntimeRoot | undefined;
-    let outputHandle: OwnedFileHandle | undefined;
-    let denyDescriptor = true;
+    let workerPid: number | undefined;
+    let denyStop = true;
     let denyRoot = true;
     const creating = vi
       .spyOn(PrivateRuntimeRoot, "create")
@@ -690,24 +690,14 @@ it.skipIf(!lzmaWorkerAvailable)(
         if (options?.prefix === "rea-uefi-lzma-") root = created;
         return created;
       });
-    const closingHandle = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementation(async function (this: OwnedFileHandle) {
-        const outputPath =
-          root === undefined ? undefined : join(root.path, "output.bin");
-        if (outputPath !== undefined && this.handle.fd >= 0) {
-          const output = await stat(outputPath).catch(() => undefined);
-          const fd = await this.handle.stat();
-          if (
-            output !== undefined &&
-            fd.dev === output.dev &&
-            fd.ino === output.ino
-          ) {
-            outputHandle = this;
-            if (denyDescriptor) throw new Error("worker output close denied");
-          }
+    const stopping = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementation(async function (this: ProviderProcessSupervisor) {
+        workerPid = this.launch.process.pid;
+        if (denyStop) {
+          return { status: "incomplete", reason: "worker stop denied" };
         }
-        return closeHandle.call(this);
+        return stopProcess.call(this);
       });
     const closingRoot = vi
       .spyOn(PrivateRuntimeRoot.prototype, "close")
@@ -719,11 +709,11 @@ it.skipIf(!lzmaWorkerAvailable)(
 
     try {
       const result = await provider.execute(inspectRequest(imagePath));
-      if (result.ok || root === undefined || outputHandle === undefined) {
-        throw new Error("worker output descriptor failure was not exercised");
+      if (result.ok || root === undefined || workerPid === undefined) {
+        throw new Error("worker stop failure was not exercised");
       }
       expect(result.error.cleanupResources).toEqual(
-        expect.arrayContaining([root.path, join(root.path, "output.bin")]),
+        expect.arrayContaining([root.path, `pid:${String(workerPid)}`]),
       );
       await expect(provider.close()).rejects.toThrow(
         /cleanup remains incomplete/i,
@@ -731,11 +721,10 @@ it.skipIf(!lzmaWorkerAvailable)(
       expect(closingRoot.mock.contexts).not.toContain(root);
       expect(existsSync(root.path)).toBe(true);
 
-      denyDescriptor = false;
+      denyStop = false;
       await expect(provider.close()).rejects.toThrow(
         /cleanup remains incomplete/i,
       );
-      expect(outputHandle.handle.fd).toBe(-1);
       expect(result.error.cleanupResources).toEqual([root.path]);
       expect(existsSync(root.path)).toBe(true);
 
@@ -744,9 +733,81 @@ it.skipIf(!lzmaWorkerAvailable)(
       expect(existsSync(root.path)).toBe(false);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
+      denyStop = false;
+      denyRoot = false;
       creating.mockRestore();
-      closingHandle.mockRestore();
+      stopping.mockRestore();
       closingRoot.mockRestore();
+      await provider.close();
+    }
+  },
+  45_000,
+);
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "reuses one persistent LZMA worker across multiple sections and reuses the validated scan for extraction",
+  async () => {
+    const mod1 = buildSection(0x10, Buffer.from("DXE-DRIVER-ONE-PAYLOAD"));
+    const mod2 = buildSection(0x10, Buffer.from("DXE-DRIVER-TWO-PAYLOAD"));
+    const corrupt = Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00, 0xaa, 0xbb]);
+    const f1 = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(mod1)),
+      ),
+    });
+    const fBad = buildFfsFile({
+      guid: "55555555-6666-4777-8888-999999999999",
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(corrupt),
+    });
+    const f2 = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(mod2)),
+      ),
+    });
+    const directory = await createTestTempDirectory("rea-uefi-worker-pool-");
+    const imagePath = join(directory, "multi-lzma.fd");
+    await writeFile(imagePath, buildFv({ files: [f1, fBad, f2] }).buffer);
+
+    let lzmaRootsCreated = 0;
+    const create = PrivateRuntimeRoot.create;
+    const creating = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        if (options?.prefix === "rea-uefi-lzma-") lzmaRootsCreated += 1;
+        return create(options);
+      });
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    try {
+      const inspected = expectOk(
+        await provider.execute(inspectRequest(imagePath)),
+      ).value.result as UefiInspectResult;
+      expect(lzmaRootsCreated).toBe(1);
+      expect(inspected.coverage).toBe("partial");
+
+      const extracted = expectOk(
+        await provider.execute(
+          extractRequest(imagePath, join(directory, "out"), {
+            include_compressed: false,
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      // Validated scan summary is reused across inspect -> extract without spawning another worker.
+      expect(lzmaRootsCreated).toBe(1);
+      expect(
+        extracted.files
+          .filter((entry) => entry.source === "raw-section")
+          .map((entry) => entry.sha256),
+      ).toEqual([
+        sha256(Buffer.from("DXE-DRIVER-ONE-PAYLOAD")),
+        sha256(Buffer.from("DXE-DRIVER-TWO-PAYLOAD")),
+      ]);
+    } finally {
+      creating.mockRestore();
       await provider.close();
     }
   },

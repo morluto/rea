@@ -266,3 +266,184 @@ it("publishes the writer's normalized path while retaining source spelling and u
     await files.close();
   }
 });
+
+const buildConcurrentUnblobReport = (
+  inputPath: string,
+  staging: string,
+  inputHash: string,
+  childSpecs: readonly {
+    readonly relativePath: string;
+    readonly payload: Buffer;
+    readonly sha256: string;
+  }[],
+  corruptIndex?: number,
+) =>
+  normalizeUnblobReport(
+    [
+      {
+        task: {
+          path: inputPath,
+          depth: 0,
+          blob_id: "",
+          is_multi_file: false,
+        },
+        reports: [
+          {
+            __typename__: "StatReport",
+            path: inputPath,
+            size: 16,
+            is_file: true,
+            is_dir: false,
+            is_link: false,
+            link_target: null,
+          },
+          { __typename__: "HashReport", sha256: inputHash },
+        ],
+        subtasks: childSpecs.map((spec, idx) => ({
+          path: join(staging, spec.relativePath),
+          depth: 1,
+          blob_id: `child-${idx}`,
+          is_multi_file: false,
+        })),
+      },
+      ...childSpecs.map((spec, idx) => ({
+        task: {
+          path: join(staging, spec.relativePath),
+          depth: 1,
+          blob_id: `child-${idx}`,
+          is_multi_file: false,
+        },
+        reports: [
+          {
+            __typename__: "StatReport",
+            path: join(staging, spec.relativePath),
+            size: spec.payload.length,
+            is_file: true,
+            is_dir: false,
+            is_link: false,
+            link_target: null,
+          },
+          {
+            __typename__: "HashReport",
+            sha256: idx === corruptIndex ? "0".repeat(64) : spec.sha256,
+          },
+        ],
+        subtasks: [],
+      })),
+    ],
+    {
+      inputPath,
+      outputRoot: staging,
+      sha256: inputHash,
+      length: 16,
+      offset: 0,
+      maxDepth: 3,
+    },
+  );
+
+const SYNTHETIC_UNBLOB_ENGINE = (executableSha256: string) => ({
+  name: "unblob" as const,
+  version: "26.6.4",
+  executable_path: "/synthetic/unblob",
+  executable_sha256: executableSha256,
+  source_revision: null,
+  worker_count: 1,
+});
+
+it("publishes nested regular files concurrently in deterministic order without double-hashing and rolls back reported digest mismatches", async () => {
+  const root = await createTestTempDirectory("rea-firmware-concurrent-pub-");
+  const staging = join(root, "staging");
+  await mkdir(join(staging, "rootfs", "bin"), { recursive: true });
+  await mkdir(join(staging, "rootfs", "etc", "conf.d"), { recursive: true });
+
+  const inputPath = join(root, "input.img");
+  const inputHash = "b".repeat(64);
+  const childSpecs = Array.from({ length: 24 }, (_, idx) => {
+    const subdir = idx % 2 === 0 ? "rootfs/bin" : "rootfs/etc/conf.d";
+    const relativePath = `${subdir}/item-${String(idx).padStart(2, "0")}.bin`;
+    const payload = Buffer.from(`payload-${idx}-${"x".repeat(64)}`);
+    const sha256 = createHash("sha256").update(payload).digest("hex");
+    return { relativePath, payload, sha256 };
+  });
+  for (const spec of childSpecs) {
+    await writeFile(join(staging, spec.relativePath), spec.payload);
+  }
+
+  const entries = await inventoryFirmwareOutput(
+    staging,
+    65_536,
+    256,
+    Number.MAX_SAFE_INTEGER,
+    "extract_firmware",
+  );
+  const files = new FirmwareFileAccess();
+  const hashSpy = vi.spyOn(files, "hash");
+  const outputOk = join(root, "published-ok");
+  const outputBad = join(root, "published-bad");
+  try {
+    const published = await publishFirmwareExtraction({
+      files,
+      workspacePath: root,
+      deadline: startFirmwareDeadline("publication", 120_000),
+      analysisTimeoutMs: 120_000,
+      outputDirectory: outputOk,
+      entries,
+      normalized: buildConcurrentUnblobReport(
+        inputPath,
+        staging,
+        inputHash,
+        childSpecs,
+      ),
+      selection: { offset: 0, length: 16, sha256: inputHash },
+      maxDepth: 3,
+      engine: SYNTHETIC_UNBLOB_ENGINE(inputHash),
+      signal: new AbortController().signal,
+      retainCleanup: vi.fn(),
+    });
+    expect(hashSpy).not.toHaveBeenCalled();
+    const expectedSorted = [...childSpecs].sort((a, b) =>
+      a.relativePath < b.relativePath
+        ? -1
+        : a.relativePath > b.relativePath
+          ? 1
+          : 0,
+    );
+    expect(published.files.map((file) => file.relative_path)).toEqual(
+      expectedSorted.map((spec) => spec.relativePath),
+    );
+    expect(published.files.map((file) => file.sha256)).toEqual(
+      expectedSorted.map((spec) => spec.sha256),
+    );
+
+    await expect(
+      publishFirmwareExtraction({
+        files,
+        workspacePath: root,
+        deadline: startFirmwareDeadline("publication", 120_000),
+        analysisTimeoutMs: 120_000,
+        outputDirectory: outputBad,
+        entries,
+        normalized: buildConcurrentUnblobReport(
+          inputPath,
+          staging,
+          inputHash,
+          childSpecs,
+          11,
+        ),
+        selection: { offset: 0, length: 16, sha256: inputHash },
+        maxDepth: 3,
+        engine: SYNTHETIC_UNBLOB_ENGINE(inputHash),
+        signal: new AbortController().signal,
+        retainCleanup: vi.fn(),
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisOutputError",
+      message: expect.stringContaining(
+        "Extracted bytes disagree with provider report",
+      ),
+    });
+    await expect(access(outputBad)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await files.close();
+  }
+});

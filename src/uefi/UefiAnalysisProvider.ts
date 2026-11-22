@@ -3,17 +3,12 @@ import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 import { hostRangeErrorKind } from "../domain/parseFailure.js";
 import { errorMessage } from "../kernel/errorMessage.js";
-import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
 import { inflate } from "node:zlib";
 import { promisify } from "node:util";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ArtifactResourceScope,
   readStableArtifact,
-  AnalysisCleanupLease,
-  AnalysisCleanupLeaseGroup,
 } from "../resources/index.js";
 import {
   createAnalysisExecution,
@@ -28,8 +23,6 @@ import {
   AnalysisInputError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
@@ -41,15 +34,6 @@ import {
   type UefiNvramInspectResult,
   type UefiRequest,
 } from "../domain/uefi/uefiFirmwareAnalysis.js";
-import {
-  OwnedCommandFailure,
-  runOwnedCommand,
-} from "../process/OwnedCommand.js";
-import {
-  processInspectionFailure,
-  retainProcessInspectionCleanup,
-} from "../providers/OwnedCommandCleanup.js";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import type {
   UefiImageScanSummary,
   UefiDecodeResult,
@@ -63,8 +47,7 @@ import {
   publishUefiFiles,
   type UefiPublicationEntry,
 } from "./UefiPublication.js";
-
-import { lzmaReplySchema } from "./UefiLzmaProtocol.js";
+import { UefiLzmaSession } from "./UefiLzmaSession.js";
 import { UEFI_PROVIDER_IDENTITY } from "./UefiProviderIdentity.js";
 
 const inflateBounded = promisify(inflate);
@@ -137,6 +120,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   #tail: Promise<void> = Promise.resolve();
   readonly #resources = new ArtifactResourceScope();
   readonly #workerModulePath: string;
+  #lastScan:
+    | { readonly key: string; readonly summary: UefiImageScanSummary }
+    | undefined;
 
   constructor(
     workerModulePath: string = fileURLToPath(
@@ -161,6 +147,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   async close(): Promise<void> {
     this.#closing = true;
     await this.#tail.catch(() => undefined);
+    this.#lastScan = undefined;
     await this.#resources.close();
   }
 
@@ -339,23 +326,45 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         );
         return finishObservation(value);
       }
-      const scan = await scanUefiImage(
-        snapshot.bytes,
-        {
-          maxDepth: request.input.max_depth,
-          maxVolumes: request.input.max_volumes,
-          maxFiles: request.input.max_files,
-        },
-        ({ payload, format, maxOutputBytes }) =>
-          this.#decodeStream(
-            request.operation,
-            payload,
-            format,
-            maxOutputBytes,
-            signal,
-          ),
-        checkpoint,
-      );
+      const scanKey = `${snapshot.sha256}:${String(request.input.max_depth)}:${String(request.input.max_volumes)}:${String(request.input.max_files)}`;
+      let scan: UefiImageScanSummary;
+      if (this.#lastScan?.key === scanKey) {
+        scan = this.#lastScan.summary;
+      } else {
+        const lzmaSession = new UefiLzmaSession(
+          this.#workerModulePath,
+          request.operation,
+          this.#resources,
+        );
+        try {
+          scan = await scanUefiImage(
+            snapshot.bytes,
+            {
+              maxDepth: request.input.max_depth,
+              maxVolumes: request.input.max_volumes,
+              maxFiles: request.input.max_files,
+            },
+            ({ payload, format, maxOutputBytes }) =>
+              this.#decodeStream(
+                lzmaSession,
+                payload,
+                format,
+                maxOutputBytes,
+                signal,
+              ),
+            checkpoint,
+          );
+        } catch (cause: unknown) {
+          const primary = classifyProviderFailure(
+            cause,
+            uefiFailureDialect(request.operation, request.input.path),
+          );
+          await lzmaSession.close(primary);
+          throw primary;
+        }
+        await lzmaSession.close();
+        this.#lastScan = { key: scanKey, summary: scan };
+      }
       checkpoint();
       if (request.operation === "extract_uefi_firmware") {
         return this.#extract(
@@ -715,7 +724,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   }
 
   async #decodeStream(
-    operation: UefiRequest["operation"],
+    lzmaSession: UefiLzmaSession,
     payload: Buffer,
     format: UefiDecodeFormat,
     maxOutputBytes: number,
@@ -755,177 +764,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         };
       }
     }
-    const root = await PrivateRuntimeRoot.create({ prefix: "rea-uefi-lzma-" });
-    const files = new ArtifactResourceScope();
-    let worker: OwnedCommandFailure | undefined;
-    const rootLease = AnalysisCleanupLease.forCloseOwner(
-      {
-        async close() {
-          if (worker?.cleanupOwner !== undefined) {
-            const stopped = await worker.cleanupOwner.stop();
-            if (stopped.status === "incomplete")
-              throw new Error(stopped.reason);
-            worker = undefined;
-          }
-          await files.close();
-          await root.close();
-        },
-        get cleanupResources() {
-          return [
-            ...new Set([
-              ...(worker?.resources ?? []),
-              ...files.cleanupResources,
-              root.path,
-            ]),
-          ];
-        },
-      },
-      root.path,
-    );
-    const workspace = {
-      kind: "lease",
-      resource: root.path,
-      lease: rootLease,
-    } as const;
-    const decode = async (): Promise<UefiDecodeResult> => {
-      const payloadPath = join(root.path, "payload.bin");
-      const outputPath = join(root.path, "output.bin");
-      const replyPath = join(root.path, "reply.json");
-      const requestPath = join(root.path, "request.json");
-      await writeFile(payloadPath, payload, { flag: "wx", mode: 0o600 });
-      await writeFile(
-        requestPath,
-        JSON.stringify({
-          format,
-          payload_path: payloadPath,
-          output_path: outputPath,
-          reply_path: replyPath,
-          max_output_bytes: maxOutputBytes,
-        }),
-        { flag: "wx", mode: 0o600 },
-      );
-      const { NODE_OPTIONS: _ambientNodeOptions, ...environment } = process.env;
-      await runOwnedCommand(
-        {
-          command: process.execPath,
-          arguments: [
-            "--max-old-space-size=256",
-            "--disable-wasm-trap-handler",
-            this.#workerModulePath,
-            requestPath,
-          ],
-          cwd: root.path,
-          expectedCommand: null,
-          runId: `rea-uefi-lzma-${randomUUID()}`,
-          hostEnvironment: environment,
-        },
-        {
-          timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
-          diagnosticBytes: UEFI_FIRMWARE_LIMITS.diagnosticBytes,
-        },
-        { signal },
-      );
-      const replyFile = await readStableArtifact(
-        replyPath,
-        UEFI_FIRMWARE_LIMITS.diagnosticBytes,
-        signal,
-        undefined,
-        files,
-      );
-      const reply = lzmaReplySchema.parse(
-        JSON.parse(replyFile.bytes.toString("utf8")),
-      );
-      if (!reply.ok) {
-        return reply;
-      }
-      const consumedBytes = reply.input_bytes_consumed;
-      if (consumedBytes > payload.length) {
-        return {
-          ok: false,
-          reason: "decoder",
-          message: `LZMA worker reported consuming ${consumedBytes} bytes from a ${payload.length}-byte input.`,
-        };
-      }
-      signal.throwIfAborted();
-      const decoded = await readStableArtifact(
-        outputPath,
-        maxOutputBytes,
-        signal,
-        undefined,
-        files,
-      );
-      if (
-        decoded.sha256 !== reply.output.sha256 ||
-        decoded.bytes.length !== reply.output.bytes
-      ) {
-        return {
-          ok: false,
-          reason: "decoder",
-          message: `LZMA worker output digest mismatch (${reply.output.sha256}).`,
-        };
-      }
-      return {
-        ok: true,
-        outcome: {
-          bytes: decoded.bytes,
-          decoderVersion: reply.lzma_version,
-          consumedBytes,
-        },
-      };
-    };
-
-    let outcome: UefiDecodeResult | undefined;
-    let primary: AnalysisError | undefined;
-    try {
-      outcome = await decode();
-    } catch (cause: unknown) {
-      primary = classifyProviderFailure(
-        cause,
-        uefiFailureDialect(operation, root.path),
-      );
-      const preparation = processInspectionFailure(cause);
-      if (preparation !== undefined) {
-        primary = retainProcessInspectionCleanup(
-          preparation,
-          primary,
-          this.#resources,
-          operation,
-        );
-      }
-      if (
-        cause instanceof OwnedCommandFailure &&
-        cause.cleanupOwner !== undefined
-      ) {
-        worker = cause;
-        this.#resources.retain(workspace);
-        new AnalysisCleanupLeaseGroup(primary, [rootLease]);
-        throw primary;
-      }
-    }
-    const cleanup = (reason: string, cause?: unknown) => {
-      const failure = new ProviderCleanupError(
-        UEFI_PROVIDER_IDENTITY.id,
-        rootLease.cleanupResources ?? [root.path],
-        { reason },
-        { cause, operation },
-      );
-      new AnalysisCleanupLeaseGroup(failure, [rootLease]);
-      return primary === undefined
-        ? failure
-        : analysisErrorWithCleanupDependencies(primary, failure, operation);
-    };
-    if (files.hasPending) {
-      this.#resources.retain(workspace);
-      throw cleanup(
-        "Worker output descriptors must close before the temporary root can be removed.",
-      );
-    }
-    const released = await this.#resources.release(workspace);
-    if (released.kind === "failed")
-      throw cleanup(errorMessage(released.cause), released.cause);
-    if (primary !== undefined) throw primary;
-    signal.throwIfAborted();
-    if (outcome === undefined) throw new Error("UEFI decoder did not settle.");
-    return outcome;
+    return lzmaSession.decode(payload, format, maxOutputBytes, signal);
   }
 }

@@ -119,28 +119,21 @@ export const publishFirmwareExtraction = async (context: {
   const files: z.infer<typeof firmwareResultSchemas.extract_firmware>["files"] =
     [];
   let totalFiles = 0;
+  let verifiedFiles = 0;
   const progress = () => ({
     output_directory: context.outputDirectory,
-    verified_files: files.length,
+    verified_files: verifiedFiles,
     total_files: totalFiles,
   });
   try {
     const materialized = new Set<string>();
-    for (const entry of context.entries)
-      if (entry.kind === "file")
-        materialized.add(`$output/${entry.relativePath}`);
-    totalFiles = materialized.size;
-    for (const path of context.normalized.files.keys()) {
-      if (path !== "$input" && !materialized.has(path))
-        throw new AnalysisOutputError(
-          "extract_firmware",
-          `Reported regular file is absent from materialized output: ${path}`,
-        );
-    }
+    const regularEntries: FirmwareEntry[] = [];
     const unpublished = [];
-    tree = await SafeOutputTree.create(context.outputDirectory);
     for (const entry of context.entries) {
-      if (entry.kind !== "file") {
+      if (entry.kind === "file") {
+        materialized.add(`$output/${entry.relativePath}`);
+        regularEntries.push(entry);
+      } else {
         unpublished.push({
           relative_path: entry.relativePath,
           kind: entry.kind,
@@ -149,39 +142,81 @@ export const publishFirmwareExtraction = async (context: {
             ? {}
             : { link_target_hex: entry.linkTargetHex }),
         });
-        continue;
       }
-      const logicalPath = `$output/${entry.relativePath}`;
-      const reported = context.normalized.files.get(logicalPath);
-      const sha256 = await context.files.hash(entry.path, context.signal);
-      if (
-        (reported?.sha256 !== null &&
-          reported?.sha256 !== undefined &&
-          reported.sha256 !== sha256) ||
-        (context.normalized.sizes.has(logicalPath) &&
-          context.normalized.sizes.get(logicalPath) !== entry.size)
-      )
+    }
+    totalFiles = materialized.size;
+    for (const path of context.normalized.files.keys()) {
+      if (path !== "$input" && !materialized.has(path))
         throw new AnalysisOutputError(
           "extract_firmware",
-          `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+          `Reported regular file is absent from materialized output: ${path}`,
         );
-      const written = await context.files.publish(
-        entry,
-        sha256,
-        tree,
-        context.signal,
-      );
-      files.push({
-        relative_path: entry.relativePath,
-        path: join(tree.outputRoot, written.relativePath),
-        size: entry.size,
-        sha256,
-        reported_sha256: reported?.sha256 ?? null,
-        mime_type: reported?.mimeType ?? null,
-        analysis_depth: reported?.depth ?? null,
-        runtime_address: null,
-        original_file_range: null,
-      });
+    }
+    tree = await SafeOutputTree.create(context.outputDirectory);
+    const activeTree = tree;
+    const publishedSlots = new Array<(typeof files)[number] | undefined>(
+      regularEntries.length,
+    );
+    let cursor = 0;
+    let firstFailure: unknown;
+    const publishWorker = async (): Promise<void> => {
+      while (firstFailure === undefined) {
+        const index = cursor++;
+        const entry = regularEntries[index];
+        if (entry === undefined) return;
+        try {
+          const logicalPath = `$output/${entry.relativePath}`;
+          const reported = context.normalized.files.get(logicalPath);
+          if (
+            context.normalized.sizes.has(logicalPath) &&
+            context.normalized.sizes.get(logicalPath) !== entry.size
+          ) {
+            throw new AnalysisOutputError(
+              "extract_firmware",
+              `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+            );
+          }
+          const written = await context.files.publish(
+            entry,
+            undefined,
+            activeTree,
+            context.signal,
+          );
+          if (
+            reported?.sha256 !== null &&
+            reported?.sha256 !== undefined &&
+            reported.sha256 !== written.sha256
+          ) {
+            throw new AnalysisOutputError(
+              "extract_firmware",
+              `Extracted bytes disagree with provider report: ${entry.relativePath}`,
+            );
+          }
+          publishedSlots[index] = {
+            relative_path: entry.relativePath,
+            path: join(activeTree.outputRoot, written.relativePath),
+            size: entry.size,
+            sha256: written.sha256,
+            reported_sha256: reported?.sha256 ?? null,
+            mime_type: reported?.mimeType ?? null,
+            analysis_depth: reported?.depth ?? null,
+            runtime_address: null,
+            original_file_range: null,
+          };
+          verifiedFiles += 1;
+        } catch (cause: unknown) {
+          firstFailure ??= cause;
+          return;
+        }
+      }
+    };
+    const workerCount = Math.min(8, regularEntries.length);
+    await Promise.allSettled(
+      Array.from({ length: workerCount }, () => publishWorker()),
+    );
+    if (firstFailure !== undefined) throw firstFailure;
+    for (const item of publishedSlots) {
+      if (item !== undefined) files.push(item);
     }
     result = firmwareResultSchemas.extract_firmware.parse({
       analysis_timeout_ms: context.analysisTimeoutMs,
