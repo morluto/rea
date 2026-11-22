@@ -4,7 +4,7 @@ import {
   ArtifactResourceRetryFailure,
 } from "../resources/index.js";
 import {
-  observeStableFile,
+  observeStableFileIdentity,
   stableFileHashCause,
   type StableFileHashOptions,
 } from "../filesystem/StableFileHash.js";
@@ -366,7 +366,7 @@ const sha256File = async (
     { path, kind: "launcher" },
     resources,
     signal,
-    (options) => observeStableFile(path, options),
+    (options) => observeStableFileIdentity(path, options),
   );
   if (!hashed.ok) return hashed;
   const { state, sha256 } = hashed.value;
