@@ -558,6 +558,8 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 
                 ## Read [the guide](another-guide.md) with `rea`
 
+                ## ![Caf&eacute; *crème*](badge.svg)
+
                 <p id="block-id">A block anchor.</p>
 
                 An <span id="inline-id">inline anchor</span>.
@@ -566,6 +568,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             page.write_text(dedent("""\
                 [Setext](../docs/guide.md#guide-heading)
                 [Formatted](../docs/guide.md#read-the-guide-with-rea)
+                [Image alt text](../docs/guide.md#caf%C3%A9-cr%C3%A8me)
                 [Block ID](../docs/guide.md#block-id)
                 [Inline ID](../docs/guide.md#inline-id)
                 [Fenced heading](../docs/guide.md#example-heading)

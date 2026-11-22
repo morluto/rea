@@ -21,6 +21,17 @@ SITE_TEXT_URL = re.compile(
 )
 
 
+def heading_text(tokens):
+    """Yield visible heading text from parsed inline tokens."""
+    for token in tokens:
+        if token.type in ("text", "code_inline"):
+            yield token.content
+        elif token.type in ("softbreak", "hardbreak"):
+            yield " "
+        elif token.type == "image":
+            yield from heading_text(token.children or ())
+
+
 def markdown_ids(path):
     """Collect GitHub heading anchors and explicit HTML IDs in local Markdown."""
     tokens = MARKDOWN.parse(path.read_text(encoding="utf-8"))
@@ -36,11 +47,7 @@ def markdown_ids(path):
                     parser.feed(child.content)
         if token.type != "heading_open":
             continue
-        text = "".join(
-            " " if child.type in ("softbreak", "hardbreak") else child.content
-            for child in tokens[index + 1].children or ()
-            if child.type in ("text", "code_inline", "image", "softbreak", "hardbreak")
-        ).lower()
+        text = "".join(heading_text(tokens[index + 1].children or ())).lower()
         slug = "".join(c for c in text if c in "-_ " or unicodedata.category(c)[0] in "LN").replace(" ", "-")
         count = counts.get(slug, 0)
         identifiers.add(f"{slug}-{count}" if count else slug)
