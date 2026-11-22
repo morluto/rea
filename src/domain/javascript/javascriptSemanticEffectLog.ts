@@ -482,6 +482,62 @@ export const ambientPathMayObserveAt = (
 };
 
 /**
+ * Ask whether a captured intrinsic receiver's member may have changed. A
+ * direct, inert replacement of its global constructor after capture replaces
+ * the global binding, not the prototype already held by that receiver. Other
+ * writes, ambiguous targets and escapes remain ordered at the member read.
+ */
+export const ambientCapturedGlobalMemberMayObserveAt = (
+  state: JavaScriptSemanticAnalysisState,
+  capture: t.Node,
+  read: t.Node,
+  constructor: string,
+  members: readonly string[],
+): boolean => {
+  const root = ["global", constructor];
+  const { writes, escapes } = ambientPathEffects(state, [...root, ...members]);
+  const mayPrecedeRead = ({ node }: AmbientEffect): boolean =>
+    semanticEffectMayPrecede(state, read, node);
+  const replacesOnlyGlobalBinding = (effect: AmbientEffect): boolean => {
+    const { node, path } = effect;
+    if (
+      path.length !== root.length ||
+      !path.every((key, index) => key === root[index]) ||
+      !t.isAssignmentExpression(node, { operator: "=" })
+    )
+      return false;
+    const left = unwrapJavaScriptExpression(node.left).node;
+    const direct =
+      isUnshadowedGlobal(left, state, constructor) ||
+      (t.isMemberExpression(left) &&
+        isUnshadowedGlobal(left.object, state, "globalThis") &&
+        semanticStaticPropertyKey(left.property, left.computed) ===
+          constructor);
+    const replacement = unwrapJavaScriptExpression(node.right).node;
+    const inert =
+      t.isNullLiteral(replacement) ||
+      t.isBooleanLiteral(replacement) ||
+      t.isNumericLiteral(replacement) ||
+      t.isStringLiteral(replacement) ||
+      t.isBigIntLiteral(replacement) ||
+      t.isFunctionExpression(replacement) ||
+      t.isArrowFunctionExpression(replacement) ||
+      (t.isObjectExpression(replacement) &&
+        replacement.properties.length === 0) ||
+      (t.isClassExpression(replacement) &&
+        replacement.superClass === null &&
+        replacement.body.body.length === 0 &&
+        (replacement.decorators?.length ?? 0) === 0);
+    return direct && inert && !semanticEffectMayPrecede(state, capture, node);
+  };
+  return (
+    writes.some(
+      (effect) => mayPrecedeRead(effect) && !replacesOnlyGlobalBinding(effect),
+    ) || escapes.some(mayPrecedeRead)
+  );
+};
+
+/**
  * `mayObserve` for an unbound name: whether a recorded assignment to the
  * ambient binding `name` may run before `read`. The loader and the origin of
  * one unbound `require` call, and the original global `process` object, ask

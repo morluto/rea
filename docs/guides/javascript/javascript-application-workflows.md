@@ -230,6 +230,9 @@ validation boundaries, and built-in resource acquisition/release.
 When a response body reader may have been replaced, or its receiver escapes to
 unknown code, the consumer remains a candidate linked to the request rather
 than a definite read from its endpoint.
+An inert reassignment of the unshadowed global `Response` after a response was
+captured does not by itself replace that reader; prototype effects and
+ambiguous rebindings remain candidates.
 Multiple readers inside a function can also remain candidates when effects on
 shared prototypes cannot be ruled out.
 For `fs/promises.open`, a binding receiving the Promise is distinct from one

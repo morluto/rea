@@ -2,7 +2,7 @@ import * as t from "@babel/types";
 import {
   bindingAssignmentMayPrecede,
   bindingInitializersMayPrecede,
-  ambientPathMayObserveAt,
+  ambientCapturedGlobalMemberMayObserveAt,
   bindingMethodMayHaveChanged,
   opaqueCodeMayChangeGlobalRead,
 } from "./javascriptSemanticEffectLog.js";
@@ -533,11 +533,12 @@ const collectResponseConsumers = (
               uniqueRequest.node,
           ),
       }) ||
-        ambientPathMayObserveAt(
+        ambientCapturedGlobalMemberMayObserveAt(
           context.state,
+          uniqueRequest?.node ?? member,
           member,
-          ["global", "Response", "prototype", method],
-          "contents",
+          "Response",
+          ["prototype", method],
         ) ||
         opaqueCodeMayChangeGlobalRead(
           uniqueRequest?.node ?? member,

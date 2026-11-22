@@ -197,3 +197,78 @@ export async function ${label}(flag) {
     expect((await readFile(path)).equals(before)).toBe(true);
   },
 );
+
+cliTest(
+  "keeps a captured response reader after global constructor rebinding through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-response-constructor-rebound-",
+    );
+    const path = join(root, "main.mjs");
+    const endpoint = "https://example.invalid/rebound";
+    const source = `const captured = await fetch("${endpoint}");
+globalThis.Response = class Replacement {};
+captured.json();
+`;
+    await writeFile(path, source);
+    const before = await readFile(path);
+    const result = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const analysis = report(result.json);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      detail: "complete",
+    });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(report(response.structuredContent).semantic_graph).toEqual(
+      analysis.semantic_graph,
+    );
+    const { nodes, relations } = analysis.semantic_graph;
+    const request = nodes.find(
+      (node) =>
+        node.kind === "request" && node.properties.endpoint === endpoint,
+    );
+    expect(request).toBeDefined();
+    if (request === undefined) throw new Error("Missing request");
+    expect(request.identity).toMatchObject({
+      artifact_sha256: createHash("sha256").update(before).digest("hex"),
+      module_path: "main.mjs",
+    });
+    expect(request.identity.source_range).not.toBeNull();
+    const requestLinks = relations.filter(
+      (edge) =>
+        edge.relation === "consumed-by" &&
+        edge.source_node_id === request.node_id,
+    );
+    expect(requestLinks).toHaveLength(1);
+    expect(requestLinks[0]).toMatchObject({ resolution: "resolved" });
+    const responseNode = nodes.find(
+      (node) => node.node_id === requestLinks[0]?.target_node_id,
+    );
+    expect(responseNode).toMatchObject({
+      kind: "response",
+      properties: { endpoint },
+    });
+    if (responseNode === undefined) throw new Error("Missing response");
+    const consumed = relations.filter(
+      (edge) =>
+        edge.relation === "consumed-by" &&
+        edge.source_node_id === responseNode.node_id,
+    );
+    expect(consumed).toHaveLength(1);
+    expect(consumed[0]).toMatchObject({
+      resolution: "resolved",
+      properties: { method: "json" },
+    });
+    expect((await readFile(path)).equals(before)).toBe(true);
+  },
+);

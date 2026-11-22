@@ -152,6 +152,135 @@ it.each([
   },
 );
 
+it.each([
+  {
+    label: "bare constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); Response = class Replacement {}; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "computed constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis["Response"] = class Replacement {}; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "null constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = null; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "function constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = function Replacement() {}; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "arrow constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = () => {}; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "empty object constructor binding after capture",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = {}; res.json();',
+    endpoint: "https://api.test/x",
+    resolution: "complete",
+  },
+  {
+    label: "class static initialization may expose the original",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = class Replacement { static { mutate(globalThis.Response); } }; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "class superclass evaluation may expose the original",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = class Replacement extends mutate(globalThis.Response) {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "constructor binding before capture",
+    source:
+      'globalThis.Response = class Replacement {}; const res = await fetch("https://api.test/x"); res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "captured old prototype is modified",
+    source:
+      'const old = globalThis.Response; const res = await fetch("https://api.test/x"); globalThis.Response = class Replacement {}; old.prototype.json = () => 1; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "original prototype escapes before rebinding",
+    source:
+      'const res = await fetch("https://api.test/x"); mutate(globalThis.Response.prototype); globalThis.Response = class Replacement {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "original constructor escapes",
+    source:
+      'const res = await fetch("https://api.test/x"); mutate(globalThis.Response); globalThis.Response = class Replacement {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "global setter installed after capture",
+    source:
+      'const old = globalThis.Response; const res = await fetch("https://api.test/x"); Object.defineProperty(globalThis, "Response", { set(value) { old.prototype.json = () => 1; } }); globalThis.Response = class Replacement {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "constructor write through an alias",
+    source:
+      'const globalAlias = globalThis; const res = await fetch("https://api.test/x"); globalAlias.Response = class Replacement {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "global setter installed before capture",
+    source:
+      'const old = globalThis.Response; Object.defineProperty(globalThis, "Response", { set(value) { old.prototype.json = () => 1; } }); const res = await fetch("https://api.test/x"); globalThis.Response = class Replacement {}; res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "replacement sequence mutates the captured prototype",
+    source:
+      'const old = globalThis.Response; const res = await fetch("https://api.test/x"); globalThis.Response = (old.prototype.json = () => 1, class Replacement {}); res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+  {
+    label: "replacement evaluation may mutate the original",
+    source:
+      'const res = await fetch("https://api.test/x"); globalThis.Response = mutate(globalThis.Response); res.json();',
+    endpoint: null,
+    resolution: "partial",
+  },
+] as const)(
+  "tracks captured Response identity for $label",
+  ({ source, endpoint, resolution }) => {
+    expect(consumersFor(source)).toEqual([
+      { method: "json", endpoint, resolution },
+    ]);
+  },
+);
+
 it("keeps a response consumer before a later global eval", () => {
   expect(
     consumersFor(`const res = await fetch("https://api.test/x");
