@@ -977,6 +977,10 @@ describe("event-time snapshot capture before lazy materialization", () => {
         producer.stdout.write("before-exit");
         producer.stderr.write("err-before");
         producer.emit("exit", 0, null);
+        if (lateOutput) {
+          producer.stdout.write("late stdout");
+          producer.stderr.write("late stderr");
+        }
         supervisor.resetOutput();
         producer.stdout.write("after-reset");
         producer.stderr.write("err-after");
