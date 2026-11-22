@@ -480,12 +480,23 @@ using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
 Pi registration. Doctor accepts an omitted `type` for stdio but reports a
 non-stdio type as invalid; `enabled: false` stays disabled.
 
-REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
-projects; a same-name project entry can replace the user entry or override its
-enabled state and exposure. Check that file if the user registration is aligned
-but unavailable in a project. An extension that registers `/mcp` can replace
-Pi's built-in MCP support and use its own configuration instead. Run `/reload`
-in an existing Pi session after changing servers outside the session.
+REA setup configures only the user scope. Pi also reads `.pi/mcp.json` in
+trusted projects; when a project directory has not been approved (including
+the default with no recorded trust decision or when default trust is not
+`always`), Pi does not load `.pi/mcp.json`, and doctor falls back to inspecting
+user configuration. In trusted projects, a project entry replaces the user
+entry if it defines a launcher or type, or overrides only its enabled state and
+exposure when omitting those fields. Doctor discovers project-scoped
+registrations in `.pi/mcp.json` for the current working directory in trusted
+projects and evaluates them with project precedence; its remediation text
+points to the project file. Plain `rea uninstall` removes user registrations.
+Use `rea uninstall --project DIR` to select a trusted Pi project's
+`.pi/mcp.json`. REA verifies ownership and the effect of removal, backs up the
+file before changing it, and verifies the write. Project flags that only
+override a user registration are preserved.
+An extension that registers `/mcp` can replace Pi's built-in MCP support and use
+its own configuration instead. Run `/reload` in an existing Pi session after
+changing servers outside the session.
 
 ## Qwen Code
 
@@ -691,6 +702,8 @@ another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
 Setup, doctor and uninstall share REA's sticky-profile resolver.
+If the selected profile's deletion marker cannot be checked, REA reports the
+profile as unresolved. Restore access to the reported path and retry.
 A custom `HERMES_HOME` outside the platform default home
 reads its own `active_profile`. An override physically inside the default home
 uses that default home's sticky selection and profile root together, including
@@ -1175,9 +1188,22 @@ both load. If the configuration already uses OpenCode V2's native
 `mcp.rea` entry from REA. Setup honors `OPENCODE_CONFIG_DIR` and
 `OPENCODE_CONFIG`, preferring the later-loaded JSONC file when both JSON and
 JSONC exist. The ordinary XDG global configuration still participates when a
-custom directory is selected. Doctor checks the merged user registration; uninstall removes
-REA-owned entries from every applicable user file so an older entry cannot
-become active again. Malformed applicable files block setup before changes.
+custom directory is selected. OpenCode V2 discovers project configuration
+from the filesystem root to the current working directory. It loads
+`opencode.json` and `opencode.jsonc` across those directories first, then the
+files in their `.opencode` directories. When a loaded file uses the native
+`mcp.servers` table, REA applies V2's whole-row replacement rule. If the files
+use only legacy `mcp.NAME` tables, REA merges server fields across layers. An
+explicit legacy `enabled` value overrides an earlier one. Setup writes a
+native row in the selected upper file whenever a loaded layer uses
+`mcp.servers`. Lower files and peer servers stay intact. A legacy server
+named `servers` that conflicts with the native table requires manual repair.
+Doctor checks the effective registration and reports its scope. For a project
+registration, run provider probes separately with settings you explicitly
+select in the terminal. Plain `rea uninstall` removes user
+registrations. Use `rea uninstall --project DIR` to select a project; REA
+can remove an owned registration defined in that directory and checks whether
+removal would expose another launcher. Ancestors remain read-only.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server
@@ -1206,14 +1232,6 @@ Do not put credentials in that command or its arguments. `rea doctor --client gr
 reports this manual step. `rea uninstall` does not remove the account connector.
 
 ## Skill selection and maintenance
-
-OpenCode's selected configuration layers determine the registration dialect.
-If any loaded layer uses native `mcp.servers`, setup writes a native REA entry
-in the selected upper file even when that file is absent or has no MCP table.
-Legacy activation is normalized before layer merging, so an explicit enable
-can override an inherited disable. Lower files and other server entries remain
-unchanged; a legacy server named `servers` that conflicts with the native table
-requires manual repair before setup can write.
 
 With no client selected, the interactive skill choice targets the shared
 `~/.agents/skills` copy. Selecting a client targets its personal destination

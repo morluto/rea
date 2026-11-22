@@ -5684,3 +5684,120 @@ it("strips control characters and NULs from README link labels, cell names, and 
     await provider.close();
   }
 });
+
+it("marks aggregate disassembly truncation as partial coverage", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-disasm-trunc-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "mod2.efi"), createMinimalPeBuffer());
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  let callCount = 0;
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command === "llvm-objdump" || command === "objdump") {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stdout: "A".repeat(64 * 1024 * 1024),
+            stderr: "",
+            status: 0,
+          } as never;
+        }
+        return {
+          stdout: "sub_0:\n  ret\n",
+          stderr: "",
+          status: 0,
+        } as never;
+      }
+      throw new Error("unexpected command: " + command);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: true }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Disassembly output truncated after reaching 64 MiB"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("incorporates directory traversal limit into directory image_sha256 without admitted candidates", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-trav-limit-sha-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const { DirectoryArtifactReader, DirectoryArtifactTraversalLimit } =
+    await import("../resources/DirectoryArtifactReader.js");
+
+  const entriesSpy = vi
+    .spyOn(DirectoryArtifactReader.prototype, "entries")
+    .mockImplementation(async function* () {
+      throw new DirectoryArtifactTraversalLimit(10000, 10000);
+    });
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes(
+          "Directory discovery stopped after reaching 10000 entry budget",
+        ),
+      ),
+    ).toBe(true);
+  } finally {
+    entriesSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("retains POSIX backslash in filename and derives hierarchy strictly from directory segments", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-posix-backslash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  // On POSIX, a file can have a backslash in its name, e.g. "PEI\\driver.efi"
+  const fileName = "PEI\\driver.efi";
+  await writeFile(join(inDir, fileName), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    const mod = result.modules[0]!;
+    // In POSIX, because the parent directory is "." and not "PEI", phase must be MISC
+    expect(mod.phase).toBe("MISC");
+  } finally {
+    await provider.close();
+  }
+});

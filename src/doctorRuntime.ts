@@ -41,7 +41,10 @@ import {
 } from "./resources/index.js";
 import type { RetainedResourceScope } from "./ports/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
-import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
+import {
+  hasProjectRegistrationContribution,
+  readEffectiveClientRegistrationConfiguration,
+} from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
 import {
   mergeEnvironmentOverrides,
@@ -76,9 +79,11 @@ interface SelectedRegistrationEnvironment {
   readonly environment: Readonly<Record<string, string | undefined>>;
   /** Names the client records as expressions this process cannot evaluate. */
   readonly unresolved: ReadonlySet<string>;
-  /** The registration could not be read or its effective settings resolved. */
-  readonly unknown?: boolean;
+  /** Why registration settings cannot authorize provider probes. */
+  readonly unavailable?: RegistrationProbeRefusal;
 }
+
+type RegistrationProbeRefusal = "unreadable" | "project_scope";
 
 const selectedRegistrationEnvironment = async (
   clients: readonly string[],
@@ -86,6 +91,7 @@ const selectedRegistrationEnvironment = async (
   resourceScope: RetainedResourceScope,
   signal: AbortSignal,
   platform: NodeJS.Platform,
+  projectDirectory: string | undefined,
 ): Promise<SelectedRegistrationEnvironment | undefined> => {
   const [selected] = clients;
   // Only an unambiguous selection can stand for the terminal's environment.
@@ -96,18 +102,26 @@ const selectedRegistrationEnvironment = async (
     await resolveSupportedClients(home, platform, processEnvironment)
   ).find(({ name }) => name === selected);
   if (client === undefined)
-    return { environment: {}, unresolved: new Set(), unknown: true };
-  // A manual connector has no local registration overlay. Local diagnostics
-  // still describe this host; registration status reports the manual step.
+    return {
+      environment: {},
+      unresolved: new Set(),
+      unavailable: "unreadable",
+    };
+  // Manual connectors have no local overlay, but host diagnostics still apply.
   if (client.format === "unsupported") return undefined;
   const registered = await readSelectedRegistration(
     client,
     resourceScope,
     platform,
+    projectDirectory,
   );
   if (registered === undefined) return undefined;
-  if ("unknown" in registered)
-    return { environment: {}, unresolved: new Set(), unknown: true };
+  if ("unavailable" in registered)
+    return {
+      environment: {},
+      unresolved: new Set(),
+      unavailable: registered.unavailable,
+    };
   return {
     environment: registered.values,
     unresolved: registered.unresolvedSettings,
@@ -167,12 +181,22 @@ const readSelectedRegistration = async (
   client: Parameters<typeof readEffectiveClientRegistrationConfiguration>[0],
   resourceScope: RetainedResourceScope,
   platform: NodeJS.Platform,
-): Promise<SelectedRegistration | { readonly unknown: true } | undefined> => {
+  projectDirectory: string | undefined,
+): Promise<
+  | SelectedRegistration
+  | { readonly unavailable: RegistrationProbeRefusal }
+  | undefined
+> => {
   // A failed close is a retained owner, not a read outcome: transfer it to the
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
     .run(() =>
-      readEffectiveClientRegistrationConfiguration(client, undefined, platform),
+      readEffectiveClientRegistrationConfiguration(
+        client,
+        undefined,
+        platform,
+        projectDirectory === undefined ? undefined : { projectDirectory },
+      ),
     )
     .catch((cause: unknown) => {
       if (cause instanceof RegularFileCleanupFailure) {
@@ -183,14 +207,16 @@ const readSelectedRegistration = async (
     });
   // A registration this process cannot read says nothing about the values the
   // client passes on; the terminal is not those values.
-  if (configuration === undefined) return { unknown: true };
+  if (configuration === undefined) return { unavailable: "unreadable" };
   if (!configuration.ok) {
     const cleanup = configuration.error.cleanupFailure;
     if (cleanup !== undefined)
       resourceScope.retain(cleanup.owner, cleanup.path);
-    return { unknown: true };
+    return { unavailable: "unreadable" };
   }
   if (configuration.value.document === undefined) return undefined;
+  if (hasProjectRegistrationContribution(configuration.value))
+    return { unavailable: "project_scope" };
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     client,
@@ -203,7 +229,7 @@ const readSelectedRegistration = async (
         values: details.value.values,
         unresolvedSettings: details.value.unresolvedSettings,
       }
-    : { unknown: true };
+    : { unavailable: "unreadable" };
 };
 
 /** Registration settings read by each provider's readiness probe. */
@@ -363,8 +389,11 @@ export const createSystemDoctorHost = (
   /** The host diagnosed; tests select another host's client layout. */
   host: HostPlatform = HOST_PLATFORM,
   savedDefaults?: ReadonlySet<string>,
+  registrationScope: "user" | "all" = "all",
 ): DoctorHost => {
   const { platform } = host;
+  const projectDirectory =
+    registrationScope === "all" ? process.cwd() : undefined;
   const startupConfig = userConfigFilePath(environment, platform);
   const inheritedEnvironment = omitEnvironmentSettings(
     environment,
@@ -441,6 +470,7 @@ export const createSystemDoctorHost = (
     environment,
     platform,
     architecture: host.architecture,
+    registrationScope,
     savedDefaults,
     ...(signal === undefined ? {} : { signal }),
     resolveProviderRequestBudget: Object.assign(
@@ -508,19 +538,27 @@ export const createSystemDoctorHost = (
             probeScope,
             inspectionSignal,
             platform,
+            projectDirectory,
           ),
       );
       if (selection === undefined) return { environment, savedDefaults };
-      if (selection.unknown === true)
+      if (selection.unavailable !== undefined)
         return {
           environment: {},
           failure: {
             classification: "unknown",
-            code: "registration_environment_unknown",
+            code:
+              selection.unavailable === "project_scope"
+                ? "project_provider_settings_unapproved"
+                : "registration_environment_unknown",
             detail:
-              "The selected client's registration could not be read or resolved.",
+              selection.unavailable === "project_scope"
+                ? "Doctor discovered a project registration and did not run provider probes from its settings."
+                : "The selected client's registration could not be read or resolved.",
             remediation:
-              "Inspect the selected client's registration on the host and rerun doctor.",
+              selection.unavailable === "project_scope"
+                ? "Run rea doctor with --provider and provider settings you selected in the terminal."
+                : "Inspect the selected client's registration on the host and rerun doctor.",
           },
         };
 

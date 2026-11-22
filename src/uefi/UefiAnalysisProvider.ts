@@ -1504,6 +1504,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               MAX_DISASSEMBLY_TOTAL_BYTES - totalStagedAsmBytes;
             if (remainingAsmBytes <= 0) {
               disassemblyStatus = "omitted";
+              isCoveragePartial = true;
               if (
                 !effectiveLimitations.includes(
                   "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
@@ -1520,6 +1521,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   : 15_000;
               if (timeLeftForDisasm <= 0) {
                 disassemblyStatus = "omitted";
+                isCoveragePartial = true;
                 if (
                   !effectiveLimitations.includes(
                     "Disassembly omitted for remaining modules to preserve deadline for publication.",
@@ -1621,6 +1623,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     disassemblyStatus = "ok";
                   } else {
                     disassemblyStatus = "omitted";
+                    isCoveragePartial = true;
                     if (
                       !effectiveLimitations.includes(
                         "Disassembly output truncated after reaching 64 MiB aggregate staging budget.",
@@ -2552,6 +2555,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     try {
       let manifestEntry: DirectoryArtifactEntry | undefined;
       const candidateEntries: DirectoryArtifactEntry[] = [];
+      let traversalLimitReached = false;
 
       try {
         for await (const entry of reader.entries(signal, {
@@ -2579,6 +2583,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
       } catch (dirErr: unknown) {
         if (dirErr instanceof DirectoryArtifactTraversalLimit) {
+          traversalLimitReached = true;
           limitations.push(
             `Directory discovery stopped after reaching ${MAX_DIRECTORY_INVENTORY_ENTRIES} entry budget.`,
           );
@@ -2954,7 +2959,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           ? exactLookupKey
           : relPath.split(/[/\\]+/).join("/");
         const crossPlatformFoldedKey = crossPlatformLookupKey.toLowerCase();
-        const segments = exactLookupKey.toLowerCase().split("/");
+        const directoryPath = dirname(relPath);
+        const hierarchySegments =
+          directoryPath === "." || directoryPath === ""
+            ? []
+            : (isWindows
+                ? directoryPath.split(/[/\\]+/)
+                : directoryPath.split(/\/+/)
+              )
+                .map((s) => s.toLowerCase())
+                .filter((s) => s.length > 0);
         const fromManifest =
           manifestModulesByExactRelPath.get(exactLookupKey) ??
           manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
@@ -2974,17 +2988,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             | "SMM"
             | "APP"
             | "MISC";
-        } else if (segments.some((s) => s === "sec")) {
+        } else if (hierarchySegments.some((s) => s === "sec")) {
           phase = "SEC";
-        } else if (segments.some((s) => s === "pei" || s === "peim")) {
+        } else if (hierarchySegments.some((s) => s === "pei" || s === "peim")) {
           phase = "PEI";
-        } else if (segments.some((s) => s === "smm")) {
+        } else if (hierarchySegments.some((s) => s === "smm")) {
           phase = "SMM";
-        } else if (segments.some((s) => s === "app" || s === "application")) {
+        } else if (
+          hierarchySegments.some((s) => s === "app" || s === "application")
+        ) {
           phase = "APP";
-        } else if (segments.some((s) => s === "dxe")) {
+        } else if (hierarchySegments.some((s) => s === "dxe")) {
           phase = "DXE";
-        } else if (segments.some((s) => s === "misc")) {
+        } else if (hierarchySegments.some((s) => s === "misc")) {
           phase = "MISC";
         } else {
           const typePhase = phaseFromFfsTypeName(fromManifest?.type);
@@ -3088,11 +3104,15 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             "\n",
         );
       }
+      if (traversalLimitReached) {
+        dirHash.update("omitted:directory_traversal_limit\n");
+      }
 
       dirSha256 =
         admittedCandidates.length === 0 &&
         manifestSha256 === null &&
-        omittedCandidates.length === 0
+        omittedCandidates.length === 0 &&
+        !traversalLimitReached
           ? sha256Hex(Buffer.alloc(0))
           : dirHash.digest("hex");
 
