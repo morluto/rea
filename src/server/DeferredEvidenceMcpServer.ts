@@ -16,6 +16,8 @@ import {
 } from "./EvidenceMcpServerCore.js";
 import { promptArgumentsSchema } from "./promptArguments.js";
 import { SERVER_START_FAILED } from "../main/messages.js";
+import { isToolFamilyAdvertised } from "../contracts/toolFamilyIds.js";
+import { serverInstructions } from "./serverInstructions.js";
 
 type ToolConfig = StandardToolRegistration;
 type InputCallback = ToolCallback<StandardSchemaWithJSON>;
@@ -54,6 +56,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
   private partialClose: (() => Promise<void>) | undefined;
   private materializing = false;
   private readonly protocolClose = () => super.close();
+  private readonly canAdvertise: (tool: string) => boolean;
 
   constructor(
     catalog: RecordedMcpCatalog,
@@ -67,13 +70,22 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       // still applies to transport discovery, which is not recorded.
       readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
       readonly identity?: RecordedMcpCatalog["identity"] | undefined;
+      readonly toolFamilies?: ReadonlySet<string> | undefined;
     } = {},
   ) {
+    const families = options.toolFamilies;
+    const advertisesTool = (tool: string) =>
+      isToolFamilyAdvertised(families, catalog.toolFamilies[tool]);
     super(
       catalog.info,
       {
-        capabilities: catalog.capabilities,
-        instructions: catalog.instructions,
+        // For a scoped connection the SDK advertises the capabilities of the
+        // admitted registrations, including whether there are any prompts.
+        capabilities: families === undefined ? catalog.capabilities : {},
+        instructions:
+          families === undefined
+            ? catalog.instructions
+            : serverInstructions(true, advertisesTool),
         ...(options.maximumInputElements === undefined
           ? {}
           : { maxToolInputElements: options.maximumInputElements }),
@@ -81,12 +93,17 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       undefined,
       delivery,
       options.compactPresentation,
-      // Recorded tools carry complete output schemas; the default `off`
-      // profile omits them from listings while the runtime still validates
-      // structured results.
+      // The recorded output shape supplies the SDK's result codec.
+      // Listings omit it and the canonical runtime validates results.
       "off",
-      options.identity ?? catalog.identity,
+      // Scoped digests belong to the canonical runtime, which attaches them
+      // before serving any tool or prompt that can report an identity.
+      families === undefined
+        ? (options.identity ?? catalog.identity)
+        : undefined,
+      families,
     );
+    this.canAdvertise = advertisesTool;
     for (const name of catalog.evidenceReferenceAlternatives)
       this.registerEvidenceReferenceAlternative(name);
     for (const tool of catalog.tools) {
@@ -141,6 +158,7 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
           return binding.callback(args, ctx);
         }) as InputCallback,
       );
+      if (!advertisesTool(name)) registered.disable();
       binding = { registered, input: inputSchema, output: outputSchema };
       this.tools.set(name, binding);
     }
@@ -159,6 +177,11 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
     };
     for (const prompt of catalog.prompts) {
       const { name, parameters, title, description } = prompt;
+      if (families !== undefined) {
+        const required = catalog.promptRequirements[name];
+        if (required === undefined) throw new Error(SERVER_START_FAILED);
+        if (!required.every(advertisesTool)) continue;
+      }
       let binding: DeferredPrompt;
       const argsSchema = promptArgumentsSchema(
         { arguments: parameters },
@@ -182,6 +205,10 @@ export class DeferredEvidenceMcpServer extends EvidenceMcpServerCore {
       binding = { registered };
       this.prompts.set(name, binding);
     }
+  }
+
+  override advertisesTool(name: string): boolean {
+    return this.canAdvertise(name);
   }
 
   ensureRuntime(): Promise<void> {

@@ -1,4 +1,5 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
 import {
   allKeyed,
@@ -7,10 +8,11 @@ import {
 } from "../../domain/keyedCollection.js";
 import {
   assertArtifactReadActive,
-  ArtifactReaderFailure,
+  yieldArtifactRead,
 } from "../../resources/index.js";
+import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { readElfSymbol } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -29,6 +31,7 @@ import { buildIntervalIndex } from "./ElfIntervalIndex.js";
 import {
   ELF_PT_GNU_EH_FRAME,
   readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
   type ElfProgramDeclaration,
   type NativeSection,
 } from "../../domain/native/nativeSectionDirectory.js";
@@ -56,6 +59,7 @@ const STT_GNU_IFUNC = 10;
 const SHN_UNDEF = 0;
 const SHN_ABS = 0xfff1;
 const SHN_LORESERVE = 0xff00;
+const EM_ARM = 40;
 const SHF_ALLOC = 2n;
 const SHF_EXECINSTR = 4n;
 
@@ -242,36 +246,60 @@ const placeSection = (
   return { location: declared, problem: null };
 };
 
-/**
- * Symbol names for one page exceeded their fixed text allowance. Unlike the
- * record budgets, max_ranges does not raise it; a smaller page avoids it.
- */
-export class ElfUnwindSymbolTextFailure extends Error {
-  readonly maximumBytes = MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES;
-
-  constructor() {
-    super(
-      `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte symbol-name text allowance.`,
-    );
-    this.name = "ElfUnwindSymbolTextFailure";
-  }
-}
+export const ELF_UNWIND_FORMAT = "elf-unwind-ranges";
+export const ELF_UNWIND_RECORD_LIMIT = "max_ranges";
+const OPERATION = "inspect_elf_unwind_ranges";
 
 /** Read .eh_frame/.eh_frame_hdr function ranges. Truncation stays incomplete. */
 export const parseElfUnwindRanges = (
   bytes: Buffer,
-  artifact: {
-    readonly path: string;
-    readonly sha256: string;
-    readonly bytes: number;
-  },
+  artifact: ElfUnwindRanges["artifact"],
   input: InspectElfUnwindRangesInput,
   signal?: AbortSignal,
 ): ElfUnwindRanges => {
   assertArtifactReadActive(signal);
-  const directory = readElfDirectoryFromBuffer(bytes);
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return elfUnwindRangesFromDirectory(
+    bytes,
+    artifact,
+    input,
+    readElfDirectoryFromBuffer(bytes, OPERATION),
+    signal,
+  );
+};
+
+/** Read the same unwind facts while allowing compressed section names to yield. */
+export const parseElfUnwindRangesCooperative = async (
+  bytes: Buffer,
+  artifact: ElfUnwindRanges["artifact"],
+  input: InspectElfUnwindRangesInput,
+  signal?: AbortSignal,
+): Promise<ElfUnwindRanges> => {
+  if (signal === undefined) return parseElfUnwindRanges(bytes, artifact, input);
+  assertArtifactReadActive(signal);
+  const directory = await readElfDirectoryFromBufferCooperative(
+    bytes,
+    () => yieldArtifactRead(signal),
+    OPERATION,
+  );
+  return elfUnwindRangesFromDirectory(
+    bytes,
+    artifact,
+    input,
+    directory,
+    signal,
+  );
+};
+
+const elfUnwindRangesFromDirectory = (
+  bytes: Buffer,
+  artifact: ElfUnwindRanges["artifact"],
+  input: InspectElfUnwindRangesInput,
+  directory: ReturnType<typeof readElfDirectoryFromBuffer>,
+  signal?: AbortSignal,
+): ElfUnwindRanges => {
+  assertArtifactReadActive(signal);
   const little = directory.little;
+  const reader = new BinaryReader(bytes, little, "elf");
   const bits = directory.bits;
   const addressSize = bits === 64 ? 8 : 4;
   const limitations: string[] = [];
@@ -448,36 +476,22 @@ export const parseElfUnwindRanges = (
     size <= bytes.length - offset;
   const readU8 = (offset: number, end: number): number | null =>
     offset < end && offset < bytes.length ? (bytes[offset] ?? null) : null;
-  const readU32 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 4 > end || offset + 4 > bytes.length)
-      return null;
-    return view.getUint32(offset, little);
-  };
-  const readU64 = (offset: number, end: number): bigint | null => {
-    if (offset < 0 || offset + 8 > end || offset + 8 > bytes.length)
-      return null;
-    return view.getBigUint64(offset, little);
-  };
-  const readS16 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 2 > end || offset + 2 > bytes.length)
-      return null;
-    return view.getInt16(offset, little);
-  };
-  const readU16 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 2 > end || offset + 2 > bytes.length)
-      return null;
-    return view.getUint16(offset, little);
-  };
-  const readS32 = (offset: number, end: number): number | null => {
-    if (offset < 0 || offset + 4 > end || offset + 4 > bytes.length)
-      return null;
-    return view.getInt32(offset, little);
-  };
-  const readS64 = (offset: number, end: number): bigint | null => {
-    if (offset < 0 || offset + 8 > end || offset + 8 > bytes.length)
-      return null;
-    return view.getBigInt64(offset, little);
-  };
+  // A field must fit its record as well as the file, even if another record
+  // makes bytes available at the same offset.
+  const fieldFits = (offset: number, size: number, end: number): boolean =>
+    offset + size <= end && within(offset, size);
+  const readU32 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 4, end) ? reader.u32(offset) : null;
+  const readU64 = (offset: number, end: number): bigint | null =>
+    fieldFits(offset, 8, end) ? reader.word(offset, 64) : null;
+  const readS16 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 2, end) ? reader.i16(offset) : null;
+  const readU16 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 2, end) ? reader.u16(offset) : null;
+  const readS32 = (offset: number, end: number): number | null =>
+    fieldFits(offset, 4, end) ? reader.i32(offset) : null;
+  const readS64 = (offset: number, end: number): bigint | null =>
+    fieldFits(offset, 8, end) ? reader.i64(offset) : null;
   const readLeb = (
     offset: number,
     end: number,
@@ -791,11 +805,12 @@ export const parseElfUnwindRanges = (
   let fdeRecords = 0;
   let discarded = 0;
   let indirectFdes = 0;
-  const budget = (kind: "CIE" | "FDE"): void => {
-    throw new ArtifactReaderFailure(
-      "limit",
+  const budget = (kind: "CIE" | "FDE", offset: number): never => {
+    throw decodeLimit(
+      ELF_UNWIND_FORMAT,
       `ELF unwind ${kind} count exceeds the selected max_ranges budget of ${String(input.max_ranges)}.`,
-      { boundary: "capacity" },
+      { name: ELF_UNWIND_RECORD_LIMIT, maximum: input.max_ranges },
+      { field: kind, offset },
     );
   };
 
@@ -862,9 +877,9 @@ export const parseElfUnwindRanges = (
       }
       const isCie = id === 0;
       if (isCie) {
-        if (cieRecords + 1 > input.max_ranges) budget("CIE");
+        if (cieRecords + 1 > input.max_ranges) budget("CIE", recordStart);
         cieRecords += 1;
-      } else if (fdeRecords + 1 > input.max_ranges) budget("FDE");
+      } else if (fdeRecords + 1 > input.max_ranges) budget("FDE", recordStart);
       else fdeRecords += 1;
       examined += 1;
       let undecoded = false;
@@ -1818,7 +1833,7 @@ const scanSymbols = (
   const tables = directory.sections.filter(
     (section) => section.type === SHT_SYMTAB || section.type === SHT_DYNSYM,
   );
-  const standard = directory.bits === 64 ? 24 : 16;
+  const standard = elfSymbolSize(directory.bits);
   // First section per index, matching a directory-order find.
   const byIndex = new Map<number, NativeSection>();
   for (const section of directory.sections)
@@ -1898,6 +1913,10 @@ const scanSymbols = (
         const owner = byIndex.get(symbol.section_index);
         if (owner !== undefined) address += owner.address;
       }
+      // An ARM function symbol sets bit 0 for Thumb code; the code, and so its
+      // FDE initial location, starts at the even address.
+      if (directory.machine === EM_ARM && symbol.type !== STT_NOTYPE)
+        address &= ~1n;
       // Only a symbol at a decoded FDE start can name a range.
       if (!wanted.has(address)) continue;
       let name = names.get(symbol.name_offset);
@@ -1945,7 +1964,14 @@ const symbolNameDecoder = (): ((name: SymbolName) => string) => {
     if (cached !== undefined) return cached;
     charged += name.contentBytes;
     if (charged > MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)
-      throw new ElfUnwindSymbolTextFailure();
+      throw decodeLimit(
+        ELF_UNWIND_FORMAT,
+        `ELF unwind symbol names on this page exceed the ${String(MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES)}-byte symbol-name text allowance.`,
+        {
+          name: "symbol_name_text_bytes",
+          maximum: MAX_ELF_UNWIND_SYMBOL_TEXT_BYTES,
+        },
+      );
     const text = elfStringTableText(name) ?? "";
     decoded.set(name, text);
     return text;

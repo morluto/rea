@@ -21,7 +21,7 @@ import { ConfigurationError } from "../../../src/domain/configurationErrors.js";
 import { err } from "../../../src/domain/result.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../../../src/process/CurrentEntrypointPath.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => {
@@ -926,6 +926,38 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+it("ignores project candidates below regular files during automatic discovery", async () => {
+  const root = await createTestTempDirectory("rea-project-evidence-");
+  const home = join(root, "home");
+  const project = join(root, "project");
+  await mkdir(home);
+  await mkdir(project);
+  await writeFile(join(project, ".pi"), "not a configuration directory");
+  await writeFile(join(root, ".opencode"), "not a configuration directory");
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+  try {
+    const read = () =>
+      readClientRegistrationStatuses(home, undefined, {
+        platform: HOST_PLATFORM.platform,
+        environment: {},
+      });
+    const absence = await read();
+    expect(absence.map(({ client }) => client)).not.toContain("pi");
+    expect(absence.map(({ client }) => client)).not.toContain("opencode");
+
+    const present = join(project, "opencode.json");
+    await writeFile(present, "invalid JSON");
+    const statuses = await read();
+    expect(statuses.find(({ client }) => client === "opencode")).toMatchObject({
+      state: "invalid",
+      config_path: present,
+      scope: "project",
+    });
+  } finally {
+    cwd.mockRestore();
+  }
+});
 
 it("reports an unresolved client location as unknown and still inspects other clients", async () => {
   const home = await createTestTempDirectory("rea-registration-unknown-path-");

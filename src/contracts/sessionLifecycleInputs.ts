@@ -1,4 +1,4 @@
-import { executableFormatHintSchema } from "../domain/dosCom.js";
+import { TARGET_FORMAT_HINTS } from "../domain/targetFormats.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import {
   binaryArchitectureSchema,
@@ -23,11 +23,14 @@ const binaryTargetPathSchema = absoluteLocalPathStringSchema.describe(
   "Absolute local filesystem path for the analysis target; relative paths are rejected.",
 );
 
+/** Explicit format selection, including the ESP flash archive interpretation. */
+const targetFormatHintSchema = z.enum(TARGET_FORMAT_HINTS);
+
 /** Input contract for opening a target with an optional staged snapshot. */
 export const openBinaryInputSchema = z
   .strictObject({
     path: binaryTargetPathSchema,
-    format: executableFormatHintSchema
+    format: targetFormatHintSchema
       .optional()
       .describe(
         "Explicit interpretation: dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset). Omission preserves header-based detection.",

@@ -93,9 +93,10 @@ const wideRequest = (count: number) => {
   };
 };
 
-processTest.for([1_000, 16_000])(
-  "retains every static load state for %s added assets through the compiled CLI",
-  async (count, { processes }) => {
+processTest(
+  "retains every static load state for a wide graph through the compiled CLI",
+  async ({ processes }) => {
+    const count = 16_000;
     const root = await createTestTempDirectory("rea-runtime-wide-states-");
     const path = join(root, "request.json");
     const { input, assetIds, analysisId } = wideRequest(count);

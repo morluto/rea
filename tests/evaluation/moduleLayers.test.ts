@@ -207,18 +207,18 @@ describe("provider boundaries", () => {
     ).toEqual({ "providers -> ghidra": 1 });
   });
 
-  it("skips only the exact declared file-to-file exception", () => {
+  it("counts domain-to-platform imports without a local-path exception", () => {
     expect(
       layerGraphFacts([
         edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
       ]).upward,
-    ).toEqual({});
+    ).toEqual({ "domain -> platform": 1 });
     expect(
       layerGraphFacts([
         edge("src/domain/localPath.ts", "src/platform/HostPlatform.js"),
         edge("src/domain/other.ts", "src/platform/HostPlatform.js"),
         edge("src/domain/localPath.ts", "src/platform/Other.js"),
       ]).upward,
-    ).toEqual({ "domain -> platform": 2 });
+    ).toEqual({ "domain -> platform": 3 });
   });
 });

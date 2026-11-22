@@ -106,6 +106,29 @@ test("does not open a shared MCP server after file cleanup starts", async () => 
   );
 });
 
+test("retries pending cleanup on later calls after a transient drain failure", async () => {
+  let connectAttempts = 0;
+  let cleanupFails = true;
+  const session = createSharedMcpSession(async (registerCleanup) => {
+    connectAttempts += 1;
+    registerCleanup(async () => {
+      if (cleanupFails) throw new Error("transient cleanup failure");
+    });
+    if (connectAttempts === 1) throw new Error("first handshake failed");
+    return fakeCall;
+  });
+  await expect(session.session.call()).rejects.toThrow(
+    "first handshake failed",
+  );
+  await expect(session.session.call()).rejects.toThrow(
+    "transient cleanup failure",
+  );
+  cleanupFails = false;
+  await expect(session.session.call()).resolves.toBe(fakeCall);
+  expect(connectAttempts).toBe(2);
+  await session.close();
+});
+
 test("keeps a failed MCP handshake when its cleanup also fails", async () => {
   const startup = new Error("handshake failed");
   const cleanup = new Error("teardown failed");

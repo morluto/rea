@@ -214,9 +214,8 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 /** The instant a string spells: an ISO date, or a time readClock reads. */
 const instantOf = (value: JsonValue | undefined): number | undefined => {
   if (typeof value !== "string") return undefined;
-  return DATE_ONLY.test(value)
-    ? Date.parse(`${value}T00:00:00Z`)
-    : readClock(value)?.ms;
+  // Date.parse can roll invalid calendar dates into the following month.
+  return readClock(DATE_ONLY.test(value) ? `${value}T00:00:00Z` : value)?.ms;
 };
 
 /** Body members sending a date or time that a constant named after the member lies within two days of: the application derived it, so another value would leave it stale. */

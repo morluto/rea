@@ -115,18 +115,17 @@ cliTest.for(["thread", "frame", "image"] as const)(
       expect(result.exitCode, result.stderr).toBe(count === 1024 ? 0 : 1);
       expect(mcp.isError ?? false).toBe(count === 1025);
       if (count === 1025) {
-        expect(result.json).toMatchObject({
+        const expected = {
           code: "resource_constraint",
+          remediation: { action: expect.stringContaining("fixed allowance") },
           details: {
+            resource: "capacity",
+            reason: expect.stringContaining(path),
             reported_limits: { boundary: "unlisted_keys", maximum: 1024 },
           },
-        });
-        expect(parseMcpToolError(mcp).error).toMatchObject({
-          code: "resource_constraint",
-          details: {
-            reported_limits: { boundary: "unlisted_keys", maximum: 1024 },
-          },
-        });
+        };
+        expect(result.json).toMatchObject(expected);
+        expect(parseMcpToolError(mcp).error).toMatchObject(expected);
         continue;
       }
       for (const reply of [result.json, mcp.structuredContent]) {

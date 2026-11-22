@@ -9,11 +9,15 @@ import {
   DEFAULT_NODE_SEA_READER_LIMITS,
   type NodeSeaReaderLimits,
 } from "../../domain/artifactReaderLimits.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import type { NodeSeaMainCodeFormat } from "../../domain/artifactFormatMetadata.js";
 import { hostRangeErrorKind } from "../../domain/parseFailure.js";
 import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 /** Node `SeaBlob::kMagic` from `src/node_sea.h` (v24). */
 const NODE_SEA_MAGIC = 0x143da20;
+const SIZE_BYTES = 8;
+const MIN_ASSET_ROW_BYTES = 2 * SIZE_BYTES;
 
 const FLAG_DISABLE_EXPERIMENTAL_SEA_WARNING = 1 << 0;
 const FLAG_USE_SNAPSHOT = 1 << 1;
@@ -66,7 +70,7 @@ export interface NodeSeaAsset {
 
 export type NodeSeaExecArgvExtension = "none" | "env" | "cli";
 
-/** Decoded Node 24 SEA blob. Ranges are relative to the start of the blob. */
+/** Decoded SEA blob. Ranges are relative to the start of the blob. */
 export interface DecodedNodeSeaBlob {
   readonly magic: typeof NODE_SEA_MAGIC;
   readonly flags: number;
@@ -76,6 +80,7 @@ export interface DecodedNodeSeaBlob {
   readonly includeAssets: boolean;
   readonly includeExecArgv: boolean;
   readonly execArgvExtension: NodeSeaExecArgvExtension;
+  readonly mainCodeFormat?: NodeSeaMainCodeFormat;
   readonly codePath: string;
   readonly mainScript: NodeSeaByteRange | null;
   readonly snapshot: NodeSeaByteRange | null;
@@ -101,7 +106,7 @@ const formatFailure = (
   );
 
 /**
- * Decode one SEA blob the way Node 24's `SeaDeserializer` reads it.
+ * Decode either SEA layout with an exec-argv extension byte.
  * Lengths are 64-bit little-endian `size_t` values. Trailing zero padding is
  * admitted; any other trailing byte fails closed. 32-bit `size_t` producers
  * are outside this reader.
@@ -128,14 +133,29 @@ export const decodeNodeSeaBlob = async (
   const flags = cursor.u32();
   if ((flags & ~KNOWN_FLAGS) !== 0) throw formatFailure(NODE_SEA_UNKNOWN_FLAGS);
   const execArgvExtension = extensionName(cursor.u8());
-  const codePath = cursor.text(false, NODE_SEA_EMPTY_CODE_PATH);
+  const mainCodeFormat = cursor.mainCodeFormat();
   const useSnapshot = (flags & FLAG_USE_SNAPSHOT) !== 0;
-  const body = cursor.byteRange();
   const useCodeCache = (flags & FLAG_USE_CODE_CACHE) !== 0;
-  const codeCache = useCodeCache ? cursor.byteRange() : null;
   const includeAssets = (flags & FLAG_INCLUDE_ASSETS) !== 0;
-  const assets = includeAssets ? await cursor.assets(signal) : [];
   const includeExecArgv = (flags & FLAG_INCLUDE_EXEC_ARGV) !== 0;
+  const argumentHeaderBytes = includeExecArgv ? SIZE_BYTES : 0;
+  const collectionHeaderBytes =
+    (includeAssets ? SIZE_BYTES : 0) + argumentHeaderBytes;
+  const afterBody = (useCodeCache ? SIZE_BYTES : 0) + collectionHeaderBytes;
+  const codePath = cursor.text(
+    false,
+    NODE_SEA_EMPTY_CODE_PATH,
+    SIZE_BYTES + afterBody,
+  );
+  if (codePath.startsWith("\0"))
+    throw formatFailure("Node SEA code path begins with a NUL byte");
+  const body = cursor.byteRange(afterBody);
+  const codeCache = useCodeCache
+    ? cursor.byteRange(collectionHeaderBytes)
+    : null;
+  const assets = includeAssets
+    ? await cursor.assets(argumentHeaderBytes, signal)
+    : [];
   const execArgv = includeExecArgv ? await cursor.execArgv(signal) : [];
   if (await cursor.hasNonZeroTail(signal))
     throw formatFailure(NODE_SEA_TRAILING_BYTES);
@@ -149,6 +169,7 @@ export const decodeNodeSeaBlob = async (
     includeAssets,
     includeExecArgv,
     execArgvExtension,
+    ...(mainCodeFormat === undefined ? {} : { mainCodeFormat }),
     codePath,
     mainScript: useSnapshot ? null : body,
     snapshot: useSnapshot ? body : null,
@@ -206,33 +227,51 @@ const extensionName = (value: number): NodeSeaExecArgvExtension => {
 /** Sequential little-endian reader over one owned blob buffer. */
 class BlobCursor {
   #offset = 0;
+  readonly #reader: BinaryReader;
 
   constructor(
     private readonly bytes: Buffer,
     private readonly limits: NodeSeaReaderLimits,
-  ) {}
+  ) {
+    this.#reader = new BinaryReader(bytes, true, "Node SEA");
+  }
 
   get remaining(): number {
     return this.bytes.length - this.#offset;
   }
 
   u32(): number {
-    return this.#demand(4).readUInt32LE(0);
+    return this.#reader.u32(this.#takeOffset(4));
   }
 
   u8(): number {
-    return this.#demand(1).readUInt8(0);
+    return this.bytes[this.#takeOffset(1)]!;
+  }
+
+  /** The byte after the legacy size field is either the first path byte or the
+   * high byte of the newer size field. A producer cannot open a path that
+   * starts with NUL, and a readable blob cannot fit a size of 2^56 or more.
+   */
+  mainCodeFormat(): NodeSeaMainCodeFormat | undefined {
+    if (this.bytes[this.#offset + SIZE_BYTES] !== 0) return undefined;
+
+    const value = this.u8();
+    if (value === 0) return "commonjs";
+    if (value === 1) return "module";
+    throw formatFailure("Node SEA main code format is unknown");
   }
 
   /** `charge` sees the raw byte length before decoding allocates a string. */
   text(
     allowEmpty: boolean,
     emptyMessage: string,
+    minimumTailBytes: number,
     charge?: (bytes: number) => void,
   ): string {
-    const length = this.#size();
+    const length = this.#size(minimumTailBytes);
     charge?.(length);
-    const raw = this.#demand(length);
+    const offset = this.#takeOffset(length);
+    const raw = this.bytes.subarray(offset, offset + length);
     let text: string;
     try {
       text = strictUtf8Decoder("preserve").decode(raw);
@@ -249,15 +288,20 @@ class BlobCursor {
     return text;
   }
 
-  byteRange(): NodeSeaByteRange {
-    const length = this.#size();
-    const offset = this.#offset;
-    this.#offset += length;
-    return { offset, length };
+  byteRange(minimumTailBytes: number): NodeSeaByteRange {
+    const length = this.#size(minimumTailBytes);
+    return { offset: this.#takeOffset(length), length };
   }
 
-  async assets(signal?: AbortSignal): Promise<NodeSeaAsset[]> {
-    const count = this.#count("asset_count", 16);
+  async assets(
+    minimumTailBytes: number,
+    signal?: AbortSignal,
+  ): Promise<NodeSeaAsset[]> {
+    const count = this.#count(
+      "asset_count",
+      MIN_ASSET_ROW_BYTES,
+      minimumTailBytes,
+    );
     const seen = new Set<string>();
     const assets: NodeSeaAsset[] = [];
     let nameBytes = 0;
@@ -277,17 +321,23 @@ class BlobCursor {
         await setImmediate();
         assertArtifactReadActive(signal);
       }
-      const name = this.text(true, NODE_SEA_INVALID_UTF8, charge);
+      const tail = (count - index - 1) * MIN_ASSET_ROW_BYTES + minimumTailBytes;
+      const name = this.text(
+        true,
+        NODE_SEA_INVALID_UTF8,
+        SIZE_BYTES + tail,
+        charge,
+      );
       if (seen.has(name))
         throw formatFailure(`Node SEA asset name collides: ${name}`);
       seen.add(name);
-      assets.push({ name, range: this.byteRange() });
+      assets.push({ name, range: this.byteRange(tail) });
     }
     return assets;
   }
 
   async execArgv(signal?: AbortSignal): Promise<string[]> {
-    const count = this.#count("argument_count", 8);
+    const count = this.#count("argument_count", SIZE_BYTES, 0);
     const values: string[] = [];
     let textBytes = 0;
     const charge = (bytes: number): void => {
@@ -306,7 +356,8 @@ class BlobCursor {
         await setImmediate();
         assertArtifactReadActive(signal);
       }
-      values.push(this.text(true, NODE_SEA_INVALID_UTF8, charge));
+      const tail = (count - index - 1) * SIZE_BYTES;
+      values.push(this.text(true, NODE_SEA_INVALID_UTF8, tail, charge));
     }
     return values;
   }
@@ -327,13 +378,13 @@ class BlobCursor {
     return false;
   }
 
-  #size(): number {
-    if (this.remaining < 8) throw formatFailure(NODE_SEA_TRUNCATED);
-    const value = this.#demand(8).readBigUInt64LE(0);
-    if (
-      value > BigInt(Number.MAX_SAFE_INTEGER) ||
-      value > BigInt(this.remaining)
-    )
+  #readSizeField(): bigint {
+    return this.#reader.word(this.#takeOffset(SIZE_BYTES), 64);
+  }
+
+  #size(minimumTailBytes: number): number {
+    const value = this.#readSizeField();
+    if (value > BigInt(this.remaining - minimumTailBytes))
       throw formatFailure(NODE_SEA_TRUNCATED);
     return Number(value);
   }
@@ -341,10 +392,13 @@ class BlobCursor {
   #count(
     field: "asset_count" | "argument_count",
     minimumRowBytes: number,
+    minimumTailBytes: number,
   ): number {
-    if (this.remaining < 8) throw formatFailure(NODE_SEA_TRUNCATED);
-    const value = this.#demand(8).readBigUInt64LE(0);
-    if (value > BigInt(Math.floor(this.remaining / minimumRowBytes)))
+    const value = this.#readSizeField();
+    if (
+      value >
+      BigInt(Math.floor((this.remaining - minimumTailBytes) / minimumRowBytes))
+    )
       throw formatFailure(NODE_SEA_TRUNCATED);
     const count = Number(value);
     if (count > this.limits[field])
@@ -357,10 +411,10 @@ class BlobCursor {
     return count;
   }
 
-  #demand(length: number): Buffer {
+  #takeOffset(length: number): number {
     if (length > this.remaining) throw formatFailure(NODE_SEA_TRUNCATED);
     const start = this.#offset;
     this.#offset += length;
-    return this.bytes.subarray(start, this.#offset);
+    return start;
   }
 }

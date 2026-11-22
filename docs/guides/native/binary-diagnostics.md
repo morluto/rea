@@ -124,11 +124,13 @@ section, symbol, mitigation or linkage views. The default `complete` detail and
 CLI output are unchanged.
 
 Complete results have a 32 MiB input, 64 MiB reply, 1 MiB combined diagnostics
-and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` raises the
-launch input default alone, up to 1 GiB. Per-call `producer_limits` selects
+and 30-second owned command deadline. `REA_PWNTOOLS_MAX_INPUT_BYTES` is the
+runtime setting `pwntools.max_input_bytes`. Change the active value with
+`update_analysis_settings`. It raises the input default alone, up to 1 GiB.
+Per-call `producer_limits` selects
 `input_bytes`, `output_bytes`, `diagnostic_bytes`, `address_space_bytes`,
-`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call
-without restart. `input_bytes` overrides the launch default. File admission
+`file_bytes`, and `cpu_seconds`; positive safe integers apply on the next call.
+`input_bytes` overrides the accepted setting. File admission
 follows selected `output_bytes` unless `file_bytes` is explicit. The separate
 `pwntools_timeout_ms` controls each command wall deadline. On CLI pass
 `--producer-limits '{"cpu_seconds":60,"output_bytes":134217728}'`. The
@@ -249,7 +251,10 @@ count and SHA-256. Resources retain separate type, name and language identities:
 numeric IDs are distinct from UTF-16 names, whose original bytes are also
 reported. Directory headers, entries, data entries and payloads retain original
 file offsets and lengths. Each opaque payload has its own SHA-256; code page and
-reserved data-entry fields are preserved.
+reserved data-entry fields are preserved. The complete inventory requires
+numeric IDs to appear in ascending order within each directory. REA inventories
+named siblings in their stored order and identifies names by their exact UTF-16
+bytes. Named-entry ordering varies across producers.
 
 Every `directories[]` row retains its identity `path` and the matching incoming
 `entry_locations`: both are empty for the root, then contain the type and
@@ -277,6 +282,8 @@ and language. Other resource payload formats remain opaque.
 16384, the largest stock Windows resource image measured with headroom
 (maximum 65536). CLI options are `--max-file-bytes` and `--max-entries`.
 Metadata is bounded to 8 MiB; exceeding any budget fails without truncation.
+Parser refusals report the exhausted limit and enforced maximum in
+`details.reported_limits`.
 Large Evidence envelopes may require a caller-configured MCP transport receive
 buffer because envelope copies add overhead. Requests honor cancellation during
 snapshot reading, directory traversal and payload hashing. The operation reads
@@ -466,6 +473,8 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+PE export tables and strings use file-backed headers and declared section
+content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
 across adjacent file-backed section mappings when the virtual bytes are
 unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.

@@ -21,7 +21,6 @@ import {
 } from "./analysisProfile.js";
 import {
   BINARY_ARCHITECTURES,
-  BINARY_TARGET_FORMAT_KINDS,
   RAW_ONLY_ARCHITECTURES,
   type BinaryTarget,
 } from "./binaryTargetTypes.js";
@@ -52,46 +51,13 @@ import {
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import {
+  BINARY_TARGET_FORMAT_KINDS,
+  BINARY_TARGET_FORMATS,
+} from "./targetFormats.js";
 
 const architectureSchema = z.enum(BINARY_ARCHITECTURES);
-const formatSchema = z.enum([
-  "analysis-database",
-  "mach-o",
-  "mach-o-universal",
-  "elf",
-  "pe",
-  "dos-mz",
-  "dos-com",
-  "raw-binary",
-  "gamecube-dol",
-  "zip",
-  "ipa",
-  "apk",
-  "msix",
-  "appx",
-  "hap",
-  "hsp",
-  "app-pack",
-  "asar",
-  "ines",
-  "godot-pck",
-  "unityfs",
-  "wxapkg",
-  "dmg",
-  "pkg",
-  "intel-hex",
-  "srec",
-  "esp-image",
-  "uf2",
-  "dfuse",
-  "esp-flash-image",
-  "fit",
-  "ntfs-mft",
-  "plist",
-  "javascript",
-  "source-map",
-  "uimage",
-]);
+const formatSchema = z.enum(BINARY_TARGET_FORMATS);
 const kindSchema = z.enum(["executable", "database", "archive", "artifact"]);
 type SnapshotFormat = z.infer<typeof formatSchema>;
 /** The selection each format's open targets make inside their bytes. */

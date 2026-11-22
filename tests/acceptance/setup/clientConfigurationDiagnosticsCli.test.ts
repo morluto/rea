@@ -3,14 +3,42 @@ import {
   mkdir,
   readFile,
   readdir,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { expect } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+
+let sharedDiagnosticHome = "";
+
+beforeAll(async () => {
+  sharedDiagnosticHome = (
+    await createTestWorkspace("rea-client-config-diagnostic-")
+  ).root;
+});
+
+beforeEach(async () => {
+  for (const entry of await readdir(sharedDiagnosticHome)) {
+    await rm(join(sharedDiagnosticHome, entry), {
+      recursive: true,
+      force: true,
+    });
+  }
+});
+
+afterAll(async () => {
+  if (sharedDiagnosticHome !== "") {
+    await removeTestWorkspace(sharedDiagnosticHome);
+  }
+});
 
 const cases = [
   {
@@ -120,9 +148,7 @@ for (const scenario of cases)
   cliTest(
     `setup and uninstall explain ${scenario.client} configuration ${scenario.text}`,
     async ({ cli }) => {
-      const home = await createTestTempDirectory(
-        "rea-client-config-diagnostic-",
-      );
+      const home = sharedDiagnosticHome;
       const config = join(home, scenario.path);
       await mkdir(dirname(config), { recursive: true });
       const original =

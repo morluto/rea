@@ -28,21 +28,32 @@ The container format is `node-sea`. REA locates Mach-O sections named
 locations come from the shared PE resource parser. ELF program-header
 `PT_NOTE` segments are authoritative, as at runtime; `SHT_NOTE` sections are
 read only when no program-header table is readable, because injectors can
-leave stale section entries. A PE without a `NODE_SEA_BLOB` resource name is
+leave stale section entries. The section fallback requires a valid direct
+`e_shnum` count and an uncompressed note section to establish a raw blob
+offset. A short remainder after the last ELF note must be zero padding.
+A PE without a `NODE_SEA_BLOB` resource name is
 left to native classification. Universal Mach-O carriers
 with different slice blobs are rejected as ambiguous; identical blobs are
 inventoried once. Native carrier bytes keep their content hash and native
 classification while the root occurrence represents the SEA container.
 
+REA reports a named Mach-O SEA section as malformed when it declares zero-fill
+or falls outside its containing segment's file or virtual address range.
+The load command containing the section must be aligned and within the declared
+command table. A framing failure later in that table prevents blob recovery.
+
 Root `format_metadata` preserves raw flags, decoded flags, code path, blob
-location, exec arguments and fuse observations. Main and asset children retain
+location, exec arguments and fuse observations. It includes `main_code_format`
+when the blob declares `commonjs` or `module`. Main and asset children retain
 their role and exact declared name in `source_path`. Safe, noncolliding names
 become logical paths after the shared NFC path normalization. Names that are
 unsafe as relative paths, have an exact or file-prefix collision with another
 entry, or occupy the reserved `__node_sea__`
-namespace receive deterministic logical paths: `__node_sea__/main.cjs` for the
-main CommonJS source and `__node_sea__/assets/<ordinal>` for assets, using their
-zero-based order in the blob. The original declared name remains
+namespace receive deterministic logical paths. Main scripts fall back to
+`__node_sea__/main.mjs` for a declared module or `__node_sea__/main.cjs` for
+the earlier and CommonJS layouts. Assets fall back to
+`__node_sea__/assets/<ordinal>` using their zero-based order in the blob.
+The original declared name remains
 in `source_path`, including an empty asset key. Snapshots and code caches use
 `__node_sea__/snapshot` and `__node_sea__/code-cache`. Extraction materializes
 the logical paths through the shared path-containment and collision rules and
@@ -63,15 +74,24 @@ source fields remain available in the retained Evidence.
 
 ## Supported layout and limits
 
-The decoder follows the 64-bit little-endian layout in Node
-[v24.10.0 node_sea.cc](https://github.com/nodejs/node/blob/v24.10.0/src/node_sea.cc)
-and [node_sea.h](https://github.com/nodejs/node/blob/v24.10.0/src/node_sea.h),
-including the exec-argument extension byte. Older layouts without that byte,
-32-bit length fields, big-endian blobs and future flags are not supported.
+The decoder reads two 64-bit little-endian layouts. The
+[Node v24.10.0 layout](https://github.com/nodejs/node/blob/v24.10.0/src/node_sea.cc)
+records the exec-argument extension. The
+[Node v25.7.0 layout](https://github.com/nodejs/node/blob/v25.7.0/src/node_sea.cc)
+also records a main code format byte. Layouts without an exec-argument extension,
+32-bit length fields, big-endian blobs and unrecognized flags such as the
+Node VFS flags are unsupported.
 Carrier byte order is independent of blob byte order.
+Both layouts use the same magic. The code-path framing distinguishes them and
+leaves the producer version unknown.
 
-Malformed magic, truncation, unknown flags/extensions, invalid UTF-8, duplicate
+Malformed magic, truncation, unknown flags or extensions, unknown main code
+formats, invalid UTF-8, duplicate
 raw asset keys and conflicting blob declarations fail closed with named reasons.
+Exact aliases of one blob range are deduplicated before verification. Distinct
+copies must have equal lengths, and their total hashed bytes cannot exceed the
+carrier file size. Overlapping declarations that exceed this verification
+allowance fail with a capacity limit; this release has no runtime override.
 Zero padding after a complete blob is allowed. Producer admission defaults to
 a 256 MiB blob, 100,000 assets whose names total at most 8 MiB, and 4,096 exec
 arguments totaling at most 1 MiB of text. These are resource policies, not Node
@@ -124,19 +144,20 @@ and host memory remain independent of larger selected budgets.
 
 PE carriers additionally use the shared 512 MiB input, 65,536 directory-entry
 and 8 MiB resource-metadata ceilings; the Node SEA selections do not raise those
-shared PE-parser boundaries. The PE name probe reads headers from the first
-64 KiB of the carrier; a PE whose
-headers extend beyond that is left to native classification. ELF note tables
-are read for at most one note per 12 carrier bytes in total, the most that
-disjoint tables can hold, so program headers that repeat the same notes do not
-rescan them once per header. Past that count the remaining tables are
+shared PE-parser boundaries. The PE name probe follows the DOS header's PE
+offset and reads the declared header records and resource directories by file
+position. The ELF scan
+allows one framing read per 12 carrier bytes. Both a note header and a short
+table tail consume a read from that allowance, so repeated declarations
+cannot drive unbounded rescans. Past that count the remaining tables are
 unreadable: an ELF without a confirmed blob keeps its native classification,
 and one with a blob fails closed. Snapshot and code-cache bytes remain opaque.
 
 ## Verification
 
-Synthetic fixtures cover Mach-O, ELF and PE inventory/extraction, malformed
-blobs, collisions and fuse contradictions. CLI and MCP tests exercise the same
+Synthetic fixtures cover both blob layouts, Mach-O, ELF and PE
+inventory/extraction, malformed blobs, collisions and fuse contradictions.
+CLI and MCP tests exercise the same
 artifact provider and advertised schemas. A CLI regression also generates a blob
 with the pinned local Node version, an absolute main path and an empty asset
 key, then inventories it inside a synthetic ELF carrier. This verifies the real
