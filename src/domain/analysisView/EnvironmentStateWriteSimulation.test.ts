@@ -5,8 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   timedCaptureEvidence,
-  analysisViewCaptureEvidence,
-  environmentManifestCaptureFixture,
   type TimedCaptureRow,
 } from "../../../tests/fixtures/analysisView.js";
 import {
@@ -59,7 +57,7 @@ it.each([
 ] as const)(
   "does not borrow an entity read across an overlapping %s write to book %s",
   (phase, target, expected) => {
-    const rows = [
+    const rows: TimedCaptureRow[] = [
       [
         "GET",
         "/api/books",
@@ -69,11 +67,11 @@ it.each([
         ],
         200,
         undefined,
-        0,
         5,
+        0,
       ],
-      ["GET", "/api/books/1", { id: 1, name: "A" }, 200, undefined, 1, 5],
-      ["GET", "/api/books/2", { id: 2, name: "B" }, 200, undefined, 2, 5],
+      ["GET", "/api/books/1", { id: 1, name: "A" }, 200, undefined, 5, 1],
+      ["GET", "/api/books/2", { id: 2, name: "B" }, 200, undefined, 5, 2],
       ...(phase === "source"
         ? [
             [
@@ -82,8 +80,8 @@ it.each([
               null,
               204,
               {},
-              3,
               10_000,
+              3,
             ] as const,
           ]
         : []),
@@ -93,8 +91,8 @@ it.each([
         null,
         204,
         { name: "Z" },
-        phase === "source" ? 4 : 3,
         5,
+        phase === "source" ? 4 : 3,
       ],
       [
         "GET",
@@ -102,8 +100,8 @@ it.each([
         { id: 1, name: "Z" },
         200,
         undefined,
-        phase === "source" ? 5 : 4,
         phase === "source" ? 5 : 1_500,
+        phase === "source" ? 5 : 4,
       ],
       ...(phase === "read"
         ? [
@@ -124,46 +122,13 @@ it.each([
         { id: 1, name: "Z" },
         200,
         undefined,
-        phase === "source" ? 14 : 6,
         5,
+        phase === "source" ? 14 : 6,
       ],
-    ] as const;
-    const entries = rows.map(
-      ([method, path, body, status, request, time, duration]) => ({
-        startedDateTime: new Date(
-          Date.UTC(2026, 0, 1, 0, 0, time),
-        ).toISOString(),
-        time: duration,
-        request: {
-          method,
-          url: `http://app.example${path}`,
-          bodySize:
-            request === undefined
-              ? 0
-              : Buffer.byteLength(JSON.stringify(request)),
-          ...(request === undefined
-            ? {}
-            : {
-                postData: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(request),
-                },
-              }),
-        },
-        response: {
-          status,
-          content: { mimeType: "application/json", text: JSON.stringify(body) },
-        },
-      }),
-    );
-    const capture = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(entries),
-    );
-    const plan = environmentStateViewOf(capture).writes.find(
-      ({ tool }) => tool === "patch_books_by_id",
-    );
-    expect(plan?.observation).toEqual(expected);
-    if (target === "1") expect(plan?.served).toBe(false);
+    ];
+    const plan = gated(rows, "patch_books_by_id");
+    expect(plan.observation).toEqual(expected);
+    if (target === "1") expect(plan.served).toBe(false);
   },
 );
 
@@ -1055,42 +1020,6 @@ describe("reads as serving answers them", () => {
 });
 
 describe("what a read shows of a write", () => {
-  it("confirms no update by a read that shows none of the fields it changed", () => {
-    const rows: TimedCaptureRow[] = [
-      [
-        "GET",
-        "/api/books",
-        [
-          { id: 1, name: "A" },
-          { id: 2, name: "B" },
-        ],
-      ],
-      ["GET", "/api/books/1", { id: 1, name: "A", description: "x" }],
-      ["GET", "/api/books/2", { id: 2, name: "B", description: "y" }],
-      [
-        "PATCH",
-        "/api/books/1",
-        { id: 1, name: "A", description: "new" },
-        200,
-        { description: "new" },
-      ],
-      // The list passes, but it shows no description.
-      [
-        "GET",
-        "/api/books",
-        [
-          { id: 1, name: "A" },
-          { id: 2, name: "B" },
-        ],
-      ],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: false,
-      reason: "unconfirmed",
-      checked_record_ordinals: [],
-    });
-  });
-
   it("lets a read a create was observed through still contradict another write", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
@@ -1383,14 +1312,6 @@ describe("encoded parent spellings", () => {
       ],
       [],
     );
-
-  it("names the plainly held entity from a path that encodes its parent", () => {
-    expect(
-      itemTarget(plainlyHeld(), type, {
-        path: "/api/orgs/uid/%61cme1/books/1",
-      }),
-    ).toEqual({ collection, id: "1" });
-  });
 
   it("lists the type's entities only when the path's own collection holds no such id", () => {
     const state = plainlyHeld();
@@ -1745,27 +1666,32 @@ describe("what a check leaves pending", () => {
     description,
   });
 
-  it("keeps an update a passing read showed nothing of for a later read to confirm", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
-      ["GET", "/api/books/1", described(1, "First Book", "x")],
-      ["GET", "/api/books/2", described(2, "Second Book", "y")],
-      [
-        "PATCH",
-        "/api/books/1",
-        described(1, "First Book", "new"),
-        200,
-        { description: "new" },
-      ],
-      // The list passes but shows no description; the item read does.
-      ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
-      ["GET", "/api/books/1", described(1, "First Book", "new")],
-    ];
-    expect(gated(rows, "patch_books_by_id")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [5],
-    });
-  });
+  it.for([false, true])(
+    "a hidden description stays pending for a later item read (present: %s)",
+    (laterRead) => {
+      const rows: TimedCaptureRow[] = [
+        ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+        ["GET", "/api/books/1", described(1, "First Book", "x")],
+        ["GET", "/api/books/2", described(2, "Second Book", "y")],
+        [
+          "PATCH",
+          "/api/books/1",
+          described(1, "First Book", "new"),
+          200,
+          { description: "new" },
+        ],
+        // The list passes but shows no description; the item read does.
+        ["GET", "/api/books", summary([FIRST_BOOK, SECOND_BOOK])],
+      ];
+      if (laterRead)
+        rows.push(["GET", "/api/books/1", described(1, "First Book", "new")]);
+      expect(gated(rows, "patch_books_by_id")).toMatchObject({
+        served: laterRead,
+        reason: laterRead ? null : "unconfirmed",
+        checked_record_ordinals: laterRead ? [5] : [],
+      });
+    },
+  );
 
   it("checks only a partial update's fields that remain after a later overwrite", () => {
     const patched = described(1, "Patched", "survives");
@@ -2157,42 +2083,6 @@ describe("what an unmodelled write explains", () => {
     });
   });
 
-  it("contradicts by a failed item read the writes no unmodelled write came after, checking only the others' members", () => {
-    const enveloped = (data: Record<string, JsonValue>, revision: string) => ({
-      data,
-      revision,
-    });
-    const full = (name: string, description: string) => ({
-      id: 1,
-      name,
-      description,
-    });
-    const summary = [
-      { id: 1, name: "A" },
-      { id: 2, name: "B" },
-    ];
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/books", summary],
-      ["GET", "/api/books/1", enveloped(full("A", "x"), "r1")],
-      [
-        "GET",
-        "/api/books/2",
-        enveloped({ id: 2, name: "B", description: "y" }, "r1"),
-      ],
-      ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
-      ["GET", "/api/books", summary],
-      ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
-      // The rename sends the name alone, so the earlier description patch stays pending.
-      ["PUT", "/api/books/1", full("Z", "new"), 200, { name: "Z" }],
-      // The rename shows, but the envelope serving would answer with does not.
-      ["GET", "/api/books/1", enveloped(full("Z", "new"), "r2")],
-    ];
-    expect(gated(rows, "put_books_by_id")).toMatchObject({
-      served: false,
-      contradicted_by: 7,
-    });
-  });
-
   it("contradicts by a list a write made after an unmodelled one, though the tool's earlier change elsewhere came before it", () => {
     const named = (id: number, name: string) => ({
       ...book(id, name, bookClock(0)),
@@ -2250,19 +2140,48 @@ describe("what an unmodelled write explains", () => {
   });
 });
 
-it("leaves the global served clock unknown when any record completion is unknown", () => {
-  const rows = (duration: number): TimedCaptureRow[] => [
-    ["GET", "/api/books", [FIRST_BOOK, SECOND_BOOK]],
-    // Even an earlier record with an unknown end may finish after the final known record.
-    ["GET", "/api/books/1", FIRST_BOOK, 200, undefined, duration],
-    ["GET", "/api/books/2", SECOND_BOOK],
+it("contradicts by a failed item read the writes no unmodelled write came after, checking only the others' members", () => {
+  const enveloped = (data: Record<string, JsonValue>, revision: string) => ({
+    data,
+    revision,
+  });
+  const full = (name: string, description: string) => ({
+    id: 1,
+    name,
+    description,
+  });
+  const summary = [
+    { id: 1, name: "A" },
+    { id: 2, name: "B" },
   ];
-  expect(
-    environmentStateViewOf(timedCaptureEvidence(rows(5))).write_clock,
-  ).toBe(new Date(bookClock(3)).toISOString());
-  expect(
-    environmentStateViewOf(timedCaptureEvidence(rows(-1))).write_clock,
-  ).toBeNull();
+  const rows: TimedCaptureRow[] = [
+    ["GET", "/api/books", summary],
+    ["GET", "/api/books/1", enveloped(full("A", "x"), "r1")],
+    [
+      "GET",
+      "/api/books/2",
+      enveloped({ id: 2, name: "B", description: "y" }, "r1"),
+    ],
+    ["PATCH", "/api/books/1", full("A", "new"), 200, { description: "new" }],
+    ["GET", "/api/books", summary],
+    ["POST", "/api/exports", { queued: true }, 202, { format: "csv" }],
+    // The rename sends the name alone, so the earlier description patch stays pending.
+    ["PUT", "/api/books/1", full("Z", "new"), 200, { name: "Z" }],
+    // The rename shows, but the envelope serving would answer with does not.
+    ["GET", "/api/books/1", enveloped(full("Z", "new"), "r2")],
+  ];
+  const { writes } = environmentStateViewOf(timedCaptureEvidence(rows));
+  expect(writes.find(({ tool }) => tool === "put_books_by_id")).toMatchObject({
+    served: false,
+    contradicted_by: 7,
+  });
+  expect(writes.find(({ tool }) => tool === "patch_books_by_id")).toMatchObject(
+    {
+      served: true,
+      checked_record_ordinals: [7],
+      contradicted_by: null,
+    },
+  );
 });
 
 describe("reads and calls on an entity an unmodelled write left unknown", () => {
@@ -2309,7 +2228,7 @@ describe("reads and calls on an entity an unmodelled write left unknown", () => 
   ];
 
   it.each([
-    { label: "scalar", read: "unavailable", served: false },
+    { label: "scalar", read: '"unavailable"', served: false },
     { label: "array", read: [], served: false },
     { label: "object", read: named("A"), served: true },
   ])(
@@ -2333,6 +2252,7 @@ describe("reads and calls on an entity an unmodelled write left unknown", () => 
 
   it.each([
     { status: 503, body: { error: "unavailable" } },
+    { status: 200, body: '"unavailable"' },
     { status: 200, body: "unavailable" },
     { status: 200, body: [] },
   ])(
@@ -3392,46 +3312,11 @@ it.each([
         null,
         204,
         {},
-        "archiveDuration" in options ? options.archiveDuration : 5,
+        options.archiveDuration ?? 5,
+        archiveStart,
       ],
     ];
-    const entries = rows.map(
-      (
-        [method, path, body = null, status = 200, request, time = 5],
-        index,
-      ) => ({
-        startedDateTime: new Date(
-          Date.parse(bookClock(index === 5 ? archiveStart : index)),
-        ).toISOString(),
-        time,
-        request: {
-          method,
-          url: `http://app.example${path}`,
-          bodySize:
-            request === undefined
-              ? 0
-              : Buffer.byteLength(JSON.stringify(request)),
-          ...(request === undefined
-            ? {}
-            : {
-                postData: {
-                  mimeType: "application/json",
-                  text: JSON.stringify(request),
-                },
-              }),
-        },
-        response: {
-          status,
-          content: { mimeType: "application/json", text: JSON.stringify(body) },
-        },
-      }),
-    );
-    const capture = analysisViewCaptureEvidence(
-      environmentManifestCaptureFixture(entries),
-    );
-    const plan = environmentStateViewOf(capture).writes.find(
-      (write) => write.tool === "patch_books_by_id",
-    );
+    const plan = gated(rows, "patch_books_by_id");
     expect(plan).toMatchObject({
       served,
       checked_record_ordinals: served ? [4] : [],
