@@ -1228,3 +1228,26 @@ it("validates a debugger session subject's launch file with the file subject dec
     "an unobserved launch target stays an explicit unknown",
   ).toEqual({ ...session, target: unknownTarget("not-observed") });
 });
+
+it("still validates profile provider agreement when reusing an immutable snapshot result", () => {
+  const result = freezeJsonSnapshot({ ok: true });
+  const created = createEvidence(TARGET, PROVIDER, {
+    operation: "health",
+    parameters: {},
+    result,
+    analysisProfile: PROFILE,
+  });
+  expect(created.normalized_result).toBe(result);
+  expect(() =>
+    createEvidence(
+      TARGET,
+      { ...PROVIDER, id: "other" },
+      {
+        operation: "health",
+        parameters: {},
+        result,
+        analysisProfile: PROFILE,
+      },
+    ),
+  ).toThrow(/profile provider/u);
+});

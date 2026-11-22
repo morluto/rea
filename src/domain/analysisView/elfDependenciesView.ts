@@ -183,7 +183,6 @@ export const projectElfDependenciesView = (
   const parsed = readReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const versions = flattenVersions(report);
   const summary = {
     artifact: report.artifact,
     format: report.format,
@@ -200,7 +199,10 @@ export const projectElfDependenciesView = (
     },
     coverage: report.coverage,
     needed_count: report.needed.length,
-    version_count: versions.length,
+    version_count: report.version_requirements.files.reduce(
+      (count, file) => count + file.versions.length,
+      0,
+    ),
     definition_count: report.version_definitions.names.length,
     derived_maximum_count: report.derived_version_maxima.length,
     import_count: report.imports.length,
@@ -330,7 +332,7 @@ export const projectElfDependenciesView = (
       );
     case "versions":
       return pageRows(
-        versions,
+        flattenVersions(report),
         versionRowSchema.keyof().options,
         view.fields,
         "version",

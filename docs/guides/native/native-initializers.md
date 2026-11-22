@@ -62,9 +62,10 @@ Each `entries[]` item reports:
 - `slot_va`, `slot_file_offset`, `slot_bytes` and `slot_section`: where the
   pointer or offset is stored. For a universal Mach-O, file offsets are
   relative to the whole file, not the slice. For `init` and `fini` the slot is
-  the `DT_INIT` / `DT_FINI` value field in the dynamic section. When that field
-  is outside every load segment, `slot_va` and `slot_section` are null and a
-  limitation says so.
+  the `DT_INIT` / `DT_FINI` value field in the dynamic section. The virtual
+  slot uses the address declared by `PT_DYNAMIC` when the entire field maps to
+  those file bytes. Otherwise `slot_va` and `slot_section` are null, a limitation
+  explains the missing mapping, and the original file field stays available.
 - `value_va`, `value_file_offset` and `section`: the resolved target address,
   its file offset and its containing section. These are null when the value
   was not established. In a linked ELF, file offsets come only from `PT_LOAD`:

@@ -226,6 +226,49 @@ class BridgeTest(unittest.TestCase):
         self.assertTrue(capped["more"])
         self.assertEqual(len(capped["callees"]), 1)
 
+    def test_callees_lazily_enumerates_imports_only_when_external_targets_occur(self):
+        FUNCS.append(Func(0x2800, 0x2808, "internal_only"))
+        INSNS[0x2800] = ("call helper", True, [0x2000], [])
+        self.addCleanup(lambda: (FUNCS.pop(), INSNS.pop(0x2800, None)))
+
+        original_enum = sys.modules["ida_nalt"].enum_import_names
+        enum_calls = []
+
+        def tracked_enum(index, callback):
+            enum_calls.append(index)
+            return original_enum(index, callback)
+
+        sys.modules["ida_nalt"].enum_import_names = tracked_enum
+
+        [internal_row] = self.query("callees", {"addrs": ["0x2800"], "limit": 500})
+        self.assertEqual(
+            internal_row,
+            {"callees": [{"addr": "0x2000", "name": "helper", "type": "internal"}], "more": False},
+        )
+        self.assertEqual(enum_calls, [])
+
+        batch_rows = self.query("callees", {"addrs": ["0x2800", "0x1000", "0x1000"], "limit": 500})
+        self.assertEqual(len(batch_rows), 3)
+        self.assertEqual(enum_calls, [0])
+        self.assertIn(
+            {"addr": "0x5000", "name": "puts", "type": "external"},
+            batch_rows[1]["callees"],
+        )
+        self.assertEqual(batch_rows[1], batch_rows[2])
+        self.query("callees", {"addrs": ["0x1000"], "limit": 500})
+        self.assertEqual(enum_calls, [0])
+
+    def test_list_funcs_filter_and_string_at(self):
+        filtered = self.query("list_funcs", {"queries": {"offset": 0, "count": 10, "filter": "help"}})
+        self.assertEqual(
+            filtered,
+            [{"data": [{"addr": "0x2000", "name": "helper", "size": "0x8"}], "next_offset": None}],
+        )
+        found = self.query("string_at", {"addr": "0x6002"})
+        self.assertEqual(found, {"matches": [{"addr": "0x6002", "string": "string 2"}], "cursor": {"done": True}})
+        missing = self.query("string_at", {"addr": "0x9999"})
+        self.assertEqual(missing, {"matches": [], "cursor": {"done": True}})
+
     def test_callgraph_reports_function_entries_only(self):
         [row] = self.query("callgraph", {"roots": ["0x1000"], "max_depth": 0})
         # Interior, non-function and import targets are not graph edges.

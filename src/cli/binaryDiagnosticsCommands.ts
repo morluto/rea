@@ -1,25 +1,3 @@
-import {
-  createByteEntropyService,
-  createRecordedCrashService,
-  createBinaryLayoutService,
-  createElfNotesService,
-  createDwarfUnitsService,
-  createElfDebugLinkService,
-  createNativeInitializersService,
-  createElfUnwindRangesService,
-  createAppleIpsService,
-  createDevicetreeService,
-  createKernelModuleService,
-  createKernelBuildConfigService,
-  createPeLoadConfigService,
-  createBinaryHardeningService,
-  createPeResourcesService,
-  createPeCertificatesService,
-  createPeImportsService,
-  createWindowsShortcutService,
-  createNativeExportsService,
-  createElfDependenciesService,
-} from "../composition/binaryDiagnostics.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
@@ -58,7 +36,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
-    inspectWithService(createElfNotesService, "rea-elf-notes"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfNotes.js")
+        ).createElfNotesService(),
+      "rea-elf-notes",
+    ),
   );
   registerContractCommand(
     cli,
@@ -79,7 +63,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createDwarfUnitsService, "rea-dwarf-units"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/dwarfUnits.js")
+        ).createDwarfUnitsService(),
+      "rea-dwarf-units",
+    ),
   );
   registerContractCommand(
     cli,
@@ -97,7 +87,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createElfDebugLinkService, "rea-elf-debug-link"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfDebugLink.js")
+        ).createElfDebugLinkService(),
+      "rea-elf-debug-link",
+    ),
   );
   registerContractCommand(
     cli,
@@ -120,7 +116,10 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     inspectWithService(
-      createNativeInitializersService,
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/nativeInitializers.js")
+        ).createNativeInitializersService(),
       "rea-native-initializers",
     ),
   );
@@ -135,7 +134,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF32/ELF64 image" } },
     },
-    inspectWithService(createElfUnwindRangesService, "rea-elf-unwind-ranges"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfUnwindRanges.js")
+        ).createElfUnwindRangesService(),
+      "rea-elf-unwind-ranges",
+    ),
   );
   registerContractCommand(
     cli,
@@ -154,7 +159,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createAppleIpsService, "rea-apple-ips"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/appleIps.js")
+        ).createAppleIpsService(),
+      "rea-apple-ips",
+    ),
   );
   registerContractCommand(
     cli,
@@ -172,7 +183,13 @@ export const registerBinaryDiagnosticsCommands = (
         },
       },
     },
-    inspectWithService(createKernelModuleService, "rea-kernel-module"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/kernelModule.js")
+        ).createKernelModuleService(),
+      "rea-kernel-module",
+    ),
   );
   registerContractCommand(
     cli,
@@ -191,7 +208,10 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     inspectWithService(
-      createKernelBuildConfigService,
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/kernelBuildConfig.js")
+        ).createKernelBuildConfigService(),
       "rea-kernel-build-config",
     ),
   );
@@ -206,7 +226,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeLoadConfigService, "rea-pe-load-config"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peLoadConfig.js")
+        ).createPeLoadConfigService(),
+      "rea-pe-load-config",
+    ),
   );
   registerContractCommand(
     cli,
@@ -219,9 +245,14 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local ELF, PE, or Mach-O image" } },
     },
-    inspectWithService(createBinaryHardeningService, "rea-binary-hardening"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/binaryHardening.js")
+        ).createBinaryHardeningService(),
+      "rea-binary-hardening",
+    ),
   );
-  const entropy = createByteEntropyService();
   registerContractCommand(
     cli,
     logger,
@@ -246,7 +277,13 @@ export const registerBinaryDiagnosticsCommands = (
           "One-shot output is complete Evidence; this command has no summary delivery",
       },
     },
-    inspectWithService(() => entropy, BYTE_ENTROPY_PROVIDER.id),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/byteEntropy.js")
+        ).createByteEntropyService(),
+      BYTE_ENTROPY_PROVIDER.id,
+    ),
   );
   registerContractCommand(
     cli,
@@ -259,7 +296,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeCertificatesService, "rea-pe-certificates"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peCertificates.js")
+        ).createPeCertificatesService(),
+      "rea-pe-certificates",
+    ),
   );
   registerContractCommand(
     cli,
@@ -272,7 +315,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeImportsService, "rea-pe-imports"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peImports.js")
+        ).createPeImportsService(),
+      "rea-pe-imports",
+    ),
   );
   registerContractCommand(
     cli,
@@ -287,7 +336,13 @@ export const registerBinaryDiagnosticsCommands = (
         path: { description: "Local Windows Shell Link (.lnk) file" },
       },
     },
-    inspectWithService(createWindowsShortcutService, "rea-windows-shortcut"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/windowsShortcut.js")
+        ).createWindowsShortcutService(),
+      "rea-windows-shortcut",
+    ),
   );
   registerContractCommand(
     cli,
@@ -300,7 +355,13 @@ export const registerBinaryDiagnosticsCommands = (
       callerPaths: ["path"],
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
-    inspectWithService(createPeResourcesService, "rea-pe-resources"),
+    inspectWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/peResources.js")
+        ).createPeResourcesService(),
+      "rea-pe-resources",
+    ),
   );
   registerContractCommand(
     cli,
@@ -321,7 +382,13 @@ export const registerBinaryDiagnosticsCommands = (
         max_depth: { description: "Maximum device-tree nesting depth" },
       },
     },
-    deliverWithService(createDevicetreeService, "rea-devicetree"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/devicetree.js")
+        ).createDevicetreeService(),
+      "rea-devicetree",
+    ),
   );
   registerContractCommand(
     cli,
@@ -329,13 +396,19 @@ export const registerBinaryDiagnosticsCommands = (
     contract("inspect_native_exports"),
     {
       description:
-        "Inspect a PE or ELF image's export table without executing it",
+        "Inspect PE or ELF image's export table without executing it",
       positionals: ["path"],
       callerPaths: ["path"],
       evidenceDelivery: true,
       fields: { path: { description: "Local PE or ELF image" } },
     },
-    deliverWithService(createNativeExportsService, "rea-native-exports"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/nativeExports.js")
+        ).createNativeExportsService(),
+      "rea-native-exports",
+    ),
   );
   registerContractCommand(
     cli,
@@ -351,9 +424,14 @@ export const registerBinaryDiagnosticsCommands = (
         path: { description: "Local ELF32/ELF64 ET_EXEC or ET_DYN image" },
       },
     },
-    deliverWithService(createElfDependenciesService, "rea-elf-dependencies"),
+    deliverWithService(
+      async () =>
+        (
+          await import("../composition/binaryDiagnostics/elfDependencies.js")
+        ).createElfDependenciesService(),
+      "rea-elf-dependencies",
+    ),
   );
-  const layout = createBinaryLayoutService(environment);
   registerContractCommand(
     cli,
     logger,
@@ -374,7 +452,11 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     async (input, context) => {
-      const result = await layout.inspectAndClose(input, {
+      const { createBinaryLayoutService } =
+        await import("../composition/binaryDiagnostics/binaryLayout.js");
+      const result = await createBinaryLayoutService(
+        environment,
+      ).inspectAndClose(input, {
         signal: context.signal,
       });
       return result.ok
@@ -382,7 +464,6 @@ export const registerBinaryDiagnosticsCommands = (
         : projectAnalysisError(result.error);
     },
   );
-  const recorded = createRecordedCrashService(environment);
   registerContractCommand(
     cli,
     logger,
@@ -405,7 +486,11 @@ export const registerBinaryDiagnosticsCommands = (
       },
     },
     async (input, context) => {
-      const result = await recorded.inspectAndClose(input, {
+      const { createRecordedCrashService } =
+        await import("../composition/binaryDiagnostics/recordedCrash.js");
+      const result = await createRecordedCrashService(
+        environment,
+      ).inspectAndClose(input, {
         signal: context.signal,
       });
       return result.ok

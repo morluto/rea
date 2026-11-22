@@ -19,9 +19,9 @@ import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
-  MCP_TRANSPORT_EVIDENCE_EXPORT,
   MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -91,11 +91,10 @@ interface OverflowNextStep {
 
 const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
   const projection = evidenceBundleProjection(value);
-  // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
     return {
-      text: MCP_TRANSPORT_EVIDENCE_EXPORT,
-      operation: "export_evidence_bundle",
+      text: MCP_TRANSPORT_EVIDENCE_SUMMARY,
+      operation: "get_evidence_bundle",
     };
   return {
     text:
@@ -160,6 +159,20 @@ const overflowNextStep = (
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
+/** The encoding already computed by `ToolResultDelivery` for a structured error result. */
+export interface ProjectedErrorEncoding {
+  readonly budgetBytes: number;
+  readonly targetContent: boolean;
+  readonly text: string;
+}
+
+const projectedErrorEncodings = new WeakMap<object, ProjectedErrorEncoding>();
+
+/** Return the `ToolResultDelivery` encoding stamped on this exact error result, if any. */
+export const projectedErrorEncoding = (
+  result: object,
+): ProjectedErrorEncoding | undefined => projectedErrorEncodings.get(result);
+
 export class ToolResultDelivery {
   readonly maximumResponseBytes: number;
   readonly resultBudgetBytes: number;
@@ -440,48 +453,45 @@ export class ToolResultDelivery {
               }))
               .sort((left, right) => right.size - left.size)
               .map(({ candidate }) => candidate);
-      while (!encoded.ok && remaining.length > 0) {
-        const limit = encoded;
-        let next: AnalysisErrorProjection | undefined;
-        let nextIndex = -1;
-        for (const [index, candidate] of remaining.entries()) {
-          const compact = omitUnretainedEvidenceFromError(
-            candidateProjection,
-            limit,
-            candidate,
-          );
-          if (compact === undefined) continue;
-          if (next === undefined) {
-            next = compact;
-            nextIndex = index;
-          }
-          const content = { error: compact };
-          const compactEncoded = encodeToolResult(
-            content,
-            this.resultBudgetBytes,
-            "error-text",
-            targetContent,
-          );
-          if (compactEncoded.ok) {
-            structuredContent = content;
-            encoded = compactEncoded;
-            break;
-          }
+      let index = 0;
+      while (!encoded.ok && index < remaining.length) {
+        const compact = omitUnretainedEvidenceFromError(
+          candidateProjection,
+          encoded,
+          remaining[index]!,
+        );
+        index += 1;
+        if (compact === undefined) continue;
+        candidateProjection = compact;
+        const content = { error: compact };
+        const compactEncoded = encodeToolResult(
+          content,
+          this.resultBudgetBytes,
+          "error-text",
+          targetContent,
+        );
+        if (compactEncoded.ok) {
+          structuredContent = content;
+          encoded = compactEncoded;
+          break;
         }
-        if (encoded.ok) break;
-        if (next === undefined) break;
-        candidateProjection = next;
-        remaining.splice(nextIndex, 1);
       }
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
-    return {
+    const result: CallToolResult = {
       content: encoded.ok ? [{ type: "text", text: encoded.text }] : [],
       structuredContent,
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
     };
+    if (encoded.ok)
+      projectedErrorEncodings.set(result, {
+        budgetBytes: this.resultBudgetBytes,
+        targetContent,
+        text: encoded.text,
+      });
+    return result;
   }
 
   private successResult(

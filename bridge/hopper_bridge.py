@@ -219,6 +219,10 @@ class InvalidRequestError(Exception):
     """Caller input failed bridge request or operation validation."""
 
 
+class SelectorNotFoundError(InvalidRequestError):
+    """A valid selector did not resolve in the current Hopper document."""
+
+
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
     (
         "analyze_function",
@@ -457,7 +461,7 @@ def _address_selection(document, value=None):
             try:
                 address = int(value, 16)
             except ValueError as error:
-                raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
+                raise SelectorNotFoundError("Unknown Hopper address or name: %s" % value) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address, source
@@ -478,7 +482,7 @@ def _procedure(document, value=None):
     address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise InvalidRequestError("No procedure exists at the requested address")
+        raise SelectorNotFoundError("No procedure exists at the requested address")
     if source == "symbol" and address != result.getEntryPoint():
         raise InvalidRequestError(
             "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
@@ -939,6 +943,26 @@ def _search_inventory(document, kind):
     return inventory
 
 
+def _search_inventory_folded(document, kind):
+    """Cache pre-casefolded search text alongside an unchanged document inventory."""
+    key = (id(document), f"{kind}_folded")
+    folded = _search_inventory_cache.get(key)
+    if folded is None:
+        inventory = _search_inventory(document, kind)
+        if kind == "string":
+            folded = tuple(
+                (address, record, record["value"].casefold())
+                for address, record in inventory
+            )
+        else:
+            folded = tuple(
+                (address, value, value.casefold())
+                for address, value in inventory
+            )
+        _search_inventory_cache[key] = folded
+    return folded
+
+
 def _search_results(document, kind, params):
     pattern = params.get("pattern")
     if not isinstance(pattern, str) or not pattern:
@@ -950,22 +974,33 @@ def _search_results(document, kind, params):
     if not isinstance(case_sensitive, bool):
         raise InvalidRequestError("case_sensitive must be a boolean")
 
-    if mode == "literal":
-        needle = pattern if case_sensitive else pattern.casefold()
-        matches = lambda value: needle in (value if case_sensitive else value.casefold())
-    else:
+    if mode != "literal":
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
+    if case_sensitive:
+        if kind == "string":
+            return [
+                {"address": address, **record}
+                for address, record in _search_inventory(document, kind)
+                if pattern in record["value"]
+            ]
+        return [
+            {"address": address, "value": value}
+            for address, value in _search_inventory(document, kind)
+            if pattern in value
+        ]
+
+    needle = pattern.casefold()
     if kind == "string":
         return [
             {"address": address, **record}
-            for address, record in _search_inventory(document, kind)
-            if matches(record["value"])
+            for address, record, folded in _search_inventory_folded(document, kind)
+            if needle in folded
         ]
     return [
         {"address": address, "value": value}
-        for address, value in _search_inventory(document, kind)
-        if matches(value)
+        for address, value, folded in _search_inventory_folded(document, kind)
+        if needle in folded
     ]
 
 
@@ -1586,6 +1621,8 @@ def _diagnostic_type(error):
         return "capability_unavailable"
     if isinstance(error, PermissionError):
         return "authorization"
+    if isinstance(error, SelectorNotFoundError):
+        return "selector_not_found"
     if isinstance(error, InvalidRequestError):
         return "invalid_request"
     return "bridge_exception"
@@ -1598,7 +1635,7 @@ def _safe_diagnostic(error):
         message = str(error)
     elif diagnostic_type == "authorization":
         message = "Invalid bridge capability"
-    elif diagnostic_type == "invalid_request":
+    elif diagnostic_type in ("invalid_request", "selector_not_found"):
         message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__

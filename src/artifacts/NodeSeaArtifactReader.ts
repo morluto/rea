@@ -37,9 +37,8 @@ const ASSET_FALLBACK_PREFIX = "__node_sea__/assets/";
 type NodeSeaRole = "main-script" | "snapshot" | "code-cache" | "asset";
 
 /** Read a Node.js SEA blob out of a Mach-O, ELF, or PE carrier without running it. */
-export class NodeSeaArtifactReader extends PositionalArtifactReader {
+export class NodeSeaArtifactReader extends PositionalArtifactReader<NodeSeaMetadata> {
   override readonly format = "node-sea" as const;
-  #header: NodeSeaMetadata | undefined;
   #admission: NodeSeaAdmission | undefined;
 
   constructor(
@@ -59,8 +58,9 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
   }
 
   formatMetadata(): NodeSeaMetadata | undefined {
-    if (this.#header === undefined) return undefined;
-    return { ...this.#header, exec_argv: [...this.#header.exec_argv] };
+    const metadata = this.preparedFormatMetadata;
+    if (metadata === undefined) return undefined;
+    return { ...metadata, exec_argv: [...metadata.exec_argv] };
   }
 
   /** Also drop the admitted decode, which only a completed preparation releases. */
@@ -100,7 +100,7 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
 
   protected override async prepareEntries(
     signal?: AbortSignal,
-  ): Promise<PositionalArtifactEntries> {
+  ): Promise<PositionalArtifactEntries<NodeSeaMetadata>> {
     const { handle, initial } = await this.verifyCarrier(signal);
     const { location, decoded } = await this.#readBlob(
       { handle, initial },
@@ -151,7 +151,7 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
       entries.push(entry);
       index += 1;
     }
-    this.#header = {
+    const metadata: NodeSeaMetadata = {
       kind: "node-sea",
       magic: decoded.magic,
       flags: decoded.flags,
@@ -177,6 +177,7 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
     this.#admission = undefined;
     return {
       entries,
+      formatMetadata: metadata,
       coverage: {
         status: "complete",
         limitations:

@@ -434,11 +434,7 @@ export const normalizeUnblobReport = (
         if (detail !== null)
           for (const problem of detail.extraction_reports) {
             diagnostics.push(
-              extractionDiagnostic(
-                path,
-                detail.handler_name,
-                jsonValueSchema.parse(problem),
-              ),
+              extractionDiagnostic(path, detail.handler_name, problem),
             );
           }
         addBlobOrigin(path, parsed.id, {

@@ -51,6 +51,7 @@ import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { createCliResultOutput } from "./cliResultOutput.js";
+import { isMcpRegistrationCommand } from "./mcpBuiltinCommands.js";
 import { formatCommandHelp } from "./help.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -91,27 +92,14 @@ interface RegistrationPresentation {
   fail(): void;
 }
 
-const precedingFlags = [
-  "--llms",
-  "--llms-full",
-  "--mcp",
-  "--update",
-  "--incur-update-check",
-];
-
 /** Route only the named REA registration operation; other builtin commands keep their owners. */
 export const serveMcpRegistration = (
   global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
   options: ServeOptions,
 ): Promise<void> | undefined => {
+  if (!isMcpRegistrationCommand(global)) return undefined;
   const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
-  if (
-    global.command[offset] !== "mcp" ||
-    global.command[offset + 1] !== "add" ||
-    precedingFlags.some((flag) => global.flags.has(flag))
-  )
-    return undefined;
   return (async () => {
     const presentation = createRegistrationPresentation(global, options);
     if (

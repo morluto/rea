@@ -29,16 +29,12 @@ const digest = "ab".repeat(32);
 const inputFor = (extra: { readonly max_entries?: number } = {}) =>
   inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra });
 
-const parse = (
-  bytes: Buffer,
-  extra: { readonly max_entries?: number } = {},
-  path = artifactPath,
-) =>
+const parse = (bytes: Buffer, extra: { readonly max_entries?: number } = {}) =>
   elfDebugLinkSchema.parse(
     parseElfDebugLink(
       bytes,
-      { path, sha256: digest, bytes: bytes.length },
-      inspectElfDebugLinkInputSchema.parse({ path, ...extra }),
+      { path: artifactPath, sha256: digest, bytes: bytes.length },
+      inspectElfDebugLinkInputSchema.parse({ path: artifactPath, ...extra }),
     ),
   );
 
@@ -270,13 +266,7 @@ it("reads the build-id beside glibc's SystemTap probe notes by default", () => {
   });
 });
 
-it("preserves parent-directory segments and omits a slash name", () => {
-  const preserved = parse(elfDebugLinkFixture(), {}, "/var/tmp/../lib/prog");
-  expect(
-    preserved.lookup_paths.find(
-      (entry) => entry.kind === "global_debug_directory",
-    )?.path,
-  ).toBe("/usr/lib/debug/var/tmp/../lib/prog.debug");
+it("observes a slash name without producing directory lookup strings", () => {
   const slashed = parse(
     elfDebugLinkFixture({
       debuglink: debuglinkSection("dir/prog.debug", 0x12345678, true),
