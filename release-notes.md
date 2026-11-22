@@ -30,6 +30,7 @@
 * **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
 * **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
 * **apple:** decode the ivar WORD_ALIGN sentinel as 8-byte alignment ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
+* **apple:** preserve Interface Builder archive roles and omissions ([#13429](https://github.com/morluto/rea/issues/13429)) ([1f6a864](https://github.com/morluto/rea/commit/1f6a864a170e67fca964221ef4b0da4085e1daa6))
 * **apple:** report the declared archiver of a keyed archive ([2d182f8](https://github.com/morluto/rea/commit/2d182f865f5db5d59269b19b2f7115706ab79dfa))
 * **apple:** require a $top dictionary, not a UID, for another archiver name ([b2a7cd9](https://github.com/morluto/rea/commit/b2a7cd91cc02b551e584ac7d774d8eab0e89f961))
 * **apple:** rethrow internal invariant violations while resolving a bundle's program file ([#11392](https://github.com/morluto/rea/issues/11392)) ([6aa3898](https://github.com/morluto/rea/commit/6aa389831792a3d51ff6adb0dfe965c7443d955d))
