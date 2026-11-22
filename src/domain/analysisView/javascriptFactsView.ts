@@ -197,6 +197,135 @@ const collectMatchingBuckets = (
   return buckets;
 };
 
+const lowerBound = (bucket: readonly number[], target: number): number => {
+  let lo = 0;
+  let hi = bucket.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (bucket[mid]! < target) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+
+const seekBucketOffsets = (
+  buckets: readonly (readonly number[])[],
+  offset: number,
+): { readonly cursors: Uint32Array; readonly skipped: number } => {
+  let lo = Number.POSITIVE_INFINITY;
+  let hi = Number.NEGATIVE_INFINITY;
+  for (const bucket of buckets) {
+    if (bucket.length === 0) continue;
+    const first = bucket[0]!;
+    const last = bucket[bucket.length - 1]!;
+    if (first < lo) lo = first;
+    if (last > hi) hi = last;
+  }
+  const cursors = new Uint32Array(buckets.length);
+  if (lo > hi) return { cursors, skipped: 0 };
+  while (lo < hi) {
+    const mid = lo + Math.floor((hi - lo + 1) / 2);
+    let countLess = 0;
+    for (const bucket of buckets) {
+      countLess += lowerBound(bucket, mid);
+      if (countLess > offset) break;
+    }
+    if (countLess <= offset) lo = mid;
+    else hi = mid - 1;
+  }
+  let skipped = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    const cursor = lowerBound(buckets[i]!, lo);
+    cursors[i] = cursor;
+    skipped += cursor;
+  }
+  return { cursors, skipped };
+};
+
+const selectMultiBucketPage = (
+  buckets: readonly (readonly number[])[],
+  offset: number,
+  limit: number,
+  total: number,
+): readonly number[] => {
+  if (offset >= total || limit <= 0) return [];
+  const pageSize = Math.min(limit, total - offset);
+  const bucketCount = buckets.length;
+  const seekThreshold = Math.max(64, bucketCount * 8);
+  const { cursors, skipped } =
+    offset > seekThreshold
+      ? seekBucketOffsets(buckets, offset)
+      : { cursors: new Uint32Array(bucketCount), skipped: 0 };
+
+  const heapBucket = new Uint32Array(bucketCount);
+  const heapOrdinal = new Uint32Array(bucketCount);
+  let heapSize = 0;
+  for (let i = 0; i < bucketCount; i++) {
+    const bucket = buckets[i]!;
+    const cursor = cursors[i]!;
+    if (cursor >= bucket.length) continue;
+    heapBucket[heapSize] = i;
+    heapOrdinal[heapSize] = bucket[cursor]!;
+    heapSize += 1;
+  }
+
+  const siftDown = (start: number): void => {
+    let idx = start;
+    const bIdx = heapBucket[idx]!;
+    const ord = heapOrdinal[idx]!;
+    while (true) {
+      const left = idx * 2 + 1;
+      if (left >= heapSize) break;
+      const right = left + 1;
+      const smallestChild =
+        right < heapSize && heapOrdinal[right]! < heapOrdinal[left]!
+          ? right
+          : left;
+      if (ord <= heapOrdinal[smallestChild]!) break;
+      heapBucket[idx] = heapBucket[smallestChild]!;
+      heapOrdinal[idx] = heapOrdinal[smallestChild]!;
+      idx = smallestChild;
+    }
+    heapBucket[idx] = bIdx;
+    heapOrdinal[idx] = ord;
+  };
+
+  for (let i = (heapSize >>> 1) - 1; i >= 0; i--) siftDown(i);
+
+  const popNextOrdinal = (): number | undefined => {
+    if (heapSize === 0) return undefined;
+    const ordinal = heapOrdinal[0]!;
+    const bIdx = heapBucket[0]!;
+    const bucket = buckets[bIdx]!;
+    const nextCursor = cursors[bIdx]! + 1;
+    cursors[bIdx] = nextCursor;
+    if (nextCursor < bucket.length) {
+      heapOrdinal[0] = bucket[nextCursor]!;
+      siftDown(0);
+    } else {
+      heapSize -= 1;
+      if (heapSize > 0) {
+        heapBucket[0] = heapBucket[heapSize]!;
+        heapOrdinal[0] = heapOrdinal[heapSize]!;
+        siftDown(0);
+      }
+    }
+    return ordinal;
+  };
+
+  for (let i = skipped; i < offset; i++) {
+    if (popNextOrdinal() === undefined) break;
+  }
+
+  const page: number[] = [];
+  while (page.length < pageSize) {
+    const ordinal = popNextOrdinal();
+    if (ordinal === undefined) break;
+    page.push(ordinal);
+  }
+  return page;
+};
+
 const projectIndexedFacts = (
   index: FactsIndex,
   view: FactRequest,
@@ -207,7 +336,8 @@ const projectIndexedFacts = (
   const buckets = collectMatchingBuckets(index, kinds, paths);
   if (buckets === undefined) {
     const total = index.all.length;
-    const end = Math.min(total, view.offset + view.limit);
+    if (view.offset >= total || view.limit <= 0) return { rows: [], total };
+    const end = view.offset + Math.min(view.limit, total - view.offset);
     const rows: FactRow[] = [];
     for (let i = view.offset; i < end; i++) {
       const entry = index.all[i]!;
@@ -226,7 +356,8 @@ const projectIndexedFacts = (
   if (buckets.length === 1) {
     const bucket = buckets[0]!;
     const total = bucket.length;
-    const end = Math.min(total, view.offset + view.limit);
+    if (view.offset >= total || view.limit <= 0) return { rows: [], total };
+    const end = view.offset + Math.min(view.limit, total - view.offset);
     const rows: FactRow[] = [];
     for (let i = view.offset; i < end; i++) {
       const entry = index.all[bucket[i]!]!;
@@ -243,18 +374,16 @@ const projectIndexedFacts = (
   }
   let total = 0;
   for (const bucket of buckets) total += bucket.length;
-  if (view.offset >= total) return { rows: [], total };
-  const merged = new Uint32Array(total);
-  let writeOffset = 0;
-  for (const bucket of buckets) {
-    merged.set(bucket, writeOffset);
-    writeOffset += bucket.length;
-  }
-  merged.sort();
-  const end = Math.min(total, view.offset + view.limit);
+  if (view.offset >= total || view.limit <= 0) return { rows: [], total };
+  const ordinals = selectMultiBucketPage(
+    buckets,
+    view.offset,
+    view.limit,
+    total,
+  );
   const rows: FactRow[] = [];
-  for (let i = view.offset; i < end; i++) {
-    const entry = index.all[merged[i]!]!;
+  for (const ordinal of ordinals) {
+    const entry = index.all[ordinal]!;
     rows.push(
       buildFactRow(
         entry.node,

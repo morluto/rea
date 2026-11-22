@@ -8,7 +8,10 @@ import { expect, it, vi } from "vitest";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 import { byteEntropySchema } from "../native/byteEntropy.js";
 import * as jsApplicationAnalysis from "../javascript/javascriptApplicationAnalysis.js";
-import { projectJavaScriptFacts } from "./javascriptFactsView.js";
+import {
+  javascriptFactsViewRequestSchema,
+  projectJavaScriptFacts,
+} from "./javascriptFactsView.js";
 import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -2064,6 +2067,562 @@ it("preserves exact parity and WeakMap reuse for indexed JavaScript module and f
   } finally {
     parseSpy.mockRestore();
   }
+});
+
+const interleavedFactsJavaScriptAnalysis = () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  type FactKind =
+    | "javascript-asset"
+    | "javascript-module"
+    | "javascript-expression"
+    | "browser-window"
+    | "native-addon";
+  type ObsSpec =
+    | {
+        readonly kind: "artifact-path";
+        readonly path: string;
+        readonly tag: string;
+      }
+    | {
+        readonly kind: "source-range";
+        readonly source: string;
+        readonly tag: string;
+      }
+    | { readonly kind: "url"; readonly url: string; readonly tag: string }
+    | { readonly kind: "unavailable"; readonly tag: string };
+
+  let counter = 0;
+  const makeNode = (kind: FactKind, specs: readonly ObsSpec[]) => {
+    counter += 1;
+    const hex = counter.toString(16).padStart(2, "0");
+    const sha256 = hex.repeat(32);
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: specs.map((spec) => ({
+        label: spec.tag,
+        properties: {
+          tag: spec.tag,
+          ...(spec.kind === "artifact-path"
+            ? { path: spec.path }
+            : spec.kind === "source-range"
+              ? { path: spec.source }
+              : {}),
+        },
+        evidence: {
+          ...baseObs.evidence,
+          ...(spec.kind === "unavailable"
+            ? {
+                state: "inferred" as const,
+                confidence: "medium" as const,
+                limitations: ["Inferred without source location"],
+              }
+            : {}),
+          artifact: {
+            available: true as const,
+            artifact_id: `art_${sha256}`,
+            sha256,
+          },
+          location:
+            spec.kind === "artifact-path"
+              ? {
+                  available: true as const,
+                  value: { kind: "artifact-path" as const, path: spec.path },
+                }
+              : spec.kind === "source-range"
+                ? {
+                    available: true as const,
+                    value: {
+                      kind: "source-range" as const,
+                      source: spec.source,
+                      start: { line: 1, column: 0 },
+                      end: { line: 1, column: 8 },
+                    },
+                  }
+                : spec.kind === "url"
+                  ? {
+                      available: true as const,
+                      value: { kind: "url" as const, url: spec.url },
+                    }
+                  : {
+                      available: false as const,
+                      reason: "not-applicable" as const,
+                      detail: "Location omitted",
+                    },
+        },
+      })),
+    });
+  };
+
+  const nodes = [
+    base.graph.nodes[0]!,
+    makeNode("javascript-asset", [
+      { kind: "artifact-path", path: "a.js", tag: "asset-a-1" },
+      { kind: "artifact-path", path: "b.js", tag: "asset-b-1" },
+      { kind: "source-range", source: "d.js", tag: "asset-d-1" },
+    ]),
+    makeNode("javascript-module", [
+      { kind: "artifact-path", path: "b.js", tag: "mod-b-1" },
+      { kind: "artifact-path", path: "a.js", tag: "mod-a-1" },
+      { kind: "unavailable", tag: "mod-noloc-1" },
+    ]),
+    makeNode("browser-window", [
+      { kind: "artifact-path", path: "c.js", tag: "win-c-1" },
+      {
+        kind: "url",
+        url: "https://example.invalid/app.html",
+        tag: "win-url-1",
+      },
+    ]),
+    makeNode("javascript-expression", [
+      { kind: "source-range", source: "d.js", tag: "expr-d-1" },
+      { kind: "artifact-path", path: "a.js", tag: "expr-a-1" },
+    ]),
+    makeNode("javascript-module", [
+      { kind: "source-range", source: "d.js", tag: "mod-d-1" },
+      { kind: "artifact-path", path: "b.js", tag: "mod-b-2" },
+    ]),
+    // Skewed large bucket in (javascript-asset, a.js) plus small interleaved entries
+    makeNode(
+      "javascript-asset",
+      Array.from({ length: 14 }, (_, idx) => ({
+        kind: "artifact-path" as const,
+        path: "a.js",
+        tag: `asset-a-bulk-${idx}`,
+      })),
+    ),
+    makeNode("native-addon", [
+      { kind: "artifact-path", path: "c.js", tag: "addon-c-1" },
+    ]),
+    makeNode("javascript-asset", [
+      { kind: "artifact-path", path: "b.js", tag: "asset-b-2" },
+      { kind: "artifact-path", path: "a.js", tag: "asset-a-2" },
+    ]),
+    makeNode("browser-window", [
+      { kind: "artifact-path", path: "a.js", tag: "win-a-1" },
+    ]),
+  ];
+
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes,
+    edges: [],
+  });
+  return analysisViewBindJavaScriptGraphs(base, graph);
+};
+
+it("paginates multi-bucket JavaScript facts with exact parity across kinds, paths, and combined filters", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  const whereModes: readonly {
+    readonly paths?: readonly string[];
+    readonly kinds?: readonly (typeof analysis.graph.nodes)[number]["kind"][];
+  }[] = [
+    { kinds: ["javascript-asset", "javascript-module", "browser-window"] },
+    { paths: ["a.js", "b.js", "d.js"] },
+    {
+      kinds: ["javascript-asset", "javascript-module"],
+      paths: ["a.js", "b.js", "d.js"],
+    },
+  ];
+
+  for (const where of whereModes) {
+    const baseline = projectJavaScriptFacts(analysis.graph.nodes, {
+      kind: "javascript-facts",
+      where: {
+        ...(where.paths ? { paths: [...where.paths] } : {}),
+        ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+      },
+      property_keys: ["tag", "path"],
+      include_available_property_keys: true,
+      offset: 0,
+      limit: 1000,
+    });
+    const total = baseline.total;
+    expect(total).toBeGreaterThan(6);
+
+    const windowCases: readonly {
+      readonly offset: number;
+      readonly limit: number;
+    }[] = [
+      { offset: 0, limit: 3 },
+      { offset: 2, limit: 5 },
+      { offset: Math.max(0, total - 2), limit: 5 },
+      { offset: total - 1, limit: 1 },
+      { offset: total, limit: 4 },
+      { offset: total + 50, limit: 5 },
+    ];
+
+    for (const { offset, limit } of windowCases) {
+      const view: AnalysisViewRequest = {
+        kind: "javascript-facts",
+        where: {
+          ...(where.paths ? { paths: [...where.paths] } : {}),
+          ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+        },
+        property_keys: ["tag", "path"],
+        include_available_property_keys: true,
+        offset,
+        limit,
+      };
+      const sealedView = projectAnalysisView(sealed, view);
+      const unsealedView = projectAnalysisView(unsealed, view);
+      expect(sealedView.ok).toBe(true);
+      expect(unsealedView.ok).toBe(true);
+      if (sealedView.ok && unsealedView.ok) {
+        expect(sealedView.value).toEqual(unsealedView.value);
+      }
+
+      if (view.kind !== "javascript-facts") throw new Error("wrong view");
+      const sealedDirect = projectJavaScriptFacts(
+        sealedNodes,
+        view,
+        sealedResult,
+      );
+      const unsealedDirect = projectJavaScriptFacts(analysis.graph.nodes, view);
+      expect(sealedDirect).toEqual(unsealedDirect);
+      expect(sealedDirect.total).toBe(total);
+      expect(sealedDirect.rows).toEqual(
+        baseline.rows.slice(offset, offset + limit),
+      );
+    }
+
+    for (const pageLimit of [1, 5]) {
+      const collected: typeof baseline.rows = [];
+      let cursor = 0;
+      while (true) {
+        const view: AnalysisViewRequest = {
+          kind: "javascript-facts",
+          where: {
+            ...(where.paths ? { paths: [...where.paths] } : {}),
+            ...(where.kinds ? { kinds: [...where.kinds] } : {}),
+          },
+          property_keys: ["tag"],
+          include_available_property_keys: false,
+          offset: cursor,
+          limit: pageLimit,
+        };
+        const sealedRes = projectAnalysisView(sealed, view);
+        const unsealedRes = projectAnalysisView(unsealed, view);
+        expect(sealedRes).toEqual(unsealedRes);
+        if (!sealedRes.ok || sealedRes.value.kind !== "javascript-facts") {
+          throw new Error("unexpected result");
+        }
+        collected.push(...sealedRes.value.rows);
+        if (sealedRes.value.coverage.exhausted) {
+          expect(sealedRes.value.coverage.next_offset).toBeNull();
+          break;
+        }
+        cursor = sealedRes.value.coverage.next_offset!;
+      }
+      expect(collected).toHaveLength(total);
+      expect(collected.map((row) => row.properties.tag)).toEqual(
+        baseline.rows.map((row) => row.properties.tag),
+      );
+    }
+  }
+});
+
+it("matches unindexed output across large-offset multi-bucket seek thresholds", () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  const kinds = [
+    "javascript-asset",
+    "javascript-module",
+    "javascript-expression",
+  ] as const;
+  const paths = ["chunk-0.js", "chunk-1.js", "chunk-2.js"] as const;
+  const nodes = Array.from({ length: 160 }, (_, nodeIdx) => {
+    const sha256 = (nodeIdx + 1).toString(16).padStart(64, "0");
+    const kind = kinds[nodeIdx % kinds.length]!;
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: Array.from({ length: 4 }, (_, obsIdx) => {
+        const path = paths[(nodeIdx + obsIdx) % paths.length]!;
+        return {
+          label: `obs-${nodeIdx}-${obsIdx}`,
+          properties: { seq: nodeIdx * 4 + obsIdx, path },
+          evidence: {
+            ...baseObs.evidence,
+            artifact: {
+              available: true as const,
+              artifact_id: `art_${sha256}`,
+              sha256,
+            },
+            location: {
+              available: true as const,
+              value: { kind: "artifact-path" as const, path },
+            },
+          },
+        };
+      }),
+    });
+  });
+
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes: [base.graph.nodes[0]!, ...nodes],
+    edges: [],
+  });
+  const analysis = analysisViewBindJavaScriptGraphs(base, graph);
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+  const total = 640; // 160 * 4 across 9 (kind, path) buckets; seekThreshold = max(64, 9 * 8) = 72
+
+  for (const [offset, limit] of [
+    [0, 5],
+    [250, 7],
+    [total - 3, 10],
+    [total, 5],
+  ] as const) {
+    const view: AnalysisViewRequest = {
+      kind: "javascript-facts",
+      where: {
+        kinds: [...kinds],
+        paths: [...paths],
+      },
+      property_keys: ["seq", "path"],
+      include_available_property_keys: false,
+      offset,
+      limit,
+    };
+    expect(projectAnalysisView(sealed, view)).toEqual(
+      projectAnalysisView(unsealed, view),
+    );
+    if (view.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(projectJavaScriptFacts(sealedNodes, view, sealedResult)).toEqual(
+      projectJavaScriptFacts(analysis.graph.nodes, view),
+    );
+  }
+});
+
+it("handles missing buckets, deduplicated filters, and single-bucket fallback", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  const edgeViews: readonly AnalysisViewRequest[] = [
+    // Missing filter values mixed with populated multi-bucket filters
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown", "javascript-module"],
+        paths: ["a.js", "missing.js", "b.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 1,
+      limit: 6,
+    },
+    {
+      kind: "javascript-facts",
+      where: { paths: ["missing.js", "a.js", "b.js"] },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 2,
+      limit: 5,
+    },
+    // All-missing buckets (buckets.length === 0)
+    {
+      kind: "javascript-facts",
+      where: { kinds: ["unknown"], paths: ["missing.js"] },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 5,
+    },
+    // Single matching bucket alongside missing entries (buckets.length === 1)
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown"],
+        paths: ["a.js", "missing.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 3,
+      limit: 4,
+    },
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "unknown"],
+        paths: ["a.js", "missing.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 999,
+      limit: 4,
+    },
+    // Duplicate entries collapsing to single bucket vs multi-bucket
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "javascript-asset"],
+        paths: ["a.js", "a.js"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 50,
+    },
+    {
+      kind: "javascript-facts",
+      where: {
+        kinds: ["javascript-asset", "javascript-asset", "javascript-module"],
+      },
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 1,
+      limit: 8,
+    },
+  ];
+
+  for (const view of edgeViews) {
+    expect(projectAnalysisView(sealed, view)).toEqual(
+      projectAnalysisView(unsealed, view),
+    );
+    if (view.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(projectJavaScriptFacts(sealedNodes, view, sealedResult)).toEqual(
+      projectJavaScriptFacts(analysis.graph.nodes, view),
+    );
+  }
+});
+
+it("enforces limit boundaries and filter-order determinism across cold and warm caches", () => {
+  const analysis = interleavedFactsJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealedResult = freezeJsonSnapshot(structuredClone(analysis));
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: sealedResult,
+  };
+  const sealedNodes = (sealedResult as typeof analysis).graph.nodes;
+
+  // Schema rejects limit: 0
+  expect(
+    javascriptFactsViewRequestSchema.safeParse({
+      kind: "javascript-facts",
+      property_keys: [],
+      limit: 0,
+    }).success,
+  ).toBe(false);
+  expect(
+    inspectAnalysisViewInputSchema.safeParse({
+      source: { kind: "inline", evidence: {} },
+      view: { kind: "javascript-facts", property_keys: [], limit: 0 },
+    }).success,
+  ).toBe(false);
+
+  // Direct call parity for limit: 0 across unfiltered, single-bucket, and multi-bucket
+  for (const where of [
+    {},
+    { kinds: ["javascript-asset" as const], paths: ["a.js"] },
+    {
+      kinds: ["javascript-asset" as const, "javascript-module" as const],
+      paths: ["a.js", "b.js"],
+    },
+  ]) {
+    const directZeroLimit = {
+      kind: "javascript-facts" as const,
+      where,
+      property_keys: ["tag"],
+      include_available_property_keys: false,
+      offset: 0,
+      limit: 0,
+    };
+    const indexedZero = projectJavaScriptFacts(
+      sealedNodes,
+      directZeroLimit,
+      sealedResult,
+    );
+    const unindexedZero = projectJavaScriptFacts(
+      analysis.graph.nodes,
+      directZeroLimit,
+    );
+    expect(indexedZero).toEqual(unindexedZero);
+    expect(indexedZero.rows).toEqual([]);
+    expect(indexedZero.total).toBeGreaterThan(0);
+  }
+
+  // Determinism across reversed filter order and cold vs warm WeakMap cache
+  const freshColdResult = freezeJsonSnapshot(structuredClone(analysis));
+  const freshColdParent: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: freshColdResult,
+  };
+  const forwardView = {
+    kind: "javascript-facts" as const,
+    where: {
+      kinds: ["javascript-asset" as const, "javascript-module" as const],
+      paths: ["a.js", "b.js", "d.js"],
+    },
+    property_keys: ["tag"],
+    include_available_property_keys: false,
+    offset: 2,
+    limit: 6,
+  };
+  const reversedView = {
+    ...forwardView,
+    where: {
+      kinds: ["javascript-module" as const, "javascript-asset" as const],
+      paths: ["d.js", "b.js", "a.js"],
+    },
+  };
+  const coldForward = projectAnalysisView(freshColdParent, forwardView);
+  const warmReversed = projectAnalysisView(freshColdParent, reversedView);
+  const cachedForward = projectAnalysisView(sealed, forwardView);
+  if (
+    !coldForward.ok ||
+    !warmReversed.ok ||
+    !cachedForward.ok ||
+    coldForward.value.kind !== "javascript-facts" ||
+    warmReversed.value.kind !== "javascript-facts"
+  ) {
+    throw new Error("expected javascript-facts result");
+  }
+  expect(coldForward.value.rows).toEqual(warmReversed.value.rows);
+  expect(coldForward.value.coverage).toEqual(warmReversed.value.coverage);
+  expect(coldForward).toEqual(cachedForward);
+  expect(
+    projectJavaScriptFacts(sealedNodes, forwardView, sealedResult),
+  ).toEqual(projectJavaScriptFacts(sealedNodes, reversedView, sealedResult));
 });
 
 it("caches sealed inspect_byte_entropy and analyze_function parents across repeated calls", () => {
