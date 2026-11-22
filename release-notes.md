@@ -409,8 +409,10 @@
 ### Code Refactoring
 
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **apple:** share readFatSliceHeaders between resolver and inventory ([#13692](https://github.com/morluto/rea/issues/13692)) ([12658e2](https://github.com/morluto/rea/commit/12658e23e7803f605d9b3166bd7d719cecb0ad52))
 * **artifacts:** consolidate magic checks and range reads ([#13643](https://github.com/morluto/rea/issues/13643)) ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
 * **artifacts:** consolidate magic checks, probe windows, and range reads ([94e0386](https://github.com/morluto/rea/commit/94e038678e66b8ed6d0e593404bde8c3b5eac5d7))
+* **artifacts:** extract memberClassification from ReleaseExposureReader ([#13673](https://github.com/morluto/rea/issues/13673)) ([dc1380d](https://github.com/morluto/rea/commit/dc1380d9d223bd2e766d6e3f391f4c4541af7f76))
 * **artifacts:** extract nodeShebang and memberTextDecoding from ReleaseExposureReader ([eb13f0c](https://github.com/morluto/rea/commit/eb13f0cb0c85adb594b390976ac1c1fbf70748dc))
 * **artifacts:** extract shebang and text decoding from ReleaseExposureReader ([#13665](https://github.com/morluto/rea/issues/13665)) ([eb13f0c](https://github.com/morluto/rea/commit/eb13f0cb0c85adb594b390976ac1c1fbf70748dc))
 * **artifacts:** migrate NtfsMft, Fit, and UImage onto PositionalArtifactReader ([af2dba0](https://github.com/morluto/rea/commit/af2dba0859f8b3f1c88b6b150c9d66139092c87c))
@@ -797,6 +799,7 @@
 * **process:** consolidate PID authority and native exit settlement coverage ([#12895](https://github.com/morluto/rea/issues/12895)) ([21f8f56](https://github.com/morluto/rea/commit/21f8f56dde0d2dafba9576f21342b5dc44250619))
 * **process:** consolidate process capture finalization checks ([#12785](https://github.com/morluto/rea/issues/12785)) ([c5907d3](https://github.com/morluto/rea/commit/c5907d3944fd7cbbcb884cdca68fa4e26e95ba45))
 * **process:** consolidate process inventory and native row checks ([#12889](https://github.com/morluto/rea/issues/12889)) ([880e623](https://github.com/morluto/rea/commit/880e62351e010a008b6373e3d23d5072e3fd8138))
+* **process:** consolidate producer recovery and cleanup evidence ([#13694](https://github.com/morluto/rea/issues/13694)) ([de0b7f6](https://github.com/morluto/rea/commit/de0b7f65150c458946af5c42ff098af442ca9675))
 * **process:** consolidate provider startup deadline coverage ([#12773](https://github.com/morluto/rea/issues/12773)) ([eb1e75b](https://github.com/morluto/rea/commit/eb1e75b809a8169f06f6980fe6245582b183b744))
 * **process:** consolidate run-token fallback and native retry coverage ([#12892](https://github.com/morluto/rea/issues/12892)) ([afc8c0a](https://github.com/morluto/rea/commit/afc8c0ae7ba35009b4a9aace530f01cefc149f54))
 * **process:** consolidate selected child environment proofs ([#13074](https://github.com/morluto/rea/issues/13074)) ([9626788](https://github.com/morluto/rea/commit/96267880c3dec7715f8e71293ed2bc13c9eacf24))
