@@ -1076,4 +1076,20 @@ describe("bounded archives", () => {
       "diagnostic-limit-reached",
     );
   });
+
+  it("does not resume inside a header value that contains a version line", () => {
+    // The bad version line is rejected and scanning resumes from it. A `WARC/`
+    // mid-line — inside the target URI here — must not be read as the next
+    // record's version line; doing so invented a record and swallowed the real
+    // one that followed.
+    const archive = parsed(
+      "WARC/not-a-version\r\nWARC-Target-URI: https://example.test/WARC/1.1\r\nContent-Length: 0\r\n\r\n\r\n" +
+        record("resource", [], "body"),
+    );
+    expect(archive.records).toHaveLength(1);
+    expect(archive.records[0]?.record_type).toBe("resource");
+    expect(archive.diagnostics.map((d) => d.code)).toContain(
+      "invalid-version-line",
+    );
+  });
 });
