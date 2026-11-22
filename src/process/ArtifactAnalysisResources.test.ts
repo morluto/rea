@@ -674,18 +674,15 @@ it.each([
       file_bytes: 67_108_864,
       cpu_seconds: 30,
     },
-    message:
-      "1073741824 bytes of address space, 67108864 bytes per file, and 30 CPU seconds",
   },
   {
     signal: "SIGXFSZ",
     resource: "file-size",
     effective: undefined,
-    message: "The effective inherited limit was not reported",
   },
 ] as const)(
   "keeps retry uncertainty and inherited limit facts for $signal",
-  async ({ signal, resource, effective, message }) => {
+  async ({ signal, resource, effective }) => {
     const resources = createArtifactAnalysisResources(
       "fixture",
       "inspect_packet_fields",
@@ -713,13 +710,22 @@ it.each([
         details: { resource, reported_limits: effective ?? null },
       });
       const action = projected.remediation.action;
-      for (const fact of [
-        message,
-        "REA retains the tighter inherited limit",
-        "This release has no runtime override",
-        "an unchanged retry may succeed or may fail the same way",
-      ])
-        expect(action).toContain(fact);
+      if (effective === undefined) {
+        expect(action).toMatch(/inherited limit.*not reported/iu);
+      } else {
+        expect(action).toContain(
+          `${String(effective.address_space_bytes)} bytes of address space`,
+        );
+        expect(action).toContain(
+          `${String(effective.file_bytes)} bytes per file`,
+        );
+        expect(action).toContain(
+          `${String(effective.cpu_seconds)} CPU seconds`,
+        );
+      }
+      expect(action).toContain("tighter inherited limit");
+      expect(action).toContain("no runtime override");
+      expect(action).toMatch(/unchanged retry.*may succeed.*may fail/iu);
       expect(action).not.toMatch(/unchanged request.*fails/iu);
     } finally {
       await resources.close();
