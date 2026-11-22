@@ -69,8 +69,10 @@ the inventory identifies a block.
 - Member VIs stored inside an `.llb` are not listed in this release.
 - Malformed or oversized containers fail instead of returning a partial
   inventory. The reader accepts complete artifacts up to 256 MiB. A container
-  that exceeds the reader's block, total-section, directory-walk, or
-  decoded-byte budgets fails with `resource_constraint` rather than returning a
-  partial inventory or a silently truncated scan.
+  that exceeds the block, total-section, or directory-walk allowance fails with
+  `resource_constraint` rather than returning a partial inventory or a silently
+  truncated scan. A section whose decode would exceed the container's
+  decoded-byte budget is reported with coding `unknown` and is not decoded; the
+  inventory continues.
 - Reading a file establishes no runtime behavior. The selected program is never
   executed, installed, or modified.

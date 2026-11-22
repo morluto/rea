@@ -20,6 +20,8 @@ import {
 } from "../domain/parseFailureAnalysisError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
   readStableArtifact,
   translateArtifactFailure,
 } from "../resources/index.js";
@@ -34,6 +36,13 @@ const OPERATION = "inspect_labview_artifact";
 /** Caller-selected complete artifact bound; this reader never truncates a container. */
 const MAX_BYTES = 256 * 1024 * 1024;
 const RSRC_MAGIC = "RSRC\r\n";
+/** Release-fixed input ceiling, stated so the refusal keeps its recovery. */
+const INPUT_ALLOWANCE = {
+  kind: "input",
+  name: "The LabVIEW artifact input allowance",
+  limit: MAX_BYTES,
+  unit: "bytes",
+} as const;
 
 const inputFailure = (message: string, cause?: unknown): AnalysisInputError =>
   new AnalysisInputError(
@@ -86,19 +95,21 @@ const limitFailure = (cause: ParseFailureError<"limit">) => {
 export class LabviewArtifactProvider implements LabviewArtifactPort {
   readonly identity = LABVIEW_PROVIDER_IDENTITY;
   readonly #resources: ArtifactResourceScope;
+  readonly #ownsResources: boolean;
 
   /**
-   * The scope owns descriptor cleanup whose close could not be proved. Callers
-   * that already track artifact resources may pass theirs; otherwise this
-   * reader owns one for its own lifetime.
+   * The scope owns descriptor cleanup whose close could not be proved. A caller
+   * that already tracks artifact resources may pass theirs; otherwise this
+   * reader owns one, and closing the provider closes it.
    */
-  constructor(resources: ArtifactResourceScope = new ArtifactResourceScope()) {
-    this.#resources = resources;
+  constructor(resources?: ArtifactResourceScope) {
+    this.#resources = resources ?? new ArtifactResourceScope();
+    this.#ownsResources = resources === undefined;
   }
 
-  /** This reader owns no retained resource; close is a no-op for lifecycle parity. */
+  /** Release an owned scope; a caller-supplied scope stays with its owner. */
   close(): Promise<void> {
-    return Promise.resolve();
+    return this.#ownsResources ? this.#resources.close() : Promise.resolve();
   }
 
   async inspect(
@@ -115,16 +126,35 @@ export class LabviewArtifactProvider implements LabviewArtifactPort {
     // and rejects a replacement or in-place change between admission and read.
     let snapshot: { readonly bytes: Buffer; readonly sha256: string };
     try {
-      snapshot = await readStableArtifact(
-        input.path,
-        MAX_BYTES,
-        signal,
-        undefined,
-        this.#resources,
+      snapshot = await this.#resources.run(() =>
+        readStableArtifact(
+          input.path,
+          MAX_BYTES,
+          signal,
+          undefined,
+          this.#resources,
+        ),
       );
     } catch (cause) {
-      const cancelled = cancellation();
-      if (cancelled !== undefined) return err(cancelled);
+      // The stable read records its own cancellation and cleanup facts. Only
+      // the release-fixed input ceiling needs this provider's own allowance.
+      if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "limit" &&
+        cause.boundary === "file-size" &&
+        cause.fixedAllowance === undefined
+      )
+        return err(
+          translateArtifactFailure(
+            OPERATION,
+            artifactFixedLimitFailure(
+              INPUT_ALLOWANCE,
+              `The selected artifact exceeds the ${String(MAX_BYTES)}-byte LabVIEW input allowance: ${input.path}`,
+              "file-size",
+              { cause },
+            ),
+          ),
+        );
       return err(translateArtifactFailure(OPERATION, cause));
     }
     const laterCancellation = cancellation();

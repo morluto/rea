@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseLabviewRsrc } from "./LabviewRsrc.js";
 import { LabviewArtifactProvider } from "./LabviewArtifactProvider.js";
 import {
@@ -109,7 +110,9 @@ describe("LabviewArtifactProvider", () => {
     const result = await pending;
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error._tag).toBe("AnalysisCancelledError");
+      // The read records the cancellation at its own owner; the public
+      // projection is what callers act on.
+      expect(projectAnalysisError(result.error).code).toBe("cancelled");
       expect(result.error.cause).toBe(reason);
     }
     await provider.close();
