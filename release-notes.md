@@ -7,6 +7,7 @@
 
 ### Features
 
+* **android:** pin jadx-headless-mcp 0.8.0 ([3ca89d8](https://github.com/morluto/rea/commit/3ca89d8272b3d8e49580ed261753ad6780df2839))
 * **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
 * **elf:** inspect exports without section headers ([#9083](https://github.com/morluto/rea/issues/9083)) ([7e15884](https://github.com/morluto/rea/commit/7e158843b36c7cca8a8614687652d20e0f77e323))
@@ -21,6 +22,8 @@
 
 ### Bug Fixes
 
+* **android:** advertise the external-reference inputs the bridge accepts ([85154de](https://github.com/morluto/rea/commit/85154de8ab9107c0f403079a9bec81ab63077ea1))
+* **android:** let the bridge advertise its own tool schemas ([2b6ede2](https://github.com/morluto/rea/commit/2b6ede2d0c0c82ea466c61a6694df3353c998637))
 * **apple:** decode keyed archives that name another archiver ([11896a6](https://github.com/morluto/rea/commit/11896a6eb1864f4f45e4ab756bdfea93427b4eb9))
 * **apple:** decode the ivar WORD_ALIGN sentinel as 8-byte alignment ([3dcd6b6](https://github.com/morluto/rea/commit/3dcd6b62e813e1d7808ee4d0554130b5aa207538))
 * **apple:** report the declared archiver of a keyed archive ([2d182f8](https://github.com/morluto/rea/commit/2d182f865f5db5d59269b19b2f7115706ab79dfa))
@@ -164,6 +167,7 @@
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **ida:** push literal patterns down to find_regex on all protocols and drop catch-all non-ASCII wildcard ([#13291](https://github.com/morluto/rea/issues/13291)) ([dff9b47](https://github.com/morluto/rea/commit/dff9b479ed3228a27bc49037c03ea970123f5a43))
 * **il2cpp:** fix 8x yields and hoist opcode checks before BigInt math in executable scans ([#13272](https://github.com/morluto/rea/issues/13272)) ([7269165](https://github.com/morluto/rea/commit/726916532371dfc65643aa1a9d6723b6edc833ed))
+* **javascript:** group renderer scripts without repeated copies ([#13328](https://github.com/morluto/rea/issues/13328)) ([0437d74](https://github.com/morluto/rea/commit/0437d74bd021e4ed48e41fb01527e861dfb8cc54))
 * **javascript:** index artifact package directory lookups ([#13327](https://github.com/morluto/rea/issues/13327)) ([4b86932](https://github.com/morluto/rea/commit/4b86932527819cfa33fc234c0cdcb4919e1653f7))
 * **javascript:** index widened summary coverage by root ([#13007](https://github.com/morluto/rea/issues/13007)) ([f2d5cd6](https://github.com/morluto/rea/commit/f2d5cd633734c1baeda7ac73a31fc7f2e40550fe))
 * **javascript:** reuse lexical returned-reference facts across ambient writes ([#13004](https://github.com/morluto/rea/issues/13004)) ([d43fc10](https://github.com/morluto/rea/commit/d43fc1051134823b1f52a7a3ed564051948e0aa1))
@@ -234,10 +238,12 @@
 * **agentenv:** stabilize timeout and stderr signal fixtures ([#12864](https://github.com/morluto/rea/issues/12864)) ([c18a8f9](https://github.com/morluto/rea/commit/c18a8f9e7f66e30903e75b219a24194a98d0e372))
 * **agentenv:** witness leader exit before stderr cancellation ([166166e](https://github.com/morluto/rea/commit/166166e197743a6bb6510a63b63b8b4e9a684b23))
 * **agentenv:** witness supervised exit before drain cancellation ([#12858](https://github.com/morluto/rea/issues/12858)) ([166166e](https://github.com/morluto/rea/commit/166166e197743a6bb6510a63b63b8b4e9a684b23))
+* **android:** assert bridge property types and surface Java stderr ([ab3ae65](https://github.com/morluto/rea/commit/ab3ae658da22c9362b7836ab1a403ad37f7163d4))
 * **android:** check component names through manifest inventory ([29925b3](https://github.com/morluto/rea/commit/29925b3c2f7bf9ba11623e0d099a4a5558abec37))
 * **android:** consolidate ADB and Apktool boundary checks ([#12837](https://github.com/morluto/rea/issues/12837)) ([79525a7](https://github.com/morluto/rea/commit/79525a7c3eb0fe333463a2c76265a5f9fcdd7e2c))
 * **android:** consolidate mapping parser and cache checks ([#12865](https://github.com/morluto/rea/issues/12865)) ([3a90d7f](https://github.com/morluto/rea/commit/3a90d7f37cc61ef5a1d3a9d45060048758ad5eef))
 * **android:** consolidate OTA partition metadata order coverage ([#12826](https://github.com/morluto/rea/issues/12826)) ([68ed9b0](https://github.com/morluto/rea/commit/68ed9b0e67573c1dd0f4bca83977f1240fef682e))
+* **android:** stop hand-copying the engine version in tests ([3d1f11a](https://github.com/morluto/rea/commit/3d1f11a61238bc108c6dfa590d3e9c128bbb8c52))
 * **android:** verify component name resolution through the manifest reader ([#12806](https://github.com/morluto/rea/issues/12806)) ([29925b3](https://github.com/morluto/rea/commit/29925b3c2f7bf9ba11623e0d099a4a5558abec37))
 * **apk:** consolidate signature capacity checks at their boundaries ([#12789](https://github.com/morluto/rea/issues/12789)) ([d766ab5](https://github.com/morluto/rea/commit/d766ab56dc43ab18130ca50f038c24891cc0fd75))
 * **apk:** consolidate signature refusal coverage ([d766ab5](https://github.com/morluto/rea/commit/d766ab56dc43ab18130ca50f038c24891cc0fd75))
