@@ -197,6 +197,7 @@
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
 * **cli:** keep single-command discovery lazy and skip throwaway Zod parses ([#13254](https://github.com/morluto/rea/issues/13254)) ([38bc4fe](https://github.com/morluto/rea/commit/38bc4fe907973800c1f6469c3d8ad46f1476f51c))
 * **cli:** parse valid strict client settings once ([#13271](https://github.com/morluto/rea/issues/13271)) ([82cd526](https://github.com/morluto/rea/commit/82cd526a8115445e04c5edd3c8c5054ee4a17f4e))
+* **deno:** batch reads of redirect table records ([#13416](https://github.com/morluto/rea/issues/13416)) ([d03f470](https://github.com/morluto/rea/commit/d03f4700e645c852c191735dc234217110143f97))
 * **desktop:** bound retained text lines while counting full files ([#10207](https://github.com/morluto/rea/issues/10207)) ([71a7e0d](https://github.com/morluto/rea/commit/71a7e0d9ff20cfd79b90ff94d57b6380eb5fec4f))
 * **dotnet:** push down native boundary and member selection predicates ([#13317](https://github.com/morluto/rea/issues/13317)) ([e0d8cc9](https://github.com/morluto/rea/commit/e0d8cc942faa4c96ce7f36b86731316b5872d76a))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
