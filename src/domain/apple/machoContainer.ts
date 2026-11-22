@@ -88,6 +88,44 @@ export const readMachoHeaderPrefixFacts = (
   };
 };
 
+/** Bounded thin-header prefix length needed to read magic, CPU type, and subtype. */
+export const FAT_SLICE_HEADER_PREFIX_BYTES = 12;
+
+/**
+ * Read bounded thin Mach-O header prefixes for each valid FAT slice using the
+ * caller's positional range reader, optionally preserving already-observed
+ * slice headers and skipping slices below `minSliceSize`.
+ */
+export const readFatSliceHeaders = async (
+  header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  options?: {
+    readonly existing?: ReadonlyMap<number, MachoHeaderPrefixFacts>;
+    readonly minSliceSize?: number;
+  },
+): Promise<FatSliceHeaderEvidence> => {
+  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>(
+    options?.existing,
+  );
+  const minSliceSize = options?.minSliceSize ?? 0;
+  for (let index = 0; index < header.slices.length; index += 1) {
+    const slice = header.slices[index];
+    if (slice === undefined || header.rangeIssues[index] !== null) continue;
+    if (slice.size < minSliceSize) continue;
+    if (options?.existing !== undefined) {
+      const observed = sliceHeadersByOffset.get(slice.offset);
+      if (observed !== undefined && observed.magic !== null) continue;
+    }
+    const observedLength = Math.min(FAT_SLICE_HEADER_PREFIX_BYTES, slice.size);
+    const thinHeader = await readRange(slice.offset, observedLength);
+    sliceHeadersByOffset.set(
+      slice.offset,
+      readMachoHeaderPrefixFacts(thinHeader),
+    );
+  }
+  return { header, sliceHeadersByOffset };
+};
+
 /** FAT declarations decoded before the caller knows the final stream length. */
 export type FatContainerTable =
   | { readonly state: "not-fat" }

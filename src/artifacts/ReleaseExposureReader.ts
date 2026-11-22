@@ -46,8 +46,21 @@ import {
   hasNonUtf8Nul,
   type MemberText,
 } from "./releaseExposure/memberTextDecoding.js";
+import {
+  asPackageFormat,
+  EXTRACTABLE,
+  hasCompanionName,
+  isJavaScriptSourceMapName,
+  isSourceMap,
+  isText,
+  NATIVE,
+  peHeaderState,
+  sniffNativeFormat,
+  targetKind,
+  type PackageFormat,
+  type PeHeaderState,
+} from "./releaseExposure/memberClassification.js";
 import { nodeShebang } from "./releaseExposure/nodeShebang.js";
-import { hasElfMagic } from "../domain/binaryContainer.js";
 import {
   InternalInvariantError,
   invariantViolation,
@@ -74,24 +87,13 @@ import type {
   ArtifactInventoryResult,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
-import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
-} from "../domain/apple/machoContainer.js";
-import {
-  inspectPeCodeViewFromBuffer,
-  parsePeRecordStructure,
-} from "../domain/binaryTarget.js";
+import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type {
   ArtifactAdmissionLimit,
   ArtifactIntegrityCheck,
 } from "../domain/artifactOperationError.js";
-import {
-  mzWindowsHeaderLayoutLimitation,
-  observeMzWindowsHeader,
-} from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
@@ -146,29 +148,6 @@ import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javasc
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
-type PackageFormat = Extract<
-  ArtifactOccurrence["artifact_format"],
-  | "asar"
-  | "bun-standalone"
-  | "deno-standalone"
-  | "dotnet-bundle"
-  | "node-sea"
-  | "pyinstaller"
->;
-const PACKAGE_FORMATS = [
-  "asar",
-  "bun-standalone",
-  "deno-standalone",
-  "dotnet-bundle",
-  "node-sea",
-  "pyinstaller",
-] as const satisfies readonly PackageFormat[];
-const EXTRACTABLE = new Set<string>(PACKAGE_FORMATS);
-const asPackageFormat = (format: string): PackageFormat | null =>
-  EXTRACTABLE.has(format) ? (format as PackageFormat) : null;
-const NATIVE = new Set(["elf", "mach-o", "mach-o-universal", "pe"]);
-const TEXT_EXTENSION =
-  /\.(?:cjs|css|cts|env|html|htm|ini|js|json|jsx|map|md|mjs|mts|pem|plist|toml|ts|tsx|txt|xml|yaml|yml)$/iu;
 const SIBLING_LIST_LIMIT = 4096;
 const CONTAINER_LIST_LIMIT = 4096;
 const OPEN_CONTAINER_LIMIT = 8;
@@ -2346,30 +2325,6 @@ const examinePackagedBinary = async (
   return image.kind !== "unread";
 };
 
-type PeHeaderState = "other" | "unexamined" | "malformed" | "pe";
-
-/** Judge a PE header by the same structural parser as inventory. */
-const peHeaderState = (bytes: Buffer, size: number | null): PeHeaderState => {
-  if (bytes.toString("latin1", 0, 2) !== "MZ") return "other";
-  const windows = observeMzWindowsHeader(bytes, size ?? bytes.length);
-  if (windows.state === "declared" && windows.signature === "PE") {
-    if (mzWindowsHeaderLayoutLimitation(windows) !== undefined)
-      return "malformed";
-    const record = parsePeRecordStructure(bytes.subarray(windows.offset));
-    if (record.ok) return "pe";
-    return record.error.kind === "incomplete" &&
-      (size === null || windows.offset + record.error.requiredBytes <= size)
-      ? "unexamined"
-      : "malformed";
-  }
-  if (
-    windows.state === "signature-needed" ||
-    (windows.state === "candidate" && windows.signature === "unobserved")
-  )
-    return "unexamined";
-  return "other";
-};
-
 const peHeaderOfRead = (
   member: MemberView,
   loaded: MemberRead,
@@ -3522,74 +3477,6 @@ const noteUnlistedEntry = (state: ScanState, entry: ArtifactEntry): void => {
     noteUnreadMap(state, namedMapReference(entry.path, entry.path), null);
     state.skippedText += 1;
   } else if (isText(entry.path, "file")) state.skippedText += 1;
-};
-
-const JAVASCRIPT_SOURCE_MAP = /\.(?:cjs|css|cts|js|jsx|mjs|mts|ts|tsx)\.map$/iu;
-
-const isJavaScriptSourceMapName = (logical: string): boolean =>
-  JAVASCRIPT_SOURCE_MAP.test(logical);
-
-const isSourceMap = (logical: string, kind: string): boolean =>
-  kind === "source-map" || logical.toLowerCase().endsWith(".map");
-
-const isDeclaredText = (kind: string): boolean =>
-  kind === "javascript" ||
-  kind === "source-map" ||
-  kind === "plist" ||
-  kind === "entitlements";
-
-const isText = (logical: string, kind: string): boolean =>
-  isDeclaredText(kind) || TEXT_EXTENSION.test(logical);
-
-const hasCompanionName = (logical: string): boolean => {
-  const lower = logical.toLowerCase();
-  return (
-    lower.endsWith(".pdb") ||
-    lower.endsWith(".debug") ||
-    lower.endsWith(".dsym")
-  );
-};
-
-/**
- * FAT identity from the container owner. A prefix can only rule a universal
- * image out against the member's real size: without one, or with slices past
- * the prefix, the image may be native and stays counted as one.
- */
-const sniffFatFormat = (
-  bytes: Buffer,
-  size: number | null,
-): "mach-o-universal" | null => {
-  const known = size !== null && size >= bytes.length;
-  const header = readFatContainerHeader(bytes, known ? size : bytes.length);
-  if (header.state !== "parsed") return null;
-  return known &&
-    classifyFatContainerEvidence(header, bytes).state === "not-mach-o"
-    ? null
-    : "mach-o-universal";
-};
-
-/** Header facts from the executable owners. A JVM class is not a FAT Mach-O. */
-const sniffNativeFormat = (
-  bytes: Buffer,
-  size: number | null = bytes.length,
-): NativeFormat | null => {
-  if (hasElfMagic(bytes)) return "elf";
-  if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
-  const universal = sniffFatFormat(bytes, size);
-  if (universal !== null) return universal;
-  return peHeaderState(bytes, size) === "pe" ? "pe" : null;
-};
-
-const targetKind = (
-  path: string,
-  format: string,
-  directory: boolean,
-): ReleaseExposureScan["target"]["kind"] => {
-  if (directory && basename(path).toLowerCase().endsWith(".app")) return "app";
-  if (directory || format === "directory") return "directory";
-  if (format === "asar") return "asar";
-  if (NATIVE.has(format) || EXTRACTABLE.has(format)) return "executable";
-  return "file";
 };
 
 const pushSample = (samples: string[], value: string): void => {

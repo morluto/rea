@@ -114,6 +114,10 @@ export interface ElfDependencyFixtureOptions {
   readonly displacedSection?: string;
   /** Keeps the .hash section but leaves DT_HASH out of the dynamic table. */
   readonly omitHashTag?: boolean;
+  /** Emits SHT_GNU_HASH (.gnu.hash) in place of the .hash section header. */
+  readonly gnuHashSection?: boolean;
+  /** Leaves DT_GNU_HASH out of the dynamic table. */
+  readonly omitGnuHashTag?: boolean;
   /** Overrides the size these section headers declare, by section name. */
   readonly sectionSizes?: Readonly<Record<string, number>>;
   /** Overrides the entry size these section headers declare, by section name. */
@@ -410,6 +414,8 @@ interface FixtureConfig {
   readonly oversizedSection: string | undefined;
   readonly displacedSection: string | undefined;
   readonly omitHashTag: boolean;
+  readonly gnuHashSection: boolean;
+  readonly omitGnuHashTag: boolean;
   readonly sectionSizes: Readonly<Record<string, number>>;
   readonly sectionEntrySizes: Readonly<Record<string, number>>;
   readonly omitSymentTag: boolean;
@@ -509,6 +515,8 @@ const fixtureConfig = (options: ElfDependencyFixtureOptions): FixtureConfig => {
     oversizedSection: options.oversizedSection,
     displacedSection: options.displacedSection,
     omitHashTag: options.omitHashTag === true,
+    gnuHashSection: options.gnuHashSection === true,
+    omitGnuHashTag: options.omitGnuHashTag === true,
     sectionSizes: options.sectionSizes ?? {},
     sectionEntrySizes: options.sectionEntrySizes ?? {},
     omitSymentTag: options.omitSymentTag === true,
@@ -650,7 +658,8 @@ const buildDynamicTags = (
   if (config.flags !== null) addTag(30, config.flags);
   if (tables.hash.length !== 0 && !config.omitHashTag)
     addTag(4, offsets.hashOff);
-  if (tables.gnuHashBytes.length !== 0) addTag(0x6ffffef5, offsets.gnuHashOff);
+  if (tables.gnuHashBytes.length !== 0 && !config.omitGnuHashTag)
+    addTag(0x6ffffef5, offsets.gnuHashOff);
   addTag(5, offsets.dynstrOff);
   if (!config.omitSymtabTag) addTag(6, offsets.dynsymOff);
   addTag(10, tables.dynstrBytes.length);
@@ -723,7 +732,10 @@ const layoutDependencyImage = (
       });
   const dynamicOff = config.omitDynamic ? 0 : place(dynamicBytes.length);
   const shstr = new StringTable();
-  for (const name of SECTION_NAMES) shstr.intern(name);
+  for (const name of SECTION_NAMES)
+    shstr.intern(
+      config.gnuHashSection && name === ".hash" ? ".gnu.hash" : name,
+    );
   const shstrBytes = shstr.bytes();
   const shstrOff = config.stripped ? 0 : place(shstrBytes.length);
   const shnum = config.stripped ? 0 : 10;
@@ -888,17 +900,29 @@ const writeDependencySections = (
       0,
       0,
     ],
-    [
-      ".hash",
-      5,
-      alloc,
-      layout.hashOff,
-      layout.hashOff,
-      tables.hash.length,
-      3,
-      0,
-      4,
-    ],
+    config.gnuHashSection
+      ? [
+          ".gnu.hash",
+          0x6ffffff6,
+          alloc,
+          layout.gnuHashOff,
+          layout.gnuHashOff,
+          tables.gnuHashBytes.length,
+          3,
+          0,
+          bits === 64 ? 8 : 4,
+        ]
+      : [
+          ".hash",
+          5,
+          alloc,
+          layout.hashOff,
+          layout.hashOff,
+          tables.hash.length,
+          3,
+          0,
+          4,
+        ],
     [
       ".dynsym",
       11,
