@@ -339,6 +339,16 @@ const classifyRootFormat = async (
   }
   // Fill each range: a short result is end of file, not a partial host read.
   const read = async (position: number, length: number): Promise<Buffer> => {
+    abortIfNeeded(signal);
+    if (position >= 0 && length >= 0) {
+      if (position + length <= evidence.prefix.length)
+        return evidence.prefix.subarray(position, position + length);
+      if (evidence.prefix.length >= archiveBytes)
+        return evidence.prefix.subarray(
+          Math.min(position, archiveBytes),
+          Math.min(position + length, archiveBytes),
+        );
+    }
     const bytes = Buffer.alloc(length);
     let filled = 0;
     while (filled < length) {
@@ -386,7 +396,11 @@ const classifyRootFormat = async (
   if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
   if (
     lower.endsWith(".pkg") &&
-    evidence.prefix.subarray(0, 4).equals(Buffer.from("xar!"))
+    evidence.prefix.length >= 4 &&
+    evidence.prefix[0] === 0x78 &&
+    evidence.prefix[1] === 0x61 &&
+    evidence.prefix[2] === 0x72 &&
+    evidence.prefix[3] === 0x21
   )
     return "pkg";
   if (
@@ -394,7 +408,13 @@ const classifyRootFormat = async (
     (await hasDiskImageSignature(archiveBytes, read))
   )
     return "dmg";
-  if (await probeUefiFlashImage(handle, signal)) return "uefi";
+  if (
+    await probeUefiFlashImage(handle, signal, {
+      fileSize: archiveBytes,
+      prefix: evidence.prefix,
+    })
+  )
+    return "uefi";
   const pck = await embeddedProbes.godotPck(evidence.prefix);
   if (pck !== undefined) return { kind: "godot-pck", source, location: pck };
   // A C3 or S3 dump begins with its bootloader, so the layout is located

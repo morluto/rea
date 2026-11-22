@@ -767,13 +767,36 @@ const detectArtifactFormat = async (
   throwIfTargetResolutionCancelled(signal);
   if (
     magic.length >= 8 &&
-    magic.subarray(0, 8).equals(Buffer.from([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]))
+    magic[0] === 0 &&
+    magic[1] === 0x61 &&
+    magic[2] === 0x73 &&
+    magic[3] === 0x6d &&
+    magic[4] === 1 &&
+    magic[5] === 0 &&
+    magic[6] === 0 &&
+    magic[7] === 0
   )
     throw new BinaryTargetError(
       path,
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  const readCachedRange = async (
+    position: number,
+    length: number,
+  ): Promise<Uint8Array> => {
+    throwIfTargetResolutionCancelled(signal);
+    if (position >= 0 && length >= 0) {
+      if (position + length <= magic.length)
+        return magic.subarray(position, position + length);
+      if (magic.length >= initial.size)
+        return magic.subarray(
+          Math.min(position, initial.size),
+          Math.min(position + length, initial.size),
+        );
+    }
+    return readHandleRange(handle, position, length, signal);
+  };
   // The shared recognizer table decides; this route reads the trailer or
   // locates an ESP flash layout only when a recognizer asks for it, and
   // refuses a file whose header names a format it cannot open.
@@ -800,18 +823,15 @@ const detectArtifactFormat = async (
       suffix =
         initial.size < DFUSE_SUFFIX_BYTES
           ? new Uint8Array(0)
-          : await readHandleRange(
-              handle,
+          : await readCachedRange(
               initial.size - DFUSE_SUFFIX_BYTES,
               DFUSE_SUFFIX_BYTES,
-              signal,
             );
     else
       espFlashLayout = (
         await locateEspFlashLayout(
           initial.size,
-          (position, length) =>
-            readHandleRange(handle, position, length, signal),
+          readCachedRange,
           {},
           { explicit: false, ...(signal === undefined ? {} : { signal }) },
         )
@@ -827,17 +847,24 @@ const detectArtifactFormat = async (
   if (
     lower.endsWith(".pkg") &&
     magic.length >= 4 &&
-    magic.subarray(0, 4).equals(Buffer.from("xar!"))
+    magic[0] === 0x78 &&
+    magic[1] === 0x61 &&
+    magic[2] === 0x72 &&
+    magic[3] === 0x21
   )
     return "pkg";
   if (
     lower.endsWith(".dmg") &&
-    (await hasDiskImageSignature(initial.size, (position, length) =>
-      readHandleRange(handle, position, length, signal),
-    ))
+    (await hasDiskImageSignature(initial.size, readCachedRange))
   )
     return "dmg";
-  if (await probeUefiFlashImage(handle, signal)) return "uefi";
+  if (
+    await probeUefiFlashImage(handle, signal, {
+      fileSize: initial.size,
+      prefix: magic,
+    })
+  )
+    return "uefi";
   // XML property lists can use archive-specific suffixes such as .archive.
   // The named-format check above keeps .js, .map, and .asar classifications.
   const xmlProbe = createXmlPlistSignatureProbe();
