@@ -1,4 +1,3 @@
-import type { BigIntStats } from "node:fs";
 import {
   createAnalysisExecution,
   type AnalysisClient,
@@ -73,7 +72,6 @@ export class ManagedStaticProvider implements AnalysisProvider {
 
 class ManagedStaticClient implements AnalysisClient {
   #snapshotBytes: Buffer | undefined;
-  #snapshotState: BigIntStats | undefined;
   readonly #resources = new ArtifactResourceScope();
 
   constructor(private readonly target: BinaryTarget) {}
@@ -127,7 +125,6 @@ class ManagedStaticClient implements AnalysisClient {
       if (options?.signal?.aborted === true)
         return err(cancelledBy(operation, options.signal));
       const snapshot = this.#snapshotBytes;
-      const snapshotState = this.#snapshotState;
       const observed =
         snapshot === undefined
           ? await readManagedSnapshot(
@@ -135,18 +132,11 @@ class ManagedStaticClient implements AnalysisClient {
               operation,
               snapshotOptions,
             )
-          : await hashManagedSource(this.target.path, operation, {
-              ...snapshotOptions,
-              ...(snapshotState === undefined
-                ? {}
-                : {
-                    cached: {
-                      state: snapshotState,
-                      sha256: this.target.sha256,
-                      byteLength: snapshot.length,
-                    },
-                  }),
-            });
+          : await hashManagedSource(
+              this.target.path,
+              operation,
+              snapshotOptions,
+            );
       const admitted = verifyManagedSourceIdentity(
         this.target,
         observed,
@@ -157,7 +147,6 @@ class ManagedStaticClient implements AnalysisClient {
       if (bytes === undefined)
         throw invariantViolation("Managed snapshot bytes are unavailable");
       this.#snapshotBytes = bytes;
-      if (observed.state !== undefined) this.#snapshotState = observed.state;
       const result = inspectManagedOperation(
         operation,
         input.data,
