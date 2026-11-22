@@ -301,6 +301,7 @@
 ### Code Refactoring
 
 * **apple:** read dispatch relative displacements through the shared readers ([0ae58b4](https://github.com/morluto/rea/commit/0ae58b4a1fe1778f49def9920a214498a2ce084d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **artifacts:** reuse the positional reader for iNES prefixes ([#13481](https://github.com/morluto/rea/issues/13481)) ([b6ffec4](https://github.com/morluto/rea/commit/b6ffec43adeec2d7b57ef49b894425e8b0d36d0a))
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
