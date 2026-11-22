@@ -2,14 +2,15 @@ import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
-import { expect, it, onTestFinished } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { readEvidenceBundle } from "../../../src/application/EvidenceBundleFiles.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 it.each([false, true])(
   "stops an SDK export cancellation before publication and keeps the same session usable (overwrite: %s)",
@@ -24,9 +25,9 @@ it.each([false, true])(
       unknownTarget("not-observed"),
       { id: "fixture", name: "Fixture", version: "1" },
       {
-        operation: "large_observation",
+        operation: "fixture_observation",
         parameters: {},
-        result: { observed: "雪😀".repeat(1024 * 1024) },
+        result: { observed: "雪😀" },
       },
     );
     expect(session.recordEvidence(evidence).ok).toBe(true);
@@ -39,8 +40,10 @@ it.each([false, true])(
       { jsonSchemaValidator: createMcpSchemaValidation() },
     );
     const controller = new AbortController();
+    const stagedWrite = phaseGate<string>();
     onTestFinished(async () => {
       controller.abort();
+      stagedWrite.release();
       await client.close();
       await server.close();
       await session.close();
@@ -49,6 +52,14 @@ it.each([false, true])(
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const closeFile = OwnedStagedOutput.prototype.closeFile;
+    const stagedClose = vi
+      .spyOn(OwnedStagedOutput.prototype, "closeFile")
+      .mockImplementationOnce(async function (this: OwnedStagedOutput) {
+        await closeFile.call(this);
+        await stagedWrite.hold(this.directory);
+      });
+    onTestFinished(() => stagedClose.mockRestore());
     const cancellation = client
       .callTool(
         { name: "export_evidence_bundle", arguments: { path, overwrite } },
@@ -58,34 +69,17 @@ it.each([false, true])(
         () => "completed",
         (error: unknown) => error,
       );
-    // Observe actual staged bytes, rather than only a locally rejected promise.
-    const deadline = performance.now() + 5000;
-    let stagedBytes = 0;
-    while (stagedBytes === 0 && performance.now() < deadline) {
-      const staging = (await readdir(root)).find((name) =>
-        name.startsWith(".rea-write-"),
-      );
-      if (staging !== undefined) {
-        const staged = await stat(join(root, staging, "content")).catch(
-          (cause: unknown) => {
-            if (
-              cause instanceof Error &&
-              "code" in cause &&
-              cause.code === "ENOENT"
-            )
-              return undefined;
-            throw cause;
-          },
-        );
-        stagedBytes = staged?.size ?? 0;
-      }
-      if (stagedBytes === 0) await delay(10);
-    }
-    expect(stagedBytes).toBeGreaterThan(0);
+    const directory = await stagedWrite.reached(
+      cancellation,
+      "staged file close",
+    );
+    expect((await stat(join(directory, "content"))).size).toBeGreaterThan(0);
     controller.abort(new Error("SDK export cancellation verification"));
     expect(await cancellation).toMatchObject({
       message: expect.stringContaining("SDK export cancellation verification"),
     });
+    await client.ping();
+    stagedWrite.release();
     await expect
       .poll(() => readdir(root))
       .toEqual(overwrite ? ["bundle.json"] : []);
