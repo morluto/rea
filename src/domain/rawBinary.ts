@@ -17,6 +17,7 @@ import {
   architectureVariantSchema,
   type ArchitectureVariant,
 } from "./architectureVariant.js";
+import { BinaryReader } from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 /** Caller-visible CPU families admitted for headerless raw binaries. */
@@ -441,13 +442,13 @@ export const admitRawBinary = (input: {
           reason: `raw-binary vector table at ${table.canonical} could not be read in full`,
           constraint: "file_format_rejected",
         });
-      const view = new DataView(
-        words.buffer,
-        words.byteOffset,
-        words.byteLength,
+      // M-profile vector-table words are little-endian.
+      const reader = new BinaryReader(
+        Buffer.from(words.buffer, words.byteOffset, words.byteLength),
+        true,
       );
-      const stackPointer = hexWord(view.getUint32(0, true));
-      const resetWord = view.getUint32(4, true);
+      const stackPointer = hexWord(reader.u32(0));
+      const resetWord = reader.u32(4);
       const reset = hexWord(resetWord);
       const observed = {
         vector_table_address: table.canonical,

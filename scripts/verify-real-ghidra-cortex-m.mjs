@@ -2,15 +2,7 @@
 // base_address, vector_table_address). Adapted from #4927 by Jean Granié.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -41,6 +33,7 @@ import {
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-cortex-m.mjs");
@@ -63,7 +56,10 @@ assert.equal(installation.status, "available", JSON.stringify(installation));
 const run = createVerifierRun();
 // Every LLVM and CLI command runs as an owned process tree with a deadline.
 const commands = await createVerifierCommands();
-const workspace = await mkdtemp(join(tmpdir(), "rea-cortex-m-proof-"));
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-cortex-m-proof-",
+});
+const workspace = workspaceFixture.path;
 // LLVM is the independent decoding oracle for every fixture.
 const llvm = {
   clang: process.env.REA_CLANG ?? "clang",
@@ -218,8 +214,7 @@ try {
   await transport.close();
   // Remove the workspace only after every owned command tree has stopped; a
   // failed close keeps it for inspection.
-  await commands.close();
-  await rm(workspace, { recursive: true, force: true });
+  await workspaceFixture.closeEarly([() => commands.close()]);
 }
 const verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
