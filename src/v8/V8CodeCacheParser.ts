@@ -4,7 +4,7 @@ import {
   V8_CODE_CACHE_LEGACY_MODULE_BIT,
   V8_CODE_CACHE_MODULE_BIT,
   V8_CODE_CACHE_HEADER_BYTES,
-  V8_CODE_CACHE_HEADER_SIZES,
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
   V8_CODE_CACHE_MIN_HEADER_BYTES,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
@@ -12,12 +12,13 @@ import {
   type V8CodeCache,
 } from "../domain/v8/v8CodeCache.js";
 import type { V8CodeCacheInputBudget } from "../domain/v8/v8CodeCacheBudget.js";
-import {
-  V8_CODE_CACHE_FORMAT,
-  v8CodeCacheBudgetFailure,
-} from "../v8/V8CodeCache.errors.js";
+import { V8_CODE_CACHE_FORMAT } from "./V8CodeCache.errors.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
-import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  unsupportedInput,
+} from "../domain/parseFailure.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const unsupported = (message: string): never => {
@@ -46,6 +47,23 @@ const HEADER_ROLES: ReadonlyArray<{
   { role: "reserved", status: "unconfirmed" },
 ];
 
+/**
+ * Word roles of the six-word header that `code-serializer.h` defines in V8 8.8 through
+ * 11.7, which has no read-only snapshot checksum word. No producer of those releases was
+ * measured, so only the two facts admission checks on the container itself are confirmed.
+ */
+const LEGACY_HEADER_ROLES: typeof HEADER_ROLES = [
+  { role: "magic", status: "confirmed" },
+  { role: "version_hash", status: "inferred" },
+  { role: "source_length", status: "inferred" },
+  { role: "flag_hash", status: "inferred" },
+  { role: "payload_length", status: "confirmed" },
+  { role: "reserved", status: "unconfirmed" },
+];
+
+const LEGACY_LIMITATION =
+  "This container has the six-word header of V8 8.8 through 11.7. That layout is taken from the V8 sources of those releases, not measured against one of their producers, so its source-length role is inferred too.";
+
 const LIMITATIONS = [
   "The payload is serialized V8 heap data, not source. No logic is recovered and no bytecode is decompiled.",
   "Recovering logic requires a version-pinned V8 decompiler (View8-style) that this tool neither installs nor runs.",
@@ -64,7 +82,7 @@ const isPrintable = (byte: number): boolean =>
 /**
  * Read one V8 code cache container without executing it.
  *
- * Admission is deliberately narrow: the header size this reader pins, the V8 code cache
+ * Admission is deliberately narrow: a header layout this reader pins, the V8 code cache
  * magic high half, and payload length reaching exactly the end of the file. Everything
  * else is reported as an observation so a producer this reader has never seen still
  * yields its facts instead of a false parse.
@@ -86,26 +104,37 @@ export const parseV8CodeCache = (
     true,
     V8_CODE_CACHE_FORMAT,
   );
-  const readField = (entry: (typeof HEADER_ROLES)[number], index: number) => {
-    const offset = index * 4;
-    return { offset, value: headerReader.u32(offset), ...entry };
-  };
-  const commonFieldCount = V8_CODE_CACHE_NARROW_HEADER_BYTES / 4;
-  const fields = HEADER_ROLES.slice(0, commonFieldCount).map(readField);
-  const magic = fields[0]!.value;
+  const magic = headerReader.u32(0);
   const magicHigh = magic >>> 16;
   if (magicHigh !== V8_CODE_CACHE_MAGIC_HIGH)
     unsupported(
       `Container magic 0x${magic.toString(16).padStart(8, "0")} does not carry the V8 code cache high half 0x${V8_CODE_CACHE_MAGIC_HIGH.toString(16)}; this file is not a V8 code cache.`,
     );
 
-  // The declared payload length gives the candidate aligned header extent.
-  const declaredPayload = fields[5]!.value;
-  const payloadOffset = bytes.length - declaredPayload;
-  if (!V8_CODE_CACHE_HEADER_SIZES.includes(payloadOffset))
+  // Each pinned layout declares the payload length in its own word, and that
+  // length must reach the end of the file from one of the layout's header
+  // extents. Seven words pad to 28 or 32 bytes; six words are 24 bytes on
+  // both pointer widths.
+  const declaredPayload = headerReader.u32(0x14);
+  const alignedOffset = bytes.length - declaredPayload;
+  const sevenWords =
+    alignedOffset === V8_CODE_CACHE_NARROW_HEADER_BYTES ||
+    alignedOffset === V8_CODE_CACHE_HEADER_BYTES;
+  const legacyPayload = headerReader.u32(0x10);
+  const legacyOffset = bytes.length - legacyPayload;
+  const sixWords = legacyOffset === V8_CODE_CACHE_LEGACY_HEADER_BYTES;
+  // The word at 0x10 is a build constant in one layout and the payload length
+  // in the other, so a container fits both only by coincidence, and nothing
+  // in the header says which reading its producer meant.
+  if (sevenWords && sixWords)
     malformed(
-      `Header declares a ${String(declaredPayload)}-byte payload, leaving ${String(payloadOffset)} header bytes, which is no admitted V8 code cache header size (${V8_CODE_CACHE_HEADER_SIZES.join(" or ")}); the container is truncated or corrupt.`,
+      `Both admitted layouts fit this container, so its header is ambiguous: ${String(declaredPayload)} payload bytes after ${String(alignedOffset)} header bytes, or ${String(legacyPayload)} after ${String(legacyOffset)}.`,
     );
+  if (!sevenWords && !sixWords)
+    malformed(
+      `Header declares a ${String(declaredPayload)}-byte payload at 0x14, leaving ${String(alignedOffset)} header bytes where the seven-word layout has ${String(V8_CODE_CACHE_NARROW_HEADER_BYTES)} or ${String(V8_CODE_CACHE_HEADER_BYTES)}, and a ${String(legacyPayload)}-byte payload at 0x10, leaving ${String(legacyOffset)} where the six-word layout has ${String(V8_CODE_CACHE_LEGACY_HEADER_BYTES)}; the container is truncated, corrupt, or written with a header this reader does not admit.`,
+    );
+  const payloadOffset = sixWords ? legacyOffset : alignedOffset;
   // Node v24.22.1's SerializedCodeData writer in code-serializer.cc zeroes
   // the alignment bytes after its words. A missing final wide payload word
   // and a narrow payload beginning with a zero word are indistinguishable here.
@@ -118,8 +147,12 @@ export const parseV8CodeCache = (
       "A 28-byte header extent followed by a zero word is ambiguous: the file may have a zero-leading narrow payload or a truncated 32-byte layout.",
     );
 
-  if (payloadOffset === V8_CODE_CACHE_HEADER_BYTES)
-    fields.push(readField(HEADER_ROLES[commonFieldCount]!, commonFieldCount));
+  // The word table covers exactly the header extent this container carries.
+  const roles = sixWords ? LEGACY_HEADER_ROLES : HEADER_ROLES;
+  const fields = roles.slice(0, payloadOffset / 4).map((entry, index) => {
+    const offset = index * 4;
+    return { offset, value: headerReader.u32(offset), ...entry };
+  });
 
   const sourceWord = fields[2]!.value;
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
@@ -151,10 +184,10 @@ export const parseV8CodeCache = (
       if (observations.length >= input.max_strings)
         // The message states the fact. Recovery advice belongs to the provider, which
         // can see whether either budget still has headroom before recommending a retry.
-        throw v8CodeCacheBudgetFailure(
-          "max_strings",
-          input.max_strings,
+        throw decodeLimit(
+          V8_CODE_CACHE_FORMAT,
           `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
+          { name: "max_strings", maximum: input.max_strings },
         );
       const retained = Math.min(
         runBytes,
@@ -207,6 +240,6 @@ export const parseV8CodeCache = (
       scanned_bytes: payload.length,
       strings: observations.length,
     },
-    limitations: LIMITATIONS,
+    limitations: sixWords ? [...LIMITATIONS, LEGACY_LIMITATION] : LIMITATIONS,
   };
 };

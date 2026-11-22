@@ -82,6 +82,15 @@ def probe(path, socket_path, mode):
             if "event" not in value:
                 return value
 
+    def queue_successor(method):
+        # Queue the reconnect and its first request before the current
+        # connection ends, as for the first client. The bridge's reconnect and
+        # unauthenticated-idle budgets then start with the request waiting,
+        # so a stalled probe cannot let them expire before it reconnects.
+        successor, successor_file = connect()
+        send(successor_file, method)
+        return successor, successor_file
+
     def finish(shutdown_count):
         worker.join(2)
         assert not worker.is_alive(), f"{mode}: bridge pinned its execution thread"
@@ -107,6 +116,10 @@ def probe(path, socket_path, mode):
             return finish(0)
     send(file, "health", "foreign-token" if mode == "unauthorized" else "owned-token")
     first_client_prepared.set()
+    # A rejected connection keeps the bridge's unauthenticated-idle budget, so
+    # it can expire while the probe reads the rejection. Queue its successor
+    # first, so that expiry and the reconnect budget both find it waiting.
+    rejected_successor = queue_successor("health") if mode == "unauthorized" else None
     if mode == "lost-reply":
         assert entered.wait(2)
     elif mode == "unauthorized":
@@ -116,12 +129,12 @@ def probe(path, socket_path, mode):
     if mode == "lost-shutdown-reply":
         send(file, "shutdown_document")
         assert entered.wait(2)
+        successor, successor_file = queue_successor("shutdown_document")
         client.shutdown(socket.SHUT_RDWR)
         file.close()
         client.close()
         release.set()
-        client, file = connect()
-        send(file, "shutdown_document")
+        client, file = successor, successor_file
         assert reply(file)["result"]["document_closed"] is True
         file.close()
         client.close()
@@ -130,12 +143,14 @@ def probe(path, socket_path, mode):
         time.sleep(0.3)
         send(file, "health")
         assert reply(file)["result"]["run_id"] == "owned-run"
+    successor = (
+        None if mode == "expiry" else rejected_successor or queue_successor("health")
+    )
     file.close()
     client.close()
     release.set()
-    if mode != "expiry":
-        client, file = connect()
-        send(file, "health")
+    if successor is not None:
+        client, file = successor
         assert reply(file)["result"]["run_id"] == "owned-run"
         send(file, "shutdown_document", params={"unconfirmed": True})
         assert reply(file)["result"]["document_closed"] is False

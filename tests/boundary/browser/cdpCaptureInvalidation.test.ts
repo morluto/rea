@@ -19,14 +19,14 @@ it("distinguishes document invalidation, origin refusal, and an independent scri
         reason,
       })),
     ),
-    {
+    ...[false, true].map((sourceFails) => ({
       navigation: {
         command: "DOMSnapshot.captureSnapshot",
         identity: { loaderId: "reloaded-document" },
       },
-      sourceFails: true,
-      reason: "target_changed",
-    },
+      sourceFails,
+      reason: "target_changed" as const,
+    })),
     {
       navigation: {
         command: "DOMSnapshot.captureSnapshot",
@@ -111,11 +111,13 @@ it("distinguishes document invalidation, origin refusal, and an independent scri
       const methods = browser.commands
         .slice(before)
         .map(({ method }) => method);
-      if (
-        "navigation" in expected &&
-        expected.navigation.command === "Network.enable"
-      )
-        expect(methods, label).not.toContain("DOMSnapshot.captureSnapshot");
+      if ("navigation" in expected) {
+        expect(methods, label).toContain(expected.navigation.command);
+        if (expected.navigation.command === "Network.enable") {
+          expect(methods, label).not.toContain("DOMSnapshot.captureSnapshot");
+          expect(methods, label).not.toContain("Accessibility.getFullAXTree");
+        }
+      }
       expect(methods, label).toContain("Target.detachFromTarget");
       await expect.poll(() => browser.activeConnectionCount()).toBe(0);
     }

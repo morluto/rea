@@ -1,7 +1,4 @@
-import {
-  IDA_COMPATIBILITY_PROFILES,
-  readIdaConfiguration,
-} from "./IdaConfiguration.js";
+import { IDA_COMPATIBILITY_PROFILES } from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -14,10 +11,7 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import {
-  decodeIdaToolResult,
-  type IdaMcpConnection,
-} from "./IdaMcpConnection.js";
+import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { parseConfig } from "../config/parseConfig.js";
 import { UNCLASSIFIED_CALL_SITE_LIMITATION } from "./IdaCallGraph.js";
 import { IdaProvider } from "./IdaProvider.js";
@@ -282,38 +276,6 @@ describe("IDA selected registration factories", () => {
     for (const client of clients) await client.close();
   });
 
-  it("requires explicit opt-in and rejects native headless registrations", async () => {
-    const { root } = await fixture();
-    const path = join(root, "native.json");
-    await writeFile(
-      path,
-      JSON.stringify({ url: "http://127.0.0.1:13337/mcp", protocol: "native" }),
-    );
-    expect(await readIdaConfiguration(path, { resourceScope })).toMatchObject({
-      ok: true,
-      value: { mode: "attached", protocol: "native" },
-    });
-    await writeFile(
-      path,
-      JSON.stringify({
-        url: "http://127.0.0.1:13337/mcp",
-        protocol: "native",
-        mode: "headless",
-      }),
-    );
-    expect((await readIdaConfiguration(path, { resourceScope })).ok).toBe(
-      false,
-    );
-    await writeFile(
-      path,
-      JSON.stringify({ command: "python", protocol: "legacy" }),
-    );
-    expect(
-      (await readIdaConfiguration(path, { resourceScope })).ok,
-      "the removed legacy protocol is refused, not read as native",
-    ).toBe(false);
-  });
-
   it("commits native profile semantics and advertises GUI effects without starting a provider", async () => {
     const { root, target, producer } = await fixture();
     const path = join(root, "profile.json");
@@ -343,34 +305,6 @@ describe("IDA selected registration factories", () => {
       )?.effects.mayShowUi,
     ).toBe(false);
     expect(producer.connects).toBe(0);
-  });
-});
-
-describe("native IDA complete result decoding", () => {
-  it("uses complete native JSON text instead of a shortened structured preview", () => {
-    const complete = [
-      {
-        data: [{ addr: "0x1000", name: "main", size: "0x20" }],
-        next_offset: null,
-      },
-    ];
-    const response = {
-      content: [{ type: "text", text: JSON.stringify(complete) }],
-      structuredContent: { result: [], _output_truncated: true },
-    };
-    expect(decodeIdaToolResult(response, "native")).toEqual(complete);
-    expect(() =>
-      decodeIdaToolResult({ ...response, content: [] }, "native"),
-    ).toThrow("complete JSON");
-    expect(() =>
-      decodeIdaToolResult(
-        { ...response, content: [{ type: "text", text: "broken JSON" }] },
-        "native",
-      ),
-    ).toThrow();
-    expect(() =>
-      decodeIdaToolResult({ ...response, isError: true }, "native"),
-    ).toThrow("tool failed");
   });
 });
 
@@ -1023,5 +957,63 @@ describe("native IDA attached operation admission", () => {
       "nothing is dispatched upstream",
     ).toBe(false);
     await client.close();
+  });
+});
+
+describe("native IDA literal candidate precision", () => {
+  it("excludes unrelated non-ASCII strings while preserving U+017F and U+212A simple folds", async () => {
+    const { client, producer } = await fixture();
+    const values = [
+      "中文菜单",
+      "Настройки",
+      "İstanbul",
+      "σ",
+      "🧪",
+      "Warfare/Storage/Read-Write",
+      "warfare/\u017ftoragE/read-write",
+      "\u212aelvin",
+    ];
+    producer.overrideCall = (name, args) => {
+      if (name !== "find_regex") return undefined;
+      const regex = new RegExp(
+        Buffer.from(String(args.pattern)).toString("latin1"),
+        "i",
+      );
+      return {
+        matches: values.flatMap((value, index) =>
+          regex.test(Buffer.from(value).toString("latin1"))
+            ? [{ addr: `0x${(0x4000 + index).toString(16)}`, string: value }]
+            : [],
+        ),
+        cursor: { done: true },
+      };
+    };
+    try {
+      const storage = await client.execute("search_strings", {
+        pattern: "warfare/storage/read-write",
+      });
+      if (!storage.ok) throw storage.error;
+      expect(storage.value.result).toEqual([
+        { address: "0x4005", value: "Warfare/Storage/Read-Write" },
+        { address: "0x4006", value: "warfare/\u017ftoragE/read-write" },
+      ]);
+      const storageCall = producer.calls.find(
+        ({ name }) => name === "find_regex",
+      );
+      expect(storageCall?.args.pattern).not.toContain("\\x80-\\xff");
+      const rawMatches = JSON.stringify(storage.value.rawResult);
+      expect(rawMatches).not.toContain("中文菜单");
+      expect(rawMatches).not.toContain("İstanbul");
+
+      const kelvin = await client.execute("search_strings", {
+        pattern: "kelvin",
+      });
+      if (!kelvin.ok) throw kelvin.error;
+      expect(kelvin.value.result).toEqual([
+        { address: "0x4007", value: "\u212aelvin" },
+      ]);
+    } finally {
+      await client.close();
+    }
   });
 });

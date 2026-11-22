@@ -424,26 +424,27 @@ const authorizeTarget = async (
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
 ): Promise<CdpEndpointTarget> => {
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  const operation = "inspect_electron_page";
+  throwIfElectronOperationCancelled(signal, operation);
   const target = selectCdpDiscoveryTarget(
     discovery.targets,
     targetId,
-    "inspect_electron_page",
+    operation,
     discovery.ambiguousTargetIds,
   );
   if (target === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_found");
+    throw new BrowserObservationError(operation, "target_not_found");
   if (target.type !== "page")
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   const path = await authorizedElectronFile(
     target.url,
     signal,
-    "inspect_electron_page",
+    operation,
     asarHeaderAdmission,
   );
-  throwIfElectronOperationCancelled(signal, "inspect_electron_page");
+  throwIfElectronOperationCancelled(signal, operation);
   if (path === undefined)
-    throw new BrowserObservationError("inspect_web_page", "target_not_allowed");
+    throw new BrowserObservationError(operation, "target_not_allowed");
   return target;
 };
 
