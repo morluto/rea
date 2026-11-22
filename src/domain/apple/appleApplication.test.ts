@@ -661,12 +661,17 @@ describe("Apple IPA components", () => {
 
 describe("macOS application scope", () => {
   it("attributes only components inside the application roots", () => {
+    const nested = "Fixture.app/Extras/Helper.app";
+    const sibling = "Fixture.app-copy/Other.app";
+    const script = "Fixture.app/Contents/Resources/app.js";
     const result = project(
       inventoryEvidence("zip", "Distribution.zip", [
         macho("Fixture.app/Contents/MacOS/Fixture"),
+        macho(`${nested}/Contents/MacOS/Helper`),
+        macho(`${sibling}/Contents/MacOS/Other`),
         macho("Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core"),
         {
-          path: "Fixture.app/Contents/Resources/app.js",
+          path: script,
           format: "javascript-bundle",
         },
         macho("Extras/Plugin.framework/Versions/A/Plugin"),
@@ -677,20 +682,30 @@ describe("macOS application scope", () => {
     );
     const paths = (components: readonly { readonly path: string }[]) =>
       components.map(({ path }) => path);
+    expect(result.application_roots).toEqual(["Fixture.app", sibling]);
+    expect(result.bundles.find(({ path }) => path === nested)).toMatchObject({
+      parent_path: "Fixture.app",
+      role: "nested-application",
+    });
     expect(paths(result.components.frameworks)).toEqual([
       "Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core",
     ]);
     expect(paths(result.components.native_libraries)).toEqual([]);
-    expect(paths(result.components.javascript)).toEqual([
-      "Fixture.app/Contents/Resources/app.js",
-    ]);
+    expect(paths(result.components.javascript)).toEqual([script]);
     expect(paths(result.components.bundle_metadata)).toEqual([]);
     expect(
-      result.bridge_candidates.every(
-        ({ source_path: source, native_path: target }) =>
-          [source, target].every((path) => path.startsWith("Fixture.app/")),
-      ),
-    ).toBe(true);
+      result.bridge_candidates.map(({ source_path, native_path }) => [
+        source_path,
+        native_path,
+      ]),
+    ).toEqual([
+      [
+        script,
+        "Fixture.app/Contents/Frameworks/Core.framework/Versions/A/Core",
+      ],
+      [script, "Fixture.app/Contents/MacOS/Fixture"],
+      [script, `${nested}/Contents/MacOS/Helper`],
+    ]);
     expect(result.limitations).toContainEqual(
       expect.stringMatching(/4 inventoried entries outside.*not attributed/i),
     );
