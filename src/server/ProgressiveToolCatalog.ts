@@ -14,16 +14,26 @@ import {
   type CatalogIdentity,
 } from "../contracts/catalog/catalogDiscovery.js";
 
+type CatalogListing = { registered: RegisteredTool; description: string };
+const catalogListing = (registered: RegisteredTool): CatalogListing => ({
+  registered,
+  description: (registered.description ?? "").slice(0, 240),
+});
+
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
+  /** In-scope domain tools; the adapter is never a search result or reset. */
   private readonly tools: ReadonlyMap<
     string,
-    { registered: RegisteredTool; description: string; search: string }
+    CatalogListing & { search: string }
   >;
+  /** Exact names and counts also cover the always-advertised adapter. */
+  private readonly inventory: ReadonlyMap<string, CatalogListing>;
 
   constructor(
     registrations: ReadonlyMap<string, RegisteredTool>,
+    adapter: RegisteredTool,
     identity: CatalogIdentity,
     private readonly batchChanges: (change: () => void) => void,
     private readonly delivery: () => ToolResultDelivery,
@@ -37,13 +47,16 @@ export class ProgressiveToolCatalog {
         .map(([name, registered]) => [
           name,
           {
-            registered,
-            description: (registered.description ?? "").slice(0, 240),
+            ...catalogListing(registered),
             search:
               `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
           },
         ]),
     );
+    this.inventory = new Map<string, CatalogListing>([
+      ...this.tools,
+      [DISCOVER_TOOLS.name, catalogListing(adapter)],
+    ]);
     this.reset();
   }
 
@@ -60,7 +73,7 @@ export class ProgressiveToolCatalog {
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
     const names =
       input.names === undefined ? undefined : [...new Set(input.names)];
-    const unknown = names?.filter((name) => !this.tools.has(name)) ?? [];
+    const unknown = names?.filter((name) => !this.inventory.has(name)) ?? [];
     if (unknown.length > 0)
       return this.delivery().toErrorToolResult(
         new AnalysisInputError(
@@ -99,14 +112,17 @@ export class ProgressiveToolCatalog {
         });
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
-    const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
+    const selected = page.map((name) => ({
+      name,
+      ...this.inventory.get(name)!,
+    }));
     const result: z.infer<typeof DISCOVER_TOOLS.outputSchema> = {
       profile: "hot-cold",
-      inventory_count: this.tools.size + 1,
+      inventory_count: this.inventory.size,
       loaded_count:
-        1 +
-        [...this.tools.values()].filter(({ registered }) => registered.enabled)
-          .length +
+        [...this.inventory.values()].filter(
+          ({ registered }) => registered.enabled,
+        ).length +
         selected.filter(({ registered }) => !registered.enabled).length,
       total_matches: matches.length,
       next_offset:

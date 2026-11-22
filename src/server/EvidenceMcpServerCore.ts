@@ -317,8 +317,21 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Install discovery after canonical registrations, before connecting. */
   enableProgressiveCatalog(): void {
     if (this.progressiveCatalog !== undefined) return;
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    const adapter = super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
     const catalog = new ProgressiveToolCatalog(
       this.registrations,
+      adapter,
       this.catalogIdentity,
       (change) => {
         this.catalogChangeDepth++;
@@ -335,18 +348,6 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       () => this.delivery,
     );
     this.progressiveCatalog = catalog;
-    const { name, ...config } = DISCOVER_TOOLS;
-    // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers. Its
-    // advertisement still follows the selected input presentation.
-    super.registerTool(
-      name,
-      { ...config, ...this.presentInput(name, config) },
-      (input, context) => {
-        context.mcpReq.signal.throwIfAborted();
-        return catalog.discover(input);
-      },
-    );
   }
 
   override sendToolListChanged(): void {

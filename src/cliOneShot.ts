@@ -80,11 +80,11 @@ export const runOneShotCli = async (
     host.stdoutIsTerminal,
   );
   const configurationError = cliConfigurationError(host.environment);
-  // Doctor is the readiness report for this failure. Other commands still stop
-  // here so they do not run with an unusable log level.
+  // Only an admitted doctor can report this failure as readiness. A malformed
+  // command still stops at the same configuration boundary as other commands.
   if (
     configurationError !== undefined &&
-    (global === undefined || global.command[0] !== "doctor")
+    (global?.command[0] !== "doctor" || !outputArguments.ok)
   ) {
     host.writeStderr(`${configurationError}\n`);
     host.setExitCode(1);
