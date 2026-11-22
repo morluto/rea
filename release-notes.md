@@ -93,6 +93,7 @@
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
 * **evidence:** evaluate unchanged artifact members in correlation ([460d771](https://github.com/morluto/rea/commit/460d77176e9634a6e052e4993ddd03be1489bec9)), closes [#13211](https://github.com/morluto/rea/issues/13211)
 * **evidence:** keep unobserved correlation paths unknown without complete coverage ([94232d0](https://github.com/morluto/rea/commit/94232d0d5f1addb2b0a45477bc67bd681e3d9282)), closes [#13211](https://github.com/morluto/rea/issues/13211)
+* **firmware:** honor the final Android OTA timestamp record ([#13373](https://github.com/morluto/rea/issues/13373)) ([e84668c](https://github.com/morluto/rea/commit/e84668c76be4df40963dbd83f84803ec812f64c5))
 * **frida:** explain refused ptrace seize during injection ([317f90e](https://github.com/morluto/rea/commit/317f90e023a96f18695790efbe903fb39a4e6b85)), closes [#9103](https://github.com/morluto/rea/issues/9103)
 * **frida:** keep ptrace seize guidance from overclaiming ([2337ebe](https://github.com/morluto/rea/commit/2337ebe130dabff210bb55aa6f34c4585bbde73a)), closes [#9103](https://github.com/morluto/rea/issues/9103)
 * **ghidra:** expose NativeAOT opt-out recovery ([#12923](https://github.com/morluto/rea/issues/12923)) ([753b7e9](https://github.com/morluto/rea/commit/753b7e908c5ab91508cbda7b954aaa8138822712))
