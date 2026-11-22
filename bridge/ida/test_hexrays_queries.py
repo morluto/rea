@@ -284,6 +284,41 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual(survey["segments"], [{"start": "0x1000", "end": "0x3000", "size": "0x2000"}])
         self.assertEqual(survey["statistics"], {"total_segments": 1})
 
+    def test_find_regex_matches_pushed_down_unicode_fold_literals(self):
+        extra = STRINGS + [
+            (0x7000, "中文菜单"),
+            (0x7001, "Warfare/Storage/Read-Write"),
+            (0x7002, "warfare/\u017ftoragE/read-write"),
+            (0x7003, "\u212aelvin"),
+        ]
+        sys.modules["idautils"].Strings = lambda: [StringItem(ea, text) for ea, text in extra]
+        storage = self.query(
+            "find_regex",
+            {
+                "pattern": "[wW][aA][rR][fF][aA][rR][eE]/(?:[sS]|\u017f)[tT][oO][rR][aA][gG][eE]/[rR][eE][aA][dD]-[wW][rR][iI][tT][eE]",
+                "offset": 0,
+                "limit": 100,
+            },
+        )
+        self.assertEqual(
+            storage,
+            {
+                "matches": [
+                    {"addr": "0x7001", "string": "Warfare/Storage/Read-Write"},
+                    {"addr": "0x7002", "string": "warfare/\u017ftoragE/read-write"},
+                ],
+                "cursor": {"done": True},
+            },
+        )
+        kelvin = self.query(
+            "find_regex",
+            {"pattern": "(?:[kK]|\u212a)[eE][lL][vV][iI][nN]", "offset": 0, "limit": 100},
+        )
+        self.assertEqual(
+            kelvin,
+            {"matches": [{"addr": "0x7003", "string": "\u212aelvin"}], "cursor": {"done": True}},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -401,6 +401,13 @@ as archive corruption. The cap cannot be raised at runtime: recompress with a
 window of at most 128 MiB, or decompress externally before retrying.
 Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
+Extraction verifies each written file before publishing the output. REA syncs
+the file, reopens it, and checks its size and SHA-256 against the bytes it wrote.
+Each file adds filesystem work, so archives with many small files can take
+longer to extract even when their total size is modest. If you only need the
+archive inventory, run `rea inspect-artifact <path> --json` to get it without
+writing an extracted tree.
+
 Inventory and extract UF2 or DfuSe regions:
 
 ```sh

@@ -4,6 +4,7 @@ import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
@@ -13,6 +14,7 @@ import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
   withHeaderWord,
+  withSyntheticLegacyHeader,
   withSyntheticNarrowHeader,
 } from "./V8CodeCache.fixture.js";
 
@@ -171,10 +173,13 @@ it("fails closed on a foreign magic", () => {
   );
 });
 
-it("fails closed on a truncated header", () => {
-  expect(() =>
-    parse(real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES - 1)),
-  ).toThrow(expect.objectContaining({ kind: "malformed" }));
+it.each([
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES - 1,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES - 1,
+])("fails closed on a header truncated to %i bytes", (length) => {
+  expect(() => parse(real.subarray(0, length))).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
 });
 
 it("treats the observed header as version-dependent rather than a fixed ABI", () => {
@@ -280,6 +285,75 @@ it("refuses a wide container that is only four bytes short", () => {
   );
 });
 
+it("inspects a synthetic six-word layout derived from a 64-bit cache", () => {
+  // V8 8.8 through 11.7 write no build-constant word, so the payload length is
+  // the fifth word and the 24-byte header needs no alignment padding.
+  const legacy = withSyntheticLegacyHeader(real);
+  const report = parse(legacy);
+  const wide = parse(real);
+
+  expect(legacy.readUInt32LE(16)).toBe(
+    legacy.length - V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+  );
+  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
+  expect(report.payload.offset).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
+  // Only header words are removed, so the payload is identical.
+  expect(report.payload.sha256).toBe(wide.payload.sha256);
+  expect(report.header.source_length).toBe(wide.header.source_length);
+  // No producer of those releases was measured, so only the two facts that
+  // admission checks on the container itself are reported as confirmed.
+  expect(report.header.fields).toMatchObject([
+    { offset: 0, role: "magic", status: "confirmed" },
+    { offset: 4, role: "version_hash", status: "inferred" },
+    { offset: 8, role: "source_length", status: "inferred" },
+    { offset: 12, role: "flag_hash", status: "inferred" },
+    { offset: 16, role: "payload_length", status: "confirmed" },
+    { offset: 20, role: "reserved", status: "unconfirmed" },
+  ]);
+  report.header.fields.forEach((field) => {
+    expect(field.value).toBe(legacy.readUInt32LE(field.offset));
+  });
+  // The report itself states that the layout was not measured.
+  expect(report.limitations).toHaveLength(wide.limitations.length + 1);
+});
+
+it("reads the bit 31 module flag of a six-word container", () => {
+  const sourceLength = 23;
+  const legacy = withSyntheticLegacyHeader(
+    withHeaderWord(real, 2, 0x80000000 | sourceLength),
+  );
+  expect(parse(legacy).header).toMatchObject({
+    header_bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+    producer: "module",
+    source_length: sourceLength,
+  });
+});
+
+it("refuses a six-word container that lost its last payload word", () => {
+  const legacy = withSyntheticLegacyHeader(real);
+  expect(() => parse(legacy.subarray(0, legacy.length - 4))).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+});
+
+it("refuses a container whose payload length fits both layouts", () => {
+  // The six-word layout does not constrain the word after its payload length,
+  // so that word can also reach the end of the file from a 28-byte header.
+  // Nothing in the header separates the two readings.
+  const legacy = withSyntheticLegacyHeader(real);
+  const both = withHeaderWord(
+    legacy,
+    5,
+    legacy.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+  expect(() => parse(both)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("ambiguous"),
+    }),
+  );
+});
+
 it("rejects a reported word table that does not cover the header it declares", () => {
   // The parser derives both from one offset, so this pair cannot disagree on a
   // parsed container; the schema is what a stored or projected report also goes
@@ -319,11 +393,14 @@ it("rejects a reported word table that does not cover the header it declares", (
     limitations: ["measured on one producer"],
   });
 
-  // Seven words is 28 bytes and eight is 32, so each header size has exactly one
-  // word count that covers it.
+  // Six words is 24 bytes, seven is 28 and eight is 32, so each header size has
+  // exactly one word count that covers it.
   const cases = [
+    { fields: 6, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 7, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: false },
     { fields: 7, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: false },
     { fields: 8, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 6, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: true },
     { fields: 7, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: true },
     { fields: 8, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: true },
   ];

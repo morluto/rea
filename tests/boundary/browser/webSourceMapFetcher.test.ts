@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { phaseArrival } from "../../support/lifecycleHarness.js";
 
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -555,16 +555,19 @@ describe("source-map declared URL policy", () => {
 });
 
 describe("web source-map fetching and validation: enforcing fetch limits and validating responses", () => {
-  it("settles an endless unique-URL redirect chain at the selected fetch deadline", async () => {
-    let calls = 0;
+  it("aborts a paused HTTP redirect chain at the selected fetch deadline", async () => {
+    const stalled = phaseArrival<number>();
+    const requests: number[] = [];
     const server = createServer((incoming, response) => {
-      calls += 1;
-      const next =
-        Number(
-          new URL(incoming.url ?? "/", "http://local").searchParams.get("n") ??
-            "0",
-        ) + 1;
-      response.writeHead(302, { location: `/map?n=${String(next)}` }).end();
+      const hop = Number(
+        new URL(incoming.url ?? "/", "http://local").searchParams.get("n"),
+      );
+      requests.push(hop);
+      if (hop === 8) stalled.arrive(hop);
+      else
+        response
+          .writeHead(302, { location: `/map?n=${String(hop + 1)}` })
+          .end();
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -576,37 +579,45 @@ describe("web source-map fetching and validation: enforcing fetch limits and val
         throw new TypeError("Expected a TCP listener address");
       const localOrigin = `http://127.0.0.1:${String(address.port)}`;
       const url = `${localOrigin}/map?n=0`;
-      const result = await fetchWebSourceMapsOk(
+      const deadline = 13_700;
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const capture = fetchWebSourceMapsOk(
         [{ ...request, fetchUrl: url, declaredUrl: url }],
         input({
           allowed_origins: [localOrigin],
-          source_map_fetch_timeout_ms: 250,
+          source_map_fetch_timeout_ms: deadline,
         }),
-        AbortSignal.timeout(2_000),
-        { fetch },
+        AbortSignal.timeout(4_000),
       );
-      expect(calls).toBeGreaterThan(1);
-      expect(result).toMatchObject({
+      await stalled.reached(
+        capture,
+        "ninth HTTP request in an approved redirect chain",
+      );
+      expect(requests).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+      await vi.advanceTimersByTimeAsync(deadline);
+      expect(await capture).toMatchObject({
         status: "unavailable",
         processed: 1,
         items: [
           {
             status: "fetch_failed",
+            effective_url: `${localOrigin}/map?n=7`,
             artifact: null,
             limitation: expect.stringContaining(
-              "250 ms source_map_fetch_timeout_ms deadline",
+              `${String(deadline)} ms source_map_fetch_timeout_ms deadline`,
             ),
           },
         ],
       });
     } finally {
+      vi.useRealTimers();
       server.closeAllConnections();
       if (server.listening)
-        await new Promise<void>((resolve, reject) => {
+        await new Promise<void>((resolve, reject) =>
           server.close((error) =>
             error === undefined ? resolve() : reject(error),
-          );
-        });
+          ),
+        );
     }
   });
 
