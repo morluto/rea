@@ -390,6 +390,7 @@
 * **har:** consolidate producer and evidence coverage ([#13202](https://github.com/morluto/rea/issues/13202)) ([1c982b8](https://github.com/morluto/rea/commit/1c982b82fea64a1562d2dc1a863e4ec76dccee9d))
 * **hopper:** consolidate host and launcher selection coverage ([#12934](https://github.com/morluto/rea/issues/12934)) ([6d895a9](https://github.com/morluto/rea/commit/6d895a9e8b7615e441fc0230382ae3af798ffb1f))
 * **hopper:** consolidate launcher failure and provenance checks ([#12877](https://github.com/morluto/rea/issues/12877)) ([d3c29cd](https://github.com/morluto/rea/commit/d3c29cddb68a60e5cc2794bda4337f0bb762f15e))
+* **hopper:** queue bridge reconnects before closing the previous client ([#13325](https://github.com/morluto/rea/issues/13325)) ([5b1bc26](https://github.com/morluto/rea/commit/5b1bc26c37847f16ea616d08b6aeb60aa77cc264))
 * **ida:** consolidate advertised observation and effect checks ([#13008](https://github.com/morluto/rea/issues/13008)) ([9bb06b2](https://github.com/morluto/rea/commit/9bb06b29caa081d3aed924135df8a5910c33b306))
 * **ida:** consolidate callee batch and evidence coverage ([#12929](https://github.com/morluto/rea/issues/12929)) ([f505759](https://github.com/morluto/rea/commit/f505759dd6a4675e7fc06e97cdfd66cea63096b7))
 * **ida:** consolidate callee coverage across graph and trace ([#12927](https://github.com/morluto/rea/issues/12927)) ([ed42b4f](https://github.com/morluto/rea/commit/ed42b4f17999ad36fb3146ab6d46a3e6f30ba878))
