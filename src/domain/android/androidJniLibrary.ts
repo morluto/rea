@@ -26,8 +26,9 @@ import {
   ElfPointerRelocationFailure,
   type ElfPointerOverlay,
 } from "../native/elfPointerRelocations.js";
-import { sha256Hex } from "../../kernel/sha256Hex.js";
 import { zstandardFrameAllowanceCause } from "../compression/zstandardFrameAllowance.js";
+
+const SYNTHETIC_ARTIFACT_SHA256 = "0".repeat(64);
 
 const MAXIMUM_STRING_BYTES = 65_535;
 const MAXIMUM_STRING_WORK = 64 * 1024 * 1024;
@@ -110,7 +111,13 @@ export const inspectAndroidJniLibrary = async (
   };
   try {
     active();
-    if (!bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+    if (
+      bytes.length < 4 ||
+      bytes[0] !== 0x7f ||
+      bytes[1] !== 0x45 ||
+      bytes[2] !== 0x4c ||
+      bytes[3] !== 0x46
+    )
       return err({
         kind: "unsupported",
         message: "JNI library inspection requires an ELF image",
@@ -151,7 +158,7 @@ export const inspectAndroidJniLibrary = async (
       bytes,
       {
         path: "[admitted immutable ELF bytes]",
-        sha256: sha256Hex(bytes),
+        sha256: SYNTHETIC_ARTIFACT_SHA256,
         bytes: bytes.length,
       },
       directory,
@@ -303,22 +310,25 @@ export const inspectAndroidJniLibrary = async (
       const allowance = Math.min(MAXIMUM_STRING_BYTES, remaining - 1);
       let scanned = false;
       try {
-        mappings.offset(address, 1);
-        scanned = true;
-        const raw = mappings.readCString(bytes, address, allowance);
-        stringWork += raw.length + 1;
-        if (stringWork > MAXIMUM_STRING_WORK)
-          throw new BinaryResourceFailure(
-            "search",
-            MAXIMUM_STRING_WORK,
-            "JNI string decoding exceeds the 64 MiB work allowance",
-          );
-        if (overlay.hasWrites(address, raw.length + 1)) {
-          tablesStatus = "partial";
-          unknowns.add(
-            "Some candidate strings overlap relocation writes; their text is not established by stored bytes",
-          );
-        } else value = decodeJniModifiedUtf8(raw);
+        if (mappings.tryOffset(address, 1) === undefined) {
+          stringWork += 1;
+        } else {
+          scanned = true;
+          const raw = mappings.readCString(bytes, address, allowance);
+          stringWork += raw.length + 1;
+          if (stringWork > MAXIMUM_STRING_WORK)
+            throw new BinaryResourceFailure(
+              "search",
+              MAXIMUM_STRING_WORK,
+              "JNI string decoding exceeds the 64 MiB work allowance",
+            );
+          if (overlay.hasWrites(address, raw.length + 1)) {
+            tablesStatus = "partial";
+            unknowns.add(
+              "Some candidate strings overlap relocation writes; their text is not established by stored bytes",
+            );
+          } else value = decodeJniModifiedUtf8(raw);
+        }
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) {
           if (cause.reason !== "unmapped") throw cause;
@@ -407,17 +417,8 @@ export const inspectAndroidJniLibrary = async (
           const fn = overlay.pointerAt(address + BigInt(2 * word));
           if (fn === undefined || fn.value === 0n) continue;
           const code = directory.machine === 40 ? fn.value & ~1n : fn.value;
-          let codeOffset: number;
-          try {
-            codeOffset = executable.offset(code, 1);
-          } catch (cause) {
-            if (
-              cause instanceof BinaryMappingFailure &&
-              cause.reason === "unmapped"
-            )
-              continue;
-            throw cause;
-          }
+          const codeOffset = executable.tryOffset(code, 1);
+          if (codeOffset === undefined) continue;
           const name = overlay.pointerAt(address),
             signature = overlay.pointerAt(address + BigInt(word));
           if (
