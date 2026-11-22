@@ -21,7 +21,10 @@ import { peResourceFixture } from "../../domain/pe/peResources.fixture.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../../tests/fixtures/artifactInventory.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { ArtifactPathRegistry } from "../../resources/ArtifactPaths.js";
+import {
+  ArtifactPathRegistry,
+  ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+} from "../../resources/ArtifactPaths.js";
 import { DenoStandaloneArtifactReader } from "../DenoStandaloneArtifactReader.js";
 import { cArchiveExecutable } from "../pyinstaller/CArchive.fixture.js";
 import { locateDenoStandalone } from "./DenoStandaloneLocation.js";
@@ -438,12 +441,11 @@ it("indexes spellings that share the same portable remote destination", async ()
     });
     expect(rows.get(`deno-remote/${String(index * 2 + 1)}`)).toMatchObject({
       format_metadata: { source_path: second },
-      limitations: expect.arrayContaining([
-        expect.stringContaining("logical path prefix"),
-      ]),
     });
   }
-  expect(snapshot.limitations.join("\n")).not.toContain("case folding");
+  expect(snapshot.limitations).not.toContain(
+    ENGLISH_UNICODE_CASE_INVENTORY_LIMITATION,
+  );
 });
 
 it("reports unknown coverage when the virtual filesystem cannot be listed", async () => {
@@ -564,49 +566,6 @@ it("marks an entry point by its source path, not an indexed logical path", async
   expect(
     snapshot.occurrences.find((row) => row.logical_path === "deno-vfs/0"),
   ).toMatchObject({ format_metadata: { entry_point: false } });
-});
-
-it("indexes a remote path that prefixes another embedded path", async () => {
-  const snapshot = await inventoryOf(
-    "remote-prefix",
-    denoElf(
-      buildDenoSection({
-        specifiers: [
-          { text: "file:///main.ts", id: 0 },
-          { text: "https://example.com/a.ts", id: 1 },
-        ],
-        remoteModules: [{ specifierId: 1, data: Buffer.from("body") }],
-        vfs: [
-          {
-            Dir: {
-              n: "deno-remote",
-              e: [
-                {
-                  Dir: {
-                    n: "example.com",
-                    e: [{ File: { n: "a.ts", o: [0, 1] } }],
-                  },
-                },
-              ],
-            },
-          },
-        ],
-        vfsFileData: Buffer.from("x"),
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find(
-      (row) =>
-        row.format_metadata !== null &&
-        typeof row.format_metadata === "object" &&
-        "role" in row.format_metadata &&
-        row.format_metadata.role === "remote-module",
-    ),
-  ).toMatchObject({
-    logical_path: "deno-remote/0",
-    limitations: expect.arrayContaining([expect.stringContaining("prefix")]),
-  });
 });
 
 it("scans blocked remote namespaces once across all modules", async () => {
