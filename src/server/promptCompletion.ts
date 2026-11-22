@@ -45,10 +45,12 @@ export const createPromptCompletionSource = (
       context,
     );
     const prefix = normalize(value);
-    const nonEmpty = candidates.filter((candidate) => candidate.length > 0);
-    return uniqueSorted(nonEmpty).filter((candidate) =>
-      normalize(candidate).startsWith(prefix),
+    const matches = candidates.filter(
+      (candidate) =>
+        candidate.length > 0 &&
+        (prefix === "" || normalize(candidate).startsWith(prefix)),
     );
+    return uniqueSorted(matches);
   },
 });
 
