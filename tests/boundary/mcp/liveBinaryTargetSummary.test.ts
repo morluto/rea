@@ -18,6 +18,13 @@ const elf = {
   type: 2,
   flags: 0,
 };
+const dsymCompanion = {
+  sourcePath: "/fixture/target.dSYM",
+  memberPath: "/fixture/target.dSYM/Contents/Resources/DWARF/target",
+  memberSha256: "b".repeat(64),
+  memberSizeBytes: 56,
+  uuid: "11111111-2222-3333-4444-555555555555",
+};
 const targets: readonly BinaryTarget[] = [
   ...(["mach-o", "elf", "dos-mz", "dos-com"] as const).map((format) => ({
     ...executable,
@@ -25,6 +32,13 @@ const targets: readonly BinaryTarget[] = [
     architecture: "x86" as const,
     availableArchitectures: ["x86" as const],
   })),
+  {
+    ...executable,
+    format: "mach-o",
+    architecture: "arm64",
+    availableArchitectures: ["arm64"],
+    debugCompanion: dsymCompanion,
+  },
   {
     ...executable,
     format: "elf",
@@ -70,6 +84,14 @@ const targets: readonly BinaryTarget[] = [
     architecture: "arm64",
     availableArchitectures: ["arm64"],
     universalSlice: { offset: 32, size: 32 },
+  },
+  {
+    ...executable,
+    format: "mach-o-universal",
+    architecture: "arm64",
+    availableArchitectures: ["arm64"],
+    universalSlice: { offset: 32, size: 32 },
+    debugCompanion: dsymCompanion,
   },
   {
     ...executable,
@@ -146,6 +168,48 @@ const impossible = [
     architecture: "arm",
     entry_point: "0x1000",
   },
+  {
+    kind: "executable",
+    format: "mach-o",
+    architecture: "arm64",
+    debug_companion: {
+      source_path: dsymCompanion.sourcePath,
+      uuid: "not-a-uuid",
+      member_sha256: dsymCompanion.memberSha256,
+    },
+  },
+  {
+    kind: "executable",
+    format: "mach-o-universal",
+    architecture: "arm64",
+    debug_companion: {
+      source_path: dsymCompanion.sourcePath,
+      uuid: dsymCompanion.uuid,
+    },
+  },
+];
+
+const nonMachOWithCompanion = [
+  {
+    kind: "executable",
+    format: "elf",
+    architecture: "x86_64",
+    debug_companion: {
+      source_path: dsymCompanion.sourcePath,
+      uuid: dsymCompanion.uuid,
+      member_sha256: dsymCompanion.memberSha256,
+    },
+  },
+  {
+    kind: "database",
+    format: "analysis-database",
+    architecture: null,
+    debug_companion: {
+      source_path: dsymCompanion.sourcePath,
+      uuid: dsymCompanion.uuid,
+      member_sha256: dsymCompanion.memberSha256,
+    },
+  },
 ];
 
 it.each(["draft-2020-12", "draft-07"] as const)(
@@ -165,6 +229,17 @@ it.each(["draft-2020-12", "draft-07"] as const)(
         ...(target.format === "raw-binary" || target.format === "gamecube-dol"
           ? { entry_point: target.entryPoint }
           : {}),
+        ...((target.format === "mach-o" ||
+          target.format === "mach-o-universal") &&
+        target.debugCompanion !== undefined
+          ? {
+              debug_companion: {
+                source_path: target.debugCompanion.sourcePath,
+                uuid: target.debugCompanion.uuid,
+                member_sha256: target.debugCompanion.memberSha256,
+              },
+            }
+          : {}),
       });
       expect(
         sessionOutputSchemas.open_binary.safeParse({ result: summary }).success,
@@ -177,6 +252,14 @@ it.each(["draft-2020-12", "draft-07"] as const)(
         sessionOutputSchemas.open_binary.safeParse({ result }).success,
       ).toBe(false);
       expect(validate({ result }).valid).toBe(false);
+    }
+    for (const classification of nonMachOWithCompanion) {
+      const result = { ...identity, ...classification };
+      expect(validate({ result }).valid).toBe(false);
+      const parsed = sessionOutputSchemas.open_binary.safeParse({ result });
+      expect(parsed.success).toBe(true);
+      if (parsed.success)
+        expect(parsed.data.result).not.toHaveProperty("debug_companion");
     }
   },
 );

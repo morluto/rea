@@ -8,6 +8,7 @@ import {
   immutableAnalysisSnapshot,
   snapshotBinding,
   snapshotEvidenceForQuery,
+  sameSnapshotTarget,
   snapshotTarget,
   snapshotMatchesTarget,
 } from "./analysisSnapshot.js";
@@ -195,26 +196,230 @@ describe("analysis snapshot target identity", () => {
       null,
     );
   });
+
+  it("refuses a snapshot target whose kind its format cannot have", () => {
+    const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
+    const snapshot = {
+      target,
+      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([]),
+    };
+    expect(analysisSnapshotSchema.safeParse(snapshot).success).toBe(true);
+    // Query IDs commit to the kind: such a header would import entries that no
+    // lookup or export of the executable can reach.
+    expect(
+      analysisSnapshotSchema.safeParse({
+        ...snapshot,
+        target: { ...target, kind: "archive" },
+      }).success,
+    ).toBe(false);
+  });
 });
 
-it("refuses a snapshot target whose kind its format cannot have", () => {
-  const target = snapshotTarget(ANALYSIS_SNAPSHOT_TARGET);
-  const snapshot = {
-    target,
-    binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-    entries: [],
-    workflow_entries: [],
-    evidence_bundle: createEvidenceBundle([]),
-  };
-  expect(analysisSnapshotSchema.safeParse(snapshot).success).toBe(true);
-  // Query IDs commit to the kind: such a header would import entries that no
-  // lookup or export of the executable can reach.
-  expect(
-    analysisSnapshotSchema.safeParse({
-      ...snapshot,
-      target: { ...target, kind: "archive" },
-    }).success,
-  ).toBe(false);
+describe("analysis snapshot dSYM companion identity", () => {
+  it("hashes a bare target exactly like snapshots written before companions", () => {
+    const base = {
+      kind: "executable",
+      identity: {
+        kind: "file",
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: "mach-o",
+        architecture: "arm64",
+        selection: null,
+      },
+    } as const;
+    // A legacy file has no debug_companion key; parsing a bare target adds
+    // null. Both must hash identically so legacy query IDs keep validating.
+    const legacyShape = {
+      ...base,
+    } as unknown as Parameters<typeof analysisQueryId>[0];
+    const binding = snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE);
+    const parsedShape = analysisSnapshotSchema.parse({
+      target: legacyShape,
+      binding,
+      entries: [],
+      workflow_entries: [],
+      evidence_bundle: createEvidenceBundle([]),
+    });
+    expect(parsedShape.target.debug_companion).toBeNull();
+    expect(
+      analysisQueryId(parsedShape.target, binding, "list_procedures", {}),
+    ).toBe(analysisQueryId(legacyShape, binding, "list_procedures", {}));
+    // A present companion changes the identifier.
+    const withCompanion = {
+      ...base,
+      debug_companion: {
+        source_path: "/fixture/pair.dSYM",
+        uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
+        member_sha256: "a".repeat(64),
+      },
+    };
+    expect(
+      analysisQueryId(withCompanion, binding, "list_procedures", {}),
+    ).not.toBe(analysisQueryId(legacyShape, binding, "list_procedures", {}));
+    expect(sameSnapshotTarget(parsedShape.target, withCompanion)).toBe(false);
+    expect(sameSnapshotTarget(withCompanion, withCompanion)).toBe(true);
+  });
+
+  it("partitions session and snapshot identity by the selected dSYM", () => {
+    const base: BinaryTarget = {
+      path: "/fixture/pair",
+      sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      kind: "executable",
+      format: "mach-o",
+      architecture: "arm64",
+      availableArchitectures: ["arm64"],
+    };
+    const companion = {
+      sourcePath: "/fixture/pair.dSYM",
+      memberPath: "/fixture/pair.dSYM/Contents/Resources/DWARF/pair",
+      memberSha256: "a".repeat(64),
+      memberSizeBytes: 4096,
+      uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
+    };
+    const withCompanion = { ...base, debugCompanion: companion };
+    // A byte-identical companion copied to another path is a different
+    // selection: the session must restage rather than report the old bundle.
+    expect(
+      snapshotMatchesTarget(snapshotTarget(withCompanion), {
+        ...base,
+        debugCompanion: { ...companion, sourcePath: "/elsewhere/pair.dSYM" },
+      }),
+    ).toBe(false);
+    expect(snapshotMatchesTarget(snapshotTarget(base), base)).toBe(true);
+    expect(
+      snapshotMatchesTarget(snapshotTarget(withCompanion), withCompanion),
+    ).toBe(true);
+    // Omitting the companion after using one, or adding one after a bare open,
+    // is a different analysis input and must not reuse the retained session.
+    expect(snapshotMatchesTarget(snapshotTarget(withCompanion), base)).toBe(
+      false,
+    );
+    expect(snapshotMatchesTarget(snapshotTarget(base), withCompanion)).toBe(
+      false,
+    );
+    // A different companion is a different identity too.
+    expect(
+      snapshotMatchesTarget(snapshotTarget(withCompanion), {
+        ...base,
+        debugCompanion: {
+          ...companion,
+          uuid: "99999999-9999-9999-9999-999999999999",
+        },
+      }),
+    ).toBe(false);
+    // Snapshots persisted before companion admission carry no field and match
+    // only a bare target.
+    const legacy = snapshotTarget(base);
+    delete (legacy as Record<string, unknown>).debug_companion;
+    expect(snapshotMatchesTarget(legacy, base)).toBe(true);
+    expect(snapshotMatchesTarget(legacy, withCompanion)).toBe(false);
+  });
+});
+
+describe("analysis snapshot debug_companion schema contract", () => {
+  it("restricts persisted non-null debug_companion commitments to Mach-O targets with validated fields", () => {
+    const { snapshot } = snapshotWithHistoricalEvidence();
+    const validCompanion = {
+      source_path: "/fixture/pair.dSYM",
+      uuid: "A1B2C3D4-E5F6-0789-ABCD-EF0123456789",
+      member_sha256: "a".repeat(64),
+    };
+    const machoTarget = {
+      kind: "executable",
+      identity: {
+        kind: "file",
+        sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+        format: "mach-o",
+        architecture: "arm64",
+        selection: null,
+      },
+      debug_companion: validCompanion,
+    };
+    expect(
+      analysisSnapshotSchema.safeParse({ ...snapshot, target: machoTarget })
+        .success,
+    ).toBe(true);
+    expect(
+      analysisSnapshotSchema.safeParse({
+        ...snapshot,
+        target: {
+          ...machoTarget,
+          identity: {
+            ...machoTarget.identity,
+            format: "mach-o-universal",
+            selection: {
+              kind: "universal-slice",
+              offset: 0,
+              size: 4096,
+              cpu_type: null,
+              cpu_subtype: null,
+            },
+          },
+        },
+      }).success,
+    ).toBe(true);
+
+    // Non-Mach-O targets must not carry a non-null debug_companion.
+    for (const nonMachoTarget of [
+      {
+        ...machoTarget,
+        identity: { ...machoTarget.identity, format: "elf" },
+      },
+      {
+        ...machoTarget,
+        identity: { ...machoTarget.identity, format: "pe" },
+      },
+      {
+        kind: "executable",
+        identity: {
+          kind: "file",
+          sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+          format: "raw-binary",
+          architecture: "arm64",
+          selection: { kind: "entry-point", entry_point: "0x1000" },
+        },
+        debug_companion: validCompanion,
+      },
+      {
+        kind: "artifact",
+        identity: {
+          kind: "file",
+          sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+          format: "plist",
+          architecture: null,
+          selection: null,
+        },
+        debug_companion: validCompanion,
+      },
+    ]) {
+      expect(
+        analysisSnapshotSchema.safeParse({
+          ...snapshot,
+          target: nonMachoTarget,
+        }).success,
+      ).toBe(false);
+    }
+
+    // Malformed companion fields or extra properties must be rejected.
+    for (const badCompanion of [
+      { ...validCompanion, source_path: "" },
+      { ...validCompanion, source_path: "/fixture/bad\u0000.dSYM" },
+      { ...validCompanion, uuid: validCompanion.uuid.toLowerCase() },
+      { ...validCompanion, uuid: "not-a-uuid" },
+      { ...validCompanion, member_sha256: "not-a-sha256" },
+      { ...validCompanion, extra: true },
+    ]) {
+      expect(
+        analysisSnapshotSchema.safeParse({
+          ...snapshot,
+          target: { ...machoTarget, debug_companion: badCompanion },
+        }).success,
+      ).toBe(false);
+    }
+  });
 });
 
 describe("analysis snapshot nested subject contract", () => {

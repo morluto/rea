@@ -7,7 +7,14 @@ import { createFunctionCoordinateContext } from "../domain/native/functionCoordi
 import type { JsonValue } from "../domain/jsonValue.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type {
+  BinaryTarget,
+  MachODebugCompanion,
+} from "../domain/binaryTargetTypes.js";
+import {
+  machODebugCompanionCommitmentSchema,
+  type MachODebugCompanionCommitment,
+} from "../domain/machoDebugCompanion.js";
 import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
@@ -268,6 +275,7 @@ export const resolveGhidraAnalysisProfile = async (
         ),
       ),
     );
+  const debugCompanion = ghidraTargetDebugCompanion(target);
   // ComLoader's acceptance depends on the provider name and the image bytes.
   // Read them once here; the launcher uses this committed selection.
   const comImport = dosCom
@@ -298,6 +306,17 @@ export const resolveGhidraAnalysisProfile = async (
         available_architectures: [
           ...(target.availableArchitectures ?? []),
         ].sort(),
+        // The committed profile is the Evidence-bearing analysis identity:
+        // a companion-selected run must not share a digest with a bare run.
+        ...(debugCompanion !== undefined
+          ? {
+              debug_companion: {
+                source_path: debugCompanion.sourcePath,
+                uuid: debugCompanion.uuid,
+                member_sha256: debugCompanion.memberSha256,
+              },
+            }
+          : {}),
         import_mode: "ephemeral-source-immutable",
         ...(installation.platform === "win32" &&
         target.format === "pe" &&
@@ -381,6 +400,30 @@ export const resolveGhidraAnalysisProfile = async (
     }),
   );
 };
+
+/** Admitted Mach-O dSYM companion carried by a target, if any. */
+export const ghidraTargetDebugCompanion = (
+  target: BinaryTarget,
+): MachODebugCompanion | undefined =>
+  target.format === "mach-o" || target.format === "mach-o-universal"
+    ? target.debugCompanion
+    : undefined;
+
+/** Admitted Mach-O dSYM companion committed into the fresh-import profile. */
+export const ghidraDebugCompanionCommitmentSchema =
+  machODebugCompanionCommitmentSchema;
+export type GhidraDebugCompanionCommitment = MachODebugCompanionCommitment;
+
+/** Whether a committed profile and the admitted target select the same companion. */
+export const sameGhidraDebugCompanion = (
+  committed: GhidraDebugCompanionCommitment | undefined,
+  companion: MachODebugCompanion | undefined,
+): boolean =>
+  committed === undefined || companion === undefined
+    ? committed === companion
+    : committed.source_path === companion.sourcePath &&
+      committed.uuid === companion.uuid &&
+      committed.member_sha256 === companion.memberSha256;
 
 /** Read the import-language commitment back from a resolved profile. */
 export const ghidraProfileLanguageOverride = (

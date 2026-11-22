@@ -15,7 +15,7 @@ import {
 } from "./machoTargetSelection.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { err, ok, type Result } from "../result.js";
-import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitectureSelection.js";
+import { MACHO_ARCHITECTURE_POLICIES } from "./machoArchitecturePolicy.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const cpuName = (cpuType: number, cpuSubtype: number): string => {

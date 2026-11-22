@@ -21,6 +21,7 @@ describe("REA's CLI command table", () => {
           format: "--target-format",
           architecture: "--architecture",
           entry_point: "--entry-point",
+          dsym_path: "--dsym-path",
           provider_id: "--provider",
           snapshot_path: "--snapshot",
         },

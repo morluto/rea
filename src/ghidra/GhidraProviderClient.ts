@@ -47,10 +47,13 @@ import {
   ghidraSeedLimitations,
 } from "./GhidraAnalysisSeeds.js";
 import {
+  ghidraDebugCompanionCommitmentSchema,
   ghidraPinnedLanguage,
   ghidraProfileDisabledAnalyzers,
   ghidraProfileLanguageOverride,
   ghidraProfilePinnedLanguage,
+  ghidraTargetDebugCompanion,
+  sameGhidraDebugCompanion,
   sameGhidraDisabledAnalyzers,
   sameGhidraLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
@@ -492,6 +495,32 @@ export const createGhidraProviderClient = (input: {
       ),
     );
   const project = projectProfile.data;
+  const targetDebugCompanion = ghidraTargetDebugCompanion(target);
+  const debugCompanionProfile = ghidraDebugCompanionCommitmentSchema
+    .optional()
+    .safeParse(committedProfile.parameters.debug_companion);
+  if (
+    !debugCompanionProfile.success ||
+    (project !== undefined &&
+      (debugCompanionProfile.data !== undefined ||
+        targetDebugCompanion !== undefined)) ||
+    !sameGhidraDebugCompanion(debugCompanionProfile.data, targetDebugCompanion)
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        related: { parameters: ["dsym_path"] },
+        diagnostics: {
+          rejection:
+            project !== undefined
+              ? "existing_project_debug_companion"
+              : "debug_companion_profile_mismatch",
+          reason:
+            project !== undefined
+              ? "Existing-project Ghidra sessions open a saved program with -process -noanalysis and cannot stage or analyze a dsym_path companion."
+              : "Resolve dsym_path into a matching analysis profile before opening the session.",
+        },
+      }),
+    );
   const projection: GhidraProjection = {
     limits: config,
     programName: project?.program_name,
@@ -750,6 +779,9 @@ export const createGhidraProviderClient = (input: {
         ? (target.sourcePath ?? target.path)
         : target.path,
     targetSha256: target.sha256,
+    ...(project === undefined && targetDebugCompanion !== undefined
+      ? { debugCompanion: targetDebugCompanion }
+      : {}),
     transport:
       installation.platform === "win32"
         ? "authenticated-loopback-tcp"
@@ -1476,6 +1508,29 @@ const projectPrimarySessionError = (
       physicalCause.reason,
       { ...context, integrityCheck: physicalCause.integrityCheck },
     );
+  if (
+    failure.kind === "admission" &&
+    failure.cause instanceof GhidraAdmissionError &&
+    failure.cause.code === "existing_project_debug_companion"
+  ) {
+    const constraint =
+      "Existing-project mode opens a saved Ghidra program with -process -noanalysis and does not import or analyze a dsym_path companion";
+    const remediationAction =
+      "Unset REA_GHIDRA_PROJECT_PATH (and REA_GHIDRA_PROGRAM_NAME if set) to run a fresh Ghidra import with dsym_path, or omit dsym_path to inspect the saved Ghidra project as-is.";
+    if (source === "existing-project")
+      return new ConfigurationError(constraint, {
+        ...context,
+        settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
+        related: { parameters: ["dsym_path"] },
+        remediationAction,
+      });
+    return new ProviderAdapterError("ghidra", operation, {
+      ...context,
+      userMessage: `${constraint}.`,
+      related: { parameters: ["dsym_path"] },
+      remediationAction,
+    });
+  }
   if (
     failure.kind === "admission" &&
     failure.cause instanceof GhidraAdmissionError &&

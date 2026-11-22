@@ -9,6 +9,7 @@ const GHIDRA_ADMISSION_CODES = [
   "existing_project_riscv_calling_convention",
   "existing_project_elf_image_base",
   "existing_project_analysis",
+  "existing_project_debug_companion",
   "gamecube_dol_combined",
   "psp_combined",
   "psp_raw_binary",

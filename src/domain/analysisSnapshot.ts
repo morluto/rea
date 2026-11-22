@@ -46,6 +46,7 @@ import {
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
+import { machODebugCompanionCommitmentSchema } from "./machoDebugCompanion.js";
 import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
@@ -85,7 +86,8 @@ const snapshotArchitectureAllowed = (
         : architecture === null || !RAW_ONLY.has(architecture);
 /**
  * The persisted target: the path-free identity `binaryTargetIdentity`
- * produces, plus the binary kind that query IDs commit to.
+ * produces, the binary kind that query IDs commit to, and any admitted
+ * Mach-O dSYM companion commitment.
  */
 const targetSchema = z
   .strictObject({
@@ -94,8 +96,12 @@ const targetSchema = z
       format: formatSchema,
       architecture: architectureSchema.nullable(),
     }),
+    /** Absent in snapshots written before companion admission; null when none. */
+    debug_companion: machODebugCompanionCommitmentSchema
+      .nullable()
+      .default(null),
   })
-  .superRefine(({ kind, identity }, context) => {
+  .superRefine(({ kind, identity, debug_companion }, context) => {
     // Query IDs commit to the kind, so a kind the format cannot have would
     // admit entries that no live lookup or export of this target can reach.
     if (kind !== BINARY_TARGET_FORMAT_KINDS[identity.format])
@@ -119,6 +125,17 @@ const targetSchema = z
           expected === null
             ? `Snapshot target format ${identity.format} makes no selection`
             : `Snapshot target format ${identity.format} requires a ${expected} selection`,
+      });
+    if (
+      debug_companion !== null &&
+      identity.format !== "mach-o" &&
+      identity.format !== "mach-o-universal"
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["debug_companion"],
+        message:
+          "Only mach-o and mach-o-universal snapshot targets may carry a debug_companion",
       });
   });
 const bindingSchema = z
@@ -407,11 +424,25 @@ const canonicalJson = (value: unknown): string => {
   return encoded;
 };
 
-/** The persisted snapshot target of an open binary: its target identity and kind. */
+/** A dSYM change is a different analysis input, not the same target. */
+const machOCompanionIdentity = (
+  target: BinaryTarget,
+): AnalysisSnapshotTarget["debug_companion"] =>
+  (target.format === "mach-o" || target.format === "mach-o-universal") &&
+  target.debugCompanion !== undefined
+    ? {
+        source_path: target.debugCompanion.sourcePath,
+        uuid: target.debugCompanion.uuid,
+        member_sha256: target.debugCompanion.memberSha256,
+      }
+    : null;
+
+/** The persisted snapshot target of an open binary: its target identity, kind, and dSYM companion. */
 export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
   targetSchema.parse({
     kind: target.kind,
     identity: binaryTargetIdentity(target),
+    debug_companion: machOCompanionIdentity(target),
   });
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
@@ -423,12 +454,39 @@ export const snapshotBinding = (
     analysis_profile: profile,
   });
 
+const sameDebugCompanionCommitment = (
+  left: AnalysisSnapshotTarget["debug_companion"],
+  right: AnalysisSnapshotTarget["debug_companion"],
+): boolean =>
+  left === null || right === null
+    ? left === right
+    : left.uuid === right.uuid &&
+      left.member_sha256 === right.member_sha256 &&
+      left.source_path === right.source_path;
+
+/** Whether two persisted snapshot targets agree on kind, identity, and dSYM companion. */
+export const sameSnapshotTarget = (
+  left: AnalysisSnapshotTarget,
+  right: AnalysisSnapshotTarget,
+): boolean =>
+  left.kind === right.kind &&
+  sameTargetIdentity(left.identity, right.identity) &&
+  sameDebugCompanionCommitment(
+    left.debug_companion ?? null,
+    right.debug_companion ?? null,
+  );
+
 /** Compare an open binary with the immutable target identity in a snapshot. */
 export const snapshotMatchesTarget = (
   snapshot: AnalysisSnapshotTarget,
   target: BinaryTarget,
 ): boolean =>
-  sameTargetIdentity(snapshot.identity, binaryTargetIdentity(target));
+  snapshot.kind === target.kind &&
+  sameTargetIdentity(snapshot.identity, binaryTargetIdentity(target)) &&
+  sameDebugCompanionCommitment(
+    snapshot.debug_companion ?? null,
+    machOCompanionIdentity(target),
+  );
 
 /** Compare a snapshot binding with the selected concrete analysis profile. */
 export const snapshotMatchesProfile = (
@@ -615,6 +673,17 @@ export const evidenceMatchesEntry = (
     evidenceContentDigest(evidence),
   ]) === entryEvidenceKey(entry, snapshot.binding);
 
+/**
+ * The target shape hashed into query IDs. A null companion is stripped so a
+ * bare target hashes exactly like the snapshots written before companion
+ * admission; a present companion keeps its key.
+ */
+const queryIdTarget = (target: AnalysisSnapshotTarget): JsonValue => {
+  if (target.debug_companion != null) return target;
+  const { debug_companion: _stripped, ...legacy } = target;
+  return legacy;
+};
+
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
   target: AnalysisSnapshotTarget,
@@ -622,7 +691,14 @@ export const analysisQueryId = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ): string =>
-  `query_${sha256Hex(canonicalJson({ target, binding, operation, parameters }))}`;
+  `query_${sha256Hex(
+    canonicalJson({
+      target: queryIdTarget(target),
+      binding,
+      operation,
+      parameters,
+    }),
+  )}`;
 
 /** Create one serializable snapshot entry from a successful provider call. */
 export const createAnalysisSnapshotEntry = (input: {

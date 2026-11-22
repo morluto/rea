@@ -17,10 +17,7 @@ import {
   type Evidence,
   type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
-import {
-  sameTargetIdentity,
-  unknownTarget,
-} from "../../domain/targetIdentity.js";
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   analysisQueryId,
@@ -28,6 +25,7 @@ import {
   evidenceMatchesWorkflowEntry,
   createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
+  sameSnapshotTarget,
   snapshotBinding,
   snapshotBindingMismatch,
   snapshotMatchesProfile,
@@ -241,7 +239,7 @@ export class AnalysisSnapshotCache {
     snapshot = immutableAnalysisSnapshot(snapshot);
     if (
       (this.#target !== undefined &&
-        !sameTargetIdentity(this.#target.identity, snapshot.target.identity)) ||
+        !sameSnapshotTarget(this.#target, snapshot.target)) ||
       (this.#binding !== undefined &&
         !snapshotMatchesProfile(
           this.#binding,
