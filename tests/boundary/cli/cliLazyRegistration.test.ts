@@ -19,7 +19,10 @@ import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
-import { processTest } from "../../support/process/processFixture.js";
+import {
+  processTest,
+  type TestProcesses,
+} from "../../support/process/processFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
 const ENVIRONMENT = { PATH: process.env.PATH };
@@ -252,42 +255,158 @@ describe("lazy CLI execution", () => {
   );
 });
 
-describe("lazy CLI discovery", () => {
-  processTest(
-    "loads only the target registrar for known-command help and schema, keeping root and unknown help complete",
-    async ({ processes }) => {
-      const home = await createTestTempDirectory("rea-cli-lazy-discovery-");
-      const run = (arguments_: readonly string[]) =>
-        processes.run(
-          process.execPath,
-          [
-            `--import=${monitorCompleteCli()}`,
-            join("scripts", "rea.mjs"),
-            ...arguments_,
-          ],
-          { env: { ...ENVIRONMENT, HOME: home } },
-        );
-      const lazyHelp = await run(["list-cutter-sessions", "--help"]);
-      expect(lazyHelp.exitCode, lazyHelp.stderr).toBe(0);
-      expect(lazyHelp.stdout).toContain("Usage: rea list-cutter-sessions");
-      expect(lazyHelp.stderr).not.toContain(COMPLETE_CLI_IMPORT);
-      const lazySchema = await run([
-        "list-cutter-sessions",
-        "--schema",
-        "--json",
-      ]);
-      expect(lazySchema.exitCode, lazySchema.stderr).toBe(0);
-      expect(JSON.parse(lazySchema.stdout)).toMatchObject({
+interface LazyDiscoveryCase {
+  readonly label: string;
+  readonly arguments: readonly string[];
+  readonly assertOutput: (stdout: string) => void;
+}
+
+const assertScopedHelp = (stdout: string): void => {
+  expect(stdout).toContain("Usage: rea list-cutter-sessions");
+  expect(stdout).not.toContain("\nCommands:\n");
+};
+
+const assertRootHelp = (stdout: string): void => {
+  expect(stdout).toContain("\nCommands:\n");
+};
+
+const llmsCommandRows = (stdout: string): readonly string[] =>
+  stdout.split("\n").filter((line) => line.startsWith("| `rea "));
+
+const KNOWN_COMMAND_DISCOVERY_CASES: readonly LazyDiscoveryCase[] = [
+  {
+    label: "--help",
+    arguments: ["list-cutter-sessions", "--help"],
+    assertOutput: assertScopedHelp,
+  },
+  {
+    label: "-h",
+    arguments: ["list-cutter-sessions", "-h"],
+    assertOutput: assertScopedHelp,
+  },
+  {
+    label: "--schema",
+    arguments: ["list-cutter-sessions", "--schema", "--json"],
+    assertOutput: (stdout) => {
+      const schema = JSON.parse(stdout) as Record<string, unknown>;
+      expect(schema).toMatchObject({
         options: { type: "object" },
         globals: { properties: { timings: { type: "boolean" } } },
       });
-      expect(lazySchema.stderr).not.toContain(COMPLETE_CLI_IMPORT);
-      const rootHelp = await run(["--help"]);
-      expect(rootHelp.exitCode, rootHelp.stderr).toBe(0);
-      expect(rootHelp.stderr).toContain(COMPLETE_CLI_IMPORT);
-      const unknownHelp = await run(["unknown-command-xyz", "--help"]);
-      expect(unknownHelp.exitCode, unknownHelp.stderr).toBe(0);
-      expect(unknownHelp.stderr).toContain(COMPLETE_CLI_IMPORT);
+      expect(Object.keys(schema).sort()).toEqual(["globals", "options"]);
+    },
+  },
+  {
+    label: "--llms",
+    arguments: ["list-cutter-sessions", "--llms"],
+    assertOutput: (stdout) => {
+      const rows = llmsCommandRows(stdout);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toContain("`rea list-cutter-sessions`");
+    },
+  },
+  {
+    label: "--llms-full",
+    arguments: ["list-cutter-sessions", "--llms-full"],
+    assertOutput: (stdout) => {
+      const headings = stdout
+        .split("\n")
+        .filter((line) => line.startsWith("# rea "));
+      expect(headings).toEqual(["# rea list-cutter-sessions"]);
+    },
+  },
+];
+
+const COMPLETE_CLI_DISCOVERY_CASES: readonly LazyDiscoveryCase[] = [
+  {
+    label: "root --help",
+    arguments: ["--help"],
+    assertOutput: assertRootHelp,
+  },
+  {
+    label: "root --llms",
+    arguments: ["--llms"],
+    assertOutput: (stdout) => {
+      expect(llmsCommandRows(stdout).length).toBeGreaterThan(1);
+    },
+  },
+  {
+    label: "unknown command --help",
+    arguments: ["unknown-command-xyz", "--help"],
+    assertOutput: assertRootHelp,
+  },
+  {
+    label: "builtin completions --help",
+    arguments: ["completions", "--help"],
+    assertOutput: (stdout) => {
+      expect(stdout).toContain("Usage: rea completions");
+    },
+  },
+];
+
+const runMonitoredDiscoveryCli = (
+  processes: TestProcesses,
+  cliArguments: readonly string[],
+  options: { readonly home: string; readonly compileCache: string },
+) =>
+  processes.run(
+    process.execPath,
+    [
+      `--import=${monitorCompleteCli()}`,
+      join("scripts", "rea.mjs"),
+      ...cliArguments,
+    ],
+    {
+      env: {
+        ...ENVIRONMENT,
+        HOME: options.home,
+        NODE_COMPILE_CACHE: options.compileCache,
+      },
+    },
+  );
+
+describe("lazy CLI discovery", () => {
+  let compileCacheRoot = "";
+  let compileCache = "";
+
+  beforeAll(async () => {
+    compileCacheRoot = (
+      await createTestWorkspace("rea-cli-lazy-discovery-cache-")
+    ).root;
+    compileCache = join(compileCacheRoot, "node-compile");
+  });
+
+  afterAll(async () => {
+    if (compileCacheRoot !== "") {
+      await removeTestWorkspace(compileCacheRoot);
+    }
+  });
+
+  processTest.for(KNOWN_COMMAND_DISCOVERY_CASES)(
+    "loads only the target registrar for known-command $label",
+    async ({ arguments: cliArguments, assertOutput }, { processes }) => {
+      const home = await createTestTempDirectory("rea-cli-lazy-discovery-");
+      const result = await runMonitoredDiscoveryCli(processes, cliArguments, {
+        home,
+        compileCache,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      assertOutput(result.stdout);
+      expect(result.stderr).not.toContain(COMPLETE_CLI_IMPORT);
+    },
+  );
+
+  processTest.for(COMPLETE_CLI_DISCOVERY_CASES)(
+    "loads the complete CLI for $label",
+    async ({ arguments: cliArguments, assertOutput }, { processes }) => {
+      const home = await createTestTempDirectory("rea-cli-complete-discovery-");
+      const result = await runMonitoredDiscoveryCli(processes, cliArguments, {
+        home,
+        compileCache,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      assertOutput(result.stdout);
+      expect(result.stderr).toContain(COMPLETE_CLI_IMPORT);
     },
   );
 });

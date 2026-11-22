@@ -32,7 +32,7 @@ const isRegistrationId = (id: string): id is CliCommandRegistrationId =>
  * The registrars the command these arguments run needs, or undefined when the
  * complete CLI must answer, as it does for shell completion, which has no
  * global arguments. A standalone version or retired per-command MCP query
- * needs no registrar. A recorded top-level command's `--help`, `--schema`,
+ * needs no registrar. A recorded top-level command's `--help`, `-h`, `--schema`,
  * `--llms`, or `--llms-full` only needs that command's registrar. Root help/
  * manifests, unknown names ("did you mean"), other CLI builtins, and a missing
  * or unusable recording all describe or search every command.
