@@ -108,9 +108,10 @@ const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Outcome the post-analysis script records for the bridge handshake. The
- * ilp32f policy instead refuses an image whose signatures its prototype
- * misplaces.
+ * Outcome the post-analysis script records for the bridge handshake. Every
+ * policy instead refuses an image whose DWARF defines functions in a language
+ * other than C, C++ or assembly, and the ilp32f policy also refuses one whose
+ * signatures its prototype misplaces.
  */
 export type GhidraRiscvCallingConventionReport =
   | {
@@ -118,7 +119,7 @@ export type GhidraRiscvCallingConventionReport =
       readonly functions: number;
       readonly definitions: number;
     }
-  | { readonly policy: "ilp32f-prototype-v1"; readonly refused: string };
+  | { readonly policy: GhidraRiscvCallingConvention; readonly refused: string };
 
 /**
  * Bound on the bridge's refusal reason. The script names at most eight
@@ -385,6 +386,13 @@ export const GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION =
   "Ghidra shows a C++ class with a non-trivial copy constructor or destructor as passed by value, although compilers pass it through a hidden pointer. REA cannot detect such a signature, so its storage is unverified.";
 
 /**
+ * The bridge refuses an image whose DWARF defines functions in another
+ * language. Code that DWARF does not describe cannot be checked.
+ */
+export const GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION =
+  "REA refuses an image whose DWARF compile units define functions in a language other than C, C++ or assembly, because the prototype models the C psABI. Functions that no DWARF compile unit describes, such as every function of a stripped image, are not checked and are taken to follow the C psABI.";
+
+/**
  * Ghidra's DWARF import erases what these types' ilp32f storage depends on: it
  * keeps no vector marker on an array, and resolves `_Atomic`, which GCC ignores
  * and Clang does not, to its base type.
@@ -407,6 +415,7 @@ export const ghidraRiscvCallingConventionLimitations = (
           `RISC-V calling-convention outcome: ${report.functions} functions and ${report.definitions} function definitions use ${prototype}.`,
         ]),
     "Ghidra recovers a variadic call's arguments from the registers the caller writes, not from their types: a padding register can appear as an argument, and arguments after an unwritten register are omitted.",
+    GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
     GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
     ...(expected === "ilp32f-prototype-v1"
       ? [GHIDRA_RISCV_ERASED_TYPE_LIMITATION]

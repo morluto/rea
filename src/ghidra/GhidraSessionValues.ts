@@ -106,7 +106,7 @@ const sessionInfoSchema = z
           definitions: z.int().nonnegative(),
         }),
         z.strictObject({
-          policy: z.literal("ilp32f-prototype-v1"),
+          policy: z.enum(GHIDRA_RISCV_CALLING_CONVENTION_IDS),
           refused: z.string().min(1).max(GHIDRA_RISCV_REFUSAL_MAX_LENGTH),
         }),
       ])

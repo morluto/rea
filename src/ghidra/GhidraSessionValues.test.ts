@@ -161,6 +161,8 @@ describe("Ghidra RISC-V calling-convention report", () => {
     ["the ilp32 outcome", valid],
     ["the ilp32f outcome", single],
     ["an ilp32f refusal", refused],
+    // Either policy refuses functions compiled from another language.
+    ["an ilp32 refusal", { ...refused, policy: valid.policy }],
   ])("accepts %s exactly", (_label, report) => {
     const parsed = parseGhidraSessionInfo(
       { ...session(), riscv_calling_convention: report },
@@ -178,7 +180,10 @@ describe("Ghidra RISC-V calling-convention report", () => {
     ["an undeclared field", { ...valid, prototype: "__rea_ilp32" }],
     ["a non-object report", "ilp32-prototype-v1"],
     ["a custom-storage count", { ...single, custom_storage: 1 }],
-    ["an ilp32 refusal", { ...refused, policy: valid.policy }],
+    [
+      "a refusal of an unknown policy",
+      { ...refused, policy: "lp64-prototype-v1" },
+    ],
     ["a refusal with counts", { ...refused, functions: 1 }],
     ["an empty refusal", { ...refused, refused: "" }],
     ["an unbounded refusal", { ...refused, refused: "x".repeat(2049) }],

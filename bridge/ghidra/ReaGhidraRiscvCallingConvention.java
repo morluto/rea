@@ -52,6 +52,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Pattern;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.transform.OutputKeys;
@@ -133,10 +134,13 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
   private final Map<DataType, Kind> parameterKinds = new HashMap<>();
   private final Map<DataType, Kind> returnKinds = new HashMap<>();
   private final Map<DataType, Boolean> erasedUnions = new HashMap<>();
-  // Entry points of old-style C definitions, read from DWARF when first needed.
-  private Set<Address> oldStyleEntries;
+  // Entry points of old-style C definitions, read from DWARF before any policy applies.
+  private Set<Address> oldStyleEntries = Set.of();
 
-  /** DW_AT_language values of C, where a definition may be old-style (K&R); 0x2c is C17. */
+  /**
+   * DW_AT_language values of C, where a definition may be old-style (K&R); 0x2c is C17 and 0x3e
+   * C23, which Ghidra names no constant for.
+   */
   private static final Set<Integer> C_LANGUAGES =
       Set.of(
           DWARFSourceLanguage.DW_LANG_C89,
@@ -144,7 +148,43 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
           DWARFSourceLanguage.DW_LANG_C99,
           DWARFSourceLanguage.DW_LANG_ObjC,
           DWARFSourceLanguage.DW_LANG_C11,
-          0x2c);
+          0x2c,
+          0x3e);
+
+  /**
+   * DW_AT_language values whose functions follow the C psABI the policies model: C, and C++,
+   * whose Itanium ABI defers to the C psABI except for classes passed by hidden reference (a
+   * limitation REA reports), and assembly, whose functions declare no source types. 0x2a and 0x2b
+   * are C++17 and C++20, 0x31 is DWARF 6's DW_LANG_Assembly.
+   */
+  private static final Set<Integer> PSABI_LANGUAGES = psabiLanguages();
+
+  private static Set<Integer> psabiLanguages() {
+    Set<Integer> languages = new HashSet<>(C_LANGUAGES);
+    languages.addAll(
+        List.of(
+            DWARFSourceLanguage.DW_LANG_C_plus_plus,
+            DWARFSourceLanguage.DW_LANG_C_plus_plus_03,
+            DWARFSourceLanguage.DW_LANG_C_plus_plus_11,
+            DWARFSourceLanguage.DW_LANG_C_plus_plus_14,
+            0x2a,
+            0x2b,
+            DWARFSourceLanguage.DW_LANG_ObjC_plus_plus,
+            DWARFSourceLanguage.DW_LANG_Mips_Assembler,
+            0x31));
+    return Set.copyOf(languages);
+  }
+
+  /** Names of languages a refusal is likely to cite; any other is named by its value alone. */
+  private static final Map<Integer, String> LANGUAGE_NAMES =
+      Map.of(
+          DWARFSourceLanguage.DW_LANG_Rust, "Rust",
+          DWARFSourceLanguage.DW_LANG_Go, "Go",
+          DWARFSourceLanguage.DW_LANG_Swift, "Swift",
+          DWARFSourceLanguage.DW_LANG_D, "D",
+          DWARFSourceLanguage.DW_LANG_Ada95, "Ada 95",
+          DWARFSourceLanguage.DW_LANG_Fortran95, "Fortran 95",
+          0x27, "Zig");
 
   @Override
   public void run() throws Exception {
@@ -164,6 +204,13 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       throw new IllegalStateException(
           "REA " + policy.id() + " requires a 32-bit RISC-V program, not "
               + language.getLanguageID());
+    // Every policy models the C psABI, so functions compiled from another language refuse the
+    // image before any prototype is installed.
+    String foreign = readDwarf();
+    if (foreign != null) {
+      refuse(policy, foreign);
+      return;
+    }
     CompilerSpec spec = currentProgram.getCompilerSpec();
     new SpecExtension(currentProgram)
         .addReplaceCompilerSpecExtension(
@@ -214,12 +261,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     if (policy.splitsStructures()) {
       String refusal = misplacedSignatures(model, policy, callables, pointed);
       if (refusal != null) {
-        // Written instead of the outcome: REA refuses the session with this reason.
-        JsonObject report = new JsonObject();
-        report.addProperty("policy", policy.id());
-        report.addProperty("refused", refusal);
-        currentProgram.getOptions(Program.PROGRAM_INFO).setString(REPORT_KEY, report.toString());
-        println("REA RISC-V " + policy.prototype() + " refused: " + refusal);
+        refuse(policy, refusal);
         return;
       }
     }
@@ -231,6 +273,72 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     println(
         "REA RISC-V " + policy.prototype() + ": functions=" + functions
             + " definitions=" + definitions);
+  }
+
+  /** Written instead of the outcome: REA refuses the session with this reason. */
+  private void refuse(Policy policy, String refusal) {
+    JsonObject report = new JsonObject();
+    report.addProperty("policy", policy.id());
+    report.addProperty("refused", refusal);
+    currentProgram.getOptions(Program.PROGRAM_INFO).setString(REPORT_KEY, report.toString());
+    println("REA RISC-V " + policy.prototype() + " refused: " + refusal);
+  }
+
+  /** Languages of the function definitions a refusal names: how many, and one of them. */
+  private record Foreign(int functions, String example) {}
+
+  /**
+   * Read the image's DWARF once: the entry points of old-style C definitions, and the refusal for
+   * function definitions in a language whose ABI is not the C psABI, or null. A compile unit
+   * without DW_AT_language is not assumed to be C. An image without DWARF has nothing to read;
+   * REA reports that its functions' languages are unchecked.
+   */
+  private String readDwarf() throws Exception {
+    if (!DWARFProgram.hasDWARFData(currentProgram, monitor)) return null;
+    Set<Address> entries = new HashSet<>();
+    Map<Integer, Foreign> foreign = new TreeMap<>();
+    try (DWARFProgram dwarf = new DWARFProgram(currentProgram, new DWARFImportOptions(), monitor)) {
+      dwarf.init(monitor);
+      for (DIEAggregate die : dwarf.allAggregates()) {
+        if (die.getTag() != DWARFTag.DW_TAG_subprogram) continue;
+        DWARFRange range = die.getPCRange();
+        if (range == null || range.isEmpty()) continue;
+        int language = die.getCompilationUnit().getLanguage();
+        if (!PSABI_LANGUAGES.contains(language)) {
+          String name = die.getName();
+          foreign.merge(
+              language,
+              new Foreign(1, name == null ? "an unnamed function" : name),
+              (seen, next) -> new Foreign(seen.functions() + 1, seen.example()));
+          continue;
+        }
+        if (!C_LANGUAGES.contains(language) || die.getBool(DWARFAttributeId.DW_AT_prototyped, false))
+          continue;
+        AddressRange code = dwarf.getAddressRange(range, true);
+        if (code != null) entries.add(code.getMinAddress());
+      }
+    }
+    oldStyleEntries = entries;
+    if (foreign.isEmpty()) return null;
+    List<String> parts = new ArrayList<>();
+    for (Map.Entry<Integer, Foreign> entry : foreign.entrySet()) {
+      if (parts.size() == REFUSAL_EXAMPLES) break;
+      parts.add(
+          shortened(
+              counted(entry.getValue().functions(), "function") + " in "
+                  + languageLabel(entry.getKey()) + ", such as " + entry.getValue().example()));
+    }
+    return "DWARF compile units define " + String.join("; ", parts)
+        + (foreign.size() > parts.size() ? "; and others" : "")
+        + ". Their calling convention is not the C psABI this lane models, so REA cannot verify"
+        + " their storage.";
+  }
+
+  private static String languageLabel(int language) {
+    if (language < 0) return "a compile unit without DW_AT_language";
+    String value = String.format("DW_AT_language 0x%x", language);
+    String name = LANGUAGE_NAMES.get(language);
+    return name == null ? value : name + " (" + value + ")";
   }
 
   /** The default ilp32d prototype changed as the policy states. */
@@ -384,7 +492,7 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
       for (Parameter parameter : function.getParameters()) {
         DataType type = parameter.getFormalDataType();
         if (misplacedParameter(model, type)
-            || (promotedFloat(type) && oldStyleEntries().contains(function.getEntryPoint())))
+            || (promotedFloat(type) && oldStyleEntries.contains(function.getEntryPoint())))
           misplaced.add(type.getName());
       }
       if (misplaced.isEmpty()) continue;
@@ -429,33 +537,11 @@ public final class ReaGhidraRiscvCallingConvention extends GhidraScript {
     return strip(type) instanceof AbstractFloatDataType && type.getLength() == 4;
   }
 
-  /**
-   * Entry points of C definitions without DW_AT_prototyped: old-style (K&R) definitions. Clang 19
-   * passes their float parameters as doubles in a0 and a1, while DWARF still declares float.
-   * Ghidra's DWARF import drops the flag, so DWARF is read again here, and only when a typed
-   * signature has a float parameter. C++ and other languages never mark the attribute.
+  /*
+   * Old-style (K&R) C definitions lack DW_AT_prototyped. Clang 19 passes their float parameters
+   * as doubles in a0 and a1, while DWARF still declares float. Ghidra's DWARF import drops the
+   * flag, so readDwarf reads it again. C++ and other languages never mark the attribute.
    */
-  private Set<Address> oldStyleEntries() throws Exception {
-    if (oldStyleEntries != null) return oldStyleEntries;
-    Set<Address> entries = new HashSet<>();
-    if (DWARFProgram.isDWARF(currentProgram)) {
-      try (DWARFProgram dwarf =
-          new DWARFProgram(currentProgram, new DWARFImportOptions(), monitor)) {
-        dwarf.init(monitor);
-        for (DIEAggregate die : dwarf.allAggregates()) {
-          if (die.getTag() != DWARFTag.DW_TAG_subprogram
-              || die.getBool(DWARFAttributeId.DW_AT_prototyped, false)
-              || !C_LANGUAGES.contains(die.getCompilationUnit().getLanguage())) continue;
-          DWARFRange range = die.getPCRange();
-          if (range == null || range.isEmpty()) continue;
-          AddressRange code = dwarf.getAddressRange(range, true);
-          if (code != null) entries.add(code.getMinAddress());
-        }
-      }
-    }
-    oldStyleEntries = entries;
-    return entries;
-  }
 
   /**
    * Whether a parameter of this type may take storage the prototype does not give it: another

@@ -25,6 +25,7 @@ import type { GhidraProviderClientFactory } from "./GhidraProviderClient.js";
 import {
   GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
   GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
+  GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
   ghidraRiscvCallingConvention,
   ghidraRiscvCallingConventionFailure,
   ghidraRiscvLimitations,
@@ -727,6 +728,11 @@ const refusal: GhidraRiscvCallingConventionReport = {
   refused:
     "1 of 17 functions and 1 function-pointer definition pass by-value types that __rea_ilp32f cannot express: rea_riscv_abi_half (_Float16).",
 };
+const languageRefusal: GhidraRiscvCallingConventionReport = {
+  policy: "ilp32-prototype-v1",
+  refused:
+    "DWARF compile units define 3 functions in Rust (DW_AT_language 0x1c), such as rea_riscv_entry. Their calling convention is not the C psABI this lane models, so REA cannot verify their storage.",
+};
 const sessionInfo = (
   value: BinaryTarget,
   reported?: GhidraRiscvCallingConventionReport,
@@ -811,6 +817,7 @@ describe("RISC-V calling-convention handshake", () => {
           "11 functions and 11 function definitions use __rea_ilp32.",
         ),
         expect.stringContaining("variadic call's arguments"),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
         GHIDRA_RISCV_HIDDEN_REFERENCE_LIMITATION,
       ]),
     );
@@ -835,6 +842,7 @@ describe("RISC-V calling-convention handshake", () => {
         expect.stringContaining(
           "17 functions and 16 function definitions use __rea_ilp32f.",
         ),
+        GHIDRA_RISCV_SOURCE_LANGUAGE_LIMITATION,
         GHIDRA_RISCV_ERASED_TYPE_LIMITATION,
       ]),
     );
@@ -880,6 +888,12 @@ describe("RISC-V calling-convention handshake", () => {
       reason: "an ilp32f refusal before any analysis call",
       value: ilp32f(),
       reported: refusal,
+      operation: "list_procedures",
+    },
+    {
+      reason: "an ilp32 refusal of another source language",
+      value: ilp32(),
+      reported: languageRefusal,
       operation: "list_procedures",
     },
   ] as const)("rejects $reason", async ({ value, reported, operation }) => {

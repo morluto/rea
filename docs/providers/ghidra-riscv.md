@@ -109,6 +109,24 @@ ilp32d does, but `double` values in integer registers, and a structure of one
 `float` and one integer in `fa0` and `a0`; the stock model joined that
 structure into `a1:a0`.
 
+### Source languages
+
+Both policies model the C psABI. C++ follows it under the Itanium C++ ABI,
+except for the classes in the [ilp32f limits](#ilp32f) that compilers pass
+through a hidden pointer. Other languages need not follow it: Rust's default
+ABI, for example, passes some small aggregates by reference or as two scalars
+where the C psABI joins them into integer registers. Before either policy
+installs its prototype, the script reads the image's DWARF once. It refuses
+the image when a compile unit whose `DW_AT_language` is not C, C++ or assembly
+defines a function with code, and names each such language with a count and an
+example. A compile unit without `DW_AT_language` is refused the same way. This
+applies to the ilp32 policy too, which until this check admitted such images.
+
+The check reads only DWARF. Functions that no compile unit describes, such as
+every function of a stripped image, or library code built without debug
+information, are not checked and are taken to follow the C psABI. A limitation
+states this on every session that applies a policy.
+
 ### Decision record: D3, RISC-V float ABIs
 
 Decided in [#7477](https://github.com/morluto/rea/issues/7477).
@@ -434,7 +452,7 @@ REA_RISCV_OBJDUMP=/path/to/llvm/bin/llvm-objdump \
 npm run verify:ghidra:riscv
 ```
 
-The lane builds nine fixtures from committed freestanding C and assembly sources:
+The lane builds eleven fixtures from committed freestanding C and assembly sources:
 
 - RV32 and RV64 double-float builds (`rv{32,64}imafdc`) of `riscv.c`,
   each linked as `ET_EXEC` and as a PIE.
@@ -456,6 +474,8 @@ The lane builds nine fixtures from committed freestanding C and assembly sources
   `float[2]`, a `float` beside a one-bit field of a 64-bit type, two
   `float _Complex` fields, and, from `riscv-float-abi-empty.cpp`, an empty
   class beside a `char` and a `float`, which the policy admits.
+- The typed soft- and single-float builds with each C compile unit's
+  `DW_AT_language` rewritten to Rust (`0x1c`). The assembly units keep theirs.
 
 PIE admission checks that the `PT_INTERP` declaration has an in-file range
 large enough for a pathname byte and its terminator. The verifier checks the
@@ -496,6 +516,10 @@ For the soft- and single-float builds the lane also checks:
 - The unmodelled build is admitted by its headers, then refused over MCP and
   the CLI with the bridge's reason, which names its refused signatures and not
   the `float[2]` or bit-field functions.
+- The Rust-labelled builds are admitted by their headers, then refused over
+  MCP by each policy with a reason that names Rust and `DW_AT_language 0x1c`.
+  The unlabelled typed builds, with C, C++ and assembly units, are the
+  controls.
 
 Header-mutated copies check admission. The RV32 double-float image relabelled as
 soft-float (`e_flags` `0x1`), refused before that lane, is admitted through it
