@@ -23,7 +23,7 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { constants as bufferConstants } from "node:buffer";
 import {
-  parsePeResources,
+  readPeResourceEntries,
   peResourceLimitBoundary,
 } from "../../domain/pe/peResourceInventory.js";
 import {
@@ -33,7 +33,6 @@ import {
 import {
   MAX_INSPECT_PE_FILE_BYTES,
   MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-  type PeResources,
 } from "../../domain/native/peResources.js";
 import type { FileHandle } from "node:fs/promises";
 import type { StableRegularFileDescriptor } from "../../filesystem/RegularFile.js";
@@ -80,7 +79,6 @@ import {
   observeNodeSeaFuseMatches,
   type NodeSeaFuseObservation,
 } from "./NodeSeaBlob.js";
-import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const PT_NOTE = 4;
 const RT_RCDATA = 10;
@@ -758,27 +756,18 @@ const locatePeResources = async (
       return [];
     throw cause;
   }
-  let resources: PeResources;
+  let resources: Awaited<ReturnType<typeof readPeResourceEntries>>;
   try {
-    resources = await parsePeResources(
+    resources = await readPeResourceEntries(
       bytes,
-      {
-        path: "<admitted SEA carrier>",
-        sha256: sha256Hex(bytes),
-        bytes: bytes.length,
-      },
-      {
-        path: "/admitted-sea-carrier",
-        max_file_bytes: MAX_INSPECT_PE_FILE_BYTES,
-        max_entries: MAX_INSPECT_PE_DIRECTORY_ENTRIES,
-      },
-      carrier.signal,
       layout,
+      MAX_INSPECT_PE_DIRECTORY_ENTRIES,
+      carrier.signal,
     );
   } catch (cause) {
     throw artifactParseFailure(cause, carrier.signal, peResourceLimitBoundary);
   }
-  return resources.resources.flatMap((resource) => {
+  return resources.flatMap((resource) => {
     if (
       resource.type.kind !== "id" ||
       resource.type.id !== RT_RCDATA ||
