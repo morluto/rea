@@ -6,7 +6,6 @@ import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lstatSync, statSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
-import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   absoluteCallerPath,
   appendCallerPath,
@@ -21,7 +20,6 @@ import {
   vscodeUserDirectory,
   xdgConfigHomeOrDefault,
 } from "./ClientConfigRoots.js";
-import { resolveClineCliSettingsPath } from "./ClineCliLocation.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   kiloDefaultLocation,
@@ -29,10 +27,6 @@ import {
   type KiloLocationContext,
 } from "./KiloClientLocation.js";
 import { windowsAppDataRoots } from "./MsixPackageStorage.js";
-import type {
-  McpRegistrationLocation,
-  McpRegistrationLocationContext,
-} from "./McpRegistrationLocations.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
 import type {
