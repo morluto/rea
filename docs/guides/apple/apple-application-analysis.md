@@ -66,8 +66,7 @@ encryption flag, limitations, and null content identity. The same application-ro
 and AppleDouble attribution rules apply. These files make overall coverage
 `partial`; component absence is unknown even when `inventory_complete` is true.
 Directories have no file bytes and symlinks remain in `symlinks`, so neither is
-an unavailable file component. The additive field participates in `projection_id`,
-including when empty, so Apple projection identifiers change.
+an unavailable file component.
 
 ## Application roots
 
@@ -106,9 +105,12 @@ application root with neither, such as an empty inventory, has no platform.
 
 ## macOS bundle anatomy
 
-`bundles` lists each application root and every nested bundle under it. Each
-bundle reports its `parent_path`, `layout`, `info_plist_path`,
-`executable_candidates`, and `signing_paths`.
+`bundles` lists each application root and nested directories with recognized
+bundle extensions. When you set `include_bundle_placement: true`, it also
+includes dotted directories with bundle anatomy (`Contents/`, `Versions/`, or
+a root `Info.plist`), such as an Automator `.action`. Each bundle reports its
+`parent_path`, `layout`, `info_plist_path`, `executable_candidates`, and
+`signing_paths`.
 
 | Layout                | Meaning         | Content directory                             |
 | --------------------- | --------------- | --------------------------------------------- |
@@ -127,7 +129,7 @@ Roles are path conventions (`role_basis: "path-convention"`):
 | `driver-extension`   | `*.dext`                                                        |
 | `plug-in`            | `PlugIns/*.bundle`, `*.plugin`, `*.qlgenerator`, `*.mdimporter` |
 | `resource-bundle`    | `Resources/*.bundle`, such as SwiftPM resource bundles          |
-| `bundle`             | Any other `*.bundle`                                            |
+| `bundle`             | Any other `*.bundle`, or a dotted directory with bundle anatomy |
 | `login-item`         | `Contents/Library/LoginItems/*.app`                             |
 | `helper-application` | `Contents/Helpers/*.app`                                        |
 | `nested-application` | Any other nested `*.app`                                        |
@@ -173,6 +175,86 @@ codesign can select, `slices.checked` the ones whose own signing state was
 read, and `slices.unsigned` those reported unsigned. Any other slice in
 `architectures` that is not in `checked`, and any slice behind
 `unmapped: true`, has an unknown signing state.
+
+## Bundle placement
+
+Set `include_bundle_placement` to `true` in the projection's JSON request
+to compare observed placement with Apple's
+[Placing content in a bundle](https://developer.apple.com/documentation/bundleresources/placing-content-in-a-bundle).
+The opt-in result includes `bundle_placement` with findings and rule coverage.
+A finding reports a mismatch with that documented layout. It is not a verdict
+that the bundle is malicious or will fail to sign, install, or launch. The check
+is static: it never signs, verifies, or launches target code.
+
+Each finding lists the `rules` it cites, the `bundle_path` and `bundle_layout`
+whose rule applies, the examined `location`, the offending `path` and its
+`entry_kind`, and `mach_o_image_count`, the number of Mach-O images at or below
+`path`. `mach_o_images` lists each of those images once, with its `path` and
+`format`. A finding rests on the listed images at or below its `path`, so nested
+findings share image records instead of repeating them, and the output grows
+with the inventory rather than with nesting depth.
+
+A Mach-O image is a file whose inventory format, `mach-o` or
+`mach-o-universal`, comes from its magic bytes. The filename extension is never
+the basis, so scripts and other files are resources.
+Members of inventoried archives, such as files inside `app.asar` or an
+application found inside an inventoried `.zip`, are not placed in the bundle and
+are not examined. Partial inventory pages can list an archive's members without
+the archive itself, so with partial coverage a path is placed only when every
+directory above it is listed. Any other path, and a bundle whose own directory
+is not listed, is not evaluated, and each rule's limitations name the first
+such path. A path the inventory repeats has no single content identity, so it
+is examined as unknown.
+
+| Rule                                  | Bundles                                                   | Finding                                                                                                                                                                             |
+| ------------------------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code-in-resource-location`           | `macos-deep`, `versioned-framework`                       | The outermost item under `Contents/Resources/` or `Versions/<version>/Resources/` that is or contains a Mach-O image. A nested bundle is reported once, counting all of its images. |
+| `framework-root-content`              | `versioned-framework` with the `framework` role           | A framework root entry other than `Versions/` and symlinks, or a `Versions/` entry other than a version directory and the `Current` symlink.                                        |
+| `grouping-directory-in-code-location` | `macos-deep`, `versioned-framework`, iOS-family `shallow` | A directory directly in a code location that contains a Mach-O image and whose own bundle anatomy is absent.                                                                        |
+| `dotted-directory-name`               | As above                                                  | Also cited by a grouping-directory finding whose name contains a dot.                                                                                                               |
+| `standalone-dynamic-library`          | None                                                      | Not evaluated.                                                                                                                                                                      |
+| `framework-in-nested-bundle`          | None                                                      | Not evaluated.                                                                                                                                                                      |
+
+Code locations follow Apple's table. In a `macos-deep` bundle they are
+`Contents/MacOS/`, `Frameworks/`, `PlugIns/`, `Helpers/`, `XPCServices/`, and
+`Library/Automator/`, `QuickLook/`, `LaunchServices/`, `LoginItems/`,
+`Spotlight/`, and `SystemExtensions/`. A framework version's code locations are
+`Frameworks/`, `PlugIns/`, and `Helpers/`. The layout comes from an observed
+`Versions/` directory, which any bundle can contain, so framework-only rules and
+locations also require the `framework` role. A `shallow` bundle with a root
+`Info.plist` has an iOS-family layout; its code locations are `Frameworks/` and
+`PlugIns/`. `AppClips/` and `Watch/` are omitted because they are iOS-only and
+the layout does not establish iOS.
+
+The macOS rules apply only to observed `macos-deep` and `versioned-framework`
+layouts; Apple's macOS rules also cover Mac Catalyst. A shallow layout does not
+tell iOS, tvOS, watchOS, and visionOS apart. The standalone-dylib and
+nested-framework rules need the bundle platform from target content, such as
+the main executable's build-platform load command, and the standalone-dylib
+rule also needs each image's Mach-O file type. The projection reads only
+inventory paths and content formats, so neither rule is evaluated: each reports
+`unknown` with a limitation that starts "Not evaluated". Their missing findings
+are unknown, not compliance.
+
+`rules` reports each rule's Apple statement, `status`, `evaluated_bundles`, and
+`limitations`. A rule's `status` is the shared coverage status: `complete`,
+`partial`, or `unknown` for a rule that is not evaluated. It is `partial` when
+source inventory coverage is partial, or when an examined file
+has an `unknown` format, unavailable content, a node outside the supplied
+pages, or a path the inventory repeats. An empty findings list then does not establish a clean bundle.
+`evaluated_bundles: 0` means that no bundle has a layout the rule covers.
+
+The placement projection requires bundle anatomy to corroborate a nested
+bundle. A filename suffix or empty layout directory alone is insufficient.
+An `Info.plist` in the layout's metadata location, a Mach-O image in a
+`Contents/MacOS/` directory, or a matching framework executable corroborates
+the relevant layout. Partial inventories can omit this anatomy, so a dotted
+directory with unresolved anatomy has no grouping finding.
+
+The default request preserves the original bundle inventory and its
+`projection_id`. The opt-in identifier covers the full result, including rule
+coverage when findings are empty. Omission of `bundle_placement` means
+placement was not evaluated.
 
 ## Dylib load resolution
 

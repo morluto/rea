@@ -96,11 +96,12 @@ cliTest.for([
 );
 
 cliTest(
-  "Apple CLI and MCP read a flattened framework's Resources/Info.plist",
+  "Apple CLI and MCP preserve the base projection and evaluate placement only on request",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-apple-flat-framework-");
     const app = join(root, "Fixture.app");
     const framework = "Contents/Frameworks/Core.framework";
+    const grouping = "Contents/PlugIns/Group.bundle";
     const machO = thinMach(0xcffaedfe, 0x0100000c);
     // Electron and Gecko apps ship frameworks without Versions/: the binary,
     // _CodeSignature/ and Resources/ sit directly in the .framework.
@@ -113,11 +114,16 @@ cliTest(
       [`${framework}/Core`, machO],
       [`${framework}/Resources/Info.plist`, "<plist><dict/></plist>"],
       [`${framework}/_CodeSignature/CodeResources`, "<plist><dict/></plist>"],
+      // Placement uses Mach-O magic, not the filename extension.
+      ["Contents/Resources/payload.dat", machO],
+      ["Contents/Resources/helper.dylib", "#!/bin/sh\n"],
+      [`${grouping}/tool`, machO],
     ];
     for (const [relative, content] of files) {
       await mkdir(dirname(join(app, relative)), { recursive: true });
       await writeFile(join(app, relative), content);
     }
+    await mkdir(join(app, grouping, "Contents"));
     const environment = { HOME: root, USERPROFILE: root };
     const inspected = await cli.run({
       arguments: ["inspect-artifact", app, "--json"],
@@ -125,23 +131,44 @@ cliTest(
     });
     expect(inspected.exitCode, inspected.stderr).toBe(0);
     const input = { inventory_evidence: [parseEvidence(inspected.json)] };
-    const output = await cli.run({
-      arguments: [
-        "project-apple-application-graph",
-        JSON.stringify(input),
-        "--json",
-      ],
-      environment,
+    const project = async (
+      request: typeof input & { include_bundle_placement?: boolean },
+    ) => {
+      const output = await cli.run({
+        arguments: [
+          "project-apple-application-graph",
+          JSON.stringify(request),
+          "--json",
+        ],
+        environment,
+      });
+      expect(output.exitCode, output.stderr).toBe(0);
+      return parseEvidence(output.json);
+    };
+    const base = appleApplicationProjectionResultSchema.parse(
+      (await project(input)).normalized_result,
+    );
+    expect(base.bundle_placement).toBeUndefined();
+    // The base graph lists the conventional suffix and records the empty layout.
+    expect(base.bundles).toContainEqual(
+      expect.objectContaining({
+        path: grouping,
+        layout: "macos-deep",
+      }),
+    );
+    const selected = { ...input, include_bundle_placement: true };
+    const evidence = await project(selected);
+    expect(evidence.parameters).toMatchObject({
+      include_bundle_placement: true,
     });
-    expect(output.exitCode, output.stderr).toBe(0);
-    const evidence = parseEvidence(output.json);
     const { call } = await connectLocalToolsMcp(environment);
-    const mcp = await call("project_apple_application_graph", input);
+    const mcp = await call("project_apple_application_graph", selected);
     expect(mcp.isError, JSON.stringify(mcp)).not.toBe(true);
     expect(parseEvidence(mcp.structuredContent)).toEqual(evidence);
     const projection = appleApplicationProjectionResultSchema.parse(
       evidence.normalized_result,
     );
+    expect(projection.projection_id).not.toBe(base.projection_id);
     expect(projection.bundles).toEqual([
       expect.objectContaining({ path: ".", layout: "macos-deep" }),
       {
@@ -160,6 +187,26 @@ cliTest(
       status: "complete-within-inventory",
       inventory_complete: true,
     });
+    expect(projection.bundle_placement?.findings).toEqual([
+      {
+        rules: ["grouping-directory-in-code-location", "dotted-directory-name"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/PlugIns",
+        path: grouping,
+        entry_kind: "directory",
+        mach_o_image_count: 1,
+      },
+      {
+        rules: ["code-in-resource-location"],
+        bundle_path: ".",
+        bundle_layout: "macos-deep",
+        location: "Contents/Resources",
+        path: "Contents/Resources/payload.dat",
+        entry_kind: "file",
+        mach_o_image_count: 1,
+      },
+    ]);
   },
 );
 

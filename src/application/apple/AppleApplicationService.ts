@@ -1,7 +1,10 @@
 import type { EvidenceLookup } from "../EvidenceInputResolver.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { projectAppleInventory } from "../../domain/apple/appleApplication.js";
+import {
+  appleApplicationProjectionInputSchema,
+  projectAppleInventory,
+} from "../../domain/apple/appleApplication.js";
 import type { Result } from "../../domain/result.js";
 import { APPLE_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -19,9 +22,15 @@ export const projectAppleApplicationEvidence = (
 ): Result<InventoryProjectionEvidenceResult, AnalysisError> => {
   return projectInventoryEvidence({
     rawInput,
+    inputSchema: appleApplicationProjectionInputSchema,
     ...(lookup === undefined ? {} : { lookup }),
     ...(execution === undefined ? {} : { execution }),
-    project: projectAppleInventory,
+    project: (inventory, { include_bundle_placement }) =>
+      projectAppleInventory(inventory, include_bundle_placement),
+    inputParameters: ({ include_bundle_placement }) =>
+      include_bundle_placement === undefined
+        ? {}
+        : { include_bundle_placement },
     operation: OPERATION,
     predicateType: "rea.apple-application-graph",
     provider: APPLE_APPLICATION_PROVIDER,

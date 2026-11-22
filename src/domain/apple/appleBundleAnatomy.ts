@@ -35,7 +35,12 @@ export const appleBundleSchema = z.strictObject({
 
 type Bundle = z.infer<typeof appleBundleSchema>;
 
-type Entry = Pick<ProjectedInventoryEntry, "path" | "kind" | "component">;
+/** Inventory facts the anatomy indexes: path, entry kind, and content identity. */
+export type AppleAnatomyEntry = Pick<
+  ProjectedInventoryEntry,
+  "path" | "kind" | "component"
+>;
+type Entry = AppleAnatomyEntry;
 
 /** Report whether an inventory format is a thin or universal Mach-O. */
 export const isMachOFormat = (format: string): boolean =>
@@ -100,11 +105,19 @@ export const anatomyTailMatches = (
 export const projectAppleBundleAnatomy = (
   entries: readonly Entry[],
   subject: { readonly name: string; readonly format: string },
-) => {
+  includePlacement: boolean,
+): AppleBundleAnatomy => {
   const tree = indexTree(entries);
   const roots = applicationRoots(tree, subject);
-  return { roots, bundles: detectBundles(tree, roots) };
+  return { tree, roots, bundles: detectBundles(tree, roots, includePlacement) };
 };
+
+/** Application roots and bundles with the tree index they were read from. */
+export interface AppleBundleAnatomy {
+  readonly tree: AppleBundleTree;
+  readonly roots: string[];
+  readonly bundles: Bundle[];
+}
 
 /**
  * Outermost iOS (`Payload/X.app`) and macOS (`X.app/Contents/…`) applications.
@@ -146,42 +159,101 @@ const applicationRoots = (
     .sort(compare);
 };
 
-const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
+/**
+ * The base inventory retains its path-convention bundle list. Placement rules
+ * use corroborated anatomy, including dotted names outside the known suffixes.
+ */
+const detectBundles = (
+  tree: Tree,
+  roots: readonly string[],
+  includePlacement: boolean,
+): Bundle[] => {
   const paths = new Set<string>(roots);
   for (const path of directoryPaths(tree)) {
-    if (
-      APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "") &&
-      roots.some((root) => isWithin(path, root))
-    )
-      paths.add(path);
+    const name = path.split("/").at(-1) ?? "";
+    if (!roots.some((root) => isWithin(path, root))) continue;
+    const eligible = includePlacement
+      ? name.includes(".") && !isInventoriedFile(tree, path)
+      : APPLE_BUNDLE_EXTENSION.test(name);
+    if (eligible) paths.add(path);
   }
-  return [...paths].sort(compare).map((path) => {
+  const observed = [...paths].sort(compare).flatMap((path) => {
     const layout = bundleLayout(path, tree);
-    return {
+    const role = roots.includes(path)
+      ? "application"
+      : APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "")
+        ? bundleRole(path)
+        : "bundle";
+    const observed = {
       path,
-      parent_path: enclosingBundle(path, paths),
       layout,
-      role: roots.includes(path) ? "application" : bundleRole(path),
+      role,
       role_basis: "path-convention",
       info_plist_path: infoPlistPath(path, layout, tree),
       executable_candidates: executableCandidates(path, layout, tree),
       signing_paths: signingPaths(path, layout, tree),
-    } satisfies Bundle;
+    } satisfies Omit<Bundle, "parent_path">;
+    return !includePlacement ||
+      roots.includes(path) ||
+      hasBundleAnatomy(observed, tree)
+      ? [observed]
+      : [];
   });
+  const observedPaths = new Set(observed.map(({ path }) => path));
+  return observed.map((bundle) => ({
+    ...bundle,
+    parent_path: enclosingBundle(bundle.path, observedPaths),
+  }));
 };
 
-/** Keep directory identity separate from authenticated file content before name selection. */
-interface Tree {
+/** A layout directory alone can be an empty grouping folder. */
+const hasBundleAnatomy = (
+  bundle: Omit<Bundle, "parent_path">,
+  tree: Tree,
+): boolean => {
+  if (
+    bundle.info_plist_path !== null &&
+    !tree.duplicateFiles.has(bundle.info_plist_path)
+  )
+    return true;
+  const name = (bundle.path.split("/").at(-1) ?? "").replace(
+    /\.framework$/iu,
+    "",
+  );
+  return bundle.executable_candidates.some(
+    (path) =>
+      !tree.duplicateFiles.has(path) &&
+      (bundle.layout === "macos-deep" ||
+        (bundle.role === "framework" &&
+          anatomyNameIs(path.split("/").at(-1) ?? "", name))),
+  );
+};
+
+/**
+ * Keep directory identity separate from authenticated file content before name
+ * selection. Symlinks are indexed by name only; their targets are not inventoried.
+ */
+export interface AppleBundleTree {
   readonly directories: ReadonlyMap<string, ReadonlySet<string>>;
   readonly files: ReadonlyMap<string, ReadonlyMap<string, Entry>>;
+  readonly links: ReadonlyMap<string, ReadonlySet<string>>;
+  /** File paths that occur more than once; `files` keeps only the last occurrence. */
+  readonly duplicateFiles: ReadonlySet<string>;
+  /** Directories the inventory lists; `directories` also holds those implied by deeper paths. */
+  readonly listedDirectories: ReadonlySet<string>;
 }
+type Tree = AppleBundleTree;
 
 const indexTree = (entries: readonly Entry[]): Tree => {
   const directories = new Map<string, Set<string>>();
   const files = new Map<string, Map<string, Entry>>();
+  const links = new Map<string, Set<string>>();
+  const duplicateFiles = new Set<string>();
+  const listedDirectories = new Set<string>();
   for (const entry of entries) {
     const { path, kind } = entry;
     if (isSidecar(path)) continue;
+    if (kind === "directory") listedDirectories.add(path);
     const segments = path.split("/");
     let parent = "";
     for (const [index, segment] of segments.entries()) {
@@ -192,13 +264,24 @@ const indexTree = (entries: readonly Entry[]): Tree => {
         directories.set(parent, names);
       } else if (kind === "file") {
         const children = files.get(parent) ?? new Map<string, Entry>();
+        if (children.has(segment)) duplicateFiles.add(path);
         children.set(segment, entry);
         files.set(parent, children);
+      } else if (kind === "symlink") {
+        const names = links.get(parent) ?? new Set<string>();
+        names.add(segment);
+        links.set(parent, names);
       }
       parent = joinPath(parent, segment);
     }
   }
-  return { directories, files };
+  return { directories, files, links, duplicateFiles, listedDirectories };
+};
+
+const isInventoriedFile = (tree: Tree, path: string): boolean => {
+  const slash = path.lastIndexOf("/");
+  const parent = slash === -1 ? "" : path.slice(0, slash);
+  return tree.files.get(parent)?.has(path.slice(slash + 1)) === true;
 };
 
 function* directoryPaths(tree: Tree): Iterable<string> {
@@ -206,10 +289,12 @@ function* directoryPaths(tree: Tree): Iterable<string> {
     for (const name of names) yield joinPath(parent, name);
 }
 
-const joinPath = (directory: string, name: string): string =>
+export const joinPath = (directory: string, name: string): string =>
   directory === "" ? name : `${directory}/${name}`;
 
-const directoryOf = (bundle: string): string => (bundle === "." ? "" : bundle);
+/** Tree key of a bundle path; the inventoried root bundle `.` is the empty key. */
+export const directoryOf = (bundle: string): string =>
+  bundle === "." ? "" : bundle;
 
 /** Inverse of joinPath: the directory part of an inventory path. */
 const parentDirectory = (path: string): string =>
@@ -268,7 +353,7 @@ const directFiles = (directory: string, tree: Tree): Entry[] =>
   );
 
 /** Content directories; `Versions/Current` is a symlink outside the inventory. */
-const contentDirectories = (
+export const contentDirectories = (
   bundle: string,
   layout: Bundle["layout"],
   tree: Tree,
@@ -290,7 +375,7 @@ const contentDirectories = (
 };
 
 /** Select applicable entry kinds before applying Apple's case preference. */
-const namedDirectory = (
+export const namedDirectory = (
   tree: Tree,
   directory: string,
   expected: string,
@@ -299,7 +384,7 @@ const namedDirectory = (
   return name === null ? null : joinPath(directory, name);
 };
 
-const namedFile = (
+export const namedFile = (
   tree: Tree,
   directory: string,
   expected: string,
@@ -369,21 +454,29 @@ const signingPaths = (
     .filter((path): path is string => path !== null)
     .sort(compare);
 
+/**
+ * A shallow bundle with Info.plist at its root has an iOS-family layout. The
+ * layout alone does not tell iOS, tvOS, watchOS, and visionOS apart. An empty
+ * or partial bundle has no Contents/ either, and a flattened macOS framework
+ * keeps Info.plist in Resources/.
+ */
+export const hasIosFamilyLayout = ({
+  path,
+  layout,
+  info_plist_path: plist,
+}: Bundle): boolean =>
+  layout === "shallow" &&
+  plist !== null &&
+  parentDirectory(plist) === directoryOf(path);
+
 /** Platforms of application roots whose layout was observed, not assumed. */
 export const platformsOf = (bundles: readonly Bundle[]): ("ios" | "macos")[] =>
   [
     ...new Set(
-      bundles.flatMap(({ path, role, layout, info_plist_path: plist }) => {
-        if (role !== "application") return [];
-        if (layout === "macos-deep") return ["macos" as const];
-        // An empty or partial root has no Contents/ either. iOS bundles keep
-        // Info.plist at their root, not in a Resources/ directory.
-        if (
-          layout === "shallow" &&
-          plist !== null &&
-          parentDirectory(plist) === directoryOf(path)
-        )
-          return ["ios" as const];
+      bundles.flatMap((bundle) => {
+        if (bundle.role !== "application") return [];
+        if (bundle.layout === "macos-deep") return ["macos" as const];
+        if (hasIosFamilyLayout(bundle)) return ["ios" as const];
         return [];
       }),
     ),
