@@ -680,6 +680,7 @@
 * **package:** consolidate verifier diagnostics and setup applicability ([#12862](https://github.com/morluto/rea/issues/12862)) ([c6fe1e4](https://github.com/morluto/rea/commit/c6fe1e43e81c55065216e166247af043c95e9584))
 * **pcap:** consolidate packet provider output and cleanup coverage ([#12816](https://github.com/morluto/rea/issues/12816)) ([4b79eaa](https://github.com/morluto/rea/commit/4b79eaa9edae781b4c094caea9158d0f39498492))
 * **pcap:** consolidate tool admission coverage ([#12834](https://github.com/morluto/rea/issues/12834)) ([15d53ae](https://github.com/morluto/rea/commit/15d53aecb0ad8e5442414c43c44b44293c199266))
+* **pe:** consolidate certificate parsing and public error proofs ([#13565](https://github.com/morluto/rea/issues/13565)) ([3b6734b](https://github.com/morluto/rea/commit/3b6734bfaebccb717d655f93ef1d361a772c8ebc))
 * **pe:** consolidate resource coverage through public adapters ([#13562](https://github.com/morluto/rea/issues/13562)) ([3f1046d](https://github.com/morluto/rea/commit/3f1046d0f813f268ba3f1caf59c7575132c6807e))
 * **process:** bound inherited-pipe fixture lifetime to its workspace ([#13030](https://github.com/morluto/rea/issues/13030)) ([d989ff0](https://github.com/morluto/rea/commit/d989ff06e8bdc5705ddab72b4e3c7f3965eb6043))
 * **process:** check SIGHUP limitation through its exported owner constant ([de44e5e](https://github.com/morluto/rea/commit/de44e5e2735fbe04226db629f3a077c8b1fa9be0))
