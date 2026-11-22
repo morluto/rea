@@ -251,3 +251,21 @@ it("serves the older LEB copy when a newer wear-leveling copy fails its data CRC
     await reader.close();
   }
 });
+
+it("keeps the LEB mapping private to the reader", async () => {
+  const path = await writeCarrier("nand.ubi", twoVolumeUbiImage());
+  const reader = new UbiImageArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    const kernel = entries.find((entry) => entry.path === "volumes/kernel");
+    expect(kernel).toBeDefined();
+    expect(kernel).not.toHaveProperty("volume");
+    // Rewriting what a caller can reach does not move the bytes open() reads.
+    Object.assign(kernel!, { volume: { ranges: [] } });
+    const bytes = await buffer(await reader.open(kernel!));
+    expect(bytes.equals(UBI_FIXTURE_KERNEL)).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

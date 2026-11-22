@@ -118,7 +118,7 @@ export class UbiImageArtifactReader implements ArtifactReader {
       if (index % 256 === 0) await setImmediate();
       index += 1;
       this.#assertOpen(signal);
-      yield copyArtifactEntry(entry);
+      yield copyArtifactEntry(publicEntry(entry));
     }
     this.#assertOpen(signal);
   }
@@ -431,6 +431,10 @@ const volumeFacts = (volume: UbiVolume) => ({
   data_bytes: volume.dataBytes,
   extractable: volume.extractRefusal === null,
 });
+
+/** The returned entry, without the reader's private LEB mapping. */
+const publicEntry = ({ volume: _volume, ...entry }: UbiEntry): ArtifactEntry =>
+  entry;
 
 const entryFor = (volume: UbiVolume): UbiEntry => ({
   path: volume.path,
