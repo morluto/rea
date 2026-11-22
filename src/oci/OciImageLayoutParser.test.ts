@@ -3625,3 +3625,116 @@ it("diagnoses a nested index whose own mediaType conflicts with its descriptor",
     expect.objectContaining({ digest: written.manifestDigest }),
   ]);
 });
+
+it("leaves blobs a conflicting document type may reference with an unknown status", async () => {
+  // Admitted as a manifest, the document also carries index members that
+  // name a blob the manifest walk never reads.
+  const manifestRoot = await createTestTempDirectory(
+    "rea-oci-manifest-conflict-graph-",
+  );
+  const stray = await putOciBlob(manifestRoot, "stray\n");
+  await rewriteManifestDocument(manifestRoot, (manifest) => {
+    manifest.mediaType = "application/vnd.oci.image.index.v1+json";
+    manifest.manifests = [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: stray,
+        size: 6,
+      },
+    ];
+  });
+  const asManifest = await inspectLayout(manifestRoot);
+  expect(
+    asManifest.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    asManifest.blobs.find((blob) => blob.digest === stray)?.referenced,
+  ).toBeNull();
+  expect(
+    asManifest.limitations.some((limitation) =>
+      limitation.includes("reference graph was not fully examined"),
+    ),
+  ).toBe(true);
+  expect(asManifest.images).toHaveLength(1);
+
+  // An unknown declared type leaves the graph incomplete the same way.
+  const unknownRoot = await createTestTempDirectory(
+    "rea-oci-manifest-unknown-graph-",
+  );
+  const unknownStray = await putOciBlob(unknownRoot, "stray\n");
+  await rewriteManifestDocument(unknownRoot, (manifest) => {
+    manifest.mediaType = "application/vnd.example.unknown";
+  });
+  const asUnknown = await inspectLayout(unknownRoot);
+  expect(
+    asUnknown.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    asUnknown.blobs.find((blob) => blob.digest === unknownStray)?.referenced,
+  ).toBeNull();
+});
+
+it("leaves blobs a nested index declared as a manifest may reference with an unknown status", async () => {
+  const root = await createTestTempDirectory("rea-oci-index-conflict-graph-");
+  const written = await writeOciImageLayoutFixture(root);
+  const stray = await putOciBlob(root, "stray\n");
+  const nestedJson = `${JSON.stringify({
+    schemaVersion: 2,
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    config: {
+      mediaType: "application/vnd.oci.image.config.v1+json",
+      digest: stray,
+      size: 6,
+    },
+    manifests: [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: written.manifestDigest,
+        size: written.manifestSize,
+      },
+    ],
+  })}\n`;
+  const nested = await putOciBlob(root, nestedJson);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: "application/vnd.oci.image.index.v1+json",
+      manifests: [
+        {
+          mediaType: "application/vnd.oci.image.index.v1+json",
+          digest: nested,
+          size: Buffer.byteLength(nestedJson),
+        },
+      ],
+    })}\n`,
+  );
+  const report = await inspectLayout(root);
+  expect(
+    report.findings.some((finding) => finding.kind === "unreferenced_blob"),
+  ).toBe(false);
+  expect(
+    report.blobs.find((blob) => blob.digest === stray)?.referenced,
+  ).toBeNull();
+  // The nested index entries are still walked.
+  expect(report.images).toEqual([
+    expect.objectContaining({ digest: written.manifestDigest }),
+  ]);
+});
+
+it("keeps unreferenced blobs definite when the declared type is the same document kind", async () => {
+  const root = await createTestTempDirectory("rea-oci-manifest-same-kind-");
+  const stray = await putOciBlob(root, "stray\n");
+  await rewriteManifestDocument(root, (manifest) => {
+    manifest.mediaType = "application/vnd.docker.distribution.manifest.v2+json";
+  });
+  const report = await inspectLayout(root);
+  expect(report.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "unreferenced_blob", digest: stray }),
+    ]),
+  );
+  expect(report.blobs.find((blob) => blob.digest === stray)?.referenced).toBe(
+    false,
+  );
+});

@@ -1394,7 +1394,10 @@ const inventoryOciImageLayout = async (
   // A referenced index or manifest may repeat its media type in its own
   // optional mediaType member. A present declaration is checked against the
   // descriptor type the walk admitted it under, so conflicting format
-  // evidence is diagnosed; the members are still read and reported.
+  // evidence is diagnosed; the members are still read and reported. A
+  // document that declares an unknown type, or a type of another document
+  // kind, may hold members the admitted kind does not read, so the walk no
+  // longer proves which blobs nothing references.
   const checkDeclaredMediaType = (
     owner: string,
     digest: string,
@@ -1413,6 +1416,10 @@ const inventoryOciImageLayout = async (
       return;
     }
     if (declared === admitted) return;
+    const sameKind =
+      (isOciIndexMediaType(declared) && isOciIndexMediaType(admitted)) ||
+      (isOciManifestMediaType(declared) && isOciManifestMediaType(admitted));
+    if (!sameKind) referenceGraphTruncated = true;
     if (!isOciKnownMediaType(declared)) {
       // The finding quotes the untrusted declaration, so its escaped text
       // spends max_descriptor_bytes before the finding is retained.
