@@ -225,6 +225,7 @@
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **ghidra:** require an owned committed project copy ([#13363](https://github.com/morluto/rea/issues/13363)) ([fb6e0dc](https://github.com/morluto/rea/commit/fb6e0dc6e8558fea2931cdfb7280854c0cfbca6c))
 * **hopper:** compose bridge image cleanup through the shared owner ([3ba20f0](https://github.com/morluto/rea/commit/3ba20f0eb8387c2eede14249a32c86ba15fef294)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** compose provider close failures through the shared owner ([a5f3689](https://github.com/morluto/rea/commit/a5f36891793f2a901326f7443d177ff9e277065d)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **inspector:** own the Node discovery path rule in one module ([#10680](https://github.com/morluto/rea/issues/10680)) ([559956c](https://github.com/morluto/rea/commit/559956cf6b5db2677aa4f8b4f34ee67b8038f4d8))
