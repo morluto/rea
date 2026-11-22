@@ -120,6 +120,7 @@
 * **evidence:** reject unknown fields in comparison record pairs ([#13523](https://github.com/morluto/rea/issues/13523)) ([0eaea65](https://github.com/morluto/rea/commit/0eaea650c0c91574c66e5383073397d652bb42eb))
 * **exports:** bind provider caveats to accepted observations ([#13430](https://github.com/morluto/rea/issues/13430)) ([ac3f83f](https://github.com/morluto/rea/commit/ac3f83f0f2172448c5a61872107ec4882d665360))
 * **firmware:** honor the final Android OTA timestamp record ([#13373](https://github.com/morluto/rea/issues/13373)) ([e84668c](https://github.com/morluto/rea/commit/e84668c76be4df40963dbd83f84803ec812f64c5))
+* **flutter:** preserve build IDs beside invalid note extents ([#13577](https://github.com/morluto/rea/issues/13577)) ([7d6c771](https://github.com/morluto/rea/commit/7d6c77106260b086717ef98e695c31257539b0e4))
 * **frida:** explain refused ptrace seize during injection ([317f90e](https://github.com/morluto/rea/commit/317f90e023a96f18695790efbe903fb39a4e6b85)), closes [#9103](https://github.com/morluto/rea/issues/9103)
 * **frida:** keep ptrace seize guidance from overclaiming ([2337ebe](https://github.com/morluto/rea/commit/2337ebe130dabff210bb55aa6f34c4585bbde73a)), closes [#9103](https://github.com/morluto/rea/issues/9103)
 * **functions:** preserve proven referenced string membership changes ([#13421](https://github.com/morluto/rea/issues/13421)) ([afbbfff](https://github.com/morluto/rea/commit/afbbfff561a9d83689e49f61a5192b98bbfe5c07))
