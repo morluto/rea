@@ -72,6 +72,7 @@ const throwIfWorkerAborted = (
 
 class ActiveWorkerReader {
   #chunks: Buffer[] = [];
+  #chunkHead = 0;
   #buffered = 0;
   #ended = false;
   #error: Error | undefined;
@@ -156,19 +157,45 @@ class ActiveWorkerReader {
         };
       });
     }
+    const first = this.#chunks[this.#chunkHead]!;
+    if (first.length === length) {
+      this.#buffered -= length;
+      this.#chunkHead += 1;
+      if (this.#chunkHead >= this.#chunks.length) {
+        this.#chunks.length = 0;
+        this.#chunkHead = 0;
+      } else if (
+        this.#chunkHead >= 64 &&
+        this.#chunkHead * 2 >= this.#chunks.length
+      ) {
+        this.#chunks.splice(0, this.#chunkHead);
+        this.#chunkHead = 0;
+      }
+      return first;
+    }
     const out = Buffer.allocUnsafe(length);
     let copied = 0;
     while (copied < length) {
-      const head = this.#chunks[0]!;
+      const head = this.#chunks[this.#chunkHead]!;
       const take = Math.min(head.length, length - copied);
       head.copy(out, copied, 0, take);
       copied += take;
       this.#buffered -= take;
       if (take === head.length) {
-        this.#chunks.shift();
+        this.#chunkHead += 1;
       } else {
-        this.#chunks[0] = head.subarray(take);
+        this.#chunks[this.#chunkHead] = head.subarray(take);
       }
+    }
+    if (this.#chunkHead >= this.#chunks.length) {
+      this.#chunks.length = 0;
+      this.#chunkHead = 0;
+    } else if (
+      this.#chunkHead >= 64 &&
+      this.#chunkHead * 2 >= this.#chunks.length
+    ) {
+      this.#chunks.splice(0, this.#chunkHead);
+      this.#chunkHead = 0;
     }
     return out;
   }
