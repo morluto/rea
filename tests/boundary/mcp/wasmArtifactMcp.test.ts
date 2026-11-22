@@ -128,13 +128,19 @@ it.each(["bin", "hop"])(
       error: {
         code: "target_unavailable",
         category: "unsupported_target",
-        details: { constraint: "wasm_requires_static_inspection" },
+        details: {
+          constraint: "wasm_requires_static_inspection",
+          related_operations: ["inspect_wasm_artifact"],
+        },
       },
     });
+    expect(failure.error.details).not.toHaveProperty("related_cli_commands");
+    expect(failure.error.remediation.action).not.toContain(
+      "rea inspect-wasm-artifact",
+    );
     const [, recoveryName, serializedInput] =
-      failure.error.remediation.action.match(
-        /call (\w+) with (\{.*\}) or run/,
-      ) ?? [];
+      failure.error.remediation.action.match(/call (\w+) with (\{[^}]*\})\./) ??
+      [];
     expect(recoveryName).toBe(name);
     const recoveryInput = z
       .object({ path: z.literal(path) })

@@ -8,7 +8,7 @@ import {
 } from "./ProcessInspectionCancellation.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { rmSync } from "node:fs";
+import { rmSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,30 @@ import type {
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
 import { errorMessage } from "../kernel/errorMessage.js";
+
+/**
+ * Remove a per-run helper root while the process exits. Nothing can repair or
+ * report this failure to a caller, and Node turns an exception raised from an
+ * exit listener into an uncaught error that changes the exit status, so the
+ * remaining root is named once on stderr instead.
+ */
+const removeHelperRootAtExit = (path: string): void => {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (cause: unknown) {
+    // Node cannot drain a queued stderr chunk from an exit listener, so the
+    // last report names the retained root with a synchronous write. A closed
+    // or full descriptor leaves nothing else this process can do.
+    try {
+      writeSync(
+        2,
+        `REA could not remove the Darwin ownership helper root ${path} at exit: ${errorMessage(cause)}\n`,
+      );
+    } catch {
+      // Exit is not the place to report a failed report.
+    }
+  }
+};
 
 const responseSchema = z.strictObject({
   results: z.array(
@@ -382,6 +406,7 @@ const compilerInspectionError = (
 /** One allocated helper root, including its shared finalization and live cleanup status. */
 interface ProcessReaderRoot {
   readonly path: string;
+  close(): Promise<void>;
   cleanupPromise?: Promise<void> | undefined;
   /** Reported by every removal failure until a retry removes the root. */
   cleanupRelease?: AnalysisCleanupRelease | undefined;
@@ -507,10 +532,9 @@ export const createDarwinProcessRunTokenReader = (
   const activeCommands = new Set<Promise<string>>();
 
   const cleanupAtExit = () => {
-    if (root !== undefined) rmSync(root.path, { recursive: true, force: true });
+    if (root !== undefined) removeHelperRootAtExit(root.path);
   };
-  const cleanupRoot = (target = root): Promise<void> => {
-    if (target === undefined) return Promise.resolve();
+  const cleanupRoot = (target: ProcessReaderRoot): Promise<void> => {
     target.cleanupPromise ??= Promise.resolve()
       .then(async () => {
         try {
@@ -543,6 +567,33 @@ export const createDarwinProcessRunTokenReader = (
       });
     return target.cleanupPromise;
   };
+  const cleanupFailedCompilationRoot = async (
+    target: ProcessReaderRoot,
+    primaryFailure?: ProcessReaderCompilation["primaryFailure"],
+  ): Promise<void> => {
+    try {
+      await target.close();
+    } catch (cleanup: unknown) {
+      if (!(cleanup instanceof ProviderCleanupError)) throw cleanup;
+      const cause =
+        primaryFailure === undefined ? cleanup : primaryFailure.cause;
+      const primary =
+        cause instanceof DarwinProcessOwnershipInspectionError
+          ? cause
+          : new DarwinProcessOwnershipInspectionError(
+              primaryFailure === undefined
+                ? "Darwin process ownership helper root cleanup retry failed"
+                : "Darwin process ownership helper preparation failed",
+              {
+                cause,
+                ...(cause instanceof ProcessOwnershipInspectionCancelled
+                  ? { cancellation: { reason: cause.reason } }
+                  : {}),
+              },
+            );
+      throw primary.withCleanupFailure(cleanup, target);
+    }
+  };
   const runCompilation = async (
     operation: ProcessReaderCompilation,
   ): Promise<string> => {
@@ -568,10 +619,12 @@ export const createDarwinProcessRunTokenReader = (
         executable = cached.executable;
         return cached.executable;
       }
-      operationRoot = {
+      const allocatedRoot: ProcessReaderRoot = {
         path: await mkdtemp(join(tmpdir(), "rea-process-token-")),
+        close: () => cleanupRoot(allocatedRoot),
       };
-      root = operationRoot;
+      operationRoot = allocatedRoot;
+      root = allocatedRoot;
       process.once("exit", cleanupAtExit);
       exitCleanupInstalled = true;
       if (signal.aborted || closed)
@@ -630,26 +683,10 @@ export const createDarwinProcessRunTokenReader = (
         // The extra pipe keeps settlement pending for Swift frontend writers
         // that inherit it after the driver and its standard streams close.
         // It cannot establish completion of a child that did not inherit it.
-        try {
-          await cleanupRoot(operationRoot);
-        } catch (cleanup: unknown) {
-          if (!(cleanup instanceof ProviderCleanupError)) throw cleanup;
-          const primary =
-            cause instanceof DarwinProcessOwnershipInspectionError
-              ? cause
-              : new DarwinProcessOwnershipInspectionError(
-                  "Darwin process ownership helper preparation failed",
-                  {
-                    cause,
-                    ...(cause instanceof ProcessOwnershipInspectionCancelled
-                      ? { cancellation: { reason: cause.reason } }
-                      : {}),
-                  },
-                );
-          throw primary.withCleanupFailure(cleanup, {
-            close: () => cleanupRoot(operationRoot),
-          });
-        }
+        await cleanupFailedCompilationRoot(
+          operationRoot,
+          operation.primaryFailure,
+        );
       }
       throw cause;
     }
@@ -682,7 +719,7 @@ export const createDarwinProcessRunTokenReader = (
       assertProcessOwnershipInspectionActive(signal);
       if (executable !== undefined) return executable;
       if (compilation === undefined && root !== undefined) {
-        await cleanupRoot();
+        await cleanupFailedCompilationRoot(root);
         continue;
       }
       let operation = compilation;
@@ -896,7 +933,7 @@ export const createDarwinProcessRunTokenReader = (
       // Each owner keeps its own failed cleanup for the next close attempt;
       // a failure of both stays incomplete until both owners recover.
       const [rootCleanup, cacheCleanup] = await Promise.allSettled([
-        cleanupRoot(),
+        root?.close(),
         helperCache?.close(),
       ]);
       if (

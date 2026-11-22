@@ -67,46 +67,22 @@ Setup আপনার agent-এ REA নিবন্ধন করে এবং �
 
 ## দ্রুত শুরু
 
-Linux-এ Ghidra, JADX, firmware tool চালু করা এবং static JavaScript/Electron
-বিশ্লেষণের জন্য process ownership যাচাইয়ে REA-এর `PATH`-এ একটি
-procps-সামঞ্জস্যপূর্ণ `ps` লাগে। পুনরুদ্ধারের ধাপ `docs/installation.md`-এর
-"Linux owned-process prerequisite" শিরোনামের নিচে আছে।
+**[rea.tools-এ শুরু করুন](https://rea.tools/bn/get-started/)** — অপারেটিং সিস্টেম, agent এবং analysis provider অনুযায়ী ধাপে ধাপে নির্দেশনা পাবেন।
 
-### আপনার agent সেট আপ করুন
+### আপনার agent যোগ করুন (MCP)
 
-Node.js ও npm ইনস্টল থাকলে চালান:
+[Node.js ও npm](../reference/supported-targets.md) ইনস্টল থাকলে, যে প্রজেক্ট বিশ্লেষণ করবেন তার বাইরে একটি বিশ্বস্ত ডিরেক্টরি থেকে এটি চালান।
 
 ```bash
 npx rea-agents setup
 ```
 
-আপনার agent বেছে নিন, প্রস্তাবিত পরিবর্তনগুলো দেখে নিন এবং অনুমোদন দিন। Setup
-REA-এর MCP server ও মানানসই workflow নির্দেশনা যোগ করে, আর বিদ্যমান
-configuration-এর ব্যাকআপ রাখে। এরপর আপনার agent রিস্টার্ট করুন। Setup নির্বাচিত
-runtime ও REA entry script সরাসরি রেকর্ড করে। Package runner-এর মাধ্যমে পেয়ে
-থাকলে তার cache entry যেন পাওয়া যায়, সেভাবে রাখুন। Package সংগ্রহের কাজটি
-টার্গেট প্রজেক্টের বাইরে একটি বিশ্বস্ত ডিরেক্টরি থেকে চালান। ইনস্টলেশন ও
-পুনরুদ্ধারের বিস্তারিত নিচের setup গাইডে আছে।
+আপনার agent বেছে নিন, setup পরিকল্পনা দেখে অনুমোদন দিন, তারপর agent রিস্টার্ট করুন।
+Setup বিদ্যমান configuration-এর ব্যাকআপ রাখে এবং REA-এর MCP সংযোগ ও
+investigation skill যোগ করে। সমর্থিত client, plugin, ম্যানুয়াল নিবন্ধন এবং
+সমস্যা সমাধানের জন্য [ইনস্টলেশন গাইড](../getting-started/installation.md) দেখুন।
 
-Setup সমর্থন করে Claude Code, Codex, Cursor, Gemini CLI, Grok Build এবং
-[অন্যান্য agent](../getting-started/installation.md#supported-agents)। Provider configuration,
-ম্যানুয়াল MCP নিবন্ধন এবং Claude Code/Codex plugin ইনস্টলেশনের জন্য
-[ইনস্টলেশন ও setup](../getting-started/installation.md) দেখুন।
-
-Context-এর বাড়তি চাপ কমাতে MCP ডিফল্টভাবে compact input schema ব্যবহার করে। পুরো
-field নির্দেশনা ও nested validation-এর বিস্তারিত দরকার হলে আপনার MCP নিবন্ধনে
-`REA_MCP_INPUT_SCHEMA_PROFILE=full` সেট করুন। দুই profile-এই সব tool থাকে এবং
-server-এর canonical validation বজায় থাকে। বিস্তারিত জানতে MCP contracts গাইডের
-"Compact input schema profile" অংশটি দেখুন।
-
-সম্পূর্ণ output schema ডিফল্টভাবেই advertise করা হয়। আপনার client যদি পুরো
-`tools/list` frame সীমিত করে, প্রতিটি advertised output schema সীমিত রাখতে
-`REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` সেট করুন, অথবা output schema একেবারে
-বাদ দিতে `off` সেট করুন। দুই সেটিংসেই server-পক্ষের canonical validation এবং
-সম্পূর্ণ structured result বজায় থাকে। MCP contracts গাইডের "Output schemas"
-অংশটি দেখুন।
-
-### আপনার agent-কে জিজ্ঞাসা করুন
+আপনার agent-কে জিজ্ঞাসা করে দেখুন:
 
 ```text
 Notes অ্যাপে search কীভাবে কাজ করে তা বুঝে নাও, আমাকে প্রমাণ দেখাও, এবং আমার
@@ -115,7 +91,7 @@ Notes অ্যাপে search কীভাবে কাজ করে তা �
 
 Notes-এর জায়গায় আপনার টার্গেট অ্যাপ এবং যে ফিচারটি বুঝতে চান সেটি বসান।
 
-### টার্মিনাল ব্যবহার করুন
+### টার্মিনাল থেকে REA ব্যবহার করুন (CLI)
 
 Extract করা একটি JavaScript/Electron অ্যাপ ডিরেক্টরি বা ASAR পরীক্ষা করুন:
 
@@ -135,41 +111,25 @@ rea --help
 
 Native বিশ্লেষণের জন্য আগে একটি provider কনফিগার করুন। Native কমান্ড, provider
 বাছাই, snapshot এবং scripting-এর জন্য [CLI ও Evidence গাইড](../getting-started/cli.md) দেখুন।
+Linux-এর পূর্বশর্তের জন্য [ইনস্টলেশন গাইড](../getting-started/installation.md#linux-owned-process-prerequisite) দেখুন।
 
 ### REA আপডেট করুন
 
-REA দ্রুত বদলায়, এবং নতুন release-এ প্রায়ই bug fix থাকে। আপনার
-ইনস্টলেশন হালনাগাদ রাখুন।
-
-`npm install --global` বা `bun add --global` দিয়ে ইনস্টল করা CLI-এর জন্য:
+গ্লোবাল npm বা Bun ইনস্টলেশনের জন্য updater চালিয়ে তার setup নির্দেশনা অনুসরণ করুন।
 
 ```bash
 rea update
 ```
 
-`rea --update` এই যাচাইকৃত workflow-এর একটি alias, এবং একই global output flag
-নেয়। অন্য command control-এর সঙ্গে মিলিয়ে চালাতে `rea update` ব্যবহার করুন।
-
-Updater কমান্ড stdout ও stderr মিলিয়ে সর্বোচ্চ 4 MiB রাখে। এর চেয়ে বড় metadata
-উত্তর কমান্ড শেষ হওয়ার পর বাতিল করা হয়; verbose ইনস্টল সীমিত diagnostics নিয়ে
-চলতে থাকে। মানুষের জন্য progress output টার্মিনালের backpressure মেনে চলে এবং
-জমা দেওয়া write শেষ হওয়া পর্যন্ত অপেক্ষা করে।
-
-Bun-এ global আপডেটের জন্য Bun 1.2.17 বা তার পরের সংস্করণ লাগবে। পুরোনো Bun
-থাকলে `rea update` চালানোর আগে নিজে Bun আপগ্রেড করে নিন।
-
-আপনার agent নিবন্ধন ও skill রিফ্রেশ করতে, আপডেটের পর যে setup কমান্ডটি
-দেখানো হয় সেটি চালান।
-
-`npx` ব্যবহার করলে আপনার agent setup আপডেট করুন এভাবে:
+`npx` ব্যবহার করলে agent setup হালনাগাদ করতে:
 
 ```bash
 npx rea-agents@latest setup
 ```
 
-Setup-এর পরিবর্তনগুলো দেখে নিয়ে আপনার agent রিস্টার্ট করুন। একবারের CLI কমান্ডের জন্য
-`npx rea-agents@latest`-এর পরে কমান্ডটি লিখুন। Bun-এ `npx rea-agents@latest`-এর
-বদলে `bunx rea-agents@latest` ব্যবহার করুন।
+Setup-এর পরিবর্তনগুলো দেখে agent রিস্টার্ট করুন। Package runner অপশন ও
+সমস্যা সমাধানের জন্য [আপডেট ও uninstall নির্দেশনা](../getting-started/installation.md#diagnose-update-and-remove)
+দেখুন।
 
 ## REA কীভাবে কাজ করে
 
@@ -189,47 +149,47 @@ CLI কমান্ডও একই workflow ব্যবহার করে।
 REA-এর জন্য লাগবে Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) বা 26.12.1+, সঙ্গে npm।
 অতিরিক্ত টুল ও host সমর্থন টার্গেটের ওপর নির্ভর করে:
 
-| টার্গেট                   | REA কী ফেরত দেয়                                                                           | প্রয়োজনীয়তা ও গাইড                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| ডেস্কটপ ইনস্টলেশন         | Runtime candidate, সহায়ক ফাইল, component marker ও পরবর্তী probe                              | বিল্ট-ইন সীমিত directory/header পরীক্ষা; [ডেস্কটপ অ্যাপ্লিকেশন](../desktop-applications.md)                                       |
-| Native বাইনারি            | Pseudocode, assembly, string, symbol, call ও reference                                    | Hopper, Ghidra, IDA বা Kuna; [native বিশ্লেষণ](../guides/native/native-investigation.md)                                                   |
-| Offline ELF layout      | Section, segment, মূল symbol/relocation এবং static mitigation-এর সম্ভাব্য তালিকা                | Linux x64-এ caller-এর দেওয়া pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                        |
-| Go বাইনারি                | Embedded compiler সংস্করণ, module, replacement ও build setting                             | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; Go ইনস্টল করার দরকার নেই                                                             |
-| GPU code object         | CUDA/HIP target, নির্বাচিত kernel-এর parameter ও resource এবং সংরক্ষিত PTX text              | বিল্ট-ইন static ELF/PE/fatbin/CUBIN/PTX পরীক্ষা; [GPU code object](../gpu-code-objects.md)                                    |
-| Model artifact          | GGUF / safetensors metadata, tensor ঘোষণা ও উদ্ভূত মোট মান                                    | বিল্ট-ইন header পরীক্ষা; ঐচ্ছিক পূর্ণ-ফাইল hash; [model ফাইল](../model-artifacts.md)                                               |
-| IL2CPP metadata         | Unity global-metadata.dat-এর assembly image, type ও method-এর নাম এবং index range          | বিল্ট-ইন static decoding (version 24, 27, 29, 31 ও 39); Unity লাগে না                                                         |
-| Godot PCK               | Archive-এর তালিকা ও extraction, মূল header/directory তথ্য এবং নির্বাচিত content identity        | বিল্ট-ইন static format 2, 3 ও 4; Godot লাগে না                                                                                |
-| Rust বাইনারি              | এমবেড করা cargo-auditable crate-এর নাম, সংস্করণ, উৎস ও dependency সম্পর্ক                      | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; [Rust বাইনারি](../rust-binaries.md)                                                 |
-| PE certificate          | Authenticode WIN_CERTIFICATE entry এবং PKCS#7 signer/X.509 পরিচয়ের field                  | বিল্ট-ইন static PE পরীক্ষা; [PE certificate](../pe-certificates.md)                                                           |
-| PE import               | Import ও delay-load DLL-এর নাম, ordinal, IAT RVA এবং pefile import hash                    | বিল্ট-ইন static PE পরীক্ষা; [PE import](../pe-imports.md)                                                                     |
-| Windows shortcut        | Shell Link target, argument, working dir, ExtraData এবং Tracker droid fact                 | বিল্ট-ইন static LNK পরীক্ষা; [Windows shortcut](../guides/native/windows-shortcut.md)                                         |
-| ELF note                | PT_NOTE/SHT_NOTE owner, type, GNU build-id ও ABI-tag field                                | বিল্ট-ইন static ELF পরীক্ষা; [ELF note](../elf-notes.md)                                                                      |
-| বাইনারি হার্ডেনিং           | ELF, PE ও Mach-O-এর PIE, NX, RELRO, CFG এবং সংশ্লিষ্ট header flag                           | বিল্ট-ইন static header inspection; [বাইনারি হার্ডেনিং](../binary-hardening.md)                                                  |
-| Apple IPS crash         | .ips metadata, thread, image, register এবং নথিভুক্ত crash শ্রেণি                             | বিল্ট-ইন static JSON পরীক্ষা; [Apple IPS](../apple-ips.md)                                                                    |
-| Linux kernel module     | .modinfo key, __versions CRC, this_module উপস্থিতি এবং signature trailer                   | বিল্ট-ইন static ELF পরীক্ষা; [kernel module](../kernel-modules.md)                                                            |
-| Erlang BEAM             | IFF chunk, atom, export, import, lambda এবং Code header                                   | বিল্ট-ইন static BEAM পরীক্ষা; [Erlang BEAM](../erlang-beam.md)                                                                |
-| WASM artifact           | Validation, section, হুবহু import/export WAT রূপ এবং decode করা WAT                           | Caller-এর দেওয়া WABT 1.0.42; `inspect_wasm_artifact`                                                                        |
-| EVM bytecode            | Dispatch selector, byte offset, অনুমিত argument ও mutability                               | Linux x64-এ local raw/hex carrier; [offline EVM গাইড](../guides/evm/evm-bytecode.md)                                                   |
-| SQLite ডেটাবেস           | Table, column, index, view, trigger এবং নির্বাচিত সাধারণ table-এর row                         | Local database/WAL snapshot; native SQLite সীমাসহ Node.js 24.x >=24.15 বা 26+                                                |
-| রেকর্ড করা Linux crash    | Raw note, রেকর্ড করা প্রতিটি thread-এর register/signal এবং ঐচ্ছিক mapping candidate           | Linux x64-এ caller-এর দেওয়া pwntools; ঐচ্ছিক GDB/pwndbg; [রেকর্ড করা crash](../guides/native/recorded-crashes.md)                            |
-| JavaScript / Electron   | Module, import, source map, route, IPC এবং native add-on-এর সম্পর্ক                         | Node.js ও npm; Linux: procps-সামঞ্জস্যপূর্ণ `ps`; [অ্যাপ্লিকেশন বিশ্লেষণ](../guides/javascript/javascript-application-workflows.md)                   |
-| ওয়েবসাইট                 | পেজের গঠন, script, network পর্যবেক্ষণ এবং অনুরোধ করা screenshot                               | একটি Chrome-ঘরানার ব্রাউজার; [ব্রাউজার বিশ্লেষণ](../guides/web/browser-observation.md)                                                         |
-| সংরক্ষিত network capture | Request, response, উন্মুক্ত payload ও source location                                        | HAR বা Fiddler Everywhere SAZ; native mitmproxy capture-এর জন্য Linux-এ mitmdump; [capture গাইড](../guides/web/web-network-captures.md)  |
-| .NET assembly           | Metadata, CIL instruction, ঘোষিত native dependency এবং build তুলনা                          | কিছু লাগে না (শুধু static); [managed-code গাইড](../guides/managed/managed-code-analysis.md)                                                     |
-| Android APK             | Manifest ঘোষণা, class, decompile করা method ও reference                                     | Linux/macOS/Windows x64-এ headless JADX ও পূর্ণ JDK; [Android গাইড](../guides/android/android-analysis.md)                                   |
-| APK signature           | v1/v2/v3/v3.1 signer, certificate fingerprint, key rotation এবং digest-এর অভ্যন্তরীণ সামঞ্জস্য | কিছু লাগে না (শুধু static); `inspect_apk_signature`                                                                             |
-| Android ডিভাইস           | ডিভাইস, package, process, log, dump, screen capture এবং APK/ফাইল আদান-প্রদান                   | Caller-এর দেওয়া adb (emulator বা হার্ডওয়্যার); [ADB গাইড](../guides/android/adb-device-analysis.md)                                              |
-| JEB প্রজেক্ট              | Engine-চালিত project unit, artifact digest এবং type/method pseudo-code                     | REA_JEB_MCP_URL দিয়ে নির্বাচিত, caller-এর চালু করা একটি MCP-সার্ভিং JEB client; [JEB গাইড](../providers/jeb-analysis.md)                     |
-| Android resource        | Decode করা manifest, string table, locale ও সংস্করণের তথ্য                                   | Caller-এর দেওয়া Apktool launcher; [resource গাইড](../guides/android/apktool-resource-analysis.md)                                           |
-| Flutter অ্যাপ             | Dart snapshot hash, প্রতিটি ABI-এর library digest এবং engine build-এর উৎস                  | কিছু লাগে না (static APK parsing); [Flutter গাইড](../guides/android/flutter-analysis.md)                                                      |
-| Firmware                | Region, extraction-এর ফলাফল এবং native বিশ্লেষণে হস্তান্তর                                     | Linux-এ Binwalk / Unblob; [firmware গাইড](../guides/firmware/firmware-analysis.md)                                                          |
-| রেকর্ড করা packet         | নির্বাচিত field, পুনরাবৃত্ত value, filter এবং decode-as rule                                    | Linux: TShark 4.x + prlimit; [capture গাইড](../guides/data/packet-captures.md)                                                          |
-| Packet সারাংশ             | Endpoint, DNS, TLS SNI, protocol বণ্টন এবং HTTP request                                    | Caller-এর দেওয়া tshark ও capinfos (Linux-এ যাচাই করা); [pcap গাইড](../guides/data/pcap-analysis.md)                                         |
-| রেকর্ড করা logic signal   | Decoder annotation, sample range এবং diagnostics                                          | Linux: sigrok-cli 0.7.2 + prlimit; [signal রেকর্ডিং](../guides/signals/signal-recordings.md)                                               |
+| টার্গেট                   | REA কী ফেরত দেয়                                                                           | প্রয়োজনীয়তা ও গাইড                                                                                                                                           |
+| ----------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ডেস্কটপ ইনস্টলেশন         | Runtime candidate, সহায়ক ফাইল, component marker ও পরবর্তী probe                              | বিল্ট-ইন সীমিত directory/header পরীক্ষা; [ডেস্কটপ অ্যাপ্লিকেশন](../desktop-applications.md)                                                                      |
+| Native বাইনারি            | Pseudocode, assembly, string, symbol, call ও reference                                    | Hopper, Ghidra, IDA বা Kuna; [native বিশ্লেষণ](../guides/native/native-investigation.md)                                                                    |
+| Offline ELF layout      | Section, segment, মূল symbol/relocation এবং static mitigation-এর সম্ভাব্য তালিকা                | Linux x64-এ caller-এর দেওয়া pwntools; [binary diagnostics](../guides/native/binary-diagnostics.md)                                                         |
+| Go বাইনারি                | Embedded compiler সংস্করণ, module, replacement ও build setting                             | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; Go ইনস্টল করার দরকার নেই                                                                                            |
+| GPU code object         | CUDA/HIP target, নির্বাচিত kernel-এর parameter ও resource এবং সংরক্ষিত PTX text              | বিল্ট-ইন static ELF/PE/fatbin/CUBIN/PTX পরীক্ষা; [GPU code object](../gpu-code-objects.md)                                                                   |
+| Model artifact          | GGUF / safetensors metadata, tensor ঘোষণা ও উদ্ভূত মোট মান                                    | বিল্ট-ইন header পরীক্ষা; ঐচ্ছিক পূর্ণ-ফাইল hash; [model ফাইল](../model-artifacts.md)                                                                              |
+| IL2CPP metadata         | Unity global-metadata.dat-এর assembly image, type ও method-এর নাম এবং index range          | বিল্ট-ইন static decoding (version 24, 27, 29, 31 ও 39); Unity লাগে না                                                                                        |
+| Godot PCK               | Archive-এর তালিকা ও extraction, মূল header/directory তথ্য এবং নির্বাচিত content identity        | বিল্ট-ইন static format 2, 3 ও 4; Godot লাগে না                                                                                                               |
+| Rust বাইনারি              | এমবেড করা cargo-auditable crate-এর নাম, সংস্করণ, উৎস ও dependency সম্পর্ক                      | বিল্ট-ইন static ELF/PE/thin Mach-O পরীক্ষা; [Rust বাইনারি](../rust-binaries.md)                                                                                |
+| PE certificate          | Authenticode WIN_CERTIFICATE entry এবং PKCS#7 signer/X.509 পরিচয়ের field                  | বিল্ট-ইন static PE পরীক্ষা; [PE certificate](../pe-certificates.md)                                                                                          |
+| PE import               | Import ও delay-load DLL-এর নাম, ordinal, IAT RVA এবং pefile import hash                    | বিল্ট-ইন static PE পরীক্ষা; [PE import](../pe-imports.md)                                                                                                    |
+| Windows shortcut        | Shell Link target, argument, working dir, ExtraData এবং Tracker droid fact                | বিল্ট-ইন static LNK পরীক্ষা; [Windows shortcut](../guides/native/windows-shortcut.md)                                                                        |
+| ELF note                | PT_NOTE/SHT_NOTE owner, type, GNU build-id ও ABI-tag field                                | বিল্ট-ইন static ELF পরীক্ষা; [ELF note](../elf-notes.md)                                                                                                     |
+| বাইনারি হার্ডেনিং           | ELF, PE ও Mach-O-এর PIE, NX, RELRO, CFG এবং সংশ্লিষ্ট header flag                           | বিল্ট-ইন static header inspection; [বাইনারি হার্ডেনিং](../binary-hardening.md)                                                                                 |
+| Apple IPS crash         | .ips metadata, thread, image, register এবং নথিভুক্ত crash শ্রেণি                             | বিল্ট-ইন static JSON পরীক্ষা; [Apple IPS](../apple-ips.md)                                                                                                   |
+| Linux kernel module     | .modinfo key, __versions CRC, this_module উপস্থিতি এবং signature trailer                   | বিল্ট-ইন static ELF পরীক্ষা; [kernel module](../kernel-modules.md)                                                                                           |
+| Erlang BEAM             | IFF chunk, atom, export, import, lambda এবং Code header                                   | বিল্ট-ইন static BEAM পরীক্ষা; [Erlang BEAM](../erlang-beam.md)                                                                                               |
+| WASM artifact           | Validation, section, হুবহু import/export WAT রূপ এবং decode করা WAT                           | Caller-এর দেওয়া WABT 1.0.42; `inspect_wasm_artifact`                                                                                                       |
+| EVM bytecode            | Dispatch selector, byte offset, অনুমিত argument ও mutability                               | Linux x64-এ local raw/hex carrier; [offline EVM গাইড](../guides/evm/evm-bytecode.md)                                                                       |
+| SQLite ডেটাবেস           | Table, column, index, view, trigger এবং নির্বাচিত সাধারণ table-এর row                         | Local database/WAL snapshot; native SQLite সীমাসহ Node.js 24.x >=24.15 বা 26+                                                                               |
+| রেকর্ড করা Linux crash    | Raw note, রেকর্ড করা প্রতিটি thread-এর register/signal এবং ঐচ্ছিক mapping candidate           | Linux x64-এ caller-এর দেওয়া pwntools; ঐচ্ছিক GDB/pwndbg; [রেকর্ড করা crash](../guides/native/recorded-crashes.md)                                             |
+| JavaScript / Electron   | Module, import, source map, route, IPC এবং native add-on-এর সম্পর্ক                         | Node.js ও npm; Linux: procps-সামঞ্জস্যপূর্ণ `ps`; [অ্যাপ্লিকেশন বিশ্লেষণ](../guides/javascript/javascript-application-workflows.md)                                |
+| ওয়েবসাইট                 | পেজের গঠন, script, network পর্যবেক্ষণ এবং অনুরোধ করা screenshot                               | একটি Chrome-ঘরানার ব্রাউজার; [ব্রাউজার বিশ্লেষণ](../guides/web/browser-observation.md)                                                                             |
+| সংরক্ষিত network capture | Request, response, উন্মুক্ত payload ও source location                                        | HAR বা Fiddler Everywhere SAZ; native mitmproxy capture-এর জন্য Linux-এ mitmdump; [capture গাইড](../guides/web/web-network-captures.md)                      |
+| .NET assembly           | Metadata, CIL instruction, ঘোষিত native dependency এবং build তুলনা                          | কিছু লাগে না (শুধু static); [managed-code গাইড](../guides/managed/managed-code-analysis.md)                                                                     |
+| Android APK             | Manifest ঘোষণা, class, decompile করা method ও reference                                     | Linux/macOS/Windows x64-এ headless JADX ও পূর্ণ JDK; [Android গাইড](../guides/android/android-analysis.md)                                                   |
+| APK signature           | v1/v2/v3/v3.1 signer, certificate fingerprint, key rotation এবং digest-এর অভ্যন্তরীণ সামঞ্জস্য | কিছু লাগে না (শুধু static); `inspect_apk_signature`                                                                                                            |
+| Android ডিভাইস           | ডিভাইস, package, process, log, dump, screen capture এবং APK/ফাইল আদান-প্রদান                   | Caller-এর দেওয়া adb (emulator বা হার্ডওয়্যার); [ADB গাইড](../guides/android/adb-device-analysis.md)                                                              |
+| JEB প্রজেক্ট              | Engine-চালিত project unit, artifact digest এবং type/method pseudo-code                     | REA_JEB_MCP_URL দিয়ে নির্বাচিত, caller-এর চালু করা একটি MCP-সার্ভিং JEB client; [JEB গাইড](../providers/jeb-analysis.md)                                          |
+| Android resource        | Decode করা manifest, string table, locale ও সংস্করণের তথ্য                                   | Caller-এর দেওয়া Apktool launcher; [resource গাইড](../guides/android/apktool-resource-analysis.md)                                                           |
+| Flutter অ্যাপ             | Dart snapshot hash, প্রতিটি ABI-এর library digest এবং engine build-এর উৎস                  | কিছু লাগে না (static APK parsing); [Flutter গাইড](../guides/android/flutter-analysis.md)                                                                      |
+| Firmware                | Region, extraction-এর ফলাফল এবং native বিশ্লেষণে হস্তান্তর                                     | Linux-এ Binwalk / Unblob; [firmware গাইড](../guides/firmware/firmware-analysis.md)                                                                         |
+| রেকর্ড করা packet         | নির্বাচিত field, পুনরাবৃত্ত value, filter এবং decode-as rule                                    | Linux: TShark 4.x + prlimit; [capture গাইড](../guides/data/packet-captures.md)                                                                             |
+| Packet সারাংশ             | Endpoint, DNS, TLS SNI, protocol বণ্টন এবং HTTP request                                    | Caller-এর দেওয়া tshark ও capinfos (Linux-এ যাচাই করা); [pcap গাইড](../guides/data/pcap-analysis.md)                                                            |
+| রেকর্ড করা logic signal   | Decoder annotation, sample range এবং diagnostics                                          | Linux: sigrok-cli 0.7.2 + prlimit; [signal রেকর্ডিং](../guides/signals/signal-recordings.md)                                                               |
 | Package ও resource      | ফাইলের তালিকা, digest, plist, Apple bundle-এর গঠন এবং extract করা resource                    | [Artifact ও JavaScript গাইড](../guides/javascript/javascript-artifact-reconstruction.md), [Apple অ্যাপ্লিকেশন](../guides/apple/apple-application-analysis.md) |
-| Process-এর আচরণ         | টার্মিনাল output, interaction, exit ও filesystem পর্যবেক্ষণ এবং run-এর তুলনা                     | Native PTY-সহ Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                        |
-| PyInstaller executable  | CArchive member, Python সংস্করণ, entry script ও extract করা bytecode                        | কিছু লাগে না (শুধু static); [Python প্যাকেজ করা অ্যাপ্লিকেশন](../python-packaged-applications.md)                                     |
-| Deno compile বাইনারি      | Virtual file, entry point, recorded option, npm snapshot-এর দৈর্ঘ্য                          | কিছু লাগে না (শুধু static); [Deno compile executable](../deno-standalone.md)                                                 |
+| Process-এর আচরণ         | টার্মিনাল output, interaction, exit ও filesystem পর্যবেক্ষণ এবং run-এর তুলনা                     | Native PTY-সহ Linux/macOS; [process capture](../guides/runtime/process-capture.md)                                                                        |
+| PyInstaller executable  | CArchive member, Python সংস্করণ, entry script ও extract করা bytecode                        | কিছু লাগে না (শুধু static); [Python প্যাকেজ করা অ্যাপ্লিকেশন](../python-packaged-applications.md)                                                                    |
+| Deno compile বাইনারি      | Virtual file, entry point, recorded option, npm snapshot-এর দৈর্ঘ্য                         | কিছু লাগে না (শুধু static); [Deno compile executable](../deno-standalone.md)                                                                                   |
 
 Static JavaScript ও .NET পরীক্ষা অ্যাপ্লিকেশন না চালিয়েই দেওয়া ফাইলগুলো পড়ে।
 Runtime capture আপনার user permission নিয়ে নির্বাচিত টার্গেট চালায় বা তার সঙ্গে

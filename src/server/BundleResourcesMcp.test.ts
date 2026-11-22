@@ -192,7 +192,33 @@ it("routes bundle resource MCP calls with null executable identity and retained 
   });
 });
 
-it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
+const expectExplicitSelection = async (
+  client: Client,
+  request: {
+    readonly name: "decode_interface_builder" | "inspect_keyed_archive";
+    readonly parameters: Record<string, JsonValue>;
+    readonly previous: {
+      readonly normalized_result: unknown;
+      readonly evidence_id: string;
+    };
+  },
+) => {
+  const response = await client.callTool({
+    name: request.name,
+    arguments: request.parameters,
+  });
+  expect(response.isError).not.toBe(true);
+  const evidence = toolContract(request.name).outputSchema.parse(
+    response.structuredContent,
+  );
+  expect(evidence.parameters).toEqual(request.parameters);
+  expect(evidence.normalized_result).toEqual(
+    request.previous.normalized_result,
+  );
+  expect(evidence.evidence_id).not.toBe(request.previous.evidence_id);
+};
+
+const createResourceMcpFixture = async () => {
   const parent = await createTestTempDirectory(
     "rea-bundle-resource-production-mcp-",
   );
@@ -219,6 +245,13 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
     session,
     clientIdentity: { name: "production-bundle-resource-test", version: "1" },
   });
+
+  return { client, session, alias, canonical };
+};
+
+it("exposes the production resource session through the MCP SDK for a keyless bundle", async () => {
+  const { client, session, alias, canonical } =
+    await createResourceMcpFixture();
 
   const opened = await client.callTool({
     name: "open_bundle_resources",
@@ -255,6 +288,12 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
         executable_sha256: null,
       },
     },
+  });
+  expect(decodedEvidence.parameters).toEqual({});
+  await expectExplicitSelection(client, {
+    name: "decode_interface_builder",
+    parameters: { max_documents: 64 },
+    previous: decodedEvidence,
   });
   const decodedEvidenceId = z
     .object({ evidence_id: z.string() })
@@ -314,6 +353,12 @@ it("exposes the production resource session through the MCP SDK for a keyless bu
         expect.objectContaining({ value: "resource-only-value" }),
       ]),
     },
+  });
+  expect(evidence.parameters).toEqual({ path: "Resources/Archive.plist" });
+  await expectExplicitSelection(client, {
+    name: "inspect_keyed_archive",
+    parameters: { path: "Resources/Archive.plist", offset: 0 },
+    previous: evidence,
   });
   const evidenceId = z
     .object({ evidence_id: z.string() })
@@ -397,6 +442,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         archive_path: "Resources/data.archive",
         archive_sha256: "b".repeat(64),
         archive_format: "binary-plist",
+        archiver: "NSKeyedArchiver",
         roots: {},
         objects: [],
         references: [],

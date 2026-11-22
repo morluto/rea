@@ -8,6 +8,7 @@ import { z } from "zod";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { Deadline } from "../domain/deadline.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../domain/stringPatterns.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
 import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
@@ -213,6 +214,17 @@ export interface DriverResult {
   readonly content: readonly Readonly<Record<string, JsonValue>>[];
   readonly structured: Readonly<Record<string, JsonValue>> | null;
 }
+
+/** Decode the driver's first screenshot only when its encoded bytes are intact. */
+export const readComputerScreenshotBytes = (
+  reply: DriverResult,
+): Buffer | undefined => {
+  if (reply.isError) return undefined;
+  const data = reply.content.find((block) => block.type === "image")?.data;
+  if (typeof data !== "string" || data.length === 0 || !isCanonicalBase64(data))
+    return undefined;
+  return Buffer.from(data, "base64");
+};
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (

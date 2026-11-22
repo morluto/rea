@@ -1,8 +1,8 @@
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { buffer } from "node:stream/consumers";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { AsarArtifactReader } from "./AsarArtifactReader.js";
 import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
@@ -10,7 +10,7 @@ import { asarHeaderBytes } from "../../tests/fixtures/asarHeader.js";
 it.each(["close", "cancel"] as const)(
   "does not complete an ASAR inventory after %s while paused",
   async (interruption) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-asar-paused-"));
+    const root = await createTestTempDirectory("rea-asar-paused-");
     const path = join(root, "app.asar");
     await writeFile(
       path,
@@ -28,13 +28,12 @@ it.each(["close", "cancel"] as const)(
       });
     } finally {
       await reader.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
 
 it("rejects malformed UTF-8 instead of inventing a replacement-character member identity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-asar-identity-"));
+  const root = await createTestTempDirectory("rea-asar-identity-");
   const path = join(root, "app.asar");
   const reader = new AsarArtifactReader(path);
   const bytes = asarHeaderBytes('{"files":{"x":{"size":0,"offset":"0"}}}');
@@ -47,14 +46,13 @@ it("rejects malformed UTF-8 instead of inventing a replacement-character member 
     });
   } finally {
     await reader.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it.each(["�", "é", "日本語", "\uFEFFname"])(
   "preserves valid UTF-8 member identity %j and reads its bytes through padded framing",
   async (name) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-asar-identity-"));
+    const root = await createTestTempDirectory("rea-asar-identity-");
     const path = join(root, "app.asar");
     const reader = new AsarArtifactReader(path);
     const content = Buffer.from("member bytes");
@@ -76,7 +74,6 @@ it.each(["�", "é", "日本語", "\uFEFFname"])(
       expect((await buffer(output)).equals(content)).toBe(true);
     } finally {
       await reader.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -84,7 +81,7 @@ it.each(["�", "é", "日本語", "\uFEFFname"])(
 it.each(['{"files":', '\uFEFF{"files":{}}'])(
   "rejects invalid JSON framing %j as format failure",
   async (json) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-asar-identity-"));
+    const root = await createTestTempDirectory("rea-asar-identity-");
     const path = join(root, "app.asar");
     const reader = new AsarArtifactReader(path);
     await writeFile(path, asarHeaderBytes(json));
@@ -94,7 +91,6 @@ it.each(['{"files":', '\uFEFF{"files":{}}'])(
       });
     } finally {
       await reader.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

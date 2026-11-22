@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import { open, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -59,6 +59,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "byte-limit.dll",
       bytes: peRepeatedExportNamesImage(0x3000),
+      boundary: "retained_text",
       maximum: 16777216,
       expected: "fixed byte allowance",
       excluded: "fixed count",
@@ -66,6 +67,7 @@ it("reports the exhausted native export allowance through MCP", async () => {
     {
       filename: "count-limit.dll",
       bytes: peStoredExportTableImage(0x40001),
+      boundary: "rows",
       maximum: 262144,
       expected: "fixed count",
       excluded: "fixed byte allowance",
@@ -83,7 +85,10 @@ it("reports the exhausted native export allowance through MCP", async () => {
       code: "resource_constraint",
       retryable: false,
       details: {
-        reported_limits: { boundary: "structure", maximum: fixture.maximum },
+        reported_limits: {
+          boundary: fixture.boundary,
+          maximum: fixture.maximum,
+        },
       },
     });
     expect(error.remediation.action).toContain(fixture.expected);
@@ -376,7 +381,7 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     path,
     Buffer.concat([
       Buffer.alloc(4096),
-      randomBytes(4096),
+      Buffer.from(Array.from({ length: 4096 }, (_, index) => index % 256)),
       Buffer.from("ordinary text ".repeat(400)),
     ]),
   );
@@ -397,6 +402,19 @@ it("profiles real bytes with exact offsets, valid advertised schemas and read-on
     InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  for (const [options, field, reason] of [
+    [{ detail: "summary", surprise: true }, "surprise", "unknown_argument"],
+    [{ block_size: 257 }, "block_size", "invalid_value"],
+  ] as const) {
+    const rejected = await client.callTool({
+      name: "inspect_byte_entropy",
+      arguments: { path, ...options },
+    });
+    expect(parseMcpToolError(rejected).error).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: [field], reason }] },
+    });
+  }
   const { ajv, inputSchema, toolDefinition } = await advertisedMcpToolSchemas(
     client,
     "inspect_byte_entropy",

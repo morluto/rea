@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import pino from "pino";
 import { expect, it, vi } from "vitest";
 import { registerCoreNativeCommands } from "../../../src/cli/coreNativeCommands.js";
@@ -8,7 +8,7 @@ const registry = () => {
     ok: false as const,
     error: { code: "invalid_request", message: "Admitted query control" },
   }));
-  const cli = Cli.create("byte-admission", { sync: false });
+  const cli = createCommandCli();
   registerCoreNativeCommands(cli, pino({ enabled: false }), run);
   return { cli, run };
 };
@@ -51,7 +51,7 @@ it("forwards admitted original strings and caller-selected search/provider contr
   );
 });
 
-it("keeps an omitted mask omitted", async () => {
+it("keeps omitted mask and limit selections omitted", async () => {
   const { cli, run } = registry();
   await cli.serve(["search-bytes", "/selected", "AB", "--json"], {
     stdout: () => undefined,
@@ -60,7 +60,7 @@ it("keeps an omitted mask omitted", async () => {
   expect(run).toHaveBeenCalledExactlyOnceWith(
     "/selected",
     "search_bytes",
-    { pattern: "AB", limit: 100 },
+    { pattern: "AB" },
     expect.any(Object),
   );
 });

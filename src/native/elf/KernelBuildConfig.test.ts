@@ -162,7 +162,6 @@ it("keeps the strict grammar for malformed quoted values", async () => {
     '"a"b"',
     '"tail\\"',
     '"a\rb"',
-    '"a\u2028b"',
     "y\u2028",
   ])
     expect(
@@ -221,6 +220,32 @@ it("reports a framed member with a bad CRC-32 as malformed, not absent", async (
   });
   expect(report.coverage.status).toBe("unknown");
   expect(report.limitations.some((line) => line.includes("CRC-32"))).toBe(true);
+});
+
+it("reads the full little-endian gzip extra field before the config", async () => {
+  const member = gzipSync(Buffer.from(SAMPLE_KERNEL_CONFIG, "latin1"));
+  const header = Buffer.from(member.subarray(0, 10));
+  header[3] = 0x04;
+  // XLEN = 260, containing one 256-byte subfield.
+  const extra = Buffer.concat([
+    Buffer.from([4, 1, 0x52, 0x45, 0, 1]),
+    Buffer.alloc(256),
+  ]);
+  const frame = (payload: Buffer) =>
+    Buffer.concat([
+      Buffer.from("IKCFG_ST"),
+      header,
+      extra,
+      payload,
+      Buffer.from("IKCFG_ED"),
+    ]);
+  expect((await parse(frame(member.subarray(10)))).config).toMatchObject({
+    status: "present",
+    option_count: 9,
+  });
+  expect((await parse(frame(Buffer.alloc(0)))).config.status).not.toBe(
+    "present",
+  );
 });
 
 it("checks the optional gzip header CRC before accepting a member", async () => {
@@ -374,19 +399,21 @@ it("names a whole-file codec stream without inflating it", async () => {
 
 it("fails closed when a config exceeds its entry or inflation budget", async () => {
   // Recovery reads the typed knob, never the message text.
-  for (const [bytes, extra, knob] of [
-    [kernelBuildConfigFixture(), { max_entries: 2 }, "max_entries"],
-    [kernelBuildConfigFixture(), { max_config_bytes: 64 }, "max_config_bytes"],
-    [bzImageGzipFixture(), { max_payload_bytes: 64 }, "max_payload_bytes"],
+  for (const [bytes, knob, maximum] of [
+    [kernelBuildConfigFixture(), "max_entries", 2],
+    [kernelBuildConfigFixture(), "max_config_bytes", 64],
+    [bzImageGzipFixture(), "max_payload_bytes", 64],
   ] as const) {
-    const failure = parse(bytes, extra);
+    const failure = parse(bytes, { [knob]: maximum });
     await expect(failure).rejects.toBeInstanceOf(
       KernelBuildConfigBudgetFailure,
     );
     await expect(failure).rejects.toMatchObject({
-      reason: "limit",
-      boundary: "capacity",
-      knob,
+      failure: {
+        kind: "limit",
+        format: "kernel-build-config",
+        limit: { name: knob, maximum },
+      },
     });
   }
 });

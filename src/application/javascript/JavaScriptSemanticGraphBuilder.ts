@@ -84,6 +84,7 @@ import {
   addSemanticGraphRelation as addRelation,
   createSemanticGraphProjectionState as emptyState,
   bindSemanticGraphApplicationNodes,
+  semanticNodeIdentityLookupKey,
   type SemanticGraphProjectionState as BuilderState,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import type {
@@ -332,7 +333,7 @@ export const createJavaScriptSemanticGraphProjection = (
       root_artifact_sha256: rootArtifactSha256,
       application_graph_id: applicationGraph.graph_id,
       root_node_ids: [...state.roots],
-      evidence_contexts: state.evidenceContexts.contexts,
+      evidence_contexts: state.evidenceContexts.ownedContexts,
       nodes: [...state.nodes.values()],
       relations,
       // The input is transferred to the factory; `fingerprints` is cleared below.
@@ -389,6 +390,7 @@ export const createJavaScriptSemanticGraphProjection = (
       ],
     });
     state.nodes.clear();
+    state.nodesByLookupKey.clear();
     state.relations.clear();
     state.unknowns.clear();
     state.unknownOmissions.clear();
@@ -437,7 +439,10 @@ export const createJavaScriptSemanticGraphProjection = (
         recordSemanticUnknownOmission(state, omission);
       for (const context of projection.evidenceContexts)
         state.evidenceContexts.adopt(context);
-      for (const node of newNodes) state.nodes.set(node.node_id, node);
+      for (const node of newNodes) {
+        state.nodes.set(node.node_id, node);
+        state.nodesByLookupKey.set(semanticNodeIdentityLookupKey(node), node);
+      }
       for (const relation of projection.relations)
         state.relations.set(relation.relation_id, relation);
       for (const unknown of newUnknowns)
@@ -582,7 +587,7 @@ export function* projectJavaScriptSemanticFileSteps(
   const fingerprints = yield* projectFileSteps(file, ir, state, paths);
   return {
     roots: [...state.roots],
-    evidenceContexts: state.evidenceContexts.contexts,
+    evidenceContexts: state.evidenceContexts.ownedContexts,
     nodes: [...state.nodes.values()],
     relations: [...state.relations.values()],
     unknowns: [...state.unknowns.values()],
@@ -595,6 +600,26 @@ export function* projectJavaScriptSemanticFileSteps(
 }
 
 function* projectFileSteps(
+  file: JavaScriptArtifactFile,
+  ir: JavaScriptSemanticIr,
+  state: BuilderState,
+  paths: readonly ElectronCallPath[],
+): Generator<void, JavaScriptSemanticFingerprint[]> {
+  if (ir.loaderCondition === undefined)
+    return yield* projectFileWithEvidenceSteps(file, ir, state, paths);
+  state.evidenceContexts.sourceLoaderCondition = {
+    path: file.path,
+    sha256: file.sha256,
+    limitation: ir.loaderCondition,
+  };
+  try {
+    return yield* projectFileWithEvidenceSteps(file, ir, state, paths);
+  } finally {
+    state.evidenceContexts.sourceLoaderCondition = undefined;
+  }
+}
+
+function* projectFileWithEvidenceSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   state: BuilderState,

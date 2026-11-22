@@ -1,5 +1,8 @@
 import type { FixedCeilingFacts } from "../../domain/fixedAllowanceRemediation.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectSelectedArtifactFileFailure,
   stableArtifactInputFailure,
@@ -69,13 +72,10 @@ const peBinaryFailurePrimary = <Limit extends string>(
     );
   if (cause instanceof BinaryResourceFailure) {
     const limit = binaryResourceAllowance(cause, options.limits);
-    return new AnalysisResourceConstraintError(
-      operation,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum_bytes, limit },
-      { cause, ...options.limitRecovery(limit, binaryResourceCeiling(cause)) },
-    );
+    return parseLimitConstraint(operation, "capacity", cause, {
+      path: input.path,
+      ...options.limitRecovery(limit, binaryResourceCeiling(cause)),
+    });
   }
   const formatFailure = parseFailureAnalysisError(operation, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;

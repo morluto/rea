@@ -34,7 +34,18 @@ const findBytes = (
 export const DART_SNAPSHOT_MAGIC = Uint8Array.from([0xf5, 0xf5, 0xdc, 0xdc]);
 export const SNAPSHOT_HASH_OFFSET = 20;
 export const SNAPSHOT_HASH_LENGTH = 32;
-export const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+const SNAPSHOT_HASH_PATTERN = /^[0-9a-f]{32}$/u;
+
+export const readDartSnapshotHash = (
+  bytes: Uint8Array,
+  snapshotOffset: number,
+): string | null => {
+  const start = snapshotOffset + SNAPSHOT_HASH_OFFSET;
+  const candidate = Buffer.from(
+    bytes.subarray(start, start + SNAPSHOT_HASH_LENGTH),
+  ).toString("latin1");
+  return SNAPSHOT_HASH_PATTERN.test(candidate) ? candidate : null;
+};
 
 export interface SnapshotHashScan {
   /** Snapshot sections found. */
@@ -76,14 +87,8 @@ export class SnapshotHashScanner {
         pendingMagic = magic;
         break;
       }
-      const candidate = Buffer.from(
-        joined.slice(
-          magic + SNAPSHOT_HASH_OFFSET,
-          magic + SNAPSHOT_HASH_OFFSET + SNAPSHOT_HASH_LENGTH,
-        ),
-      ).toString("latin1");
-      const isValidHash = SNAPSHOT_HASH_PATTERN.test(candidate);
-      if (isValidHash && !this.candidateSet.has(candidate)) {
+      const candidate = readDartSnapshotHash(joined, magic);
+      if (candidate !== null && !this.candidateSet.has(candidate)) {
         if (this.candidates.length === MAX_SNAPSHOT_HASH_CANDIDATES)
           this.#capped = true;
         else {
@@ -93,7 +98,7 @@ export class SnapshotHashScanner {
       }
       // Only valid hash records count toward source agreement; a complete
       // magic record whose field is not lowercase hex is not a source.
-      if (isValidHash) this.#sources += 1;
+      if (candidate !== null) this.#sources += 1;
       offset = magic + DART_SNAPSHOT_MAGIC.length;
     }
     // Keep a pending magic for the next chunk; otherwise keep only the

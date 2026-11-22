@@ -14,6 +14,7 @@ import { parsePcapHttpUri } from "./PcapHttpUri.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { parseDnsMessageRaw } from "./PcapDnsWire.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { isRecord as object } from "../kernel/isRecord.js";
 
 const OPERATION = "inspect_pcap_capture";
 /** Bounds JSON decoding plus its expanded object graph before JSON.parse. */
@@ -165,9 +166,6 @@ export interface TsharkFields {
   readonly packetCount: number;
   readonly partial: boolean;
 }
-
-const object = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Map a refused tshark document to the pcap operation's typed failure. */
 const decodeTsharkPackets = async (

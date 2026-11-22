@@ -1,3 +1,5 @@
+import { isImmutableJsonSnapshot } from "./immutableJson.js";
+
 /** Exact UTF-16 code units of a JSON string, including escaping and quotes. */
 export const jsonStringCodeUnits = (value: string): number => {
   let length = value.length + 2;
@@ -42,36 +44,126 @@ export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
 
-/** Compare ordinary JSON text in bounded parts, preserving native key order. */
-export const equalJsonText = (left: unknown, right: unknown): boolean => {
-  const a = jsonParts(left);
-  const b = jsonParts(right);
-  let x = a.next();
-  let y = b.next();
-  let i = 0;
-  let j = 0;
-  try {
-    while (!x.done && !y.done) {
-      const length = Math.min(x.value.length - i, y.value.length - j);
-      if (x.value.slice(i, i + length) !== y.value.slice(j, j + length))
-        return false;
-      i += length;
-      j += length;
-      if (i === x.value.length) {
-        x = a.next();
-        i = 0;
-      }
-      if (j === y.value.length) {
-        y = b.next();
-        j = 0;
+const validateRemainingJson = (
+  frames: ContainerFrame[],
+  ancestors: Set<object>,
+  pending?: unknown,
+  hasPending = false,
+): void => {
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      if (typeof pending !== "object" || pending === null) {
+        if (!isValidJsonScalar(pending))
+          throw new TypeError("JSON output requires ordinary JSON values");
+      } else {
+        if (ancestors.has(pending))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!isImmutableJsonSnapshot(pending))
+          frames.push(openContainer(pending, frames.length, ancestors, false));
       }
     }
-    return x.done === true && y.done === true;
-  } finally {
-    a.return(undefined);
-    b.return(undefined);
+    const frame = frames.at(-1);
+    if (frame === undefined) return;
+    const member = nextMember(frame);
+    if (member === undefined) {
+      ancestors.delete(frame.value);
+      frames.pop();
+      continue;
+    }
+    pending = member.item;
+    hasPending = true;
   }
 };
+
+/** Compare ordinary JSON text iteratively, fast-pathing identical immutable subtrees. */
+export const equalJsonText = (left: unknown, right: unknown): boolean => {
+  const ancestorsLeft = new Set<object>();
+  const ancestorsRight = new Set<object>();
+  const leftFrames: ContainerFrame[] = [];
+  const rightFrames: ContainerFrame[] = [];
+  const finishMismatch = (
+    pendingA?: unknown,
+    hasA = false,
+    pendingB?: unknown,
+    hasB = false,
+  ): false => {
+    validateRemainingJson(leftFrames, ancestorsLeft, pendingA, hasA);
+    validateRemainingJson(rightFrames, ancestorsRight, pendingB, hasB);
+    return false;
+  };
+  let pendingLeft = left;
+  let pendingRight = right;
+  let hasPending = true;
+
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      const a = pendingLeft;
+      const b = pendingRight;
+      const objA = typeof a === "object" && a !== null;
+      const objB = typeof b === "object" && b !== null;
+      if (!objA && !objB) {
+        if (!isValidJsonScalar(a) || !isValidJsonScalar(b))
+          throw new TypeError("JSON output requires ordinary JSON values");
+        if (a !== b) return finishMismatch();
+      } else if (objA && objB) {
+        if (ancestorsLeft.has(a) || ancestorsRight.has(b))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!(a === b && isImmutableJsonSnapshot(a))) {
+          const frameA = openContainer(
+            a,
+            leftFrames.length,
+            ancestorsLeft,
+            false,
+          );
+          const frameB = openContainer(
+            b,
+            rightFrames.length,
+            ancestorsRight,
+            false,
+          );
+          leftFrames.push(frameA);
+          rightFrames.push(frameB);
+          if (frameA.array !== frameB.array) return finishMismatch();
+        }
+      } else {
+        return finishMismatch(a, true, b, true);
+      }
+    }
+
+    const frameA = leftFrames.at(-1);
+    const frameB = rightFrames.at(-1);
+    if (frameA === undefined || frameB === undefined) return true;
+    const memberA = nextMember(frameA);
+    const memberB = nextMember(frameB);
+    if (memberA === undefined || memberB === undefined) {
+      if (memberA !== memberB)
+        return finishMismatch(
+          memberA?.item,
+          memberA !== undefined,
+          memberB?.item,
+          memberB !== undefined,
+        );
+      ancestorsLeft.delete(frameA.value);
+      ancestorsRight.delete(frameB.value);
+      leftFrames.pop();
+      rightFrames.pop();
+      continue;
+    }
+    if (memberA.key !== memberB.key)
+      return finishMismatch(memberA.item, true, memberB.item, true);
+    pendingLeft = memberA.item;
+    pendingRight = memberB.item;
+    hasPending = true;
+  }
+};
+
+const isValidJsonScalar = (value: unknown): boolean =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
 
 /** Buffer JSON parts while preserving complete UTF-16 surrogate pairs. */
 export function* bufferedJsonParts(parts: Iterable<string>): Generator<string> {
@@ -114,9 +206,7 @@ function* encodeString(value: string): Generator<string> {
 /** Encoded text accumulated before it is yielded as one part. */
 const PART_CHARACTERS = 16 * 1024;
 
-const indentation: string[] = [];
-const indent = (depth: number): string =>
-  (indentation[depth] ??= `\n${"  ".repeat(depth)}`);
+const INDENT_SPACES = " ".repeat(PART_CHARACTERS);
 
 interface ContainerFrame {
   readonly value: object;
@@ -226,15 +316,30 @@ function* encodeValue(
     const frame = stack.at(-1);
     if (frame === undefined) break;
     const member = nextMember(frame);
+    if (member !== undefined && frame.written > 0) buffer += ",";
+    if (pretty && (member !== undefined || frame.written > 0)) {
+      if (buffer.length === PART_CHARACTERS) {
+        yield buffer;
+        buffer = "";
+      }
+      buffer += "\n";
+      let spaces = 2 * (frame.depth + (member === undefined ? 0 : 1));
+      // Deep indentation can itself fill several parts. Reuse one whitespace
+      // block so neither the string allocation nor its retention grows with depth.
+      while (buffer.length + spaces >= PART_CHARACTERS) {
+        const available = PART_CHARACTERS - buffer.length;
+        yield buffer + INDENT_SPACES.slice(0, available);
+        buffer = "";
+        spaces -= available;
+      }
+      buffer += INDENT_SPACES.slice(0, spaces);
+    }
     if (member === undefined) {
-      if (pretty && frame.written > 0) buffer += indent(frame.depth);
       buffer += frame.array ? "]" : "}";
       ancestors.delete(frame.value);
       stack.pop();
       continue;
     }
-    if (frame.written > 0) buffer += ",";
-    if (pretty) buffer += indent(frame.depth + 1);
     if (member.key !== undefined) {
       const key = scalarText(member.key);
       if (key !== undefined) buffer += key;

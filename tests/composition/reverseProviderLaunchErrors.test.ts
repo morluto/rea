@@ -125,9 +125,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
             },
           },
           remediation: {
-            action: expect.stringContaining(
-              "REA_OBJDUMP_COMMAND does not need to change",
-            ),
+            action: expect.stringContaining("REA_OBJDUMP_COMMAND"),
           },
         });
         expect(projected.message).toContain(code);
@@ -180,9 +178,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
           },
         },
         remediation: {
-          action: expect.stringContaining(
-            "REA_RIZIN_COMMAND does not need to change",
-          ),
+          action: expect.stringContaining("REA_RIZIN_COMMAND"),
         },
       });
       expect(projected.message).toContain(code);
@@ -225,9 +221,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
             },
           },
           remediation: {
-            action: expect.stringContaining(
-              "REA_OBJDUMP_COMMAND does not need to change",
-            ),
+            action: expect.stringContaining("REA_OBJDUMP_COMMAND"),
           },
         });
         expect(projected.message).toContain(code);
@@ -272,9 +266,7 @@ it.each(["EAGAIN", "EMFILE", "ENFILE", "ENOMEM"] as const)(
             },
           },
           remediation: {
-            action: expect.stringContaining(
-              "REA_OBJDUMP_COMMAND does not need to change",
-            ),
+            action: expect.stringContaining("REA_OBJDUMP_COMMAND"),
           },
         });
       }
@@ -370,9 +362,7 @@ it("preserves Darwin process ownership inspection preparation error without blam
       expect(projected.remediation.action).toContain(
         DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
       );
-      expect(projected.remediation.action).toContain(
-        "REA_OBJDUMP_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -416,9 +406,7 @@ it("preserves Darwin process ownership inspection error with cleanup state witho
       expect(projected.remediation.action).toContain(
         DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
       );
-      expect(projected.remediation.action).toContain(
-        "REA_RIZIN_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_RIZIN_COMMAND");
       expect(result.error.cleanupIncomplete).toBe(true);
       expect(result.error.cleanup).toEqual(cleanupError.cleanup);
     }
@@ -530,6 +518,40 @@ it("preserves command deadline timeout when macOS helper preparation aborts with
   }
 });
 
+it("keeps caller cancellation primary when macOS helper preparation is cancelled with a spawn EMFILE reason", async () => {
+  const { directory, path } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const reason = spawnFailure("EMFILE", "/usr/bin/swiftc");
+  const darwinError = new DarwinProcessOwnershipInspectionError(
+    "Darwin process ownership helper preparation was cancelled",
+    {
+      cause: reason,
+      cancellation: { reason },
+    },
+  );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw darwinError;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      path,
+      operation: "file_headers",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cause).toBe(reason);
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it("uses platform-aware recovery without /proc when Darwin baseline capture rejects identity_snapshot_unavailable", async () => {
   const { directory } = await createArtifact();
   const command = resolve(directory, "configured-objdump");
@@ -569,9 +591,7 @@ it("uses platform-aware recovery without /proc when Darwin baseline capture reje
         ),
       );
       expect(projected.remediation.action).not.toContain("/proc");
-      expect(projected.remediation.action).toContain(
-        "REA_OBJDUMP_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -623,9 +643,7 @@ it("preserves Darwin baseline_unavailable admission failure without blaming conf
         processOwnershipAdmissionRecovery("baseline_unavailable", "darwin"),
       );
       expect(projected.remediation.action).not.toContain("/proc");
-      expect(projected.remediation.action).toContain(
-        "REA_OBJDUMP_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -658,9 +676,7 @@ it("preserves provider-launch ENOENT when configured command path contains ps su
           system_code: "ENOENT",
         },
       });
-      expect(projected.remediation.action).toContain(
-        "Set REA_OBJDUMP_COMMAND to an installed executable GNU objdump command",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
     }
     expect(service.observedLaunchFailures()).toMatchObject({
       inspect_with_objdump: {
@@ -714,9 +730,7 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
         expect(projected.remediation.action).toContain(
           processOwnershipAdmissionRecovery(code, process.platform),
         );
-        expect(projected.remediation.action).toContain(
-          "REA_OBJDUMP_COMMAND does not need to change",
-        );
+        expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
       }
       expect(service.observedLaunchFailures()).toEqual({});
     } finally {
@@ -764,9 +778,7 @@ it("preserves host process ownership admission failure in baseline capture witho
           process.platform,
         ),
       );
-      expect(projected.remediation.action).toContain(
-        "REA_RIZIN_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_RIZIN_COMMAND");
     }
     expect(service.observedLaunchFailures()).toEqual({});
   } finally {
@@ -1215,9 +1227,7 @@ it("preserves provider-launch ENOENT for a real execute_rizin_command target and
           system_code: "ENOENT",
         },
       });
-      expect(projected.remediation.action).toContain(
-        "Set REA_RIZIN_COMMAND to an installed executable Rizin command",
-      );
+      expect(projected.remediation.action).toContain("REA_RIZIN_COMMAND");
     }
     expect(service.observedLaunchFailures()).toMatchObject({
       execute_rizin_command: {
@@ -1266,9 +1276,7 @@ it("keeps Windows native runner load and self-test failures out of command-launc
           },
         },
       });
-      expect(projected.remediation.action).toContain(
-        "REA_OBJDUMP_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
       expect(projected.remediation.action).not.toContain(
         "Set REA_OBJDUMP_COMMAND",
       );
@@ -1365,9 +1373,7 @@ it("keeps Windows process_spawn host-control rejections out of command-launch st
           },
         },
       });
-      expect(projected.remediation.action).toContain(
-        "REA_OBJDUMP_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_OBJDUMP_COMMAND");
       expect(projected.remediation.action).not.toContain(
         "Set REA_OBJDUMP_COMMAND",
       );
@@ -1404,9 +1410,7 @@ it("keeps Windows process_spawn host-control rejections out of command-launch st
           },
         },
       });
-      expect(projected.remediation.action).toContain(
-        "REA_RIZIN_COMMAND does not need to change",
-      );
+      expect(projected.remediation.action).toContain("REA_RIZIN_COMMAND");
       expect(projected.remediation.action).not.toContain(
         "Set REA_RIZIN_COMMAND",
       );

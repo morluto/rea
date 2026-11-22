@@ -1,26 +1,14 @@
-import { withCanonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
 import { expect, it } from "vitest";
-import { z } from "zod";
 import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-core.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
-it("verifies the output profile selected for the packaged server", async () => {
+it("verifies canonical names, converted schemas and session metadata together", async () => {
   const harness = await createApplicationMcpHarness({
     serverOptions: {
       environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
     },
   });
-  try {
-    const names = await verifyCompleteToolCatalog(harness.client);
-    expect(names).toContain("binary_session");
-  } finally {
-    await harness.close();
-  }
-});
-
-it("verifies canonical names, converted schemas and session metadata together", async () => {
-  const harness = await createApplicationMcpHarness();
   try {
     const listed = await harness.client.listTools();
     const sessionDefinition = listed.tools.find(
@@ -28,6 +16,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
     );
     if (sessionDefinition === undefined)
       throw new Error("Expected the binary_session definition");
+    expect(sessionDefinition.outputSchema).toBeDefined();
     // Catalog order must not select which schema validates the lifecycle call.
     const tools = {
       ...listed,
@@ -41,7 +30,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
         name: "binary_session",
         arguments: {},
       },
-      { toolDefinition: withCanonicalOutputSchema(sessionDefinition) },
+      { toolDefinition: sessionDefinition },
     );
     const forwarded: unknown[][] = [];
     const client = {
@@ -68,33 +57,17 @@ it("verifies canonical names, converted schemas and session metadata together", 
     const omitted = tools.tools[0];
     if (omitted === undefined) throw new Error("Expected canonical tools");
     const reduced = { ...tools, tools: tools.tools.slice(1) };
-    const body = z
-      .object({
-        result: z
-          .object({
-            tool_availability: z
-              .object({
-                groups: z.array(
-                  z.object({ names: z.array(z.string()) }).passthrough(),
-                ),
-              })
-              .passthrough(),
-          })
-          .passthrough(),
-      })
-      .passthrough()
-      .parse(
-        JSON.parse(
-          status.content.find((item) => item.type === "text")?.text ?? "null",
-        ),
-      );
+    const schema = toolContract("binary_session").outputSchema;
+    const body = schema.parse(status.structuredContent);
+    if (body.result.detail !== "summary")
+      throw new Error("Expected a binary_session summary");
     body.result.tool_availability.groups = body.result.tool_availability.groups
       .map((group) => ({
         ...group,
         names: group.names.filter((name) => name !== omitted.name),
       }))
       .filter((group) => group.names.length > 0);
-    toolContract("binary_session").outputSchema.parse(body);
+    schema.parse(body);
     const disagreeingOmission = {
       ...status,
       content: [{ type: "text" as const, text: JSON.stringify(body) }],
@@ -199,7 +172,7 @@ it("refuses a packaged catalog with a pattern outside the portable dialect", asy
           },
         }),
       ).rejects.toThrow(
-        `${kind === "inputSchema" ? "input" : "output"} pattern look-around: 1 > 0`,
+        `${first.name} ${kind === "inputSchema" ? "input" : "output"} $.properties.name: pattern look-around`,
       );
     }
   } finally {

@@ -6,6 +6,7 @@ import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const cancelledArrayFixture = (alignment?: number) => {
   const seed = ggufFixture();
@@ -38,7 +39,7 @@ const cancelledArrayFixture = (alignment?: number) => {
 it.each([undefined, 64])(
   "retains completed GGUF facts when cancellation interrupts a later value (alignment=%s)",
   async (alignment) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-model-partial-cancel-"));
+    const root = await createTestTempDirectory("rea-model-partial-cancel-");
     const path = join(root, "model.gguf");
     const { fixture, count, arrayStart } = cancelledArrayFixture(alignment);
     await writeFile(path, fixture.bytes);
@@ -126,13 +127,12 @@ it.each([undefined, 64])(
     } finally {
       readSpy.mockRestore();
       await provider.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
 
 it("retains GGUF tensor declarations and layout limitations before later tensor bytes cancel", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-model-tensor-partial-"));
+  const root = await createTestTempDirectory("rea-model-tensor-partial-");
   const path = join(root, "model.gguf");
   const tensorCount = 4000;
   const fixture = ggufFixture({
@@ -231,7 +231,6 @@ it("retains GGUF tensor declarations and layout limitations before later tensor 
   } finally {
     readSpy.mockRestore();
     await provider.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -242,7 +241,7 @@ it.each([
 ])(
   "retains parsed $format facts with alignment $alignment when full hashing is cancelled",
   async ({ format, alignment }) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-model-hash-cancel-"));
+    const root = await createTestTempDirectory("rea-model-hash-cancel-");
     const path = join(root, `model.${format}`);
     const fixture =
       format === "safetensors"
@@ -347,7 +346,6 @@ it.each([
     } finally {
       readSpy.mockRestore();
       await provider.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );

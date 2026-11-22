@@ -19,7 +19,10 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   fixedAllowanceOptions,
@@ -330,21 +333,18 @@ export class ArtifactAnalysisResources {
     }
     if (failures.length === 0) return;
     if (failures.length === 1) throw failures[0];
-    throw new ProviderCleanupError(
+    throw providerCleanupErrorFromFailures(
       this.providerId,
-      failures.flatMap((failure) => failure.cleanupResources),
+      failures,
       {
         reason: "One or more analysis runtime resources remain owned.",
         failures: failures.map((failure) => projectAnalysisError(failure)),
       },
       {
         operation: failures[0]?.operation ?? this.#artifacts.operation,
-        cause: new AggregateError(
-          failures,
-          "Analysis runtime cleanup remains incomplete",
-        ),
+        message: "Analysis runtime cleanup remains incomplete",
       },
-    ).bindCleanupDependencies(failures);
+    );
   }
 
   async #releaseRoot(root: ArtifactAnalysisRuntime): Promise<void> {
@@ -433,11 +433,7 @@ export class ArtifactAnalysisResources {
       (primary ?? failure).retainPartialObservation(cause.partialObservation);
     return primary === undefined
       ? failure
-      : analysisErrorWithCleanupFailure(
-          primary,
-          failure,
-          operation,
-        ).bindCleanupDependencies([primary, failure]);
+      : analysisErrorWithCleanupDependencies(primary, failure, operation);
   }
 
   commandFailure(
@@ -532,11 +528,11 @@ export class ArtifactAnalysisResources {
       await this.release();
     } catch (cause: unknown) {
       if (descriptorFailure !== undefined && cause instanceof AnalysisError)
-        throw analysisErrorWithCleanupFailure(
+        throw analysisErrorWithCleanupDependencies(
           descriptorFailure,
           cause,
           this.#artifacts.operation,
-        ).bindCleanupDependencies([descriptorFailure, cause]);
+        );
       throw cause;
     }
     if (descriptorFailure !== undefined) throw descriptorFailure;

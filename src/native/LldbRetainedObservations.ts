@@ -1,4 +1,5 @@
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
+import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
 import {
   NATIVE_CALL_CAPTURE_DEFAULTS,
   type NativeCallCaptureLimits,
@@ -126,13 +127,19 @@ const parseLldbObservationJournal = (bytes: Uint8Array): ParsedLldbJournal => {
       malformedCount += 1;
       firstMalformedRow ??= rowNumber;
     };
-    let row: unknown;
+    let text: string;
     try {
-      row = JSON.parse(decoder.decode(line));
+      text = decoder.decode(line);
     } catch {
       markMalformed();
       continue;
     }
+    const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+    if (!parsed.ok) {
+      markMalformed();
+      continue;
+    }
+    const row = parsed.value;
     if (
       typeof row !== "object" ||
       row === null ||

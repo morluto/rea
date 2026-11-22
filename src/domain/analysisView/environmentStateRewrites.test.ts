@@ -4,7 +4,6 @@ import { StateRecordChronology } from "./StateRecordChronology.js";
 import { rewriteCuts } from "./environmentStateRewrites.js";
 import {
   writeSpanCheck,
-  writeSpanIndex,
   type StateRecordFacts,
 } from "./environmentStateRules.js";
 
@@ -79,15 +78,14 @@ it("selects the earliest possibly interfering write without replacing a known co
   const finished = record(0, "PUT", 0, 5);
   const unresolved = record(1, "PUT", 10, undefined);
   const earlier = record(2, "GET", 20, 25);
-  const later = record(3, "GET", 30, 35);
-  const records = [finished, unresolved, earlier, later];
+  const overlap = record(3, "PUT", 26, 27);
+  const later = record(4, "GET", 30, 35);
+  const records = [finished, unresolved, earlier, overlap, later];
   const chronology = new StateRecordChronology(records, "recorded-start-time");
-  const writes = [finished, unresolved];
-  expect(writeSpanIndex(writes, chronology)(earlier, later)).toBe(1);
   expect(
     rewriteCuts(
       [{ type: "/api/items", earlier: earlier.ordinal, later: later.ordinal }],
-      writes,
+      [finished, unresolved, overlap],
       new Map(records.map((value) => [value.ordinal, value])),
       chronology,
     ).get("/api/items"),

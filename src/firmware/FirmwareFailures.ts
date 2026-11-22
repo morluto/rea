@@ -1,7 +1,6 @@
 import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import {
   type AnalysisCleanupLease,
-  ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
 } from "../resources/index.js";
 import type {
@@ -17,7 +16,7 @@ import {
   isAborted,
   type AbortedSignal,
 } from "../domain/analysisErrorCore.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { ProviderFailureDialect } from "../providers/classifyProviderFailure.js";
@@ -214,16 +213,7 @@ export const firmwareFailureDialect = (
       if (read.cleanupLeases === undefined)
         treeCleanupLease?.bindCleanupError(cleanup);
       if (primary === undefined) return cleanup;
-      // A file operation's own outcome shares its cleanup; a cancelled read's does not.
-      return analysisErrorWithCleanupFailure(
-        primary,
-        cleanup,
-        operation,
-      ).bindCleanupDependencies(
-        read instanceof ArtifactFileCleanupFailure
-          ? [primary, cleanup]
-          : [cleanup],
-      );
+      return analysisErrorWithCleanupDependencies(primary, cleanup, operation);
     },
     unclassified: (cause, details) =>
       new ProviderAdapterError(engine, operation, {

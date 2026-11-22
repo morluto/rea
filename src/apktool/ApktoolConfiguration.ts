@@ -18,7 +18,7 @@ import {
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
-import { isAbsolute, win32 } from "node:path";
+import { isQualifiedCallerPath } from "../filesystem/callerPath.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { findWindowsExecutable } from "../process/WindowsExecutable.js";
 import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
@@ -26,6 +26,7 @@ import { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import { randomUUID } from "node:crypto";
 import {
   OwnedCommandFailure,
+  preparationHostCapacityFailure,
   runOwnedCommand,
   prepareOwnedCommand,
 } from "../process/OwnedCommand.js";
@@ -80,11 +81,7 @@ export const resolveApktoolCommand = async (
   const selectedEnvironment = snapshotEnvironment(environment, platform);
   const configured = selectedEnvironment[APKTOOL_COMMAND_ENV];
   if (configured !== undefined && configured.trim() !== "") {
-    if (
-      !(platform === "win32"
-        ? win32.isAbsolute(configured)
-        : isAbsolute(configured))
-    )
+    if (!isQualifiedCallerPath(configured, platform))
       throw new ApktoolConfigurationFailure(
         "not_absolute",
         `${APKTOOL_COMMAND_ENV} must be an absolute path to the apktool launcher`,
@@ -488,10 +485,35 @@ const versionProbeFailure = (
       )
     );
   if (inspectionCancellation !== undefined) return inspectionCancellation;
-  if (
-    preparation !== undefined &&
-    !(cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-  )
+  if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
+    return new AnalysisTimeoutError(
+      "inspect_apktool_client",
+      VERSION_TIMEOUT_MS,
+      {
+        cause,
+        ...(output === undefined ? {} : { capturedOutput: output }),
+        ...apktoolVersionProbeTimeoutGuidance(),
+      },
+    );
+  const launch =
+    preparationHostCapacityFailure(cause) ?? launcherFailureOf(cause);
+  // The host, not the selected launcher, refused this launch.
+  if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
+    return classifyLaunchFailure(launch, {
+      providerId: "apktool",
+      operation: "inspect_apktool_client",
+      command: selection.command,
+      fixedArguments: true,
+      selection: APKTOOL_COMMAND_ENV,
+      details: {
+        cause,
+        diagnostics: {
+          selected_command: selection.command,
+          command_source: selection.commandSource,
+        },
+      },
+    });
+  if (preparation !== undefined)
     return new ProviderAdapterError("apktool", "inspect_apktool_client", {
       cause,
       diagnostics: {
@@ -509,33 +531,6 @@ const versionProbeFailure = (
       preparation.capturedOutput === undefined
         ? {}
         : { capturedOutput: preparation.capturedOutput }),
-    });
-  if (cause instanceof OwnedCommandFailure && cause.reason === "timeout")
-    return new AnalysisTimeoutError(
-      "inspect_apktool_client",
-      VERSION_TIMEOUT_MS,
-      {
-        cause,
-        ...(output === undefined ? {} : { capturedOutput: output }),
-        ...apktoolVersionProbeTimeoutGuidance(),
-      },
-    );
-  const launch = launcherFailureOf(cause);
-  // The host, not the selected launcher, refused this launch.
-  if (launch?.kind === "host-exhausted" || launch?.kind === "argument-list")
-    return classifyLaunchFailure(launch, {
-      providerId: "apktool",
-      operation: "inspect_apktool_client",
-      command: selection.command,
-      fixedArguments: true,
-      selection: APKTOOL_COMMAND_ENV,
-      details: {
-        cause,
-        diagnostics: {
-          selected_command: selection.command,
-          command_source: selection.commandSource,
-        },
-      },
     });
   if (launch?.kind === "missing" || launch?.kind === "not_executable") {
     const execDenied = launch.kind === "not_executable";

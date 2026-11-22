@@ -47,7 +47,7 @@ import {
 import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
-import { compareProcedureAddresses } from "./selection.js";
+import { sortByProcedureAddress } from "./selection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export interface ExportIdentity {
@@ -266,9 +266,7 @@ export class DecompileExport {
         inventory_limitations: [...input.latestRun.inventoryLimitations],
       },
       limitations: [...input.limitations],
-      functions: [...this.records.values()].sort((left, right) =>
-        compareProcedureAddresses(left.address, right.address),
-      ),
+      functions: sortByProcedureAddress([...this.records.values()]),
     });
     if (!index.success)
       return err(
@@ -392,20 +390,10 @@ const openResumedJournal = async (
   if (!opened.ok) return opened;
   const functions = await prepareFunctionsDirectory(root, resources);
   if (!functions.ok) return functions;
-  const handle = await openJournal(root, "a");
-  if (!handle.ok) return handle;
-  resources.ownFile(
-    handle.value,
-    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
-    true,
-  );
   // Drop a torn final line left by a crash so the next append starts a line.
   const repaired =
     opened.value.committedBytes === opened.value.journalBytes ||
-    (await handle.value.truncate(opened.value.committedBytes).then(
-      () => true,
-      () => false,
-    ));
+    (await truncateJournal(root, opened.value.committedBytes, resources));
   if (!repaired) {
     return err(
       decompileInputError(
@@ -414,7 +402,36 @@ const openResumedJournal = async (
       ),
     );
   }
+  const handle = await openJournal(root, "a");
+  if (!handle.ok) return handle;
+  resources.ownFile(
+    handle.value,
+    join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME),
+    true,
+  );
   return ok({ handle: handle.value, journal: opened.value });
+};
+
+/**
+ * Truncate through a write handle opened without O_APPEND. Windows opens an
+ * append handle with FILE_APPEND_DATA only, and SetEndOfFile refuses it.
+ */
+const truncateJournal = async (
+  root: string,
+  bytes: number,
+  resources: ExportResources,
+): Promise<boolean> => {
+  const path = join(root, DECOMPILE_DIRECTORY_JOURNAL_NAME);
+  const handle = await open(path, constants.O_WRONLY | NO_FOLLOW).catch(
+    (cause: unknown) => cause,
+  );
+  if (!isFileHandle(handle)) return false;
+  const close = resources.ownFile(handle, path);
+  const truncated = await handle.truncate(bytes).then(
+    () => true,
+    () => false,
+  );
+  return (await close()) && truncated;
 };
 
 export type FileCommit =
@@ -641,7 +658,7 @@ const JOURNAL_FLAGS = {
   a: constants.O_WRONLY | constants.O_APPEND | NO_FOLLOW,
 } as const;
 
-/** The journal is never opened through a symlink: repair truncates it. */
+/** The journal is never opened through a symlink: resume appends to it. */
 const openJournal = async (
   root: string,
   flag: "wx" | "a",

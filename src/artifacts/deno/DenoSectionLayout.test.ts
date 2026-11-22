@@ -1,6 +1,10 @@
 import { expect, it } from "vitest";
 
-import { parseDenoSection } from "./DenoSectionLayout.js";
+import {
+  MAX_DENO_REMOTE_BODY_BYTES,
+  MAX_DENO_SPECIFIER_TEXT_BYTES,
+  parseDenoSection,
+} from "./DenoSectionLayout.js";
 import {
   buildDenoSection,
   defaultDenoMetadata,
@@ -87,7 +91,7 @@ it("parses metadata, tables, remote regions, and embedded configuration", async 
     data: { length: original.length },
     transpiled: { length: transpiled.length },
   });
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
   expect(parsed.vfs.listing).toBe("listed");
   expect(parsed.vfs.members[0]).toMatchObject({
     role: "vfs-file",
@@ -150,6 +154,51 @@ it("refuses a specifier table above the named record allowance", async () => {
   });
 });
 
+it.each([
+  {
+    text: "file:///wire-specifier.ts",
+    limit: MAX_DENO_SPECIFIER_TEXT_BYTES,
+    field: "specifier text",
+  },
+  {
+    text: "wire-module",
+    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    field: "remote module",
+  },
+  {
+    text: "wire-transpiled",
+    limit: MAX_DENO_REMOTE_BODY_BYTES,
+    field: "remote transpiled",
+  },
+])(
+  "validates the $field extent before charging its byte allowance",
+  async ({ text, limit, field }) => {
+    const bytes = buildDenoSection({
+      specifiers: [{ text: "file:///wire-specifier.ts", id: 0 }],
+      remoteModules: [
+        { specifierId: 0, data: "wire-module", transpiled: "wire-transpiled" },
+      ],
+    });
+    const body = bytes.indexOf(Buffer.from(text));
+    expect(body).toBeGreaterThan(4);
+    const claimed = limit + 1;
+    bytes.writeUInt32LE(claimed, body - 4);
+    const read = async (offset: number, length: number) =>
+      bytes.subarray(offset, offset + length);
+    await expect(parseDenoSection(bytes.length, read)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringContaining(`${field} length overruns`),
+    });
+    // The same body could fit at this logical section size. The selected
+    // allowance must stop the parser before it tries to read the body.
+    await expect(
+      parseDenoSection(body + claimed + 64, read),
+    ).rejects.toMatchObject({
+      reason: "limit",
+    });
+  },
+);
+
 it("stops on unrecognized remote flags and duplicate specifier ids", async () => {
   await expect(
     parseDenoSectionBytes(
@@ -166,7 +215,7 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
     parseDenoSectionBytes(
       buildDenoSection({
         specifiers: [
-          { text: "file:///a.ts", id: 0 },
+          { bytes: Buffer.from([0xff]), id: 0 },
           { text: "file:///b.ts", id: 0 },
         ],
       }),
@@ -177,14 +226,22 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
   });
 });
 
-it("reports an invalid specifier as an unsupported listing", async () => {
+it("limits unsupported listings to the tables that need invalid specifier text", async () => {
   const parsed = await parseDenoSectionBytes(
     buildDenoSection({
-      specifiers: [{ bytes: Buffer.from([0xff]), id: 0 }],
+      specifiers: [
+        { bytes: Buffer.from([0xff]), id: 0 },
+        { text: "https://example.com/mod.ts", id: 1 },
+        { text: "https://example.com/start.ts", id: 2 },
+      ],
+      redirects: [{ from: 2, to: 1 }],
+      remoteModules: [{ specifierId: 1, data: "known" }],
     }),
   );
   expect(parsed.specifiers.listing).toBe("unsupported");
-  expect(parsed.specifierText).toBeNull();
+  expect(parsed.redirects.listing).toBe("listed");
+  expect(parsed.remoteModules.listing).toBe("listed");
+  expect(parsed.specifierText.get(0)).toBeNull();
 });
 
 it("keeps decoded specifiers when another remote id is missing", async () => {
@@ -198,8 +255,8 @@ it("keeps decoded specifiers when another remote id is missing", async () => {
     }),
   );
   expect(parsed.remoteModules.listing).toBe("unsupported");
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
-  expect(parsed.specifierText?.has(2)).toBe(false);
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.has(2)).toBe(false);
 });
 
 it("honors cancellation before parsing", async () => {

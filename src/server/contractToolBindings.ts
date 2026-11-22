@@ -13,7 +13,10 @@ import type {
   EvidenceWriter,
 } from "../application/investigation/InvestigationRecordPort.js";
 import type { AnalysisViewRequest } from "../domain/analysisView/analysisViewRequest.js";
-import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import {
+  toolContractEntry,
+  type TOOL_CONTRACTS,
+} from "../contracts/toolContracts.js";
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Evidence } from "../domain/evidence.js";
@@ -35,6 +38,7 @@ import type { ArtifactResourceScope } from "../resources/index.js";
 import {
   type AnalysisWorkflow,
   type AnalysisWorkflowOutcome,
+  type AnalysisWorkflowOptions,
   type ApplicationWorkflowRequest,
   createAnalysisToolHandler,
   createApplicationToolHandler,
@@ -43,6 +47,7 @@ import {
   type DerivedSources,
   createEvidenceToolHandler,
   createRetainedSummaryToolHandler,
+  type RetainedSummaryOperation,
   createValueToolHandler,
   type ContractToolService,
   type ValueOutcome,
@@ -286,9 +291,7 @@ type DerivedBinding = {
  * Admit `detail`/`view` in the adapter, run the workflow on the remaining
  * input, and retain the complete Evidence behind a summary.
  */
-interface RetainedSummaryBinding<Input> {
-  readonly admission: ContractInputAdmission;
-  readonly summary: EvidenceOperation<Omit<Input, "detail" | "view">>;
+type RetainedSummaryBinding<Input> = RetainedSummaryOperation<Input> & {
   readonly run?: never;
   readonly value?: never;
   readonly derive?: never;
@@ -299,7 +302,7 @@ interface RetainedSummaryBinding<Input> {
   readonly mutation?: never;
   readonly query?: never;
   readonly provider?: never;
-}
+};
 
 /**
  * Run an application workflow that completes Evidence from session-held
@@ -340,6 +343,7 @@ type ApplicationBinding<Input = unknown> =
  */
 type AnalysisBinding<Input> = {
   readonly admission: "sdk";
+  readonly completionProgress?: AnalysisWorkflowOptions["completionProgress"];
   readonly run?: never;
   readonly summary?: never;
   readonly value?: never;
@@ -504,7 +508,6 @@ export const registerContractTools = (
   server: EvidenceMcpServer,
   bindings: ContractToolBindings,
   dependencies: ContractToolDependencies,
-  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
 ): void => {
   const {
     logger,
@@ -521,10 +524,9 @@ export const registerContractTools = (
       | ValueBinding
       | ApplicationBinding
       | DerivedBinding
-      | {
+      | ({
           readonly admission: "sdk";
           readonly analyze: AnalysisWorkflow;
-          readonly detail?: "delivery";
           readonly value?: never;
           readonly workflow?: never;
           readonly derive?: never;
@@ -533,7 +535,7 @@ export const registerContractTools = (
           readonly mutation?: never;
           readonly query?: never;
           readonly provider?: never;
-        }
+        } & AnalysisWorkflowOptions)
       | ExternalMutationBinding<unknown>
       | QueryBinding<unknown>
       | ProviderBinding<ProviderOperation>
@@ -542,11 +544,22 @@ export const registerContractTools = (
     >
     // The table's exact per-name types are checked where it is written.
   > = bindings as never;
-  const unbound = new Set(Object.keys(table));
-  for (const contract of contracts) {
-    const binding = table[contract.name];
+  const matched: {
+    readonly contract: (typeof TOOL_CONTRACTS)[number];
+    readonly index: number;
+    readonly binding: NonNullable<(typeof table)[string]>;
+  }[] = [];
+  const unbound: string[] = [];
+  for (const name of Object.keys(table)) {
+    const binding = table[name];
     if (binding === undefined) continue;
-    unbound.delete(contract.name);
+    const entry = toolContractEntry(name);
+    if (entry === undefined) unbound.push(name);
+    else
+      matched.push({ contract: entry.contract, index: entry.index, binding });
+  }
+  matched.sort((left, right) => left.index - right.index);
+  for (const { contract, binding } of matched) {
     if (
       binding.provider !== undefined &&
       binding.provider.operation !== contract.name
@@ -591,7 +604,10 @@ export const registerContractTools = (
                   logger,
                   retention,
                   requiredAdmission(withAdmittedAnalysis, contract.name),
-                  binding.detail === "delivery",
+                  {
+                    detail: binding.detail,
+                    completionProgress: binding.completionProgress,
+                  },
                 )(contract)
               : binding.query !== undefined
                 ? createValueToolHandler(
@@ -643,7 +659,7 @@ export const registerContractTools = (
                         : createRetainedSummaryToolHandler(
                             server,
                             contract as SummaryContract,
-                            binding.summary,
+                            binding,
                             logger,
                             retention,
                             withAdmittedAnalysis,
@@ -659,8 +675,8 @@ export const registerContractTools = (
             present(await handler(input, context)),
     );
   }
-  if (unbound.size > 0)
+  if (unbound.length > 0)
     throw invariantViolation(
-      `MCP tool bindings name no registered contract: ${[...unbound].join(", ")}`,
+      `MCP tool bindings name no registered contract: ${unbound.join(", ")}`,
     );
 };
