@@ -130,6 +130,7 @@
 * **javascript:** account for active nullish pattern defaults ([c1943f1](https://github.com/morluto/rea/commit/c1943f196cde8d232029e184648bf0a1356b685a))
 * **javascript:** include the underscore in the http token class ([62c4c25](https://github.com/morluto/rea/commit/62c4c25d19b67363784b58961072cd12c509de52))
 * **javascript:** omit requests rejected by the default agent protocol ([f54cc2f](https://github.com/morluto/rea/commit/f54cc2f3acf5e73b1007aafe8db69bc4b0ca29c3))
+* **javascript:** preserve abrupt destructuring boundaries ([#13433](https://github.com/morluto/rea/issues/13433)) ([365bbd9](https://github.com/morluto/rea/commit/365bbd9008ddde7b4ff6c0ba3b239e24309a7a64))
 * **javascript:** preserve Electron identity beside unrelated alias exhaustion ([#12988](https://github.com/morluto/rea/issues/12988)) ([c2870f9](https://github.com/morluto/rea/commit/c2870f91320721222a6157b5728eaff92a6c5a2a))
 * **javascript:** preserve uncertainty after nullish patterns ([8ae636b](https://github.com/morluto/rea/commit/8ae636b6abaaf3ac76a657be085a1abb1f571e1d))
 * **javascript:** preserve Webpack slots outside finite writes ([#13006](https://github.com/morluto/rea/issues/13006)) ([91a68a8](https://github.com/morluto/rea/commit/91a68a8b7cd374b0b5a09cf5b57b05b8bb304162))
