@@ -1,378 +1,375 @@
 import {
-  webSourceLocationViewRequestSchema,
-  webSourceLocationContextSchema,
-  webSourceLocationSummarySchema,
-  webSourceLocationMatchViewSchema,
-} from "./webSourceLocationView.js";
-import { analysisTextPageItemSchema } from "./analysisViewText.js";
-import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
+  NATIVE_INVENTORY_OPERATIONS,
+  nativeInventoryOperationSchema,
+} from "../native/nativeInventory.js";
 import {
-  graphqlContractViewContextSchema,
-  graphqlContractViewItemsSchema,
-} from "./graphqlContractView.js";
-import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+  NATIVE_OBSERVATION_OPERATIONS,
+  type NativeObservationOperation,
+} from "../native/nativeObservation.js";
+import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
 import {
-  playwrightTraceViewContextSchema,
-  playwrightTraceViewItemsSchema,
-} from "./playwrightTraceView.js";
-import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
-import { apiContractArtifactSchema } from "../apiContract/apiContract.js";
+  artifactGraphManifestSchema,
+  artifactInventoryCoverageSchema,
+} from "../artifactGraph.js";
+import { desktopCoverageSchema } from "../desktopApplication.js";
+import { nativeFunctionMatchingContextSchema } from "../native/functionMatching.js";
 import {
-  apiContractViewContextSchema,
-  apiContractViewItemsSchema,
-} from "./apiContractView.js";
-import {
-  procedureReferenceViewRequests,
-  procedureReferenceViewItems,
-  procedureReferenceSummarySchema,
-} from "./nativeProcedureReferencesView.js";
+  rustBinaryViewPageSchema,
+  rustBinaryViewRequestSchema,
+} from "../rust/rustBinaryQuery.js";
 import {
   analysisViewCoverageSchema,
   nullableCollectionViewCoverageSchema,
 } from "./analysisViewCoverage.js";
 import {
-  nativeInstructionReferencesRequestSchema,
-  nativeInstructionReferenceItemsSchema,
-  nativeInstructionReferenceContextSchema,
-} from "./nativeInstructionReferencesView.js";
+  artifactSchema,
+  summaryViewResultBase,
+  viewResultBaseFields,
+} from "./analysisViewBase.js";
+import { recordedArrayViewSchema } from "./analysisViewRequest.js";
 import {
-  javaScriptRouteInventorySourceSchema,
-  javaScriptRouteInventorySchema,
-} from "../javascript/javascriptRouteInventory.js";
-import { nativeFunctionMatchingContextSchema } from "../native/functionMatching.js";
+  facetViewSchema,
+  itemViewSchema,
+  nativeViewSchema,
+  pageViewSchema,
+} from "./analysisViewShape.js";
+import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
 import {
-  nativeObservationViewRequestSchema,
-  nativeContextViewRequestSchema,
-  nativeObservationItemsSchemas,
-  nativeContextItemsSchemas,
-  nativeSourceContextReferenceSchema,
-  nativeObservationOperationSchema,
-} from "./nativeObservationSchemas.js";
-import {
-  NATIVE_OBSERVATION_OPERATIONS,
-  type NativeObservationOperation,
-} from "../native/nativeObservation.js";
-import { nativeValueTraceSummarySchema } from "./nativeValueTraceView.js";
-import {
-  devicetreeViewRequestSchema,
-  devicetreeViewItemsSchema,
-  devicetreeSummarySchema,
-  devicetreePageContextSchema,
-} from "./devicetreeView.js";
-import {
-  apkSignatureViewRequestSchema,
-  apkSignatureViewItemsSchema,
-} from "../apkSignature/apkSignatureQuery.js";
-import {
-  apkSignatureSummarySchema,
-  apkSignatureSourceCoverageSchema,
-} from "./apkSignatureView.js";
-import {
-  erlangBeamViewRequestSchema,
-  erlangBeamViewPageSchema,
-  erlangBeamSummarySchema,
-} from "./erlangBeamView.js";
-import {
-  pythonPycViewRequestSchema,
-  pythonPycViewItemsSchema,
-  pythonPycSummarySchema,
-} from "./pythonPycView.js";
-import { nugetNupkgSummarySchema } from "./nugetNupkgView.js";
-import {
-  nativeExportsViewRequestSchema,
-  nativeExportsViewItemsSchema,
-  nativeExportsSummarySchema,
-} from "./nativeExportsView.js";
-import {
-  elfDependenciesViewRequestSchema,
-  elfDependenciesViewItemsSchema,
-  elfDependenciesSummarySchema,
-} from "./elfDependenciesView.js";
-import { procedurePseudocodeSummarySchema } from "./procedurePseudocodeSchemas.js";
-import { byteEntropySummarySchema } from "./byteEntropyView.js";
-import {
-  javaScriptRoutesViewRequestSchema,
-  javaScriptRoutesViewItemsSchema,
-  javaScriptRoutesViewSummarySchema,
-} from "./javascriptRoutesView.js";
-import {
-  webBundleViewSourceUnknownsSchema,
-  webBundleViewRequestSchema,
-  webBundleViewItemsSchema,
-  webBundleSummarySchema,
-} from "./webBundleView.js";
-import { webBundleAnalysisSchema } from "../webBundleAnalysis.js";
-import { recordedBrowserOriginSchema } from "../browserObservation.js";
-import {
-  sourceToBundleViewRequestSchema,
-  sourceToBundleViewItemsSchema,
-  sourceToBundleViewContextSchema,
-} from "./sourceToBundleView.js";
-import {
-  endpointComparisonViewContextSchema,
-  endpointComparisonViewItemsSchema,
-  endpointComparisonViewRequestSchema,
-} from "./endpointComparisonView.js";
-import {
-  featureTraceSummarySchema,
-  featureTraceViewCollections,
-  featureTraceViewContextSchema,
-} from "./featureTraceView.js";
-import {
-  nativeFeatureTraceSummarySchema,
-  nativeFeatureTraceViewItems,
-  nativeFeatureTraceRequests,
-} from "./nativeFeatureTraceView.js";
+  artifactInventoryItemsSchema,
+  artifactInventoryViewRequestSchema,
+} from "./artifactInventoryView.js";
 import {
   batchDecompileSummarySchema,
   batchDecompileViewCollections,
   batchDecompileViewContextSchema,
 } from "./batchDecompileView.js";
 import {
-  gpuCodeObjectsViewRequestSchema,
-  gpuCodeObjectsSummarySchema,
-  gpuCodeObjectsItemsSchema,
-  gpuCodeObjectsPtxPageSchema,
-} from "./gpuCodeObjectsView.js";
-import { gpuCodeObjectsObjectSchema } from "../gpu/gpuCodeObjects.js";
-import { modelArtifactViewRequestSchema } from "../model/modelArtifactQuery.js";
-import {
-  modelArtifactSummarySchema,
-  modelArtifactViewItemsSchema,
-  modelArtifactViewContextSchema,
-} from "./modelArtifactView.js";
-import {
-  commandSummaryContext,
-  gdbCommandSummarySchema,
-} from "./commandObservationView.js";
-import {
-  fridaSessionStatusSummarySchema,
-  fridaSessionStatusViewContext,
-} from "./fridaSessionStatusView.js";
-import { commandObservationSchema } from "../commandObservation.js";
-import {
-  rustBinaryViewPageSchema,
-  rustBinaryViewRequestSchema,
-} from "../rust/rustBinaryQuery.js";
-import {
-  goBinarySummarySchema,
-  goBinaryViewContextSchema,
-  goBinaryViewPageSchema,
-  goBinaryViewRequestSchema,
-} from "./goBinaryView.js";
-import {
-  rustBinarySummarySchema,
-  rustBinaryViewContextSchema,
-} from "./rustBinaryView.js";
+  browserScenarioViewContextSchema,
+  browserScenarioViewItemsSchema,
+  browserScenarioViewRequestSchema,
+} from "./browserScenarioViewSchemas.js";
 import {
   cycloneDxDocumentSchema,
   cycloneDxSourceCoverageSchema,
   cycloneDxViewRequestSchema,
 } from "./cyclonedxView.js";
 import {
-  nativeFunctionMatchingViewRequestSchema,
-  nativeFunctionMatchingViewItemsSchema,
-} from "./nativeFunctionMatchingView.js";
+  dartAotViewContextSchema,
+  dartAotViewRequestSchema,
+} from "./dartAotView.js";
 import {
-  protobufViewRequestSchema,
-  protobufViewItemsSchema,
-  protobufViewContextSchema,
-} from "./protobufCaptureView.js";
-import {
-  nativeInventoryViewRequestSchema,
-  nativeInventoryViewRowSchema,
-  nativeInventorySummarySchema,
-} from "./nativeInventoryView.js";
-import { nativeViewSourceContext } from "./nativeViewContext.js";
-import {
-  NATIVE_INVENTORY_OPERATIONS,
-  nativeInventoryOperationSchema,
-} from "../native/nativeInventory.js";
-import { z } from "zod";
-import { knownCoverageStatusSchema } from "../coverage.js";
-import {
-  browserScenarioSummarySchema,
-  browserScenarioViewContextSchema,
-  browserScenarioViewItemsSchema,
-  browserScenarioViewRequestSchema,
-} from "./browserScenarioViewSchemas.js";
-import {
-  nativeLoadImageViewRequestSchema,
-  nativeLoadImageViewItemsSchema,
-  nativeLoadImageSummarySchema,
-} from "./nativeLoadImageView.js";
-import {
-  desktopViewRequestSchema,
   desktopViewItemsSchema,
-  desktopSummarySchema,
+  desktopViewRequestSchema,
 } from "./desktopApplicationView.js";
-import { desktopCoverageSchema } from "../desktopApplication.js";
 import {
-  javascriptModuleReferencesRequestSchema,
-  javascriptModuleReferenceSchema,
-} from "./javascriptModuleReferences.js";
-import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
+  devicetreePageContextSchema,
+  devicetreeViewItemsSchema,
+  devicetreeViewRequestSchema,
+} from "./devicetreeView.js";
 import {
-  javascriptFactsViewRequestSchema,
-  javascriptFactRowSchema,
-} from "./javascriptFactsView.js";
-import { javaScriptSourceSelectionSchema } from "../javascript/javascriptSourceSelection.js";
-import { digestSchema, prefixedDigestSchema } from "../digests.js";
-import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
-import { binaryLayoutSchema } from "../native/binaryLayout.js";
-import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
-import { functionFacetAvailabilitySchema } from "../native/functionDossier.js";
+  elfDependenciesSummarySchema,
+  elfDependenciesViewItemsSchema,
+  elfDependenciesViewRequestSchema,
+} from "./elfDependenciesView.js";
 import {
-  artifactGraphManifestSchema,
-  artifactInventoryCoverageSchema,
-} from "../artifactGraph.js";
-import { apiSurfaceFields, apiSurfaceViewSchema } from "./apiSurfaceSchema.js";
-import {
-  evmViewRequestSchema,
-  evmViewItemSchema,
-  evmSummarySchema,
-} from "./evmInterfaceView.js";
-import {
-  artifactInventoryViewRequestSchema,
-  artifactInventoryItemsSchema,
-  artifactInventorySummarySchema,
-} from "./artifactInventoryView.js";
-import {
-  managedViewRequestSchema,
-  managedViewItemSchema,
-  managedSummarySchema,
-  managedViewContextSchema,
-} from "./managedArtifactView.js";
-import {
-  managedMembersViewRequestSchema,
-  managedMembersViewPageSchema,
-  managedMemberSummarySchema,
-  managedMembersViewContextSchema,
-} from "./managedMemberViewSchemas.js";
-import {
-  wasmViewRequestSchema,
-  wasmViewItemSchema,
-  wasmSummarySchema,
-} from "./wasmArtifactView.js";
-import {
-  machoSummarySchema,
-  machoViewContextSchema,
-  machoViewRows,
-  machoViewRequestSchema,
-} from "./machoView.js";
-import {
-  interfaceBuilderSummarySchema,
-  interfaceBuilderViewContextSchema,
-  interfaceBuilderViewItemsSchema,
-  interfaceBuilderViewRequestSchema,
-} from "./interfaceBuilderView.js";
-import {
-  captureViewRequestSchema,
-  captureViewItemsSchema,
-  captureSummarySchema,
-} from "./webNetworkCaptureView.js";
+  environmentCoverageFields,
+  environmentCoverageViewRequestSchema,
+} from "./environmentCoverageView.js";
 import { environmentManifestFields } from "./environmentManifestSchema.js";
 import { environmentManifestViewRequestSchema } from "./environmentManifestView.js";
 import {
   environmentStateFields,
   environmentStateViewRequestSchema,
 } from "./environmentStateView.js";
+import { evmViewItemSchema, evmViewRequestSchema } from "./evmInterfaceView.js";
 import {
-  environmentCoverageFields,
-  environmentCoverageViewRequestSchema,
-} from "./environmentCoverageView.js";
+  goBinaryViewContextSchema,
+  goBinaryViewPageSchema,
+  goBinaryViewRequestSchema,
+} from "./goBinaryView.js";
 import {
-  pcapViewRequestSchema,
-  pcapViewPageSchema,
-  pcapSummarySchema,
-} from "./pcapCaptureView.js";
-import {
-  qlogViewRequestSchema,
-  qlogViewPageSchema,
-  qlogViewContextSchema,
-} from "./qlogCaptureView.js";
-import {
-  androidPackageSummarySchema,
-  androidManifestViewItemSchema,
-  androidComponentViewRowSchema,
-  androidComponentViewContextSchema,
-  androidComponentSummarySchema,
-} from "./androidPackageView.js";
-import {
-  androidManifestViewRequestSchema,
-  androidComponentsViewRequestSchema,
-  androidComponentSummaryViewRequestSchema,
-} from "../android/androidPackageQuery.js";
-import {
-  androidClassSummarySchema,
-  androidMethodSummarySchema,
-} from "./androidSymbolView.js";
-import { androidJniSummarySchema } from "./androidJniView.js";
-import {
-  androidJniViewRequestSchema,
-  androidJniViewItemsSchema,
-} from "../android/androidJniQuery.js";
-import {
-  dartAotSummarySchema,
-  dartAotViewRequestSchema,
-  dartAotViewContextSchema,
-} from "./dartAotView.js";
-import {
-  il2cppMetadataSummarySchema,
-  il2cppMetadataViewRequestSchema,
   il2cppMetadataViewContextSchema,
   il2cppMetadataViewItemsSchema,
+  il2cppMetadataViewRequestSchema,
 } from "./il2cppMetadataView.js";
 import {
-  facetViewSchema,
-  itemViewSchema,
-  nativeViewSchema,
-  pageViewSchema,
-  summaryViewSchema,
-} from "./analysisViewShape.js";
-import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+  interfaceBuilderViewContextSchema,
+  interfaceBuilderViewItemsSchema,
+  interfaceBuilderViewRequestSchema,
+} from "./interfaceBuilderView.js";
+import { javascriptApplicationSourceCoverageSchema } from "./javascriptApplicationCoverage.js";
+import {
+  javascriptFactRowSchema,
+  javascriptFactsViewRequestSchema,
+} from "./javascriptFactsView.js";
+import {
+  javascriptModuleReferenceSchema,
+  javascriptModuleReferencesRequestSchema,
+} from "./javascriptModuleReferences.js";
+import {
+  machoViewContextSchema,
+  machoViewRequestSchema,
+  machoViewRows,
+} from "./machoView.js";
+import {
+  managedViewContextSchema,
+  managedViewItemSchema,
+  managedViewRequestSchema,
+} from "./managedArtifactView.js";
+import {
+  managedMembersViewContextSchema,
+  managedMembersViewPageSchema,
+  managedMembersViewRequestSchema,
+} from "./managedMemberViewSchemas.js";
+import {
+  nativeExportsSummarySchema,
+  nativeExportsViewItemsSchema,
+  nativeExportsViewRequestSchema,
+} from "./nativeExportsView.js";
+import {
+  nativeFeatureTraceRequests,
+  nativeFeatureTraceSummarySchema,
+  nativeFeatureTraceViewItems,
+} from "./nativeFeatureTraceView.js";
+import {
+  nativeFunctionMatchingViewItemsSchema,
+  nativeFunctionMatchingViewRequestSchema,
+} from "./nativeFunctionMatchingView.js";
+import {
+  nativeInstructionReferenceContextSchema,
+  nativeInstructionReferenceItemsSchema,
+  nativeInstructionReferencesRequestSchema,
+} from "./nativeInstructionReferencesView.js";
+import {
+  nativeInventoryViewRequestSchema,
+  nativeInventoryViewRowSchema,
+} from "./nativeInventoryView.js";
+import {
+  nativeLoadImageViewItemsSchema,
+  nativeLoadImageViewRequestSchema,
+} from "./nativeLoadImageView.js";
+import {
+  nativeContextItemsSchemas,
+  nativeContextViewRequestSchema,
+  nativeObservationOperationSchema,
+  nativeObservationViewRequestSchema,
+  nativeSourceContextReferenceSchema,
+} from "./nativeObservationSchemas.js";
+import {
+  procedureReferenceSummarySchema,
+  procedureReferenceViewItems,
+  procedureReferenceViewRequests,
+} from "./nativeProcedureReferencesView.js";
+import { nativeViewSourceContext } from "./nativeViewContext.js";
+import {
+  pcapViewPageSchema,
+  pcapViewRequestSchema,
+} from "./pcapCaptureView.js";
+import {
+  protobufViewContextSchema,
+  protobufViewItemsSchema,
+  protobufViewRequestSchema,
+} from "./protobufCaptureView.js";
+import {
+  qlogViewContextSchema,
+  qlogViewPageSchema,
+  qlogViewRequestSchema,
+} from "./qlogCaptureView.js";
+import {
+  rustBinarySummarySchema,
+  rustBinaryViewContextSchema,
+} from "./rustBinaryView.js";
+import {
+  wasmViewItemSchema,
+  wasmViewRequestSchema,
+} from "./wasmArtifactView.js";
+import {
+  captureViewItemsSchema,
+  captureViewRequestSchema,
+} from "./webNetworkCaptureView.js";
 
-const artifactSchema = z.strictObject({
-  path: z
-    .string()
-    .describe(
-      "Selected artifact path, or the canonical resource root when resource-only Evidence has no executable subject.",
-    ),
-  sha256: digestSchema.nullable(),
-});
+import {
+  androidClassSummaryViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidJniPageViewResultSchema,
+  androidJniSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+} from "./summarySchemas/androidSummarySchemas.js";
+import {
+  apiContractPageViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  graphqlContractPageViewResultSchema,
+} from "./summarySchemas/apiContractSummarySchemas.js";
+import {
+  apkSignaturePageViewResultSchema,
+  apkSignatureSummaryViewResultSchema,
+} from "./summarySchemas/apkSignatureSummarySchema.js";
+import { artifactInventorySummaryViewResultSchema } from "./summarySchemas/artifactInventorySummarySchema.js";
+import { batchDecompileSummaryViewResultSchema } from "./summarySchemas/batchDecompileSummarySchema.js";
+import { binaryLayoutSummaryViewResultSchema } from "./summarySchemas/binaryLayoutSummarySchema.js";
+import { browserScenarioSummaryViewResultSchema } from "./summarySchemas/browserScenarioSummarySchema.js";
+import { byteEntropySummaryViewResultSchema } from "./summarySchemas/byteEntropySummarySchema.js";
+import { dartAotSummaryViewResultSchema } from "./summarySchemas/dartAotSummarySchema.js";
+import { desktopApplicationSummaryViewResultSchema } from "./summarySchemas/desktopApplicationSummarySchema.js";
+import { devicetreeSummaryViewResultSchema } from "./summarySchemas/devicetreeSummarySchema.js";
+import { elfDependenciesSummaryViewResultSchema } from "./summarySchemas/elfDependenciesSummarySchema.js";
+import {
+  endpointComparisonPageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+} from "./summarySchemas/endpointComparisonSummarySchemas.js";
+import {
+  erlangBeamSummaryViewResultSchema,
+  erlangBeamTableViewResultSchema,
+} from "./summarySchemas/erlangBeamSummarySchemas.js";
+import { evmInterfaceSummaryViewResultSchema } from "./summarySchemas/evmInterfaceSummarySchema.js";
+import {
+  featureTraceSummaryViewResultSchema,
+  featureTraceViewResultSchema,
+} from "./summarySchemas/featureTraceSummarySchemas.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "./summarySchemas/fridaSessionStatusSummarySchema.js";
+import { gdbCommandSummaryViewResultSchema } from "./summarySchemas/gdbCommandSummarySchema.js";
+import { goBinarySummaryViewResultSchema } from "./summarySchemas/goBinarySummarySchema.js";
+import {
+  gpuCodeObjectsPageViewResultSchema,
+  gpuCodeObjectsSummaryViewResultSchema,
+} from "./summarySchemas/gpuCodeObjectsSummarySchemas.js";
+import { il2cppMetadataSummaryViewResultSchema } from "./summarySchemas/il2cppMetadataSummarySchema.js";
+import { interfaceBuilderSummaryViewResultSchema } from "./summarySchemas/interfaceBuilderSummarySchema.js";
+import { javascriptApplicationSummaryViewResultSchema } from "./summarySchemas/javascriptApplicationSummarySchema.js";
+import { javaScriptRoutesViewResultSchema } from "./summarySchemas/javascriptRoutesSummarySchema.js";
+import { machoSummaryViewResultSchema } from "./summarySchemas/machoSummarySchema.js";
+import {
+  managedArtifactSummaryViewResultSchema,
+  managedMemberSummaryViewResultSchema,
+} from "./summarySchemas/managedSummarySchemas.js";
+import {
+  modelArtifactPageViewResultSchema,
+  modelArtifactSummaryViewResultSchema,
+} from "./summarySchemas/modelArtifactSummarySchemas.js";
+import { nativeExportsSummaryViewResultSchema } from "./summarySchemas/nativeExportsSummarySchema.js";
+import { nativeFeatureTraceSummaryViewResultSchema } from "./summarySchemas/nativeFeatureTraceSummarySchema.js";
+import { nativeFunctionMatchingSummaryViewResultSchema } from "./summarySchemas/nativeFunctionMatchingSummarySchema.js";
+import { nativeFunctionSummaryViewResultSchema } from "./summarySchemas/nativeFunctionSummarySchema.js";
+import { nativeInventorySummaryViewResultSchema } from "./summarySchemas/nativeInventorySummarySchema.js";
+import { nativeLoadImageSummaryViewResultSchema } from "./summarySchemas/nativeLoadImageSummarySchema.js";
+import { nativeObservationSummaryViewResultSchemas } from "./summarySchemas/nativeObservationSummarySchemas.js";
+import { nativeProcedureReferencesSummaryViewResultSchema } from "./summarySchemas/nativeProcedureReferencesSummarySchema.js";
+import { nativeValueTraceSummaryViewResultSchema } from "./summarySchemas/nativeValueTraceSummarySchema.js";
+import { nugetNupkgSummaryViewResultSchema } from "./summarySchemas/nugetNupkgSummarySchema.js";
+import { objdumpSummaryViewResultSchema } from "./summarySchemas/objdumpSummarySchema.js";
+import { pcapCaptureSummaryViewResultSchema } from "./summarySchemas/pcapCaptureSummarySchema.js";
+import {
+  playwrightTracePageViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+} from "./summarySchemas/playwrightTraceSummarySchemas.js";
+import { procedurePseudocodeSummaryViewResultSchema } from "./summarySchemas/procedurePseudocodeSummarySchema.js";
+import {
+  pythonPycCodeObjectsViewResultSchema,
+  pythonPycSummaryViewResultSchema,
+} from "./summarySchemas/pythonPycSummarySchemas.js";
+import {
+  rustBinaryPageViewResultSchema,
+  rustBinarySummaryViewResultSchema,
+} from "./summarySchemas/rustBinarySummarySchemas.js";
+import {
+  sourceToBundlePageViewResultSchema,
+  sourceToBundleSummaryViewResultSchema,
+} from "./summarySchemas/sourceToBundleSummarySchemas.js";
+import { wasmArtifactSummaryViewResultSchema } from "./summarySchemas/wasmArtifactSummarySchema.js";
+import {
+  webBundlePageViewResultSchema,
+  webBundleSummaryViewResultSchema,
+} from "./summarySchemas/webBundleSummarySchemas.js";
+import { webNetworkCaptureSummaryViewResultSchema } from "./summarySchemas/webNetworkCaptureSummarySchema.js";
+import {
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationTextViewResultSchema,
+} from "./summarySchemas/webSourceLocationSummarySchemas.js";
 
-const layoutSummarySchema = z.strictObject({
-  bytes: binaryLayoutSchema.shape.artifact.shape.bytes,
-  format: binaryLayoutSchema.shape.format,
-  architecture: binaryLayoutSchema.shape.architecture,
-  image_type: binaryLayoutSchema.shape.image_type,
-  entry: z.strictObject({
-    reported_value: z.string().min(1),
-    meaning: z.enum(["linked-virtual-address", "not-applicable", "absent"]),
-    execution_status: z.literal("unknown"),
-  }),
-  counts: z.strictObject({
-    sections: z.int().nonnegative(),
-    segments: z.int().nonnegative(),
-    symbols: z.int().nonnegative(),
-    relocations: z.int().nonnegative(),
-  }),
-  limitation_count: z.int().nonnegative(),
-});
-
-const javascriptSummarySchema = z.strictObject({
-  input_path: z.string().min(1),
-  format: z.enum(["asar", "directory"]),
-  root_artifact_sha256: digestSchema,
-  source_selection: javaScriptSourceSelectionSchema.exactOptional(),
-  statistics: jsonObjectSchema,
-  electron: jsonObjectSchema,
-  coverage: jsonObjectSchema,
-  limitation_count: z.int().nonnegative(),
-});
+export {
+  androidClassSummaryViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidJniPageViewResultSchema,
+  androidJniSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+  apiContractPageViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  apkSignaturePageViewResultSchema,
+  apkSignatureSummaryViewResultSchema,
+  artifactInventorySummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
+  binaryLayoutSummaryViewResultSchema,
+  browserScenarioSummaryViewResultSchema,
+  byteEntropySummaryViewResultSchema,
+  dartAotSummaryViewResultSchema,
+  desktopApplicationSummaryViewResultSchema,
+  devicetreeSummaryViewResultSchema,
+  elfDependenciesSummaryViewResultSchema,
+  endpointComparisonPageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  erlangBeamSummaryViewResultSchema,
+  erlangBeamTableViewResultSchema,
+  evmInterfaceSummaryViewResultSchema,
+  featureTraceSummaryViewResultSchema,
+  featureTraceViewResultSchema,
+  fridaSessionStatusSummaryViewResultSchema,
+  gdbCommandSummaryViewResultSchema,
+  goBinarySummaryViewResultSchema,
+  gpuCodeObjectsPageViewResultSchema,
+  gpuCodeObjectsSummaryViewResultSchema,
+  graphqlContractPageViewResultSchema,
+  il2cppMetadataSummaryViewResultSchema,
+  interfaceBuilderSummaryViewResultSchema,
+  javascriptApplicationSummaryViewResultSchema,
+  javaScriptRoutesViewResultSchema,
+  machoSummaryViewResultSchema,
+  managedArtifactSummaryViewResultSchema,
+  managedMemberSummaryViewResultSchema,
+  modelArtifactPageViewResultSchema,
+  modelArtifactSummaryViewResultSchema,
+  nativeExportsSummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
+  nativeFunctionMatchingSummaryViewResultSchema,
+  nativeFunctionSummaryViewResultSchema,
+  nativeInventorySummaryViewResultSchema,
+  nativeLoadImageSummaryViewResultSchema,
+  nativeObservationSummaryViewResultSchemas,
+  nativeProcedureReferencesSummaryViewResultSchema,
+  nativeValueTraceSummaryViewResultSchema,
+  nugetNupkgSummaryViewResultSchema,
+  objdumpSummaryViewResultSchema,
+  pcapCaptureSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  procedurePseudocodeSummaryViewResultSchema,
+  pythonPycCodeObjectsViewResultSchema,
+  pythonPycSummaryViewResultSchema,
+  rustBinaryPageViewResultSchema,
+  rustBinarySummaryViewResultSchema,
+  sourceToBundlePageViewResultSchema,
+  sourceToBundleSummaryViewResultSchema,
+  wasmArtifactSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webNetworkCaptureSummaryViewResultSchema,
+  webSourceLocationMatchesViewResultSchema,
+  webSourceLocationSummaryViewResultSchema,
+  webSourceLocationTextViewResultSchema,
+};
 
 const viewResultBase = {
-  parent_evidence_id: prefixedDigestSchema("ev"),
+  ...viewResultBaseFields,
   parent_operation: z.enum([
     "trace_web_source_location",
     "inspect_python_pyc",
@@ -416,82 +413,7 @@ const viewResultBase = {
     "match_native_functions",
     "procedure_references",
   ]),
-  parent_digest: digestSchema,
-  view_digest: digestSchema,
-  artifact: artifactSchema,
-  coverage: analysisViewCoverageSchema,
-  limitations: z.array(z.string()),
-  unknowns: z.array(z.string()),
 } as const;
-
-const summaryViewResultBase = {
-  kind: z.literal("summary"),
-  view: summaryViewSchema,
-  ...viewResultBase,
-} as const;
-
-export const webSourceLocationSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("trace_web_source_location"),
-  summary: webSourceLocationSummarySchema,
-});
-export const webSourceLocationMatchesViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("source-location"),
-  parent_operation: z.literal("trace_web_source_location"),
-  view: webSourceLocationViewRequestSchema.options[0],
-  source_location: webSourceLocationContextSchema,
-  items: z.array(webSourceLocationMatchViewSchema),
-});
-export const webSourceLocationTextViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("source-location-text"),
-  coverage: nullableCollectionViewCoverageSchema,
-  parent_operation: z.literal("trace_web_source_location"),
-  view: webSourceLocationViewRequestSchema.options[1],
-  source_location: webSourceLocationContextSchema,
-  match: webSourceLocationMatchViewSchema,
-  item: analysisTextPageItemSchema.nullable(),
-});
-
-/** Original selector and text availability without the complete decompiled text. */
-export const procedurePseudocodeSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("procedure_pseudo_code"),
-  summary: procedurePseudocodeSummarySchema,
-});
-
-const nativeObservationSummaryFor = <
-  Operation extends NativeObservationOperation,
->(
-  operation: Operation,
-) =>
-  z.strictObject({
-    ...summaryViewResultBase,
-    ...nativeViewSourceContext,
-    artifact: artifactSchema.nullable(),
-    parent_operation: z.literal(operation),
-    source_context: nativeSourceContextReferenceSchema,
-    summary: z.strictObject({ observations: z.int().nonnegative() }),
-    items: nativeObservationItemsSchemas[operation],
-  });
-export const nativeObservationSummaryViewResultSchemas = {
-  procedure_address: nativeObservationSummaryFor("procedure_address"),
-  procedure_callees: nativeObservationSummaryFor("procedure_callees"),
-  procedure_callers: nativeObservationSummaryFor("procedure_callers"),
-  xrefs: nativeObservationSummaryFor("xrefs"),
-  resolve_containing_procedure: nativeObservationSummaryFor(
-    "resolve_containing_procedure",
-  ),
-  get_call_graph: nativeObservationSummaryFor("get_call_graph"),
-};
-
-export const nativeValueTraceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("trace_native_values"),
-  summary: nativeValueTraceSummarySchema,
-});
 
 const nativeObservationSummaryViewResultSchema = z.discriminatedUnion(
   "parent_operation",
@@ -507,7 +429,7 @@ const nativeObservationSummaryViewResultSchema = z.discriminatedUnion(
 const nativeObservationPageFor = <Operation extends NativeObservationOperation>(
   operation: Operation,
 ) =>
-  nativeObservationSummaryFor(operation)
+  nativeObservationSummaryViewResultSchemas[operation]
     .omit({ kind: true, view: true })
     .extend({
       kind: z.literal("native-observation"),
@@ -547,117 +469,6 @@ const nativeContextViewResultSchema = z.discriminatedUnion("facet", [
   }),
 ]);
 
-export const byteEntropySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  summary: byteEntropySummarySchema,
-  parent_operation: z.literal("inspect_byte_entropy"),
-});
-
-export const elfDependenciesSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_elf_dependencies"),
-  summary: elfDependenciesSummarySchema,
-});
-
-export const nativeExportsSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_native_exports"),
-  summary: nativeExportsSummarySchema,
-});
-
-export const devicetreeSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_devicetree"),
-  summary: devicetreeSummarySchema,
-});
-export const erlangBeamSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_erlang_beam"),
-  summary: erlangBeamSummarySchema,
-});
-export const erlangBeamTableViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  coverage: nullableCollectionViewCoverageSchema,
-  kind: z.literal("beam"),
-  parent_operation: z.literal("inspect_erlang_beam"),
-  view: erlangBeamViewRequestSchema,
-  beam: erlangBeamSummarySchema,
-  page: erlangBeamViewPageSchema,
-});
-
-export const pythonPycSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_python_pyc"),
-  summary: pythonPycSummarySchema,
-});
-
-export const nugetNupkgSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_nuget_nupkg"),
-  summary: nugetNupkgSummarySchema,
-});
-
-export const pythonPycCodeObjectsViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("python-pyc"),
-  parent_operation: z.literal("inspect_python_pyc"),
-  view: pythonPycViewRequestSchema,
-  pyc: pythonPycSummarySchema,
-  items: pythonPycViewItemsSchema,
-});
-
-/** Opt-in command delivery keeps output once and retains the complete parent. */
-export const gdbCommandSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...commandSummaryContext,
-  parent_operation: z.literal("gdb_console"),
-  artifact: artifactSchema.nullable(),
-  summary: gdbCommandSummarySchema,
-});
-
-export const objdumpSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...commandSummaryContext,
-  parent_operation: z.literal("inspect_with_objdump"),
-  artifact: artifactSchema.nullable(),
-  summary: commandObservationSchema,
-});
-
-export const fridaSessionStatusSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...fridaSessionStatusViewContext,
-  parent_operation: z.literal("frida_session_status"),
-  artifact: artifactSchema.nullable(),
-  summary: fridaSessionStatusSummarySchema,
-});
-
-/** Opt-in Go delivery retains original bytes and exposes build identity/counts. */
-export const goBinarySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...goBinaryViewContextSchema.shape,
-  parent_operation: z.literal("inspect_go_binary"),
-  summary: goBinarySummarySchema,
-});
-
-/** Compact source identity and counts, retaining the complete embedded graph. */
-export const rustBinarySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...rustBinaryViewContextSchema.shape,
-  parent_operation: z.literal("inspect_rust_binary"),
-  summary: rustBinarySummarySchema,
-});
-
-export const rustBinaryPageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  coverage: nullableCollectionViewCoverageSchema,
-  ...rustBinaryViewContextSchema.shape,
-  kind: z.literal("rust"),
-  parent_operation: z.literal("inspect_rust_binary"),
-  view: rustBinaryViewRequestSchema,
-  rust: rustBinarySummarySchema,
-  page: rustBinaryViewPageSchema,
-});
-
 /** One CycloneDX 1.6 document. This view does not page. */
 export const cycloneDxViewResultSchema = z.strictObject({
   ...viewResultBase,
@@ -666,20 +477,6 @@ export const cycloneDxViewResultSchema = z.strictObject({
   view: cycloneDxViewRequestSchema,
   source_coverage: cycloneDxSourceCoverageSchema,
   document: cycloneDxDocumentSchema,
-});
-
-/** Summary `inspect_binary_layout` detail returns; no other view kind. */
-export const binaryLayoutSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  summary: layoutSummarySchema,
-  parent_operation: z.literal("inspect_binary_layout"),
-});
-
-/** Summary `analyze_javascript_application` detail returns; no other view kind. */
-export const javascriptApplicationSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  summary: javascriptSummarySchema,
-  parent_operation: z.literal("analyze_javascript_application"),
 });
 
 /** Typed reference page; full item observations remain available separately. */
@@ -702,275 +499,11 @@ const javascriptFactsViewResultSchema = z.strictObject({
   source_coverage: javascriptApplicationSourceCoverageSchema,
 });
 
-/** Exact summary carrier for artifact inspection's optional delivery contract. */
-export const artifactInventorySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.enum(["inspect_artifact", "inventory_artifact"]),
-  summary: artifactInventorySummarySchema,
-});
-
-export const desktopApplicationSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_desktop_application"),
-  summary: desktopSummarySchema,
-});
-
-/** Exact summary carrier for WASM inspection's optional delivery contract. */
-export const wasmArtifactSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_wasm_artifact"),
-  summary: wasmSummarySchema,
-});
-
-/** Exact slice identity and collection counts for Mach-O's selected delivery. */
-export const machoSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_macho"),
-  summary: machoSummarySchema,
-});
-
-/** Decoded documents and graph counts for Interface Builder's selected delivery. */
-export const interfaceBuilderSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("decode_interface_builder"),
-  resource_root: bundleResourceRootSchema.optional(),
-  summary: interfaceBuilderSummarySchema,
-});
-
-/** Exact inferred-interface summary for EVM's caller-selected delivery. */
-export const evmInterfaceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_evm_interface"),
-  summary: evmSummarySchema,
-});
-
-/** Exact metadata overview for the managed artifact's selected delivery. */
-export const managedArtifactSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_managed_artifact"),
-  summary: managedSummarySchema,
-});
-
-/** Exact member selection, coverage and counts for the selected delivery. */
-export const managedMemberSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_managed_members"),
-  summary: managedMemberSummarySchema,
-});
-
-/** Exact historical capture summary, with no body or member-inventory payload. */
-export const webNetworkCaptureSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_web_network_capture"),
-  summary: captureSummarySchema,
-});
-
-/** Compact outcomes and the focus screen from a retained browser scenario. */
-export const browserScenarioSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: z.null(),
-  parent_operation: z.literal("capture_browser_scenario"),
-  summary: browserScenarioSummarySchema,
-});
-
-/** Exact package declarations with retained decoded manifest text. */
-export const androidPackageSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_android_package"),
-  summary: androidPackageSummarySchema,
-});
-export const androidJniSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_android_jni_bindings"),
-  summary: androidJniSummarySchema,
-});
-export const androidJniPageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("android-jni"),
-  parent_operation: z.literal("inspect_android_jni_bindings"),
-  view: androidJniViewRequestSchema,
-  items: androidJniViewItemsSchema,
-  source: androidJniSummarySchema.pick({
-    native_inventory: true,
-    library_inventory: true,
-    selection: true,
-  }),
-});
-
-/** Exact class facts with complete raw protocol Evidence retained separately. */
-export const androidClassSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_android_class"),
-  summary: androidClassSummarySchema,
-});
-
-/** Exact selected method body, source coverage and optional mapping facts. */
-export const androidMethodSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_android_method"),
-  summary: androidMethodSummarySchema,
-});
-
-/** One page of the retained manifest text. */
-export const androidManifestViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("android"),
-  facet: z.literal("manifest"),
-  view: androidManifestViewRequestSchema,
-  item: androidManifestViewItemSchema,
-  parent_operation: z.literal("inspect_android_package"),
-});
-export const androidComponentsViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...androidComponentViewContextSchema.shape,
-  kind: z.literal("android"),
-  facet: z.literal("components"),
-  view: androidComponentsViewRequestSchema,
-  items: z.array(androidComponentViewRowSchema),
-  byte_limited: z.boolean(),
-  parent_operation: z.literal("inspect_android_package"),
-});
-export const androidComponentSummaryViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...androidComponentViewContextSchema.shape,
-  kind: z.literal("android"),
-  facet: z.literal("component-summary"),
-  view: androidComponentSummaryViewRequestSchema,
-  summary: androidComponentSummarySchema,
-  parent_operation: z.literal("inspect_android_package"),
-});
 const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
 ]);
-
-export const pcapCaptureSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_pcap_capture"),
-  summary: pcapSummarySchema,
-});
-
-/** Exact snapshot and pool-coverage carrier for selected AOT delivery. */
-export const dartAotSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_dart_aot"),
-  summary: dartAotSummarySchema,
-});
-
-export const javaScriptRoutesViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  artifact: artifactSchema.nullable(),
-  kind: z.literal("javascript-routes"),
-  parent_operation: z.enum([
-    "analyze_javascript_application",
-    "analyze_web_bundle",
-  ]),
-  view: javaScriptRoutesViewRequestSchema,
-  inventory_id: javaScriptRouteInventorySchema.shape.inventory_id,
-  source_manifest_sha256: digestSchema,
-  source_coverage: javaScriptRouteInventorySchema.shape.coverage,
-  inventory_capacity: javaScriptRouteInventorySchema.shape.capacity,
-  capture_url: z.string().nullable(),
-  items: javaScriptRoutesViewItemsSchema,
-  sources: z.array(javaScriptRouteInventorySourceSchema),
-  summary: javaScriptRoutesViewSummarySchema.nullable(),
-  byte_limited: z.boolean(),
-});
-
-/** Compact web bundle findings retain endpoint observations and inference candidates. */
-export const webBundleSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("analyze_web_bundle"),
-  target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleViewSourceUnknownsSchema,
-  summary: webBundleSummarySchema,
-});
-
-export const webBundlePageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  artifact: artifactSchema.nullable(),
-  kind: z.literal("web-bundle"),
-  parent_operation: z.literal("analyze_web_bundle"),
-  target_url: z.string(),
-  target_origin: recordedBrowserOriginSchema.nullable(),
-  source_unknowns: webBundleViewSourceUnknownsSchema,
-  view: webBundleViewRequestSchema,
-  completeness: webBundleAnalysisSchema.shape.completeness,
-  items: webBundleViewItemsSchema,
-  summary: webBundleSummarySchema.nullable(),
-  byte_limited: z.boolean(),
-});
-
-export const gpuCodeObjectsSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_gpu_code_objects"),
-  summary: gpuCodeObjectsSummarySchema,
-});
-export const gpuCodeObjectsPageViewResultSchema = z.strictObject({
-  kind: z.literal("gpu-code-objects"),
-  view: gpuCodeObjectsViewRequestSchema,
-  items: gpuCodeObjectsItemsSchema,
-  ptx: gpuCodeObjectsPtxPageSchema.nullable(),
-  source_coverage: gpuCodeObjectsObjectSchema.shape.coverage,
-  ...viewResultBase,
-  parent_operation: z.literal("inspect_gpu_code_objects"),
-});
-
-export const apkSignatureSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_apk_signature"),
-  summary: apkSignatureSummarySchema,
-});
-export const apkSignaturePageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  kind: z.literal("apk-signature"),
-  parent_operation: z.literal("inspect_apk_signature"),
-  view: apkSignatureViewRequestSchema,
-  items: apkSignatureViewItemsSchema,
-  source_coverage: apkSignatureSourceCoverageSchema,
-});
-
-export const modelArtifactSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_model_artifact"),
-  summary: modelArtifactSummarySchema,
-});
-
-export const modelArtifactPageViewResultSchema = z.strictObject({
-  kind: z.literal("model-artifact"),
-  view: modelArtifactViewRequestSchema,
-  items: modelArtifactViewItemsSchema,
-  ...viewResultBase,
-  ...modelArtifactViewContextSchema.shape,
-  parent_operation: z.literal("inspect_model_artifact"),
-});
-
-/** Metadata identity and row counts for selected IL2CPP delivery. */
-export const il2cppMetadataSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_il2cpp_metadata"),
-  summary: il2cppMetadataSummarySchema,
-});
-
-/** Exact inventory summary with the original observation's provider and query. */
-export const nativeInventorySummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...nativeViewSourceContext,
-  parent_operation: nativeInventoryOperationSchema,
-  artifact: artifactSchema.nullable(),
-  summary: nativeInventorySummarySchema,
-});
-
-export const nativeFeatureTraceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...nativeViewSourceContext,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("trace_feature"),
-  summary: nativeFeatureTraceSummarySchema,
-});
 
 const nativeFeatureTracePage = <
   Collection extends keyof typeof nativeFeatureTraceViewItems,
@@ -997,13 +530,6 @@ const nativeFeatureTracePageViewResultSchema = z
       nativeFeatureTracePage("unknowns"),
     ]),
   );
-export const nativeProcedureReferencesSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...nativeViewSourceContext,
-  parent_operation: z.literal("procedure_references"),
-  artifact: artifactSchema.nullable(),
-  summary: procedureReferenceSummarySchema,
-});
 
 const procedureReferencePage = <
   Collection extends keyof typeof procedureReferenceViewRequests,
@@ -1031,229 +557,6 @@ const procedureReferencePageViewResultSchema = z
     ]),
   );
 
-/** Compact provider load observations retain the independent verification state. */
-export const nativeLoadImageSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  ...nativeViewSourceContext,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("inspect_native_load_image"),
-  summary: nativeLoadImageSummarySchema,
-});
-
-/** Compact native matching discovery retains the complete matching report. */
-export const nativeFunctionMatchingSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: z.null(),
-  parent_operation: z.literal("match_native_functions"),
-  summary: nativeFunctionMatchingContextSchema,
-});
-
-/** Rows observed for one facet, or null when the provider declared that facet unavailable. */
-const declaredFacetCountSchema = z
-  .number()
-  .int()
-  .nonnegative()
-  .nullable()
-  .describe(
-    "Observed rows; null when facet_availability declares the facet unavailable, so no rows is not evidence of none.",
-  );
-
-/** Rows of an optional dossier record, or null when the dossier omitted it. */
-const recordedFacetCountSchema = z
-  .number()
-  .int()
-  .nonnegative()
-  .nullable()
-  .describe(
-    "Observed rows; null when the dossier did not record the facet (the native facet view reports it not recorded), so no rows is not evidence of none.",
-  );
-
-/** Rows of one value-flow facet, or null when value flow is unavailable. */
-const valueFlowFacetCountSchema = z
-  .number()
-  .int()
-  .nonnegative()
-  .nullable()
-  .describe(
-    "Observed rows; null when value_flow.available is false because native_value_flow was not recorded or the provider declared it unavailable (unknowns names which), so no rows is not evidence of none.",
-  );
-
-/** Compact analyze_function dossier; the complete dossier stays retained for facet paging. */
-export const nativeFunctionSummarySchema = z.strictObject({
-  procedure: z.strictObject({
-    name: z.string(),
-    address: z.string(),
-  }),
-  pseudocode: z.strictObject({
-    available: z
-      .boolean()
-      .describe(
-        "Provider facet_availability for pseudocode when declared; otherwise whether decompiled text is present. The flag is authoritative over raw length.",
-      ),
-    code_units: z
-      .number()
-      .int()
-      .nonnegative()
-      .describe(
-        "Pseudocode length in UTF-16 code units, the unit inspect_analysis_view pages pseudocode by.",
-      ),
-  }),
-  value_flow: z.strictObject({
-    available: z.boolean(),
-    truncated: z
-      .boolean()
-      .nullable()
-      .describe(
-        "Whether the provider truncated available value-flow; null when value-flow is unavailable (see available).",
-      ),
-  }),
-  facet_availability: functionFacetAvailabilitySchema
-    .nullable()
-    .describe(
-      "The provider's declared availability per facet, or null when it declared none. Unavailable facets name their reason here and in unknowns.",
-    ),
-  counts: z.strictObject({
-    assembly: declaredFacetCountSchema,
-    basic_blocks: declaredFacetCountSchema,
-    comments: declaredFacetCountSchema,
-    callers: declaredFacetCountSchema,
-    callees: declaredFacetCountSchema,
-    incoming_references: declaredFacetCountSchema,
-    outgoing_references: declaredFacetCountSchema,
-    unresolved_calls: recordedFacetCountSchema,
-    referenced_strings: declaredFacetCountSchema,
-    referenced_names: declaredFacetCountSchema,
-    swift_string_literals: recordedFacetCountSchema,
-    swift_string_literal_omissions: recordedFacetCountSchema,
-    prototype_conflicts: recordedFacetCountSchema.optional(),
-    value_flow_operations: valueFlowFacetCountSchema,
-    value_flow_def_use: valueFlowFacetCountSchema,
-    value_flow_effects: valueFlowFacetCountSchema,
-    value_flow_parameters: valueFlowFacetCountSchema,
-    value_flow_parameter_uses: valueFlowFacetCountSchema,
-  }),
-  limitation_count: z.number().int().nonnegative(),
-});
-
-/** Compact analyze_function summary that retains the complete native dossier Evidence. */
-export const nativeFunctionSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("analyze_function"),
-  procedure_address: z.string().nullable(),
-  summary: nativeFunctionSummarySchema,
-});
-
-export const sourceToBundleSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: z.null(),
-  parent_operation: z.literal("compare_source_to_bundle"),
-  summary: sourceToBundleViewContextSchema,
-});
-export const playwrightTraceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_playwright_trace"),
-  summary: playwrightTraceViewContextSchema,
-});
-export const playwrightTracePageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...playwrightTraceViewContextSchema.shape,
-  kind: z.literal("playwright-trace"),
-  parent_operation: z.literal("inspect_playwright_trace"),
-  view: playwrightTraceViewRequestSchema,
-  items: playwrightTraceViewItemsSchema,
-});
-export const apiContractSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  parent_operation: z.literal("inspect_api_contract"),
-  summary: z.union([
-    apiContractViewContextSchema,
-    graphqlContractViewContextSchema,
-  ]),
-});
-export const apiContractPageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...apiContractViewContextSchema.shape,
-  kind: z.literal("api-contract"),
-  artifact: apiContractArtifactSchema,
-  parent_operation: z.literal("inspect_api_contract"),
-  view: apiContractViewRequestSchema,
-  items: apiContractViewItemsSchema,
-});
-export const graphqlContractPageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...graphqlContractViewContextSchema.shape,
-  parent_operation: z.literal("inspect_api_contract"),
-  view: graphqlContractViewRequestSchema,
-  items: graphqlContractViewItemsSchema,
-});
-export const endpointComparisonSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: z.null(),
-  parent_operation: z.literal("compare_static_and_observed_endpoints"),
-  summary: endpointComparisonViewContextSchema,
-});
-export const endpointComparisonPageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...endpointComparisonViewContextSchema.shape,
-  kind: z.literal("endpoint-comparison"),
-  artifact: z.null(),
-  parent_operation: z.literal("compare_static_and_observed_endpoints"),
-  view: endpointComparisonViewRequestSchema,
-  items: endpointComparisonViewItemsSchema,
-});
-export const sourceToBundlePageViewResultSchema = z.strictObject({
-  ...viewResultBase,
-  ...sourceToBundleViewContextSchema.shape,
-  kind: z.literal("source-to-bundle"),
-  artifact: z.null(),
-  parent_operation: z.literal("compare_source_to_bundle"),
-  view: sourceToBundleViewRequestSchema,
-  items: sourceToBundleViewItemsSchema,
-});
-
-/** Compact retained feature-trace summary; pages carry the same trace context. */
-export const featureTraceSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("trace_application_feature"),
-  summary: featureTraceSummarySchema,
-});
-const featureTracePage = <
-  Collection extends keyof typeof featureTraceViewCollections,
->(
-  collection: Collection,
-) =>
-  z.strictObject({
-    ...viewResultBase,
-    ...featureTraceViewContextSchema.shape,
-    kind: z.literal("feature-trace"),
-    artifact: artifactSchema.nullable(),
-    parent_operation: z.literal("trace_application_feature"),
-    view: featureTraceViewCollections[collection].request,
-    items: featureTraceViewCollections[collection].rows,
-  });
-// As with Mach-O pages, the kind tag keeps dispatch while each collection is
-// advertised with exactly its own rows.
-export const featureTraceViewResultSchema = z
-  .object({ kind: z.literal("feature-trace") })
-  .passthrough()
-  .pipe(
-    z.union([
-      featureTracePage("paths"),
-      featureTracePage("nodes"),
-      featureTracePage("edges"),
-      featureTracePage("seed_matches"),
-      featureTracePage("native_handoffs"),
-    ]),
-  );
-
-/** Counts and identities of a retained batch without any pseudocode body. */
-export const batchDecompileSummaryViewResultSchema = z.strictObject({
-  ...summaryViewResultBase,
-  artifact: artifactSchema.nullable(),
-  parent_operation: z.literal("batch_decompile"),
-  summary: batchDecompileSummarySchema,
-});
 const batchDecompilePage = {
   ...viewResultBase,
   ...batchDecompileViewContextSchema.shape,

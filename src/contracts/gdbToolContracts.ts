@@ -6,7 +6,7 @@ import {
   commandEvidenceDetailSchema,
   gdbCommandResultSchema,
 } from "../domain/commandObservation.js";
-import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/analysisViewResult.js";
+import { gdbCommandSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/gdbCommandSummarySchema.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata, toolEffects } from "./toolEffects.js";

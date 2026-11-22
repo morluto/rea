@@ -123,7 +123,10 @@ export interface ElfPointerRelocationInput {
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
-  readonly dynamicSegments: readonly ElfDynamicSegment[];
+  readonly dynamicSegments: readonly Pick<
+    ElfDynamicSegment,
+    "offset" | "size"
+  >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
 }
@@ -1024,6 +1027,11 @@ export function* readElfRelocationWritesSteps(
 /** Loader values and overlap ownership, independent of retained relocation provenance. */
 export interface ElfVirtualPointerWrites {
   readonly hasWrites: (address: bigint, size: number) => boolean;
+  /** Sorted, coalesced mapping-relative `[start, end)` byte intervals overlapping loader writes. */
+  readonly writeIntervalsIn: (
+    address: bigint,
+    size: number,
+  ) => readonly { readonly start: number; readonly end: number }[];
   /** Undefined when a write leaves the selected field unresolved or partly overwritten. */
   readonly unsignedAt: (address: bigint, width: 4 | 8) => bigint | undefined;
 }
@@ -1179,6 +1187,37 @@ class ElfVirtualWriteIndex {
         const low = before(address + BigInt(size));
         return low > 0 && (reach[low - 1] ?? 0n) > address;
       },
+      writeIntervalsIn: (
+        address: bigint,
+        size: number,
+      ): readonly { readonly start: number; readonly end: number }[] => {
+        if (size <= 0) return [];
+        const limit = address + BigInt(size);
+        const last = before(limit) - 1;
+        if (last < 0 || (reach[last] ?? 0n) <= address) return [];
+        const reversed: { start: number; end: number }[] = [];
+        for (let at = last; at >= 0 && (reach[at] ?? 0n) > address; at--) {
+          const range = ranges[at]!;
+          if (range.end <= address) continue;
+          const start =
+            range.address <= address ? 0 : Number(range.address - address);
+          const end = range.end >= limit ? size : Number(range.end - address);
+          reversed.push({ start, end });
+        }
+        if (reversed.length <= 1) return reversed;
+        reversed.reverse();
+        const coalesced: { start: number; end: number }[] = [reversed[0]!];
+        for (let i = 1; i < reversed.length; i += 1) {
+          const next = reversed[i]!;
+          const tail = coalesced[coalesced.length - 1]!;
+          if (next.start <= tail.end) {
+            if (next.end > tail.end) tail.end = next.end;
+          } else {
+            coalesced.push(next);
+          }
+        }
+        return coalesced;
+      },
     };
   }
 }
@@ -1286,6 +1325,7 @@ export function* readElfPointerValuesSteps(
   const { originalValueAt } = next.value;
   return {
     hasWrites: facts.hasWrites,
+    writeIntervalsIn: facts.writeIntervalsIn,
     unsignedAt: (address, width) => {
       if (!facts.hasWrites(address, width)) return undefined;
       return facts.unsignedAt(

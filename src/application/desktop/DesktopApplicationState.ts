@@ -108,11 +108,17 @@ const inputError = (userMessage: string, remediationAction: string) =>
     { path: ["capture"], reason: "invalid_value", message: userMessage },
   ]);
 
+interface AdmittedDesktopCapture {
+  readonly folder: string;
+  readonly evidence: Evidence;
+  readonly capture: DesktopApplicationCapture;
+}
+
 /** Admit `capture.json` only as complete desktop capture Evidence. */
 export const readDesktopCapture = async (
   folder: string,
   signal: AbortSignal | undefined,
-): Promise<{ evidence: Evidence; capture: DesktopApplicationCapture }> => {
+): Promise<AdmittedDesktopCapture> => {
   const resources = new ArtifactResourceScope();
   const outcome = await resources
     .run(async () => {
@@ -153,7 +159,7 @@ export const readDesktopCapture = async (
           `The capture result is malformed (${describeValidationFailure(capture.error)}).`,
           "Capture the application again.",
         );
-      return { evidence: evidence.value, capture: capture.data };
+      return { folder, evidence: evidence.value, capture: capture.data };
     })
     .then(ok, (cause: unknown) => err(cause));
   try {
@@ -545,13 +551,17 @@ const stateLimitations = (policy: DesktopViewPolicy) => [
 
 /** Read a capture folder into the application's state view. */
 const inspectState = async (
-  folder: string,
+  source: string | AdmittedDesktopCapture,
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
   options: DesktopStateViewOptions,
 ): Promise<Evidence> => {
   const policy = desktopViewPolicy(options.viewPolicy);
-  const { evidence, capture } = await readDesktopCapture(folder, signal);
+  const { folder, evidence, capture } =
+    typeof source === "string"
+      ? await readDesktopCapture(source, signal)
+      : source;
+  if (isAborted(signal)) throw cancelledBy(OPERATION, signal);
   const names = applicationNames(capture);
   const facts = roleFacts(capture);
   const index = indexState(capture);
@@ -635,7 +645,7 @@ export interface DesktopStateViewOptions {
 
 /** Inspect one capture folder, returning its state view Evidence or a failure. */
 export const inspectDesktopApplicationState = async (
-  folder: string,
+  source: string | AdmittedDesktopCapture,
   readers: DesktopStateReaders,
   signal?: AbortSignal,
   options: DesktopStateViewOptions = {},
@@ -650,7 +660,7 @@ export const inspectDesktopApplicationState = async (
         admitted.error.issues,
         options.viewPolicy,
       );
-    return await inspectState(folder, readers, signal, {
+    return await inspectState(source, readers, signal, {
       ...options,
       ...(options.viewPolicy === undefined
         ? {}

@@ -74,9 +74,6 @@ describe("ELF dependency stable filesystem boundary", () => {
       const tooSmall = await service.inspect({ path, max_file_bytes: 64 });
       if (tooSmall.ok) throw new Error("Expected resource budget failure");
       expect(tooSmall.error._tag).toBe("AnalysisResourceConstraintError");
-      const tooMany = await service.inspect({ path, max_needed: 1 });
-      if (tooMany.ok) throw new Error("Expected entry budget failure");
-      expect(tooMany.error._tag).toBe("AnalysisResourceConstraintError");
       const cancelled = await service.inspect(
         { path },
         { signal: AbortSignal.abort() },

@@ -1,6 +1,6 @@
 import { Ajv, type Options } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import { applicationFeatureSeedSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
@@ -55,10 +55,22 @@ it.each(drafts)(
     });
     const options = { target, libraryOptions: { reused: "ref" as const } };
     for (const sharedFirst of [false, true]) {
-      const wrapped = transformAdvertisedInputJsonSchema(canonical, transform);
+      const seed = transform(
+        canonical["~standard"].jsonSchema.input({ target }),
+      );
+      const resolveCached = vi.fn(() => seed);
+      const wrapped = transformAdvertisedInputJsonSchema(
+        canonical,
+        transform,
+        resolveCached,
+      );
       const project = wrapped["~standard"].jsonSchema.input;
-      if (sharedFirst) project(options);
+      if (sharedFirst) {
+        project(options);
+        expect(resolveCached).not.toHaveBeenCalled();
+      }
       const advertised = project({ target });
+      expect(advertised).toBe(seed);
       expect(JSON.stringify(advertised)).not.toContain('"$ref":');
       expect(advertised).toEqual(
         transform(canonical["~standard"].jsonSchema.input({ target })),
@@ -69,6 +81,7 @@ it.each(drafts)(
         transform(canonical["~standard"].jsonSchema.input(options)),
       );
       expect(project({ target })).toBe(advertised);
+      expect(resolveCached).toHaveBeenCalledExactlyOnceWith(target);
     }
   },
 );

@@ -307,6 +307,7 @@ const decodeGnu = (
   };
 };
 
+// Linux v7.3 include/uapi/linux/auxvec.h, plus the arch-wide AT_SYSINFO_EHDR.
 const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
   0: "AT_NULL",
   1: "AT_IGNORE",
@@ -318,6 +319,7 @@ const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
   7: "AT_BASE",
   8: "AT_FLAGS",
   9: "AT_ENTRY",
+  10: "AT_NOTELF",
   11: "AT_UID",
   12: "AT_EUID",
   13: "AT_GID",
@@ -326,10 +328,16 @@ const AUXV_TYPE_NAMES: Readonly<Record<number, string>> = {
   16: "AT_HWCAP",
   17: "AT_CLKTCK",
   23: "AT_SECURE",
+  24: "AT_BASE_PLATFORM",
   25: "AT_RANDOM",
   26: "AT_HWCAP2",
+  27: "AT_RSEQ_FEATURE_SIZE",
+  28: "AT_RSEQ_ALIGN",
+  29: "AT_HWCAP3",
+  30: "AT_HWCAP4",
   31: "AT_EXECFN",
   33: "AT_SYSINFO_EHDR",
+  51: "AT_MINSIGSTKSZ",
 };
 
 const hexWord = (val: bigint | number): string => `0x${val.toString(16)}`;

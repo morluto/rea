@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  createKunaProjectSourceScanner,
   parseKunaExportSummary,
   parseKunaInventory,
   scanKunaAssembly,
@@ -77,6 +78,39 @@ it("splits Kuna's .c into function blocks at any chunk size", async () => {
   expect(block.startsWith("// Function: sub_1080 @ 0x1080  (error:")).toBe(
     true,
   );
+});
+
+it("retains split UTF-8 headers and byte spans when the input buffer is reused", () => {
+  const preamble = "// generated\n";
+  const first = "// Function: café @ 0x10\nvoid a() {}\n";
+  const second = "// Function: 雪 @ 0x20\nvoid b() {}\n";
+  const source = Buffer.from(preamble + first + second);
+  const scanner = createKunaProjectSourceScanner({ decompiled: 2, failed: 0 });
+  const scratch = Buffer.alloc(1);
+  for (const byte of source) {
+    scratch[0] = byte;
+    scanner.push(scratch);
+    scratch.fill(0xff);
+  }
+  expect(scanner.finish()).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "café",
+        address: "0x10",
+        cOffset: Buffer.byteLength(preamble),
+        cLength: Buffer.byteLength(first),
+        error: null,
+      },
+      {
+        name: "雪",
+        address: "0x20",
+        cOffset: Buffer.byteLength(preamble + first),
+        cLength: Buffer.byteLength(second),
+        error: null,
+      },
+    ],
+  });
 });
 
 it.each([

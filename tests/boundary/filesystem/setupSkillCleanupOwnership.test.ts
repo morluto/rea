@@ -6,6 +6,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -227,7 +228,7 @@ describe("skill regular-file cleanup ownership", () => {
     await mkdir(dirname(manifest), { recursive: true });
     await writeFile(manifest, "stale managed skill\n");
     const resources = new ArtifactResourceScope();
-    const skillRead = phaseGate();
+    const skillRead = phaseGate<FileHandle>();
     let heldRead = false;
     openMock.mockImplementation(async (...args) => {
       const handle = await actualFs.open(...args);
@@ -235,7 +236,7 @@ describe("skill regular-file cleanup ownership", () => {
       heldRead = true;
       const nativeRead = handle.read.bind(handle);
       vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
-        await skillRead.hold();
+        await skillRead.hold(handle);
         return nativeRead(...readArgs);
       });
       return handle;
@@ -244,17 +245,17 @@ describe("skill regular-file cleanup ownership", () => {
     const reading = readSkillFile(manifest, resources);
     let closing: Promise<void> | undefined;
     await withVerifierCleanup(async () => {
-      await skillRead.reached(reading, "skill read");
-      let closed = false;
+      const descriptor = await skillRead.reached(reading, "skill read");
+      let descriptorAtClose: number | undefined;
       closing = resources.close().then(() => {
-        closed = true;
+        descriptorAtClose = descriptor.fd;
       });
-      await Promise.resolve();
-      expect(closed).toBe(false);
+      await setImmediate();
+      expect(descriptorAtClose).toBeUndefined();
       skillRead.release();
       expect(await reading).toBe("stale managed skill\n");
       await closing;
-      expect(closed).toBe(true);
+      expect(descriptorAtClose).toBe(-1);
     }, [
       skillRead.release,
       async () => {

@@ -220,7 +220,7 @@ const reconciliationItemShape = {
     }),
   ),
 };
-const reconciliationItemSchema = z.union([
+const reconciliationItemSchema = z.discriminatedUnion("status", [
   z.strictObject({
     ...reconciliationItemShape,
     static_layer_id: prefixedDigestSchema("jrl"),
