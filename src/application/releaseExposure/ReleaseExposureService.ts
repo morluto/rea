@@ -17,7 +17,6 @@ import {
   AnalysisOutputError,
   AnalysisUnsupportedTargetError,
   cancelledBy,
-  carriedReason,
 } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { desktopApplicationSchema } from "../../domain/desktopApplication.js";
@@ -555,14 +554,19 @@ const stopsAudit = (error: AnalysisError): boolean =>
 
 /**
  * Attach this audit's report, which replaces an owner's own partial for one
- * image. An error with unfinished cleanup is kept, so its owner can resolve it.
+ * image. Keep the cleanup owner even if it confirms release before the report
+ * is assembled.
  */
 const withAuditPartial = (
   error: AnalysisError,
   report: Evidence,
 ): AnalysisError => {
-  if (error.partialObservation !== undefined && !error.cleanupIncomplete)
-    return cancelledBy(RELEASE_EXPOSURE_OPERATION, carriedReason(error.cause), {
+  if (
+    error instanceof AnalysisCancelledError &&
+    error.partialObservation !== undefined &&
+    !error.carriesCleanup
+  )
+    return cancelledBy(RELEASE_EXPOSURE_OPERATION, error, {
       partialObservation: report,
     });
   error.partialObservation = report;
