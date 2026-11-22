@@ -270,14 +270,13 @@ it("takes checkpoints from a REA in the computer that predates their changed fil
       ).structuredContent,
     ).checkpoint;
   // The first reply is lost, so the second call reads the checkpoint from the capture's log.
-  expect(
-    (
-      await client.callTool({
-        name: "mark_build_checkpoint",
-        arguments: { computer_id: id, name: "seed" },
-      })
-    ).isError,
-  ).toBe(true);
+  const lost = parseMcpToolError(
+    await client.callTool({
+      name: "mark_build_checkpoint",
+      arguments: { computer_id: id, name: "seed" },
+    }),
+  );
+  expect(lost.error.code).not.toBe("invalid_request");
 
   const seed = await mark("seed");
   const end = await mark("end");
@@ -297,7 +296,12 @@ it("takes checkpoints from a REA in the computer that predates their changed fil
       changed_files: null,
       more_changed_files: null,
     });
-  await callOk(client, "stop_build_capture", { computer_id: id });
+  const stopped = await callOk(client, "stop_build_capture", {
+    computer_id: id,
+  });
+  expect(stopped.structuredContent).toMatchObject({
+    draft: { seed_checkpoint: "seed", end_checkpoint: "end" },
+  });
 });
 
 it("returns a draft note's read error when only a dconf database REA cannot read changed between seed and end", async () => {
