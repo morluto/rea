@@ -75,7 +75,7 @@ export const completedStableArtifactIdentity = (
 /** Filesystem boundary for stable reads, including deterministic replacement probes. */
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;
-  open(path: string, flags: number): Promise<FileHandle>;
+  open(path: string, flags: number, mode?: number): Promise<FileHandle>;
   realpath?(path: string): Promise<string>;
 }
 

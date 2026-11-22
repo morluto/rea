@@ -203,9 +203,10 @@ const writeSnapshotChunk = async (
 
 const openSnapshotDestination = async (
   destinationPath: string,
+  selectedFileSystem: StableArtifactFileSystem,
 ): Promise<OwnedFileHandle> => {
   try {
-    const handle = await open(
+    const handle = await selectedFileSystem.open(
       destinationPath,
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       0o600,
@@ -288,7 +289,10 @@ const copyObservedArtifact = async (options: {
         onChunk: async (chunk) => {
           try {
             assertArtifactReadActive(signal);
-            destination ??= await openSnapshotDestination(destinationPath);
+            destination ??= await openSnapshotDestination(
+              destinationPath,
+              selectedFileSystem,
+            );
             await writeSnapshotChunk(
               destination.handle,
               chunk,
@@ -337,7 +341,10 @@ const copyObservedArtifact = async (options: {
   if (destination === undefined) {
     assertArtifactReadActive(signal);
     try {
-      destination = await openSnapshotDestination(destinationPath);
+      destination = await openSnapshotDestination(
+        destinationPath,
+        selectedFileSystem,
+      );
     } catch (cause: unknown) {
       throw cause instanceof SnapshotDestinationWriteError
         ? cause.destinationCause

@@ -103,4 +103,59 @@ describe("checkFirmwareStagingBudget", () => {
       resource: "file-size",
     });
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "counts raw non-UTF8 filenames using raw path buffers on POSIX hosts",
+    async () => {
+      const root = await createTestTempDirectory("rea-staging-raw-name-");
+      const rawName = Buffer.from([
+        0x62, 0x61, 0x64, 0xff, 0x2e, 0x62, 0x69, 0x6e,
+      ]);
+      await writeFile(Buffer.concat([Buffer.from(`${root}/`), rawName]), "abc");
+      await writeFile(join(root, "good.bin"), "12345");
+      const usage = await checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+      });
+      expect(usage).toEqual({ bytes: 8, entries: 2 });
+    },
+  );
+
+  it("stops directory enumeration when maxEntries is exceeded or cancellation arrives", async () => {
+    const root = await createTestTempDirectory("rea-staging-early-stop-");
+    await writeFile(join(root, "one.bin"), "1");
+    await writeFile(join(root, "two.bin"), "2");
+    await writeFile(join(root, "three.bin"), "3");
+
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 2,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+    });
+
+    const controller = new AbortController();
+    controller.abort(new Error("stop enumeration"));
+    await expect(
+      checkFirmwareStagingBudget({
+        root,
+        maxBytes: 100,
+        maxEntries: 10,
+        fileSizeBytes: 100,
+        operation: "extract_firmware",
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisCancelledError",
+    });
+  });
 });

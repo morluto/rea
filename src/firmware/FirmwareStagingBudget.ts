@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import { lstat, opendir } from "node:fs/promises";
 import { sep } from "node:path";
 import type { FirmwareDeadline } from "./FirmwareDeadline.js";
 import {
@@ -22,10 +22,9 @@ const optionalLstat = async (path: Buffer) =>
     throw cause;
   });
 
-const optionalReaddirBufferTypes = async (directory: Buffer) =>
-  readdir(directory, {
-    encoding: "buffer",
-    withFileTypes: true,
+const optionalOpendirBuffer = async (directory: Buffer) =>
+  opendir(directory, {
+    encoding: "buffer" as BufferEncoding,
   }).catch((cause: unknown) => {
     if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
       return undefined;
@@ -60,8 +59,15 @@ const flushStagingBudgetStats = async (
     options.operation,
     options.deadline,
   );
-  const stats = await Promise.all(batch.map(optionalLstat));
-  for (const [index, stat] of stats.entries()) {
+  const settledStats = await Promise.allSettled(batch.map(optionalLstat));
+  const firstRejected = settledStats.find(
+    (outcome): outcome is PromiseRejectedResult =>
+      outcome.status === "rejected",
+  );
+  if (firstRejected !== undefined) throw firstRejected.reason;
+  for (const [index, outcome] of settledStats.entries()) {
+    if (outcome.status !== "fulfilled") continue;
+    const stat = outcome.value;
     if (stat === undefined) continue;
     if (stat.isDirectory()) {
       const candidate = batch[index];
@@ -106,16 +112,19 @@ export const checkFirmwareStagingBudget = async (
       directoryStat.isSymbolicLink()
     )
       continue;
-    const entries = await optionalReaddirBufferTypes(directory);
-    if (entries === undefined) continue;
+    const handle = await optionalOpendirBuffer(directory);
+    if (handle === undefined) continue;
     let statBatch: Buffer[] = [];
-    for (const entry of entries) {
+    for await (const entry of handle) {
       throwIfFirmwareInventoryCancelled(signal, operation, deadline);
       count += 1;
       if (count > maxEntries)
         throw firmwareStagingLimit(operation, "max_output_files", maxEntries);
       if (entry.isSymbolicLink()) continue;
-      const entryPath = joinRawPath(directory, entry.name);
+      const rawName = Buffer.isBuffer(entry.name)
+        ? entry.name
+        : Buffer.from(entry.name);
+      const entryPath = joinRawPath(directory, rawName);
       if (entry.isDirectory()) {
         pending.push(entryPath);
         continue;

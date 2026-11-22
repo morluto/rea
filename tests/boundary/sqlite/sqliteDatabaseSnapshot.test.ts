@@ -10,6 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -38,15 +39,18 @@ const fixture = async (wal = false) => {
     await removeTestWorkspace(workspace.root);
   });
   const root = await workspace.mkdir("private");
-  const capture = (fileSystem?: StableArtifactFileSystem) =>
+  const capture = (
+    fileSystem?: StableArtifactFileSystem,
+    signal?: AbortSignal,
+  ) =>
     captureSqliteDatabaseSnapshot(
       database.path,
       root,
       resourceScope,
-      undefined,
+      signal,
       fileSystem,
     );
-  return { workspace, database, root, capture };
+  return { workspace, database, root, resourceScope, capture };
 };
 
 it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["PERSIST", "TRUNCATE"])(
@@ -415,5 +419,138 @@ describe("SQLite snapshot streaming copy and destination isolation", () => {
       code: "ENOENT",
       path: `${root}/database.snapshot`,
     });
+  });
+});
+
+describe("SQLite snapshot destination cleanup lifecycle", () => {
+  it("retains source and destination handles across write and close failures and retries cleanup", async () => {
+    const { database, root, resourceScope, capture } = await fixture();
+    const destinationPath = `${root}/database.snapshot`;
+    let denySourceClose = true;
+    let denyDestWrite = true;
+    let denyDestClose = true;
+    const fileSystem: StableArtifactFileSystem = {
+      lstat: (path) => lstat(path, { bigint: true }),
+      open: async (path, flags, mode) => {
+        const handle = await open(path, flags, mode);
+        const origClose = handle.close.bind(handle);
+        if (path === database.path) {
+          handle.close = async () => {
+            if (denySourceClose) throw new Error("source close denied");
+            await origClose();
+          };
+        } else if (path === destinationPath) {
+          const origWrite = handle.write.bind(handle);
+          handle.write = (async (...args: Parameters<typeof origWrite>) => {
+            if (denyDestWrite)
+              throw Object.assign(new Error("no space left on destination"), {
+                code: "ENOSPC",
+              });
+            return await origWrite(...args);
+          }) as typeof handle.write;
+          handle.close = async () => {
+            if (denyDestClose) throw new Error("destination close denied");
+            await origClose();
+          };
+        }
+        return handle;
+      },
+    };
+
+    try {
+      const error = await capture(fileSystem).catch((cause: unknown) => cause);
+      expect(error).toMatchObject({
+        reason: "io",
+        cleanup: {
+          resources: expect.arrayContaining([database.path, destinationPath]),
+        },
+      });
+      expect((error as Error).message).toContain(
+        "no space left on destination",
+      );
+      const providerError = classifyProviderFailure(
+        error,
+        sqliteDatabaseDialect(database.path, "snapshot-capture"),
+      );
+      expect(providerError.cleanupIncomplete).toBe(true);
+      expect(providerError.cleanupResources).toEqual(
+        expect.arrayContaining([database.path, destinationPath]),
+      );
+      await expect(resourceScope.retryCleanup()).rejects.toMatchObject({
+        cleanup: {
+          resources: expect.arrayContaining([database.path, destinationPath]),
+        },
+      });
+      denySourceClose = false;
+      denyDestClose = false;
+      await expect(resourceScope.retryCleanup()).resolves.toBeUndefined();
+    } finally {
+      denySourceClose = false;
+      denyDestClose = false;
+    }
+  });
+
+  it("handles cancellation during destination close and retains failed close until retry", async () => {
+    for (const failClose of [false, true]) {
+      const { database, root, resourceScope, capture } = await fixture();
+      const destinationPath = `${root}/database.snapshot`;
+      const controller = new AbortController();
+      let denyDestClose = failClose;
+      const fileSystem: StableArtifactFileSystem = {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags, mode) => {
+          const handle = await open(path, flags, mode);
+          if (path === destinationPath) {
+            const origClose = handle.close.bind(handle);
+            handle.close = async () => {
+              if (!controller.signal.aborted)
+                controller.abort(
+                  new Error("cancelled during destination close"),
+                );
+              if (denyDestClose) throw new Error("destination close failed");
+              await origClose();
+            };
+          }
+          return handle;
+        },
+      };
+
+      try {
+        const error = await capture(fileSystem, controller.signal).catch(
+          (cause: unknown) => cause,
+        );
+        expect(error).toMatchObject({
+          _tag: "SqliteSnapshotAcquisitionFailure",
+          operationCause: { reason: "cancelled" },
+        });
+        const providerError = classifyProviderFailure(
+          error,
+          sqliteDatabaseDialect(
+            database.path,
+            "snapshot-capture",
+            controller.signal,
+          ),
+        );
+        if (failClose) {
+          expect(providerError).toBeInstanceOf(ProviderCleanupError);
+          expect(providerError.cleanupPrimary?._tag).toBe(
+            "AnalysisCancelledError",
+          );
+          expect(error).toMatchObject({
+            operationCause: { cleanup: { resources: [destinationPath] } },
+          });
+          expect(providerError.cleanupIncomplete).toBe(true);
+          expect(providerError.cleanupResources).toEqual([destinationPath]);
+          denyDestClose = false;
+          await expect(resourceScope.retryCleanup()).resolves.toBeUndefined();
+        } else {
+          expect(providerError._tag).toBe("AnalysisCancelledError");
+          expect(providerError.cleanupIncomplete).toBe(false);
+          expect(providerError.cleanupResources).toEqual([]);
+        }
+      } finally {
+        denyDestClose = false;
+      }
+    }
   });
 });
