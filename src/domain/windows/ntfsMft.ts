@@ -17,15 +17,16 @@ import type {
 } from "../firmware/regionDecoder.js";
 
 /** An NTFS FILE record begins with this signature. */
-const MFT_FILE_RECORD_MAGIC = "FILE";
 const MFT_FILE_RECORD_MAGIC_BYTES = 4;
 /** The shortest header worth reading: a FILE record header ends at `nextAttributeId`. */
 const NTFS_MFT_MIN_RECORD_BYTES = 42;
 
 const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
   prefix.length >= MFT_FILE_RECORD_MAGIC_BYTES &&
-  text(prefix.subarray(0, MFT_FILE_RECORD_MAGIC_BYTES)) ===
-    MFT_FILE_RECORD_MAGIC;
+  prefix[0] === 0x46 &&
+  prefix[1] === 0x49 &&
+  prefix[2] === 0x4c &&
+  prefix[3] === 0x45;
 
 /** A record's declared size is a power of two from 512 upward; 1024 is NTFS's default. */
 const MFT_DEFAULT_RECORD_BYTES = 1024;
@@ -170,9 +171,6 @@ export interface MftMetadata {
   readonly file_name_incomplete_record_count: number;
   readonly attribute_incomplete_record_count: number;
 }
-
-const text = (ascii: Uint8Array): string =>
-  Buffer.from(ascii).toString("latin1");
 
 const failure = (
   message: string,

@@ -358,7 +358,8 @@ const asSafeInt = (value: bigint | string | number): number | null => {
   return Number(numeric);
 };
 
-const hex = (bytes: Uint8Array): string => Buffer.from(bytes).toString("hex");
+const hex = (bytes: Uint8Array): string =>
+  Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("hex");
 
 const protobufFailure = (cause: unknown): AndroidOtaPayloadParseError =>
   malformed(
