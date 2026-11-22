@@ -1,4 +1,4 @@
-import { BinaryReader } from "./binaryContainer.js";
+import { BinaryReader, hasElfMagic } from "./binaryContainer.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -117,13 +117,6 @@ export type ExecutableMetadata =
 export const PE_RECORD_HEADER_BYTES = 24;
 /** Bound the optional-header read used by structural PE admission. */
 export const MAX_PE_OPTIONAL_HEADER_BYTES = 4096;
-
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.length >= 4 &&
-  bytes[0] === 0x7f &&
-  bytes[1] === 0x45 &&
-  bytes[2] === 0x4c &&
-  bytes[3] === 0x46;
 
 /**
  * Whether leading bytes begin an executable header family that

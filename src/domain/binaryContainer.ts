@@ -7,6 +7,22 @@ import {
 import type { PeDataDirectory } from "./peOptionalHeader.js";
 import { decodeLimit, ParseFailureError } from "./parseFailure.js";
 
+/** Return whether the leading bytes begin with the 4-byte ELF magic (`\x7fELF`). */
+export const hasElfMagic = (bytes: Uint8Array): boolean =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x7f &&
+  bytes[1] === 0x45 &&
+  bytes[2] === 0x4c &&
+  bytes[3] === 0x46;
+
+/** Return whether the leading bytes begin with the 4-byte XAR archive magic (`xar!`). */
+export const hasXarMagic = (bytes: Uint8Array): boolean =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x78 &&
+  bytes[1] === 0x61 &&
+  bytes[2] === 0x72 &&
+  bytes[3] === 0x21;
+
 /** Native container facts a format failure can name. */
 interface BinaryFormatFailureFacts {
   /** The image holds the metadata, in a form this reader cannot decode. */

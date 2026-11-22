@@ -3,6 +3,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
+  hasElfMagic,
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
 } from "../binaryContainer.js";
@@ -42,9 +43,6 @@ import {
 
 type Artifact = NativeExports["artifact"];
 
-const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.subarray(0, ELF_MAGIC.length).equals(ELF_MAGIC);
 const OPERATION = "inspect_native_exports";
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;

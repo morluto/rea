@@ -8,6 +8,7 @@ import {
   yieldArtifactRead,
 } from "../../resources/index.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
+import { hasElfMagic } from "../../domain/binaryContainer.js";
 import { elfObjectTypeName } from "../../domain/native/elfNotes.js";
 import {
   zstandardFrameAllowanceCause,
@@ -641,9 +642,6 @@ const candidateSections = (
     symtab: status([".symtab"]),
   };
 };
-
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.length >= 4 && bytes.toString("hex", 0, 4) === "7f454c46";
 
 const readCandidateIdentity = (
   content: Buffer,
