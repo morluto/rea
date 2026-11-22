@@ -1018,6 +1018,7 @@ export class CutterBridgeClient {
                 const bytes = await readBoundedFileBytes(
                   file,
                   MAX_DESCRIPTOR_BYTES,
+                  { expectedSize: info.size },
                 );
                 assertArtifactReadActive(signal);
                 return bytes;
