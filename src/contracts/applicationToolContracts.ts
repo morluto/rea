@@ -5,13 +5,17 @@ import { applicationInventoryProjectionInputSchema } from "../domain/mobileAppli
 import { z } from "zod";
 import { EVIDENCE_FORMAT_REVISION } from "../domain/evidenceFormat.js";
 import {
+  endpointComparisonPageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/endpointComparisonSummarySchemas.js";
+import {
   featureTraceSummaryViewResultSchema,
   featureTraceViewResultSchema,
-  sourceToBundleSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/featureTraceSummarySchemas.js";
+import {
   sourceToBundlePageViewResultSchema,
-  endpointComparisonSummaryViewResultSchema,
-  endpointComparisonPageViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+  sourceToBundleSummaryViewResultSchema,
+} from "../domain/analysisView/summarySchemas/sourceToBundleSummarySchemas.js";
 import { staticObservedEndpointComparisonSchema } from "../domain/javascript/staticObservedEndpointSchemas.js";
 import { STATIC_OBSERVED_ENDPOINT_COMPARISON_EXAMPLE } from "./javascript/staticObservedEndpointExample.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
