@@ -269,6 +269,43 @@ export const omitAdvertisedOutputJsonSchema = <Schema>(
 };
 
 /**
+ * Memoize canonical output JSON Schema generation per target dialect so
+ * repeated `tools/list` requests reuse the same schema object identity and hit
+ * `advertiseToolOutput`'s compaction WeakMap in O(1).
+ */
+export const cacheAdvertisedOutputJsonSchema = <Schema>(
+  schema: Schema,
+): Schema => {
+  const standard = Reflect.get(schema as object, "~standard");
+  if (!isRecord(standard)) return schema;
+  const jsonSchema = Reflect.get(standard, "jsonSchema");
+  if (!isRecord(jsonSchema)) return schema;
+  const project = Reflect.get(jsonSchema, "output");
+  if (typeof project !== "function") return schema;
+  const byTarget = new Map<string, Record<string, unknown>>();
+  const cachedOutput = (options: unknown): unknown => {
+    const target = Reflect.get(options as object, "target");
+    const cacheable =
+      typeof target === "string" &&
+      Reflect.get(options as object, "libraryOptions") === undefined;
+    if (cacheable) {
+      const cached = byTarget.get(target);
+      if (cached !== undefined) return cached;
+    }
+    const projected = (project as (options: unknown) => unknown)(options);
+    if (cacheable && isRecord(projected)) byTarget.set(target, projected);
+    return projected;
+  };
+  return {
+    ...(schema as object),
+    "~standard": {
+      ...standard,
+      jsonSchema: { ...jsonSchema, output: cachedOutput },
+    },
+  } as Schema;
+};
+
+/**
  * Apply a wire-presentation transform to one schema's advertised input
  * projection. The wrapper preserves the schema's own parser and standard
  * metadata, so both Zod registrations and plain standard schemas keep their

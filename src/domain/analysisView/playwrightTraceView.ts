@@ -31,6 +31,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { selectViewRows } from "./selectViewRows.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
 
@@ -153,6 +154,115 @@ const eventFields = (
   };
 };
 
+interface PlaywrightTraceIndex {
+  readonly eventsById: ReadonlyMap<string, readonly number[]>;
+  readonly eventsByStream: ReadonlyMap<string, readonly number[]>;
+  readonly eventsByKind: ReadonlyMap<string, readonly number[]>;
+  readonly eventsByCall: ReadonlyMap<string, readonly number[]>;
+  readonly membersById: ReadonlyMap<string, readonly number[]>;
+  readonly membersByPath: ReadonlyMap<string, readonly number[]>;
+  readonly streamsById: ReadonlyMap<string, readonly number[]>;
+  readonly diagnosticsByCode: ReadonlyMap<string, readonly number[]>;
+}
+
+const traceIndexes = new WeakMap<object, PlaywrightTraceIndex>();
+
+const pushBucket = (
+  map: Map<string, number[]>,
+  key: string | null | undefined,
+  index: number,
+): void => {
+  if (key === null || key === undefined) return;
+  let bucket = map.get(key);
+  if (bucket === undefined) {
+    bucket = [];
+    map.set(key, bucket);
+  }
+  bucket.push(index);
+};
+
+const getPlaywrightTraceIndex = (
+  report: PlaywrightTrace,
+): PlaywrightTraceIndex | undefined => {
+  if (!isImmutableJsonSnapshot(report)) return undefined;
+  let cached = traceIndexes.get(report);
+  if (cached !== undefined) return cached;
+  const eventsById = new Map<string, number[]>();
+  const eventsByStream = new Map<string, number[]>();
+  const eventsByKind = new Map<string, number[]>();
+  const eventsByCall = new Map<string, number[]>();
+  for (let index = 0; index < report.events.length; index += 1) {
+    const row = report.events[index]!;
+    pushBucket(eventsById, row.event_id, index);
+    pushBucket(eventsByStream, row.stream_id, index);
+    pushBucket(eventsByKind, row.kind, index);
+    pushBucket(eventsByCall, row.call_id, index);
+  }
+  const membersById = new Map<string, number[]>();
+  const membersByPath = new Map<string, number[]>();
+  for (let index = 0; index < report.members.length; index += 1) {
+    const row = report.members[index]!;
+    pushBucket(membersById, row.member_id, index);
+    pushBucket(membersByPath, row.path, index);
+  }
+  const streamsById = new Map<string, number[]>();
+  for (let index = 0; index < report.streams.length; index += 1)
+    pushBucket(streamsById, report.streams[index]!.stream_id, index);
+  const diagnosticsByCode = new Map<string, number[]>();
+  for (let index = 0; index < report.diagnostics.length; index += 1)
+    pushBucket(diagnosticsByCode, report.diagnostics[index]!.code, index);
+  cached = {
+    eventsById,
+    eventsByStream,
+    eventsByKind,
+    eventsByCall,
+    membersById,
+    membersByPath,
+    streamsById,
+    diagnosticsByCode,
+  };
+  traceIndexes.set(report, cached);
+  return cached;
+};
+
+const collectCandidateIndices = (
+  indexMap: ReadonlyMap<string, readonly number[]>,
+  filter: ReadonlySet<string>,
+): number[] => {
+  if (filter.size === 1) {
+    const only = filter.values().next().value;
+    const list = only === undefined ? undefined : indexMap.get(only);
+    return list === undefined ? [] : [...list];
+  }
+  const seen = new Set<number>();
+  for (const key of filter) {
+    const list = indexMap.get(key);
+    if (list === undefined) continue;
+    for (let i = 0; i < list.length; i += 1) seen.add(list[i]!);
+  }
+  return [...seen].sort((left, right) => left - right);
+};
+
+const selectCandidateRows = <Source, Row>(
+  rows: readonly Source[],
+  candidateIndices: readonly number[],
+  view: { readonly offset: number; readonly limit: number },
+  matches: (row: Source, index: number) => boolean,
+  project: (row: Source, index: number) => Row,
+): { rows: Row[]; total: number } => {
+  const selected: Row[] = [];
+  let total = 0;
+  for (let i = 0; i < candidateIndices.length; i += 1) {
+    const index = candidateIndices[i]!;
+    const row = rows[index]!;
+    if (!matches(row, index)) continue;
+    if (total >= view.offset && selected.length < view.limit)
+      selected.push(project(row, index));
+    total++;
+  }
+  return { rows: selected, total };
+};
+
 const selectRows = (
   report: PlaywrightTrace,
   view: Exclude<View, { collection: "event-text" }>,
@@ -162,70 +272,128 @@ const selectRows = (
       streams = values(view.stream_ids),
       kinds = values(view.kinds),
       calls = values(view.call_ids);
-    return selectViewRows(
-      report.events,
-      view,
-      (row) =>
-        allows(ids, row.event_id) &&
-        allows(streams, row.stream_id) &&
-        allows(kinds, row.kind) &&
-        allows(calls, row.call_id),
-      (row) => eventFields(row, view),
-    );
+    const matchEvent = (row: PlaywrightTrace["events"][number]): boolean =>
+      allows(ids, row.event_id) &&
+      allows(streams, row.stream_id) &&
+      allows(kinds, row.kind) &&
+      allows(calls, row.call_id);
+    const projectEvent = (row: PlaywrightTrace["events"][number]) =>
+      eventFields(row, view);
+    if (
+      ids !== undefined ||
+      streams !== undefined ||
+      kinds !== undefined ||
+      calls !== undefined
+    ) {
+      const idx = getPlaywrightTraceIndex(report);
+      if (idx !== undefined) {
+        const candidates =
+          ids !== undefined
+            ? collectCandidateIndices(idx.eventsById, ids)
+            : calls !== undefined
+              ? collectCandidateIndices(idx.eventsByCall, calls)
+              : streams !== undefined
+                ? collectCandidateIndices(idx.eventsByStream, streams)
+                : collectCandidateIndices(idx.eventsByKind, kinds!);
+        return selectCandidateRows(
+          report.events,
+          candidates,
+          view,
+          matchEvent,
+          projectEvent,
+        );
+      }
+    }
+    return selectViewRows(report.events, view, matchEvent, projectEvent);
   }
   if (view.collection === "members") {
     const ids = values(view.member_ids),
       paths = values(view.paths);
-    return selectViewRows(
-      report.members,
-      view,
-      (row) => allows(ids, row.member_id) && allows(paths, row.path),
-      (row) => ({
-        ...fields(
-          row,
-          view.fields ?? ["declared_bytes", "declared_compressed_bytes"],
-        ),
-        member_id: row.member_id,
-        path: row.path,
-        logical_path: row.logical_path,
-        kind: row.kind,
-        encrypted: row.encrypted,
-        decoded: row.decoded,
-        limitations: row.limitations,
-      }),
-    );
+    const matchMember = (row: PlaywrightTrace["members"][number]): boolean =>
+      allows(ids, row.member_id) && allows(paths, row.path);
+    const projectMember = (row: PlaywrightTrace["members"][number]) => ({
+      ...fields(
+        row,
+        view.fields ?? ["declared_bytes", "declared_compressed_bytes"],
+      ),
+      member_id: row.member_id,
+      path: row.path,
+      logical_path: row.logical_path,
+      kind: row.kind,
+      encrypted: row.encrypted,
+      decoded: row.decoded,
+      limitations: row.limitations,
+    });
+    if (ids !== undefined || paths !== undefined) {
+      const idx = getPlaywrightTraceIndex(report);
+      if (idx !== undefined) {
+        const candidates =
+          ids !== undefined
+            ? collectCandidateIndices(idx.membersById, ids)
+            : collectCandidateIndices(idx.membersByPath, paths!);
+        return selectCandidateRows(
+          report.members,
+          candidates,
+          view,
+          matchMember,
+          projectMember,
+        );
+      }
+    }
+    return selectViewRows(report.members, view, matchMember, projectMember);
   }
   if (view.collection === "streams") {
     const ids = values(view.stream_ids);
-    return selectViewRows(
-      report.streams,
-      view,
-      (row) => allows(ids, row.stream_id),
-      (row) => ({
-        ...fields(
-          row,
-          view.fields ?? ["producer", "lines", "supported_events"],
-        ),
-        stream_id: row.stream_id,
-        member_id: row.member_id,
-        role: row.role,
-        version: row.version,
-        state: row.state,
-      }),
-    );
+    const matchStream = (row: PlaywrightTrace["streams"][number]): boolean =>
+      allows(ids, row.stream_id);
+    const projectStream = (row: PlaywrightTrace["streams"][number]) => ({
+      ...fields(row, view.fields ?? ["producer", "lines", "supported_events"]),
+      stream_id: row.stream_id,
+      member_id: row.member_id,
+      role: row.role,
+      version: row.version,
+      state: row.state,
+    });
+    if (ids !== undefined) {
+      const idx = getPlaywrightTraceIndex(report);
+      if (idx !== undefined)
+        return selectCandidateRows(
+          report.streams,
+          collectCandidateIndices(idx.streamsById, ids),
+          view,
+          matchStream,
+          projectStream,
+        );
+    }
+    return selectViewRows(report.streams, view, matchStream, projectStream);
   }
   const codes = values(view.codes);
+  const matchDiagnostic = (
+    row: PlaywrightTrace["diagnostics"][number],
+  ): boolean => allows(codes, row.code);
+  const projectDiagnostic = (row: PlaywrightTrace["diagnostics"][number]) => ({
+    ...fields(row, view.fields ?? ["message"]),
+    diagnostic_id: row.diagnostic_id,
+    member_id: row.member_id,
+    line: row.line,
+    code: row.code,
+  });
+  if (codes !== undefined) {
+    const idx = getPlaywrightTraceIndex(report);
+    if (idx !== undefined)
+      return selectCandidateRows(
+        report.diagnostics,
+        collectCandidateIndices(idx.diagnosticsByCode, codes),
+        view,
+        matchDiagnostic,
+        projectDiagnostic,
+      );
+  }
   return selectViewRows(
     report.diagnostics,
     view,
-    (row) => allows(codes, row.code),
-    (row) => ({
-      ...fields(row, view.fields ?? ["message"]),
-      diagnostic_id: row.diagnostic_id,
-      member_id: row.member_id,
-      line: row.line,
-      code: row.code,
-    }),
+    matchDiagnostic,
+    projectDiagnostic,
   );
 };
 const selectEventText = (
