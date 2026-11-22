@@ -234,9 +234,8 @@ class HopperBridgeTest(unittest.TestCase):
         dossier = bridge["_analyze_function"](doc, {"procedure": "0x1000"})
 
         self.assertEqual(seg.named_addresses_calls, 0)
-        # _instruction_addresses runs once inside _analyze_function; _assembly_lines reuses it.
-        # Note basicBlockIterator is called once in _instruction_addresses and once for CFG blocks.
-        self.assertEqual(proc.block_iter_calls, 2)
+        # The dossier collects instruction addresses and CFG blocks in one traversal.
+        self.assertEqual(proc.block_iter_calls, 1)
         self.assertEqual(
             dossier["assembly"],
             [
