@@ -178,15 +178,13 @@ export class EnvironmentStateWriteSimulation {
   readonly #lastCheck = new Map<string, number>();
   /** When the latest modelled write to each target since its last check ended. */
   readonly #touchedSince: PendingTargets = new Map();
-  /** Timeline indexes of writes the gate does not model. */
-  readonly #unmodelledAt: number[] = [];
   readonly #writeCompletion: CapturedWriteCompletion;
-  readonly #history: WriteHistory = {
+  readonly #history = {
     touched: this.#touched,
     pending: this.#touchedSince,
     checked: this.#lastCheck,
-    unmodelledAt: this.#unmodelledAt,
-  };
+    lastUnmodelledAt: -1,
+  } satisfies WriteHistory;
   readonly #log: {
     readonly index: number;
     readonly tool: string;
@@ -759,7 +757,6 @@ export class EnvironmentStateWriteSimulation {
     }
     // Retain omissions only after the final check's coverage passes the ownership guards.
     this.omitted.keep(view, outcome);
-    const interferes = interference(this.#history, outcome);
     const unseen = outcome.pass
       ? this.#confirm(view, record, outcome, exercised)
       : undefined;
@@ -775,6 +772,7 @@ export class EnvironmentStateWriteSimulation {
       this.#pending = this.#pending.filter((write) => !shown.has(write.target));
     }
     if (!outcome.pass) {
+      const interferes = interference(this.#history, outcome);
       const interfered = new Set([...exercised].filter(interferes));
       if (interfered.size === 0)
         this.#mismatch({ record, index, keys, exercised, view });
@@ -844,7 +842,7 @@ export class EnvironmentStateWriteSimulation {
 
   #unmodelled(path: string, index: number): void {
     this.#taint.write(path);
-    this.#unmodelledAt.push(index);
+    this.#history.lastUnmodelledAt = index;
   }
 
   /** Check the writes to an item read's entity on the members they sent, as a resynchronising read does. */
