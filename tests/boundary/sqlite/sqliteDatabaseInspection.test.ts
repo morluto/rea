@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
-import { describe, expect, it as nativeTest, onTestFinished } from "vitest";
+import { describe, expect, it as nativeTest, onTestFinished, vi } from "vitest";
 import {
   createSqliteApplicationCollationFixture,
   createSqliteLongNameFixture,
@@ -1091,57 +1091,74 @@ describe("SQLite short-page truncation and reusable TextDecoder codecs", () => {
       CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT);
       INSERT INTO items (label) VALUES ('first'), ('second'), ('third');
     `);
+    const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare");
+    const probeQueries = (): string[] =>
+      prepareSpy.mock.calls
+        .map(([sql]) => sql)
+        .filter((sql) => /^SELECT 1 FROM .* LIMIT 1 OFFSET \?$/.test(sql));
 
-    const shortPage = inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "items",
-      row_limit: 10,
-    });
-    expect(shortPage.rows).toMatchObject({
-      row_offset: 0,
-      row_limit: 10,
-      truncated: false,
-      next_row_offset: null,
-    });
-    expect(shortPage.rows?.values).toHaveLength(3);
+    try {
+      prepareSpy.mockClear();
+      const shortPage = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 10,
+      });
+      expect(shortPage.rows).toMatchObject({
+        row_offset: 0,
+        row_limit: 10,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(shortPage.rows?.values).toHaveLength(3);
+      expect(probeQueries()).toHaveLength(0);
 
-    const exactNonTruncated = inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "items",
-      row_limit: 3,
-    });
-    expect(exactNonTruncated.rows).toMatchObject({
-      row_limit: 3,
-      truncated: false,
-      next_row_offset: null,
-    });
-    expect(exactNonTruncated.rows?.values).toHaveLength(3);
+      prepareSpy.mockClear();
+      const exactNonTruncated = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 3,
+      });
+      expect(exactNonTruncated.rows).toMatchObject({
+        row_limit: 3,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(exactNonTruncated.rows?.values).toHaveLength(3);
+      expect(probeQueries()).toHaveLength(1);
 
-    const exactTruncated = inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "items",
-      row_limit: 2,
-    });
-    expect(exactTruncated.rows).toMatchObject({
-      row_limit: 2,
-      truncated: true,
-      next_row_offset: 2,
-    });
-    expect(exactTruncated.rows?.values).toHaveLength(2);
+      prepareSpy.mockClear();
+      const exactTruncated = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 2,
+      });
+      expect(exactTruncated.rows).toMatchObject({
+        row_limit: 2,
+        truncated: true,
+        next_row_offset: 2,
+      });
+      expect(exactTruncated.rows?.values).toHaveLength(2);
+      expect(probeQueries()).toHaveLength(1);
 
-    const offsetShortPage = inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "items",
-      row_offset: 2,
-      row_limit: 5,
-    });
-    expect(offsetShortPage.rows).toMatchObject({
-      row_offset: 2,
-      row_limit: 5,
-      truncated: false,
-      next_row_offset: null,
-    });
-    expect(offsetShortPage.rows?.values).toHaveLength(1);
+      prepareSpy.mockClear();
+      const offsetShortPage = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_offset: 2,
+        row_limit: 5,
+      });
+      expect(offsetShortPage.rows).toMatchObject({
+        row_offset: 2,
+        row_limit: 5,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(offsetShortPage.rows?.values).toHaveLength(1);
+      expect(probeQueries()).toHaveLength(0);
+    } finally {
+      prepareSpy.mockRestore();
+    }
   });
 
   it.each([
@@ -1205,6 +1222,130 @@ describe("SQLite short-page truncation and reusable TextDecoder codecs", () => {
           ),
         ).toEqual([["\uFEFFalpha"], ["bravo𝄞"]]);
       }
+    },
+  );
+});
+
+const encodeTextBytes = (
+  value: string,
+  encoding: "UTF-8" | "UTF-16le" | "UTF-16be",
+): Buffer => {
+  const bytes = Buffer.from(value, encoding === "UTF-8" ? "utf8" : "utf16le");
+  if (encoding === "UTF-16be") bytes.swap16();
+  return bytes;
+};
+
+describe("SQLite lenient text decoder isolation across cells", () => {
+  it.each([
+    {
+      encoding: "UTF-8",
+      incompleteHex: "61f09f",
+      secondMalformedHex: "ff00c0af62e282",
+      secondMalformedValue: "\uFFFD\0\uFFFD\uFFFDb\uFFFD",
+    },
+    {
+      encoding: "UTF-16le",
+      incompleteHex: "610000d8",
+      secondMalformedHex: "410042",
+      secondMalformedValue: "A\uFFFD",
+    },
+    {
+      encoding: "UTF-16be",
+      incompleteHex: "0061d800",
+      secondMalformedHex: "004100",
+      secondMalformedValue: "A\uFFFD",
+    },
+  ] as const)(
+    "flushes malformed %s cells before decoding subsequent BOM-prefixed cells",
+    async ({
+      encoding,
+      incompleteHex,
+      secondMalformedHex,
+      secondMalformedValue,
+    }) => {
+      const follow1 = "\uFEFFalphaé𝄞";
+      const follow2 = "\uFEFFbravo𝄞";
+      const path = await createDatabase(
+        `PRAGMA encoding='${encoding}'; CREATE TABLE items(id INTEGER PRIMARY KEY, first TEXT, pad INTEGER, second TEXT);`,
+      );
+      const writer = new DatabaseSync(path);
+      try {
+        writer
+          .prepare(
+            `INSERT INTO items VALUES (1, CAST(X'${incompleteHex}' AS TEXT), 0, ?)`,
+          )
+          .run(follow1);
+        if (encoding === "UTF-8") {
+          writer
+            .prepare(
+              `INSERT INTO items VALUES (2, CAST(X'${secondMalformedHex}' AS TEXT), 0, ?)`,
+            )
+            .run(follow2);
+        } else {
+          writer
+            .prepare("INSERT INTO items VALUES (2, 'AB', 258, ?)")
+            .run(follow2);
+        }
+      } finally {
+        writer.close();
+      }
+      if (encoding !== "UTF-8") {
+        const raw = await readFile(path);
+        const ab = encodeTextBytes("AB", encoding);
+        const follow2Bytes = encodeTextBytes(follow2, encoding);
+        const serialType = 13 + 2 * follow2Bytes.length;
+        const needle = Buffer.concat([
+          Buffer.from([0x05, 0x00, 0x15, 0x02, serialType]),
+          ab,
+          Buffer.from([0x01, 0x02]),
+          follow2Bytes,
+        ]);
+        const index = raw.indexOf(needle);
+        expect(index).toBeGreaterThanOrEqual(0);
+        expect(raw.indexOf(needle, index + 1)).toBe(-1);
+        // Shrink `first` from 4 bytes ('AB') to 3 odd bytes while expanding
+        // `pad` from a 2-byte to a 3-byte integer so the record size holds.
+        raw[index + 2] = 0x13;
+        raw[index + 3] = 0x03;
+        await writeFile(path, raw);
+      }
+
+      const result = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        columns: ["first", "second"],
+      });
+      expect(result.database_encoding).toBe(encoding);
+      expect(result.rows?.values).toEqual([
+        [
+          {
+            type: "text",
+            value: "a\uFFFD",
+            bytes_hex: incompleteHex,
+            encoding,
+          },
+          {
+            type: "text",
+            value: follow1,
+            bytes_hex: encodeTextBytes(follow1, encoding).toString("hex"),
+            encoding,
+          },
+        ],
+        [
+          {
+            type: "text",
+            value: secondMalformedValue,
+            bytes_hex: secondMalformedHex,
+            encoding,
+          },
+          {
+            type: "text",
+            value: follow2,
+            bytes_hex: encodeTextBytes(follow2, encoding).toString("hex"),
+            encoding,
+          },
+        ],
+      ]);
     },
   );
 });
