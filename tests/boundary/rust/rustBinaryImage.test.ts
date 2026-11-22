@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { machoImageWithUnknownCommand } from "../../../src/artifacts/apple/MachoImage.fixture.js";
 import { fat } from "../../../src/domain/binaryTarget.fixture.js";
 import {
   createRustImage,
@@ -149,6 +150,15 @@ it("reads a Mach-O __DATA,.dep-v0 section", () => {
       evidence_kind: "inferred",
       hashes: [{ hash: RUSTC_HASH, file_offset: 2048 }],
     },
+  });
+});
+
+it("preserves the 32-bit width of a thin Mach-O with no dependency section", () => {
+  const bytes = Buffer.from(machoImageWithUnknownCommand(false, 12));
+  expect(readRustBinaryImage(bytes)).toMatchObject({
+    format: "macho",
+    bits: 32,
+    auditable_metadata: null,
   });
 });
 
@@ -611,7 +621,18 @@ it.each([
     expect(readBinaryContainer(bytes, "elf-directory").load_regions).toEqual(
       readBinaryContainer(control, "elf-directory").load_regions,
     );
-    expect(() => readGoBinaryImage(bytes)).toThrow(/build-info|mapped/i);
+    const failureKind =
+      fault === "compressed"
+        ? "unsupported"
+        : fault === "out-of-file"
+          ? "truncated"
+          : "malformed";
+    expect(() => readGoBinaryImage(bytes)).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(/build-info|mapped/i),
+        failure: expect.objectContaining({ kind: failureKind }),
+      }),
+    );
     expect(readRustBinaryImage(bytes)).toMatchObject({
       format,
       auditable_metadata: { file_offset: 1024, packages },
