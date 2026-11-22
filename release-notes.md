@@ -353,6 +353,7 @@
 * **parsers:** index PE RVA lookups and remove per-item parser allocations ([#13602](https://github.com/morluto/rea/issues/13602)) ([3699755](https://github.com/morluto/rea/commit/36997555d26a874ce6cd4c90b67ca06e7cf7f881))
 * **parsers:** optimize Safetensors JSON, ElectronFuse scan, and SourceMap hashing ([7a2be3c](https://github.com/morluto/rea/commit/7a2be3c7d4225cce4e4b39933bbfee698da782ed))
 * **parsers:** optimize Safetensors, ElectronFuse, and SourceMap ([#13645](https://github.com/morluto/rea/issues/13645)) ([7a2be3c](https://github.com/morluto/rea/commit/7a2be3c7d4225cce4e4b39933bbfee698da782ed))
+* **parsers:** optimize UEFI uniformity, FIT reader, and HAR validation ([#13657](https://github.com/morluto/rea/issues/13657)) ([d5f35cd](https://github.com/morluto/rea/commit/d5f35cd16230ebf6973c0f451baee1b2b4646ddc))
 * **parsers:** remove hot-loop allocs in UEFI, USN, PE, Go, Rust, Maven ([#13647](https://github.com/morluto/rea/issues/13647)) ([841d41d](https://github.com/morluto/rea/commit/841d41df31549e1d8fc424bfb1f47c61818de048))
 * **parsers:** single-pass XML plist Base64 table, cached TextDecoders, and fused KeyedArchive/Protobuf/JNI/P-Invoke hot paths ([#13594](https://github.com/morluto/rea/issues/13594)) ([e8d8803](https://github.com/morluto/rea/commit/e8d8803898d5f76f11a98805deb7549568d8becc))
 * **pcap/pwntools:** eliminate redundant parsing, linear scans, and quadratic allocations ([#13359](https://github.com/morluto/rea/issues/13359)) ([18f5b7b](https://github.com/morluto/rea/commit/18f5b7b4db6b24789084ebb1c81ad552893bc48a))
@@ -362,6 +363,7 @@
 * **pe:** index PE export address-to-file mappings with createFileMappingIndex ([#13487](https://github.com/morluto/rea/issues/13487)) ([38cb06c](https://github.com/morluto/rea/commit/38cb06c4c6f0745c426655d0b397dac2cd47b919))
 * **pe:** index PE export address-to-file mappings with createFileMappingIndex ([#13489](https://github.com/morluto/rea/issues/13489)) ([38cb06c](https://github.com/morluto/rea/commit/38cb06c4c6f0745c426655d0b397dac2cd47b919))
 * **process/ghidra/hopper:** eliminate per-char array allocs, O(P*U) filesystem scans, unbounded wire sizing, and full-binary chunk copies ([#13529](https://github.com/morluto/rea/issues/13529)) ([3a0d9d6](https://github.com/morluto/rea/commit/3a0d9d6874b25fc0e49cfb8fc1d5e56760ae770e))
+* **process/server/ida:** O(1) tail capture, pre-filtered CapabilityInventory, Map process-table joins, and owned IDA JSON validation ([#13612](https://github.com/morluto/rea/issues/13612)) ([fbe14d6](https://github.com/morluto/rea/commit/fbe14d6bd6e8c93c048cbba039d5b69985031d46))
 * **process:** fix expectedSize EOF probing in readBoundedFileBytes and eliminate 2x buffer copies ([#13494](https://github.com/morluto/rea/issues/13494)) ([9a85100](https://github.com/morluto/rea/commit/9a85100b59e06f29f3f9e2a6d301b845e0794545))
 * **process:** replace nested-loop joins with Set hash joins in process ownership observation ([#13490](https://github.com/morluto/rea/issues/13490)) ([1482cc8](https://github.com/morluto/rea/commit/1482cc87eaab1a0e5ce60c4c67c98c599bf3f85c))
 * **process:** transfer chunked string buffers into RegexMatcher worker ([#13428](https://github.com/morluto/rea/issues/13428)) ([48d4b61](https://github.com/morluto/rea/commit/48d4b6145a79fa56e7b1bdff687f55f652825dc5))
@@ -399,6 +401,8 @@
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure ([#13652](https://github.com/morluto/rea/issues/13652)) ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
 * **domain/pe:** unify Asn1BerFailure and PeBinaryFailure onto shared owners ([867dacc](https://github.com/morluto/rea/commit/867dacc94688e20a7ab9957c63cd529b5b9729d0))
+* **domain:** split artifactFormatMetadata into domain modules ([#13655](https://github.com/morluto/rea/issues/13655)) ([8497f8c](https://github.com/morluto/rea/commit/8497f8c05a0a8184089f958419735329287bb9a0))
+* **domain:** split artifactFormatMetadata.ts into domain-grouped schema modules ([8497f8c](https://github.com/morluto/rea/commit/8497f8c05a0a8184089f958419735329287bb9a0))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **environment:** retain the latest replay interference event ([#13408](https://github.com/morluto/rea/issues/13408)) ([b96e2e1](https://github.com/morluto/rea/commit/b96e2e10e751f1026a6a828503b3709e6795897f))
 * **environment:** scan replay observations without copying the timeline ([#13409](https://github.com/morluto/rea/issues/13409)) ([54121e2](https://github.com/morluto/rea/commit/54121e2f2a3d461fdf30ba1b5ee31fd3a35656b0))
@@ -414,6 +418,8 @@
 * **nuget:** select declared manifest occurrences in one pass ([#13402](https://github.com/morluto/rea/issues/13402)) ([4bb5c87](https://github.com/morluto/rea/commit/4bb5c87d2b1a06abcdf26ccf68dfd2551aebd9bd))
 * **pe:** decode certificate BMP and UTF-32 strings through BinaryReader ([6543a3c](https://github.com/morluto/rea/commit/6543a3c1a182aeeb797c3e9e27a3ec887e71d00f)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **process:** compose analysis runtime cleanup through the shared owner ([2d36025](https://github.com/morluto/rea/commit/2d360253ddf8c2ab2c0c4a6a3186a8e981a8e090)), closes [#11859](https://github.com/morluto/rea/issues/11859)
+* **uefi/native:** cache UEFI BinaryReader and reuse hasDosMzMagic ([#13659](https://github.com/morluto/rea/issues/13659)) ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
+* **uefi/native:** cache UEFI BinaryReader per buffer and reuse hasDosMzMagic ([0fc591d](https://github.com/morluto/rea/commit/0fc591da7c2309f59a46933658de8591a4c90c41))
 * **verify:** exclude negated .ok checks from the abort-reclassification guard ([a80dc68](https://github.com/morluto/rea/commit/a80dc68318d2b9e2abca08ae5d4eaf1206b83bde)), closes [#11920](https://github.com/morluto/rea/issues/11920)
 
 
