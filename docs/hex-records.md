@@ -53,7 +53,7 @@ Root `format_metadata` (`hex-records`) records:
 | `start_address`, `start_address_record`           | The Intel `05` EIP or the `S7`/`S8`/`S9` address, with its record type            |
 | `start_segment_cs`, `start_segment_ip`            | The Intel `03` CS:IP pair                                                         |
 | `header_hex`, `header_text`                       | S-record `S0` data as hex, and as text only when every byte is printable ASCII    |
-| `declared_data_record_count`                      | The last `S5`/`S6` count, validated against the final number of data records      |
+| `declared_data_record_count`                      | The last `S5`/`S6` count, validated against preceding data records                |
 
 `variant` is `null` for an S-record file in which no data or termination
 record establishes an address width. Start addresses are declared facts, not
@@ -61,22 +61,23 @@ proven entry points.
 
 ## Facts, limitations and failures
 
-| Situation                                                                                                             | Outcome                                                                      |
-| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Gaps between regions                                                                                                  | Separate regions; never zero-filled                                          |
-| Out-of-order records                                                                                                  | Sorted into regions                                                          |
-| An address written twice with the same value                                                                          | Accepted and counted in `duplicate_bytes`                                    |
-| An address written twice with different values                                                                        | Fails, naming the address and the line spans of both writes                  |
-| Checksum mismatch, odd hex length, non-hex character, byte count disagreeing with the line                            | Fails with the line, declared and computed values, and record type           |
-| Line longer than 521 (Intel) or 514 (S-record) characters, excluding the line ending                                  | Fails before the line is decoded                                             |
-| Intel type `06` or higher, `S4`, wrong fixed length for Intel `01`–`05` or `S5`–`S9`                                  | Fails                                                                        |
-| Missing Intel `01` or `S7`–`S9`                                                                                       | Regions are returned; coverage is unknown and the file may be truncated      |
-| A non-blank record after termination, or a second `S0`                                                                | Fails; blank lines are allowed anywhere                                      |
-| `S5`/`S6` count different from the preceding data records, or a last count different from the final data record total | Fails                                                                        |
-| Termination type not matching the data address width                                                                  | Reported as a limitation; the declared fact is kept                          |
-| Conflicting repeated `03`/`05` start records                                                                          | Fails; identical repeats are allowed                                         |
-| An Intel data record whose 16-bit offset wraps past `0xFFFF`                                                          | Fails: producers disagree on whether the address wraps or continues linearly |
-| I16HEX data above `0xFFFFF`, or data crossing the S1/S2/S3 address width                                              | Fails                                                                        |
+| Situation                                                                                  | Outcome                                                                                    |
+| ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Gaps between regions                                                                       | Separate regions; never zero-filled                                                        |
+| Out-of-order records                                                                       | Sorted into regions                                                                        |
+| An address written twice with the same value                                               | Accepted and counted in `duplicate_bytes`                                                  |
+| An address written twice with different values                                             | Fails, naming the address and the line spans of both writes                                |
+| Checksum mismatch, odd hex length, non-hex character, byte count disagreeing with the line | Fails with the line, declared and computed values, and record type                         |
+| Line longer than 521 (Intel) or 514 (S-record) characters, excluding the line ending       | Fails before the line is decoded                                                           |
+| Intel type `06` or higher, `S4`, wrong fixed length for Intel `01`–`05` or `S5`–`S9`       | Fails                                                                                      |
+| Missing Intel `01` or `S7`–`S9`                                                            | Regions are returned; coverage is unknown and the file may be truncated                    |
+| A non-blank record after termination, or a second `S0`                                     | Fails; blank lines are allowed anywhere                                                    |
+| `S5`/`S6` count different from the preceding data records                                  | Fails                                                                                      |
+| Data records after the final `S5`/`S6` count                                               | Regions are retained and a limitation identifies the count that does not cover all records |
+| Termination type not matching the data address width                                       | Reported as a limitation; the declared fact is kept                                        |
+| Conflicting repeated `03`/`05` start records                                               | Fails; identical repeats are allowed                                                       |
+| An Intel data record whose 16-bit offset wraps past `0xFFFF`                               | Fails: producers disagree on whether the address wraps or continues linearly               |
+| I16HEX data above `0xFFFFF`, or data crossing the S1/S2/S3 address width                   | Fails                                                                                      |
 
 Lowercase hex, LF and CRLF line endings, and trailing spaces or tabs are
 accepted. A CR not followed by LF is an invalid character. Failures apply to

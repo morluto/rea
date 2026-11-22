@@ -1,7 +1,7 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 import * as hexRecordDecoding from "../domain/firmware/hexRecords.js";
@@ -78,21 +78,52 @@ it("reports unknown coverage and termination facts as limitations", async () => 
   );
 });
 
-it.each([5, 6] as const)(
-  "rejects a stale S%i count when additional data follows",
-  async (type) => {
+it.each([
+  [5, false],
+  [6, false],
+  [5, true],
+] as const)(
+  "retains data after an S%i count (later final count: %s)",
+  async (type, finalCount) => {
     const text = SREC_S19.replace(
       "S5030002FA",
-      `${srecRecord(type, 2, [])}\n${srecRecord(1, 0x20, [0x2a])}`,
+      [
+        srecRecord(type, 2, []),
+        srecRecord(1, 0x20, [0x2a]),
+        ...(finalCount ? [srecRecord(type, 3, [])] : []),
+      ].join("\n"),
     );
-    await expect(
-      scanCanonicalArtifactInventory(await writeImage("count.s19", text)),
-    ).rejects.toMatchObject({
-      reason: "format",
-      message: expect.stringMatching(
-        /line 4.*count declares 2 data records.*contains 3/iu,
-      ),
-    });
+    const path = await writeImage("count.s19", text);
+    const result = await scanCanonicalArtifactInventory(path);
+    const warning = expect.stringMatching(
+      /line 4.*count covers 2 of 3 data records/iu,
+    );
+    if (finalCount) expect(result.limitations).not.toContainEqual(warning);
+    else expect(result.limitations).toContainEqual(warning);
+    expect(result.coverage.status).toBe("complete");
+
+    // GNU objcopy 2.44 retained these exact bytes for the S5 inputs.
+    const resourceScope = new ArtifactResourceScope();
+    try {
+      const extracted = await extractArtifact({
+        inputPath: path,
+        inputFormat: "srec",
+        outputRoot: join(dirname(path), "out"),
+        environment: process.env,
+        integrityPolicy: "fail",
+        resourceScope,
+      });
+      const bytes = await readFile(
+        join(extracted.output_root, "0x00000000-0x00000020.bin"),
+      );
+      const expected = Buffer.from([
+        ...Array.from({ length: 32 }, (_, index) => index),
+        0x2a,
+      ]);
+      expect(bytes.equals(expected)).toBe(true);
+    } finally {
+      await resourceScope.close();
+    }
   },
 );
 

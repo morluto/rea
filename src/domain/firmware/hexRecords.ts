@@ -153,14 +153,6 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
       const ended = this.#endLine(false);
       if (!ended.ok) return ended;
     }
-    const count = this.#declaredCount;
-    if (count !== undefined && count.value !== this.#dataRecordCount)
-      return err(
-        formatFailure(
-          count.line,
-          `S-record count declares ${String(count.value)} data records, but the file contains ${String(this.#dataRecordCount)}`,
-        ),
-      );
     const merged = mergeRuns(this.#runs, this.#arena);
     this.#arena = new Uint8Array(0);
     if (!merged.ok) return merged;
@@ -389,18 +381,28 @@ class StreamingHexRecordDecoder implements RegionDecoder<HexRecordImage> {
   }
 
   #limitations(): string[] {
-    const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
-    if (this.#termination === undefined)
-      return [`${label} has no termination record; the file may be truncated.`];
-    const termination = this.#termination.value;
-    const mismatched = [...this.#dataTypes].filter(
-      (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
-    );
-    return this.#encoding === "srec" && mismatched.length > 0
-      ? [
+    const limitations: string[] = [];
+    const count = this.#declaredCount;
+    if (count !== undefined && count.value < this.#dataRecordCount)
+      limitations.push(
+        `S-record line ${String(count.line)}: the final count covers ${String(count.value)} of ${String(this.#dataRecordCount)} data records. Data after the count is retained.`,
+      );
+    const termination = this.#termination?.value;
+    if (termination === undefined) {
+      const label = HEX_RECORD_ENCODING_LABELS[this.#encoding];
+      limitations.push(
+        `${label} has no termination record; the file may be truncated.`,
+      );
+    } else if (this.#encoding === "srec") {
+      const mismatched = [...this.#dataTypes].filter(
+        (type) => SREC_WIDTH_OF[type] !== SREC_WIDTH_OF[termination],
+      );
+      if (mismatched.length > 0)
+        limitations.push(
           `S-record termination ${termination} does not match the address width of ${mismatched.sort().join(", ")} data records.`,
-        ]
-      : [];
+        );
+    }
+    return limitations;
   }
 
   #metadata(
