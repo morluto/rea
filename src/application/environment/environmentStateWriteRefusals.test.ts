@@ -64,7 +64,13 @@ const nested = (depth: number): JsonValue =>
 describe("served document writes", () => {
   it("changes only the recorded document path with the learned member names and types", () => {
     const query = "scope=panel&view=full";
-    const settings = servedFrom(settingsRows(`${SETTINGS_PATH}?${query}`));
+    const reversed = "view=full&scope=panel";
+    const gray = { ...LIGHT, theme: "gray" };
+    const settings = servedFrom([
+      ...settingsRows(`${SETTINGS_PATH}?${query}`),
+      ["PATCH", `${SETTINGS_PATH}?${reversed}`, gray, 200, gray],
+      ["GET", SETTINGS_PATH, gray],
+    ]);
     expect(settings.state.writes.get(PATCH_SETTINGS)).toMatchObject({
       served: true,
       effect: "document",
@@ -91,21 +97,25 @@ describe("served document writes", () => {
       ({ name }) => name === PATCH_SETTINGS,
     )!;
     const respond = environmentToolAnswer(settings.source, settings.store);
-    for (const [rawQuery, theme, exact] of [
-      [query, "blue", true],
-      ["view=full&scope=panel", "green", false],
+    for (const [rawQuery, queryArgs, theme, exact] of [
+      [query, {}, "blue", true],
+      [reversed, {}, "green", false],
+      [undefined, { scope: "panel", view: "full" }, "yellow", false],
+      [undefined, {}, "purple", true],
     ] as const) {
       const body = { theme, meta: DARK.meta };
-      expect(
-        respond(patch, { id: "1", body: { theme } }, rawQuery),
-      ).toMatchObject({
-        ok: true,
-        value: {
-          body,
-          replay: { exact_match: exact, record_ordinal: 1 },
-          state: { view: "document-write", path: "/api/orgs/1/settings" },
-        },
-      });
+      expect
+        .soft(
+          respond(patch, { id: "1", ...queryArgs, body: { theme } }, rawQuery),
+        )
+        .toMatchObject({
+          ok: true,
+          value: {
+            body,
+            replay: { exact_match: exact, record_ordinal: 1 },
+            state: { view: "document-write", path: "/api/orgs/1/settings" },
+          },
+        });
       expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual(body);
     }
   });
