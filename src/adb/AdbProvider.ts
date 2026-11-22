@@ -7,26 +7,10 @@ import {
 } from "../filesystem/callerPath.js";
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { collectNumericIssues } from "./AdbNumericIssues.js";
-import {
-  adbFilesystemErrorCode,
-  adbInputFileError,
-} from "./AdbFilesystemAdmission.js";
+import { adbInputFileError } from "./AdbFilesystemAdmission.js";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
-import { constants as fsConstants } from "node:fs";
-import {
-  access,
-  copyFile,
-  lstat,
-  link,
-  mkdtemp,
-  mkdir,
-  open,
-  rmdir,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { lstat, link, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 import {
   type ExecutionOptions,
@@ -66,7 +50,6 @@ import {
   AnalysisUnsupportedTargetError,
   cancelledBy,
   OwnerCancellation,
-  carriedReason,
   isAborted,
 } from "../domain/analysisErrorCore.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -80,17 +63,8 @@ import { err, ok, type Result } from "../domain/result.js";
 import { finalizedResult, runOwned } from "../providers/runOwned.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
-import {
-  hashStableFile,
-  stableFileHashCause,
-} from "../filesystem/StableFileHash.js";
-import {
-  regularFileCancellation,
-  RegularFileCancelled,
-  RegularFileCleanupFailure,
-} from "../filesystem/OwnedRegularFile.js";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { stableFileHashCause } from "../filesystem/StableFileHash.js";
+import { RegularFileCancelled } from "../filesystem/OwnedRegularFile.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 import {
