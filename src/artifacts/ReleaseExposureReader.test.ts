@@ -1913,31 +1913,31 @@ describe("ReleaseExposureReader nested packages in a host", () => {
   });
 });
 
-describe("ReleaseExposureReader packaged probe allowance", () => {
-  const withPostInventoryArchive = async <T>(
-    archive: string,
-    wrap: (reader: ArtifactReader) => ArtifactReader,
-    run: () => Promise<T>,
-  ): Promise<T> => {
-    const actual = await vi.importActual<
-      typeof import("./inventory/ArtifactInventory.js")
-    >("./inventory/ArtifactInventory.js");
-    let inventoried = false;
-    inventoryRead.impl = async (...args) => {
-      const inventory = await actual.inventoryArtifactInScope(...args);
-      inventoried = true;
-      return inventory;
-    };
-    createdReaders.wrap = (reader, path) =>
-      path === archive && inventoried ? wrap(reader) : reader;
-    try {
-      return await run();
-    } finally {
-      inventoryRead.impl = undefined;
-      createdReaders.wrap = undefined;
-    }
+const withPostInventoryArchive = async <T>(
+  archive: string,
+  wrap: (reader: ArtifactReader) => ArtifactReader,
+  run: () => Promise<T>,
+): Promise<T> => {
+  const actual = await vi.importActual<
+    typeof import("./inventory/ArtifactInventory.js")
+  >("./inventory/ArtifactInventory.js");
+  let inventoried = false;
+  inventoryRead.impl = async (...args) => {
+    const inventory = await actual.inventoryArtifactInScope(...args);
+    inventoried = true;
+    return inventory;
   };
+  createdReaders.wrap = (reader, path) =>
+    path === archive && inventoried ? wrap(reader) : reader;
+  try {
+    return await run();
+  } finally {
+    inventoryRead.impl = undefined;
+    createdReaders.wrap = undefined;
+  }
+};
 
+describe("ReleaseExposureReader packaged probe allowance", () => {
   it("keeps probing after a zero-byte unread packaged image", async () => {
     const root = await createTestTempDirectory("rea-release-unread-probe-");
     const broken = Buffer.alloc(8192);
@@ -4038,41 +4038,17 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
       { reason: "close failed", resources: [resource] },
     );
 
-  it("does not read a cleanup-incomplete limit failure as an oversized member", async () => {
-    const root = await createTestTempDirectory("rea-release-exposure-limit-");
-    await writeFile(join(root, "bundle.map"), "{}");
-    const real = stableRead.impl;
-    stableRead.impl = async (...args) => {
-      if (args[0].endsWith("bundle.map"))
-        throw cleanupFailure("limit", args[0]);
-      return (real as NonNullable<typeof real>)(...args);
-    };
-    const reader = new ReleaseExposureReader();
-    try {
-      const result = await reader.inspect(
-        { path: root },
-        undefined,
-        ignoreText,
-      );
-      if (result.ok) throw new Error("expected cleanup-incomplete failure");
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources.join("\n")).toContain("bundle.map");
-    } finally {
-      stableRead.impl = real;
-      await reader.close();
-    }
-  });
-
-  it("reports what it found before a member's cleanup failed", async () => {
+  it("preserves partial findings and the resource when a limited member fails cleanup", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-stop-");
     await writeFile(
       join(root, "a.js.map"),
       JSON.stringify({ version: 3, sources: ["a.ts"], mappings: "" }),
     );
-    await writeFile(join(root, "z.map"), "{}");
+    const member = join(root, "z.map");
+    await writeFile(member, "{}");
     const real = stableRead.impl;
     stableRead.impl = async (...args) => {
-      if (args[0].endsWith("z.map")) throw cleanupFailure("limit", args[0]);
+      if (args[0] === member) throw cleanupFailure("limit", member);
       return (real as NonNullable<typeof real>)(...args);
     };
     const reader = new ReleaseExposureReader();
@@ -4086,6 +4062,7 @@ describe("ReleaseExposureReader cleanup-bearing read failures", () => {
       );
       if (result.ok) throw new Error("expected cleanup-incomplete failure");
       expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toContain(member);
       expect(interrupted).toHaveLength(1);
       expect(interrupted[0]?.coverage).toBe("unknown");
       expect(interrupted[0]?.source_maps.without_sources).toBe(1);
@@ -4199,87 +4176,76 @@ const sourceMapArchive = (): Buffer => {
 };
 
 describe("ReleaseExposureReader same-name members", () => {
-  it("scans every same-name package member instead of the last one twice", async () => {
-    const root = await createTestTempDirectory("rea-release-same-name-");
-    const archive = join(root, "app.asar");
-    await writeFile(
-      archive,
-      asarArchive([{ name: "config.txt", bytes: Buffer.from("x") }]),
-    );
-    const contents = new Map([
-      ["first", "marker"],
-      ["second", "harmless"],
-    ]);
-    createdReaders.wrap = (source) => {
-      const list = source.entries.bind(source);
-      source.entries = async function* (signal) {
-        for await (const entry of list(signal)) {
-          if (entry.path !== "config.txt") {
-            yield entry;
-            continue;
-          }
-          for (const adapterKey of contents.keys())
-            yield { ...entry, adapterKey };
-        }
-      };
-      source.open = (entry) =>
-        Promise.resolve(Readable.from([contents.get(entry.adapterKey) ?? ""]));
-      return source;
-    };
-    try {
+  it.each(["complete", "interrupted"] as const)(
+    "keeps same-name member identity with %s archive listing",
+    async (listing) => {
+      const root = await createTestTempDirectory(
+        "rea-release-duplicate-members-",
+      );
+      const file = join(root, "app");
+      await writeFile(
+        file,
+        cArchiveExecutable({
+          layout: "2.1",
+          pythonVersion: 310,
+          members: ["", "first body", "second body"].map((body) => ({
+            name: "config.txt",
+            typeCode: "x",
+            compress: body !== "",
+            payload: Buffer.from(body),
+          })),
+        }),
+      );
       const reader = new ReleaseExposureReader();
       const texts: string[] = [];
-      const result = await reader.inspect(
-        { path: archive },
-        undefined,
-        (text) => {
+      const inspect = () =>
+        reader.inspect({ path: file }, undefined, (text) => {
           texts.push(text);
-        },
-      );
-      await reader.close();
-      if (!result.ok) throw result.error;
-      expect(texts).toEqual(expect.arrayContaining(["harmless", "marker"]));
-    } finally {
-      createdReaders.wrap = undefined;
-    }
-  });
+        });
+      try {
+        let shouldInterrupt = true;
+        const result =
+          listing === "complete"
+            ? await inspect()
+            : await withPostInventoryArchive(
+                file,
+                (source) => {
+                  const entries = source.entries.bind(source);
+                  source.entries = async function* (signal, options) {
+                    for await (const entry of entries(signal, options)) {
+                      yield entry;
+                      if (shouldInterrupt && entry.path === "config.txt") {
+                        shouldInterrupt = false;
+                        throw new Error("interrupted archive listing");
+                      }
+                    }
+                  };
+                  return source;
+                },
+                inspect,
+              );
+        if (!result.ok) throw result.error;
+        expect(texts).toEqual(
+          listing === "complete"
+            ? ["", "first body", "second body"]
+            : ["", "second body"],
+        );
+        expect(result.value.coverage).toBe(
+          listing === "complete" ? "complete" : "unknown",
+        );
+        expect(result.value.text_members).toMatchObject(
+          listing === "complete"
+            ? { scanned: 3, skipped: 0 }
+            : { scanned: 2, skipped: 1 },
+        );
+      } finally {
+        await reader.close();
+      }
+    },
+  );
 });
 
 describe("ReleaseExposureReader member identity", () => {
-  it("reads a compressed same-name member after an empty stored one", async () => {
-    const root = await createTestTempDirectory("rea-release-empty-first-");
-    const file = join(root, "app");
-    await writeFile(
-      file,
-      cArchiveExecutable({
-        layout: "2.1",
-        pythonVersion: 310,
-        members: [
-          {
-            name: "config.txt",
-            typeCode: "x",
-            compress: false,
-            payload: Buffer.alloc(0),
-          },
-          {
-            name: "config.txt",
-            typeCode: "x",
-            compress: true,
-            payload: Buffer.from("credential-marker"),
-          },
-        ],
-      }),
-    );
-    const reader = new ReleaseExposureReader();
-    const texts: string[] = [];
-    const result = await reader.inspect({ path: file }, undefined, (text) => {
-      texts.push(text);
-    });
-    await reader.close();
-    if (!result.ok) throw result.error;
-    expect(texts).toContain("credential-marker");
-  });
-
   it.each([
     ["app.js", "debug.json", { embedded: 1, skipped: 0 }],
     ["z.js", "a.json", { embedded: 0, skipped: 1 }],
