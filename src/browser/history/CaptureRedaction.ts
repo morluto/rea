@@ -33,22 +33,6 @@ export const isCaptureCredentialHeaderBytes = (
   return false;
 };
 
-const sensitiveByteValuesCache = new WeakMap<
-  readonly string[],
-  readonly Buffer[]
->();
-
-const cachedExplicitUtf8Spellings = (
-  sensitiveValues: readonly string[],
-): readonly Buffer[] => {
-  if (sensitiveValues.length === 0) return [];
-  const cached = sensitiveByteValuesCache.get(sensitiveValues);
-  if (cached !== undefined) return cached;
-  const computed = explicitUtf8Spellings(sensitiveValues);
-  sensitiveByteValuesCache.set(sensitiveValues, computed);
-  return computed;
-};
-
 /** Literal redaction and structural authentication exclusions preserve unrelated local evidence. */
 export class CaptureRedaction {
   readonly redactions: Redaction[] = [];
@@ -64,7 +48,7 @@ export class CaptureRedaction {
         : undefined;
     this.#requestUrl =
       typeof request?.url === "string" ? request.url : undefined;
-    this.#sensitiveByteValues = cachedExplicitUtf8Spellings(sensitiveValues);
+    this.#sensitiveByteValues = explicitUtf8Spellings(sensitiveValues);
   }
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
