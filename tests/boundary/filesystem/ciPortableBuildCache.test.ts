@@ -171,6 +171,32 @@ it("rejects malformed or ambiguous plans in both commands and removes stale publ
   }
 });
 
+it("removes stale publication output when the plan file is missing", async () => {
+  const root = await fixture();
+  expect(run(root, "key").status).toBe(0);
+  await mkdir(join(root, output), { recursive: true });
+  await writeFile(join(root, output, "old-success"), "stale");
+  const missing = join(root, "missing-plan.json");
+  for (const mode of ["key", "snapshot"] as const) {
+    const result = spawnSync(process.execPath, [script, mode, missing], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, BUILD_CACHE_PREFIX: prefix },
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).not.toBe(0);
+    expect(result.stdout).toBe("");
+  }
+  await expect(readdir(join(root, output))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(
+    readFile(join(root, ".cache/ci-build-plan.json")),
+  ).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
 it("records cold caches and omits whole entries with missing required companions", async () => {
   const root = await fixture();
   const cold = run(root, "snapshot");

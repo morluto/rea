@@ -129,12 +129,18 @@ async function snapshot(tasks) {
 const [mode, input, ...extra] = process.argv.slice(2);
 if (extra.length || !input || !["key", "snapshot"].includes(mode))
   throw new Error("Usage: portable-build-cache.mjs key|snapshot <plan.json>");
-// Read the complete plan file first so the later invalidation can delete the
-// retained plan even when that path is also the input. Failed validation must
-// not leave stale plans or snapshots for downstream reuse.
-const source = await readFile(input, "utf8");
-if (mode === "snapshot") await rm(output, { recursive: true, force: true });
-else await rm(plan, { force: true });
+// Read the complete plan file first so invalidation can delete the retained
+// plan even when that path is also the input. If the read fails, still clear
+// this mode's previous output so a missing or unreadable file cannot leave a
+// stale plan or snapshot. Failed validation must also not leave stale output
+// for downstream reuse.
+let source;
+try {
+  source = await readFile(input, "utf8");
+} finally {
+  if (mode === "snapshot") await rm(output, { recursive: true, force: true });
+  else await rm(plan, { force: true });
+}
 const tasks = readTasks(source);
 if (mode === "key") {
   const prefix = z
