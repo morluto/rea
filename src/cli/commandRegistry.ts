@@ -211,6 +211,56 @@ export const commandOwnOperations = (
   return operations;
 };
 
+interface OperationCommandIndex {
+  readonly canonical: ReadonlyMap<string, string>;
+  readonly contractPrimary: ReadonlyMap<string, string>;
+  readonly contractSecondary: ReadonlyMap<string, string>;
+  readonly otherMatch: ReadonlyMap<string, string>;
+}
+
+const operationCommandIndexes = new WeakMap<
+  readonly CliCommandEntry[],
+  OperationCommandIndex
+>();
+
+const getOperationCommandIndex = (
+  entries: readonly CliCommandEntry[],
+): OperationCommandIndex => {
+  let cached = operationCommandIndexes.get(entries);
+  if (cached !== undefined) return cached;
+  const canonical = new Map<string, string>();
+  const contractPrimary = new Map<string, string>();
+  const contractSecondary = new Map<string, string>();
+  const otherMatch = new Map<string, string>();
+  for (const entry of entries) {
+    const own = commandOwnOperations(entry);
+    const primaryName = own[0]?.name;
+    for (let index = 0; index < own.length; index += 1) {
+      const matched = own[index]!;
+      const opName = matched.name;
+      const command =
+        matched.selector === undefined
+          ? entry.name
+          : `${entry.name} ${matched.selector}`;
+      if (entry.name === cliCommandFor(opName) && !canonical.has(opName))
+        canonical.set(opName, command);
+      if (entry.source.kind === "contract") {
+        if (primaryName === opName) {
+          if (!contractPrimary.has(opName))
+            contractPrimary.set(opName, command);
+        } else if (!contractSecondary.has(opName)) {
+          contractSecondary.set(opName, command);
+        }
+      } else if (!otherMatch.has(opName)) {
+        otherMatch.set(opName, command);
+      }
+    }
+  }
+  cached = { canonical, contractPrimary, contractSecondary, otherMatch };
+  operationCommandIndexes.set(entries, cached);
+  return cached;
+};
+
 /**
  * The CLI command spelling (`rea <command>`) that runs a contract operation,
  * or undefined when no CLI command answers it. Prefers the canonical
@@ -224,31 +274,18 @@ export const cliCommandForOperation = (
   cliName: string,
   recordedCommands?: Readonly<Record<string, string>>,
 ): string | undefined => {
+  const index = getOperationCommandIndex(entries);
+  const direct = index.canonical.get(operation);
+  if (direct !== undefined) return `${cliName} ${direct}`;
   const canonical = cliCommandFor(operation);
-  let contractPrimary: string | undefined;
-  let contractSecondary: string | undefined;
-  let otherMatch: string | undefined;
-  for (const entry of entries) {
-    const own = commandOwnOperations(entry);
-    const matched = own.find(({ name }) => name === operation);
-    if (matched === undefined) continue;
-    const command =
-      matched.selector === undefined
-        ? entry.name
-        : `${entry.name} ${matched.selector}`;
-    if (entry.name === canonical) return `${cliName} ${command}`;
-    if (entry.source.kind === "contract") {
-      if (own[0]?.name === operation) contractPrimary ??= command;
-      else contractSecondary ??= command;
-    } else {
-      otherMatch ??= command;
-    }
-  }
   if (
     recordedCommands !== undefined &&
     Object.hasOwn(recordedCommands, canonical)
   )
     return `${cliName} ${canonical}`;
-  const selected = contractPrimary ?? contractSecondary ?? otherMatch;
+  const selected =
+    index.contractPrimary.get(operation) ??
+    index.contractSecondary.get(operation) ??
+    index.otherMatch.get(operation);
   return selected === undefined ? undefined : `${cliName} ${selected}`;
 };
