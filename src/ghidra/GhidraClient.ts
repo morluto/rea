@@ -1392,9 +1392,6 @@ export class GhidraClient {
       providerVersion: this.#options.providerVersion,
       profileDigest: this.#options.profileDigest,
       targetSha256: this.#options.targetSha256,
-      ...(this.#targetAdmission === undefined
-        ? {}
-        : { targetAdmission: this.#targetAdmission }),
       ...(this.#options.expectedLanguageId === undefined
         ? {}
         : { expectedLanguageId: this.#options.expectedLanguageId }),
