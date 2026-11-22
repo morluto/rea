@@ -857,7 +857,7 @@ it("reports every unresolved Electron path without starting a provider", async (
 it("refuses an Electron wait longer than Node can schedule", async () => {
   const capture = vi.fn();
   const client = await activePathAdmissionClient(capture);
-  // Playwright's waitForTimeout(2 ** 31) returns after 1 ms.
+  // A delay above the Node timer range returns after 1 ms.
   const result = await client.callTool({
     name: "capture_electron_scenario",
     arguments: {

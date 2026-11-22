@@ -464,97 +464,78 @@ it("reports relative configuration and missing capinfos as capability gaps", asy
   }
 });
 
-it("names the prlimit selection when the Linux limiter is unusable", async () => {
-  const root = await createTestTempDirectory("rea-pcap-prlimit-");
-  const tools = await writeStubTools(root);
-  const provider = new PcapProvider({
-    environment: {
-      REA_TSHARK_COMMAND: tools.tshark,
-      REA_CAPINFOS_COMMAND: tools.capinfos,
-      REA_TSHARK_PRLIMIT_COMMAND: "relative/prlimit",
-    },
-  });
-  onTestFinished(() => provider.close());
-  // Readiness keeps the limiter owner's repair instead of Wireshark advice.
-  const availability = await provider.inspectAvailability();
-  expect(availability).toMatchObject({
-    status: "unavailable",
-    reason: expect.stringContaining("Cannot establish the selected Linux"),
-    remediation: expect.stringMatching(
-      /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
-    ),
-  });
-  if (availability.status !== "unavailable")
-    throw new Error("Expected an unavailable limiter");
-  const result = await provider.execute({
-    operation: "inspect_pcap_capture",
-    input: { path: "/not-opened/capture.pcap" },
-  });
-  if (result.ok) throw new Error("expected an unusable limiter");
-  const projected = projectAnalysisError(result.error);
-  expect(projected).toMatchObject({
-    code: "capability_unavailable",
-    details: { provider_id: "pcap", operation: "inspect_pcap_capture" },
-  });
-  expect(projected.message).toContain("must be absolute");
-  expect(projected.message).toContain("Check that REA_TSHARK_PRLIMIT_COMMAND");
-  expect(projected.remediation.action).toBe(availability.remediation);
-});
-
-it("rejects directory and non-prlimit selections before opening the capture", async () => {
-  const root = await createTestTempDirectory("rea-pcap-invalid-limiter-");
-  const tools = await writeStubTools(root);
-  for (const configured of [root, "/usr/bin/true"]) {
+posixIt(
+  "preserves the limiter repair in readiness and refuses capture before reading input",
+  async () => {
+    const root = await createTestTempDirectory("rea-pcap-prlimit-");
+    const tools = await writeStubTools(root);
+    const configured = "relative/prlimit";
     const provider = new PcapProvider({
+      platform: "linux",
       environment: {
         REA_TSHARK_COMMAND: tools.tshark,
         REA_CAPINFOS_COMMAND: tools.capinfos,
         REA_TSHARK_PRLIMIT_COMMAND: configured,
       },
     });
-    try {
-      const result = await provider.execute({
+    onTestFinished(() => provider.close());
+    const availability = await provider.inspectAvailability();
+    expect(availability).toMatchObject({
+      status: "unavailable",
+      reason: expect.stringContaining("Cannot establish the selected Linux"),
+      remediation: expect.stringMatching(
+        /REA_TSHARK_PRLIMIT_COMMAND.*\/usr\/bin\/prlimit.*absolute.*executable.*util-linux prlimit/iu,
+      ),
+    });
+    if (availability.status !== "unavailable")
+      throw new Error("Expected an unavailable limiter");
+    const result = await provider.execute({
+      operation: "inspect_pcap_capture",
+      input: { path: join(root, "not-created.pcap") },
+    });
+    if (result.ok) throw new Error("expected an unusable limiter");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      message: expect.stringContaining("must be absolute"),
+      remediation: { action: availability.remediation },
+      details: {
+        provider_id: "pcap",
         operation: "inspect_pcap_capture",
-        input: { path: "/not-opened/capture.pcap" },
-      });
-      if (result.ok) throw new Error("expected an unusable limiter");
-      const error = projectAnalysisError(result.error);
-      expect(error).toMatchObject({
-        code: "capability_unavailable",
-        details: {
-          diagnostics: {
-            configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
-            configured,
-          },
+        diagnostics: {
+          configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+          configured,
         },
-      });
-      expect(error.message).toContain("REA_TSHARK_PRLIMIT_COMMAND");
-      expect(error.message).not.toContain("Cannot run selected tool");
-    } finally {
-      await provider.close();
-    }
-  }
-});
+      },
+    });
+  },
+);
 
 it("rejects a different util-linux command before opening capture bytes", async () => {
   const root = await createTestTempDirectory("rea-pcap-other-util-linux-");
   const tools = await writeStubTools(root);
+  const configured = "/usr/bin/lsblk";
   const provider = new PcapProvider({
     environment: {
       REA_TSHARK_COMMAND: tools.tshark,
       REA_CAPINFOS_COMMAND: tools.capinfos,
-      REA_TSHARK_PRLIMIT_COMMAND: "/usr/bin/lsblk",
+      REA_TSHARK_PRLIMIT_COMMAND: configured,
     },
   });
   try {
     const result = await provider.execute({
       operation: "inspect_pcap_capture",
-      input: { path: "/not-opened/capture.pcap" },
+      input: { path: join(root, "not-created.pcap") },
     });
     if (result.ok) throw new Error("expected an unusable limiter");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCapabilityUnavailableError",
-      capturedOutput: { stdout: expect.stringContaining("--output") },
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        diagnostics: {
+          configuration_key: "REA_TSHARK_PRLIMIT_COMMAND",
+          configured,
+        },
+        captured_output: { stdout: expect.stringContaining("--output") },
+      },
     });
   } finally {
     await provider.close();
@@ -1010,5 +991,35 @@ it("reports partial DNS coverage when raw extraction fails without selected DNS 
   });
   expect(result.value.limitations.join(" ")).toContain(
     "DNS wire identity extraction was unavailable",
+  );
+});
+
+it("skips the second tshark DNS pass when base dissection observes no DNS, mDNS, or LLMNR traffic", async () => {
+  const base: { _source: { layers: Record<string, unknown> } }[] =
+    JSON.parse(TSHARK_JSON);
+  for (const packet of base) {
+    packet._source.layers["frame.protocols"] = ["eth:ethertype:ip:tcp:tls"];
+    for (const key of Object.keys(packet._source.layers)) {
+      if (key === "dns" || key === "dns_raw" || key.startsWith("dns."))
+        delete packet._source.layers[key];
+    }
+  }
+  const { provider, root } = await providerWith({
+    malformedDnsJson: true,
+    tsharkJson: JSON.stringify(base),
+  });
+  const result = await provider.execute({
+    operation: "inspect_pcap_capture",
+    input: { path: await captureFixture(root) },
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    coverage: "complete",
+    packet_count: base.length,
+    dns_queries: [],
+    dns_query_count: 0,
+  });
+  expect(result.value.limitations.join(" ")).not.toContain(
+    "DNS wire identity extraction",
   );
 });

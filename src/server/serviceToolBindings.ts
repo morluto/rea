@@ -1,3 +1,4 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
 import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
 
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
@@ -134,7 +135,11 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -448,7 +453,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 
@@ -702,6 +707,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
@@ -2172,7 +2183,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

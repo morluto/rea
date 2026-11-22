@@ -3,7 +3,11 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
-import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import {
+  isToolFamilyAdvertised,
+  registerToolFamilies,
+} from "../contracts/toolFamilyIds.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
@@ -102,9 +106,8 @@ const createMcpServer = (
     {
       capabilities: {},
       maxToolInputElements: configured.value,
-      instructions: serverInstructions(
-        session !== undefined,
-        advertisedToolFamilies,
+      instructions: serverInstructions(session !== undefined, (tool) =>
+        isToolFamilyAdvertised(advertisedToolFamilies, toolFamilyId(tool)),
       ),
     },
     session === undefined
@@ -210,6 +213,7 @@ export const createServer = (
     javascriptRecovery,
     artifactResources,
     reverseEngineering,
+    uefiAnalysis,
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
@@ -262,6 +266,10 @@ export const createServer = (
             options.availabilityPolicy,
             {
               ...capabilities.availability,
+              observeOptionalFeatures: () =>
+                server.advertisesFamily("artifact")
+                  ? capabilities.observeOptionalFeatures()
+                  : {},
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },
@@ -482,6 +490,7 @@ export const createServer = (
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
+    uefi: () => registerServiceTools(server, { uefiAnalysis }, contractTools),
     android: () =>
       registerServiceTools(
         server,

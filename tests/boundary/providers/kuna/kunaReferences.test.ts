@@ -15,10 +15,9 @@ it("preserves observed edges while qualifying undiscovered calls in both directi
   const client = open();
   try {
     const tools = new EnhancedTools(client);
-    const forward = await tools.execute("trace_call_path", {
-      start: "main",
-      goal: "0x2000",
-      direction: "forward",
+    const forward = await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "0x2000", direction: "forward" },
     });
     if (!forward.ok) throw forward.error;
     expect(forward.value).toMatchObject({
@@ -35,10 +34,9 @@ it("preserves observed edges while qualifying undiscovered calls in both directi
       },
       truncated: false,
     });
-    const backward = await tools.execute("trace_call_path", {
-      start: "0x2000",
-      goal: "main",
-      direction: "backward",
+    const backward = await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "0x2000", goal: "main", direction: "backward" },
     });
     if (!backward.ok) throw backward.error;
     expect(backward.value).toMatchObject({
@@ -48,10 +46,9 @@ it("preserves observed edges while qualifying undiscovered calls in both directi
         observed_goal_status: "not_reached",
       },
     });
-    const observed = await tools.execute("trace_call_path", {
-      start: "main",
-      goal: "parse",
-      direction: "forward",
+    const observed = await tools.executeValidated({
+      name: "trace_call_path",
+      input: { start: "main", goal: "parse", direction: "forward" },
     });
     if (!observed.ok) throw observed.error;
     expect(observed.value).toMatchObject({
@@ -74,9 +71,9 @@ it("resolves graph-only imports as graph roots and path endpoints without export
       expect.objectContaining({ address: "0x2000" }),
     );
     const tools = new EnhancedTools(client);
-    const graph = await tools.execute("get_call_graph", {
-      address: "0x2000",
-      direction: "backward",
+    const graph = await tools.executeValidated({
+      name: "get_call_graph",
+      input: { address: "0x2000", direction: "backward" },
     });
     if (!graph.ok) throw graph.error;
     expect(graph.value).toMatchObject({
@@ -86,10 +83,9 @@ it("resolves graph-only imports as graph roots and path endpoints without export
       ["main", "0x2000", "forward"],
       ["0x2000", "main", "backward"],
     ] as const) {
-      const path = await tools.execute("trace_call_path", {
-        start,
-        goal,
-        direction,
+      const path = await tools.executeValidated({
+        name: "trace_call_path",
+        input: { start, goal, direction },
       });
       if (!path.ok) throw path.error;
       expect(path.value).toMatchObject({ goal_status: "reached" });

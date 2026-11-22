@@ -37,7 +37,11 @@ import {
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
 import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
-import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
+import {
+  hasGuaranteedObjectOutputRoot,
+  omitAdvertisedOutputJsonSchema,
+  transformAdvertisedInputJsonSchema,
+} from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   AnalysisInputError,
@@ -50,7 +54,7 @@ import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysi
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
   type ToolResultDelivery,
@@ -317,8 +321,21 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Install discovery after canonical registrations, before connecting. */
   enableProgressiveCatalog(): void {
     if (this.progressiveCatalog !== undefined) return;
-    const catalog = new ProgressiveToolCatalog(
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    const adapter = super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
+    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
       this.registrations,
+      adapter,
       this.catalogIdentity,
       (change) => {
         this.catalogChangeDepth++;
@@ -335,18 +352,6 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       () => this.delivery,
     );
     this.progressiveCatalog = catalog;
-    const { name, ...config } = DISCOVER_TOOLS;
-    // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers. Its
-    // advertisement still follows the selected input presentation.
-    super.registerTool(
-      name,
-      { ...config, ...this.presentInput(name, config) },
-      (input, context) => {
-        context.mcpReq.signal.throwIfAborted();
-        return catalog.discover(input);
-      },
-    );
   }
 
   override sendToolListChanged(): void {
@@ -444,21 +449,33 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const presented = this.presentInput(name, config);
-    const registeredConfig = {
-      ...config,
-      ...(presented.description === undefined
-        ? {}
-        : { description: presented.description }),
-      ...(presented.inputSchema === undefined
-        ? {}
-        : {
-            inputSchema: captureInputValidation(
-              name,
-              presented.inputSchema as StandardSchemaWithJSON,
-            ),
-          }),
-    };
+    const advertised = this.advertisesTool(name);
+    const presented = advertised ? this.presentInput(name, config) : config;
+    const outputSchema =
+      this.presentation.output === undefined &&
+      config.outputSchema !== undefined &&
+      hasGuaranteedObjectOutputRoot(config.outputSchema)
+        ? omitAdvertisedOutputJsonSchema(config.outputSchema)
+        : config.outputSchema;
+    const registeredConfig = advertised
+      ? {
+          ...config,
+          ...(presented.description === undefined
+            ? {}
+            : { description: presented.description }),
+          ...(presented.inputSchema === undefined
+            ? {}
+            : {
+                inputSchema: captureInputValidation(
+                  name,
+                  presented.inputSchema as StandardSchemaWithJSON,
+                ),
+              }),
+          ...(outputSchema === undefined ? {} : { outputSchema }),
+        }
+      : outputSchema === undefined
+        ? config
+        : { ...config, outputSchema };
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -497,7 +514,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       registeredConfig as never,
       scoped as never,
     );
-    if (!this.advertisesTool(name)) registered.disable();
+    if (!advertised) registered.disable();
     return registered;
   }
 
@@ -516,19 +533,32 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const { input } = this.presentation;
     if (inputSchema === undefined || !hasAdvertisedInputJsonSchema(inputSchema))
       return config;
+    let draft2020:
+      | {
+          readonly description: string | undefined;
+          readonly inputSchema: Record<string, unknown> | undefined;
+        }
+      | undefined;
+    const projectDraft2020 = () => {
+      if (draft2020 !== undefined) return draft2020;
+      const projected = (inputSchema as StandardSchemaWithJSON)[
+        "~standard"
+      ].jsonSchema.input({ target: "draft-2020-12" });
+      draft2020 = isRecord(projected)
+        ? advertiseToolInput(description, projected, input)
+        : { description, inputSchema: undefined };
+      return draft2020;
+    };
     return {
-      ...this.describeTool(name, () => {
-        const projected = (inputSchema as StandardSchemaWithJSON)[
-          "~standard"
-        ].jsonSchema.input({ target: "draft-2020-12" });
-        return isRecord(projected)
-          ? advertiseToolInput(description, projected, input).description
-          : description;
-      }),
+      ...this.describeTool(name, () => projectDraft2020().description),
       inputSchema: transformAdvertisedInputJsonSchema(
         inputSchema,
         (projected) =>
           advertiseToolInput(description, projected, input).inputSchema,
+        (target) =>
+          target === "draft-2020-12"
+            ? projectDraft2020().inputSchema
+            : undefined,
       ),
     };
   }
@@ -879,7 +909,7 @@ class ErrorEvidenceTransport implements Transport {
     // text-only result without serializing the complete JSON-RPC message.
     const isStructured = message.result.structuredContent !== undefined;
     const structured = isStructured
-      ? jsonObjectSchema.parse(message.result.structuredContent)
+      ? ownedJsonObjectSchema.parse(message.result.structuredContent)
       : undefined;
     const sdkResultWithMarker =
       !isStructured &&
@@ -920,7 +950,7 @@ class ErrorEvidenceTransport implements Transport {
       encoded =
         normalized.result.content.length === 0
           ? encodeToolResult(
-              jsonObjectSchema.parse(structuredContent),
+              ownedJsonObjectSchema.parse(structuredContent),
               budget,
               "error-text",
               targetContent,
@@ -932,7 +962,7 @@ class ErrorEvidenceTransport implements Transport {
     }
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
-    const originalResult = jsonObjectSchema.parse(message.result);
+    const originalResult = ownedJsonObjectSchema.parse(message.result);
     const retainedResult = structured ?? originalResult;
     const originalError = isStructured
       ? analysisErrorProjectionSchema.safeParse(structured?.["error"])

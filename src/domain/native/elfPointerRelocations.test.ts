@@ -1,16 +1,59 @@
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { FileMapping } from "../virtualFileMapping.js";
 import {
   ElfPointerRelocationFailure,
   elfAbsoluteRelocationType,
   elfCopyRelocationType,
   elfRelocationWidth,
+  elfRelocationWidthLookup,
   readElfRelocationWritesSteps,
   readElfPointerValuesSteps,
+  readElfPointerRelocationsSteps,
   type ElfPointerWrite,
 } from "./elfPointerRelocations.js";
 
 const EM_X86_64 = 62;
+
+it("applies PT_DYNAMIC capacity only to backed whole entries", () => {
+  const maximum = 16 * 1024 * 1024;
+  const bytes = Buffer.alloc(maximum + 16);
+  const read = (file: Buffer, size: bigint) => {
+    const steps = readElfRelocationWritesSteps(file, {
+      bits: 64,
+      little: true,
+      machine: EM_X86_64,
+      dynamicSegments: [{ offset: 0n, size }],
+      mappings: [],
+      zeroFills: [],
+    });
+    let next = steps.next();
+    while (!next.done) next = steps.next();
+    return next.value;
+  };
+
+  const malformed = expect.objectContaining({
+    reason: "malformed-container",
+    message: "PT_DYNAMIC is truncated or outside the file",
+  });
+  expect(() => read(bytes.subarray(0, 16), BigInt(bytes.length))).toThrow(
+    malformed,
+  );
+  expect(() => read(bytes, BigInt(maximum + 1))).toThrow(malformed);
+  expect(() => read(bytes, BigInt(bytes.length))).toThrow(
+    expect.objectContaining({
+      reason: "native-index-capacity",
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: { name: "native-index-capacity", maximum },
+      }),
+      unit: "bytes",
+    }),
+  );
+  expect(read(bytes, BigInt(maximum))).toMatchObject({
+    dynamic_present: true,
+    pointer_coverage_known: true,
+  });
+});
 
 const image = (): Buffer => {
   const bytes = Buffer.alloc(0x400);
@@ -58,6 +101,113 @@ const drain = (bytes: Buffer): ElfPointerWrite[] => {
     if (next.value !== undefined) writes.push(next.value);
   return writes;
 };
+
+const relrImage = (tags: readonly (readonly [bigint, bigint])[]): Buffer => {
+  const bytes = Buffer.alloc(0x400);
+  tags.forEach(([tag, value], index) => {
+    bytes.writeBigUInt64LE(tag, index * 16);
+    bytes.writeBigUInt64LE(value, index * 16 + 8);
+  });
+  bytes.writeBigUInt64LE(0x300n, 0x100);
+  bytes.writeBigUInt64LE(3n, 0x108);
+  bytes.writeBigUInt64LE(0x1234n, 0x300);
+  bytes.writeBigUInt64LE(0x5678n, 0x308);
+  return bytes;
+};
+
+it("keeps the same RELR values and record provenance for Android's tag aliases", () => {
+  const standard = relrImage([
+    [36n, 0x100n],
+    [35n, 16n],
+    [37n, 8n],
+  ]);
+  const android = relrImage([
+    [0x6fffe000n, 0x100n],
+    [0x6fffe001n, 16n],
+    [0x6fffe003n, 8n],
+  ]);
+  expect(drain(android)).toEqual(drain(standard));
+  expect(
+    drain(android).map(({ address, value, source }) => ({
+      address,
+      value,
+      source,
+    })),
+  ).toEqual([
+    {
+      address: 0x300n,
+      value: 0x1234n,
+      source: { encoding: "relr", record_file_offset: 0x100, kind: null },
+    },
+    {
+      address: 0x308n,
+      value: 0x5678n,
+      source: { encoding: "relr", record_file_offset: 0x108, kind: null },
+    },
+  ]);
+});
+
+it.each([
+  { tags: [[0x6fffe001n, 8n]], caseName: "size without address" },
+  { tags: [[0x6fffe000n, 0x100n]], caseName: "Android address without size" },
+  { tags: [[36n, 0x100n]], caseName: "standard address without size" },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe001n, 7n],
+    ],
+    caseName: "invalid size",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe001n, 16n],
+      [0x6fffe003n, 4n],
+    ],
+    caseName: "invalid entry width",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [0x6fffe000n, 0x100n],
+    ],
+    caseName: "duplicate Android address",
+  },
+  {
+    tags: [
+      [0x6fffe000n, 0x100n],
+      [35n, 16n],
+    ],
+    caseName: "mixed Android address and standard size",
+  },
+  {
+    tags: [
+      [36n, 0x100n],
+      [0x6fffe000n, 0x100n],
+    ],
+    caseName: "mixed standard and Android addresses",
+  },
+] as const)("refuses malformed RELR declarations: $caseName", ({ tags }) => {
+  const parse = () => drain(relrImage(tags));
+  expect(parse).toThrow(ElfPointerRelocationFailure);
+  expect(parse).toThrow(
+    expect.objectContaining({
+      reason: "malformed-container",
+      failure: expect.objectContaining({ kind: "malformed" }),
+    }),
+  );
+});
+
+it("accepts an explicitly empty Android RELR table", () => {
+  expect(
+    drain(
+      relrImage([
+        [0x6fffe000n, 0x100n],
+        [0x6fffe001n, 0n],
+      ]),
+    ),
+  ).toEqual([]);
+});
 
 it("returns the decoded record type, symbol index and addend with each write", () => {
   const writes = drain(image());
@@ -112,21 +262,21 @@ it("returns the decoded record type, symbol index and addend with each write", (
 });
 
 it("owns the word-sized absolute relocation type per machine", () => {
-  expect(elfAbsoluteRelocationType(62)).toBe(1);
-  expect(elfAbsoluteRelocationType(3)).toBe(1);
-  expect(elfAbsoluteRelocationType(183)).toBe(257);
-  expect(elfAbsoluteRelocationType(40)).toBe(2);
-  expect(elfAbsoluteRelocationType(8)).toBeUndefined();
+  expect(elfAbsoluteRelocationType(62, 64)).toBe(1);
+  expect(elfAbsoluteRelocationType(3, 32)).toBe(1);
+  expect(elfAbsoluteRelocationType(183, 64)).toBe(257);
+  expect(elfAbsoluteRelocationType(40, 32)).toBe(2);
+  expect(elfAbsoluteRelocationType(8, 64)).toBeUndefined();
 });
 
 it("owns the COPY relocation type per machine and gives it no fixed width", () => {
-  expect(elfCopyRelocationType(62)).toBe(5);
-  expect(elfCopyRelocationType(3)).toBe(5);
-  expect(elfCopyRelocationType(183)).toBe(1024);
-  expect(elfCopyRelocationType(40)).toBe(20);
-  expect(elfCopyRelocationType(8)).toBeUndefined();
-  expect(elfRelocationWidth(62, 5)).toBeUndefined();
-  expect(elfRelocationWidth(183, 1024)).toBeUndefined();
+  expect(elfCopyRelocationType(62, 64)).toBe(5);
+  expect(elfCopyRelocationType(3, 32)).toBe(5);
+  expect(elfCopyRelocationType(183, 64)).toBe(1024);
+  expect(elfCopyRelocationType(40, 32)).toBe(20);
+  expect(elfCopyRelocationType(8, 64)).toBeUndefined();
+  expect(elfRelocationWidth(62, 5, 64)).toBeUndefined();
+  expect(elfRelocationWidth(183, 1024, 64)).toBeUndefined();
 });
 
 /**
@@ -261,6 +411,7 @@ it.each([
   ["AArch64 GLOB_DAT", 183, 1025, 0x4020n],
   ["x86-64 absolute", 62, 1, 0x4020n],
   ["x86-64 GLOB_DAT", 62, 6, 0x4000n],
+  ["RISC-V RV64 absolute", 243, 2, 0x4020n],
 ] as const)(
   "derives %s from image definitions only when requested",
   (_name, machine, kind, expected) => {
@@ -435,6 +586,8 @@ it.each([
   ["AArch64", 183, 64, 1024],
   ["i386", 3, 32, 5],
   ["ARM", 40, 32, 20],
+  ["RISC-V RV32", 243, 32, 4],
+  ["RISC-V RV64", 243, 64, 4],
 ] as const)(
   "sizes a %s COPY write from the image's own dynamic symbol",
   (_name, machine, bits, kind) => {
@@ -526,10 +679,36 @@ it("reports a TLS descriptor as a two-word write", () => {
   const { writes, result } = walk(symbolicImage(36n, 0n));
   expect(writes).toMatchObject([{ address: 0x300n, width: 16, value: null }]);
   expect(result.pointer_coverage_known).toBe(true);
-  expect(elfRelocationWidth(62, 36)).toBe(16);
-  expect(elfRelocationWidth(183, 1031)).toBe(16);
-  expect(elfRelocationWidth(40, 13)).toBe(8);
-  expect(elfRelocationWidth(3, 41)).toBe(8);
+  expect(elfRelocationWidth(62, 36, 64)).toBe(16);
+  expect(elfRelocationWidth(183, 1031, 64)).toBe(16);
+  expect(elfRelocationWidth(40, 13, 32)).toBe(8);
+  expect(elfRelocationWidth(3, 41, 32)).toBe(8);
+});
+
+it("reports a sized link-time kind in a dynamic table as a write of unknown value", () => {
+  // R_X86_64_PLT32, as a text relocation would carry it.
+  const { writes, result } = walk(symbolicImage(4n, 0n));
+  expect(writes).toMatchObject([{ address: 0x300n, width: 4, value: null }]);
+  expect(result.pointer_coverage_known).toBe(true);
+});
+
+it("sizes the link-time kinds compilers emit into x86-64 and AArch64 objects", () => {
+  // Kind numbers and names were paired from clang output with llvm-objdump.
+  for (const kind of [4, 9, 19, 20, 21, 22, 23, 34, 41, 42])
+    expect(elfRelocationWidth(62, kind, 64)).toBe(4);
+  for (const kind of [25, 27, 29])
+    expect(elfRelocationWidth(62, kind, 64)).toBe(8);
+  // Each of these patches one 32-bit A64 instruction.
+  for (const kind of [
+    273, 274, 275, 277, 278, 282, 283, 284, 285, 286, 299, 309, 311, 312, 541,
+    542, 543, 549, 551, 562, 563, 564,
+  ])
+    expect(elfRelocationWidth(183, kind, 64)).toBe(4);
+  // TLSDESC_CALL marks an instruction and has no field of its own.
+  expect(elfRelocationWidth(62, 35, 64)).toBeUndefined();
+  expect(elfRelocationWidth(183, 569, 64)).toBeUndefined();
+  // A kind outside the table keeps no width.
+  expect(elfRelocationWidth(62, 99, 64)).toBeUndefined();
 });
 
 /** Three fully decoded relative values; empty REL declarations add no state. */
@@ -599,4 +778,120 @@ it("refuses pointer workspace growth before inserting the next virtual destinati
   } finally {
     inserted.mockRestore();
   }
+});
+
+/** ELF32 RELA with an ordinary defined symbol and a SysV hash bound. */
+const riscvSymbolicImage32 = (kind: number, symbol = 1): Buffer => {
+  const bytes = symbolicImage32(kind, 0x28);
+  bytes.writeInt32LE(7, 0); // RELA instead of REL.
+  bytes.writeInt32LE(8, 8);
+  bytes.writeUInt32LE(12, 12);
+  bytes.writeInt32LE(9, 16);
+  bytes.writeUInt32LE(12, 20);
+  bytes.writeUInt32LE((symbol << 8) | kind, 0x104);
+  bytes.writeInt32LE(-16, 0x108);
+  bytes.writeUInt32LE(0x4000, 0x214);
+  bytes[0x21c] = 0x11;
+  bytes.writeUInt16LE(1, 0x21e);
+  bytes.writeInt32LE(4, 40);
+  bytes.writeUInt32LE(0x280, 44);
+  [1, 2, 1, 0, 0].forEach((value, index) =>
+    bytes.writeUInt32LE(value, 0x280 + index * 4),
+  );
+  return bytes;
+};
+
+it.each([32, 64] as const)(
+  "keeps RV%s symbol, TLS, resolver and COPY semantics separate",
+  (bits) => {
+    const make = (kind: number, symbol = 1) =>
+      bits === 32
+        ? riscvSymbolicImage32(kind, symbol)
+        : symbolicImage(BigInt(kind), 0x28n, {
+            definition: { value: 0x4000n },
+            addend: -16n,
+            symbolIndex: symbol,
+          });
+    const absolute = bits === 32 ? 1 : 2;
+    expect(elfAbsoluteRelocationType(243, bits)).toBe(absolute);
+    expect(elfCopyRelocationType(243, bits)).toBe(4);
+    expect(elfRelocationWidth(243, 12, bits)).toBe(bits / 4);
+    expect(
+      walk(make(absolute), undefined, 243, bits).writes[0]?.value,
+    ).toBeNull();
+    expect(
+      walk(make(absolute), undefined, 243, bits, true).writes[0]?.value,
+    ).toBe(0x3ff0n);
+    // Type 6 must never inherit x86 GLOB_DAT semantics, even for a defined symbol.
+    for (const [kind, width] of [
+      [6, 4],
+      [12, bits / 4],
+      [58, bits / 8],
+    ]) {
+      const { writes, result } = walk(make(kind!), undefined, 243, bits, true);
+      expect(writes[0]).toMatchObject({ value: null, width });
+      expect(result.pointer_coverage_known).toBe(true);
+    }
+    const relative = walk(make(3, 0), undefined, 243, bits);
+    expect(relative.writes[0]?.value).toBe(BigInt.asUintN(bits, -16n));
+    const input = {
+      bits,
+      little: true,
+      machine: 243,
+      dynamicSegments: [{ offset: 0n, size: 0x100n }],
+      mappings: [{ address: 0n, offset: 0, size: 0x400 }],
+      zeroFills: [],
+    };
+    const sparse = readElfPointerRelocationsSteps(make(3, 0), input);
+    let sparseNext = sparse.next();
+    while (!sparseNext.done) sparseNext = sparse.next();
+    expect(sparseNext.value.pointerAt(0x300n)).toMatchObject({
+      value: BigInt.asUintN(bits, -16n),
+      relocation: { encoding: "rela", kind: 3, record_file_offset: 0x100 },
+    });
+    const values = readElfPointerValuesSteps(
+      make(absolute),
+      input,
+      1024 * 1024,
+      {
+        symbolResolution: "image-definitions",
+      },
+    );
+    let valuesNext = values.next();
+    while (!valuesNext.done) valuesNext = values.next();
+    expect(valuesNext.value.unsignedAt(0x300n, bits === 64 ? 8 : 4)).toBe(
+      0x3ff0n,
+    );
+    const unknown = walk(make(0x7f), "record", 243, bits, true);
+    expect(unknown.result.pointer_coverage_known).toBe(false);
+    expect(unknown.writes).toEqual([]);
+  },
+);
+
+it("does not apply a machine's pointer rules to a different ELF class", () => {
+  expect(elfAbsoluteRelocationType(183, 32)).toBeUndefined();
+  expect(elfAbsoluteRelocationType(40, 64)).toBeUndefined();
+});
+
+describe("elfRelocationWidthLookup", () => {
+  it("matches elfRelocationWidth across supported and unsupported targets", () => {
+    for (const [machine, bits, sampleType] of [
+      [183, 64, 257],
+      [62, 64, 1],
+      [40, 32, 2],
+      [3, 32, 1],
+      [243, 32, 1],
+      [243, 64, 2],
+    ] as const) {
+      const widths = elfRelocationWidthLookup(machine, bits);
+      expect(widths).toBeDefined();
+      expect(widths?.get(sampleType)).toBe(
+        elfRelocationWidth(machine, sampleType, bits),
+      );
+      expect(widths?.get(0)).toBeUndefined();
+      expect(elfRelocationWidth(machine, 0, bits)).toBe(0);
+    }
+    expect(elfRelocationWidthLookup(183, 32)).toBeUndefined();
+    expect(elfRelocationWidthLookup(999, 64)).toBeUndefined();
+  });
 });

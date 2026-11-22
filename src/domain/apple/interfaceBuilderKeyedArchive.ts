@@ -1,7 +1,7 @@
 import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
-import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, ownedJsonValueSchema } from "../jsonValue.js";
 import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { malformedInput } from "../parseFailure.js";
 
@@ -651,7 +651,7 @@ const jsonSafeRecord = (value: Record<string, unknown>) =>
         if (serialized === undefined) return [];
         const decoded = parseJsonWithDuplicatePolicy(serialized, "reject");
         if (!decoded.ok) return [];
-        const parsed = jsonValueSchema.safeParse(decoded.value);
+        const parsed = ownedJsonValueSchema.safeParse(decoded.value);
         return parsed.success ? [[key, parsed.data]] : [];
       } catch (cause: unknown) {
         // Unserializable entries are omitted from the record.

@@ -1,3 +1,6 @@
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
@@ -5,7 +8,10 @@ import {
 } from "../pcap/PcapConfiguration.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
-import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
+import type {
+  CapabilityAvailabilityFacts,
+  OptionalAvailabilityFeatures,
+} from "../application/CapabilityAvailability.js";
 import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclarationId,
@@ -26,6 +32,7 @@ import {
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
 import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
+import { readHostFile } from "../desktop/HostFileRead.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -147,6 +154,7 @@ export interface CapabilityServiceOptions {
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -175,6 +183,9 @@ export interface CapabilityServiceOptions {
   readonly desktopBuildStartTiming?: ComputerStartTiming;
   readonly reverseEngineering?: ReverseEngineeringService;
 }
+
+// Reuse a PATH probe for bursts of status calls and recheck installs/removals.
+const TSHARK_AVAILABILITY_CACHE_MS = 1_000;
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
   try {
@@ -355,6 +366,7 @@ const modules = {
     ({ providerEnvironment, options }) =>
       new DesktopBuildComputers(
         providerEnvironment,
+        readHostFile,
         options.desktopBuildSettle,
         options.desktopBuildDefaults,
         options.desktopBuildStartTiming,
@@ -480,6 +492,12 @@ const modules = {
       },
     }),
   ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
+  ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>
       createGdbSessionManager(providerEnvironment, { platform }),
@@ -539,19 +557,53 @@ const modules = {
     ({ environment, options, platform }) =>
       options.packetCapture ??
       createPacketCaptureService(environment, platform),
-    ({ environment, options, platform }) => ({
-      hostUnsupported: {
-        packetCapture: outsideHost(
-          options.packetCapture,
-          tsharkHostSupported(platform),
-        ),
-      },
-      optionalFeatures: {
-        packetCaptureEnabled:
-          options.packetCapture !== undefined ||
-          (tsharkHostSupported(platform) && tsharkLocatable(environment)),
-      },
-    }),
+    ({ environment, options, platform }) => {
+      let cached:
+        | {
+            readonly command: string | undefined;
+            readonly path: string | undefined;
+            readonly pathExt: string | undefined;
+            readonly locatable: boolean;
+            readonly expiresAt: number;
+          }
+        | undefined;
+      const locatable = (): boolean => {
+        const command = environment.REA_TSHARK_COMMAND;
+        const path = environment.PATH;
+        const pathExt = environment.PATHEXT;
+        const now = performance.now();
+        if (
+          cached === undefined ||
+          cached.command !== command ||
+          cached.path !== path ||
+          cached.pathExt !== pathExt ||
+          now >= cached.expiresAt
+        ) {
+          cached = {
+            command,
+            path,
+            pathExt,
+            locatable: tsharkLocatable(environment),
+            expiresAt: now + TSHARK_AVAILABILITY_CACHE_MS,
+          };
+        }
+        return cached.locatable;
+      };
+      return {
+        hostUnsupported: {
+          packetCapture: outsideHost(
+            options.packetCapture,
+            tsharkHostSupported(platform),
+          ),
+        },
+        // Probe PATH only when `binary_session` queries default availability.
+        observeOptionalFeatures: () => ({
+          packetCaptureEnabled:
+            options.packetCapture !== undefined ||
+            (tsharkHostSupported(platform) && locatable()),
+        }),
+      };
+    },
   ),
   signalRecording: service(
     ({ environment, options, platform }) =>
@@ -688,6 +740,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
   const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
+  const optionalFeatureObservers: (() => Partial<OptionalAvailabilityFeatures>)[] =
+    [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -712,6 +766,9 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
         instance.availability?.observeCommandProviderFailures;
       if (observeCommandFailure !== undefined)
         commandFailureObservers.push(observeCommandFailure);
+      const observeOptional = instance.availability?.observeOptionalFeatures;
+      if (observeOptional !== undefined)
+        optionalFeatureObservers.push(observeOptional);
       return [
         id,
         instance.ownership === "host"
@@ -728,6 +785,11 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    observeOptionalFeatures: (): Partial<OptionalAvailabilityFeatures> =>
+      Object.assign(
+        {},
+        ...optionalFeatureObservers.map((observe) => observe()),
+      ),
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();

@@ -18,6 +18,7 @@ import {
 import type { KernelModulePort } from "../../ports/binaryDiagnostics/KernelModulePort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import {
@@ -31,7 +32,7 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { parseKernelModule } from "./KernelModuleParser.js";
+import { parseKernelModuleCooperative } from "./KernelModuleParser.js";
 
 const OPERATION = "inspect_kernel_module";
 
@@ -64,7 +65,7 @@ export class KernelModuleProvider implements KernelModulePort {
           this.#resources,
         );
         return ok(
-          parseKernelModule(
+          await parseKernelModuleCooperative(
             snapshot.bytes,
             {
               path: input.path,
@@ -72,6 +73,7 @@ export class KernelModuleProvider implements KernelModulePort {
               bytes: snapshot.bytes.length,
             },
             input,
+            options?.signal,
           ),
         );
       });
@@ -98,6 +100,8 @@ const kernelModuleFailurePrimary = (
   input: InspectKernelModuleInput,
 ) => {
   const { cause, origin } = facts;
+  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
+    return cause;
   if (cause instanceof BinaryResourceFailure)
     return parseLimitConstraint(
       OPERATION,

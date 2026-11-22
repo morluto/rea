@@ -4,10 +4,13 @@ exit: 0
 _incur_complete_rea() {
     local IFS=$'\013'
     local _COMPLETE_INDEX=${COMP_CWORD}
+    local _line=${COMP_LINE-}
     local _completions _output
     if ! _output=$(
         export COMPLETE="bash"
         export _COMPLETE_INDEX="$_COMPLETE_INDEX"
+        export _COMPLETE_BASH_LINE="${_line:0:${COMP_POINT:-0}}"
+        export _COMPLETE_BASH_FRAGMENT="${2-}"
         'rea' -- "${COMP_WORDS[@]}"
     ); then
         unset COMPREPLY

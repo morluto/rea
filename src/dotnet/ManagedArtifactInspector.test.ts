@@ -231,6 +231,42 @@ describe("managed CLI directory availability", () => {
   });
 });
 
+it.each(["before the section table", "past the file"])(
+  "reports partial coverage when SizeOfHeaders ends %s",
+  (extent) => {
+    const bytes = buildManagedPeFixture();
+    const optional = bytes.readUInt32LE(0x3c) + 24;
+    bytes.writeUInt32LE(
+      extent === "before the section table" ? 0x100 : bytes.length + 1,
+      optional + 60,
+    );
+
+    expect(
+      inspectManagedArtifactBytes(bytes, managedPeFixtureTarget(bytes)),
+    ).toMatchObject({
+      pe: {
+        machine: 0x014c,
+        optional_header: "pe32",
+        section_count: 1,
+        cli: null,
+      },
+      classification: { status: "malformed" },
+      metadata: { status: "malformed" },
+      coverage: {
+        state: "partial",
+        issues: [
+          {
+            code: "invalid-directory",
+            scope: "pe.optional-header",
+            detail: expect.stringContaining("SizeOfHeaders"),
+            offset: optional + 60,
+          },
+        ],
+      },
+    });
+  },
+);
+
 describe("managed artifact inventory", () => {
   it.each([
     { moduleRowCount: 0, assemblyRowCount: 1, scope: "metadata.Module" },
@@ -289,6 +325,7 @@ describe("managed artifact inventory", () => {
     fixture.copy(bytes, 0, 0, 0x0200);
     fixture.copy(bytes, sectionDataOffset, 0x0200, 0x1000);
     bytes.writeUInt16LE(97, coffOffset + 2);
+    bytes.writeUInt32LE(sectionDataOffset, coffOffset + 20 + 60);
     bytes.writeUInt32LE(sectionDataOffset, sectionOffset + 20);
 
     const result = inspectManagedArtifactBytes(

@@ -307,7 +307,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       }),
     ),
     kind: "application",
-    description: `Checkpoint the running capture under a unique name; returns acknowledged counts and up to ${String(MAX_ACKNOWLEDGED_FILES)} changed files. Files named by window titles rank first, then state_paths/open files, with caches last. Mark ${SEED_CHECKPOINT} after saving the seed and ${END_CHECKPOINT} after saving the first change. For later tasks, build on the preceding change and mark ${END_CHECKPOINT}-<task name>; mark near-<task name> after saving a near miss that must fail one task check. Duplicate names are refused.`,
+    description: `Checkpoint the running capture under a unique name; returns acknowledged counts and up to ${String(MAX_ACKNOWLEDGED_FILES)} changed files. Files named by window titles rank first, then state_paths/open files, with caches last. Mark ${SEED_CHECKPOINT} after saving the seed and ${END_CHECKPOINT} after saving the first change. For later tasks, build on the preceding change and mark ${END_CHECKPOINT}-<task name>; mark near-<task name> after saving a near miss that must fail one task check. If cancelled while saving the optional screenshot, retry the same name to recover its acknowledgement. Repeating a reported name is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,

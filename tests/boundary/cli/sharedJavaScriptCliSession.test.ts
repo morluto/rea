@@ -118,6 +118,32 @@ test("reads a CLI session frame delivered one byte at a time", () => {
   expect(frames).toEqual([{ id: 7, note: "x".repeat(64) }]);
 });
 
+test("reports an incomplete response frame when worker stdout ends", async () => {
+  const session = createCliCommandSession({
+    shutdownGraceMs: MOCK_SHUTDOWN_GRACE_MS,
+    spawnWorker: () =>
+      asCliProcess(
+        respondingProcess(42, (request, child) => {
+          const response = encodeCliSessionFrame({
+            id: request.id,
+            exitCode: 0,
+          });
+          child.stdout.end(response.subarray(0, -1));
+          child.exitCode = 0;
+          child.emit("exit", 0, null);
+          child.stdout.once("end", () => child.emit("close", 0, null));
+        }),
+      ),
+  });
+  try {
+    await expect(
+      session.run(command(["--version"], { PATH: "/usr/bin" })),
+    ).rejects.toThrow(/CLI session ended with an incomplete frame/u);
+  } finally {
+    await session.close();
+  }
+});
+
 test("stops an unready shared CLI process when the session closes", async () => {
   let spawned: FakeCliProcess | undefined;
   const session = createCliCommandSession({

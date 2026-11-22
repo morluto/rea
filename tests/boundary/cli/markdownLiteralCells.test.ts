@@ -121,6 +121,7 @@ cliTest(
     const row = {
       [literal]: literal,
       punctuation,
+      "List<T>": "&copy; <br> left|right\\path\r\nnext",
       nested: { text: literal, values: ["__name__", "plain"] },
       empty: "",
       zero: 0,
@@ -167,6 +168,7 @@ cliTest(
       ...Object.keys(row),
       literal,
       punctuation,
+      "&copy; <br> left|right\\pathnext",
       JSON.stringify(row.nested),
       "",
       "0",
@@ -176,6 +178,7 @@ cliTest(
       ...Object.values(edgeSpaceEntries),
     ];
     expect(renderedCells(html)).toEqual(expectedCells);
+    expect(html).toContain("left|right\\path<br>next");
     expect(html).not.toMatch(/<(?:em|strong|s|code|img)(?:\s|>)/u);
 
     // Standalone reports share the same table owner as command output.

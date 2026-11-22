@@ -245,48 +245,6 @@ it("retains an oversized failed-open receipt with its original error", async () 
   }
 });
 
-it("delivers an error whose text fits although structured and text copies would not", async () => {
-  const nameBytes = Math.ceil(STDIO_DEFAULT_MAX_BUFFER_SIZE / 2) + 64 * 1024;
-  const retained: Evidence[] = [];
-  const server = new EvidenceMcpServer(
-    { name: "mid-sized-error-test", version: "1" },
-    { capabilities: {} },
-    (evidence) => {
-      retained.push(evidence);
-      return ok("added");
-    },
-    delivery,
-  );
-  server.registerTool("mid_failure", { inputSchema: z.object({}) }, async () =>
-    failureWithName(nameBytes),
-  );
-  const client = new Client(
-    { name: "mid-sized-error-client", version: "1" },
-    { jsonSchemaValidator: createMcpSchemaValidation() },
-  );
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  try {
-    await server.connect(serverTransport);
-    await client.connect(clientTransport);
-    const failure = await client.callTool({
-      name: "mid_failure",
-      arguments: {},
-    });
-    expect(failure.isError).toBe(true);
-    expect(failure.structuredContent).toBeUndefined();
-    expect(parseMcpToolError(failure)).toEqual(
-      failureWithName(nameBytes).structuredContent,
-    );
-    expect(retained).toHaveLength(0);
-    expect(Buffer.byteLength(JSON.stringify(failure))).toBeLessThan(
-      STDIO_DEFAULT_MAX_BUFFER_SIZE,
-    );
-  } finally {
-    await Promise.all([client.close(), server.close()]);
-  }
-});
-
 it("keeps the untrusted target-content marker on an oversized error's replacement", async () => {
   const retained: Evidence[] = [];
   const server = new EvidenceMcpServer(
@@ -380,10 +338,14 @@ it.each([false, true])(
       deliveredErrorBytes(fittingName, targetContent, boundaryDelivery),
     ).toBe(boundaryDelivery.resultBudgetBytes);
     const toolName = targetContent ? "procedure_pseudo_code" : "record_unknown";
+    const retained: Evidence[] = [];
     const server = new EvidenceMcpServer(
       { name: "error-budget-test", version: "1" },
       { capabilities: {} },
-      undefined,
+      (evidence) => {
+        retained.push(evidence);
+        return ok("added");
+      },
       boundaryDelivery,
     );
     server.registerTool(toolName, { inputSchema: z.object({}) }, async () =>
@@ -409,6 +371,11 @@ it.each([false, true])(
         arguments: {},
       });
       expect(fitting.isError).toBe(true);
+      expect(fitting.structuredContent).toBeUndefined();
+      expect(Buffer.byteLength(JSON.stringify(fitting))).toBe(
+        boundaryDelivery.resultBudgetBytes,
+      );
+      expect(retained).toHaveLength(0);
       expect(fitting._meta).toEqual(
         targetContent ? UNTRUSTED_TARGET_CONTENT : undefined,
       );
@@ -426,7 +393,10 @@ it.each([false, true])(
         error: {
           code: "resource_constraint",
           details: {
-            reported_limits: { original_error_code: "invalid_request" },
+            reported_limits: {
+              original_error_code: "invalid_request",
+              response_bytes_at_least: boundaryDelivery.resultBudgetBytes + 1,
+            },
           },
         },
       });

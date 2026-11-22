@@ -108,6 +108,7 @@ export class SafeOutputTree {
   readonly #outputRoot: string;
   #rootIdentity: DirectoryIdentity | undefined;
   readonly #nestedDirectories = new Map<string, DirectoryIdentity>();
+  readonly #creatingDirectories = new Map<string, Promise<DirectoryIdentity>>();
   readonly #unknownDirectories = new Set<string>();
   readonly #ownedFiles = new Map<string, FileIdentity>();
   /** Exclusive files awaiting identity admission; admitted identity and handles have separate owners. */
@@ -278,7 +279,7 @@ export class SafeOutputTree {
   async write(
     relativePath: string,
     source: Readable,
-    expected: { readonly sha256: string; readonly bytes: number },
+    expected: { readonly sha256?: string | null; readonly bytes: number },
     signal?: AbortSignal,
   ): Promise<SafeOutputFile> {
     try {
@@ -353,7 +354,11 @@ export class SafeOutputTree {
           { integrityCheck: "declared-size" },
         );
       const sha256 = hash.digest("hex");
-      if (sha256 !== expected.sha256)
+      if (
+        expected.sha256 !== undefined &&
+        expected.sha256 !== null &&
+        sha256 !== expected.sha256
+      )
         throw new ArtifactReaderFailure(
           "integrity",
           `Extracted content disagrees with inventory: ${path}`,
@@ -609,35 +614,54 @@ export class SafeOutputTree {
         logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
       await assertPathIdentity(parent.path, parent.identity);
-      const creation = await mkdir(current, { mode: 0o700 }).then(
-        () => ({ kind: "created" }) as const,
-        (cause: unknown) => {
-          if (hasUnrepresentableName(cause))
-            throw new DestinationPathUnrepresentableFailure(logicalPath, {
-              cause,
-            });
-          if (!isAlreadyExists(cause)) throw cause;
-          return { kind: "existing", cause } as const;
-        },
-      );
-      if (creation.kind === "existing") {
-        await throwIfDestinationCaseCollision(
-          parent.path,
-          logicalPath,
-          creation.cause,
-        );
-        const identity = this.#nestedDirectories.get(current);
-        if (identity === undefined) throw replacedDirectory(current);
-        await assertPathIdentity(current, identity);
+      const inflight = this.#creatingDirectories.get(current);
+      if (inflight !== undefined) {
+        await inflight;
+        await throwIfDestinationCaseCollision(parent.path, logicalPath);
+        const existingIdentity = this.#nestedDirectories.get(current);
+        if (existingIdentity === undefined) throw replacedDirectory(current);
+        await assertPathIdentity(current, existingIdentity);
       } else {
-        const identity = await readDirectoryIdentity(current).catch(
-          (cause: unknown) => {
-            this.#unknownDirectories.add(current);
-            throw cause;
-          },
-        );
-        this.#nestedDirectories.set(current, identity);
-        await this.#secureCreatedDirectory(current, identity);
+        const ensureDir = async (): Promise<DirectoryIdentity> => {
+          const creation = await mkdir(current, { mode: 0o700 }).then(
+            () => ({ kind: "created" }) as const,
+            (cause: unknown) => {
+              if (hasUnrepresentableName(cause))
+                throw new DestinationPathUnrepresentableFailure(logicalPath, {
+                  cause,
+                });
+              if (!isAlreadyExists(cause)) throw cause;
+              return { kind: "existing", cause } as const;
+            },
+          );
+          if (creation.kind === "existing") {
+            await throwIfDestinationCaseCollision(
+              parent.path,
+              logicalPath,
+              creation.cause,
+            );
+            const known = this.#nestedDirectories.get(current);
+            if (known === undefined) throw replacedDirectory(current);
+            await assertPathIdentity(current, known);
+            return known;
+          }
+          const createdIdentity = await readDirectoryIdentity(current).catch(
+            (cause: unknown) => {
+              this.#unknownDirectories.add(current);
+              throw cause;
+            },
+          );
+          this.#nestedDirectories.set(current, createdIdentity);
+          await this.#secureCreatedDirectory(current, createdIdentity);
+          return createdIdentity;
+        };
+        const pending = ensureDir();
+        this.#creatingDirectories.set(current, pending);
+        try {
+          await pending;
+        } finally {
+          this.#creatingDirectories.delete(current);
+        }
       }
       await assertPathIdentity(parent.path, parent.identity);
       const identity = this.#nestedDirectories.get(current);

@@ -5,10 +5,10 @@ import {
   webSourceLocationSummaryDeliveryShape,
 } from "../domain/analysisView/webSourceLocationView.js";
 import {
-  webSourceLocationSummaryViewResultSchema,
   webSourceLocationMatchesViewResultSchema,
+  webSourceLocationSummaryViewResultSchema,
   webSourceLocationTextViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+} from "../domain/analysisView/summarySchemas/webSourceLocationSummarySchemas.js";
 import {
   exportWebScriptsInputSchema,
   webScriptExportResultSchema,

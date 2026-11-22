@@ -23,7 +23,9 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -61,6 +63,8 @@ import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
   ghidraMips1Limitations,
   ghidraMipsSoftFloatFailure,
+  ghidraMipsElfImageBase,
+  ghidraMipsElfImageBaseCommitment,
   ghidraMipsRelocatableLimitations,
   ghidraMipsSharedLimitations,
   ghidraMipsSoftFloatLimitations,
@@ -120,7 +124,10 @@ import {
   ghidraRiscvLimitations,
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
+import {
+  ghidraKnownProviderDefectLimitations,
+  unverifiedGhidraBuildLimitation,
+} from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
@@ -135,12 +142,16 @@ import {
   ghidraEmptyExternalOutgoingLimitation,
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
-  ghidraFunctionSeedRecovery,
+  ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
+import {
+  ghidraMachoMainEntryCandidate,
+  isGhidraMainSelector,
+} from "./GhidraMachoEntryHint.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
@@ -184,6 +195,7 @@ export type GhidraProviderClientFactory = (
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
+      | "readTargetSnapshotRanges"
       | "hashTargetSnapshot"
       | "hashTargetSnapshotRanges"
       | "attestDosTargetSnapshot"
@@ -339,6 +351,22 @@ const containingProcedureAbsenceCaveat = (
     : [];
 };
 
+/**
+ * Caveat for an instruction query in mapped memory that Ghidra's listing does
+ * not cover: no decode was attempted, so code there remains possible.
+ */
+const instructionListingAbsenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+  source: GhidraSessionSource,
+): readonly string[] => {
+  if (operation !== "inspect_native_instruction") return [];
+  const record = referenceObservationRecord(normalized);
+  return record?.status === "not-in-listing"
+    ? [ghidraNotInListingLimitation(source)]
+    : [];
+};
+
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
   readonly config: AppConfig;
@@ -355,6 +383,13 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return prerequisites;
   const committedProfile = prerequisites.value.profile;
+  const comImport =
+    target.format === "dos-com"
+      ? ghidraProfileComImport(committedProfile.parameters)
+      : undefined;
+  if (comImport?.ok === false)
+    return err(ghidraProfileConflict("open_binary", comImport.error));
+  const comSelection = comImport?.value;
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()
     .safeParse(committedProfile.parameters.owned_checkpoint);
@@ -398,6 +433,21 @@ export const createGhidraProviderClient = (input: {
         "open_binary",
         "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
       ),
+    );
+  const elfImageBase = ghidraMipsElfImageBase(target);
+  if (
+    !isDeepStrictEqual(
+      committedProfile.parameters.elf_image_base,
+      ghidraMipsElfImageBaseCommitment(target),
+    )
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the MIPS shared-image link base into the analysis profile before opening the session.",
+        },
+      }),
     );
   const riscvCallingConvention = ghidraRiscvCallingConvention(target);
   if (
@@ -662,11 +712,14 @@ export const createGhidraProviderClient = (input: {
         ? { pspExtension: pspExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
+      ...(elfImageBase === undefined ? {} : { elfImageBase }),
       ...(riscvCallingConvention === undefined
         ? {}
         : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com" ? { dosCom: true } : {}),
+      ...(comSelection === undefined
+        ? {}
+        : { dosCom: { loader: comSelection.loader } }),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
@@ -731,6 +784,9 @@ export const createGhidraProviderClient = (input: {
           expectedCompilerSpecId: "default",
         }
       : {}),
+    ...(elfImageBase === undefined
+      ? {}
+      : { expectedImageBase: `0x${elfImageBase}` }),
     ...(context === undefined ? {} : { runId: context.runId }),
     logger: logger.child({ layer: "ghidra-bridge" }),
   });
@@ -750,6 +806,56 @@ export const createGhidraProviderClient = (input: {
     riscvCallingConvention !== undefined;
   const lostProviderHealth = (): ProviderOperationHealth | undefined =>
     providerStarted ? client.operationHealthSnapshot?.() : undefined;
+  // Only a thin image REA imported itself has Ghidra's import at the declared
+  // vmaddrs; universal slices and caller projects are not established here.
+  const machoMainEntryHint = async (
+    failure: GhidraSessionError,
+    request: Readonly<Record<string, JsonValue>>,
+    signal: AbortSignal | undefined,
+  ): Promise<{
+    readonly hint?: string;
+    readonly cleanupFailure?: AnalysisError;
+  }> => {
+    if (
+      target.format !== "mach-o" ||
+      projection.source === "existing-project" ||
+      failure.kind !== "remote" ||
+      failure.remoteCode !== "procedure_not_found" ||
+      !isGhidraMainSelector(request.procedure) ||
+      client.readTargetSnapshotRanges === undefined
+    )
+      return {};
+    const read = await client.readTargetSnapshotRanges(
+      ghidraMachoMainEntryCandidate,
+      signal,
+    );
+    if (!read.ok)
+      return read.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: read.error.cleanupFailure };
+    if (read.value === undefined) return {};
+    const { address, fileOffset } = read.value;
+    const observed = await client.callTool(
+      "procedure_address",
+      {
+        procedure: address,
+        ...(request.document === undefined
+          ? {}
+          : { document: request.document }),
+      },
+      signal === undefined ? undefined : { signal },
+    );
+    if (!observed.ok)
+      return observed.error.cleanupFailure === undefined
+        ? {}
+        : { cleanupFailure: observed.error.cleanupFailure };
+    // This lookup can also resolve a containing function. Only its exact
+    // entry can substantiate the candidate derived from LC_MAIN.
+    if (observed.value !== address) return {};
+    return {
+      hint: `Retry the same operation at Ghidra procedure address ${address} (Mach-O LC_MAIN file offset ${fileOffset}). For CLI decompile, use --procedure ${address}. For MCP, set procedure to "${address}".`,
+    };
+  };
   let projectHistory: Evidence | undefined;
   const checkSessionObservations = async (
     operation: AnalysisOperation,
@@ -861,6 +967,9 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
+  const knownDefectLimitations = ghidraKnownProviderDefectLimitations(
+    prerequisites.value.providerVersion,
+  );
   const sessionLimitations = (): readonly string[] => {
     const restored = client.checkpointRestore?.();
     return [
@@ -883,6 +992,7 @@ export const createGhidraProviderClient = (input: {
       ...disabledAnalyzerLimitations,
       ...pdbLimitations,
       ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
+      ...knownDefectLimitations,
     ];
   };
   const nativeAotOwner =
@@ -973,6 +1083,7 @@ export const createGhidraProviderClient = (input: {
       measured: observed,
       client,
       languageOverride: importLanguage,
+      comSelection,
       mapSessionError: (failure) =>
         projectSessionError(
           operation,
@@ -1076,16 +1187,30 @@ export const createGhidraProviderClient = (input: {
       if (called.ok) providerStarted = true;
       if (operation === "list_documents" || operation === "list_procedures")
         return inventoryExecution(operation, called);
-      if (!called.ok)
-        return err(
-          projectSessionError(
-            operation,
-            called.error,
-            projection,
-            lostProviderHealth(),
-            input.value,
-          ),
+      if (!called.ok) {
+        const entry = await machoMainEntryHint(
+          called.error,
+          input.value,
+          options?.signal,
         );
+        const projected = projectSessionError(
+          operation,
+          called.error,
+          projection,
+          lostProviderHealth(),
+          input.value,
+          entry.hint,
+        );
+        return err(
+          entry.cleanupFailure === undefined
+            ? projected
+            : analysisErrorWithCleanupDependencies(
+                projected,
+                entry.cleanupFailure,
+                operation,
+              ),
+        );
+      }
       if (operation === "inspect_native_load_image")
         return loadImageExecution(called.value, options?.signal);
       const result = isGhidraFunctionOperation(operation)
@@ -1099,7 +1224,14 @@ export const createGhidraProviderClient = (input: {
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
       const absenceCaveats = isGhidraFunctionOperation(operation)
-        ? emptyReferenceCaveat(operation, normalized)
+        ? [
+            ...emptyReferenceCaveat(operation, normalized),
+            ...instructionListingAbsenceCaveat(
+              operation,
+              normalized,
+              projection.source,
+            ),
+          ]
         : containingProcedureAbsenceCaveat(
             operation,
             normalized,
@@ -1318,6 +1450,7 @@ const projectSessionError = (
   projection: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const primary = projectPrimarySessionError(
     operation,
@@ -1325,6 +1458,7 @@ const projectSessionError = (
     projection,
     health,
     request,
+    entryHint,
   );
   return failure.cleanupFailure === undefined
     ? primary
@@ -1341,6 +1475,7 @@ const projectPrimarySessionError = (
   { limits, programName, source }: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
+  entryHint?: string,
 ): AnalysisError => {
   const context = {
     cause: failure,
@@ -1495,11 +1630,11 @@ const projectPrimarySessionError = (
         break;
       default:
         recovery =
-          "Use list_procedures or search_procedures to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
+          (entryHint === undefined ? "" : `${entryHint} `) +
+          "Choose an observed name or address from the current Ghidra inventory. CLI: rea search <path> . --kind procedures --mode regex --provider ghidra. MCP: use search_procedures or list_procedures. An inventory miss leaves the function's presence in the artifact unknown." +
           (source === "existing-project"
-            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
-            : "") +
-          ` ${ghidraFunctionSeedRecovery(source)}`;
+            ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME. That separate analysis excludes the selected project's annotations and other edits."
+            : "");
         relatedOperations = ["list_procedures", "search_procedures"];
     }
     return new AnalysisInputError(
@@ -1911,7 +2046,7 @@ const ghidraSessionRestart = (source: GhidraSessionSource): string =>
  * can raise the deadline only for a new invocation; a continuing caller can
  * update it for the next operation on the same Program.
  */
-export const ghidraDecompileTimeoutRecovery = (
+const ghidraDecompileTimeoutRecovery = (
   seconds: number,
   source: GhidraSessionSource,
 ): {

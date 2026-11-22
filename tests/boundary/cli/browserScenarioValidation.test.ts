@@ -53,15 +53,6 @@ const launchScenario = {
   actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
 } as const;
 
-it("accepts a valid scenario without launching or attaching to a browser", async () => {
-  const output = await serveJson(
-    registerValidatingCli(),
-    "validate-browser-scenario",
-    launchScenario,
-  );
-  expect(output).toEqual({ valid: true, actions: 1, secrets: 0 });
-});
-
 it.each(["validate-browser-scenario", "capture-browser-scenario"])(
   "%s rejects a literal Basic username containing a colon before creating a provider",
   async (command) => {
@@ -104,53 +95,40 @@ it.each(["validate-browser-scenario", "capture-browser-scenario"])(
   },
 );
 
-it("counts declared secrets without resolving their environment values", async () => {
-  const cli = registerValidatingCli();
-  const output = await serveJson(cli, "validate-browser-scenario", {
-    ...launchScenario,
-    actions: [
-      {
-        step_id: "sign-in",
-        action: "fill",
-        locator: { kind: "css", selector: "#token" },
-        value: { source: "secret", secret_id: "session_token" },
-      },
-    ],
-    secrets: [
-      { secret_id: "session_token", environment_variable: "SESSION_TOKEN" },
-      { secret_id: "api_key", environment_variable: "API_KEY" },
-    ],
-  });
-  expect(output).toEqual({ valid: true, actions: 1, secrets: 2 });
-});
+const secretAction = {
+  step_id: "sign-in",
+  action: "fill",
+  locator: { kind: "css", selector: "#token" },
+  value: { source: "secret", secret_id: "session_token" },
+};
+const disconnectedBrowser = {
+  mode: "connect",
+  cdp_endpoint: "http://127.0.0.1:1",
+  target_id: "unavailable-target",
+};
 
-it("rejects a duplicate action step identity with the offending field path", async () => {
-  const output = await serveJson(
-    registerValidatingCli(),
-    "validate-browser-scenario",
-    {
-      ...launchScenario,
-      actions: [
-        { step_id: "settle", action: "wait_for_timeout", duration_ms: 1 },
-        { step_id: "settle", action: "wait_for_timeout", duration_ms: 2 },
-      ],
-    },
-  );
-  expect(output).toMatchObject({
-    error: "Browser scenario validation failed",
-    code: "invalid_request",
-    category: "invalid_input",
-    details: {
-      issues: [
-        expect.objectContaining({
-          path: ["actions"],
-          reason: "invalid_value",
-          message: "Action step IDs must be unique",
-        }),
-      ],
-    },
-  });
-});
+it.each([
+  ["launch", launchScenario.browser],
+  ["connect", disconnectedBrowser],
+])(
+  "validates %s and counts secrets without touching runtime resources",
+  async (_mode, browser) => {
+    const output = await serveJson(
+      registerValidatingCli(),
+      "validate-browser-scenario",
+      {
+        ...launchScenario,
+        browser,
+        actions: [secretAction],
+        secrets: [
+          { secret_id: "session_token", environment_variable: "SESSION_TOKEN" },
+          { secret_id: "api_key", environment_variable: "API_KEY" },
+        ],
+      },
+    );
+    expect(output).toEqual({ valid: true, actions: 1, secrets: 2 });
+  },
+);
 
 it("rejects an action that reuses the reserved initial step identity", async () => {
   const output = await serveJson(
@@ -186,14 +164,7 @@ it("rejects an undeclared secret reference without exposing any secret value", a
   const cli = registerValidatingCli();
   const output = await serveJson(cli, "validate-browser-scenario", {
     ...launchScenario,
-    actions: [
-      {
-        step_id: "sign-in",
-        action: "fill",
-        locator: { kind: "css", selector: "#token" },
-        value: { source: "secret", secret_id: "session_token" },
-      },
-    ],
+    actions: [secretAction],
   });
   const serialized = JSON.stringify(output);
   expect(output).toMatchObject({
@@ -238,40 +209,6 @@ it("rejects an unknown field instead of ignoring it", async () => {
       ],
     },
   });
-});
-
-it("rejects a scenario whose input file cannot be read", async () => {
-  const cli = registerValidatingCli();
-  let stdout = "";
-  await cli.cli.serve(
-    ["validate-browser-scenario", "missing-scenario.json", "--json"],
-    {
-      env: {},
-      stdout: (text) => {
-        stdout += text;
-      },
-      exit: () => undefined,
-    },
-  );
-  expect(cli.createProvider).not.toHaveBeenCalled();
-  expect(cli.readSecret).not.toHaveBeenCalled();
-  expect(JSON.parse(stdout) as unknown).toMatchObject({
-    input_path: "missing-scenario.json",
-    input_reason: "read-failed",
-  });
-});
-
-it("accepts a disconnected CDP target without constructing a provider", async () => {
-  expect(
-    await serveJson(registerValidatingCli(), "validate-browser-scenario", {
-      ...launchScenario,
-      browser: {
-        mode: "connect",
-        cdp_endpoint: "http://127.0.0.1:1",
-        target_id: "unavailable-target",
-      },
-    }),
-  ).toEqual({ valid: true, actions: 1, secrets: 0 });
 });
 
 it.each([
@@ -359,11 +296,7 @@ cliTest.for(["launch", "connect"] as const)(
           browser:
             mode === "launch"
               ? { mode, executable_path: "/nonexistent/rea-validation-browser" }
-              : {
-                  mode,
-                  cdp_endpoint: "http://127.0.0.1:1",
-                  target_id: "not-attached",
-                },
+              : disconnectedBrowser,
           secrets: [
             {
               secret_id: "session_token",
@@ -389,7 +322,8 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-scenario-validation-");
     const input = JSON.stringify(launchScenario);
-    await writeFile(join(root, "valid.json"), input);
+    const scenarioPaths = ["[scenario].json", "{scenario}.json"];
+    for (const path of scenarioPaths) await writeFile(join(root, path), input);
     await writeFile(
       join(root, "invalid.json"),
       JSON.stringify({
@@ -398,17 +332,25 @@ cliTest(
       }),
     );
     await writeFile(join(root, "malformed.json"), '{"private-value":');
-    for (const arguments_ of [
-      ["validate-browser-scenario", "valid.json", "--json"],
-      ["validate-browser-scenario", "-", "--json"],
-    ]) {
+    for (const path of [...scenarioPaths, "-"]) {
       const result = await cli.run({
-        arguments: arguments_,
+        arguments: ["validate-browser-scenario", path, "--json"],
         cwd: root,
-        ...(arguments_[1] === "-" ? { input } : {}),
+        ...(path === "-" ? { input } : {}),
       });
       expect(result.exitCode, result.stderr).toBe(0);
       expect(result.json).toEqual({ valid: true, actions: 1, secrets: 0 });
+    }
+    for (const path of ["[missing].json", "{missing}.json"]) {
+      const result = await cli.run({
+        arguments: ["validate-browser-scenario", path, "--json"],
+        cwd: root,
+      });
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.json).toMatchObject({
+        input_path: path,
+        input_reason: "read-failed",
+      });
     }
     const rejected = await cli.run({
       arguments: ["validate-browser-scenario", "invalid.json", "--json"],
@@ -422,6 +364,7 @@ cliTest(
         issues: [
           expect.objectContaining({
             path: ["actions"],
+            reason: "invalid_value",
             message: "Action step IDs must be unique",
           }),
         ],

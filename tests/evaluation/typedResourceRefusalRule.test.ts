@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { RuleTester } from "oxlint/plugins-dev";
 import rule from "../../scripts/lint/rules/typed-resource-refusal.mjs";
@@ -50,7 +50,7 @@ new RuleTester({ languageOptions: { parserOptions: { lang: "ts" } } }).run(
   },
 );
 
-it("keeps the untyped-refusal baseline to files that still need migration", async () => {
+it("keeps the untyped-refusal baseline to existing source files", async () => {
   const baseline = JSON.parse(
     await readFile(
       "scripts/lint/rules/typed-resource-refusal-baseline.json",
@@ -60,9 +60,7 @@ it("keeps the untyped-refusal baseline to files that still need migration", asyn
   for (const [file, count] of Object.entries(baseline)) {
     expect(file).toMatch(/^src\/.+\.ts$/u);
     expect(count).toBeGreaterThan(0);
-    // A file whose untyped constructions are gone must leave the baseline.
-    expect(await readFile(file, "utf8")).toContain(
-      "new AnalysisResourceConstraintError(",
-    );
+    // The rule checks counts in files lint visits. A removed file gets no visit.
+    expect((await stat(file)).isFile(), file).toBe(true);
   }
 });

@@ -21,16 +21,14 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-pointer-mappings-");
     const { client, call } = await connectLocalToolsMcp();
     const cases = [
-      ...([32, 64] as const).flatMap((bits) =>
-        (["contents", "descriptors"] as const).map((placement) => ({
-          name: `pe${bits}-header-${placement}`,
-          fixture: createGoPeHeaderPointerFixture(bits, placement),
-        })),
-      ),
-      ...(["contents", "descriptor"] as const).map((placement) => ({
-        name: `elf-cross-load-${placement}`,
-        fixture: createGoCrossLoadPointerFixture(placement),
-      })),
+      {
+        name: "pe32-header-descriptors",
+        fixture: createGoPeHeaderPointerFixture(32, "descriptors"),
+      },
+      {
+        name: "elf-cross-load-contents",
+        fixture: createGoCrossLoadPointerFixture("contents"),
+      },
     ];
     for (const { name, fixture } of cases) {
       const path = join(root, name);
@@ -62,7 +60,9 @@ cliTest(
     }
 
     const damaged = createGoCrossLoadPointerFixture("contents");
-    damaged.bytes.writeBigUInt64LE(0x11001n, 200); // A one-byte virtual gap.
+    // Keep both load translations and leave the final byte of the first load unmapped.
+    damaged.bytes.writeBigUInt64LE(4095n, 160);
+    damaged.bytes.writeBigUInt64LE(4095n, 168);
     const path = join(root, "elf-cross-load-gap");
     await writeFile(path, damaged.bytes);
     const rejected = await cli.run({

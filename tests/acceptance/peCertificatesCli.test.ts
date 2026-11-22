@@ -20,6 +20,70 @@ const contract = BINARY_DIAGNOSTICS_TOOL_CONTRACTS.find(
 if (contract === undefined)
   throw new Error("Missing inspect_pe_certificates contract");
 
+cliTest(
+  "checks the next PE certificate frame before reporting the entry limit through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-limit-framing-");
+    const path = join(root, "table.exe");
+    const single = peCertificateFixture(false, Buffer.from([0x61]), 0x0001);
+    const table = single.subarray(0x200);
+    const tableSizeAt = 0x98 + 96 + 4 * 8 + 4;
+    const valid = Buffer.concat([single, table]);
+    valid.writeUInt32LE(table.length * 2, tableSizeAt);
+    const badLength = Buffer.from(valid);
+    badLength.writeUInt32LE(table.length + 1, single.length);
+    const badAlignment = Buffer.from(valid.subarray(0, valid.length - 1));
+    badAlignment.writeUInt32LE(table.length * 2 - 1, tableSizeAt);
+    const call = await cli.sharedMcpCall!();
+    for (const { bytes, message } of [
+      { bytes: valid },
+      { bytes: badLength, message: "dwLength exceeds" },
+      { bytes: badAlignment, message: "alignment padding is truncated" },
+    ]) {
+      const expectedError =
+        message === undefined
+          ? {
+              code: "resource_constraint",
+              details: {
+                resource: "capacity",
+                reported_limits: { max_entries: 1 },
+              },
+            }
+          : {
+              code: "invalid_request",
+              details: {
+                issues: [
+                  expect.objectContaining({
+                    reason: "invalid_format",
+                    message: expect.stringContaining(message),
+                  }),
+                ],
+              },
+            };
+      await writeFile(path, bytes);
+      const inspected = await cli.run({
+        arguments: [
+          "inspect-pe-certificates",
+          path,
+          "--max-entries",
+          "1",
+          "--json",
+        ],
+      });
+      expect(inspected.exitCode, inspected.stdout).toBe(1);
+      expect.soft(inspected.json).toMatchObject(expectedError);
+      const rejected = await call("inspect_pe_certificates", {
+        path,
+        max_entries: 1,
+      });
+      expect(rejected.isError, JSON.stringify(rejected)).toBe(true);
+      expect
+        .soft(parseMcpToolError(rejected).error)
+        .toMatchObject(expectedError);
+    }
+  },
+);
+
 cliTest.for([false, true])(
   "rejects incomplete certificate alignment and recovers through CLI/MCP (PE32+ = %s)",
   async (plus, { cli }) => {
@@ -535,6 +599,11 @@ cliTest.for([
       details: {
         operation: "inspect_pe_certificates",
         reported_limits: limits,
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "parser",
+          limit: Object.values(limits)[0],
+        },
       },
     });
     const { message: reason, remediation } = result.json as {
@@ -543,8 +612,6 @@ cliTest.for([
     };
     expect(reason).toContain(message);
     expect(remediation.action).toContain(String(Object.values(limits)[0]));
-    expect(remediation.action).toContain("no runtime override");
-    expect(remediation.action).toMatch(/unchanged request.*fails/iu);
   },
 );
 

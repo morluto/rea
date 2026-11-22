@@ -13,6 +13,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        context.savedDefaults,
       ),
   ),
   coreAnalysis: withAnalysis(
@@ -38,6 +39,15 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./cutterCommands.js"),
     (module, context) =>
       module.registerCutterCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
+  ),
+  userConfig: plain(
+    () => import("./userConfigCommands.js"),
+    (module, context) =>
+      module.registerUserConfigCommands(
         context.cli,
         context.logger,
         context.environment,
@@ -206,6 +216,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.environment,
       ),
   ),
+  uefi: plain(
+    () => import("./uefiCommands.js"),
+    (module, context) =>
+      module.registerUefiCommands(context.cli, context.logger),
+  ),
   android: plain(
     () => import("./androidCommands.js"),
     (module, context) =>
@@ -330,6 +345,19 @@ export const CLI_COMMAND_REGISTRATIONS = {
     (module, context) =>
       module.registerGuidedWorkflowCommands(context.cli, context.logger),
   ),
+  sourceToBundle: plain(
+    () => import("./sourceToBundleCommand.js"),
+    (module, context) =>
+      module.registerSourceToBundleCommand(context.cli, context.logger),
+  ),
+  staticObservedEndpoints: plain(
+    () => import("./staticObservedEndpointsCommand.js"),
+    (module, context) =>
+      module.registerStaticObservedEndpointsCommand(
+        context.cli,
+        context.logger,
+      ),
+  ),
   analysisView: plain(
     () => import("./analysisViewCommands.js"),
     (module, context) =>
@@ -434,7 +462,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     Family in "setup" | ToolFamilyId
   ]: readonly CliCommandRegistrationId[];
 } = {
-  setup: ["setup"],
+  setup: ["setup", "userConfig"],
   direct: ["coreAnalysis"],
   enhanced: [],
   native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],
@@ -461,6 +489,7 @@ const CLI_FAMILY_REGISTRATIONS: {
   ],
   managed: ["managed"],
   firmware: ["firmware"],
+  uefi: ["uefi"],
   android: ["android"],
   pcap: ["pcap"],
   flutter: ["flutter"],
@@ -480,6 +509,8 @@ const CLI_FAMILY_REGISTRATIONS: {
   application: [
     "guidance",
     "guidedWorkflow",
+    "sourceToBundle",
+    "staticObservedEndpoints",
     "analysisView",
     "evidence",
     "environment",

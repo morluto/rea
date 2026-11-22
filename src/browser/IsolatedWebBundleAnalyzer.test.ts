@@ -115,49 +115,7 @@ it("preserves completed prefix and suffix facts when one script times out", asyn
   expect(JSON.stringify(timedOut)).not.toContain("--");
 });
 
-it("keeps the selected allowance and its recovery for a refused script", async () => {
-  const captured = inspection(["fetch('/kept');", "fetch('/refused');"]);
-  const allowance = { aliasStates: 64, source: "runtime" } as const;
-  const refusal = javaScriptMemberMutationRefusal(
-    "analyze_web_bundle",
-    allowance,
-  );
-  const received: unknown[] = [];
-  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
-    analyze: async (script, _timeout, _signal, _precision, selected) => {
-      received.push(selected);
-      return script.script_key === captured.scripts.items[1]?.script_key
-        ? err({ error: refusal, completed: null })
-        : ok(analyzeCapturedWebScript(script));
-    },
-    close: async () => {},
-  }));
-  expect((await analyzer.reserve()).ok).toBe(true);
-  const result = await analyzer.analyze(
-    captured,
-    noSourceMaps,
-    input,
-    undefined,
-    allowance,
-  );
-  analyzer.releaseReservation();
-  if (!result.ok) throw result.error;
-  expect(received).toEqual([allowance, allowance]);
-  expect(result.value.unknowns).toContainEqual({
-    dimension: "javascript_analysis",
-    reason: expect.stringContaining("resource_constraint"),
-    affected_script_keys: [captured.scripts.items[1]?.script_key],
-    limit: refusal.limit,
-    remediation: refusal.remediationAction,
-  });
-  expect(refusal.limit).toMatchObject({
-    setting: "javascript.member_mutation_alias_states",
-    effective_value: 64,
-    source: "runtime",
-  });
-});
-
-it("keeps a refused script's parse and text facts beside its refusal", async () => {
+it("keeps per-script refusal coverage and any completed facts under the selected allowance", async () => {
   const refused = [
     "/* __webpack_require__ */ function probe(input, env) { var m; if (env.first) m = env.first.info;",
     ...Array.from(
@@ -167,14 +125,23 @@ it("keeps a refused script's parse and text facts beside its refusal", async () 
     ),
     "m[1] = input.length; var c = new Map(); c.get('k'); fetch('/hidden'); return m; }",
   ].join(" ");
-  const captured = inspection(["fetch('/kept');", refused]);
+  const captured = inspection([
+    "fetch('/kept');",
+    refused,
+    "fetch('/unavailable');",
+  ]);
+  const keys = captured.scripts.items.map(({ script_key }) => script_key);
   const allowance = { aliasStates: 8, source: "runtime" } as const;
   const refusal = javaScriptMemberMutationRefusal(
     "analyze_web_bundle",
     allowance,
   );
+  const received: unknown[] = [];
   const analyzer = new IsolatedWebBundleAnalyzer(() => ({
     analyze: async (script, _timeout, _signal, precision, selected) => {
+      received.push(selected);
+      if (script.script_key === keys[2])
+        return err({ error: refusal, completed: null });
       const facts = analyzeCapturedWebScript(script, precision, selected);
       // The worker parent states the refusal from the allowance it sent.
       return ok(
@@ -195,7 +162,8 @@ it("keeps a refused script's parse and text facts beside its refusal", async () 
   );
   analyzer.releaseReservation();
   if (!result.ok) throw result.error;
-  const refusedKey = captured.scripts.items[1]?.script_key;
+  expect(received).toEqual([allowance, allowance, allowance]);
+  const refusedKey = keys[1];
   expect(result.value.completeness).toMatchObject({
     status: "partial",
     parsed_scripts: 2,
@@ -211,14 +179,31 @@ it("keeps a refused script's parse and text facts beside its refusal", async () 
   expect(result.value.observations.endpoints.map(({ value }) => value)).toEqual(
     ["/kept"],
   );
-  expect(result.value.unknowns).toContainEqual({
-    dimension: "javascript_analysis",
-    reason: expect.stringContaining("resource_constraint"),
-    affected_script_keys: [refusedKey],
-    limit: refusal.limit,
-    remediation: refusal.remediationAction,
-    refused_phase: "member-mutations",
+  const limit = expect.objectContaining({
+    setting: "javascript.member_mutation_alias_states",
+    effective_value: 8,
+    source: "runtime",
   });
+  const unknowns = result.value.unknowns.filter(
+    ({ dimension }) => dimension === "javascript_analysis",
+  );
+  expect(unknowns).toEqual([
+    {
+      dimension: "javascript_analysis",
+      reason: expect.stringContaining("resource_constraint"),
+      affected_script_keys: [refusedKey],
+      limit,
+      remediation: refusal.remediationAction,
+      refused_phase: "member-mutations",
+    },
+    {
+      dimension: "javascript_analysis",
+      reason: expect.stringContaining("resource_constraint"),
+      affected_script_keys: [keys[2]],
+      limit,
+      remediation: refusal.remediationAction,
+    },
+  ]);
 });
 
 it("marks the unstarted suffix when the aggregate deadline expires", async () => {
@@ -436,19 +421,23 @@ it("retains all completed facts when cancellation arrives during worker close", 
   }));
   expect((await analyzer.reserve()).ok).toBe(true);
   const pending = analyzer.analyze(captured, noSourceMaps, input);
-  await workerClose.reached(pending, "worker close");
-  const closing = analyzer.close();
-  workerClose.release();
-  await closing;
-  const result = await pending;
-  analyzer.releaseReservation();
-
-  if (result.ok) throw new Error("Expected cancellation during finalization");
-  expect(result.error._tag).toBe("AnalysisCancelledError");
-  expect(result.error.partialObservation).toMatchObject({
-    completeness: { status: "complete", parsed_scripts: 2 },
-    observations: { endpoints: [{ value: "/one" }, { value: "/two" }] },
-  });
+  try {
+    await workerClose.reached(pending, "worker close");
+    const closing = analyzer.close();
+    workerClose.release();
+    await closing;
+    const result = await pending;
+    if (result.ok) throw new Error("Expected cancellation during finalization");
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.partialObservation).toMatchObject({
+      completeness: { status: "complete", parsed_scripts: 2 },
+      observations: { endpoints: [{ value: "/one" }, { value: "/two" }] },
+    });
+  } finally {
+    workerClose.release();
+    await pending.finally(() => analyzer.close());
+    analyzer.releaseReservation();
+  }
 });
 
 it("retains cleanup ownership after mixed worker/close failure and resolves it on retry", async () => {
@@ -506,11 +495,13 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
   replacement.releaseReservation();
 });
 
-it("shares one capture reservation when analyzers use one admission", async () => {
+it("shares a capture reservation within one admission and isolates independent owners", async () => {
   const admission = new WebBundleAnalysisAdmission();
   const first = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
   const second = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
+  const independent = new IsolatedWebBundleAnalyzer(() => inertWorker());
   expect((await first.reserve()).ok).toBe(true);
+  expect((await independent.reserve()).ok).toBe(true);
   const blocked = await second.reserve();
   if (blocked.ok) throw new Error("Expected shared admission refusal");
   expect(projectAnalysisError(blocked.error)).toMatchObject({
@@ -523,6 +514,7 @@ it("shares one capture reservation when analyzers use one admission", async () =
   first.releaseReservation();
   expect((await second.reserve()).ok).toBe(true);
   second.releaseReservation();
+  independent.releaseReservation();
 });
 
 it("does not fail one admission's analysis when another host's worker runtime is retained", async () => {
@@ -562,15 +554,6 @@ it("does not fail one admission's analysis when another host's worker runtime is
     fail = false;
     await stuck.close();
   }
-});
-
-it("does not share a capture reservation across independent admissions", async () => {
-  const first = new IsolatedWebBundleAnalyzer(() => inertWorker());
-  const second = new IsolatedWebBundleAnalyzer(() => inertWorker());
-  expect((await first.reserve()).ok).toBe(true);
-  expect((await second.reserve()).ok).toBe(true);
-  first.releaseReservation();
-  second.releaseReservation();
 });
 
 const inertWorker = (): WebBundleAnalysisWorkerPort => ({
