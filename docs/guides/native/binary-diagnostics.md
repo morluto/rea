@@ -481,6 +481,7 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+A declared PE export directory shorter than its 40-byte table is malformed.
 PE export tables and strings use file-backed headers and declared section
 content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
