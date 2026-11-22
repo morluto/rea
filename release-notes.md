@@ -311,6 +311,7 @@
 * **artifacts:** consolidate inventory view coverage ([#12871](https://github.com/morluto/rea/issues/12871)) ([5486394](https://github.com/morluto/rea/commit/5486394715d13e0224bed43d74bad0669d0fa8f3))
 * **artifacts:** consolidate keyed archive scalar delivery coverage ([7f41107](https://github.com/morluto/rea/commit/7f411078a3ddd85d570bc1ed5050ecb372be7a38))
 * **artifacts:** consolidate Node SEA carrier and wire contracts ([#13415](https://github.com/morluto/rea/issues/13415)) ([6895a9e](https://github.com/morluto/rea/commit/6895a9e86061ec1c0aca5bd0281a37f6ee75f9b9))
+* **artifacts:** consolidate Node SEA comparison coverage ([#13417](https://github.com/morluto/rea/issues/13417)) ([a394686](https://github.com/morluto/rea/commit/a394686328f1ff12206292dbf7aeb3333d2bebb2))
 * **artifacts:** consolidate reader ordering and coverage checks ([#12774](https://github.com/morluto/rea/issues/12774)) ([d1275f7](https://github.com/morluto/rea/commit/d1275f72d6fc4299f341be3d7c301f9d3d4fd155))
 * **artifacts:** consolidate selected name and admitted content coverage ([#12880](https://github.com/morluto/rea/issues/12880)) ([fdbe6d5](https://github.com/morluto/rea/commit/fdbe6d5f2b401521dcc4c0f76677ec2c80771895))
 * **artifacts:** consolidate summary replay coverage ([#12942](https://github.com/morluto/rea/issues/12942)) ([e4d3861](https://github.com/morluto/rea/commit/e4d3861756e32dc850606ac35bac0f53e24ae001))
