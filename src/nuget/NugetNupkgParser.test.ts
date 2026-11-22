@@ -20,11 +20,7 @@ import {
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
-import {
-  NUPKG_LIMITATIONS,
-  distinctTargetMatches,
-  parseNugetNupkg,
-} from "./NugetNupkgParser.js";
+import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -542,9 +538,11 @@ it.each([
   },
 );
 
-const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
+const manifestRels = (
+  ...targets: string[]
+) => `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="${target}" Id="R1" />
+  ${targets.map((target, index) => `<Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="${target}" Id="R${index + 1}" />`).join("\n  ")}
 </Relationships>
 `;
 
@@ -846,6 +844,16 @@ it.each([
     const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
     expect(report.nuspec?.source).toBe(source);
     expect(report.identity?.id).toBe(id);
+    const warnings = report.limitations.filter((line) =>
+      line.includes("case-insensitive ZIP name"),
+    );
+    expect(warnings).toEqual(
+      source === "opc-relationship"
+        ? [
+            "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
+          ]
+        : [],
+    );
   },
 );
 
@@ -916,23 +924,26 @@ it("reports unknown coverage when the central directory leaves bytes unaccounted
   ).toBe(true);
 });
 
-it("stops resolving manifest targets once a second distinct member is found", () => {
-  const bucket = Array.from({ length: 10_000 }, (_, index) => ({ index }));
-  const match = vi.fn((_target: string) => bucket);
-  const targets = Array.from(
-    { length: 10_000 },
-    (_, index) => `T${index}.nuspec`,
+it("follows multiple relationship spellings of a single physical manifest", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: {
+      "_rels/.rels": manifestRels(
+        "/CONTENT/OTHER.nuspec",
+        "/content/./Other.nuspec",
+      ),
+      "content/Other.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.nuspec).toMatchObject({
+    path: "content/Other.nuspec",
+    source: "opc-relationship",
+  });
+  expect(report.identity?.id).toBe("Ungrouped.Package");
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("case-insensitive ZIP name"),
   );
-  expect(distinctTargetMatches(targets, match)).toEqual([bucket[0], bucket[1]]);
-  expect(match).toHaveBeenCalledTimes(1);
-});
-
-it("keeps one member when every manifest target resolves to it", () => {
-  const member = { name: "Only.nuspec" };
-  const match = vi.fn((_target: string) => [member]);
-  const targets = Array.from({ length: 1_000 }, () => "ONLY.nuspec");
-  expect(distinctTargetMatches(targets, match)).toEqual([member]);
-  expect(match).toHaveBeenCalledTimes(1_000);
 });
 
 it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async () => {
