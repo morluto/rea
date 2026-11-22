@@ -54,20 +54,25 @@ vi.mock("../../domain/native/peImage.js", async (importOriginal) => {
   };
 });
 
+const input = inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" });
+
+const parseBytes = (
+  bytes: Buffer,
+  max_callbacks = input.max_callbacks,
+  signal?: AbortSignal,
+) =>
+  parsePeLoadConfig(
+    bytes,
+    { path: input.path, sha256: "a".repeat(64), bytes: bytes.length },
+    { ...input, max_callbacks },
+    signal,
+  );
+
 const parse = (
   options: PeLoadConfigFixtureOptions = {},
-  max_callbacks = 64,
-) => {
-  const bytes = peLoadConfigImage(options);
-  return parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({
-      path: "/sample.exe",
-      max_callbacks,
-    }),
-  );
-};
+  max_callbacks?: number,
+) => parseBytes(peLoadConfigImage(options), max_callbacks);
+
 describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
   it("locates callbacks and separates flag claims", async () => {
     const report = await parse({ bits });
@@ -92,31 +97,59 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     expect(report.load_config?.se_handler_count).toBe(bits === 32 ? 2 : null);
   });
   it.each([
-    [0x2100, 0x2200, 0x1700],
-    [0x2180, 0x2280, null],
-    [0x2200, 0x2300, null],
+    {
+      layout: "file-backed",
+      start: 0x2100,
+      end: 0x2200,
+      fileOffset: 0x1700,
+      section: ".text",
+    },
+    {
+      layout: "file and zero-fill",
+      start: 0x2180,
+      end: 0x2280,
+      fileOffset: null,
+      section: ".text",
+    },
+    {
+      layout: "zero-fill only",
+      start: 0x2200,
+      end: 0x2300,
+      fileOffset: null,
+      section: ".text",
+    },
+    {
+      layout: "crossing two sections with the same name",
+      start: 0x1f80,
+      end: 0x2080,
+      fileOffset: 0x1580,
+      section: null,
+    },
   ] as const)(
-    "retains a TLS template at [%s, %s) without requiring file backing",
-    async (start, end, fileOffset) => {
+    "retains only established TLS template locations for $layout",
+    async ({ layout, start, end, fileOffset, section }) => {
       const bytes = peLoadConfigImage({
         bits,
         zeroFillCallback: true,
         rawDataRange: [start, end],
       });
+      if (layout === "crossing two sections with the same name") {
+        const header = bytes.readUInt32LE(60);
+        const firstSection = header + 24 + bytes.readUInt16LE(header + 20);
+        bytes.copy(bytes, firstSection, firstSection + 40, firstSection + 48);
+      }
       const base = bits === 64 ? 0x180000000n : 0x10000000n;
-      const report = await parsePeLoadConfig(
-        bytes,
-        { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-        inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      );
+      const report = await parseBytes(bytes);
       expect(report.tls).toMatchObject({
         start_address_of_raw_data: `0x${(base + BigInt(start)).toString(16)}`,
         end_address_of_raw_data: `0x${(base + BigInt(end)).toString(16)}`,
         raw_data_size: 256,
         raw_data_file_offset: fileOffset,
-        raw_data_section: ".text",
+        raw_data_section: section,
       });
-      expect(report.tls?.callbacks).toHaveLength(1);
+      expect(report.tls?.callbacks).toMatchObject([
+        { rva: 0x2200, file_offset: null, section: ".text" },
+      ]);
       expect(report.load_config?.guard_flags?.raw).toBe(0x500);
     },
   );
@@ -160,7 +193,9 @@ describe.each([32, 64] as const)("PE%s load configuration", (bits) => {
     "callback-unterminated",
     "ambiguous-section",
   ] as const)("rejects %s", async (malformed) => {
-    await expect(parse({ bits, malformed })).rejects.toThrow();
+    await expect(parse({ bits, malformed })).rejects.toMatchObject({
+      failure: { kind: "malformed" },
+    });
   });
 });
 
@@ -181,11 +216,7 @@ it("preserves pointer precision and unknown flag bits", async () => {
   // PE64 load config at 0x640; XFG slot at +280, GuardFlags at +144.
   bytes.writeBigUInt64LE(0xfedcba9876543210n, 0x640 + 280);
   bytes.writeUInt32LE(0xf0200100, 0x640 + 144);
-  const report = await parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-  );
+  const report = await parseBytes(bytes);
   expect(report.load_config?.guard_xfg_check_function_pointer).toEqual({
     va: "0xfedcba9876543210",
     rva: null,
@@ -201,22 +232,15 @@ it("preserves pointer precision and unknown flag bits", async () => {
 it("honors cancellation before parsing", async () => {
   const bytes = peLoadConfigImage();
   const reason = { caller: "before PE load config parsing" };
-  const failure = await parsePeLoadConfig(
+  const failure = await parseBytes(
     bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    undefined,
     AbortSignal.abort(reason),
   ).catch((cause: unknown) => cause);
   expect(failure).toBeInstanceOf(ArtifactReaderFailure);
   expect(failure).toMatchObject({ reason: "cancelled" });
   if (!(failure instanceof ArtifactReaderFailure)) throw failure;
   expect(failure.cause).toBe(reason);
-});
-
-it("retains a callback in virtual-only section storage with unknown file offset", async () => {
-  expect(
-    (await parse({ zeroFillCallback: true })).tls?.callbacks[0],
-  ).toMatchObject({ rva: 0x2200, file_offset: null, section: ".text" });
 });
 
 it("requires the full physical section extent even when its virtual bytes fit", async () => {
@@ -242,14 +266,7 @@ it("resolves callback sections without rescanning the largest section table", as
   onTestFinished(() => {
     tableReads.budget = Infinity;
   });
-  const report = await parsePeLoadConfig(
-    bytes,
-    { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-    inspectPeLoadConfigInputSchema.parse({
-      path: "/sample.exe",
-      max_callbacks: 4096,
-    }),
-  );
+  const report = await parseBytes(bytes, 4096);
   expect(tableReads.count).toBeLessThanOrEqual(tableReads.budget);
   expect(report.tls?.callbacks).toHaveLength(4096);
   expect(report.tls?.callbacks.every(({ section }) => section === ".v")).toBe(
@@ -358,19 +375,14 @@ describe.each([32, 64] as const)(
   "PE%s load-config fields at specification offsets",
   (bits) => {
     it.each(
-      SPEC_FIELDS[bits].map(([name, offset, width], index) => ({
+      SPEC_FIELDS[bits].map(([name, offset, width]) => ({
         name,
-        index,
         end: offset + width,
       })),
-    )("exposes $name exactly when Size reaches $end", async ({ name, end }) => {
+    )("exposes $name exactly when Size reaches $end", async ({ end }) => {
       for (const size of [end - 1, end]) {
         const bytes = specImage(bits, size);
-        const report = await parsePeLoadConfig(
-          bytes,
-          { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-          inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-        );
+        const report = await parseBytes(bytes);
         const config = report.load_config;
         if (config === null) throw new Error("Expected a load configuration");
         expect(config.size).toBe(size);
@@ -383,9 +395,6 @@ describe.each([32, 64] as const)(
             covered ? expectedField(field, sentinel(fieldIndex, width)) : null,
           );
         });
-        expect(config[name] === null).toBe(
-          size < end || (bits === 64 && name.startsWith("se_handler")),
-        );
       }
     });
   },
@@ -410,11 +419,7 @@ it.each([32, 64] as const)(
       );
       bytes.writeUInt32LE(offset, LOAD_CONFIG_AT + offsetOffset);
       bytes.writeUInt16LE(section, LOAD_CONFIG_AT + sectionOffset);
-      const report = await parsePeLoadConfig(
-        bytes,
-        { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
-        inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
-      );
+      const report = await parseBytes(bytes);
       expect(peLoadConfigSchema.safeParse(report).success).toBe(true);
       expect(report.load_config).toMatchObject({
         dynamic_value_reloc_table: "0x0",
