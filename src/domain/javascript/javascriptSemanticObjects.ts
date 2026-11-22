@@ -20,7 +20,10 @@ import {
   type JavaScriptSemanticInitializer,
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
-import { clearSemanticValueCaches } from "./javascriptSemanticValues.js";
+import {
+  clearSemanticValueCaches,
+  evaluateSemanticExpression,
+} from "./javascriptSemanticValues.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   createSemanticReadPresenceQuery,
@@ -184,6 +187,20 @@ const collectMember = (
   );
 };
 
+/** Distinguish null from undefined because only undefined selects a default. */
+const destructuringNullishKind = (
+  expression: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  isNullish: ObjectCollectionContext["isNullish"],
+): "null" | "undefined" | null => {
+  const { node } = unwrapJavaScriptExpression(expression);
+  if (t.isNullLiteral(node)) return "null";
+  if (isNullish(node)) return "undefined";
+  if (!t.isIdentifier(node)) return null;
+  const value = evaluateSemanticExpression(node, state);
+  return value.status === "literal" && value.value === null ? "null" : null;
+};
+
 const collectDestructuring = (
   root: t.Node,
   initializer: t.Node | null | undefined,
@@ -262,12 +279,17 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     const plainObjectPath = next.plainObjectPath === true && !hasDefault;
-    // Only undefined selects the default, whose result can also be nullish.
-    if (
+    // An owned data slot can hold null directly or through a resolved local.
+    const nullish =
       selected !== undefined &&
-      (t.isObjectPattern(pattern) || t.isArrayPattern(pattern)) &&
-      isNullish(selected) &&
-      (!hasDefault || t.isNullLiteral(selected) || isNullish(occurrence.right))
+      (t.isObjectPattern(pattern) || t.isArrayPattern(pattern))
+        ? destructuringNullishKind(selected, state, isNullish)
+        : null;
+    if (
+      nullish !== null &&
+      (nullish === "null" ||
+        !hasDefault ||
+        destructuringNullishKind(occurrence.right, state, isNullish) !== null)
     ) {
       abrupt = true;
       ownSlot = undefined;
@@ -314,11 +336,16 @@ const collectDestructuring = (
           });
           continue;
         }
+        // Computing a known key with effects (for example, void call())
+        // can still invalidate the source slots before the property lookup.
+        const ownLookup =
+          !prop.computed ||
+          t.isPureish(unwrapJavaScriptExpression(prop.key).node);
         pending.push({
           pattern: prop.value,
           path: [...path, name],
-          plainObjectPath: plainObjectPath && !prop.computed,
-          lookup: prop.computed ? "unproven" : "own",
+          plainObjectPath: plainObjectPath && ownLookup,
+          lookup: ownLookup ? "own" : "unproven",
         });
       }
       continue;
