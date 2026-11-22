@@ -296,31 +296,37 @@ export const clientConfigurationSyntaxName = (
     : "JSONC";
 };
 
+/** Read the document and identify a repairable syntax at the same boundary. */
 const parseDocument = (
   text: string,
   format: Exclude<ClientConfigurationFormat, "unsupported">,
   root = "The configuration root",
-): Record<string, unknown> => {
+): Pick<ClientConfigurationDocument, "document" | "requiresRewrite"> => {
   const reader = clientConfigurationReader(format);
   if (reader.syntax === "toml")
-    return requireObject(parseClientToml(text), root);
+    return { document: requireObject(parseClientToml(text), root) };
+  const repair = reader.syntax === "json" && reader.repairsJsonc === true;
   // An empty file, which some clients create before any server is added,
   // holds no settings to preserve.
   if (
     (reader.syntax === "yaml" || reader.emptyFile === "no-settings") &&
     isEmptyClientConfigurationText(text)
   )
-    return {};
+    return repair ? { document: {}, requiresRewrite: true } : { document: {} };
   if (reader.syntax === "yaml") {
     if (reader.parse === undefined)
       throw new TypeError(`${format} configuration has a dedicated parser`);
-    return requireObject(reader.parse(text), root);
+    return { document: requireObject(reader.parse(text), root) };
   }
-  if (reader.native === "json" && reader.repairsJsonc !== true)
-    return requireObject(
-      JSON.parse(reader.bom === "accept" ? text.replace(/^\uFEFF/, "") : text),
-      root,
-    );
+  if (reader.native === "json") {
+    const input =
+      !repair && reader.bom === "accept" ? text.replace(/^\uFEFF/, "") : text;
+    try {
+      return { document: requireObject(JSON.parse(input), root) };
+    } catch (cause: unknown) {
+      if (!repair || !(cause instanceof SyntaxError)) throw cause;
+    }
+  }
   const errors: ParseError[] = [];
   // Accept a UTF-8 BOM without shifting diagnostics or editing the original text.
   const jsonText = text.startsWith("\uFEFF") ? ` ${text.slice(1)}` : text;
@@ -330,10 +336,13 @@ const parseDocument = (
     throw new SyntaxError(
       `Invalid JSON/JSONC at offset ${firstError.offset}: ${printParseErrorCode(firstError.error)}`,
     );
-  return requireObject(
-    tree === undefined ? undefined : getNodeValue(tree),
-    root,
-  );
+  return {
+    document: requireObject(
+      tree === undefined ? undefined : getNodeValue(tree),
+      root,
+    ),
+    ...(repair ? { requiresRewrite: true } : {}),
+  };
 };
 
 /** A parsed configuration whose structure, not its syntax, cannot hold MCP servers. */
@@ -355,7 +364,11 @@ const requireObject = (
 export const parseZcodeFallbackConfiguration = (
   text: string,
 ): ClientConfigurationDocument => {
-  const document = parseDocument(text, "zcode_fallback", "ZCode fallback root");
+  const { document } = parseDocument(
+    text,
+    "zcode_fallback",
+    "ZCode fallback root",
+  );
   return {
     document,
     servers:
@@ -395,16 +408,6 @@ export const parseGgcodeLegacyConfiguration = (
 /** Members of OpenCode V2's `mcp` object that are not server names. */
 const OPENCODE_V2_MCP_SETTINGS = new Set(["servers", "timeout"]);
 
-/** Parse a client document and reject malformed roots or MCP server tables. */
-const strictJsonNeedsRewrite = (text: string): boolean => {
-  try {
-    JSON.parse(text);
-    return false;
-  } catch {
-    return true;
-  }
-};
-
 /** Fx's native writer preserves a sole profile table and rejects hidden peers. */
 const fxConfigurationServersKey = (
   document: Record<string, unknown>,
@@ -426,14 +429,7 @@ export const parseClientConfiguration = (
   // DeepSeek Harness stores a Cordis patch list, not a server table.
   if (format === "zcode_fallback") return parseZcodeFallbackConfiguration(text);
   if (format === "dsh") return parseDshCordisDocument(text);
-  const document = parseDocument(text, format);
-  const reader = clientConfigurationReader(format);
-  const requiresRewrite: true | undefined =
-    reader.syntax === "json" &&
-    reader.repairsJsonc === true &&
-    strictJsonNeedsRewrite(text)
-      ? true
-      : undefined;
+  const { document, requiresRewrite } = parseDocument(text, format);
   if (
     format === "copilot_cli_project" &&
     !Object.hasOwn(document, "mcpServers")

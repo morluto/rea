@@ -12,8 +12,7 @@ export const VALUED_OUTPUT_FLAGS: ReadonlySet<string> = new Set([
 const spacedOutputValue = (
   flag: string,
   next: string | undefined,
-): string | undefined =>
-  VALUED_OUTPUT_FLAGS.has(flag) && next ? next : undefined;
+): string | undefined => (VALUED_OUTPUT_FLAGS.has(flag) ? next : undefined);
 
 export const OUTPUT_SWITCHES: ReadonlySet<string> = new Set([
   "--json",
@@ -65,7 +64,7 @@ export interface CliGlobalArguments {
   readonly commandIndices: readonly number[];
   /** Valueless global flags and timing spellings taken out before command parsing. */
   readonly flags: ReadonlySet<string>;
-  /** Positions of nonempty values consumed by valued output flags. */
+  /** Positions of explicit values consumed by valued output flags, including empty values. */
   readonly outputValues: readonly {
     readonly flag: string;
     readonly index: number;
@@ -88,7 +87,7 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
     const argument = arguments_[index]!;
     const outputValue = spacedOutputValue(argument, arguments_[index + 1]);
     if (outputValue !== undefined) {
-      // A nonempty spaced value is consumed before looking for more flags.
+      // A spaced value is consumed before looking for more flags.
       // Its contents belong to that option, even when they look like a flag.
       normalized.push(argument, outputValue);
       index += 1;
@@ -118,7 +117,7 @@ const normalizeCliArguments = (arguments_: readonly string[]): string[] => {
 /**
  * Read one invocation's global arguments. Builtin switches are taken from any
  * position, including after `--`; a valued output flag consumes the next
- * nonempty token as data. The timing global is then read from the remaining
+ * token as data even when it is empty. The timing global is then read from the remaining
  * tokens until `--`. The output argument reader reports malformed output
  * values from these same positions.
  */

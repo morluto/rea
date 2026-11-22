@@ -182,12 +182,15 @@ it.each([
     expect(invalid.isError).toBe(true);
     expect(await client.listTools()).toEqual(initial);
     const loaded = await call("discover_tools", {
-      names: ["list_unknowns", "list_unknowns"],
+      names: ["list_unknowns", "discover_tools", "list_unknowns"],
     });
     expect(loaded.structuredContent).toMatchObject({
       loaded_count: initial.tools.length + 1,
-      total_matches: 1,
-      tools: [{ name: "list_unknowns" }],
+      total_matches: 2,
+      tools: [
+        { name: "list_unknowns" },
+        { name: "discover_tools", input_schema: discovery.inputSchema },
+      ],
     });
     expect((await call("list_unknowns", {})).isError).not.toBe(true);
     const materialized = await client.listTools();
