@@ -2,6 +2,8 @@ import { jsonValueSchema } from "../domain/jsonValue.js";
 import { describe, expect, it } from "vitest";
 
 import { createBrowserEvidence } from "./BrowserEvidence.js";
+import { listBrowserTargetsInputSchema } from "../domain/browserObservation.js";
+import { browserTargetListSchema } from "../domain/browserObservationSchemas.js";
 import {
   analyzeWebBundleInputSchema,
   webBundleAnalysisSchema,
@@ -40,16 +42,25 @@ const result = webBundleAnalysisSchema.parse({
   limitations: [],
 });
 
+const bundleInput = {
+  cdp_endpoint: "http://127.0.0.1:9222",
+  target_id: "page-1",
+  observation_ms: 0,
+};
 const input = (allowedOrigins: string[]) =>
   analyzeWebBundleInputSchema.parse({
-    cdp_endpoint: "http://127.0.0.1:9222",
-    target_id: "page-1",
-    observation_ms: 0,
+    ...bundleInput,
     allowed_origins: allowedOrigins,
   });
 
-describe("web bundle Evidence origin scope", () => {
-  it("records the captured target origin when the request uses the default scope", () => {
+const deadlines = {
+  command_timeout_ms: 1_500,
+  discovery_timeout_ms: 15_000,
+  source_map_fetch_timeout_ms: 1_750,
+};
+
+describe("web bundle Evidence scope", () => {
+  it("records the captured target origin and leaves implicit deadlines omitted", () => {
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
       input([]),
@@ -60,19 +71,27 @@ describe("web bundle Evidence origin scope", () => {
     expect(evidence.parameters.allowed_origins).toEqual([
       "https://app.example.test",
     ]);
+    for (const deadline of Object.keys(deadlines))
+      expect(evidence.parameters).not.toHaveProperty(deadline);
   });
 
-  it("preserves an explicit caller origin scope", () => {
+  it("preserves the caller's explicit origin scope and independent deadlines", () => {
     const evidence = createBrowserEvidence(
       "analyze_web_bundle",
-      input(["https://explicit.example.test"]),
+      analyzeWebBundleInputSchema.parse({
+        ...bundleInput,
+        allowed_origins: ["https://explicit.example.test"],
+        fetch_source_maps: true,
+        ...deadlines,
+      }),
       { source: jsonValueSchema.parse(result), facts: result },
       provider,
     );
 
-    expect(evidence.parameters.allowed_origins).toEqual([
-      "https://explicit.example.test",
-    ]);
+    expect(evidence.parameters).toMatchObject({
+      allowed_origins: ["https://explicit.example.test"],
+      ...deadlines,
+    });
   });
 
   it("does not infer an origin from a URL without one", () => {
@@ -134,3 +153,43 @@ it.each([undefined, {}, { decoded_records: 1024 }])(
     else expect(evidence.parameters.source_map_limits).toEqual(selection);
   },
 );
+
+const targetList = browserTargetListSchema.parse({
+  browser: {
+    product: "fixture",
+    protocol_version: "1.3",
+    revision: "fake-revision",
+    user_agent: "FakeChrome",
+    js_version: "13.0",
+  },
+  targets: [],
+  excluded: { disallowed_origin: 0, unsupported_url: 0, non_page: 0 },
+  limitations: [],
+});
+
+it("records only the caller-selected discovery deadline on target listing", () => {
+  const cdp_endpoint = "ws://127.0.0.1:9222/devtools/browser/fake";
+  const observation = {
+    source: jsonValueSchema.parse(targetList),
+    facts: targetList,
+  };
+  const explicit = createBrowserEvidence(
+    "list_browser_targets",
+    listBrowserTargetsInputSchema.parse({
+      cdp_endpoint,
+      discovery_timeout_ms: 25_000,
+    }),
+    observation,
+    provider,
+  );
+  expect(explicit.parameters.discovery_timeout_ms).toBe(25_000);
+  expect(explicit.parameters).not.toHaveProperty("command_timeout_ms");
+  const omitted = createBrowserEvidence(
+    "list_browser_targets",
+    listBrowserTargetsInputSchema.parse({ cdp_endpoint }),
+    observation,
+    provider,
+  );
+  expect(omitted.parameters).not.toHaveProperty("discovery_timeout_ms");
+  expect(omitted.parameters).not.toHaveProperty("command_timeout_ms");
+});

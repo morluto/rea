@@ -546,3 +546,23 @@ it.each([
     });
   },
 );
+
+it("validates patterns even when the worker has no candidate values", async () => {
+  const invalid = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "[",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(invalid).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError", operation: "search_procedures" },
+  });
+  const empty = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^main$",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(empty).toEqual({ ok: true, value: [] });
+});

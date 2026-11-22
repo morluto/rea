@@ -91,7 +91,7 @@ const report = (
 const parent = (value = report()): AnalysisViewParent => {
   const evidence = createEvidence(
     { path: "/retained.apk", sha256: "a".repeat(64), format: "apk" },
-    { id: "jadx", name: "JADX", version: "0.7.1" },
+    { id: "jadx", name: "JADX", version: "0.0.0" },
     {
       operation: "inspect_android_package",
       parameters: {},

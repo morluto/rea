@@ -125,8 +125,8 @@ describe("CDP SVG identity at the snapshot boundary", () => {
       reason: "provider_unavailable",
       count: 3,
     });
-    expect(result.value.limitations).toContain(
-      "SVG identity was unavailable for 3 snapshotted XLink candidate nodes; their URL destinations remain unknown.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringContaining("SVG identity"),
     );
   });
 

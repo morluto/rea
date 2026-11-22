@@ -4,7 +4,7 @@ export const ENVIRONMENT_MANIFEST_EXAMPLE = {
     source: {
       kind: "retained-evidence",
       evidence_id:
-        "ev_8eb1873465f0b0acb83f57e6bda1f7dc921f16bf6832310a2102d7c1f6eaad3c",
+        "ev_343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     },
     view: {
       kind: "environment-manifest",
@@ -14,12 +14,12 @@ export const ENVIRONMENT_MANIFEST_EXAMPLE = {
   },
   output: {
     parent_evidence_id:
-      "ev_8eb1873465f0b0acb83f57e6bda1f7dc921f16bf6832310a2102d7c1f6eaad3c",
+      "ev_343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     parent_operation: "inspect_web_network_capture",
     parent_digest:
-      "8eb1873465f0b0acb83f57e6bda1f7dc921f16bf6832310a2102d7c1f6eaad3c",
+      "343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     view_digest:
-      "ab9708516d5cd0b6c377215e14231222f822552d77c3f446155d7eae6e4ea045",
+      "13a5c3c764555f047ba13f30e18ebc724a2a2c46177f70817599846d459d1332",
     artifact: {
       path: "/fixtures/environment-manifest.har",
       sha256:
@@ -34,7 +34,7 @@ export const ENVIRONMENT_MANIFEST_EXAMPLE = {
     },
     limitations: [
       "Body shapes list top-level JSON key types from one recorded request each; they do not establish required fields or a complete schema.",
-      "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+      "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3/12.3.1 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
       "Observed query parameter names do not establish required parameters, value types or a complete API schema.",
       "Opt-in template rules after-uid-literal merge recorded literals by shape; merged parameters may conflate distinct resources.",
       "Tool templates, parameters and names are inferences from recorded request lines; they do not establish handler identity, URL-space schemas or causality.",

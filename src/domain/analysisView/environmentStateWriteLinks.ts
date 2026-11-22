@@ -306,11 +306,8 @@ export const linkedCreate = (input: {
   const post = records[first]!;
   const ids = new Set(input.respondedIds(post.ordinal));
   if (ids.size === 0) return undefined;
-  // Only a read finished before the call began shows what was there before it, as `freshIds` decides.
-  const before = records
-    .slice(0, first)
-    .filter((record) => input.chronology.completedBefore(record, post));
-  for (const record of records.slice(first + 1)) {
+  for (let index = first + 1; index < records.length; index++) {
+    const record = records[index]!;
     // Another write may have made what a later read shows, so the search ends there.
     if (!own.has(record.ordinal) && input.isWrite(record)) return undefined;
     const view = input.viewOf(record.ordinal);
@@ -325,6 +322,10 @@ export const linkedCreate = (input: {
       continue;
     const id = lastSegmentValue(record.path);
     const collection = collectionPathOf(record, true);
+    // Only reads finished before the call began can show that the candidate already existed.
+    const before = records
+      .slice(0, first)
+      .filter((earlier) => input.chronology.completedBefore(earlier, post));
     // An earlier read of the id under another type or collection names another entity.
     const readBefore = before.some((earlier) => {
       const read = input.viewOf(earlier.ordinal);

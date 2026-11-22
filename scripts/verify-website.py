@@ -2,6 +2,7 @@
 
 from html.parser import HTMLParser
 from pathlib import Path
+import json
 import re
 import struct
 import sys
@@ -10,9 +11,9 @@ from urllib.parse import unquote
 import xml.etree.ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
-from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, sync_pages
+from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, social_image_path, sync_pages
 from website_i18n import is_language_code
-from website_references import markdown_references, split_reference
+from website_references import markdown_references, parse_markdown, split_reference
 
 LEGACY_ORIGIN = "morluto.github.io"
 SITE_TEXT_URL = re.compile(
@@ -20,28 +21,39 @@ SITE_TEXT_URL = re.compile(
 )
 
 
+def heading_text(tokens):
+    """Yield visible heading text from parsed inline tokens."""
+    for token in tokens:
+        if token.type in ("text", "code_inline"):
+            yield token.content
+        elif token.type in ("softbreak", "hardbreak"):
+            yield " "
+        elif token.type == "image":
+            yield from heading_text(token.children or ())
+
+
 def markdown_ids(path):
     """Collect GitHub heading anchors and explicit HTML IDs in local Markdown."""
-    source = path.read_text(encoding="utf-8")
+    tokens = parse_markdown(path.read_text(encoding="utf-8"))
     parser = HtmlReferences()
-    parser.feed(source)
-    identifiers = set(parser.ids)
+    identifiers = set()
     counts = {}
-    fenced = False
-    for line in source.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-        if fenced:
+    for index, token in enumerate(tokens):
+        if token.type == "html_block":
+            parser.feed(token.content)
+        elif token.type == "inline":
+            for child in token.children or ():
+                if child.type == "html_inline":
+                    parser.feed(child.content)
+        if token.type != "heading_open":
             continue
-        heading = re.match(r"^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$", line)
-        if not heading:
-            continue
-        text = re.sub(r"<[^>]*>", "", heading[1]).lower()
+        text = "".join(heading_text(tokens[index + 1].children or ())).lower()
         slug = "".join(c for c in text if c in "-_ " or unicodedata.category(c)[0] in "LN").replace(" ", "-")
         count = counts.get(slug, 0)
         identifiers.add(f"{slug}-{count}" if count else slug)
         counts[slug] = count + 1
-    return identifiers
+    parser.close()
+    return identifiers | parser.ids
 
 
 def check_repository_links(root):
@@ -173,6 +185,7 @@ def check_search_metadata(site, pages):
     errors = []
     indexable = set()
     titles = set()
+    previews = {"assets/social-card.png"}
     for path, page in pages.items():
         label = path.relative_to(site).as_posix()
         title = page.titles[0].strip() if len(page.titles) == 1 else ""
@@ -207,13 +220,19 @@ def check_search_metadata(site, pages):
         description = descriptions[0].strip() if len(descriptions) == 1 else ""
         if not description:
             errors.append(f"{label}: needs exactly one nonempty head description")
+        relative = path.relative_to(site)
+        if is_language_code(relative.parts[0]):
+            relative = Path(*relative.parts[1:])
+        route = relative.as_posix().removesuffix("index.html")
+        preview = social_image_path(route)
+        previews.add(preview)
         expected_og = {
-            "og:type": "website",
+            "og:type": "article" if route.startswith("blog/") and route != "blog/" else "website",
             "og:site_name": "REA",
             "og:title": title,
             "og:description": description,
             "og:url": url,
-            "og:image": f"{SITE_ORIGIN}/assets/social-card.png",
+            "og:image": f"{SITE_ORIGIN}/{preview}",
             "og:image:type": "image/png",
             "og:image:width": "1200",
             "og:image:height": "630",
@@ -307,17 +326,18 @@ def check_search_metadata(site, pages):
                 "robots.txt: expected crawl access and one absolute rea.tools sitemap directive"
             )
 
-    image = site / "assets/social-card.png"
-    if not image.is_file():
-        errors.append("Social preview PNG is missing; run scripts/prepare-website.py")
-    else:
-        header = image.read_bytes()[:24]
-        if (
-            len(header) != 24
-            or header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-            or struct.unpack(">II", header[16:24]) != (1200, 630)
-        ):
-            errors.append("Social preview must be a 1200 × 630 PNG")
+    for preview in sorted(previews):
+        image = site / preview
+        if not image.is_file():
+            errors.append(f"Social preview PNG is missing: {preview}; run scripts/prepare-website.py")
+        else:
+            header = image.read_bytes()[:24]
+            if (
+                len(header) != 24
+                or header[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+                or struct.unpack(">II", header[16:24]) != (1200, 630)
+            ):
+                errors.append("Social preview must be a 1200 × 630 PNG")
     return len(indexable), errors
 
 
@@ -448,6 +468,12 @@ def main():
     errors.extend(check_repository_links(root))
     try:
         sync_pages(root, check=True)
+        from PIL import Image
+        directory = root / "website/_site/contributors"
+        people = ranked_contributors(json.loads((directory / "people.json").read_text()))
+        with Image.open(directory / "avatars.png") as grid:
+            if grid.info.get("contributor_ids") != ",".join(str(p["id"]) for p in people):
+                errors.append("Contributor grid differs from the directory; refresh contributors.")
     except (OSError, ValueError, KeyError) as error:
         errors.append(str(error))
     if errors:

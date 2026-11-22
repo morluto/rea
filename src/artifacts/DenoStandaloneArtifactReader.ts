@@ -4,6 +4,7 @@ import { setImmediate } from "node:timers/promises";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type {
   DenoStandaloneEntryMetadata,
@@ -215,21 +216,13 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     const section = await parseDenoSection(
       location.length,
       async (offset, length) => {
-        const bytes = Buffer.alloc(length);
-        let filled = 0;
-        while (filled < length) {
-          assertArtifactReadActive(signal);
-          const read = await source.handle.read(
-            bytes,
-            filled,
-            length - filled,
-            location.offset + offset + filled,
-          );
-          assertArtifactReadActive(signal);
-          if (read.bytesRead === 0)
-            throw denoFormatFailure("section read was short");
-          filled += read.bytesRead;
-        }
+        const bytes = await readFileHandleRange(
+          source.handle,
+          location.offset + offset,
+          length,
+          () => assertArtifactReadActive(signal),
+        );
+        assertArtifactReadActive(signal);
         return bytes;
       },
       signal,
