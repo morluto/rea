@@ -26,7 +26,6 @@ import {
   ownArtifactStream,
 } from "./OwnedArtifactStream.js";
 import { cancellableArtifactChunks } from "./OwnedAsyncArtifactStream.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { AndroidSparseImageMetadata } from "../domain/artifactFormatMetadata.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
@@ -61,6 +60,8 @@ const SMALL_PAYLOAD_BYTES = 16 * 1024;
 const OUTPUT_BATCH_BYTES = 64 * 1024;
 /** Batched output yields to the event loop at least this often. */
 const OUTPUT_YIELD_BYTES = 1024 * 1024;
+/** One descriptor read of a large RAW run. */
+const RAW_READ_BYTES = 64 * 1024;
 
 interface PreparedSparseImage {
   readonly image: AndroidSparseImage;
@@ -410,12 +411,25 @@ async function* expandRuns(
     if (run.kind === "raw" && run.length > SMALL_PAYLOAD_BYTES) {
       const pending = batch.take();
       if (pending !== undefined) yield pending;
-      yield* readFileHandleChunks(handle, {
-        start: run.offset,
-        end: run.offset + run.length - 1,
-        signal,
-        cancellationFailure,
-      });
+      // Read in this iterator, not a nested prefetching stream, so each
+      // descriptor read stays pending in the owner that cancellation waits on.
+      const end = run.offset + run.length;
+      for (let position = run.offset; position < end;) {
+        assertActive();
+        const chunk = Buffer.allocUnsafe(
+          Math.min(RAW_READ_BYTES, end - position),
+        );
+        const { bytesRead } = await handle.read(
+          chunk,
+          0,
+          chunk.length,
+          position,
+        );
+        assertActive();
+        if (bytesRead === 0) break;
+        position += bytesRead;
+        yield chunk.subarray(0, bytesRead);
+      }
       continue;
     }
     let filled: Generator<Buffer>;

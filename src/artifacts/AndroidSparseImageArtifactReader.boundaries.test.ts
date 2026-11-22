@@ -543,6 +543,154 @@ it.each([
   },
 );
 
+it.each([
+  {
+    name: "close",
+    retire: (reader: AndroidSparseImageArtifactReader) => reader.close(),
+    closeWaits: true,
+  },
+  {
+    name: "caller cancellation",
+    retire: (
+      _reader: AndroidSparseImageArtifactReader,
+      controller: AbortController,
+    ) => {
+      controller.abort(new Error("stop held RAW read"));
+      return Promise.resolve();
+    },
+    closeWaits: false,
+  },
+])(
+  "waits for a held RAW read and keeps its failure on $name",
+  { timeout: 5_000 },
+  async ({ retire, closeWaits }) => {
+    const blockSize = 64 * 1024;
+    const path = await fixture(
+      buildAndroidSparseImage({
+        blockSize,
+        chunks: [{ type: "raw", data: Buffer.alloc(blockSize * 4, 0x5a) }],
+      }),
+    );
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new AndroidSparseImageArtifactReader(path, admitted);
+    const controller = new AbortController();
+    let stream: Readable | undefined;
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    let release: ((failure: Error) => void) | undefined;
+    let holding = false;
+    let heldStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      heldStarted = resolve;
+    });
+    const reads = vi.spyOn(admitted.handle, "read");
+    try {
+      const [entry] = await entries(reader);
+      holding = true;
+      reads.mockImplementation(((...args: Parameters<typeof nativeRead>) => {
+        if (!holding) return nativeRead(...args);
+        holding = false;
+        heldStarted!();
+        return new Promise((_resolve, reject) => {
+          release = reject;
+        });
+      }) as typeof admitted.handle.read);
+      stream = await reader.open(entry!, controller.signal);
+      await started;
+      const closed = new Promise<unknown>((resolve) => {
+        stream!.once("close", () => resolve(stream!.errored));
+      });
+      let retired = false;
+      const retiring = retire(reader, controller).then(() => {
+        retired = true;
+      });
+      await setImmediate();
+      await setImmediate();
+      // Neither the stream nor close settles while the descriptor read runs.
+      expect(stream.closed).toBe(false);
+      expect(retired).toBe(!closeWaits);
+      const failure = new Error("held RAW read failed");
+      release!(failure);
+      expect(await closed).toBe(failure);
+      await retiring;
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      stream?.destroy();
+      await reader.close();
+      await admitted.handle.close();
+    }
+  },
+);
+
+it.each([
+  {
+    name: "close",
+    retire: (reader: AndroidSparseImageArtifactReader) => reader.close(),
+  },
+  {
+    name: "caller cancellation",
+    retire: (
+      _reader: AndroidSparseImageArtifactReader,
+      controller: AbortController,
+    ) => {
+      controller.abort(new Error("stop undrained RAW run"));
+      return Promise.resolve();
+    },
+  },
+])(
+  "leaves no RAW read running after an undrained stream retires on $name",
+  { timeout: 5_000 },
+  async ({ retire }) => {
+    const blockSize = 64 * 1024;
+    const path = await fixture(
+      buildAndroidSparseImage({
+        blockSize,
+        chunks: [{ type: "raw", data: Buffer.alloc(blockSize * 32, 0x5a) }],
+      }),
+    );
+    const admitted = await openRegularFile(path, { symlinks: "reject" });
+    const reader = new AndroidSparseImageArtifactReader(path, admitted);
+    const controller = new AbortController();
+    const nativeRead = admitted.handle.read.bind(admitted.handle);
+    const held: (() => void)[] = [];
+    let inFlight = 0;
+    let stream: Readable | undefined;
+    const reads = vi.spyOn(admitted.handle, "read");
+    try {
+      const [entry] = await entries(reader);
+      let rawReads = 0;
+      // The first two RAW reads fill the undrained pipeline; a later read is
+      // held, and a nested stream would issue one as an unowned prefetch.
+      reads.mockImplementation((async (
+        ...args: Parameters<typeof nativeRead>
+      ) => {
+        if (++rawReads <= 2) return nativeRead(...args);
+        inFlight += 1;
+        await new Promise<void>((resolve) => held.push(resolve));
+        inFlight -= 1;
+        return nativeRead(...args);
+      }) as typeof admitted.handle.read);
+      stream = await reader.open(entry!, controller.signal);
+      for (let tick = 0; tick < 8; tick += 1) await setImmediate();
+      // How many descriptor reads were still running when the stream closed.
+      const runningAtClose = new Promise<number>((resolve) => {
+        stream!.once("close", () => resolve(inFlight));
+      });
+      const retiring = retire(reader, controller);
+      for (let tick = 0; tick < 8; tick += 1) await setImmediate();
+      for (const resolve of held.splice(0)) resolve();
+      expect(await runningAtClose).toBe(0);
+      await retiring;
+    } finally {
+      for (const resolve of held.splice(0)) resolve();
+      reads.mockRestore();
+      stream?.destroy();
+      await reader.close();
+      await admitted.handle.close();
+    }
+  },
+);
+
 it("refuses to open an entry it did not produce", async () => {
   const reader = new AndroidSparseImageArtifactReader(
     await fixture(mixedAndroidSparseImage()),
