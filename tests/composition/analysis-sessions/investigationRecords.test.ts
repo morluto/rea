@@ -213,15 +213,20 @@ it("detaches exported snapshot payloads after sealed bundle or snapshot import w
     edited: true,
   });
 
-  // Internal reads still share the sealed immutable snapshot untouched.
+  // Internal reads still share the imported record untouched, apart from the
+  // session's provider_selection stamp the import applies to every retained
+  // record.
   const borrowedRecord = session.evidenceForAnalysis(evidence.evidence_id);
   const borrowedBundle = session.immutableEvidenceBundle();
-  expect(borrowedRecord).toBe(sealedBundle.records[0]);
   expect(borrowedBundle.records[0]).toBe(borrowedRecord);
   expect(Object.isFrozen(borrowedRecord)).toBe(true);
   expect(Object.isFrozen(borrowedRecord?.normalized_result)).toBe(true);
   expect(Object.isFrozen(borrowedRecord?.raw_result)).toBe(true);
-  expect(borrowedRecord).toEqual(evidence);
+  if (borrowedRecord === undefined) throw new Error("Missing retained record");
+  expect({
+    ...borrowedRecord,
+    provider_selection: evidence.provider_selection,
+  }).toEqual(evidence);
 
   // Imported sealed AnalysisSnapshot entries are also detached on export.
   const baseProvider = createCacheProvider([]);
