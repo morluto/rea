@@ -39,7 +39,7 @@ export const resultFor = (
     case "Debugger.getScriptSource":
       return scriptSourceResult();
     case "Network.getResponseBody":
-      return responseBodyResult(options);
+      return responseBodyResult();
     case "Page.captureScreenshot":
       return screenshotResult();
     case "Browser.getVersion":
@@ -63,7 +63,7 @@ export const resultFor = (
     case "CacheStorage.requestEntries":
       return cacheEntriesResult(port);
     case "CacheStorage.requestCachedResponse":
-      return cachedResponseResult(options);
+      return cachedResponseResult();
     case "Page.enable":
     case "Page.disable":
     case "Page.setLifecycleEventsEnabled":
@@ -115,9 +115,7 @@ const frameTreeResult = (
     port,
     frameTreeReads > 1 && options.frameUrlAfterFirstRead !== undefined
       ? options.frameUrlAfterFirstRead
-      : frameTreeReads <= (options.transitionalFrameReads ?? 0)
-        ? ":"
-        : (options.electronFileUrl ?? options.attachedFrameUrl),
+      : options.electronFileUrl,
     options.extraCollections === true,
     options.webMcpFrameCount,
   );
@@ -140,16 +138,13 @@ const scriptSourceResult = () => ({
   scriptSource: "export const observed = 'source-secret';",
 });
 
-const responseBodyResult = (options: FakeOptions) =>
-  options.invalidResponseBodyBase64 === true
-    ? { body: "%%%not-base64%%%", base64Encoded: true }
-    : {
-        body: JSON.stringify({
-          result: { ok: true, token: "response-body-secret" },
-          items: [{ id: 1 }, { id: 2 }],
-        }),
-        base64Encoded: false,
-      };
+const responseBodyResult = () => ({
+  body: JSON.stringify({
+    result: { ok: true, token: "response-body-secret" },
+    items: [{ id: 1 }, { id: 2 }],
+  }),
+  base64Encoded: false,
+});
 
 const screenshotResult = () => ({
   data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==",
@@ -260,11 +255,9 @@ const cacheEntriesResult = (port: number) => ({
   returnCount: 1,
 });
 
-const cachedResponseResult = (options: FakeOptions) => ({
+const cachedResponseResult = () => ({
   response: {
-    body: Buffer.from(
-      options.cachedResponseBody ?? "cache-body-secret",
-    ).toString("base64"),
+    body: Buffer.from("cache-body-secret").toString("base64"),
   },
 });
 

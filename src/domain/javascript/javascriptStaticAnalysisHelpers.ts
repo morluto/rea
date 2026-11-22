@@ -193,11 +193,11 @@ interface StaticPathFact {
   readonly base: "source-directory" | "literal-path" | "unknown";
 }
 
-/** Resolve a path string composed only from inert literal syntax. */
+/** Project path text only after its source-directory or literal base is proven. */
 export const staticPath = (
   node: t.Node,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticPathFact(node, pathIntrinsics)?.path;
+): string | undefined => staticFileExpressionPath(node, pathIntrinsics)?.path;
 
 /** Parse spelling and its source-directory provenance together at the owning boundary. */
 const staticPathFact = (
@@ -696,7 +696,15 @@ export const endpointArgument = (
             receiverFact === "extension-state")))
     )
       return undefined;
-    return { kind: "candidate", value };
+    // Method-first clients such as superagent, needle, and Angular
+    // `HttpClient` call `request(method, url)`. When a standard method token
+    // precedes an exact string, that string is the candidate target. With a
+    // computed target, the token itself remains the candidate.
+    const target =
+      method === "request" && XHR_METHODS.has(value.toUpperCase())
+        ? stringValue(args[1])
+        : undefined;
+    return { kind: "candidate", value: target ?? value };
   }
   if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
     return candidate(stringValue(args[0]));

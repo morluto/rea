@@ -2110,6 +2110,24 @@ export const CHECK_CASES: readonly (readonly [
     false,
   ],
   [
+    {
+      kind: "value_equals",
+      file: settings,
+      pointer: "/shaped",
+      value: { children: ["437.8"], attributes: {}, name: "Cell" },
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: settings,
+      pointer: "/shaped",
+      value: { children: ["437.8"], attributes: [], name: "Cell" },
+    },
+    false,
+  ],
+  [
     { kind: "value_equals", file: settings, pointer: "/tags/1", value: "b" },
     true,
   ],

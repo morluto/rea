@@ -7,15 +7,16 @@ import {
   ZIP64_LOCATOR,
   ZIP_EOCD_BYTES,
   readZip64DirectoryRecord,
+  readZip64Locator,
   zip64EndUsesSingleVolume,
+  zip64LocatorUsesSingleVolume,
   zipEndOfCentralDirectoryCandidates,
   zipEndUsesSingleVolume,
 } from "../zipEndOfCentralDirectory.js";
 import { strictUtf8Decoder } from "../strictUtf8.js";
+import { readZipCentralExtent } from "../zip/zipCentralHeader.js";
 import { ZIP_EXTRA_FIELD, lastZipExtraField } from "../zip/zipExtraFields.js";
 
-const CENTRAL_HEADER = 0x02014b50;
-const CENTRAL_HEADER_BYTES = 46;
 const UTF8_NAME = 0x800;
 const UNIX_TYPE = 0o170000;
 const UNIX_DIRECTORY = 0o040000;
@@ -41,31 +42,40 @@ const directoryEnd = (reader: BinaryReader) => {
   const eocd = found.value;
   const end = eocd.offset;
   const { totalEntries, directorySize, directoryOffset } = eocd;
-  const classic = zipEndUsesSingleVolume(eocd)
-    ? { end, size: directorySize, declaredOffset: directoryOffset }
-    : undefined;
-  const locator = end - ZIP64_LOCATOR.bytes;
+  const classic =
+    zipEndUsesSingleVolume(eocd) && eocd.entriesOnDisk === totalEntries
+      ? {
+          end,
+          size: directorySize,
+          declaredOffset: directoryOffset,
+          entries: BigInt(totalEntries),
+        }
+      : undefined;
+  const locatorOffset = end - ZIP64_LOCATOR.bytes;
   // Like Python's zipfile, follow a locator whether or not the classic record defers to it.
-  if (locator < 0 || reader.u32(locator) !== ZIP64_LOCATOR.signature)
-    return classic;
-  const declared = reader.word(locator + ZIP64_LOCATOR.recordOffset, 64);
-  const fallback = locator - ZIP64_END.fixedBytes;
+  const locator = readZip64Locator(reader, locatorOffset);
+  if (locator === undefined) return classic;
+  const declared = locator.recordOffset;
+  const fallback = locatorOffset - ZIP64_END.fixedBytes;
   // Keep the fixed-record fallback for archives with an unadjusted prepended offset.
   for (const at of [
     declared <= BigInt(fallback) ? Number(declared) : -1,
     fallback,
   ]) {
-    const record = readZip64DirectoryRecord(reader, at, locator);
-    if (!record.ok || record.value.end !== locator) continue;
+    const record = readZip64DirectoryRecord(reader, at, locatorOffset);
+    if (!record.ok || record.value.end !== locatorOffset) continue;
     if (
       !zipEndUsesSingleVolume(eocd, "zip64Classic") ||
-      !zip64EndUsesSingleVolume(reader, locator, at)
+      !zip64LocatorUsesSingleVolume(locator) ||
+      !zip64EndUsesSingleVolume(record.value) ||
+      record.value.entriesOnDisk !== record.value.totalEntries
     )
       return undefined;
     return {
       end: at,
       size: Number(record.value.directorySize),
       declaredOffset: Number(record.value.directoryOffset),
+      entries: record.value.totalEntries,
     };
   }
   // Keep the classic values for a stray locator when the classic record is complete.
@@ -159,17 +169,11 @@ export const scanZipDirectory = (
   if (start < 0) return undefined;
   const records: Uint8Array[] = [];
   let count = 0;
+  let seen = 0;
   for (let at = start; at < located.end;) {
-    if (
-      at + CENTRAL_HEADER_BYTES > located.end ||
-      reader.u32(at) !== CENTRAL_HEADER
-    )
-      return undefined;
-    const name = at + CENTRAL_HEADER_BYTES;
-    const extra = name + reader.u16(at + 28);
-    const comment = extra + reader.u16(at + 30);
-    const next = comment + reader.u16(at + 32);
-    if (next > located.end) return undefined;
+    const extent = readZipCentralExtent(reader, at, located.end);
+    if (!extent.ok) return undefined;
+    const { name, extra, comment, next } = extent.value;
     const slash = endsInSlash(reader, {
       name,
       extra,
@@ -186,8 +190,10 @@ export const scanZipDirectory = (
       count += 1;
       if (records.length < keep) records.push(bytes.subarray(at, next));
     }
+    seen += 1;
     at = next;
   }
+  if (BigInt(seen) !== located.entries) return undefined;
   return { start, declaredOffset: located.declaredOffset, records, count };
 };
 
@@ -241,7 +247,7 @@ export const boundedDirectoryTail = (directory: ZipDirectory): Uint8Array => {
       BigInt(offset) + BigInt(size),
       true,
     );
-    locator.setUint32(16, 1, true);
+    locator.setUint32(ZIP64_LOCATOR.totalDisksOffset, 1, true);
   }
   const end = new DataView(tail.buffer, size + wideBytes, ZIP_EOCD_BYTES);
   end.setUint32(0, 0x06054b50, true);

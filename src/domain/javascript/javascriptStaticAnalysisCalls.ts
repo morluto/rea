@@ -1,6 +1,6 @@
 import {
   isBrowserNetworkRequest,
-  isFetchCall,
+  literalFetchRequestConstructorUrl,
 } from "./javascriptNetworkRequests.js";
 import * as t from "@babel/types";
 import {
@@ -602,19 +602,6 @@ export const indexVitePreloadDependencyTable = (
   };
 };
 
-const requestConstructorUrl = (
-  node: t.Node,
-  bindings: JavaScriptSemanticAnalysisState,
-): string | undefined => {
-  const target = unwrapJavaScriptExpression(node).node;
-  if (
-    t.isNewExpression(target) &&
-    isUnmodifiedGlobalReference(target.callee, bindings, "Request")
-  )
-    return stringValue(target.arguments[0]);
-  return undefined;
-};
-
 const inspectEndpointCall = (
   node: JavaScriptCallLike,
   name: string,
@@ -628,9 +615,7 @@ const inspectEndpointCall = (
     if (target === undefined) return;
     const literal =
       stringValue(target) ??
-      (isFetchCall(node, bindings)
-        ? requestConstructorUrl(target, bindings)
-        : undefined);
+      literalFetchRequestConstructorUrl(node, target, bindings);
     if (literal !== undefined) {
       addEndpoint(context, {
         node,
@@ -893,8 +878,12 @@ const urlObjectRequestTarget = (
       seen,
       isToString,
     );
-  if (!isToString && isFetchCall(site, bindings)) {
-    const requestUrl = requestConstructorUrl(initialized, bindings);
+  if (!isToString) {
+    const requestUrl = literalFetchRequestConstructorUrl(
+      site,
+      initialized,
+      bindings,
+    );
     if (requestUrl !== undefined) return requestUrl;
   }
   if (!t.isNewExpression(initialized)) return undefined;

@@ -32,7 +32,6 @@ import {
 
 const SNAPSHOT_PATH = "__node_sea__/snapshot";
 const CODE_CACHE_PATH = "__node_sea__/code-cache";
-const MAIN_FALLBACK_PATH = "__node_sea__/main.cjs";
 const ASSET_FALLBACK_PREFIX = "__node_sea__/assets/";
 
 type NodeSeaRole = "main-script" | "snapshot" | "code-cache" | "asset";
@@ -163,6 +162,9 @@ export class NodeSeaArtifactReader extends PositionalArtifactReader {
       include_exec_argv: decoded.includeExecArgv,
       exec_argv_extension: decoded.execArgvExtension,
       exec_argv: [...decoded.execArgv],
+      ...(decoded.mainCodeFormat === undefined
+        ? {}
+        : { main_code_format: decoded.mainCodeFormat }),
       code_path: decoded.codePath,
       carrier: location.carrier,
       blob_offset: location.blobOffset,
@@ -218,7 +220,12 @@ function* seaMembers(decoded: DecodedNodeSeaBlob): Generator<{
   };
   if (decoded.mainScript !== null)
     yield {
-      path: mappedPath(decoded.codePath, MAIN_FALLBACK_PATH),
+      path: mappedPath(
+        decoded.codePath,
+        decoded.mainCodeFormat === "module"
+          ? "__node_sea__/main.mjs"
+          : "__node_sea__/main.cjs",
+      ),
       sourcePath: decoded.codePath,
       role: "main-script",
       range: decoded.mainScript,

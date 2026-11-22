@@ -44,6 +44,48 @@ it("preserves full references, flags, offsets and UTF-16 names after sparse padd
   ]);
 });
 
+it.each([2 * 64 * 1024, 2 * 64 * 1024 + 8, 2 * 64 * 1024 + 24])(
+  "keeps the exact record boundary after a %i-byte zero run on a resumed page",
+  (paddingBytes) => {
+    const startFileOffset = 72;
+    const recordOffset = startFileOffset + paddingBytes;
+    const bytes = Buffer.concat([
+      journalRecord(),
+      Buffer.alloc(paddingBytes),
+      journalRecord(),
+      Buffer.alloc(3),
+    ]);
+    expect([...readUsnJournal(bytes, startFileOffset)]).toMatchObject([
+      {
+        ok: false,
+        error: {
+          kind: "padding",
+          fileOffset: startFileOffset,
+          bytes: paddingBytes,
+        },
+      },
+      { ok: true, value: { fileOffset: recordOffset, name: "a😃b" } },
+      {
+        ok: false,
+        error: { kind: "truncated", fileOffset: recordOffset + 72 },
+      },
+    ]);
+  },
+);
+
+it("does not skip a malformed header with a zero length and nonzero version", () => {
+  const paddingBytes = 2 * 64 * 1024 + 24;
+  const bytes = Buffer.alloc(paddingBytes + 8);
+  bytes.writeUInt16LE(2, paddingBytes + 4);
+  expect([...readUsnJournal(bytes)]).toEqual([
+    {
+      ok: false,
+      error: { kind: "padding", fileOffset: 0, bytes: paddingBytes },
+    },
+    { ok: false, error: { kind: "malformed", fileOffset: paddingBytes } },
+  ]);
+});
+
 it("uses a validated record length to skip unsupported and malformed records", () => {
   const unsupported = journalRecord();
   unsupported.writeUInt16LE(9, 4);
@@ -68,14 +110,14 @@ it("stops at a truncated record", () => {
   ]);
 });
 
-it("decodes V3 opaque 128-bit identifiers without narrowing to MFT references", () => {
+it("preserves V3 opaque 128-bit identifiers and signed USN words", () => {
   const bytes = Buffer.alloc(88);
   bytes.writeUInt32LE(bytes.length);
   bytes.writeUInt16LE(3, 4);
   bytes.writeBigUInt64LE(0x0002_0000_0000_0007n, 8);
   bytes.writeBigUInt64LE(0xfedcba9876543210n, 16);
   bytes.writeBigUInt64LE(9007199254740993n, 24);
-  bytes.writeBigInt64LE(9007199254740993n, 40);
+  bytes.writeBigInt64LE(-9007199254740993n, 40);
   bytes.writeBigUInt64LE(133000000000000001n, 48);
   bytes.writeUInt16LE(6, 72);
   bytes.writeUInt16LE(76, 74);
@@ -89,7 +131,7 @@ it("decodes V3 opaque 128-bit identifiers without narrowing to MFT references", 
         name: "new",
         fileReference: 0xfedcba98765432100002000000000007n,
         parentReference: 9007199254740993n,
-        usn: 9007199254740993n,
+        usn: -9007199254740993n,
         timestampFileTime: 133000000000000001n,
       },
     },

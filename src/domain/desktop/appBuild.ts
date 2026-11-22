@@ -388,6 +388,7 @@ if [ ! -f "$policy" ]; then
   exit 1
 fi
 /usr/local/bin/node --input-type=module - "$policy" "$desktop" <<'JS'
+import { isUtf8 } from "node:buffer";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -397,7 +398,12 @@ if (typeof policy.adjustInstalledDesktopText !== "function") {
   process.exit(1);
 }
 const desktop = process.argv[3];
-const adjusted = policy.adjustInstalledDesktopText(readFileSync(desktop, "utf8"), true);
+const bytes = readFileSync(desktop);
+if (!isUtf8(bytes)) {
+  console.error(\`The desktop entry \${desktop} is not valid UTF-8 and could not be adjusted for Electron.\`);
+  process.exit(1);
+}
+const adjusted = policy.adjustInstalledDesktopText(bytes.toString("utf8"), true);
 if (!adjusted.ok) {
   console.error(\`The desktop entry \${desktop} could not be adjusted for Electron: \${adjusted.error}.\`);
   process.exit(1);

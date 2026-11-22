@@ -17,19 +17,36 @@ the client can launch it.
 For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
-same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. This also applies when setup
+same selected files. Setup skips paths that pass through fnm multishell
+directories or `XDG_RUNTIME_DIR`, including through another symlink.
+This preserves durable manager aliases across
+version updates. When no eligible alias exists, setup uses the selected
+installation paths. This also applies when setup
 runs through a package runner: retain the selected cache entry and runtime while
 the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
+
+For a supported Aube v2 package shim, setup saves a wrapper around the shim so
+the registration can follow the manager's REA installation across upgrades.
+The wrapper supplies shell helpers by absolute path and binds a verified
+Node path for the shim's fallback. Setup prefers a Node alias that works
+independently of the shim's sibling interpreter, then falls back to the
+installed Node executable. The wrapper uses an executable sibling Node when
+the shim selects it and uses the saved Node for bare or hardcoded interpreter
+commands. This works without Node on the client's `PATH` and when an upgrade
+switches between the two supported shim formats.
+
 Setup forwards supported, explicitly selected REA settings into client
 configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
 unchanged. Restart the client after applying the update.
+
+If doctor reports a saved session path that still resolves, run setup to
+refresh that registration before the session directory is removed.
 
 If a runtime manager removes the registered executable and no surviving alias
 was available, doctor reports its identity as unknown and setup retains the
@@ -94,7 +111,8 @@ raising a REA startup or operation deadline, separately ensure the client allows
 enough time for the full request. Use `inspect_analysis_settings` for the running
 server's defaults; `rea doctor` checks launch configuration and cannot observe
 another process's runtime overrides. See the
-[settings design](../design/limits-and-recovery.md) for ownership and lifetime.
+[analysis settings and recovery](../reference/limits-and-recovery.md#precedence-and-lifetime)
+for precedence and lifetime.
 
 ## Client tool names and discovery
 
@@ -117,7 +135,7 @@ unfamiliar prefix. The unavailable fork reported in
 
 ## Hot/cold catalogs
 
-For a client that supports MCP catalog refresh, set
+For a client that can call newly listed tools during an active task, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
 named tools through `discover_tools`. Setup can record the explicit choice:
@@ -310,8 +328,9 @@ read it. From that redirected view, setup and uninstall refuse to change other
 clients' files there (VS Code, Trae, Devin and Hermes) and skill directories
 there. `npm install -g` run from such a process installs into the package's
 `LocalCache\Roaming\npm`, which other processes cannot see at the `%APPDATA%`
-path. Setup refuses to register a launcher stored in any MSIX package's
-private storage. Install REA from an ordinary terminal and rerun setup there.
+path. Setup and the default `rea mcp add` launcher reject runtimes and REA
+scripts stored in any MSIX package's private storage. Install REA from an
+ordinary terminal and retry the registration there.
 
 Uninstall removes REA's entry from both the private copy and the `%APPDATA%`
 file, including registrations that earlier releases wrote to `%APPDATA%`.
@@ -400,7 +419,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime runtime settings `windows.change_time_drift_ms` (`REA_WINDOWS_CHANGE_TIME_DRIFT_MS`), `windows.change_time_settle_poll_ms` (`REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`), and `windows.change_time_settle_max_polls` (`REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`), provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -461,12 +480,23 @@ using a relative override. Pi has no profiles: `OMP_PROFILE`, `PI_PROFILE`,
 Pi registration. Doctor accepts an omitted `type` for stdio but reports a
 non-stdio type as invalid; `enabled: false` stays disabled.
 
-REA configures only the user scope. Pi also reads `.pi/mcp.json` in trusted
-projects; a same-name project entry can replace the user entry or override its
-enabled state and exposure. Check that file if the user registration is aligned
-but unavailable in a project. An extension that registers `/mcp` can replace
-Pi's built-in MCP support and use its own configuration instead. Run `/reload`
-in an existing Pi session after changing servers outside the session.
+REA setup configures only the user scope. Pi also reads `.pi/mcp.json` in
+trusted projects; when a project directory has not been approved (including
+the default with no recorded trust decision or when default trust is not
+`always`), Pi does not load `.pi/mcp.json`, and doctor falls back to inspecting
+user configuration. In trusted projects, a project entry replaces the user
+entry if it defines a launcher or type, or overrides only its enabled state and
+exposure when omitting those fields. Doctor discovers project-scoped
+registrations in `.pi/mcp.json` for the current working directory in trusted
+projects and evaluates them with project precedence; its remediation text
+points to the project file. Plain `rea uninstall` removes user registrations.
+Use `rea uninstall --project DIR` to select a trusted Pi project's
+`.pi/mcp.json`. REA verifies ownership and the effect of removal, backs up the
+file before changing it, and verifies the write. Project flags that only
+override a user registration are preserved.
+An extension that registers `/mcp` can replace Pi's built-in MCP support and use
+its own configuration instead. Run `/reload` in an existing Pi session after
+changing servers outside the session.
 
 ## Qwen Code
 
@@ -566,7 +596,7 @@ the diagnostic identifies the setting to repair. See the
 for the supported policy values.
 
 When direct launcher paths prove the same executable or Node entrypoint,
-setup retains the existing caller-selected spelling. An otherwise aligned
+setup retains an existing spelling outside known session directories. An otherwise aligned
 registration therefore needs no rewrite or recovery backup merely because
 REA was invoked through another symlink. Setup also retains that spelling when
 another field, such as an invalid timeout, needs repair. Unresolved identity
@@ -672,6 +702,8 @@ another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
 Setup, doctor and uninstall share REA's sticky-profile resolver.
+If the selected profile's deletion marker cannot be checked, REA reports the
+profile as unresolved. Restore access to the reported path and retry.
 A custom `HERMES_HOME` outside the platform default home
 reads its own `active_profile`. An override physically inside the default home
 uses that default home's sticky selection and profile root together, including
@@ -1036,6 +1068,14 @@ in `~/.agents/skills` (`$DSH_AGENTS_HOME/skills` when configured); Harness
 discovers that directory, and its native `skill` tool can load
 `reverse-engineer-anything`.
 
+Keep the default `full` catalog with Harness 0.2.0-rc.2. In a headless
+loopback-model probe, `discover_tools` activated the requested tool. Harness
+re-fetched `tools/list` and received the new definition, but its next model
+request still omitted that tool. Verify that an active task can call a newly
+listed tool before opting into hot/cold on another Harness version. To restore
+upfront advertisement, run `rea setup --client dsh --tool-catalog-profile full`
+and restart Harness.
+
 REA's optional [native client verification](../development/testing.md#end-to-end-integration-and-golden-evidence)
 checks headless chat, skill loading, all tool input schemas and actual analysis
 using the installed Harness and a local model fixture. This establishes the
@@ -1148,9 +1188,22 @@ both load. If the configuration already uses OpenCode V2's native
 `mcp.rea` entry from REA. Setup honors `OPENCODE_CONFIG_DIR` and
 `OPENCODE_CONFIG`, preferring the later-loaded JSONC file when both JSON and
 JSONC exist. The ordinary XDG global configuration still participates when a
-custom directory is selected. Doctor checks the merged user registration; uninstall removes
-REA-owned entries from every applicable user file so an older entry cannot
-become active again. Malformed applicable files block setup before changes.
+custom directory is selected. OpenCode V2 discovers project configuration
+from the filesystem root to the current working directory. It loads
+`opencode.json` and `opencode.jsonc` across those directories first, then the
+files in their `.opencode` directories. When a loaded file uses the native
+`mcp.servers` table, REA applies V2's whole-row replacement rule. If the files
+use only legacy `mcp.NAME` tables, REA merges server fields across layers. An
+explicit legacy `enabled` value overrides an earlier one. Setup writes a
+native row in the selected upper file whenever a loaded layer uses
+`mcp.servers`. Lower files and peer servers stay intact. A legacy server
+named `servers` that conflicts with the native table requires manual repair.
+Doctor checks the effective registration and reports its scope. For a project
+registration, run provider probes separately with settings you explicitly
+select in the terminal. Plain `rea uninstall` removes user
+registrations. Use `rea uninstall --project DIR` to select a project; REA
+can remove an owned registration defined in that directory and checks whether
+removal would expose another launcher. Ancestors remain read-only.
 
 Grok Build loads `[mcp_servers.rea]` from `$GROK_HOME/config.toml`, or from
 `~/.grok/config.toml` when `GROK_HOME` is unset or empty. Setup edits that server
@@ -1180,14 +1233,6 @@ reports this manual step. `rea uninstall` does not remove the account connector.
 
 ## Skill selection and maintenance
 
-OpenCode's selected configuration layers determine the registration dialect.
-If any loaded layer uses native `mcp.servers`, setup writes a native REA entry
-in the selected upper file even when that file is absent or has no MCP table.
-Legacy activation is normalized before layer merging, so an explicit enable
-can override an inherited disable. Lower files and other server entries remain
-unchanged; a legacy server named `servers` that conflicts with the native table
-requires manual repair before setup can write.
-
 With no client selected, the interactive skill choice targets the shared
 `~/.agents/skills` copy. Selecting a client targets its personal destination
 when supported. Use `rea setup --skill-client shared --skill` for the shared
@@ -1216,3 +1261,27 @@ persisting an internal versioned script path. Unresolved aliases and wrappers
 that are different files do not establish that proof; setup retains its selected
 entrypoint. A manager-specific upgrade remains subject to that manager's alias
 policy.
+
+## Persisted provider settings
+
+Use `rea config --set NAME=VALUE` to save a provider path in
+`${XDG_CONFIG_HOME:-~/.config}/rea/rea.json`. `rea config --get NAME --json`
+shows the value and its source. For Hopper on macOS and Linux, it reports
+the launcher path the provider would try when no value is set.
+`rea config --unset NAME` removes the saved value. Environment variables override the file, and absent settings
+use provider discovery. When setup relies on saved defaults from a non-default
+`XDG_CONFIG_HOME`, it records that directory only if the client registration
+does not already define `XDG_CONFIG_HOME`. Each MCP start reads the saved
+file from the selected directory. Setup uses its saved IDA request budget
+when recommending client deadlines and preserves any existing client deadline.
+When one client is selected, doctor uses that registration's configuration
+location for provider probes. The JSON report lists the effective settings
+and their source (`env`, `config`, or `auto`) under
+`providerInspections[].providerSettings` and `staticProviderSettings` for
+Hopper and ILSpy. Setup leaves values from the saved file in that file so a
+later edit takes effect at the next MCP start.
+
+An edit to an existing file retains its original contents in
+`rea.json.rea.backup`. If doctor reports malformed or unreadable configuration,
+repair the named file or restore the verified backup. MCP startup reports the
+same file error.

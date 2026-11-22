@@ -84,13 +84,16 @@ describe("subject target identity", () => {
       local_path: "/elsewhere/firmware.bin",
     });
     expect(rebound.evidence_id).toBe(original.evidence_id);
-    // A different selection is a different target, so the path is not rebound.
-    expect(
-      rebindEvidenceToTargetPath(original, {
-        ...raw("0x100"),
-        path: "/elsewhere/firmware.bin",
-      }),
-    ).toBe(original);
+    for (const different of [
+      raw("0x100"),
+      { ...raw("0x0"), sha256: "f".repeat(64) },
+    ])
+      expect(
+        rebindEvidenceToTargetPath(original, {
+          ...different,
+          path: "/elsewhere/firmware.bin",
+        }),
+      ).toBe(original);
   });
 
   it("names the subject only by its identity and display facts", () => {

@@ -38,7 +38,7 @@ const VENDOR_V4_SIZE = 2128;
 const VENDOR_RAMDISK_ENTRY_SIZE = 108;
 const MAX_VENDOR_RAMDISKS = 4096;
 const MAX_RAMDISK_ENTRY_SIZE = 4096;
-const MAX_HEADER_SIZE = 1024 * 1024;
+const MAX_VENDOR_HEADER_SIZE = 1024 * 1024;
 const PAGE_MIN = 2048;
 const PAGE_MAX = 65536;
 const NAME_SIZE = 16;
@@ -152,7 +152,7 @@ const capacityError = (message: string, limit: LimitRef): never => {
 
 const HEADER_SIZE_LIMIT = {
   name: "Android boot image header_size",
-  maximum: MAX_HEADER_SIZE,
+  maximum: MAX_VENDOR_HEADER_SIZE,
   unit: "bytes",
 };
 const VENDOR_RAMDISK_COUNT_LIMIT = {
@@ -257,16 +257,17 @@ const requirePageSize = (value: number): number => {
 const requireHeaderSize = (
   value: number,
   minimum: number,
-  maximum: number,
+  maximum?: number,
 ): number => {
-  if (value > MAX_HEADER_SIZE)
-    capacityError(
-      `header_size ${value} exceeds the ${MAX_HEADER_SIZE} byte header bound`,
-      HEADER_SIZE_LIMIT,
-    );
-  if (!Number.isInteger(value) || value < minimum || value > maximum)
+  if (
+    !Number.isInteger(value) ||
+    value < minimum ||
+    (maximum !== undefined && value > maximum)
+  )
     formatError(
-      `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
+      maximum === undefined
+        ? `header_size ${value} is smaller than the ${minimum}-byte structure`
+        : `header_size ${value} is outside the supported range ${minimum} through ${maximum}`,
     );
   return value;
 };
@@ -766,6 +767,22 @@ const parseModernBoot = (
   });
 };
 
+const vendorTableByteLength = (
+  entryCount: number,
+  entrySize: number,
+): number => {
+  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
+    formatError(
+      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
+    );
+  const bytes = entryCount * entrySize;
+  if (!Number.isSafeInteger(bytes))
+    formatError(
+      `vendor ramdisk table dimensions ${entryCount} × ${entrySize} exceed a safe byte length`,
+    );
+  return bytes;
+};
+
 const parseVendorTableHeader = (
   prefix: Buffer,
 ): {
@@ -778,6 +795,17 @@ const parseVendorTableHeader = (
   const entryCount = u32(prefix, VENDOR_V3_SIZE + 4);
   const entrySize = u32(prefix, VENDOR_V3_SIZE + 8);
   const bootconfigSize = u32(prefix, VENDOR_V3_SIZE + 12);
+  if (vendorTableByteLength(entryCount, entrySize) !== tableSize)
+    formatError(
+      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
+    );
+  return { tableSize, entryCount, entrySize, bootconfigSize };
+};
+
+const requireVendorTableCapacity = (
+  entryCount: number,
+  entrySize: number,
+): void => {
   if (entryCount > MAX_VENDOR_RAMDISKS)
     capacityError(
       `vendor ramdisk table declares more than ${MAX_VENDOR_RAMDISKS} entries`,
@@ -788,16 +816,6 @@ const parseVendorTableHeader = (
       `vendor ramdisk table entry size ${entrySize} exceeds the ${MAX_RAMDISK_ENTRY_SIZE} byte entry bound`,
       VENDOR_RAMDISK_ENTRY_SIZE_LIMIT,
     );
-  if (entryCount > 0 && entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const product = entryCount * entrySize;
-  if (!Number.isSafeInteger(product) || product !== tableSize)
-    formatError(
-      `vendor ramdisk table size ${tableSize} does not equal ${entryCount} entries of ${entrySize} bytes`,
-    );
-  return { tableSize, entryCount, entrySize, bootconfigSize };
 };
 
 const parseVendorHeader = (
@@ -820,11 +838,14 @@ const parseVendorHeader = (
   const vendorRamdiskSize = u32(prefix, 24);
   const tagsAddr = u32(prefix, 2076);
   const name = decodeField(prefix.subarray(2080, 2080 + NAME_SIZE));
-  const headerSize = requireHeaderSize(
-    u32(prefix, 2096),
-    structSize,
-    MAX_HEADER_SIZE,
-  );
+  const headerSize = requireHeaderSize(u32(prefix, 2096), structSize);
+  if (headerSize > MAX_VENDOR_HEADER_SIZE) {
+    requireFileCovers(fileSize, headerSize, []);
+    capacityError(
+      `header_size ${headerSize} exceeds the ${MAX_VENDOR_HEADER_SIZE} byte header bound`,
+      HEADER_SIZE_LIMIT,
+    );
+  }
   const dtbSize = u32(prefix, 2100);
   const dtbAddr = u64(prefix, 2104, "dtb address");
   const table = headerVersion === 4 ? parseVendorTableHeader(prefix) : null;
@@ -878,6 +899,8 @@ const parseVendorHeader = (
   const section = { offset: sectionOffset, size: vendorRamdiskSize };
   const declared = [...components, section, tableRange];
   const dataEnd = requireFileCovers(fileSize, headerSize, declared);
+  if (table !== null)
+    requireVendorTableCapacity(table.entryCount, table.entrySize);
   return bootParse({
     imageKind: "vendor-boot",
     magic: VENDOR_BOOT_MAGIC,
@@ -995,11 +1018,7 @@ const readVendorRamdiskTable = (
     readonly sectionSize: number;
   },
 ): VendorRamdiskTableParse => {
-  if (input.entryCount > 0 && input.entrySize < VENDOR_RAMDISK_ENTRY_SIZE)
-    formatError(
-      `vendor ramdisk table entry size ${input.entrySize} is smaller than the ${VENDOR_RAMDISK_ENTRY_SIZE}-byte v4 entry`,
-    );
-  const expected = input.entryCount * input.entrySize;
+  const expected = vendorTableByteLength(input.entryCount, input.entrySize);
   requireBytes(table, expected, "vendor ramdisk table");
   if (table.length > expected)
     formatError(
@@ -1187,6 +1206,10 @@ const readAvbFooter = (input: {
     input.headerOccupied,
     input.components,
   );
+  // vbmeta is appended after the original image, including any padding
+  // within that image. Existing component checks name specific collisions.
+  if (vbmetaSize > 0 && vbmetaOffset < originalImageSize)
+    formatError("AVB vbmeta overlaps the original boot image");
   return {
     present: true,
     footerSize: AVB_FOOTER_SIZE,

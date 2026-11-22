@@ -13,6 +13,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        context.savedDefaults,
       ),
   ),
   coreAnalysis: withAnalysis(
@@ -38,6 +39,15 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./cutterCommands.js"),
     (module, context) =>
       module.registerCutterCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
+  ),
+  userConfig: plain(
+    () => import("./userConfigCommands.js"),
+    (module, context) =>
+      module.registerUserConfigCommands(
         context.cli,
         context.logger,
         context.environment,
@@ -205,6 +215,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.logger,
         context.environment,
       ),
+  ),
+  uefi: plain(
+    () => import("./uefiCommands.js"),
+    (module, context) =>
+      module.registerUefiCommands(context.cli, context.logger),
   ),
   android: plain(
     () => import("./androidCommands.js"),
@@ -434,7 +449,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     Family in "setup" | ToolFamilyId
   ]: readonly CliCommandRegistrationId[];
 } = {
-  setup: ["setup"],
+  setup: ["setup", "userConfig"],
   direct: ["coreAnalysis"],
   enhanced: [],
   native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],
@@ -461,6 +476,7 @@ const CLI_FAMILY_REGISTRATIONS: {
   ],
   managed: ["managed"],
   firmware: ["firmware"],
+  uefi: ["uefi"],
   android: ["android"],
   pcap: ["pcap"],
   flutter: ["flutter"],

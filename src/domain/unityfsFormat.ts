@@ -1,3 +1,4 @@
+import { BinaryReader } from "./binaryContainer.js";
 import { strictUtf8Decoder } from "./strictUtf8.js";
 /**
  * UnityFS (AssetBundle) container structure: a fixed signature header followed
@@ -139,7 +140,6 @@ export const readUnityFsHeaderFacts = (
   bytes: Uint8Array,
 ): UnityFsHeaderFacts | undefined => {
   if (!hasUnityFsHeader(bytes)) return undefined;
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let cursor = UNITYFS_VERSION_STRINGS_OFFSET;
   const readString = (): string | undefined => {
     const start = cursor;
@@ -169,14 +169,19 @@ export const readUnityFsHeaderFacts = (
   )
     return undefined;
   const fixed = cursor;
+  const reader = new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    false,
+    "unityfs",
+  );
   return {
-    formatVersion: view.getUint32(8),
+    formatVersion: reader.u32(8),
     playerVersion,
     engineVersion,
-    declaredSize: view.getBigUint64(fixed),
-    compressedBlocksInfoSize: view.getUint32(fixed + 8),
-    uncompressedBlocksInfoSize: view.getUint32(fixed + 12),
-    flags: view.getUint32(fixed + 16),
+    declaredSize: reader.word(fixed, 64),
+    compressedBlocksInfoSize: reader.u32(fixed + 8),
+    uncompressedBlocksInfoSize: reader.u32(fixed + 12),
+    flags: reader.u32(fixed + 16),
     afterFixed: fixed + UNITYFS_HEADER_TAIL_BYTES,
   };
 };

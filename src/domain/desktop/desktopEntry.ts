@@ -1,5 +1,7 @@
 import { err, ok, type Result } from "../result.js";
 import {
+  DESKTOP_ENTRY_GROUP,
+  DESKTOP_GROUP,
   DESKTOP_KEY,
   DESKTOP_KEY_SEPARATOR,
   DESKTOP_VALUE_ESCAPE,
@@ -11,6 +13,7 @@ import {
   QUOTABLE,
   QUOTED_ESCAPE,
 } from "./desktopLaunchSyntax.js";
+import { DESKTOP_LINE_BREAK } from "./desktopTextSyntax.js";
 
 /** The unlocalized `[Desktop Entry]` keys a desktop capture uses. */
 export interface DesktopEntry {
@@ -24,15 +27,29 @@ export interface DesktopEntry {
   readonly categories: readonly string[];
   readonly mime_types: readonly string[];
   readonly terminal: boolean;
+  readonly hidden: boolean;
+  /** First malformed source line ignored by tolerant field inspection. */
+  readonly malformed_line?: number;
 }
 
-const GROUP = /^\[(?<name>[^\]]+)\]$/u;
+// Capture tolerant padding separately so it stays available for validation.
+const GROUP = new RegExp(String.raw`^(\s*)${DESKTOP_GROUP}(\s*)$`, "u");
+const GLIB_GROUP_LEADING_SPACE = /^[ \t\f\r]*$/u;
+const GLIB_GROUP_TRAILING_SPACE = /^[ \t]*$/u;
+// GLib skips only its ASCII whitespace before a key or a comment. A record that
+// starts with any other Unicode space keeps that space in the key, so the line
+// is malformed rather than parsed with the space removed.
+const GLIB_LINE_LEADING_SPACE = /^[ \t\f\r]*/u;
+const INVALID_GROUP_NAME_CHARACTER = /[[\]\u0000-\u001f\u007f]/u;
+const LINE_WITH_SEPARATOR = new RegExp(`(${DESKTOP_LINE_BREAK})`, "u");
 // Only LF separates records; Unicode line/paragraph separators are value data.
 const ENTRY = new RegExp(
-  `^(?<key>${DESKTOP_KEY})${DESKTOP_KEY_SEPARATOR}(?<value>.*)$`,
+  `^(?<key>${DESKTOP_KEY})(?<locale>\\[[A-Za-z0-9_.@-]+\\])?${DESKTOP_KEY_SEPARATOR}(?<value>.*)$`,
   "su",
 );
 const valueEscape = new RegExp(DESKTOP_VALUE_ESCAPE, "gu");
+// GLib strips its ASCII whitespace from the raw boolean. LF ends the record.
+const BOOLEAN_TRUE = /^[ \t\f\r]*(?:true|1)[ \t\f\r]*$/u;
 
 /** Undo the escapes the desktop entry format allows in string values. */
 const unescapeValue = (value: string): string =>
@@ -99,36 +116,61 @@ const listValue = (value: string | undefined): readonly string[] => {
   return entries;
 };
 
-/** Read the main group of a freedesktop desktop entry, ignoring localized keys. */
-export const parseDesktopEntry = (
-  text: string,
-): Result<DesktopEntry, "missing_desktop_entry_group"> => {
-  const values = new Map<string, string>();
+/** GLib merges repeated groups and gives the last occurrence of a key precedence. */
+const readDesktopEntryFields = (text: string) => {
+  const parts = text.split(LINE_WITH_SEPARATOR);
+  const fields = new Map<
+    string,
+    { readonly value: string; readonly part: number }
+  >();
   let group: string | undefined;
   let found = false;
-  for (const raw of text.split(/\r?\n/u)) {
-    const line = raw.trim();
+  let malformedLine: number | undefined;
+  for (let index = 0; index < parts.length; index += 2) {
+    const raw = parts[index]!;
+    const line = raw.replace(GLIB_LINE_LEADING_SPACE, "");
     if (line.length === 0 || line.startsWith("#")) continue;
-    const header = GROUP.exec(line);
-    if (header?.groups !== undefined) {
-      group = header.groups.name;
-      found ||= group === "Desktop Entry";
+    const [, leading = "", header, trailing = ""] = GROUP.exec(raw) ?? [];
+    if (header !== undefined) {
+      if (
+        (group === undefined && header !== DESKTOP_ENTRY_GROUP) ||
+        INVALID_GROUP_NAME_CHARACTER.test(header) ||
+        !GLIB_GROUP_LEADING_SPACE.test(leading) ||
+        !GLIB_GROUP_TRAILING_SPACE.test(trailing)
+      )
+        malformedLine ??= index / 2 + 1;
+      // Preserve the group boundary for tolerant field and rewrite consumers.
+      group = header;
+      found ||= group === DESKTOP_ENTRY_GROUP;
       continue;
     }
     // Full-line trimming is syntax-only: string-value suffixes are data.
-    const entry = ENTRY.exec(raw.trimStart());
-    if (group !== "Desktop Entry" || entry?.groups === undefined) continue;
+    const entry = ENTRY.exec(line);
+    if (group === undefined || entry?.groups === undefined) {
+      malformedLine ??= index / 2 + 1;
+      continue;
+    }
+    if (group !== DESKTOP_ENTRY_GROUP || entry.groups.locale !== undefined)
+      continue;
     const { key, value } = entry.groups;
-    if (key !== undefined && value !== undefined && !values.has(key))
-      // Keep the existing enum/boolean token treatment before value unescaping.
-      values.set(
-        key,
-        key === "Type" || key === "Terminal" ? value.trimEnd() : value,
-      );
+    if (key !== undefined && value !== undefined)
+      fields.set(key, {
+        value: key === "Type" ? value.trimEnd() : value,
+        part: index,
+      });
   }
+  return { parts, fields, found, malformedLine };
+};
+
+/** Read the effective main-group keys, ignoring localized keys and action groups. */
+export const parseDesktopEntry = (
+  text: string,
+): Result<DesktopEntry, "missing_desktop_entry_group"> => {
+  const { fields, found, malformedLine } = readDesktopEntryFields(text);
   if (!found) return err("missing_desktop_entry_group");
+  const rawField = (key: string) => fields.get(key)?.value;
   const field = (key: string) => {
-    const value = values.get(key);
+    const value = rawField(key);
     return value === undefined ? null : unescapeValue(value);
   };
   return ok({
@@ -139,9 +181,11 @@ export const parseDesktopEntry = (
     path: field("Path"),
     icon: field("Icon"),
     startup_wm_class: field("StartupWMClass"),
-    categories: listValue(values.get("Categories")),
-    mime_types: listValue(values.get("MimeType")),
-    terminal: field("Terminal") === "true",
+    categories: listValue(rawField("Categories")),
+    mime_types: listValue(rawField("MimeType")),
+    terminal: BOOLEAN_TRUE.test(rawField("Terminal") ?? ""),
+    hidden: BOOLEAN_TRUE.test(rawField("Hidden") ?? ""),
+    ...(malformedLine === undefined ? {} : { malformed_line: malformedLine }),
   });
 };
 
@@ -188,39 +232,20 @@ export const formatDesktopExec = (argv: readonly string[]): string =>
     )
     .join(" ");
 
-const EXEC_LINE = /^Exec\s*=/u;
-
 /**
- * Replace the first `Exec` line of the main group, leaving other groups
- * alone. `exec` is the command `tokenizeDesktopExec` reads; it is escaped for
- * the desktop-entry value layer before it is written.
+ * Replace the effective main-group `Exec`, using the same record owner as
+ * parsing. Overridden keys and action groups stay unchanged. `exec` is escaped
+ * for the desktop-entry value layer before it is written.
  */
 export const replaceDesktopExec = (
   text: string,
   exec: string,
 ): Result<string, "missing_exec_line"> => {
-  const newline = text.includes("\r\n") ? "\r\n" : "\n";
-  let group: string | undefined;
-  let replaced = false;
-  const lines = text.split(/\r?\n/u).map((line) => {
-    const trimmed = line.trim();
-    const header = GROUP.exec(trimmed);
-    if (header?.groups?.name !== undefined) {
-      group = header.groups.name;
-      return line;
-    }
-    if (
-      replaced ||
-      group !== "Desktop Entry" ||
-      trimmed.length === 0 ||
-      trimmed.startsWith("#") ||
-      !EXEC_LINE.test(trimmed)
-    )
-      return line;
-    replaced = true;
-    return `Exec=${escapeDesktopEntryValue(exec)}`;
-  });
-  return replaced ? ok(lines.join(newline)) : err("missing_exec_line");
+  const { parts, fields } = readDesktopEntryFields(text);
+  const execField = fields.get("Exec");
+  if (execField === undefined) return err("missing_exec_line");
+  parts[execField.part] = `Exec=${escapeDesktopEntryValue(exec)}`;
+  return ok(parts.join(""));
 };
 
 /** Facts substituted for the `%i`, `%c` and `%k` field codes. */

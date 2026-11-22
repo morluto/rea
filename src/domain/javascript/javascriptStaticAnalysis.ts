@@ -19,8 +19,7 @@ import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascriptSemanticCove
 import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths.js";
 import {
   ELECTRON_IDENTITY_LIMITATION,
-  ELECTRON_MODULE,
-  ELECTRON_REFERENCE_KINDS,
+  referencesElectronModule,
 } from "./javascriptElectronMemberWrites.js";
 
 import { traverseJavaScriptAstSteps } from "./javascriptSemanticTraversal.js";
@@ -31,6 +30,7 @@ import {
 } from "./electronStaticRenderer.js";
 import { finishElectronNativeBindingsSteps } from "./electronStaticAnalysisNative.js";
 import { finishElectronDynamicCodeSteps } from "./electronStaticAnalysisDynamicCode.js";
+import { finishElectronIpcChannels } from "./electronStaticAnalysisIpc.js";
 import { inspectElectronStaticNode } from "./electronStaticAnalysis.js";
 import {
   hasPossibleCommonJsDelegateWrite,
@@ -233,7 +233,12 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     source,
     accumulator,
     electronIdentity,
+    () => index.indexMemberMutationFactsSteps(),
   );
+  if (accumulator.pendingIpcChannels.size > 0) {
+    yield* index.indexMemberMutationFactsSteps();
+    finishElectronIpcChannels(accumulator, bindings);
+  }
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
   return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
 }
@@ -268,24 +273,7 @@ const finalizeStaticAnalysis = (
   const parserErrors = recoveredJavaScriptSyntaxErrorCount(file.errors);
   const wrapperRedeclarations = commonJsWrapperRedeclarationCount(file.errors);
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
-  // A `worker` or `service-worker` reference records a URL relative to the
-  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
-  // not an Electron module. Read the same kinds the Electron boundary owner uses.
-  // Only a loaded module establishes Electron applicability: `require.resolve`
-  // locates the module without loading it, so no boundary fact is expected.
-  const electronObserved = accumulator.references.some(
-    ({ value }) =>
-      value.specifier !== null &&
-      value.operation === "load" &&
-      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
-      ELECTRON_MODULE.test(value.specifier) &&
-      value.loader_authority !== "candidate" &&
-      // A `factory-loader` reference names a recovered bundle module, so its
-      // specifier is a module key inside the artifact rather than a package. A
-      // real external load in the same file keeps its `commonjs-loader`
-      // identity, so it is still counted.
-      value.loader !== "factory-loader",
-  );
+  const electronObserved = referencesElectronModule(accumulator.references);
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const controls = semanticPrecisionControls(
     resourceLimits,

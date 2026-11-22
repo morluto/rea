@@ -26,50 +26,84 @@ const analyzeMaps = async (maps: Readonly<Record<string, string>>) => {
   return analysis.graph;
 };
 
-it("keeps external indexed sections unsupported while retaining local siblings", async () => {
+it("keeps nested declarations and exact section diagnostics across external and malformed siblings", async () => {
   const url = "https://app.test/maps/part.map";
-  const mapText = JSON.stringify({
+  const original = (source: string, content: string) => ({
     version: 3,
-    sections: [
-      {
-        offset: { line: 0, column: 0 },
-        map: {
-          version: 3,
-          sources: ["before.ts"],
-          sourcesContent: ["export const before = 1;"],
-          names: [],
-          mappings: "AAAA",
-        },
-      },
-      { offset: { line: 1, column: 0 }, url },
-      {
-        offset: { line: 2, column: 0 },
-        url: 42,
-        map: {
-          version: 3,
-          sources: ["ignored.ts"],
-          sourcesContent: ["export const ignored = 0;"],
-          names: [],
-          mappings: "AAAA",
-        },
-      },
-      {
-        offset: { line: 3, column: 0 },
-        map: {
-          version: 3,
-          sources: ["after.ts"],
-          sourcesContent: ["export const after = 2;"],
-          names: [],
-          mappings: "AAAA",
-        },
-      },
-    ],
+    sources: [source] as const,
+    sourcesContent: [content] as const,
+    names: [],
+    mappings: "AAAA",
   });
+  const before = original("before.ts", "export const before = 1;");
+  const middle = original("middle.ts", "export const middle = 2;");
+  const after = original("after.ts", "export const after = 3;");
+  const retained = [
+    [before, [0, 0]],
+    [middle, [0, 3]],
+    [after, [3]],
+  ] as const;
+  const indexed = [
+    {
+      offset: { line: 0, column: 0 },
+      map: {
+        version: 3,
+        sections: [
+          {
+            offset: { line: 0, column: 0 },
+            map: before,
+          },
+          {
+            offset: { line: 1, column: 0 },
+            url: `${url}/nested`,
+            map: original("ignored.ts", "0"),
+          },
+          { offset: { line: 2, column: 0 } },
+          {
+            offset: { line: 3, column: 0 },
+            map: middle,
+          },
+        ],
+      },
+    },
+    { offset: { line: 4, column: 0 }, url },
+    {
+      offset: { line: 5, column: 0 },
+      url: 42,
+      map: original("ignored.ts", "0"),
+    },
+    {
+      offset: { line: 6, column: 0 },
+      map: after,
+    },
+  ];
+  const mapText = JSON.stringify({ version: 3, sections: indexed });
   const graph = await analyzeMaps({ "indexed.js.map": mapText });
   const digest = createHash("sha256").update(mapText).digest("hex");
-  const limitation =
-    `Indexed source-map section at [2]: External source-map section URL must be a string.; ` +
-    `External source-map section URL is not fetched: ${url}`;
+  const invalid_sections = [
+    {
+      section_path: [0, 2],
+      reason:
+        "Indexed source-map section requires an embedded map or external URL.",
+    },
+    {
+      section_path: [2],
+      reason: "External source-map section URL must be a string.",
+    },
+  ];
+  const external_sections = [
+    { section_path: [0, 1], url: `${url}/nested` },
+    { section_path: [1], url },
+  ];
+  const limitation = [
+    ...invalid_sections.map(
+      ({ section_path, reason }) =>
+        `Indexed source-map section at [${section_path.join(",")}]: ${reason}`,
+    ),
+    ...external_sections.map(
+      ({ url }) => `External source-map section URL is not fetched: ${url}`,
+    ),
+  ].join("; ");
   expect(graph.coverage.status).toBe("partial");
   expect(graph.nodes).toContainEqual(
     expect.objectContaining({
@@ -79,15 +113,8 @@ it("keeps external indexed sections unsupported while retaining local siblings",
           properties: expect.objectContaining({
             path: "indexed.js.map",
             operation: "parse-local-source-map",
-            external_sections: [{ section_path: [1], url }],
-            invalid_sections: [
-              {
-                section_path: [2],
-                reason: expect.stringMatching(
-                  /section URL.*must be a string/iu,
-                ),
-              },
-            ],
+            external_sections,
+            invalid_sections,
           }),
           evidence: expect.objectContaining({
             artifact: expect.objectContaining({ sha256: digest }),
@@ -97,21 +124,32 @@ it("keeps external indexed sections unsupported while retaining local siblings",
       ]),
     }),
   );
-  for (const [source, content] of [
-    ["before.ts", "export const before = 1;"],
-    ["after.ts", "export const after = 2;"],
-  ] as const) {
-    expect(graph.nodes).toContainEqual(
+  const originals = graph.nodes.filter(
+    ({ identity }) => identity.strategy === "source-map-original",
+  );
+  expect(originals).toHaveLength(retained.length);
+  for (const [declaration_index, [map, section_path]] of retained.entries())
+    expect(originals).toContainEqual(
       expect.objectContaining({
         kind: "source-module",
         identity: expect.objectContaining({
           source_map_sha256: digest,
-          original_source: source,
-          source_sha256: createHash("sha256").update(content).digest("hex"),
+          original_source: map.sources[0],
+          source_sha256: createHash("sha256")
+            .update(map.sourcesContent[0])
+            .digest("hex"),
         }),
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              declaration_index,
+              section_path,
+              source_index: 0,
+            }),
+          }),
+        ]),
       }),
     );
-  }
 });
 
 it("marks non-array sections malformed even when the object has regular-map fields", async () => {

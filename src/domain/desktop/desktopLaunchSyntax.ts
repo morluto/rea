@@ -14,6 +14,8 @@ const escapeKeys = Object.keys(DESKTOP_VALUE_ESCAPES)
 export const DESKTOP_VALUE_ESCAPE = String.raw`\\([${escapeKeys}])`;
 export const DESKTOP_KEY = String.raw`[A-Za-z0-9-]+`;
 export const DESKTOP_KEY_SEPARATOR = String.raw`[ \t]*=[ \t]*`;
+export const DESKTOP_GROUP = String.raw`\[([^\]]+)\]`;
+export const DESKTOP_ENTRY_GROUP = "Desktop Entry";
 
 export const QUOTABLE = String.raw`["\x60$\\]`;
 export const QUOTED_ESCAPE = String.raw`\\(${QUOTABLE})`;

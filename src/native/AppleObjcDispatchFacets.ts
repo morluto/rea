@@ -83,7 +83,6 @@ const resolveSuperclass = (
 
 /** Decode Objective-C protocol lists, classlists, methods, and ivars into `result`. */
 export const decodeObjcDispatchFacets = (input: {
-  bytes: Buffer;
   sections: readonly Section[];
   segments: readonly Segment[];
   readers: ObjcDispatchReaders;
@@ -99,7 +98,6 @@ export const decodeObjcDispatchFacets = (input: {
   objcClassListScanTruncated: boolean;
 } => {
   const {
-    bytes,
     sections,
     segments,
     readers: read,
@@ -110,6 +108,18 @@ export const decodeObjcDispatchFacets = (input: {
   const failures: string[] = [];
   const categoryIssues: DecodeIssue[] = [];
   let classObjectsExamined = 0;
+  const instanceImplementationsByClass = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"][number][]
+  >();
+  const classImplementationsByClass = new Map<
+    string,
+    ObjcSwiftMetadata["objc_dispatch_implementations"][number][]
+  >();
+  const ownerIndex = (methodType: "instance" | "class") =>
+    methodType === "class"
+      ? classImplementationsByClass
+      : instanceImplementationsByClass;
   const methods = (
     list: bigint,
     className: string,
@@ -135,7 +145,7 @@ export const decodeObjcDispatchFacets = (input: {
       }
       const entry = list + 8n + BigInt(index * stride);
       const rel = (field: bigint) => {
-        const displacement = bytes.readInt32LE(read.offset(field, 4));
+        const displacement = read.i32(field);
         const target = field + BigInt(displacement);
         let fileOffset: number | null = null;
         try {
@@ -199,7 +209,7 @@ export const decodeObjcDispatchFacets = (input: {
           "Objective-C method has an empty selector",
         );
       selectors.push(selector);
-      result.objc_dispatch_implementations.push({
+      const implementationRecord = {
         class_name: className,
         selector,
         method_type: methodType,
@@ -209,7 +219,7 @@ export const decodeObjcDispatchFacets = (input: {
         decode:
           implementationLocation === null
             ? {
-                status: "partial",
+                status: "partial" as const,
                 reason: "implementation_pointer_unmapped_or_encoded",
               }
             : decoded,
@@ -219,7 +229,15 @@ export const decodeObjcDispatchFacets = (input: {
             ? "Encoded relative Objective-C method entry"
             : "Encoded absolute Objective-C method entry",
         ),
-      });
+      };
+      result.objc_dispatch_implementations.push(implementationRecord);
+      const byClass = ownerIndex(methodType);
+      let bucket = byClass.get(className);
+      if (bucket === undefined) {
+        bucket = [];
+        byClass.set(className, bucket);
+      }
+      bucket.push(implementationRecord);
     }
     return selectors;
   };
@@ -400,11 +418,7 @@ export const decodeObjcDispatchFacets = (input: {
       is_meta_class: meta,
       is_root_class: root,
       methods: projectObjcClassMethods(
-        result.objc_dispatch_implementations.filter(
-          (item) =>
-            item.class_name === name &&
-            item.method_type === (meta ? "class" : "instance"),
-        ),
+        ownerIndex(meta ? "class" : "instance").get(name) ?? [],
       ),
       properties,
       protocols,

@@ -1,6 +1,7 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -13,7 +14,7 @@ import {
 import { ArtifactFileSource } from "./ArtifactFileSource.js";
 import { artifactReaderLimitFailure } from "./ArtifactReaderLimits.js";
 import type { FileHandle } from "node:fs/promises";
-import { Duplex, PassThrough, type Readable } from "node:stream";
+import { compose, Duplex, PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
 import { constants, createZstdDecompress } from "node:zlib";
 
@@ -56,6 +57,10 @@ import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { strictUtf8Decoder } from "../domain/strictUtf8.js";
 import { decodeZipCp437 } from "../domain/zip/zipEntryText.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
+import {
+  ZstandardFramingError,
+  zstandardFrameChunks,
+} from "../domain/compression/zstandardFrameChunks.js";
 
 const ZIP_UTF8_DECODER = strictUtf8Decoder("preserve");
 
@@ -83,13 +88,16 @@ class ZipZstandardDecompressionStream {
 
   constructor(_format: string, options?: DecompressionStreamOptions) {
     const stream = Duplex.toWeb(
-      createZstdDecompress({
-        chunkSize: options?.chunkSize,
-        // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: {
-          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
-        },
-      }),
+      compose(
+        new PassThrough(),
+        zstandardFrameChunks,
+        createZstdDecompress({
+          chunkSize: options?.chunkSize,
+          params: {
+            [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+          },
+        }),
+      ),
     );
     this.readable = stream.readable;
     this.writable = stream.writable;
@@ -628,6 +636,19 @@ export const typedZipFailure = (
 ): unknown => {
   if (!(cause instanceof Error) || cause instanceof ArtifactReaderFailure)
     return cause;
+  // zip.js refuses a member's method before reading its data, so only that
+  // member's content is unreadable. The central directory still lists every
+  // entry, so entry coverage is unchanged, as for an encrypted member; the
+  // occurrence limitation carries the content gap.
+  if (
+    compressionMethod !== undefined &&
+    cause.message === ERR_UNSUPPORTED_COMPRESSION
+  )
+    return new ArtifactEntryContentUnavailable(
+      `ZIP archive uses an unsupported feature: ${cause.message} (method ${String(compressionMethod)})`,
+      `ZIP member compression method ${String(compressionMethod)} is unsupported; no content hash or child artifact was produced.`,
+      { cause },
+    );
   // Only method 93 uses Node's native Zstandard decoder. Do not classify
   // cancellation or an unrelated codec/runtime error as malformed ZIP data.
   const code = "code" in cause ? cause.code : undefined;
@@ -648,7 +669,8 @@ export const typedZipFailure = (
     });
   const invalidZstandard =
     compressionMethod === 93 &&
-    (code === "ZSTD_error_prefix_unknown" ||
+    (cause instanceof ZstandardFramingError ||
+      code === "ZSTD_error_prefix_unknown" ||
       code === "ZSTD_error_checksum_wrong" ||
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||

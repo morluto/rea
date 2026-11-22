@@ -1,3 +1,4 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { desktopLibraryPolicy } from "../domain/desktop/libraryPolicy.js";
 import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join } from "node:path";
@@ -154,14 +155,33 @@ const findNestedDesktopEntry = async (
   return incomplete ? { truncated: true } : undefined;
 };
 
+const tryExecUnavailable = async (
+  entry: DesktopEntry,
+  request: LinuxApplicationRequest,
+): Promise<string | undefined> => {
+  if (entry.type !== "Application" || !entry.try_exec) return undefined;
+  const found = await resolveProgram(
+    entry.try_exec,
+    request.environment,
+    request.callerDirectory,
+  );
+  return found === undefined ? entry.try_exec : undefined;
+};
+
 const locateDesktopEntry = async (
   request: LinuxApplicationRequest,
   selector: string,
   signal?: AbortSignal,
-): Promise<
-  Result<{ path: string; id: string | null }, LinuxApplicationRefusal>
-> => {
-  if (isAbsolute(selector)) return ok({ path: selector, id: null });
+): ReturnType<typeof readDesktopEntry> => {
+  if (isAbsolute(selector)) {
+    const located = await readDesktopEntry(selector, null, signal);
+    if (!located.ok) return located;
+    const program = await tryExecUnavailable(located.value.entry, request);
+    assertArtifactReadActive(signal);
+    return program === undefined
+      ? located
+      : err({ reason: "executable_not_found", program });
+  }
   const id = selector.endsWith(".desktop") ? selector : `${selector}.desktop`;
   const searched = desktopEntryDirectories(request.environment, request.home);
   for (const directory of searched) {
@@ -171,36 +191,61 @@ const locateDesktopEntry = async (
     assertArtifactReadActive(signal);
     if (!kind.ok)
       return err({ reason: "desktop_entry_search_incomplete", searched });
-    if (kind.value === "file")
-      return ok({ path, id: id.slice(0, -".desktop".length) });
-    // A nested entry in this directory outranks a flat one in a later root.
-    const nested = await findNestedDesktopEntry(directory, id, signal);
-    assertArtifactReadActive(signal);
-    if (nested !== undefined && "path" in nested)
-      return ok({ path: nested.path, id: id.slice(0, -".desktop".length) });
-    // The bounded search did not establish absence, so a later root must not
-    // supply a different application under the same id.
-    if (nested !== undefined)
-      return err({ reason: "desktop_entry_search_incomplete", searched });
+    let candidate = path;
+    if (kind.value !== "file") {
+      // A nested entry in this directory outranks a flat one in a later root.
+      const nested = await findNestedDesktopEntry(directory, id, signal);
+      assertArtifactReadActive(signal);
+      if (nested === undefined) continue;
+      // A bounded search cannot establish absence in this root.
+      if (!("path" in nested))
+        return err({ reason: "desktop_entry_search_incomplete", searched });
+      candidate = nested.path;
+    }
+    const located = await readDesktopEntry(
+      candidate,
+      id.slice(0, -".desktop".length),
+      signal,
+    );
+    if (!located.ok) return located;
+    if (!located.value.entry.hidden) {
+      const program = await tryExecUnavailable(located.value.entry, request);
+      assertArtifactReadActive(signal);
+      if (program !== undefined) continue;
+      return located;
+    }
+    const { type, malformed_line } = located.value.entry;
+    if (type !== "Application") continue;
+    // Claim deletion only after the hidden entry establishes its structure.
+    if (malformed_line !== undefined)
+      return err({
+        reason: "desktop_entry_invalid",
+        detail: `malformed desktop entry structure at line ${String(malformed_line)}`,
+      });
+    break;
   }
   return err({ reason: "desktop_entry_not_found", searched });
 };
 
 const readDesktopEntry = async (
   path: string,
+  id: string | null,
   signal: AbortSignal | undefined,
-): Promise<Result<DesktopEntry, LinuxApplicationRefusal>> => {
+): Promise<
+  Result<
+    { path: string; id: string | null; entry: DesktopEntry },
+    LinuxApplicationRefusal
+  >
+> => {
   const options = {
     symlinks: "follow" as const,
     ...(signal === undefined ? {} : { signal }),
   };
-  let text: string;
+  let bytes: Uint8Array;
   try {
-    text = (
-      await withOwnedRegularFile(path, options, ({ handle }) =>
-        readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
-      )
-    ).toString("utf8");
+    bytes = await withOwnedRegularFile(path, options, ({ handle }) =>
+      readStableFileBytes(handle, path, DESKTOP_ENTRY_MAX_BYTES, options),
+    );
   } catch (cause: unknown) {
     const failure = hostReadFailure(cause);
     if (failure !== cause) throw failure;
@@ -213,15 +258,16 @@ const readDesktopEntry = async (
           : "unreadable",
     });
   }
+  let text: string;
+  try {
+    text = decodeStrictUtf8(bytes, "preserve");
+  } catch {
+    return err({ reason: "desktop_entry_invalid", detail: "not valid UTF-8" });
+  }
   const parsed = parseDesktopEntry(text);
   if (!parsed.ok)
     return err({ reason: "desktop_entry_invalid", detail: parsed.error });
-  if (parsed.value.type !== "Application" || parsed.value.exec === null)
-    return err({
-      reason: "desktop_entry_invalid",
-      detail: "not an Application entry with an Exec key",
-    });
-  return ok(parsed.value);
+  return ok({ path, id, entry: parsed.value });
 };
 
 const readHeader = async (
@@ -368,28 +414,34 @@ const launchCommand = async (
     signal,
   );
   if (!located.ok) return located;
-  const entry = await readDesktopEntry(located.value.path, signal);
-  if (!entry.ok) return entry;
-  const tokens = tokenizeDesktopExec(entry.value.exec ?? "");
+  const { entry } = located.value;
+  if (entry.type !== "Application" || entry.exec === null)
+    return err({
+      reason: "desktop_entry_invalid",
+      detail: "not an Application entry with an Exec key",
+    });
+  const tokens = tokenizeDesktopExec(entry.exec);
   if (!tokens.ok)
     return err({ reason: "desktop_entry_invalid", detail: tokens.error });
   const {
     type: _type,
     try_exec: _tryExec,
+    hidden: _hidden,
+    malformed_line: _malformedLine,
     path: workingDirectory,
     ...fields
-  } = entry.value;
+  } = entry;
   return ok({
     argv: expandDesktopExec(
       tokens.value,
       {
-        icon: entry.value.icon,
-        name: entry.value.name,
+        icon: entry.icon,
+        name: entry.name,
         location: located.value.path,
       },
       request.arguments,
     ),
-    workingDirectory: workingDirectory ?? request.home,
+    workingDirectory: workingDirectory || request.home,
     entry: {
       id: located.value.id,
       path: located.value.path,

@@ -49,6 +49,10 @@ export const modernHealthSchema = z
   .object({
     status: z.literal("ok"),
     input_path: z.string().min(1),
+    input_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/iu)
+      .nullish(),
     idb_path: z.string().nullable(),
     imagebase: idaAddressSchema,
     auto_analysis_ready: z.boolean().nullable(),
@@ -294,3 +298,38 @@ export const surveySegmentsSchema = z
         });
     }
   });
+
+/**
+ * Translate a `search_strings` literal query into a candidate regex for upstream
+ * `find_regex` across all IDA protocols (`modern`, `hexrays`, and `native`)
+ * while keeping REA's ECMAScript Unicode simple case folding as the final filter.
+ *
+ * Across all 1,114,112 Unicode code points, only U+017F (`ſ` ↔ `s`/`S`) and
+ * U+212A (`K` ↔ `k`/`K`) fold to ASCII under `/iu`. Spelling them inline as
+ * `(?:[sS]|\u017f)` and `(?:[kK]|\u212a)` matches both Unicode regex engines
+ * (Python `re`) and UTF-8-as-bytes matchers (`ida-free-mcp`) without a catch-all
+ * wildcard that forces every non-ASCII string across paginated RPCs.
+ *
+ * Returns `undefined` when ill-formed UTF-16 surrogates or non-ASCII
+ * case-insensitive characters require unfiltered enumeration.
+ */
+export const idaLiteralSearchPattern = (
+  pattern: string,
+  caseSensitive: boolean,
+): string | undefined => {
+  if (/[\uD800-\uDFFF]/u.test(pattern)) return undefined;
+  if (!caseSensitive && /[\u0080-\u{10ffff}]/u.test(pattern)) return undefined;
+  let literal = (caseSensitive ? pattern : pattern.toLowerCase()).replace(
+    /[.*+?^${}()|[\]\\]/gu,
+    "\\$&",
+  );
+  // Spell ASCII variants (plus U+017F/U+212A simple folds) explicitly rather
+  // than depending on upstream regex case flags or locale rules.
+  if (!caseSensitive)
+    literal = literal.replace(/[a-z]/gu, (char) => {
+      if (char === "s") return "(?:[sS]|\u017f)";
+      if (char === "k") return "(?:[kK]|\u212a)";
+      return `[${char}${char.toUpperCase()}]`;
+    });
+  return literal;
+};

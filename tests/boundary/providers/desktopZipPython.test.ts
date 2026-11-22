@@ -472,6 +472,43 @@ describe("zip directories in the exported module", () => {
   });
 });
 
+it("refuses inconsistent classic and Zip64 directory record counts", async () => {
+  const classic = zipArchive([
+    { name: "doc/", data: "" },
+    { name: "doc/settings.json", data: '{"zoom":2}' },
+  ]);
+  const zip64 = withZip64End(classic);
+  const classicDiskCount = Buffer.from(classic);
+  classicDiskCount.writeUInt16LE(1, classicDiskCount.length - 14);
+  const classicTotal = Buffer.from(classicDiskCount);
+  classicTotal.writeUInt16LE(1, classicTotal.length - 12);
+  const zip64DiskCount = Buffer.from(zip64);
+  zip64DiskCount.writeBigUInt64LE(1n, zip64DiskCount.length - 74);
+  const zip64Total = Buffer.from(zip64DiskCount);
+  zip64Total.writeBigUInt64LE(1n, zip64Total.length - 66);
+  const archives = [classicDiskCount, classicTotal, zip64DiskCount, zip64Total];
+
+  const python = await pythonFileViews(saved(archives));
+  expect(python).toEqual(
+    archives.map(() => ({
+      format: "zip",
+      view: null,
+      error: "not a readable zip archive",
+    })),
+  );
+  for (const archive of archives)
+    expect(await readZipView(archive)).toEqual({
+      ok: false,
+      error: "not a readable zip archive",
+    });
+
+  for (const archive of [classic, zip64])
+    expect(await sameView(archive)).toMatchObject({
+      entries: [{ name: "doc/settings.json" }],
+      entry_count: 1,
+    });
+});
+
 describe("ZIP directory counts and volume admission in the exported module", () => {
   it("retains the selected ZIP count at and beyond the classic sentinel", async () => {
     const path = join(

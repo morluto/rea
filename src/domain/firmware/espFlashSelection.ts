@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ExecutableFormatHint } from "../dosCom.js";
+import type { TargetFormatHint } from "../targetFormats.js";
 import { ESP_PARTITION_TABLE_SECTOR_BYTES } from "./espPartitionTable.js";
 
 /** A 32-bit flash address written as `0x`-prefixed hexadecimal. */
@@ -13,7 +13,7 @@ export const parseEspFlashAddress = (text: string): number =>
 
 /** Describe the format and flash-input pairing without performing I/O. */
 export const espFlashSelectionError = (input: {
-  readonly format?: ExecutableFormatHint | undefined;
+  readonly format?: TargetFormatHint | undefined;
   readonly flashOffset?: number | undefined;
   readonly partitionTableOffset?: number | undefined;
 }): string | undefined => {

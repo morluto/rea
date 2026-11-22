@@ -253,6 +253,65 @@ it("preserves Exec key spacing and line endings while removing TryExec", async (
   );
 });
 
+it("installs the effective AppImage launcher and action keys while keeping extension fields", async () => {
+  const root = await stage("rea-appimage-effective-entry-");
+  const image = join(root, "env/vendor/app.AppImage");
+  const source = join(root, "source.desktop");
+  const desktop = [
+    "[Desktop Entry]",
+    "Type=Application",
+    "Name=Draw",
+    'Exec="overridden',
+    "Icon=earlier",
+    "Actions=New;",
+    "TryExec=earlier",
+    "[Desktop Action New]",
+    "Name=New Window",
+    'Exec="overridden-action',
+    "[X-Extension]",
+    'Exec="extension-data',
+    "TryExec=extension-data",
+    "[Desktop Entry]",
+    "Exec=drawio --current %U",
+    "Icon=current",
+    "TryExec=current",
+    "[Desktop Action New]",
+    "Exec=drawio --new-window",
+    "",
+  ].join("\n");
+  await writeFile(source, desktop);
+  await writeFile(
+    image,
+    STUB_APPIMAGE +
+      `cp -- "${source}" squashfs-root/drawio.desktop\n` +
+      "printf 'earlier' > squashfs-root/earlier.svg\n" +
+      "printf 'current' > squashfs-root/current.svg\n",
+    { mode: 0o755 },
+  );
+
+  await runDownloadInstall(
+    renderBuildBundle(appImageRequest("drawio"), localPayload),
+    root,
+  );
+
+  const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+  expect(
+    await readFile(
+      join(root, "local-share/applications/drawio.desktop"),
+      "utf8",
+    ),
+  ).toBe(
+    desktop
+      .replace("TryExec=earlier\n", "")
+      .replace("TryExec=current\n", "")
+      .replace("Exec=drawio --current", `Exec=${appRun} --current`)
+      .replace("Exec=drawio --new-window", `Exec=${appRun} --new-window`),
+  );
+  const icons = join(root, "local-share/icons/hicolor/scalable/apps");
+  expect(await readFile(join(icons, "current.svg"), "utf8")).toBe("current");
+  expect(await exists(join(icons, "earlier.svg"))).toBe(false);
+});
+
 it.each([
   ['env "drawio %U', "unterminated quote"],
   ["env -i", "missing program"],
@@ -446,9 +505,28 @@ it.each([
 );
 
 describe("installed launch paths", () => {
-  it.each(["", "/usr/bin/env -- REA_TEST_ENV=selected "])(
-    "rewrites and launches an Electron-style command with the shared launch policy (prefix %j)",
-    async (prefix) => {
+  it.each([
+    {
+      name: "direct command",
+      prefix: "",
+      displayName: Buffer.from("Typora"),
+      valid: true,
+    },
+    {
+      name: "wrapped command with a literal replacement character",
+      prefix: "/usr/bin/env -- REA_TEST_ENV=selected ",
+      displayName: Buffer.from("Typora \uFFFD"),
+      valid: true,
+    },
+    {
+      name: "entry containing malformed UTF-8",
+      prefix: "",
+      displayName: Buffer.from([0xff]),
+      valid: false,
+    },
+  ])(
+    "applies the shared Electron launch policy for $name",
+    async ({ prefix, displayName, valid }) => {
       const bundle = renderBuildBundle(
         {
           ...request({
@@ -495,16 +573,13 @@ describe("installed launch paths", () => {
         mode: 0o755,
       });
       const exec = `${prefix}${app} --title=sample -- APP_MODE=argument %U`;
-      const original = [
-        "[Desktop Entry]",
-        "Type=Application",
-        "Name=Typora",
-        `Exec=${exec}`,
-        "[Desktop Action New]",
-        "Name=New Window",
-        "Exec=typora --new-window",
-        "",
-      ].join("\n");
+      const original = Buffer.concat([
+        Buffer.from("[Desktop Entry]\nType=Application\nName="),
+        displayName,
+        Buffer.from(
+          `\nExec=${exec}\n[Desktop Action New]\nName=New Window\nExec=typora --new-window\n`,
+        ),
+      ]);
       await writeFile(desktop, original);
       await writeFile(
         join(bin, "node"),
@@ -520,17 +595,27 @@ describe("installed launch paths", () => {
       const scriptPath = join(root, "prepare-electron-launch.sh");
       await writeFile(scriptPath, script);
       await chmod(scriptPath, 0o755);
-      await execute("sh", [scriptPath], {
+      const prepared = execute("sh", [scriptPath], {
         cwd: process.cwd(),
         env: { ...process.env, XDG_DATA_DIRS: join(root, "share") },
       });
+      if (!valid) {
+        await expect(prepared).rejects.toMatchObject({
+          stderr: expect.stringContaining("is not valid UTF-8"),
+        });
+        expect((await readFile(desktop)).equals(original)).toBe(true);
+        return;
+      }
+      await prepared;
 
       const adjusted = await readFile(desktop, "utf8");
       expect(adjusted).toBe(
-        original.replace(
-          `Exec=${exec}`,
-          `Exec=${prefix}${app} --no-sandbox --title=sample -- APP_MODE=argument %U`,
-        ),
+        original
+          .toString("utf8")
+          .replace(
+            `Exec=${exec}`,
+            `Exec=${prefix}${app} --no-sandbox --title=sample -- APP_MODE=argument %U`,
+          ),
       );
       const parsed = parseDesktopEntry(adjusted);
       if (!parsed.ok) throw new Error(parsed.error);

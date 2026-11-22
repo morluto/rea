@@ -4,7 +4,10 @@ import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "./FilesystemSnapshot.js";
-import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
+import {
+  buildCaptureResult,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+} from "./ProcessCaptureLifecycle.js";
 import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -329,3 +332,54 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
     expect(result.truncated).toBe(false);
   },
 );
+
+it("records the PTY session-leader SIGHUP limitation on POSIX captures only", () => {
+  const capture = emptyCapture();
+  const buildForPlatform = (platform: string) =>
+    buildCaptureResult({
+      frames: [],
+      exit: { exitCode: 0, reason: "exited" },
+      samples: [],
+      before: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      after: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      truncationDetails: truncationDetails([], [], []),
+      scenario: processScenarioSchema.parse(base),
+      rootPid: 1,
+      samplingPartial: false,
+      renderedFrames: [],
+      interactions: [],
+      checkpoints: capture.filesystem_checkpoints,
+      settlement: {
+        state: capture.settlement.state,
+        elapsed_ms: capture.settlement.elapsed_ms,
+      },
+      manifest: { ...capture.manifest, platform },
+      eventJournal: [],
+    });
+
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(
+    /PTY session leader/iu,
+  );
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/SIGHUP/u);
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/group/iu);
+  for (const posixPlatform of ["linux", "darwin"]) {
+    expect(buildForPlatform(posixPlatform).limitations).toContain(
+      POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+    );
+  }
+  const winLimitations = buildForPlatform("win32").limitations;
+  expect(winLimitations).not.toContain(
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+  );
+  expect(winLimitations.some((line) => line.includes("SIGHUP"))).toBe(false);
+});

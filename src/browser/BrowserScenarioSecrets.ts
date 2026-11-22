@@ -235,15 +235,13 @@ const redactionMarker = (
 ): string => {
   const candidates = [`${REDACTION_PREFIX}${id}]`, "[REDACTED]", "…", ""];
   return (
-    candidates.find((candidate) =>
-      patterns.every(
-        (pattern) =>
-          !patternMatches(
-            candidate,
-            lowercasePercentEscapes(candidate),
-            pattern,
-          ),
-      ),
+    candidates.find(
+      (candidate) =>
+        !containsSecretPattern(
+          candidate,
+          lowercasePercentEscapes(candidate),
+          patterns,
+        ),
     ) ?? ""
   );
 };

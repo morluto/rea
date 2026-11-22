@@ -1,4 +1,7 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import {
@@ -9,13 +12,12 @@ import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { analysisErrorProjectionSchema } from "../../domain/analysisErrorProjectionSchema.js";
 import { inspectWebNetworkCaptureInputSchema } from "../../domain/webNetworkCapture.js";
 import {
+  EFFECTIVE_DECODER_CPU_RECORD,
   historicalCaptureFailure,
   protobufCaptureFailure,
+  recordedDecoderCpuSeconds,
 } from "./CaptureFailures.js";
-import {
-  CaptureFormatError,
-  captureLimitForReply,
-} from "./CaptureFormatError.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
 import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../../tests/fixtures/captureDecoderLimits.js";
 import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
@@ -243,6 +245,146 @@ it.each([
     });
   },
 );
+
+const emptyCommandOutput = { text: "", bytes: 0, observedBytes: 0 };
+
+const cpuSignalFailure = (signal: "SIGXCPU" | "SIGXFSZ") =>
+  new OwnedCommandFailure("process", "Decoder failed", {
+    stdout: emptyCommandOutput,
+    stderr: emptyCommandOutput,
+    exitCode: null,
+    signal,
+  });
+
+it("reports SIGXCPU with the CPU ceiling the decoder recorded", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.mitm",
+    format: "mitmproxy",
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(
+      input,
+      cpuSignalFailure("SIGXCPU"),
+      "decoder",
+      undefined,
+      undefined,
+      undefined,
+      { seconds: 1, requestedSeconds: 30 },
+    ),
+  );
+  expect(analysisErrorProjectionSchema.parse(projected)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "cpu",
+      reported_limits: {
+        cpu_seconds: 1,
+        requested_cpu_seconds: 30,
+        observed_signal: "SIGXCPU",
+        format: "mitmproxy",
+      },
+    },
+    remediation: {
+      action: expect.stringContaining("RLIMIT_CPU above 1 seconds"),
+    },
+  });
+  expect(JSON.stringify(projected)).not.toContain("768");
+});
+
+it("reports the decoder CPU budget without asking to raise RLIMIT_CPU", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.mitm",
+    format: "mitmproxy",
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(
+      input,
+      cpuSignalFailure("SIGXCPU"),
+      "decoder",
+      undefined,
+      undefined,
+      undefined,
+      { seconds: 30, requestedSeconds: 30 },
+    ),
+  );
+  expect(analysisErrorProjectionSchema.parse(projected)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "cpu",
+      refusal: {
+        kind: "fixed_ceiling",
+        allowance_kind: "work",
+        limit: 30,
+        unit: "seconds",
+      },
+    },
+    remediation: {
+      action: expect.stringContaining("do not raise"),
+    },
+  });
+  expect(projected.remediation.action).not.toContain("RLIMIT_CPU above");
+  expect(projected.details?.reported_limits).toBeNull();
+});
+
+it("reports SIGXCPU without inventing a CPU ceiling", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.mitm",
+    format: "mitmproxy",
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(input, cpuSignalFailure("SIGXCPU"), "decoder"),
+  );
+  expect(analysisErrorProjectionSchema.parse(projected)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "cpu",
+      reported_limits: { observed_signal: "SIGXCPU" },
+    },
+    remediation: { action: expect.stringContaining("was not recorded") },
+  });
+  expect(projected.details?.reported_limits).not.toHaveProperty("cpu_seconds");
+});
+
+it("leaves SIGXFSZ on the adapter failure path", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.mitm",
+    format: "mitmproxy",
+  });
+  expect(
+    projectAnalysisError(
+      historicalCaptureFailure(input, cpuSignalFailure("SIGXFSZ"), "decoder"),
+    ),
+  ).toMatchObject({ code: "execution_failure" });
+});
+
+it("reads only an admitted CPU ceiling for the CPU limit exit", async () => {
+  const root = await createTestTempDirectory("rea-cpu-limit-");
+  const path = join(root, EFFECTIVE_DECODER_CPU_RECORD);
+  const cause = cpuSignalFailure("SIGXCPU");
+  expect(await recordedDecoderCpuSeconds(root, cause)).toBeUndefined();
+  await writeFile(path, '{"requested_seconds":30,"seconds":1}');
+  expect(await recordedDecoderCpuSeconds(root, cause)).toEqual({
+    seconds: 1,
+    requestedSeconds: 30,
+  });
+  expect(
+    await recordedDecoderCpuSeconds(root, cpuSignalFailure("SIGXFSZ")),
+  ).toBeUndefined();
+  for (const record of [
+    '{"seconds":1}',
+    '{"requested_seconds":30,"seconds":1,"other":2}',
+    '{"requested_seconds":30,"seconds":1.5}',
+    '{"requested_seconds":1,"seconds":30}',
+    '{"requested_seconds":30,"seconds":1}' + " ".repeat(64),
+  ]) {
+    await writeFile(path, record);
+    expect(
+      await recordedDecoderCpuSeconds(root, cause),
+      record,
+    ).toBeUndefined();
+  }
+});
 
 it.each(["before open", "during read"])(
   "preserves observed capture changes %s as retryable acquisition integrity failures",
@@ -485,12 +627,10 @@ it.each([
       capture_path: "/selected/capture.har",
       format: "har",
     });
-    const projected = projectAnalysisError(
-      protobufCaptureFailure(
-        input,
-        new CaptureFormatError(limit, "Protobuf limit reached"),
-      ),
-    );
+    const cause = new CaptureFormatError(limit, "Protobuf limit reached");
+    const error = protobufCaptureFailure(input, cause);
+    expect.soft(error.cause).toBe(cause);
+    const projected = projectAnalysisError(error);
     expect(projected).toMatchObject({
       code: "resource_constraint",
       retryable: false,
@@ -499,27 +639,6 @@ it.each([
         action: expect.stringContaining(`Increase ${parameter}`),
       },
     });
+    expect(projected.remediation.action).toContain(String(limit.maximum));
   },
 );
-
-it("derives each decoder-child wire reason from the limit table", () => {
-  expect(
-    new CaptureFormatError(
-      { name: "nesting-depth", maximum: 64 },
-      "deep",
-      "/log",
-    ),
-  ).toMatchObject({ replyReason: "input-limit", pointer: "/log" });
-  expect(
-    new CaptureFormatError({ name: "expanded-input", maximum: 1 }, "big")
-      .replyReason,
-  ).toBe("expanded-limit");
-  expect(new CaptureFormatError("malformed", "bad").replyReason).toBe("format");
-  expect(new CaptureFormatError("unsupported", "no").replyReason).toBe(
-    "unsupported",
-  );
-  expect(captureLimitForReply("input-limit")).toBe("nesting-depth");
-  expect(captureLimitForReply("expanded-limit")).toBe("expanded-input");
-  // A reply-size refusal is not a decoder input limit.
-  expect(captureLimitForReply("limit")).toBeUndefined();
-});

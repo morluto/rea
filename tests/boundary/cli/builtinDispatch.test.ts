@@ -194,3 +194,25 @@ cliTest(
     }
   },
 );
+
+it.for([false, true])(
+  "clamps dispatcher refusal token windows at the end (%s)",
+  (fullOutput) => {
+    const output = renderFailure(
+      { code: "COMMAND_NOT_FOUND", message: "Unknown command" },
+      { command: "fixture", duration: "0ms" },
+      undefined,
+      {
+        format: "json",
+        human: false,
+        fullOutput,
+        tokenCount: false,
+        tokenLimit: 5,
+        tokenOffset: 1000,
+      },
+    );
+    expect(output).toMatch(/\[truncated: showing tokens (\d+)–\1 of \1\]/u);
+    expect(output).not.toContain("nextOffset");
+    expect(output).not.toContain("Unknown command");
+  },
+);
