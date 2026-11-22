@@ -2055,10 +2055,15 @@ export const supportedClients = (
   platform: NodeJS.Platform,
   env: ClientPathContext["env"] = process.env,
   systemPaths: ClientSystemPaths = {},
+  only?: SupportedClientName,
 ): readonly SetupClient[] => {
   const context = { home, platform, env, systemPaths };
   const definitions: readonly ClientDefinition[] = SUPPORTED_CLIENT_DEFINITIONS;
-  return definitions.map((definition) => {
+  const selected =
+    only === undefined
+      ? definitions
+      : definitions.filter(({ name }) => name === only);
+  return selected.map((definition) => {
     try {
       const location = resolveLocation(definition, context);
       if (!location.ok)
