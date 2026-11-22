@@ -177,7 +177,7 @@ try {
   );
   // A Cortex-M55 loop: WLS/LE around MVE, which only ARMv8.1-M has. Base 0
   // also puts the v8-m decoder where ARMCortex.pspec would label the table.
-  // Ghidra 12.1.4 decodes WLS and LE, but places their targets wrongly and
+  // Ghidra 12.2, like 12.1.4, decodes WLS and LE, but places their targets wrongly and
   // gives LE no fall-through, so the pop after the loop is not disassembled.
   // The results carry that limitation; the case records both branches' flow.
   cases.push(

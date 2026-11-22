@@ -127,7 +127,7 @@ rea inspect /absolute/path/to/dump.bin --target-format raw-binary --architecture
 `ARM:LE:32:Cortex` is Ghidra's ARMv7 decoder with Thumb as the default state. It
 has no ARMv8-M encodings, such as the `MSPLIM` and `PSPLIM` system registers that
 v8-M startup code sets, so the v8-M and v8.1-M variants use `ARM:LE:32:v8-m`.
-Ghidra 12.1.4's `ARM.ldefs` lists `armv8.1-m.main` for that language, which also
+Ghidra 12.2's `ARM.ldefs` lists `armv8.1-m.main` for that language, which also
 decodes ARMv8.1-M encodings such as MVE and the low-overhead loops (`wls`, `le`);
 the loop branches' flow is wrong, as Limitations describes.
 Neither decoder refuses instructions that a smaller profile lacks: `armv6-m`
@@ -172,7 +172,7 @@ processor-defined labels. `ARMCortex.pspec` names the vector table at
 at base `0x0` its names would cover the table and the code after it. The load
 image attests that the seeded entry is the only one.
 
-`npm run verify:ghidra:cortex-m` checks this lane against real Ghidra 12.1.4
+`npm run verify:ghidra:cortex-m` checks this lane against real Ghidra 12.2
 with source-owned fixtures and LLVM as the decoding oracle; see
 [testing lanes](../testing-lanes.md).
 
@@ -300,8 +300,8 @@ on 12.2. The recorded run was on macOS; Linux has not been exercised.
   processor-defined vector labels are not applied, so other vectors are neither
   entries nor labels. Floating-point state, TrustZone and device memory maps are
   not modelled.
-- Ghidra 12.1.4 decodes the ARMv8.1-M low-overhead-loop branches `wls` and `le`
-  with the right mnemonics, but not their flow. In the verifier's Cortex-M55
+- Ghidra 12.2, like 12.1.4, decodes the ARMv8.1-M low-overhead-loop branches
+  `wls` and `le` with the right mnemonics, but not their flow. In the verifier's Cortex-M55
   image, `wls` branched 2 bytes short of its target, `le` branched 4 bytes past
   the loop start, and `le` had no fall-through. Code after such a loop may be
   left undisassembled; `armv8.1-m.main` results say so.
