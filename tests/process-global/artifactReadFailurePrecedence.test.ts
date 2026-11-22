@@ -5,7 +5,6 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { access, mkdir, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
-import { buffer } from "node:stream/consumers";
 import { createPackageWithOptions } from "@electron/asar";
 import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
@@ -174,6 +173,7 @@ it.each(["idle", "active", "read-failure"])(
     await createPackageWithOptions(input, archive, { unpack: "*.bin" });
     const reader = new AsarArtifactReader(archive);
     const activeRead = stage === "active" ? phaseGate() : undefined;
+    let consuming: Promise<unknown> | undefined;
     if (activeRead !== undefined) fault.onRead = () => activeRead.hold();
     try {
       const entries = [];
@@ -191,10 +191,15 @@ it.each(["idle", "active", "read-failure"])(
       if (stage === "read-failure") fault.failure = failure;
       const source = await reader.open(entry, fault.controller.signal);
       expect(fault.opened).toHaveLength(1);
+      let delivered = 0;
+      const consume = async () => {
+        for await (const chunk of source as AsyncIterable<Buffer>)
+          delivered += chunk.length;
+      };
       const result =
         stage === "idle"
           ? new Promise<unknown>((resolve) => source.once("error", resolve))
-          : buffer(source).catch((cause: unknown) => cause);
+          : (consuming = consume().catch((cause: unknown) => cause));
       if (activeRead !== undefined)
         await activeRead.reached(result, "ASAR descriptor read completion");
       if (stage !== "read-failure") fault.controller.abort(fault.reason);
@@ -214,13 +219,18 @@ it.each(["idle", "active", "read-failure"])(
           reason: "cancelled",
           cancellation: { reason: fault.reason },
         });
+      expect(delivered).toBe(0);
       fault.failure = undefined;
       await reader.close();
       expect(fault.opened[0]?.fd).toBe(-1);
     } finally {
       activeRead?.release();
       fault.failure = undefined;
-      await reader.close();
+      try {
+        await reader.close();
+      } finally {
+        await consuming;
+      }
     }
   },
 );
