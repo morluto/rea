@@ -416,6 +416,7 @@
 * **filesystem:** consolidate stable hash and descriptor ownership checks ([#12879](https://github.com/morluto/rea/issues/12879)) ([79bd830](https://github.com/morluto/rea/commit/79bd830f4e4514e3cabf4af7fa9b2b26076d080a))
 * **filesystem:** verify commit cancellation closes its parent descriptor ([#12814](https://github.com/morluto/rea/issues/12814)) ([84ee3c1](https://github.com/morluto/rea/commit/84ee3c1edc7930360d6004d33baab0a4ebe7c5f7))
 * **firmware:** consolidate extraction report ownership checks ([#13351](https://github.com/morluto/rea/issues/13351)) ([734ef0f](https://github.com/morluto/rea/commit/734ef0f9b2a450514a56ed9f2b2945878d37f98c))
+* **firmware:** consolidate HEX wire limits and public inspection ([#13376](https://github.com/morluto/rea/issues/13376)) ([7aa15c4](https://github.com/morluto/rea/commit/7aa15c4ac76ea7472404236462f07ac1a433b945))
 * **firmware:** consolidate parsing and process-limit checks ([#12844](https://github.com/morluto/rea/issues/12844)) ([67a55ea](https://github.com/morluto/rea/commit/67a55ea8e15e8a774cba46d69fe8c6f151cba489))
 * **firmware:** consolidate split OTA partition order coverage ([68ed9b0](https://github.com/morluto/rea/commit/68ed9b0e67573c1dd0f4bca83977f1240fef682e))
 * **firmware:** consolidate staging and resource recovery checks ([#13358](https://github.com/morluto/rea/issues/13358)) ([2209acc](https://github.com/morluto/rea/commit/2209acc82424bee01512419bee02e9613aa3392c))
