@@ -5801,3 +5801,77 @@ it("retains POSIX backslash in filename and derives hierarchy strictly from dire
     await provider.close();
   }
 });
+
+it("marks coverage partial when Ghidra decompilation is incomplete with failed functions", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-incomplete-ghidra-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Sample.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  await writeFile(
+    join(mockGhidraDir, "support", "analyzeHeadless"),
+    "#!/bin/sh\nexit 0\n",
+  );
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const ExecFileOutputModule = await import("../process/ExecFileOutput.js");
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command, args) => {
+      if (command.includes("analyzeHeadless")) {
+        const outC = args[args.indexOf("-postScript") + 2];
+        if (outC) {
+          await writeFile(
+            outC,
+            "void SampleEntry(void) { /* decompiled */ }\n",
+          );
+          await writeFile(
+            `${outC}.outcome.json`,
+            JSON.stringify({
+              status: "success",
+              decompiled_functions: 1,
+              failed_functions: 2,
+            }),
+          );
+        }
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("was incomplete; 2 function(s) failed to decompile"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});

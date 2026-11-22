@@ -1931,6 +1931,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                           "/* WARNING: Failed to decompile function",
                         )
                       ) {
+                        isCoveragePartial = true;
                         const incompleteMsg =
                           failedCount > 0
                             ? `Ghidra C decompilation for ${safeLimitationModName} was incomplete; ${failedCount} function(s) failed to decompile.`
