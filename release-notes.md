@@ -278,6 +278,7 @@
 * **asar:** consolidate packed listing coverage ([#12945](https://github.com/morluto/rea/issues/12945)) ([c355fcb](https://github.com/morluto/rea/commit/c355fcb8f7ba8e45adc25a27a8af2eeb28af1452))
 * **asar:** streamline allocation and descriptor fixtures ([#12949](https://github.com/morluto/rea/issues/12949)) ([0b0b847](https://github.com/morluto/rea/commit/0b0b847afd3362c34b093f3bfbde7d6abc39cead))
 * **asar:** verify packed member close on cancellation ([#12947](https://github.com/morluto/rea/issues/12947)) ([2f87f93](https://github.com/morluto/rea/commit/2f87f938e0b986146599cc12327a8da39e4c2654))
+* **audit:** consolidate release exposure evidence checks ([#13341](https://github.com/morluto/rea/issues/13341)) ([23af000](https://github.com/morluto/rea/commit/23af000299a049350ac63cd41f94892e1c1c9089))
 * **binary:** throw the cause when restoration setup fails ([89fe8dc](https://github.com/morluto/rea/commit/89fe8dcf4e704e56187653b8c23fbd3eb5d00a92))
 * **browser:** catch permissive decoding of malformed wire payloads ([#12792](https://github.com/morluto/rea/issues/12792)) ([fc5ba54](https://github.com/morluto/rea/commit/fc5ba5473be501fd9fce2d094a2d8aa6c41c69f5))
 * **browser:** catch permissive response body decoding ([fc5ba54](https://github.com/morluto/rea/commit/fc5ba5473be501fd9fce2d094a2d8aa6c41c69f5))
