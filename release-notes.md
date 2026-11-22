@@ -223,6 +223,7 @@
 
 * **adapters/server:** use ownedJsonValueSchema for freshly constructed internal results ([#13459](https://github.com/morluto/rea/issues/13459)) ([6c6005c](https://github.com/morluto/rea/commit/6c6005ca9a9330dc28138d69021d7510d9e49ae6))
 * **adapters:** eliminate hot-path overhead across WASM, EVM, Frida, web modules, and HAR ([#13356](https://github.com/morluto/rea/issues/13356)) ([26465e8](https://github.com/morluto/rea/commit/26465e8ae63045372f28383b1dcc4856e9b41644))
+* **analysis-view:** index documents/entities/reads and avoid array reallocations in EnvironmentStateWriteSimulation ([#13497](https://github.com/morluto/rea/issues/13497)) ([d853221](https://github.com/morluto/rea/commit/d8532215396f087e1198584f7a4c4e1b236e60b0))
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
 * **android:** reuse stat-verified SHA-256 digests across JADX operations ([#13460](https://github.com/morluto/rea/issues/13460)) ([8601170](https://github.com/morluto/rea/commit/86011705e5c65b2436230ca550ec872dd5dedc85))
 * **artifacts/android:** reuse ASAR snapshot descriptors and index JADX bridge lookups ([#13361](https://github.com/morluto/rea/issues/13361)) ([4d7a971](https://github.com/morluto/rea/commit/4d7a9710fe19af7e70693ea56c1e5d3a0268baa1))
@@ -244,6 +245,7 @@
 * **dotnet:** push down native boundary and member selection predicates ([#13317](https://github.com/morluto/rea/issues/13317)) ([e0d8cc9](https://github.com/morluto/rea/commit/e0d8cc942faa4c96ce7f36b86731316b5872d76a))
 * **electron/js:** index IPC/package/file lookups and fuse summary passes ([#13507](https://github.com/morluto/rea/issues/13507)) ([5262268](https://github.com/morluto/rea/commit/5262268826932fed264d0e7d2036826cb60c2a76))
 * **electron/js:** index IPC/package/file lookups and fuse summary passes ([#13510](https://github.com/morluto/rea/issues/13510)) ([5262268](https://github.com/morluto/rea/commit/5262268826932fed264d0e7d2036826cb60c2a76))
+* **elf:** fuse dynamic symbol hardening predicates into single-pass scan with __ prefix pre-filter ([#13513](https://github.com/morluto/rea/issues/13513)) ([8da89da](https://github.com/morluto/rea/commit/8da89da5e4e1959cd83c0c6ffbf9ce5380d80b10))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13475](https://github.com/morluto/rea/issues/13475)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13476](https://github.com/morluto/rea/issues/13476)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
