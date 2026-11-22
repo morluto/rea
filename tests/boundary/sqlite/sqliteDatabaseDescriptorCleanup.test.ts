@@ -1,5 +1,5 @@
 import { createCommandCli } from "../../support/cli/commandCli.js";
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, open, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -361,8 +361,41 @@ it("retains cancellation diagnostics and the interrupt exit code through CLI shu
   expect(descriptorCleanup.attempts).toBeGreaterThanOrEqual(2);
 });
 
+const canRemoveRootWithOpenReply = async (parent: string): Promise<boolean> => {
+  const root = await PrivateRuntimeRoot.create({ parent });
+  try {
+    const path = join(root.path, "reply.json");
+    await writeFile(path, "{}");
+    const handle = await open(path, "r");
+    try {
+      await root.close();
+      return true;
+    } catch (cause: unknown) {
+      if (cause instanceof Error && "code" in cause) {
+        if (cause.code === "EBUSY" || cause.code === "ENOTEMPTY") return false;
+        // Sharing violation, lock violation, or the open entry keeps the root nonempty.
+        if (
+          cause.code === "ERR_REA_WINDOWS_NATIVE" &&
+          "win32Code" in cause &&
+          [32, 33, 145].some((code) => code === cause.win32Code)
+        )
+          return false;
+      }
+      throw cause;
+    } finally {
+      await handle.close();
+    }
+  } finally {
+    // Confirm the probe's root is removable after the descriptor closes.
+    await root.close();
+  }
+};
+
 it("retains reply-read cancellation and retries the failed reply descriptor close", async () => {
   const selected = await fixture("reply");
+  const removesOpenRoot = await canRemoveRootWithOpenReply(
+    dirname(selected.database.path),
+  );
   const controller = new AbortController();
   const reason = { requested: "cancel during reply read" };
   descriptorCleanup.onOpen = () => controller.abort(reason);
@@ -371,8 +404,14 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
     { signal: controller.signal },
   );
   if (result.ok) throw new Error("Expected cancelled reply read");
-  expect(result.error).toMatchObject({ _tag: "AnalysisCancelledError" });
-  expect(result.error.cause).toBe(reason);
+  if (!removesOpenRoot)
+    expect(result.error).toBeInstanceOf(ProviderCleanupError);
+  const cancellation = removesOpenRoot
+    ? result.error
+    : result.error.cleanupPrimary;
+  expect(cancellation).toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(cancellation?.cause).toBe(reason);
+  expect(cancellation?.partialObservation).toBeUndefined();
   expect(result.error.partialObservation).toBeUndefined();
   const cancelled = {
     code: "cleanup_incomplete",
@@ -386,10 +425,9 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
       },
     },
   };
-  // Windows cannot remove a private root while the reply descriptor is open;
-  // the retained cancellation is then reported as the root cleanup's cause.
+  // A retained private root wraps the descriptor cleanup and its cancellation.
   expect(projectAnalysisError(result.error)).toMatchObject(
-    process.platform === "win32"
+    !removesOpenRoot
       ? {
           code: "cleanup_incomplete",
           details: {
@@ -410,12 +448,16 @@ it("retains reply-read cancellation and retries the failed reply descriptor clos
   );
   const handle = descriptorCleanup.handles[0];
   if (handle === undefined) throw new Error("Expected owned reply descriptor");
+  expect(descriptorCleanup.attempts).toBe(1);
   expect(handle.fd).toBeGreaterThanOrEqual(0);
   await expect(selected.provider.close()).rejects.toMatchObject({
     cleanupIncomplete: true,
   });
+  expect(descriptorCleanup.attempts).toBe(2);
+  expect(handle.fd).toBeGreaterThanOrEqual(0);
   descriptorCleanup.denied = false;
   await selected.provider.close();
+  expect(descriptorCleanup.attempts).toBe(3);
   expect(handle.fd).toBe(-1);
   expect(result.error.cleanupIncomplete).toBe(false);
   expect(projectAnalysisError(result.error)).toMatchObject({
