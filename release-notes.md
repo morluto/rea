@@ -183,6 +183,7 @@
 * **setup:** refuse Hermes profiles with an unreadable deletion marker ([#13296](https://github.com/morluto/rea/issues/13296)) ([625bd4b](https://github.com/morluto/rea/commit/625bd4b70aaf920623557e2639e8c2809604998a))
 * **setup:** register aube's bin shim instead of its versioned store path ([#5311](https://github.com/morluto/rea/issues/5311)) ([abba1f4](https://github.com/morluto/rea/commit/abba1f43bb08f71af584a1b4d26895f1e1ece90b))
 * **setup:** unify OpenCode layer resolution and alias ownership ([#13226](https://github.com/morluto/rea/issues/13226)) ([d6c4776](https://github.com/morluto/rea/commit/d6c4776e651474728b17f984346bdf4481d1b55e))
+* **setup:** verify restored files before reporting rollback ([#13491](https://github.com/morluto/rea/issues/13491)) ([a329ce6](https://github.com/morluto/rea/commit/a329ce621af3b4d25a8205c0d014aa17b706f746))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
 * **state-view:** reject unsafe integers in recorded item counts ([00b4082](https://github.com/morluto/rea/commit/00b4082d4c3040116a625cd492c8cc5b7a5bf96e))
 * **test:** reap synthetic test-stub processes on cleanup failure and fail fast on unavailable exit polling ([#13368](https://github.com/morluto/rea/issues/13368)) ([bd9a7fa](https://github.com/morluto/rea/commit/bd9a7fad7efba6a2aad1ace7a9e4388f6cf11101))
