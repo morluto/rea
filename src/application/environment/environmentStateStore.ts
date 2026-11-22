@@ -496,10 +496,12 @@ export class EnvironmentStateStore {
 
   /** Every collection spelling in the active, baseline, Evidence, or generated history, with active entities first. */
   knownCollectionsOf(type: string): readonly string[] {
-    const known = new Set([
-      ...this.collectionsOf(type),
-      ...(this.#knownCollections.get(type) ?? []),
-    ]);
+    const known = new Set<string>();
+    for (const collection of this.collectionsOf(type))
+      if (this.#collections.has(environmentCollectionKey(type, collection)))
+        known.add(collection);
+    for (const collection of this.#knownCollections.get(type) ?? [])
+      known.add(collection);
     return [...known];
   }
 
