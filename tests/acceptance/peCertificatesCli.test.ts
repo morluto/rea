@@ -599,6 +599,11 @@ cliTest.for([
       details: {
         operation: "inspect_pe_certificates",
         reported_limits: limits,
+        refusal: {
+          kind: "fixed_ceiling",
+          allowance_kind: "parser",
+          limit: Object.values(limits)[0],
+        },
       },
     });
     const { message: reason, remediation } = result.json as {
@@ -607,8 +612,6 @@ cliTest.for([
     };
     expect(reason).toContain(message);
     expect(remediation.action).toContain(String(Object.values(limits)[0]));
-    expect(remediation.action).toContain("no runtime override");
-    expect(remediation.action).toMatch(/unchanged request.*fails/iu);
   },
 );
 

@@ -757,6 +757,22 @@ it.each([true, false])(
   },
 );
 
+it("uses the ELF byte order when counting sectionless imports through DT_HASH", () => {
+  const image = readElfHardening(
+    elfHardeningFixture({
+      little: false,
+      sections: false,
+      stackChk: true,
+      fortify: true,
+    }),
+  );
+  expect(image.byte_order).toBe("big");
+  expect(states(image.rows)).toMatchObject({
+    stack_protector: "enabled",
+    fortify: "enabled",
+  });
+});
+
 it("reads sectionless GNU hash buckets with many non-owning load declarations", () => {
   const original = elfHardeningFixture({ sections: false, stackChk: true });
   const oldPhoff = Number(original.readBigUInt64LE(32));
@@ -1889,19 +1905,62 @@ it("accepts well-formed segments with sections and file payloads", async () => {
   const probe = machoHardeningFixture({
     extraCommands: [machoSegment(64, { commandSize: size })],
   });
+  const segment = machoSegment(64, {
+    commandSize: size,
+    sections: 1,
+    vmSize: probe.length,
+    fileSize: probe.length,
+  });
+  segment.write("__restrict", 72, "latin1");
   const image = (
     await readMachoHardening(
-      machoHardeningFixture({
-        extraCommands: [
-          machoSegment(64, {
-            commandSize: size,
-            sections: 1,
-            vmSize: probe.length,
-            fileSize: probe.length,
-          }),
-        ],
-      }),
+      machoHardeningFixture({ extraCommands: [segment] }),
     )
   )[0];
   expect(findRow(image?.rows ?? [], "restrict_segment").state).toBe("enabled");
+});
+
+it.each([
+  ["another section", "__other"],
+  ["no section", null],
+] as const)(
+  "reports a __RESTRICT segment with %s as unrestricted, as dyld does",
+  async (_label, restrictSection) => {
+    for (const bits of [32, 64] as const) {
+      const bytes = machoHardeningFixture({
+        bits,
+        restrict: true,
+        restrictSection,
+      });
+      const restrict = findRow(
+        (await readMachoHardening(bytes))[0]?.rows ?? [],
+        "restrict_segment",
+      );
+      expect(restrict).toMatchObject({
+        state: "disabled",
+        basis: expect.stringContaining("no __restrict section"),
+      });
+      const named = restrict.location;
+      if (named === null) throw new Error("Missing segment name location");
+      expect(
+        bytes.subarray(named.offset, named.offset + named.bytes).toString(),
+      ).toBe("__RESTRICT\0\0\0\0\0\0");
+    }
+  },
+);
+
+it("locates the __restrict section that makes dyld restrict an image", async () => {
+  for (const bits of [32, 64] as const) {
+    const bytes = machoHardeningFixture({ bits, restrict: true });
+    const restrict = findRow(
+      (await readMachoHardening(bytes))[0]?.rows ?? [],
+      "restrict_segment",
+    );
+    expect(restrict.state).toBe("enabled");
+    const section = restrict.location;
+    if (section === null) throw new Error("Missing section name location");
+    expect(
+      bytes.subarray(section.offset, section.offset + section.bytes).toString(),
+    ).toBe("__restrict\0\0\0\0\0\0");
+  }
 });

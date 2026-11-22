@@ -24,7 +24,7 @@ export type GhidraRiscvCallingConvention =
  * pinned language's default `riscv32-fp.cspec` model, which is ilp32d;
  * docs/providers/ghidra-riscv.md states the rules of each ABI.
  */
-export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
+const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
   Record<
     GhidraRiscvCallingConvention,
     { readonly abi: string; readonly prototype: string }
@@ -34,10 +34,10 @@ export const GHIDRA_RISCV_CALLING_CONVENTIONS: Readonly<
 };
 
 /** Admitted load models for each lane. */
-export type GhidraRiscvLoadModel = "exec" | "pie";
+type GhidraRiscvLoadModel = "exec" | "pie";
 
 /** One admitted ELF class and declared float ABI. */
-export interface GhidraRiscvLane {
+interface GhidraRiscvLane {
   readonly elfClass: 32 | 64;
   readonly floatAbi: RiscvFloatAbi;
   readonly loadModels: readonly GhidraRiscvLoadModel[];
@@ -46,7 +46,7 @@ export interface GhidraRiscvLane {
 }
 
 /** Every class and float ABI pair the Ghidra lane admits; others are refused. */
-export const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
+const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
   { elfClass: 64, floatAbi: "double", loadModels: ["exec", "pie"] },
   { elfClass: 32, floatAbi: "double", loadModels: ["exec", "pie"] },
   {
@@ -58,7 +58,7 @@ export const GHIDRA_RISCV_LANES: readonly GhidraRiscvLane[] = [
 ];
 
 /** Lane ids are built from their fields, so a new ABI or load model adds a value. */
-export const ghidraRiscvSupportLane = (lane: {
+const ghidraRiscvSupportLane = (lane: {
   readonly elfClass: 32 | 64;
   readonly floatAbi: RiscvFloatAbi;
   readonly loadModel?: GhidraRiscvLoadModel;
@@ -70,7 +70,7 @@ export const ghidraRiscvSupportLane = (lane: {
  * the names `Tag_RISCV_arch` records. Lanes with a calling-convention policy
  * admit an image only when it declares an RV32I base and only these.
  */
-export const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
+const GHIDRA_RISCV32_DECODED_EXTENSIONS: ReadonlySet<string> = new Set([
   "m",
   "a",
   "f",

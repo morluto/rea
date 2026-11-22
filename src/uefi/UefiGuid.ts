@@ -34,11 +34,6 @@ export function formatGuidLittleEndian(
   ].join("-");
 }
 
-/** Case-insensitive canonical GUID comparison. */
-export function guidEquals(left: string, right: string): boolean {
-  return left.toLowerCase() === right.toLowerCase();
-}
-
 /**
  * FFS2 container GUID (PI Specification, firmware file system 2).
  * Raw bytes: 78 E5 8C 8C 3D 8A 1C 4F 99 35 89 61 85 C3 2D D3.
@@ -47,6 +42,6 @@ export const FFS2_FILE_SYSTEM_GUID = "8c8ce578-8a3d-4f1c-9935-896185c32dd3";
 
 /**
  * FFS3 container GUID (PI Specification, firmware file system 3).
- * Raw bytes: 07 12 73 54 41 5C BD 4C B5 E5 CD 26 D8 07 70 B1.
+ * Raw bytes: 7A C0 73 54 CB 3D CA 4D BD 6F 1E 96 89 E7 34 9A.
  */
-export const FFS3_FILE_SYSTEM_GUID = "54731207-5c41-4cbd-b5e5-cd26d80770b1";
+export const FFS3_FILE_SYSTEM_GUID = "5473c07a-3dcb-4dca-bd6f-1e9689e7349a";

@@ -8,8 +8,12 @@ import {
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
 import type { Il2cppBinaryArchitecture } from "../../../src/domain/il2cpp/il2cppMetadata.js";
-import { expect, it } from "vitest";
-import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
+import { describe, expect, it } from "vitest";
+import { findCodeRegistration } from "../../../src/il2cpp/Il2cppBinaryRegistration.js";
+import {
+  linkIl2cppBinarySteps,
+  type Il2cppCodeGenModule,
+} from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   drain,
   linkIl2cppBinary,
@@ -585,6 +589,34 @@ it.each([
     ).reason,
   ).toBe("code-registration-not-found");
 });
+
+it.each([
+  ["x86-64", 7],
+  ["arm64", 8],
+] as const)(
+  "keeps the entire %s registration reference inside the executable extent",
+  (arch, width) => {
+    const instruction = 0xc00;
+    const makeImage = (inside: number) => {
+      const bytes = createIl2cppBinaryFixture({
+        codeRegistration: false,
+        codeReference: arch === "x86-64",
+        adrpAdd: arch === "arm64" ? [[instruction, 0x500]] : [],
+        splitSegmentAt: instruction + inside,
+      });
+      if (arch === "x86-64") bytes.writeUInt32LE(0x01000007, 4);
+      bytes.writeUInt32LE(1, 32 + 72 + 60); // The second segment is read-only.
+      return bytes;
+    };
+    expect(link(makeImage(width)).code_gen_modules_array).toBe(
+      FIXTURE_BINARY_BASE + 0x500n,
+    );
+    expect(failure(makeImage(width - 1))).toMatchObject({
+      reason: "code-registration-not-found",
+      kind: "malformed",
+    });
+  },
+);
 
 it("finds an arm64 module array through the ADRP+ADD pair that loads it", () => {
   const linked = link(
@@ -2306,4 +2338,120 @@ it("retains an unresolved matching image count when its method array could fit",
   bytes.writeUInt32LE(bytes.readUInt32LE(0x400), 0x700);
   bytes.writeBigUInt64LE(bytes.readBigUInt64LE(0x410), 0x710);
   expect(() => link(bytes)).toThrow(Il2cppBinaryFormatFailure);
+});
+
+describe("executable reference scan fast paths", () => {
+  const buildExecScanFixture = (
+    arch: "amd64" | "arm64",
+    extendExecutableMappingPastEof = false,
+  ) => {
+    const execSize = 0x2000;
+    const totalSize = 0x4000;
+    const bytes = Buffer.alloc(totalSize);
+    const base = 0x100000000n;
+    const container = {
+      format: "pe" as const,
+      architecture: arch,
+      bits: 64 as const,
+      byte_order: "little" as const,
+      image_base: base,
+      mappings: [{ address: base + 0x1000n, size: 0x2000, offset: 0x1000 }],
+      executable_mappings: [
+        {
+          address: base + 0x1000n,
+          size: extendExecutableMappingPastEof ? 0x10_000 : execSize,
+          offset: 0x1000,
+        },
+      ],
+      sections: [],
+      zero_fills: [],
+      symbols: [],
+    };
+    return { bytes, base, image: drain(openImageSteps(bytes, container)) };
+  };
+
+  const createCodeGenModules = (
+    addresses: readonly bigint[],
+  ): Il2cppCodeGenModule[] =>
+    addresses.map((address, image) => ({
+      image,
+      address,
+      method_pointer_count: 1,
+      method_pointers: 0n,
+    }));
+
+  it("matches x86-64 REX.W+R mov/lea with negative displacement and ignores non-matching bytes", () => {
+    const fix = buildExecScanFixture("amd64");
+    fix.bytes.fill(0x48, 0x1000, 0x2fff); // partial REX decoy
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1100n, 0x1000);
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1140n, 0x1008);
+    const insnAt = 0x2000;
+    fix.bytes.set([0x4c, 0x8b, 0x0d], insnAt); // REX.W|REX.R (0x4c), MOV (0x8b), mod=0 rm=5 reg=1 (0x0d)
+    fix.bytes.writeInt32LE(0x1000 - (insnAt + 7), insnAt + 3);
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
+  });
+
+  it("rejects arm64 register 31 / mismatched registers and matches negative ADRP+ADD page deltas", () => {
+    const fix = buildExecScanFixture("arm64");
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1200n, 0x1000);
+    fix.bytes.writeBigUInt64LE(fix.base + 0x1240n, 0x1008);
+    // At 0x2000: ADRP x31 (xzr) + ADD x31, x31, #0 -> must be rejected
+    fix.bytes.writeUInt32LE(0x90ffffff >>> 0, 0x2000);
+    fix.bytes.writeUInt32LE(0x910003ff >>> 0, 0x2004);
+    // At 0x2010: ADRP x8, #page(0x1000); ADD x9, x8, #0 (mismatched dst register!) -> rejected
+    const deltaNeg = -1 & 0x1fffff;
+    fix.bytes.writeUInt32LE(
+      (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+      0x2010,
+    );
+    fix.bytes.writeUInt32LE(0x91000109 >>> 0, 0x2014);
+    // At 0x2020: valid ADRP x8, #page(0x1000); ADD x8, x8, #0x000
+    fix.bytes.writeUInt32LE(
+      (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+      0x2020,
+    );
+    fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2024);
+    expect(
+      drain(
+        findCodeRegistration(
+          fix.image,
+          createCodeGenModules([fix.base + 0x1200n, fix.base + 0x1240n]),
+        ),
+      ),
+    ).toEqual({ field: null, array: fix.base + 0x1000n });
+  });
+
+  it("clamps scan bounds cleanly when an executable mapping exceeds buffer length", () => {
+    for (const arch of ["amd64", "arm64"] as const) {
+      const fix = buildExecScanFixture(arch, true);
+      fix.bytes.writeBigUInt64LE(fix.base + 0x1100n, 0x1000);
+      fix.bytes.writeBigUInt64LE(fix.base + 0x1140n, 0x1008);
+      if (arch === "amd64") {
+        fix.bytes.set([0x48, 0x8d, 0x05], 0x2000);
+        fix.bytes.writeInt32LE(0x1000 - (0x2000 + 7), 0x2003);
+      } else {
+        const deltaNeg = -1 & 0x1fffff;
+        fix.bytes.writeUInt32LE(
+          (0x90000008 | ((deltaNeg & 3) << 29) | ((deltaNeg >> 2) << 5)) >>> 0,
+          0x2000,
+        );
+        fix.bytes.writeUInt32LE(0x91000108 >>> 0, 0x2004);
+      }
+      expect(
+        drain(
+          findCodeRegistration(
+            fix.image,
+            createCodeGenModules([fix.base + 0x1100n, fix.base + 0x1140n]),
+          ),
+        ),
+      ).toEqual({ field: null, array: fix.base + 0x1000n });
+    }
+  });
 });

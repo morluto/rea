@@ -1,98 +1,53 @@
-import { describe, expect, it } from "vitest";
+import { expect, it } from "vitest";
 import { importMapForTrustedResolver } from "./importMapForTrustedResolver.js";
 
-describe("importMapForTrustedResolver", () => {
-  const baseUrl = "https://app.test/index.html";
-  const importerUrl = "https://app.test/main.js";
+const baseUrl = "https://app.test/maps/index.html";
+const importer = "https://app.test/maps/scoped/main.js?build=2#entry";
 
-  it("omits integrity that covers the selected importer URL", () => {
-    const map = {
-      imports: { dep: "/dep.js" },
-      integrity: {
-        "https://app.test/main.js": "sha256-importer",
-        "https://app.test/dep.js": "sha256-dep",
+it("removes importer integrity and serializes every other entry unchanged", () => {
+  const dependencyIntegrity = {
+    "./dep.js": "sha256-dep",
+    "https://other.test/maps/scoped/main.js": "sha256-other-origin",
+    "./scoped/other.js": "sha256-other-path",
+    "http://[": "sha256-invalid-url",
+    ["__proto__"]: "sha256-proto-dep",
+  };
+  const importerIntegrity = {
+    [importer]: "sha256-exact",
+    "./scoped/main.js?build=1#other": "sha256-relative",
+    "/maps/scoped/main.js": "sha256-path",
+  };
+  const map = {
+    imports: { dep: "./dep.js" },
+    scopes: { "/scoped/": { dep: "./scoped.js" } },
+    integrity: { ...dependencyIntegrity, ...importerIntegrity },
+  };
+
+  const original = JSON.stringify(map);
+  const installed = importMapForTrustedResolver(map, importer, baseUrl);
+  expect(JSON.parse(JSON.stringify(installed))).toStrictEqual({
+    imports: map.imports,
+    scopes: map.scopes,
+    integrity: dependencyIntegrity,
+  });
+  expect(JSON.stringify(map)).toBe(original);
+});
+
+it("omits integrity only when removing the last entry", () => {
+  const map = { imports: { dep: "./dep.js" } };
+  const dependencyOnly = { ...map, integrity: { "./dep.js": "sha256-dep" } };
+  expect(importMapForTrustedResolver(map, importer, baseUrl)).toEqual(map);
+  expect(
+    importMapForTrustedResolver(dependencyOnly, importer, baseUrl),
+  ).toEqual(dependencyOnly);
+  expect(
+    importMapForTrustedResolver(
+      {
+        ...map,
+        integrity: { "/maps/scoped/main.js": "sha256-importer" },
       },
-    };
-    expect(importMapForTrustedResolver(map, importerUrl, baseUrl)).toEqual({
-      imports: { dep: "/dep.js" },
-      integrity: { "https://app.test/dep.js": "sha256-dep" },
-    });
-  });
-
-  it("resolves relative integrity keys against the import-map base URL", () => {
-    const map = {
-      imports: { dep: "./dep.js" },
-      integrity: {
-        "./main.js": "sha256-importer",
-        "./dep.js": "sha256-dep",
-      },
-    };
-    expect(
-      importMapForTrustedResolver(map, "https://app.test/main.js", baseUrl),
-    ).toEqual({
-      imports: { dep: "./dep.js" },
-      integrity: { "./dep.js": "sha256-dep" },
-    });
-  });
-
-  it("matches importer integrity across query and fragment differences", () => {
-    const map = {
-      imports: { dep: "/dep.js" },
-      integrity: {
-        "https://app.test/main.js": "sha256-importer",
-        "https://app.test/dep.js": "sha256-dep",
-      },
-    };
-    expect(
-      importMapForTrustedResolver(
-        map,
-        "https://app.test/main.js?build=1#entry",
-        baseUrl,
-      ),
-    ).toEqual({
-      imports: { dep: "/dep.js" },
-      integrity: { "https://app.test/dep.js": "sha256-dep" },
-    });
-  });
-
-  it("drops an empty integrity member after removing the importer entry", () => {
-    const map = {
-      imports: { dep: "/dep.js" },
-      integrity: { "https://app.test/main.js": "sha256-importer" },
-    };
-    expect(importMapForTrustedResolver(map, importerUrl, baseUrl)).toEqual({
-      imports: { dep: "/dep.js" },
-    });
-  });
-
-  it("preserves maps without integrity and dependency-only integrity", () => {
-    const without = { imports: { dep: "/dep.js" } };
-    expect(importMapForTrustedResolver(without, importerUrl, baseUrl)).toBe(
-      without,
-    );
-    const dependencyOnly = {
-      imports: { dep: "/dep.js" },
-      integrity: { "https://app.test/dep.js": "sha256-dep" },
-    };
-    expect(
-      importMapForTrustedResolver(dependencyOnly, importerUrl, baseUrl),
-    ).toBe(dependencyOnly);
-  });
-
-  it("preserves a dependency integrity key named __proto__ without prototype pollution", () => {
-    const integrity = Object.assign(Object.create(null), {
-      "https://app.test/main.js": "sha256-importer",
-      "https://app.test/dep.js": "sha256-dep",
-    });
-    integrity["__proto__"] = "sha256-proto-dep";
-    const map = { imports: { dep: "/dep.js" }, integrity };
-    const next = importMapForTrustedResolver(map, importerUrl, baseUrl);
-    const nextIntegrity = next.integrity as { readonly [key: string]: string };
-    expect(nextIntegrity["https://app.test/dep.js"]).toBe("sha256-dep");
-    expect(
-      Object.getOwnPropertyDescriptor(nextIntegrity, "__proto__")?.value,
-    ).toBe("sha256-proto-dep");
-    expect(Object.getPrototypeOf(nextIntegrity)).toBe(null);
-    expect(Object.prototype.hasOwnProperty.call({}, "__proto__")).toBe(false);
-  });
+      importer,
+      baseUrl,
+    ),
+  ).toEqual(map);
 });

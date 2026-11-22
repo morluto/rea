@@ -150,6 +150,46 @@ it("projects bounded alias selection as a resource-limit unknown", () => {
 });
 
 it.each([
+  ["a bounded inline spread", "[...[1]]", 1, true],
+  ["a backed inline spread", "[...[1]]", 2, false],
+  [
+    "an unsupported spread after a backed spread",
+    "[...[1], ...opaque]",
+    2,
+    false,
+  ],
+  ["a second inline spread", "[...[1], ...[2]]", 2, true],
+] as const)(
+  "reports the alias selection limit only when it blocks %s",
+  (_name, array, aliasSelections, bounded) => {
+    const source = `export const answer = ${array};`;
+    const ir = analyzeJavaScriptSemantics(source, {
+      alias_selections: aliasSelections,
+    });
+    const graph = graphFor(source, ir);
+    const unknown = graph.unknowns.find(
+      ({ reason, detail }) =>
+        reason === "resource-limit" &&
+        /Alias selection expansion/u.test(detail),
+    );
+    if (bounded) {
+      expect(ir.coverage).toMatchObject({
+        status: "partial",
+        resourceLimits: ["alias-selections"],
+      });
+      expect(unknown?.detail).toContain(
+        `semantic_precision.alias_selections=${aliasSelections}`,
+      );
+    } else {
+      expect(ir.coverage.resourceLimits ?? []).not.toContain(
+        "alias-selections",
+      );
+      expect(unknown).toBeUndefined();
+    }
+  },
+);
+
+it.each([
   ["plain export", "const answer = 42; export { answer };", 0],
   ["aliased export", "const answer = 42; export { answer as result };", 0],
   ["declaration only", "const answer = 42;", 0],
@@ -1060,11 +1100,14 @@ it("attributes an adopted file to the ceiling that bounded its offer", () => {
   let step = steps.next();
   while (!step.done) step = steps.next();
   projection.adoptFileProjection(step.value);
-  const limitation = projection
-    .finish(SHA256, semanticApplication)
-    .limitations.join("\n");
-  expect(limitation).toContain("max_semantic_nodes_per_file is 3");
-  expect(limitation).not.toContain("max_semantic_nodes is 10");
+  const finished = projection.finish(SHA256, semanticApplication);
+  expect(finished.coverage.controls).toEqual([
+    expect.objectContaining({
+      parameter: "max_semantic_nodes_per_file",
+      effective_value: 3,
+      applies_at: "next_call",
+    }),
+  ]);
 });
 
 it("reports truncation only when a file exceeds its exact node budget", () => {

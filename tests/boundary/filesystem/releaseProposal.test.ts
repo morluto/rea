@@ -316,6 +316,7 @@ type HistoryFailure = {
   errors: { message: string; type?: string }[];
   status?: number;
   html?: string;
+  disconnect?: boolean;
 };
 const internalError = {
   message:
@@ -495,6 +496,10 @@ async function releaseFixture({
         const failure = failures[0];
         if (failure && failure.cursor === query.variables.cursor) {
           failures.shift();
+          if (failure.disconnect)
+            throw new TypeError("fetch failed", {
+              cause: new Error("other side closed"),
+            });
           if (failure.html !== undefined)
             return new Response(failure.html, {
               status: failure.status ?? 504,
@@ -974,6 +979,44 @@ it("uses a tag-only manifest release and excludes older version overrides", asyn
   ).toBe(true);
 });
 
+it("recuts the abandoned patch from the last published manifest version", async () => {
+  const fixture = await releaseFixture({
+    releasedVersions: { ".": "6.10.0" },
+    releases: [releaseRecord("6.10.0")],
+    commits: [
+      {
+        sha: latest,
+        message:
+          "fix(release): restore the previous manifest\n\nRelease-As: 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: "b".repeat(40),
+        message: "fix: correct candidate regression",
+        files: ["src/change.ts"],
+      },
+      {
+        sha: "c".repeat(40),
+        message: "chore(main): release rea-agents 6.10.1",
+        files: [".release-please-manifest.json"],
+      },
+      {
+        sha: baseline,
+        message: "chore(main): release rea-agents 6.10.0",
+        files: [".release-please-manifest.json"],
+      },
+    ],
+  });
+  const [candidate] = await fixture.manifest.buildPullRequests();
+  expect(candidate?.body.toString()).toContain("correct candidate regression");
+  const version = candidate?.updates.find(
+    (update) => update.path === "version.txt",
+  );
+  expect(
+    version?.updater.updateContent("6.10.0 // x-release-please-version"),
+  ).toContain("6.10.1");
+});
+
 it.each(["omitted", "0.0.0"])(
   "preserves initial bootstrap with an %s manifest version",
   async (version) => {
@@ -1016,6 +1059,7 @@ it.each([
     status: 200,
   },
   { name: "HTTP 502 error", error: internalError, status: 502 },
+  { name: "transport disconnect", error: internalError, disconnect: true },
   {
     name: "HTTP 504 HTML error",
     error: internalError,
@@ -1024,7 +1068,7 @@ it.each([
   },
 ])(
   "retries the same history cursor after $name and discards partial data",
-  async ({ error, status, html }) => {
+  async ({ error, status, html, disconnect }) => {
     const sleep = vi
       .spyOn(githubRuntime, "sleepInMs")
       .mockResolvedValue(undefined);
@@ -1040,7 +1084,8 @@ it.each([
         {
           cursor: "10",
           errors: [error],
-          status,
+          ...(status === undefined ? {} : { status }),
+          ...(disconnect === undefined ? {} : { disconnect }),
           ...(html === undefined ? {} : { html }),
         },
       ],
@@ -1114,6 +1159,21 @@ it.each([
       (request) => request.method === "GET" || request.pathname === "/graphql",
     ),
   ).toBe(true);
+});
+
+it("does not mistake an HTTP 500 response for a history transport disconnect", async () => {
+  const sleep = vi
+    .spyOn(githubRuntime, "sleepInMs")
+    .mockResolvedValue(undefined);
+  const fixture = await releaseFixture({
+    historyFailures: [{ errors: [], html: "other side closed", status: 500 }],
+  });
+  await expect(fixture.manifest.buildPullRequests()).rejects.toMatchObject({
+    status: 500,
+    message: "other side closed",
+  });
+  expect(fixture.pages).toHaveLength(1);
+  expect(sleep).not.toHaveBeenCalled();
 });
 
 it("exhausts bounded history retries without creating a partial proposal", async () => {

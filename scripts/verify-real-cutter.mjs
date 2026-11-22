@@ -5,13 +5,11 @@ import {
   withVerifierCleanup,
 } from "./lib/verifier-cleanup.mjs";
 import assert from "node:assert/strict";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { access, constants, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-import { createServer } from "../dist/server/createServer.js";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const cli = resolve("scripts/rea.mjs");
@@ -103,6 +101,10 @@ await withVerifierCleanup(async () => {
   );
   assert.equal(typeof inspection.raw_result.bin?.arch, "string");
 
+  const [{ Client, InMemoryTransport }, { createServer }] = await Promise.all([
+    import("@modelcontextprotocol/client"),
+    import("../dist/server/createServer.js"),
+  ]);
   const mcpServer = createServer(
     { kind: "fixed", analysis: unavailableAnalysis },
     {

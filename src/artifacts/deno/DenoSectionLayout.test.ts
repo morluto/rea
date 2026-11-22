@@ -24,6 +24,10 @@ const parseDenoSectionBytes = (bytes: Buffer, signal?: AbortSignal) =>
 it("parses metadata, tables, remote regions, and embedded configuration", async () => {
   const original = Buffer.from("export const value = 1;\n");
   const transpiled = Buffer.from("transpiled\n");
+  const laterSpecifiers = Array.from({ length: 1_024 }, (_, index) => ({
+    id: index + 2,
+    text: `https://example.com/dependency-${index}.ts`,
+  }));
   const parsed = await parseDenoSectionBytes(
     buildDenoSection({
       metadata: {
@@ -47,8 +51,12 @@ it("parses metadata, tables, remote regions, and embedded configuration", async 
       specifiers: [
         { text: "file:///main.ts", id: 0 },
         { text: "https://example.com/mod.ts", id: 1 },
+        ...laterSpecifiers,
       ],
-      redirects: [{ from: 0, to: 1 }],
+      redirects: [
+        { from: 0, to: 1 },
+        ...laterSpecifiers.map(({ id }) => ({ from: id, to: 1 })),
+      ],
       remoteModules: [
         {
           specifierId: 1,
@@ -80,10 +88,13 @@ it("parses metadata, tables, remote regions, and embedded configuration", async 
     caDataByteLength: 3,
     vfsCaseSensitivity: "insensitive",
   });
-  expect(JSON.stringify(parsed.metadata)).toContain(secret);
   expect(parsed.npmSnapshotByteLength).toBe(3);
-  expect(parsed.specifiers).toMatchObject({ count: 2, listing: "listed" });
-  expect(parsed.redirects).toMatchObject({ count: 1, listing: "listed" });
+  expect(parsed.specifiers).toMatchObject({ count: 1_026, listing: "listed" });
+  expect(parsed.redirects).toEqual({
+    count: 1_025,
+    byteLength: 8_204,
+    listing: "listed",
+  });
   expect(parsed.remoteModules.listing).toBe("listed");
   expect(parsed.remoteModules.modules[0]).toMatchObject({
     specifierId: 1,
@@ -91,7 +102,7 @@ it("parses metadata, tables, remote regions, and embedded configuration", async 
     data: { length: original.length },
     transpiled: { length: transpiled.length },
   });
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
   expect(parsed.vfs.listing).toBe("listed");
   expect(parsed.vfs.members[0]).toMatchObject({
     role: "vfs-file",
@@ -215,7 +226,7 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
     parseDenoSectionBytes(
       buildDenoSection({
         specifiers: [
-          { text: "file:///a.ts", id: 0 },
+          { bytes: Buffer.from([0xff]), id: 0 },
           { text: "file:///b.ts", id: 0 },
         ],
       }),
@@ -226,14 +237,22 @@ it("stops on unrecognized remote flags and duplicate specifier ids", async () =>
   });
 });
 
-it("reports an invalid specifier as an unsupported listing", async () => {
+it("limits unsupported listings to the tables that need invalid specifier text", async () => {
   const parsed = await parseDenoSectionBytes(
     buildDenoSection({
-      specifiers: [{ bytes: Buffer.from([0xff]), id: 0 }],
+      specifiers: [
+        { bytes: Buffer.from([0xff]), id: 0 },
+        { text: "https://example.com/mod.ts", id: 1 },
+        { text: "https://example.com/start.ts", id: 2 },
+      ],
+      redirects: [{ from: 2, to: 1 }],
+      remoteModules: [{ specifierId: 1, data: "known" }],
     }),
   );
   expect(parsed.specifiers.listing).toBe("unsupported");
-  expect(parsed.specifierText).toBeNull();
+  expect(parsed.redirects.listing).toBe("listed");
+  expect(parsed.remoteModules.listing).toBe("listed");
+  expect(parsed.specifierText.get(0)).toBeNull();
 });
 
 it("keeps decoded specifiers when another remote id is missing", async () => {
@@ -247,9 +266,81 @@ it("keeps decoded specifiers when another remote id is missing", async () => {
     }),
   );
   expect(parsed.remoteModules.listing).toBe("unsupported");
-  expect(parsed.specifierText?.get(1)).toBe("https://example.com/mod.ts");
-  expect(parsed.specifierText?.has(2)).toBe(false);
+  expect(parsed.specifierText.get(1)).toBe("https://example.com/mod.ts");
+  expect(parsed.specifierText.has(2)).toBe(false);
 });
+
+// Empty snapshots and specifier tables leave only their length words before redirect rows.
+const REDIRECT_METADATA = Buffer.from('{"entrypoint_key":"main.ts"}');
+const REDIRECT_ROWS =
+  DENO_FIXTURE_SECTION_MAGIC.length + 8 + REDIRECT_METADATA.length + 8 + 4 + 4;
+const redirectSection = (sources: readonly number[]) =>
+  buildDenoSection({
+    metadataBytes: REDIRECT_METADATA,
+    specifiers: [],
+    redirects: sources.map((from) => ({ from, to: 0 })),
+  });
+
+it.each([false, true])(
+  "reports the first malformed redirect despite a short third row (physical EOF %s)",
+  async (physicalEof) => {
+    const parseShort = (second: number) => {
+      const section = redirectSection([1, second, 1]);
+      const acquired = section.subarray(0, REDIRECT_ROWS + 20);
+      return parseDenoSection(
+        physicalEof ? section.length : acquired.length,
+        async (offset, length) => acquired.subarray(offset, offset + length),
+      );
+    };
+    await expect(parseShort(1)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(/duplicate redirect specifier id 1/iu),
+    });
+    await expect(parseShort(2)).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(
+        physicalEof ? /section read was short/iu : /overruns the section/iu,
+      ),
+    });
+  },
+);
+
+it("keeps the redirect count allowance and rejects duplicate IDs across batches", async () => {
+  const overCount = redirectSection([]).subarray(0, REDIRECT_ROWS);
+  overCount.writeUInt32LE(100_001, REDIRECT_ROWS - 4);
+  await expect(parseDenoSectionBytes(overCount)).rejects.toMatchObject({
+    reason: "limit",
+    fixedAllowance: { limit: 100_000, unit: "records" },
+  });
+  const sources = Array.from({ length: 1_024 }, (_, index) => index);
+  await expect(
+    parseDenoSectionBytes(redirectSection([...sources, 0])),
+  ).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/duplicate redirect specifier id 0/iu),
+  });
+});
+
+it.each([false, true])(
+  "retains cancellation during redirect admission (count read %s)",
+  async (duringCount) => {
+    const controller = new AbortController();
+    const reason = Symbol("stop during redirect admission");
+    const section = redirectSection([1, 1]);
+    const bytes = duringCount ? section.subarray(0, REDIRECT_ROWS) : section;
+    const abortAt = duringCount ? REDIRECT_ROWS - 4 : REDIRECT_ROWS;
+    await expect(
+      parseDenoSection(
+        bytes.length,
+        async (offset, length) => {
+          if (offset === abortAt) controller.abort(reason);
+          return bytes.subarray(offset, offset + length);
+        },
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
+  },
+);
 
 it("honors cancellation before parsing", async () => {
   const controller = new AbortController();

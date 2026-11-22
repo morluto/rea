@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
 import { valid } from "semver";
 import { z } from "zod";
-import { releaseBullets, releaseSection } from "./release-markdown.mjs";
+import {
+  githubReleaseReference,
+  plainReleaseNumbers,
+  releaseBullets,
+  releaseSection,
+} from "./release-markdown.mjs";
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/u);
 const actor = z.object({
@@ -193,22 +198,17 @@ function bulletCredits(parts, repository) {
   for (const { text, href } of parts) {
     prose += text;
     const target = href?.split(/[?#]/u, 1)[0]?.replace(/\/$/u, "");
-    const reference =
-      /^https:\/\/github\.com\/([^/]+\/[^/]+)\/(?:pull|issues)\/(\d+)$/u.exec(
-        target ?? "",
-      );
-    if (href) links.push(reference && target ? target : href);
-    if (reference) {
-      // Use the destination's repository and number instead of its display label.
-      if (reference[1].toLowerCase() === repository.toLowerCase())
-        references.add(Number(reference[2]));
+    const reference = githubReleaseReference(target);
+    if (href) links.push(reference?.number !== undefined ? target : href);
+    if (reference?.number !== undefined) {
+      if (reference.repository === repository.toLowerCase())
+        references.add(reference.number);
       localProse += " ";
     } else {
       localProse += text;
     }
   }
-  for (const match of localProse.matchAll(/(?<![\w/])#(\d+)\b/gu))
-    references.add(Number(match[1]));
+  for (const number of plainReleaseNumbers(localProse)) references.add(number);
   const start = prose.indexOf("Thanks ");
   const thanked = new Set(
     Array.from(

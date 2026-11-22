@@ -9,6 +9,7 @@ import { executeWorkflowFixture } from "../../support/workflowGit.js";
 const workflow = async (filename = "ci.yml") =>
   z
     .object({
+      on: z.record(z.string(), z.unknown()),
       jobs: z.record(
         z.string(),
         z
@@ -52,10 +53,26 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
         "utf8",
       ),
     );
+  const archiveSteps = z
+    .object({
+      runs: z.object({ steps: z.array(z.object({ run: z.string() })) }),
+    })
+    .parse(await action("ubuntu-archive")).runs.steps;
+  expect(archiveSteps.map(({ run }) => run).join("\n")).toContain(
+    "apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update",
+  );
   const layout = (await workflow("real-binary-layout.yml")).jobs[
     "real-binary-layout"
   ];
   expect(layout?.["runs-on"]).toBe("ubuntu-24.04");
+  expect(layout?.["timeout-minutes"]).toBe(25);
+  const toolchain = steps
+    .parse(layout?.steps)
+    .find((step) => step.uses === "./.github/actions/host-apt-packages");
+  expect(toolchain?.with).toMatchObject({
+    "download-timeout-seconds": "900",
+    "install-recommends": "false",
+  });
   expect(
     steps.parse(layout?.steps).filter((step) => step.uses === archive),
   ).toEqual([{ uses: archive, with: { [input]: "true" } }]);
@@ -79,7 +96,7 @@ it("opts only the Noble binary-layout toolchain into the Ubuntu Azure archive fa
   ).toBe("false");
 });
 
-const recordedCrashRefresh = "refresh --kill-after=5s 90s";
+const recordedCrashRefresh = "refresh --kill-after=5s 150s";
 const recordedCrashDownload = "download --kill-after=5s 180s";
 
 it.skipIf(process.platform === "win32").each([
@@ -111,6 +128,8 @@ it.skipIf(process.platform === "win32").each([
         case " $* " in
           *" update "*)
             record_stage refresh
+            [[ " $* " == *" Acquire::Languages=none "* ]] || return 98
+            [[ " $* " != *" -qq "* ]] || return 99
             if [[ $mode == refresh && " $* " == *" --error-on=any "* ]]; then
               return 100
             fi
@@ -637,6 +656,19 @@ it("leaves cancellation ownership with CI so child lanes cannot cancel another t
     ).toBeUndefined();
   }
 });
+
+it.each([
+  ["ci.yml", null],
+  ["ci-full-pr.yml", { types: ["labeled"] }],
+  ["pr-title.yml", { types: ["opened", "synchronize", "reopened", "edited"] }],
+] as const)(
+  "admits PRs targeting stack branches in %s",
+  async (file, trigger) => {
+    const { on } = await workflow(file);
+    expect(on.pull_request).toEqual(trigger);
+    if (file === "ci.yml") expect(on.push).toEqual({ branches: ["main"] });
+  },
+);
 
 it("keeps fast feedback separate from complete qualification and release proof", async () => {
   const ci = z

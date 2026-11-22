@@ -1,5 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { parse } from "@babel/parser";
+import { traverseFast, type Node } from "@babel/types";
 import { describe, expect, it } from "vitest";
 import { CdpConnection } from "../../src/browser/CdpConnection.js";
 import { startFakeCdpBrowser } from "../fixtures/fakeCdpBrowser.js";
@@ -19,21 +21,92 @@ async function* scriptFiles(directory: string): AsyncGenerator<string> {
   }
 }
 
-/**
- * JavaScript verifiers send through the same `CdpConnection` and Playwright
- * sessions as TypeScript, but the compiler does not check their method names.
- *
- * The structural check is at the send owners: `CdpConnection.send` and the
- * Playwright session refuse an unregistered command before it reaches the
- * browser, and `CdpConnection.onRegisteredEvent` and the Playwright session
- * refuse an unregistered event name when subscribing (see
- * `verifierCdpEventPayloads.test.ts`). Type-checking the verifier scripts
- * themselves is not practical (checkJs over them and the built modules they
- * import reports about 17,000 implicit `any` errors), so the text scan below
- * is only an early warning for verifiers that rarely run. It sees
- * string-literal sends only: a name built at run time or passed through a
- * variable is not scanned, and is caught only when that verifier runs.
- */
+const cdpMethod = /^[A-Z][A-Za-z]*\.[a-z][A-Za-z]*$/u;
+
+function staticString(node: Node | undefined): string | undefined {
+  if (node?.type === "StringLiteral") return node.value;
+  if (node?.type === "TemplateLiteral" && node.expressions.length === 0)
+    return node.quasis[0]?.value.cooked ?? undefined;
+  return undefined;
+}
+
+// Guard literal sends in rarely run verifiers. The runtime send owners check
+// computed command names, and registered-event subscribers validate event names.
+function verifierCdpCalls(source: string) {
+  const commands: { name: string; line: number }[] = [];
+  const rawEvents: number[] = [];
+  const tree = parse(source, {
+    sourceType: "unambiguous",
+    plugins: ["typescript"],
+  });
+  traverseFast(tree, (node) => {
+    if (
+      node.type !== "CallExpression" &&
+      node.type !== "OptionalCallExpression"
+    )
+      return;
+    const { callee } = node;
+    if (
+      callee.type !== "MemberExpression" &&
+      callee.type !== "OptionalMemberExpression"
+    )
+      return;
+    const method =
+      !callee.computed && callee.property.type === "Identifier"
+        ? callee.property.name
+        : staticString(callee.property);
+    const line = callee.loc?.start.line ?? 1;
+    if (method === "onEvent") {
+      rawEvents.push(line);
+    } else if (method === "send") {
+      const name = staticString(node.arguments[0]);
+      if (name !== undefined && cdpMethod.test(name))
+        commands.push({ name, line });
+    }
+  });
+  return { commands, rawEvents };
+}
+
+describe("verifier CDP source references", () => {
+  it("finds static calls independent of quoting and ignores source-like text", () => {
+    const source = [
+      '// session.send("Page.comment"); session.onEvent(handler);',
+      `const example = 'session.send("Page.example"); session.onEvent(handler);';`,
+      "session.send ('Page.notRegistered');",
+      'session["send"](`DOM.getDocument`);',
+      "session.onEvent (handler);",
+      "session?.['onEvent'](handler);",
+      "session.onRegisteredEvent('Page.lifecycleEvent', handler);",
+      "session.send(method);",
+    ].join("\n");
+    expect(verifierCdpCalls(source)).toEqual({
+      commands: [
+        { name: "Page.notRegistered", line: 3 },
+        { name: "DOM.getDocument", line: 4 },
+      ],
+      rawEvents: [5, 6],
+    });
+  });
+
+  it("uses registered commands and excludes raw event subscribers", async () => {
+    const unregistered: string[] = [];
+    const rawEvents: string[] = [];
+    let sends = 0;
+    for await (const path of scriptFiles(scriptsRoot)) {
+      const calls = verifierCdpCalls(await readFile(path, "utf8"));
+      const file = relative(scriptsRoot, path);
+      sends += calls.commands.length;
+      for (const { name, line } of calls.commands) {
+        if (!isCdpCommand(name)) unregistered.push(`${file}:${line}: ${name}`);
+      }
+      for (const line of calls.rawEvents) rawEvents.push(`${file}:${line}`);
+    }
+    expect(sends).toBeGreaterThan(0);
+    expect(unregistered).toEqual([]);
+    expect(rawEvents).toEqual([]);
+  });
+});
+
 describe("verifier CDP commands", () => {
   it("refuses an unregistered command at the connection before sending it", async () => {
     const browser = await startFakeCdpBrowser();
@@ -55,23 +128,6 @@ describe("verifier CDP commands", () => {
       await connection.close();
       await browser.close();
     }
-  });
-
-  it("sends only commands with registered result schemas", async () => {
-    const unregistered: string[] = [];
-    let sends = 0;
-    for await (const path of scriptFiles(scriptsRoot)) {
-      const source = await readFile(path, "utf8");
-      for (const match of source.matchAll(
-        /\.send\(\s*"([A-Z][A-Za-z]*\.[a-z][A-Za-z]*)"/gu,
-      )) {
-        sends += 1;
-        if (!isCdpCommand(match[1]!))
-          unregistered.push(`${relative(scriptsRoot, path)}: ${match[1]}`);
-      }
-    }
-    expect(sends).toBeGreaterThan(0);
-    expect(unregistered).toEqual([]);
   });
 
   it("keeps the reply members the verifiers read", () => {

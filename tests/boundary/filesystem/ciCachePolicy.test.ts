@@ -711,7 +711,11 @@ it("publishes each hosted npm download cache from one writer", async () => {
       job: "package-e2e",
       save: "${{ matrix.os != 'ubuntu-latest' }}",
     },
-    { file: "ci.yml", job: "windows-curated", save: "true" },
+    {
+      file: "ci.yml",
+      job: "windows-curated",
+      save: "${{ matrix.suite == 'capabilities' }}",
+    },
   ]);
   const ci = workflows.find(({ file }) => file === "ci.yml");
   expect(ci?.workflow.jobs?.static?.permissions).toBeUndefined();

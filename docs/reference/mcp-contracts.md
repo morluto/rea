@@ -465,10 +465,20 @@ pages do not start a provider or create another decompilation. An
 `analyze_function` dossier is a different observation.
 `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
-unknown metadata. Missing omission counts remain null. Summary output carries
-every matching record; actual transport admission still applies. Omitted
-`detail` preserves complete canonical bundle delivery; filters require summary
-or records.
+unknown metadata. Missing omission counts remain null.
+
+Summary output carries every matching record when neither `offset` nor `limit`
+is supplied. To page metadata, supply either field: `offset` defaults to 0 and
+`limit` to 64. The optional `page` object reports `offset`, `limit` and
+`next_offset`; follow `page.next_offset` until it is null. Filters apply before
+paging, and rows retain canonical Evidence ID order. `matching_records`,
+`direct_links` and `missing_direct_links` still count every filtered record and
+its direct links, including records outside the page. `total_retained_records`
+and `unknown_revisions` continue to describe the entire session. Keep the
+session unchanged while following offsets. If a metadata page exceeds the
+response budget, keep its filters and offset and reduce its limit; export if a
+single metadata row still cannot fit. Omitted `detail` preserves complete
+canonical bundle delivery; filters require summary, records or links.
 
 To read a discovered record without transferring the whole bundle, call
 `get_evidence_bundle` with `detail: "records"` and the same exact `filters`.
@@ -482,8 +492,8 @@ such as annotations. `missing_evidence_links` lists direct `evidence_links` of
 the returned records that this session or bundle does not retain; links are not
 traversed. A selection is not an Evidence bundle: it omits manifests and
 residual unknowns, cannot be imported, and describes historical observations
-rather than current provider or database state. `offset` and `limit` require
-`detail: "records"`. If one page exceeds the response budget, select fewer
+rather than current provider or database state. `offset` and `limit` apply to
+summary, records or links delivery. If one record page exceeds the response budget, select fewer
 records or one `evidence_id`; a single record larger than one response still
 needs `export_evidence_bundle`, or `inspect_analysis_view` pages where its parent
 supports views.
@@ -558,20 +568,35 @@ To find missing sources before a downstream analysis refuses them, read
 record payload. `filters` select the starting records, while membership is
 checked against every record in the session or file, so a filtered-out source is
 `retained`, not missing. Rows (`evidence_id`, `linked_evidence_id`, `status`) are
-in canonical order, default to `link_status: "missing"` and page with `offset` and
-`limit` (default 64); `links` counts every inspected link regardless of that
-selection. `traversal: "direct"` (the default) reads the selected records' own
+in canonical order and page with `offset` and `limit` (default 64).
+`linked_evidence_id` optionally selects direct citations to one exact Evidence
+ID, including an ID missing from the current session or file. With this selector,
+`link_status` defaults to `"all"`; otherwise it defaults to `"missing"`.
+`links` counts target-matching links before status filtering or paging.
+`traversal: "direct"` (the default) reads the selected records' own
 links and sets `retained_closure` to null, because it makes no closure claim.
 `traversal: "retained-closure"` also follows retained links, as composed workflows
 such as `build_call_path` do, and reports `complete` or `incomplete`; anything
-beyond a missing link remains unknown. Missing means absent from this session or
+beyond a missing link remains unknown. Closure completeness covers all examined
+outgoing links, even when the target selector hides some rows. The target
+selector does not change source filters or traverse incoming links transitively.
+Missing means absent from this session or
 file, not nonexistent, and neither status describes analysis coverage. Importing
 a missing source changes this membership without changing any Evidence ID.
+For example, `{"detail":"links","linked_evidence_id":"ev_<64 lowercase hex characters>"}`
+returns the retained direct referrers in the current investigation. An optional
+`filters.evidence_id` still selects a source record, not the cited target.
+No matches means no direct referrers among the examined retained records; it
+does not establish absence elsewhere or validate a conclusion.
 
 For a portable exported bundle, the CLI shares this projection:
-`rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
+`rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --format json`.
+Follow `page.next_offset` to discover further matching records without their
+payloads, or omit both paging fields for the complete summary.
 `"detail":"records"` with an `evidence_id` filter returns that complete record,
-and `"detail":"links"` reads link membership.
+and `"detail":"links"` reads link membership. Add `linked_evidence_id` to that
+links request to select direct referrers in the file, using the same semantics
+as MCP. The target selector is rejected for other detail modes.
 The CLI validates and materializes that local bundle under its existing memory
 budget; summary delivery does not make arbitrary large files cheap to import.
 
@@ -1317,6 +1342,20 @@ constraint, and `details.path` names that file. A `.dext`, `.kext`,
 resource root reports its `layout` as `contents`, `root`,
 `versioned-framework` or `flattened-framework`.
 
+When the caller opens a directory, `inspect_macho` and `inspect_signature`
+include `normalized_result.bundle_provenance`. It records the canonical bundle
+directory, selected layout, lookup path and SHA-256 of the Info.plist bytes
+read during resolution, and the declared executable name. For versioned
+frameworks, `version_directory` records where the program directory resolved.
+The `framework` object reports the directory's name without `.framework` and
+whether it exactly matches the declared name. A mismatch does not override
+`CFBundleExecutable`. The Mach-O summary includes these fields under
+`summary.bundle_provenance`. The binary is still the Evidence subject.
+These facts describe the selection at open time. Reopening refreshes them
+from the new admission, including when the executable bytes stay the same.
+A retained report includes those facts when a later inspection or cleanup step fails.
+Direct file selections and older Evidence can omit this object.
+
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or
 unresolvable. `binary_session` reports `session_kind: "bundle_resources"` and the
@@ -1336,6 +1375,13 @@ resource readers remain read-only within the selected bundle.
 `inspect_plist` requires an open binary or bundle-resource session. An explicit
 `path` selects a plist in that context and does not create a session;
 `binary_session` reports `target_required` while neither session is open.
+`source_sha256` records the SHA-256 of the plist bytes read. While an
+executable is open, the Evidence subject remains that program.
+REA writes a private temporary copy for the native commands and leaves the
+selected plist untouched. The tool advertises the temporary filesystem write.
+An app-bundle or resource-only session accepts only plists that resolve inside
+its root. To inspect an outside plist, open the plist itself with `open_binary`
+or pass its path directly to the CLI.
 Use `open_bundle_resources` for a bundle whose executable cannot be resolved.
 When `path` is omitted and the open target is itself a plist, a plist that
 cannot be read or decoded is reported against that target
@@ -1750,11 +1796,8 @@ failing owner supports runtime recovery; `inspect_analysis_settings` is optional
 when those facts are supplied. Updates are atomic, apply to new work, survive
 target close/open, and vanish when REA exits. Explicit per-call arguments take
 precedence. Neither tool changes host deadlines or resolves retained cleanup.
-See [runtime settings and recovery](../design/limits-and-recovery.md#runtime-settings-through-mcp)
-for the full setting list, reset/revision semantics and ASAR retry example.
-For implementation ownership, accepted-operation snapshots, provider wiring,
-and extension guidance, see the
-[maintainer design](../design/limits-and-recovery.md#ownership-and-data-flow).
+See [runtime settings and recovery](limits-and-recovery.md#runtime-settings-through-mcp)
+for inspection, reset and revision semantics and an ASAR retry example.
 
 Ghidra and Hopper startup updates apply to the next startup attempt without
 restarting REA. Ghidra decompile timeout updates apply on the existing Program.
@@ -1844,10 +1887,11 @@ deadline still applies. Choose the total budget for the expected workload;
 neither server configuration nor progress can override a remote caller's
 deadline.
 
-The 240-second setting is a measured example, not a universal timeout: a
-controlled Linux x64/WSL2 fixture took about 64 seconds for its first overview
-with Ghidra 12.1.4 on a mounted NTFS installation, native JDK 21, two CPUs, and a
-512 MiB Java heap. Target size, storage, and analysis work can change that time.
+The 240-second setting is a measured example, not a universal timeout. Recorded
+on Ghidra 12.1.4 with native JDK 21 (no longer accepted); not yet re-run on
+12.2. A controlled Linux x64/WSL2 fixture took about 64 seconds for its first
+overview on a mounted NTFS installation, with two CPUs and a 512 MiB Java heap.
+Target size, storage, and analysis work can change that time.
 Configure the deadline in the caller's existing request settings; it is not a
 tool argument, setup grant, or server-side automatic extension. CLI analysis has
 no MCP client request deadline, but keeps the provider startup deadline and
@@ -1878,8 +1922,9 @@ connection cannot apply a changed launch environment. See the
 
 This close/reopen flow was exercised on one real Linux stdio connection after a
 controlled startup timeout, followed by a successful overview and function
-analysis. A separate Windows x64 stdio run with Ghidra 12.1.4, JDK 21 and Node
-22.19.0 exercised the same connection and caller-selected native PE: the default
+analysis. Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet
+re-run on 12.2. A separate Windows x64 stdio run with Node 22.19.0 exercised the
+same connection and caller-selected native PE: the default
 60-second client request timed out, close succeeded, and reopening before a
 240-second request completed the cold overview in about 163 seconds. The next
 overview took about 19 ms. The cold and warm overviews reported two procedures

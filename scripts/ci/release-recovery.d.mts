@@ -3,8 +3,8 @@ export function selectRecoveryRelease(input: {
   version: string;
   run: unknown;
   jobs: unknown;
-  release: unknown;
-  tagSha: string;
+  release?: unknown;
+  tagSha?: string;
 }): {
   version: string;
   source_sha: string;

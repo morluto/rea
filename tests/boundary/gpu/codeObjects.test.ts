@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync, zstdCompressSync } from "node:zlib";
 import { createHash } from "node:crypto";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { runWithAnalysisOperationSnapshot } from "../../../src/domain/analysisOperationSnapshot.js";
 import {
   MAXIMUM_ZSTD_MAX_FRAMES,
@@ -1072,6 +1073,64 @@ it("uses a later module target when selecting standalone PTX", async () => {
   expect(inventory.value.objects[0]!.target).toBe("sm_90");
   expect(selected.value.kernels.map(({ name }) => name)).toEqual(["first"]);
 });
+it("reports invalid standalone PTX encoding in inventory and kernel inspection", async () => {
+  const header = Buffer.from(
+    ".version 8.0\n.target sm_80\n.address_size 64\n// ",
+  );
+  const entry = Buffer.from("\n.visible .entry hello() { ret; }\n");
+  const malformed = Buffer.concat([header, Buffer.from([0xff]), entry]);
+  const valid = Buffer.concat([header, Buffer.from("café"), entry]);
+  for (const analysis of ["inventory", "kernels"] as const) {
+    const result = await inspect(malformed, { analysis });
+    if (!result.ok) throw result.error;
+    expect(result.value).toMatchObject({
+      format: "ptx",
+      artifact: {
+        sha256: createHash("sha256").update(malformed).digest("hex"),
+      },
+      coverage: {
+        discovery: "partial",
+        payloads: analysis === "kernels" ? "partial" : "not-requested",
+      },
+      objects: [{ kind: "ptx", target: null, inspection: "malformed" }],
+      kernels: [],
+      ptx_artifacts: [],
+    });
+    expect(result.value.objects[0]!.limitations).toContain(
+      "PTX is not valid UTF-8 text",
+    );
+
+    const control = await inspect(valid, { analysis });
+    if (!control.ok) throw control.error;
+    expect(control.value.coverage.discovery).toBe("complete");
+    expect(control.value.objects[0]!.target).toBe("sm_80");
+    if (analysis === "kernels") {
+      expect(control.value.kernels.map(({ name }) => name)).toEqual(["hello"]);
+      expect(
+        Buffer.from(control.value.ptx_artifacts[0]!.text).equals(valid),
+      ).toBe(true);
+    }
+  }
+});
+
+it("keeps a UTF-8 character split by the standalone PTX scan budget unexamined", async () => {
+  const budget = 16 * 1024 * 1024;
+  const header = Buffer.from(".version 8.0\n.target sm_80\n// ");
+  const bytes = Buffer.concat([
+    header,
+    Buffer.alloc(budget - header.length - 1, 0x20),
+    Buffer.from("é\n"),
+  ]);
+  const result = await inspect(bytes, { analysis: "inventory" });
+  if (!result.ok) throw result.error;
+  expect(result.value.coverage.discovery).toBe("partial");
+  expect(result.value.objects).toMatchObject([
+    { kind: "ptx", target: null, inspection: "partial" },
+  ]);
+  expect(result.value.objects[0]!.limitations).toEqual([
+    "PTX target scan reached the 16 MiB text budget before all module directives were examined.",
+  ]);
+});
 it.each(["truncated", "invalid", "extension"] as const)(
   "retains earlier AMD kernel declarations after a later %s note",
   async (kind) => {
@@ -1181,6 +1240,16 @@ it.each(["section-names", "symbols"] as const)(
     );
   },
 );
+it.each(["add_one", "kérnel_日本"])(
+  "decodes UTF-8 CUBIN symbol name %s without a name limitation",
+  async (name) => {
+    const result = await inspect(cubinFixture({ name }));
+    if (!result.ok) throw result.error;
+    const [kernel] = result.value.kernels;
+    expect(kernel).toMatchObject({ name, symbol: name });
+    expect(kernel!.limitations.join(" ")).not.toContain("not valid UTF-8");
+  },
+);
 it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   const bytes = cubinFixture();
   const symbolName = bytes.indexOf(Buffer.from("\0add_one\0"));
@@ -1188,7 +1257,11 @@ it("preserves non-UTF-8 CUBIN symbol bytes in the kernel name", async () => {
   bytes[symbolName + 1] = 0xff;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
-  expect(result.value.kernels[0]?.name).toBe("ÿdd_one");
+  const [kernel] = result.value.kernels;
+  expect(kernel?.name).toBe("ÿdd_one");
+  expect(kernel!.limitations).toContain(
+    `CUDA kernel symbol name is not valid UTF-8; name shows its bytes as Latin-1 (base64 ${Buffer.from("\xffdd_one", "latin1").toString("base64")})`,
+  );
 });
 
 it.each([9, 10])(
@@ -1495,6 +1568,14 @@ it("refuses escaped PTX report expansion while preserving bounded interrupted fa
     error: { _tag: "AnalysisResourceConstraintError" },
   });
   if (result.ok) throw new Error("expected representation capacity refusal");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "gpu-retained-report-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
   const partial = gpuCodeObjectsPartialSchema.parse(
     parseEvidence(result.error.partialObservation).normalized_result,
   );
@@ -1531,7 +1612,14 @@ it("distinguishes impossible Clang bundle counts from a framed over-capacity dir
   }
   const result = await inspect(framed, { analysis: "inventory" });
   if (result.ok) throw new Error("Expected directory capacity failure");
-  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: { boundary: "hip-bundle-entries", maximum: 65_536 },
+    },
+  });
 });
 
 it("checks Clang bundle ID bounds before the retained directory allowance", async () => {
@@ -1545,7 +1633,19 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
   const framed = Buffer.concat([header, Buffer.from(name), Buffer.alloc(1)]);
   const limited = await inspect(framed, { analysis: "inventory" });
   if (limited.ok) throw new Error("Expected a directory capacity failure");
-  expect(limited.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(projectAnalysisError(limited.error)).toMatchObject({
+    code: "resource_constraint",
+    retryable: false,
+    details: {
+      resource: "memory",
+      reported_limits: {
+        boundary: "hip-bundle-id-bytes",
+        maximum: 65_536,
+        maximum_object_bytes: 134_217_728,
+        maximum_report_bytes: 16_777_216,
+      },
+    },
+  });
 
   const short = Buffer.from(header);
   short.writeBigUInt64LE(BigInt(short.length), 32);
@@ -1560,4 +1660,30 @@ it("checks Clang bundle ID bounds before the retained directory allowance", asyn
       issues: [{ path: ["path"], reason: "invalid_format" }],
     });
   }
+});
+
+it("reports aggregate Clang directory capacity when every ID fits", async () => {
+  const count = 256;
+  const idBytes = 65_536;
+  const entryBytes = 24 + idBytes;
+  const directoryEnd = 32 + count * entryBytes;
+  const framed = Buffer.alloc(directoryEnd + 1, 0x78);
+  framed.write("__CLANG_OFFLOAD_BUNDLE__");
+  framed.writeBigUInt64LE(BigInt(count), 24);
+  for (let index = 0; index < count; index++) {
+    const row = 32 + index * entryBytes;
+    framed.writeBigUInt64LE(BigInt(directoryEnd), row);
+    framed.writeBigUInt64LE(1n, row + 8);
+    framed.writeBigUInt64LE(BigInt(idBytes), row + 16);
+  }
+  const result = await inspect(framed, { analysis: "inventory" });
+  if (result.ok) throw new Error("Expected directory capacity failure");
+  expect(projectAnalysisError(result.error)).toMatchObject({
+    details: {
+      reported_limits: {
+        boundary: "hip-bundle-directory-bytes",
+        maximum: 16_777_216,
+      },
+    },
+  });
 });

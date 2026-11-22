@@ -75,8 +75,6 @@ export interface ArtifactReaderConstruction {
 
 export interface FormatDescriptor {
   readonly id: ArtifactFormatId;
-  /** Every ZIP package family shares this row of capabilities. */
-  readonly zipFamily: boolean;
   /** Root occurrence kind is container, including directories and zip packages. */
   readonly occurrenceContainer: boolean;
   /** Path-role classification treats the format as a container of its own. */
@@ -145,7 +143,6 @@ function admittedAs(
 
 /** One capability row for every ZIP-backed package family. */
 const ZIP_FAMILY_CAPABILITIES = {
-  zipFamily: true,
   occurrenceContainer: true,
   roleContainer: false,
   retainClassifiedSource: true,
@@ -204,7 +201,6 @@ function described<Id extends ArtifactFormatId>(
 }
 
 const plain = {
-  zipFamily: false,
   occurrenceContainer: false,
   roleContainer: false,
   retainClassifiedSource: false,
@@ -279,17 +275,21 @@ const NON_ZIP_FORMATS = {
   }),
   pkg: container("pkg", { absentInventory: "platform" }),
   asar: container("asar", {
+    retainClassifiedSource: true,
     extractable: true,
     absentInventory: "unavailable",
-    createReader: (path, options) =>
-      new AsarArtifactReader(path, {
+    createReader: (path, options) => {
+      const admitted = sourceOf(options);
+      return new AsarArtifactReader(path, {
         ...(options.asarHeaderAdmission === undefined
           ? {}
           : { headerAdmission: options.asarHeaderAdmission }),
         ...(options.selectedPath === undefined
           ? {}
           : { selectedPath: options.selectedPath }),
-      }),
+        ...(admitted === undefined ? {} : { admitted }),
+      });
+    },
   }),
   ines: container("ines", {
     roleContainer: true,

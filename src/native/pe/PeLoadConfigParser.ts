@@ -12,6 +12,7 @@ import {
   createFileMappingIndex,
   imageFileMappings,
   mappedFileOffset,
+  type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
 import {
   peDeclaredFileMappings,
@@ -127,26 +128,32 @@ const sectionNameIndex = (
 };
 
 /**
- * Read one PE TLS directory and load configuration without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` callback slots.
+ * Read one PE TLS directory and load configuration from a parsed PE image
+ * without executing the image. Yields to the event loop and honors cancellation
+ * every `ENTRIES_PER_YIELD` callback slots.
  */
-export const parsePeLoadConfig = async (
+export const parsePeLoadConfigFromImage = async (
   bytes: Buffer,
+  image: PeImage,
   artifact: PeLoadConfig["artifact"],
   input: InspectPeLoadConfigInput,
   signal?: AbortSignal,
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
-  const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const lookup = createFileMappingIndex(
-    imageFileMappings(image),
-    image.zero_fills,
-  );
   const pointerWidth = bits === 64 ? 8 : 4;
   const reader = new BinaryReader(bytes, true, "pe");
+  // Build section and mapping indices only when directory 9 or 10 exists and needs them.
+  let mappingIndex: FileMappingIndex | undefined;
+  const getLookup = (): FileMappingIndex =>
+    (mappingIndex ??= createFileMappingIndex(
+      imageFileMappings(image),
+      image.zero_fills,
+    ));
+  let cachedSectionName: ((rva: number) => string | null) | undefined;
+  const sectionName = (rva: number): string | null =>
+    (cachedSectionName ??= sectionNameIndex(image.sections))(rva);
 
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
@@ -166,7 +173,7 @@ export const parsePeLoadConfig = async (
     return {
       rva,
       size,
-      file_offset: lookup.offset(base + BigInt(rva), size),
+      file_offset: getLookup().offset(base + BigInt(rva), size),
     };
   };
 
@@ -176,15 +183,13 @@ export const parsePeLoadConfig = async (
     return delta <= 0xffffffffn ? Number(delta) : null;
   };
 
-  const sectionName = sectionNameIndex(image.sections);
-
   const locate = (va: bigint): PeLoadConfigLocated => {
     if (va === 0n)
       return { va: "0x0", rva: null, file_offset: null, section: null };
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      fileOffset = optionalFileOffset(() => lookup.offset(va, 1));
+      fileOffset = optionalFileOffset(() => getLookup().offset(va, 1));
     }
     return {
       va: hex(va),
@@ -202,7 +207,7 @@ export const parsePeLoadConfig = async (
     locate,
     rvaOf,
     sectionName,
-    lookup,
+    lookup: { offset: (address, size) => getLookup().offset(address, size) },
     templateFileOffset: (address, size) =>
       optionalFileOffset(() =>
         mappedFileOffset(
@@ -227,7 +232,7 @@ export const parsePeLoadConfig = async (
           `Load configuration Size ${String(size)} extends beyond the 32-bit RVA space`,
         );
       try {
-        return lookup.offset(base + BigInt(rva), size);
+        return getLookup().offset(base + BigInt(rva), size);
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure)
           throw new BinaryFormatFailure(
@@ -249,6 +254,27 @@ export const parsePeLoadConfig = async (
     examined_callbacks: tls?.callbacks.length ?? 0,
     limitations: [...PE_LOAD_CONFIG_LIMITATIONS],
   };
+};
+
+/**
+ * Read one PE TLS directory and load configuration without executing the image.
+ * Yields to the event loop and honors cancellation every
+ * `ENTRIES_PER_YIELD` callback slots.
+ */
+export const parsePeLoadConfig = async (
+  bytes: Buffer,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
+): Promise<PeLoadConfig> => {
+  assertArtifactReadActive(signal);
+  return parsePeLoadConfigFromImage(
+    bytes,
+    readPeImage(bytes),
+    artifact,
+    input,
+    signal,
+  );
 };
 
 const readTls = async ({

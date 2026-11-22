@@ -581,7 +581,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/raw-buffer-read.json",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -1000,13 +1000,13 @@ it("retains native Inspector verification on every documented package host", asy
   );
   expect(windowsBuild).toBeGreaterThanOrEqual(0);
   expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
-  for (const verifier of [
-    "node scripts/verify/inspector/runtime-observation.mjs",
-    "node scripts/verify-windows-package.mjs",
-  ]) {
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
     const step = windowsSteps.findIndex(({ run }) => run === verifier);
     expect(step).toBeGreaterThan(windowsBuild);
-    expect(windowsSteps[step]?.if).toBeUndefined();
+    expect(windowsSteps[step]?.if).toBe(condition);
   }
 });
 
@@ -1043,6 +1043,10 @@ it.each([
   ],
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },
@@ -1472,6 +1476,10 @@ it.each([
   ],
   [
     "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/desktop/AgentEnvBridgeSources.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],
   [

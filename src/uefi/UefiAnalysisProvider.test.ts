@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,7 @@ import { deflateSync } from "node:zlib";
 import { expect, it, vi } from "vitest";
 import { SafeOutputTree } from "../resources/SafeOutputTree.js";
 import { SafeOutputTreeCreationFailure } from "../resources/SafeOutputTreeCreationFailure.js";
-import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
@@ -25,6 +25,7 @@ import {
   buildSection,
   guidBytes,
 } from "../../tests/fixtures/uefiImage.js";
+import { FFS2_FILE_SYSTEM_GUID, FFS3_FILE_SYSTEM_GUID } from "./UefiGuid.js";
 import { UefiAnalysisProvider } from "./UefiAnalysisProvider.js";
 import {
   uefiRequestSchema,
@@ -662,7 +663,7 @@ it("rolls back staged files if the receipts cannot form a valid extraction resul
 });
 
 it.skipIf(!lzmaWorkerAvailable)(
-  "retains the worker root across a failed descriptor retry and releases its child before root removal",
+  "retains the worker root across a failed child stop retry and stops its child before root removal",
   async () => {
     const driver = buildFfsFile({
       guid: GUID_DRIVER,
@@ -676,11 +677,11 @@ it.skipIf(!lzmaWorkerAvailable)(
     await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
     const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
     const create = PrivateRuntimeRoot.create;
-    const closeHandle = OwnedFileHandle.prototype.close;
+    const stopProcess = ProviderProcessSupervisor.prototype.stop;
     const closeRoot = PrivateRuntimeRoot.prototype.close;
     let root: PrivateRuntimeRoot | undefined;
-    let outputHandle: OwnedFileHandle | undefined;
-    let denyDescriptor = true;
+    let workerPid: number | undefined;
+    let denyStop = true;
     let denyRoot = true;
     const creating = vi
       .spyOn(PrivateRuntimeRoot, "create")
@@ -689,24 +690,14 @@ it.skipIf(!lzmaWorkerAvailable)(
         if (options?.prefix === "rea-uefi-lzma-") root = created;
         return created;
       });
-    const closingHandle = vi
-      .spyOn(OwnedFileHandle.prototype, "close")
-      .mockImplementation(async function (this: OwnedFileHandle) {
-        const outputPath =
-          root === undefined ? undefined : join(root.path, "output.bin");
-        if (outputPath !== undefined && this.handle.fd >= 0) {
-          const output = await stat(outputPath).catch(() => undefined);
-          const fd = await this.handle.stat();
-          if (
-            output !== undefined &&
-            fd.dev === output.dev &&
-            fd.ino === output.ino
-          ) {
-            outputHandle = this;
-            if (denyDescriptor) throw new Error("worker output close denied");
-          }
+    const stopping = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementation(async function (this: ProviderProcessSupervisor) {
+        workerPid = this.launch.process.pid;
+        if (denyStop) {
+          return { status: "incomplete", reason: "worker stop denied" };
         }
-        return closeHandle.call(this);
+        return stopProcess.call(this);
       });
     const closingRoot = vi
       .spyOn(PrivateRuntimeRoot.prototype, "close")
@@ -718,23 +709,35 @@ it.skipIf(!lzmaWorkerAvailable)(
 
     try {
       const result = await provider.execute(inspectRequest(imagePath));
-      if (result.ok || root === undefined || outputHandle === undefined) {
-        throw new Error("worker output descriptor failure was not exercised");
+      if (result.ok || root === undefined || workerPid === undefined) {
+        throw new Error("worker stop failure was not exercised");
       }
       expect(result.error.cleanupResources).toEqual(
-        expect.arrayContaining([root.path, join(root.path, "output.bin")]),
+        expect.arrayContaining([root.path, `pid:${String(workerPid)}`]),
       );
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "uefi",
+        result: {
+          firmware_volumes: [
+            expect.objectContaining({
+              ffs_files: [expect.objectContaining({ guid: GUID_DRIVER })],
+            }),
+          ],
+        },
+        provenance: {
+          path: imagePath,
+        },
+      });
       await expect(provider.close()).rejects.toThrow(
         /cleanup remains incomplete/i,
       );
       expect(closingRoot.mock.contexts).not.toContain(root);
       expect(existsSync(root.path)).toBe(true);
 
-      denyDescriptor = false;
+      denyStop = false;
       await expect(provider.close()).rejects.toThrow(
         /cleanup remains incomplete/i,
       );
-      expect(outputHandle.handle.fd).toBe(-1);
       expect(result.error.cleanupResources).toEqual([root.path]);
       expect(existsSync(root.path)).toBe(true);
 
@@ -743,14 +746,286 @@ it.skipIf(!lzmaWorkerAvailable)(
       expect(existsSync(root.path)).toBe(false);
       expect(result.error.cleanupIncomplete).toBe(false);
     } finally {
+      denyStop = false;
+      denyRoot = false;
       creating.mockRestore();
-      closingHandle.mockRestore();
+      stopping.mockRestore();
       closingRoot.mockRestore();
       await provider.close();
     }
   },
   45_000,
 );
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "retains the completed inspection when cancellation arrives during pooled worker shutdown",
+  async () => {
+    const driver = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(Buffer.from("worker output"))),
+      ),
+    });
+    const directory = await createTestTempDirectory(
+      "rea-uefi-late-worker-close-",
+    );
+    const imagePath = join(directory, "image.fi");
+    await writeFile(imagePath, buildFv({ files: [driver] }).buffer);
+    const controller = new AbortController();
+    const stopProcess = ProviderProcessSupervisor.prototype.stop;
+    const stopping = vi
+      .spyOn(ProviderProcessSupervisor.prototype, "stop")
+      .mockImplementationOnce(async function (this: ProviderProcessSupervisor) {
+        controller.abort("cancelled during worker close");
+        return stopProcess.call(this);
+      });
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    try {
+      const result = await provider.execute(inspectRequest(imagePath), {
+        signal: controller.signal,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error._tag).toBe("AnalysisCancelledError");
+        expect(result.error.cleanupIncomplete).toBe(false);
+        expect(result.error.partialObservation).toMatchObject({
+          kind: "uefi",
+          result: {
+            firmware_volumes: [
+              expect.objectContaining({
+                ffs_files: [expect.objectContaining({ guid: GUID_DRIVER })],
+              }),
+            ],
+          },
+          provenance: {
+            path: imagePath,
+          },
+        });
+      }
+    } finally {
+      stopping.mockRestore();
+      await provider.close();
+    }
+  },
+  45_000,
+);
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "reuses one persistent LZMA worker across multiple sections and reuses the validated scan for extraction",
+  async () => {
+    const mod1 = buildSection(0x10, Buffer.from("DXE-DRIVER-ONE-PAYLOAD"));
+    const mod2 = buildSection(0x10, Buffer.from("DXE-DRIVER-TWO-PAYLOAD"));
+    const corrupt = Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00, 0xaa, 0xbb]);
+    const f1 = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(mod1)),
+      ),
+    });
+    const fBad = buildFfsFile({
+      guid: "55555555-6666-4777-8888-999999999999",
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(corrupt),
+    });
+    const f2 = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 7,
+      payload: buildLzmaGuidedSection(
+        Buffer.from(lzmaPurescript.compressFile(mod2)),
+      ),
+    });
+    const directory = await createTestTempDirectory("rea-uefi-worker-pool-");
+    const imagePath = join(directory, "multi-lzma.fd");
+    await writeFile(imagePath, buildFv({ files: [f1, fBad, f2] }).buffer);
+
+    let lzmaRootsCreated = 0;
+    const create = PrivateRuntimeRoot.create;
+    const creating = vi
+      .spyOn(PrivateRuntimeRoot, "create")
+      .mockImplementation(async (options) => {
+        if (options?.prefix === "rea-uefi-lzma-") lzmaRootsCreated += 1;
+        return create(options);
+      });
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    try {
+      const inspected = expectOk(
+        await provider.execute(inspectRequest(imagePath)),
+      ).value.result as UefiInspectResult;
+      expect(lzmaRootsCreated).toBe(1);
+      expect(inspected.coverage).toBe("partial");
+
+      const extracted = expectOk(
+        await provider.execute(
+          extractRequest(imagePath, join(directory, "out"), {
+            include_compressed: false,
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      // Validated scan summary is reused across inspect -> extract without spawning another worker.
+      expect(lzmaRootsCreated).toBe(1);
+      expect(
+        extracted.files
+          .filter((entry) => entry.source === "raw-section")
+          .map((entry) => entry.sha256),
+      ).toEqual([
+        sha256(Buffer.from("DXE-DRIVER-ONE-PAYLOAD")),
+        sha256(Buffer.from("DXE-DRIVER-TWO-PAYLOAD")),
+      ]);
+    } finally {
+      creating.mockRestore();
+      await provider.close();
+    }
+  },
+  45_000,
+);
+
+it("keeps worker stdin errors owned across cancellation of an in-flight frame write", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-stdin-cancel-");
+  const blockedWorker = join(directory, "blocked-worker.mjs");
+  await writeFile(blockedWorker, "setInterval(() => {}, 1000);\n", "utf8");
+  const largeCompressed = Buffer.alloc(512 * 1024, 0x5d);
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(largeCompressed),
+  });
+  const imagePath = join(directory, "large-lzma.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const uncaught: unknown[] = [];
+  const onUncaught = (err: unknown) => {
+    uncaught.push(err);
+  };
+  process.on("uncaughtException", onUncaught);
+
+  const controller = new AbortController();
+  let capturedStdin: NodeJS.WritableStream | undefined;
+  const stop = ProviderProcessSupervisor.prototype.stop;
+  const stopping = vi
+    .spyOn(ProviderProcessSupervisor.prototype, "stop")
+    .mockImplementation(async function (this: ProviderProcessSupervisor) {
+      capturedStdin = this.launch.process.stdin ?? undefined;
+      capturedStdin?.emit(
+        "error",
+        Object.assign(new Error("write EPIPE during stop"), { code: "EPIPE" }),
+      );
+      return stop.call(this);
+    });
+
+  const provider = new UefiAnalysisProvider(blockedWorker);
+  try {
+    const timer = setTimeout(() => {
+      controller.abort(new Error("caller cancelled write"));
+    }, 120);
+    const result = await provider.execute(inspectRequest(imagePath), {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (capturedStdin !== undefined) {
+      capturedStdin.emit(
+        "error",
+        Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+      );
+    }
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+    }
+    expect(uncaught).toEqual([]);
+  } finally {
+    stopping.mockRestore();
+    process.off("uncaughtException", onUncaught);
+    await provider.close();
+  }
+});
+
+it("preserves caller cancellation and cleans up the runtime root when worker startup aborts before launch", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-startup-cancel-");
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(
+      Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00]),
+    ),
+  });
+  const imagePath = join(directory, "startup-cancel.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const controller = new AbortController();
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  let createdRootPath: string | undefined;
+  const creating = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      const root = await createRoot(options);
+      createdRootPath = root.path;
+      controller.abort("caller cancelled during startup");
+      return root;
+    });
+  const provider = new UefiAnalysisProvider();
+  try {
+    const result = await provider.execute(inspectRequest(imagePath), {
+      signal: controller.signal,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error._tag).toBe("AnalysisCancelledError");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.secondaryFailures).toEqual([]);
+    }
+    expect(createdRootPath).toBeDefined();
+    expect(existsSync(createdRootPath!)).toBe(false);
+  } finally {
+    creating.mockRestore();
+    await provider.close();
+  }
+});
+
+it("preserves provider_timeout and cleans up the runtime root when the deadline expires during worker startup", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-startup-timeout-");
+  const ffs = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: buildLzmaGuidedSection(
+      Buffer.from([0x5d, 0x00, 0x00, 0x80, 0x00]),
+    ),
+  });
+  const imagePath = join(directory, "startup-timeout.fd");
+  await writeFile(imagePath, buildFv({ files: [ffs] }).buffer);
+
+  const createRoot = PrivateRuntimeRoot.create.bind(PrivateRuntimeRoot);
+  let createdRootPath: string | undefined;
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const creating = vi
+    .spyOn(PrivateRuntimeRoot, "create")
+    .mockImplementationOnce(async (options) => {
+      const root = await createRoot(options);
+      createdRootPath = root.path;
+      vi.advanceTimersByTime(UEFI_FIRMWARE_LIMITS.timeoutMs);
+      return root;
+    });
+  const provider = new UefiAnalysisProvider();
+  try {
+    const result = await provider.execute(inspectRequest(imagePath));
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        timeoutMs: UEFI_FIRMWARE_LIMITS.timeoutMs,
+      });
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(result.error.secondaryFailures).toEqual([]);
+    }
+    expect(createdRootPath).toBeDefined();
+    expect(existsSync(createdRootPath!)).toBe(false);
+  } finally {
+    creating.mockRestore();
+    vi.useRealTimers();
+    await provider.close();
+  }
+});
 
 it("rolls back a tree acquired during failed publication setup without publishing", async () => {
   const { imagePath, directory } = await writeTestImage();
@@ -1669,6 +1944,402 @@ it.each([
       ).value.result as UefiExtractResult;
       expect(selected.coverage).toBe("complete");
       expect(selected.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.each([
+  {
+    name: "valid unaligned UsedSize",
+    entrySize: 8,
+    usedSize: 129,
+    range: null,
+  },
+  {
+    name: "zero-sized entry",
+    entrySize: 0,
+    usedSize: 129,
+    range: { offset: 92, length: 8 },
+    detail: "invalid extent",
+  },
+  {
+    name: "entry exceeding the extension",
+    entrySize: 9,
+    usedSize: 129,
+    range: { offset: 92, length: 8 },
+    detail: "invalid extent",
+  },
+  {
+    name: "UsedSize before the extension ends",
+    entrySize: 8,
+    usedSize: 99,
+    range: { offset: 96, length: 4 },
+    detail: "outside the volume data extent",
+  },
+  {
+    name: "file in the claimed erased tail",
+    entrySize: 8,
+    usedSize: 104,
+    range: { offset: 96, length: 4 },
+    detail: "ends before the observed FFS file end at 0x81",
+  },
+  {
+    name: "UsedSize inside the erase-filled end of a file",
+    entrySize: 8,
+    usedSize: 128,
+    payload: Buffer.alloc(2, 0xff),
+    range: { offset: 96, length: 4 },
+    detail: "ends before the observed FFS file end at 0x82",
+  },
+])(
+  "reports FV extension coverage and retains the FFS file for $name",
+  async ({
+    entrySize,
+    usedSize,
+    payload = Buffer.from([0x31]),
+    range,
+    detail,
+  }) => {
+    const file = buildFfsFile({ guid: GUID_RAW, typeCode: 1, payload });
+    const { buffer } = buildFv({ files: [file], extendedHeader: "standalone" });
+    buffer.writeUInt16LE(entrySize, 92);
+    buffer.writeUInt32LE(usedSize, 96);
+    const root = await createTestTempDirectory("rea-uefi-fv-extension-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe(range === null ? "complete" : "partial");
+      expect(inspected.firmware_volumes[0]?.ffs_files).toMatchObject([
+        { offset: 104, length: 24 + payload.length },
+      ]);
+      const result = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "volume"), {
+            target: { kind: "volume", offset: 0 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(result.files).toMatchObject([{ sha256: sha256(payload) }]);
+      expect(result.extraction_gaps).toMatchObject(
+        range === null
+          ? []
+          : [
+              {
+                kind: "unparsed-region",
+                logical_path: "flash/FV@0x0",
+                range,
+                detail: expect.stringContaining(detail ?? ""),
+              },
+            ],
+      );
+      const selected = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "file"), {
+            target: { kind: "ffs-file", offset: 104 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(selected.coverage).toBe("complete");
+      expect(selected.files).toMatchObject([{ sha256: sha256(payload) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("retains decode provenance when extracting an empty decoded firmware volume", async () => {
+  const decoded = buildFv({ files: [], blockSize: 128 }).buffer;
+  const file = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 7,
+    payload: amdZlibSection(decoded),
+  });
+  const root = await createTestTempDirectory("rea-uefi-empty-decoded-volume-");
+  const path = join(root, "image.fd");
+  await writeFile(path, buildFv({ files: [file] }).buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    const source = inspected.firmware_volumes[1]?.source_stream;
+    expect(source).toEqual(expect.any(String));
+    const result = expectOk(
+      await provider.execute(
+        extractRequest(path, join(root, "out"), {
+          target: { kind: "volume", offset: 0, source_stream: source },
+        }),
+      ),
+    ).value.result as UefiExtractResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.files).toEqual([]);
+    expect(result.derivations).toMatchObject([
+      {
+        child_stream: source,
+        child_path: null,
+        parent_stream: null,
+        parent_file_range: {
+          offset: 96 + 24 + AMD_ZLIB_HEADER_LENGTH,
+          length: deflateSync(decoded).length,
+        },
+      },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([
+  { name: "empty", body: Buffer.alloc(0), gap: { offset: 96, length: 4 } },
+  {
+    name: "erased",
+    body: Buffer.alloc(128, 0xff),
+    gap: { offset: 100, length: 128 },
+  },
+])(
+  "reports missing required FV framing for an $name FV-image section",
+  async ({ body, gap }) => {
+    const section = buildSection(0x17, body);
+    const file = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: Buffer.concat([section, buildSection(0x19, RAW_BODY)]),
+    });
+    const root = await createTestTempDirectory("rea-uefi-missing-fv-image-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buildFv({ files: [file] }).buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      expect(inspected.firmware_volumes).toHaveLength(1);
+      const result = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "out"), {
+            target: { kind: "section", offset: 96 },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(result.coverage).toBe("partial");
+      expect(result.extraction_gaps).toMatchObject([
+        { kind: "unparsed-region", range: gap },
+      ]);
+      const peer = expectOk(
+        await provider.execute(
+          extractRequest(path, join(root, "peer"), {
+            target: { kind: "section", offset: 96 + section.length },
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      expect(peer.coverage).toBe("complete");
+      expect(peer.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.skipIf(!lzmaWorkerAvailable)(
+  "retains valid LZMA output while recording the exact unread carrier suffix",
+  async () => {
+    const decoded = buildSection(0x19, RAW_BODY);
+    const compressed = Buffer.from(lzmaPurescript.compressFile(decoded));
+    const unread = Buffer.from("ordinary unread fixture bytes");
+    const image = buildFv({
+      files: [
+        buildFfsFile({
+          guid: GUID_DRIVER,
+          typeCode: 7,
+          payload: buildLzmaGuidedSection(Buffer.concat([compressed, unread])),
+        }),
+      ],
+    });
+    const directory = await createTestTempDirectory("rea-uefi-lzma-suffix-");
+    const path = join(directory, "image.fd");
+    await writeFile(path, image.buffer);
+    const provider = new UefiAnalysisProvider(distUefiLzmaWorker);
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      const result = expectOk(
+        await provider.execute(
+          extractRequest(path, join(directory, "out"), {
+            include_compressed: false,
+          }),
+        ),
+      ).value.result as UefiExtractResult;
+      const carrierStart = 120; // 72-byte FV, 24-byte FFS and 24-byte guided headers.
+      expect(result.coverage).toBe("partial");
+      expect(result.derivations).toMatchObject([
+        {
+          parent_file_range: {
+            offset: carrierStart,
+            length: compressed.length,
+          },
+        },
+      ]);
+      expect(result.extraction_gaps).toMatchObject([
+        {
+          kind: "unparsed-region",
+          source_stream: null,
+          range: {
+            offset: carrierStart + compressed.length,
+            length: unread.length,
+          },
+          detail: expect.stringContaining("did not examine"),
+        },
+      ]);
+      expect(result.files).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: "raw-section",
+            sha256: sha256(RAW_BODY),
+          }),
+        ]),
+      );
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it("skips a large file in FFS2 while preserving the next file for inspection and extraction", async () => {
+  const large = buildFfsFile({
+    guid: GUID_DRIVER,
+    typeCode: 1,
+    payload: Buffer.alloc(0x100_0000 - 24),
+  });
+  const compact = buildFfsFile({
+    guid: GUID_RAW,
+    typeCode: 1,
+    payload: RAW_BODY,
+  });
+  const { buffer } = buildFv({ files: [large, compact] });
+  const root = await createTestTempDirectory("rea-uefi-ffs2-large-");
+  const path = join(root, "image.fd");
+  await writeFile(path, buffer);
+  const provider = new UefiAnalysisProvider();
+  try {
+    const inspected = expectOk(await provider.execute(inspectRequest(path)))
+      .value.result as UefiInspectResult;
+    expect(inspected.coverage).toBe("partial");
+    expect(inspected.firmware_volumes[0]?.ffs_files).toMatchObject([
+      { guid: GUID_RAW, offset: 72 + large.length },
+    ]);
+    const extracted = expectOk(
+      await provider.execute(extractRequest(path, join(root, "out"))),
+    ).value.result as UefiExtractResult;
+    expect(extracted.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+    expect(extracted.extraction_gaps).toMatchObject([
+      { kind: "unparsed-region", range: { offset: 72, length: large.length } },
+    ]);
+  } finally {
+    await provider.close();
+  }
+});
+
+it.each([
+  ["FFS2", FFS2_FILE_SYSTEM_GUID, 0x100_0000n],
+  ["FFS3", FFS3_FILE_SYSTEM_GUID, 0xffff_ffff_ffff_ffffn],
+] as const)(
+  "preserves a later %s file across interrupted headers and unpublished data",
+  async (_, fileSystemGuid, size) => {
+    const incomplete = Buffer.alloc(32, 0xff);
+    incomplete[19] = 1;
+    incomplete.fill(0, 20, 23);
+    incomplete[23] = 0x1f; // Header invalid. Its ExtendedSize cannot establish an extent.
+    incomplete.writeBigUInt64LE(size, 24);
+    const pending = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 1,
+      payload: Buffer.from([0x31]),
+    });
+    pending[23] = 0x3c; // Header valid, data validity not set.
+    const intact = buildFfsFile({
+      guid: GUID_RAW,
+      typeCode: 1,
+      payload: RAW_BODY,
+    });
+    const { buffer } = buildFv({
+      files: [incomplete, pending, intact],
+      fileSystemGuid,
+    });
+    const root = await createTestTempDirectory("rea-uefi-interrupted-ffs-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      expect(
+        inspected.firmware_volumes[0]?.ffs_files.map(({ offset, checksum }) => [
+          offset,
+          checksum,
+        ]),
+      ).toEqual([
+        [104, "unchecked"],
+        [136, "unchecked"],
+      ]);
+      const extracted = expectOk(
+        await provider.execute(extractRequest(path, join(root, "out"))),
+      ).value.result as UefiExtractResult;
+      expect(extracted.files).toMatchObject([{ sha256: sha256(RAW_BODY) }]);
+      expect(extracted.extraction_gaps).toMatchObject([
+        { kind: "unparsed-region", range: { offset: 72, length: 32 } },
+        { kind: "unparsed-region", range: { offset: 128, length: 1 } },
+      ]);
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
+it.each([
+  {
+    name: "unterminated",
+    payload: Buffer.from("Title", "utf16le"),
+    kind: "unparsed-region",
+    offset: 96,
+    length: 14,
+  },
+  {
+    name: "beyond the display limit",
+    payload: Buffer.from("A".repeat(512) + "\0", "utf16le"),
+    kind: "size-truncated",
+    offset: 1124,
+    length: 2,
+  },
+])(
+  "keeps a UI name unknown when it is $name while retaining its stored bytes",
+  async ({ payload, kind, offset, length }) => {
+    const file = buildFfsFile({
+      guid: GUID_DRIVER,
+      typeCode: 7,
+      payload: buildSection(0x15, payload),
+    });
+    const root = await createTestTempDirectory("rea-uefi-ui-name-");
+    const path = join(root, "image.fd");
+    await writeFile(path, buildFv({ files: [file] }).buffer);
+    const provider = new UefiAnalysisProvider();
+    try {
+      const inspected = expectOk(await provider.execute(inspectRequest(path)))
+        .value.result as UefiInspectResult;
+      expect(inspected.coverage).toBe("partial");
+      expect(inspected.firmware_volumes[0]?.ffs_files[0]?.ui_string).toBeNull();
+      const extracted = expectOk(
+        await provider.execute(extractRequest(path, join(root, "out"))),
+      ).value.result as UefiExtractResult;
+      expect(extracted.extraction_gaps).toMatchObject([
+        { kind, range: { offset, length } },
+      ]);
+      expect(extracted.files).toMatchObject([{ sha256: sha256(payload) }]);
     } finally {
       await provider.close();
     }

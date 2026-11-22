@@ -29,7 +29,7 @@ import type {
 } from "./dylibResolution.js";
 import { machoArchitectureName } from "./machoCpuIdentity.js";
 import {
-  MACHO_VERSION_MIN_PLATFORMS,
+  classifyMachoVersionMinCommand,
   legacyMachoPlatform,
 } from "./machoPlatform.js";
 import {
@@ -236,7 +236,7 @@ const readSliceMagic = async (
   offset: number,
 ): Promise<number | null> => {
   const bytes = await readAt(offset, 4);
-  return bytes.byteLength < 4 ? null : viewOf(bytes).getUint32(0, false);
+  return readMachoHeaderPrefixFacts(bytes).magic;
 };
 
 /** Decode every slice's dylib-loading load commands without reading code. */
@@ -754,25 +754,29 @@ const decodeCommand = (
         "malformed",
         `load command ${index} is too short for LC_BUILD_VERSION`,
       );
-    const view = viewOf(body);
-    const toolCount = view.getUint32(20, true);
+    const reader = machoWordReader(body, true);
+    const toolCount = reader.u32(20);
     if (toolCount > Math.floor((body.byteLength - 24) / 8))
       throw machoIssue(
         "malformed",
         `load command ${index} LC_BUILD_VERSION tool records exceed cmdsize`,
       );
-    const platform = view.getUint32(8, true);
+    const platform = reader.u32(8);
     slice.platforms.push(platform);
     return;
   }
-  const legacyPlatform = MACHO_VERSION_MIN_PLATFORMS.get(command);
-  if (legacyPlatform !== undefined) {
-    if (body.byteLength < 16)
+  const versionMin = classifyMachoVersionMinCommand(command, body.byteLength);
+  if (versionMin !== null) {
+    if (versionMin.kind !== "exact")
       throw machoIssue(
         "malformed",
-        `load command ${index} is too short for a version-min command`,
+        versionMin.kind === "truncated"
+          ? `load command ${index} is too short for a version-min command`
+          : `load command ${index} is too long for a version-min command`,
       );
-    slice.platforms.push(legacyMachoPlatform(legacyPlatform, slice.cpu_type));
+    slice.platforms.push(
+      legacyMachoPlatform(versionMin.platform, slice.cpu_type),
+    );
     return;
   }
   if (command === LC.LAZY_LOAD_DYLIB_INFO)
@@ -1137,6 +1141,3 @@ const fileTypeName = (fileType: number): MachoSlice["file_type"] =>
 
 const version = (value: number): string =>
   `${value >>> 16}.${(value >>> 8) & 0xff}.${value & 0xff}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

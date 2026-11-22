@@ -29,7 +29,11 @@ import {
   elfStringTableText,
   observeElfStringTableEntry,
 } from "../../domain/elfStringTable.js";
-import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
+import {
+  ELF_SYMBOL_TRUNCATED_MESSAGE,
+  elfSymbolSize,
+  readElfSymbolAt,
+} from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -254,13 +258,22 @@ const typeName = (type: number): ElfDependencyImport["type"] => {
   }
 };
 
-interface CString {
-  readonly name: string | null;
-  readonly truncated: boolean;
-  readonly outside: boolean;
-  /** No NUL within the scan window; the string may continue past it. */
-  readonly limited: boolean;
-}
+type CString =
+  | {
+      readonly state: "terminated";
+      readonly name: string;
+      readonly location: number;
+    }
+  | {
+      readonly state: "unterminated" | "scan-limit";
+      readonly name: null;
+      readonly location: number;
+    }
+  | {
+      readonly state: "outside" | "table-unavailable";
+      readonly name: null;
+      readonly location: null;
+    };
 
 /**
  * Longest ELF string scanned for its terminator. Each string is hashed and
@@ -268,11 +281,26 @@ interface CString {
  */
 const ELF_STRING_SCAN_BYTES = 65536;
 
-/** Why an unreadable string has no name, short of being outside or empty. */
-const unreadString = (observed: Pick<CString, "limited">): string =>
-  observed.limited
+const unreadString = (limited: boolean): string =>
+  limited
     ? `has no terminator within the ${String(ELF_STRING_SCAN_BYTES)}-byte string scan limit`
     : "is unterminated";
+
+const unreadDynamicString = (
+  label: string,
+  observed: CString,
+  offset?: number,
+): string => {
+  const index = offset === undefined ? "" : ` ${String(offset)}`;
+  if (observed.state === "table-unavailable")
+    return `${label} string offset${index} could not be read because the dynamic string table is unavailable`;
+  if (observed.state === "outside")
+    return `${label} string offset${index} is outside the dynamic string table`;
+  const field = `${label} string${offset === undefined ? "" : ` at offset${index}`}`;
+  if (observed.state === "terminated") return `${field} is empty`;
+  const table = offset === undefined ? " in the dynamic string table" : "";
+  return `${field} ${unreadString(observed.state === "scan-limit")}${table}`;
+};
 
 /**
  * Dynamic string table reads share one scan and retained-text budget fixed by
@@ -285,7 +313,7 @@ class DynamicStrings {
   readonly #retained: Budget;
 
   constructor(
-    readonly table: Buffer,
+    readonly table: { readonly bytes: Buffer; readonly offset: number } | null,
     readonly limit: number,
   ) {
     this.#scanned = new Budget(limit);
@@ -309,34 +337,34 @@ class DynamicStrings {
   }
 
   read(offset: number): CString {
+    if (this.table === null)
+      return { state: "table-unavailable", name: null, location: null };
     const cached = this.#cache.get(offset);
     if (cached !== undefined) {
       this.retain(cached.name);
       return cached;
     }
     const observed = observeElfStringTableEntry(
-      this.table,
+      this.table.bytes,
       offset,
       ELF_STRING_SCAN_BYTES,
     );
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
     if (observed.state === "outside")
-      entry = { name: null, truncated: false, outside: true, limited: false };
+      entry = { state: "outside", name: null, location: null };
     else if (observed.state === "truncated")
       entry = {
+        state: observed.scanLimited ? "scan-limit" : "unterminated",
         name: null,
-        truncated: true,
-        outside: false,
-        limited: observed.examinedBytes === ELF_STRING_SCAN_BYTES,
+        location: this.table.offset + offset,
       };
     else {
       this.#charge("retained", observed.contentBytes);
       entry = {
+        state: "terminated",
         name: elfStringTableText(observed),
-        truncated: false,
-        outside: false,
-        limited: false,
+        location: this.table.offset + offset,
       };
     }
     this.#cache.set(offset, entry);
@@ -359,9 +387,7 @@ const searchPath = (
     issues.push({
       code: "name_unreadable",
       location,
-      message: observed.outside
-        ? "Search-path string offset is outside the dynamic string table"
-        : `Search-path string ${unreadString(observed)} in the dynamic string table`,
+      message: unreadDynamicString("Search-path", observed),
     });
     return null;
   }
@@ -499,6 +525,45 @@ const tableFromVirtual = (
     size,
     location: { offset, bytes: size },
   };
+};
+
+const GNU_VERSYM_SLOT_BYTES = 2;
+
+/** Keep complete leading slots in one proven file translation. */
+const tableFromMappedVersym = (
+  mappings: ElfLoadMappings,
+  address: bigint | undefined,
+  count: number,
+): LocatedTable | null => {
+  if (address === undefined) return null;
+  const complete = tableFromVirtual(
+    mappings,
+    address,
+    count * GNU_VERSYM_SLOT_BYTES,
+  );
+  if (complete !== null || count <= 1) return complete;
+
+  const mapping = createFileMappingIndex(
+    mappings.fileBacked,
+    mappings.zeroFills,
+  );
+  let low = 0;
+  let high = count - 1;
+  let offset: number | null = null;
+  // A mapped prefix proves every shorter span at the same start.
+  while (low < high) {
+    const slots = Math.ceil((low + high) / 2);
+    try {
+      offset = mapping.offset(address, slots * GNU_VERSYM_SLOT_BYTES);
+      low = slots;
+    } catch (cause) {
+      if (!(cause instanceof BinaryMappingFailure)) throw cause;
+      high = slots - 1;
+    }
+  }
+  if (offset === null) return null;
+  const size = low * GNU_VERSYM_SLOT_BYTES;
+  return { offset, size, location: { offset, bytes: size } };
 };
 
 /**
@@ -746,16 +811,22 @@ export const readElfDependenciesSteps = function* (
   const table = reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
   const unique = new Map<bigint, number>();
   const addresses = new Map<bigint, bigint>();
-  const neededOffsets: number[] = [];
+  const neededEntries: {
+    readonly nameOffset: number;
+    readonly sourceOffset: number;
+  }[] = [];
   const walked = walkElfDynamicTable<never>(
     table,
     { bits, littleEndian: reader.little },
     UNIQUE_DYNAMIC_TAGS,
-    ({ tag, value, singleton }) => {
+    ({ tag, value, offset, singleton }) => {
       if (tag === DT_NEEDED) {
-        neededOffsets.push(asNumber(value, "DT_NEEDED"));
+        neededEntries.push({
+          nameOffset: asNumber(value, "DT_NEEDED"),
+          sourceOffset: dynamic.offset + offset,
+        });
         charge(
-          neededOffsets.length,
+          neededEntries.length,
           input.max_needed,
           MAX_INSPECT_ELF_DEPENDENCY_NEEDED,
           "DT_NEEDED entries",
@@ -886,7 +957,7 @@ export const readElfDependenciesSteps = function* (
         : null));
   if (
     dynstrTable === null &&
-    (ambiguousStrings || neededOffsets.length > 0 || unique.has(DT_SONAME))
+    (ambiguousStrings || neededEntries.length > 0 || unique.has(DT_SONAME))
   )
     issues.push({
       code: "table_unavailable",
@@ -897,13 +968,20 @@ export const readElfDependenciesSteps = function* (
     });
   const dynstr = new DynamicStrings(
     dynstrTable === null
-      ? Buffer.alloc(0)
-      : reader.range(dynstrTable.offset, dynstrTable.size, "DT_STRTAB"),
+      ? null
+      : {
+          bytes: reader.range(
+            dynstrTable.offset,
+            dynstrTable.size,
+            "DT_STRTAB",
+          ),
+          offset: dynstrTable.offset,
+        },
     bytes.length,
   );
-  const needed: ElfDependencyNeeded[] = neededOffsets.map(
-    (name_offset, index) => {
-      const observed = dynstr.read(name_offset);
+  const needed: ElfDependencyNeeded[] = neededEntries.map(
+    ({ nameOffset, sourceOffset }, index) => {
+      const observed = dynstr.read(nameOffset);
       const name =
         observed.name === null || observed.name.length === 0
           ? null
@@ -911,14 +989,10 @@ export const readElfDependenciesSteps = function* (
       if (name === null)
         issues.push({
           code: "name_unreadable",
-          location: hex((dynstrTable?.offset ?? 0) + name_offset),
-          message: observed.outside
-            ? `DT_NEEDED string offset ${String(name_offset)} is outside the dynamic string table`
-            : observed.truncated || observed.name === null
-              ? `DT_NEEDED string at offset ${String(name_offset)} ${unreadString(observed)}`
-              : `DT_NEEDED string at offset ${String(name_offset)} is empty`,
+          location: hex(observed.location ?? sourceOffset),
+          message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
         });
-      return { index, name, name_offset };
+      return { index, name, name_offset: nameOffset };
     },
   );
   const sonameOffset = unique.get(DT_SONAME);
@@ -1027,7 +1101,7 @@ export const readElfDependenciesSteps = function* (
     tableFromSection(versymSection, bytes.length, "GNU versym", issues) ??
     (symbolCount === null
       ? null
-      : tableFromVirtual(mappings, addresses.get(DT_VERSYM), symbolCount * 2));
+      : tableFromMappedVersym(mappings, addresses.get(DT_VERSYM), symbolCount));
   if (
     dynsymTable === null &&
     symbolCount !== null &&
@@ -1050,12 +1124,30 @@ export const readElfDependenciesSteps = function* (
       message:
         "GNU versym table could not be located from section headers or DT_VERSYM",
     });
+  const versymSlots =
+    versymTable === null
+      ? null
+      : {
+          offset: versymTable.offset,
+          count: Math.floor(versymTable.size / GNU_VERSYM_SLOT_BYTES),
+        };
+  if (
+    versymSlots !== null &&
+    symbolCount !== null &&
+    versymSlots.count < symbolCount
+  )
+    issues.push({
+      code: "table_unavailable",
+      location: hex(versymSlots.offset),
+      message: `GNU versym table holds ${String(versymSlots.count)} of ${String(symbolCount)} dynamic symbol slots; later slots were not read`,
+    });
   const imports = parseImports(
     reader,
     bytes,
+    header.machine,
     bits,
     dynsymTable,
-    versymTable,
+    versymSlots,
     dynstr,
     symbolCount,
     symbolEntrySize,
@@ -1114,11 +1206,7 @@ const namedString = (
     issues.push({
       code: "name_unreadable",
       location: label,
-      message: observed.outside
-        ? `${label} string offset is outside the dynamic string table`
-        : observed.truncated || observed.name === null
-          ? `${label} string ${unreadString(observed)} in the dynamic string table`
-          : `${label} string is empty`,
+      message: unreadDynamicString(label, observed),
     });
     return null;
   }
@@ -1142,17 +1230,15 @@ const parseInterpreter = (
   try {
     const body = reader.range(interp.offset, interp.bytes, "PT_INTERP");
     const observed = observeElfStringTableEntry(body, 0, ELF_STRING_SCAN_BYTES);
-    if (observed.state !== "terminated" || observed.bytes === null) {
+    if (observed.state !== "terminated") {
       issues.push({
         code: "name_unreadable",
         location: hex(interp.offset),
-        message: `PT_INTERP path ${unreadString({
-          limited: interp.bytes > ELF_STRING_SCAN_BYTES,
-        })}`,
+        message: `PT_INTERP path ${unreadString(observed.state === "truncated" && observed.scanLimited)}`,
       });
       return { status: "unreadable", path: null, location: interp };
     }
-    const path = observed.bytes.toString("latin1");
+    const path = elfStringTableText(observed);
     if (path.length === 0) {
       issues.push({
         code: "name_unreadable",
@@ -1548,12 +1634,21 @@ const parseVerdef = (
   }
 };
 
+/**
+ * On SPARC (EM_SPARC, EM_SPARC32PLUS, EM_SPARCV9) symbol type 13 is
+ * STT_SPARC_REGISTER: an undefined entry declares use of the global register
+ * in st_value and may have an empty name (SPARC V9 ABI). It is not an import.
+ */
+const SPARC_MACHINES: ReadonlySet<number> = new Set([2, 18, 43]);
+const STT_SPARC_REGISTER = 13;
+
 const parseImports = (
   reader: BinaryReader,
   bytes: Buffer,
+  machine: number,
   bits: 32 | 64,
   dynsym: LocatedTable | null,
-  versym: LocatedTable | null,
+  versym: { readonly offset: number; readonly count: number } | null,
   dynstr: DynamicStrings,
   declaredCount: number | null,
   entrySize: number,
@@ -1598,17 +1693,13 @@ const parseImports = (
   }
   let versymBytes: Buffer | null = null;
   if (versym !== null) {
-    // A short table still holds whole slots for its leading symbols; keep those
-    // and leave only the symbols past its end without a version.
-    const slotCount = Math.min(symbolCount, Math.floor(versym.size / 2));
-    if (slotCount < symbolCount)
-      issues.push({
-        code: "table_unavailable",
-        location: hex(versym.offset),
-        message: `GNU versym table holds ${String(slotCount)} of ${String(symbolCount)} dynamic symbol slots; later imports have no version`,
-      });
+    const slotCount = Math.min(symbolCount, versym.count);
     try {
-      versymBytes = reader.range(versym.offset, slotCount * 2, "GNU versym");
+      versymBytes = reader.range(
+        versym.offset,
+        slotCount * GNU_VERSYM_SLOT_BYTES,
+        "GNU versym",
+      );
     } catch (cause) {
       if (!(cause instanceof BinaryFormatFailure)) throw cause;
       issues.push({
@@ -1618,22 +1709,24 @@ const parseImports = (
       });
     }
   }
+  const versymReader =
+    versymBytes === null
+      ? null
+      : new BinaryReader(versymBytes, reader.little, "elf");
   for (let index = 1; index < symbolCount; index += 1) {
     const at = dynsym.offset + index * entrySize;
-    const parsed = readElfSymbol(
-      bytes.subarray(at, at + entrySize),
-      bits,
-      reader.little,
-    );
-    if (!parsed.ok) {
+    const parsed = readElfSymbolAt(bytes, at, bits, reader.little);
+    if (parsed === null) {
       issues.push({
         code: "malformed_entry",
         location: hex(at),
-        message: parsed.error.message,
+        message: ELF_SYMBOL_TRUNCATED_MESSAGE,
       });
       continue;
     }
-    if (parsed.value.section_index !== 0) continue;
+    if (parsed.section_index !== 0) continue;
+    if (parsed.type === STT_SPARC_REGISTER && SPARC_MACHINES.has(machine))
+      continue;
     charge(
       imports.length + 1,
       maxImports,
@@ -1643,15 +1736,16 @@ const parseImports = (
     );
     const name = namedString(
       dynstr,
-      parsed.value.name_offset,
+      parsed.name_offset,
       issues,
       `dynsym[${String(index)}]`,
     );
     let version: ElfDependencyImport["version"] = null;
-    if (versymBytes !== null && (index + 1) * 2 <= versymBytes.length) {
-      const raw = new BinaryReader(versymBytes, reader.little, "elf").u16(
-        index * 2,
-      );
+    if (
+      versymReader !== null &&
+      (index + 1) * GNU_VERSYM_SLOT_BYTES <= versymReader.bytes.length
+    ) {
+      const raw = versymReader.u16(index * GNU_VERSYM_SLOT_BYTES);
       const versionIndex = raw & 0x7fff;
       const hidden = (raw & 0x8000) !== 0;
       if (versionIndex <= 1)
@@ -1675,7 +1769,9 @@ const parseImports = (
         if (resolved === undefined)
           issues.push({
             code: "version_unresolved",
-            location: hex((versym?.offset ?? 0) + index * 2),
+            location: hex(
+              (versym?.offset ?? 0) + index * GNU_VERSYM_SLOT_BYTES,
+            ),
             message: `Import ${name ?? `#${String(index)}`} references version index ${String(versionIndex)} with no matching verneed record`,
           });
       }
@@ -1683,8 +1779,8 @@ const parseImports = (
     imports.push({
       index,
       name,
-      binding: bindingName(parsed.value.binding),
-      type: typeName(parsed.value.type),
+      binding: bindingName(parsed.binding),
+      type: typeName(parsed.type),
       version,
     });
   }

@@ -60,11 +60,6 @@ export const ffsChecksumVerdictSchema = z.enum([
   "pad-file-unchecked",
   "unchecked",
 ]);
-/** FFS file types that carry sections in FFS2 layout. */
-export const sectionedFfsTypeNameSchema = ffsTypeNameSchema.exclude([
-  "raw",
-  "freeform",
-]);
 const alignmentSchema = z.enum([
   "1",
   "16",
@@ -113,7 +108,7 @@ export const uefiCompressionSchema = z.union([
     kind: z.enum([
       "lzma-custom",
       "lzmaf86",
-      "ami-zlib",
+      "amd-zlib",
       "tiano",
       "efi-standard",
       "unknown-compression",
@@ -529,10 +524,6 @@ export type UefiInspectResult = z.infer<
 export type UefiExtractResult = z.infer<
   (typeof uefiResultSchemas)["extract_uefi_firmware"]
 >;
-export type UefiNvramVariableRecord = z.infer<
-  typeof uefiNvramVariableRecordSchema
->;
-export type UefiNvramStoreRecord = z.infer<typeof uefiNvramStoreRecordSchema>;
 export type UefiNvramInspectResult = z.infer<
   (typeof uefiResultSchemas)["inspect_uefi_nvram"]
 >;
