@@ -212,9 +212,11 @@ describe("Ghidra language override configuration", () => {
 
 describe("Ghidra language catalog", () => {
   it("parses language IDs and their compiler specs", async () => {
-    expect(
-      await readGhidraLanguageCatalog(installDir, new ArtifactResourceScope()),
-    ).toEqual([
+    const catalog = await readGhidraLanguageCatalog(
+      installDir,
+      new ArtifactResourceScope(),
+    );
+    expect(catalog.definitions).toEqual([
       {
         id: "x86:LE:32:default",
         compilerSpecIds: ["windows", "gcc", "borlandcpp"],
@@ -226,7 +228,7 @@ describe("Ghidra language catalog", () => {
         join(installDir, "absent"),
         new ArtifactResourceScope(),
       ),
-    ).toEqual([]);
+    ).toEqual({ definitions: [], oversizedFiles: [] });
   });
 
   it("identifies the malformed installed definition beside a valid selected language", async () => {
@@ -263,6 +265,63 @@ describe("Ghidra language catalog", () => {
       expect(repaired.value.profile?.parameters.language_id).toBe(
         "x86:LE:32:default",
       );
+    } finally {
+      await rm(path);
+    }
+  });
+
+  it("distinguishes an undefined language from one hidden by the definition size limit", async () => {
+    const languageId = "x86:LE:31:default";
+    const configured = provider({ REA_GHIDRA_LANGUAGE_ID: languageId });
+    const path = join(
+      installDir,
+      "Ghidra/Processors/x86/data/languages/large.ldefs",
+    );
+    const maximum = 4 * 1024 * 1024;
+    const definition = `<language_definitions><language id="${languageId}"/></language_definitions>`;
+    const absent = await configured.resolveAnalysisProfile(pe);
+    if (absent.ok) throw new Error("Expected a configuration error");
+    expect(projectAnalysisError(absent.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+            constraint: `is not a language defined by Ghidra ${SUPPORTED_GHIDRA_VERSION}`,
+          },
+        ],
+      },
+    });
+    await writeFile(path, definition.padEnd(maximum + 1));
+    try {
+      const known = await provider({
+        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+      }).resolveAnalysisProfile(pe);
+      if (!known.ok) throw known.error;
+      expect(known.value.profile?.parameters.language_id).toBe(
+        "x86:LE:32:default",
+      );
+
+      const uncertain = await configured.resolveAnalysisProfile(pe);
+      if (uncertain.ok) throw new Error("Expected a file size refusal");
+      expect(projectAnalysisError(uncertain.error)).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          operation: "resolve_analysis_profile",
+          resource: "file-size",
+          reported_limits: { boundary: "language_definition_bytes", maximum },
+          diagnostics: {
+            path,
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+            oversized_definition_count: 1,
+          },
+        },
+      });
+
+      await writeFile(path, definition);
+      const repaired = await configured.resolveAnalysisProfile(pe);
+      if (!repaired.ok) throw repaired.error;
+      expect(repaired.value.profile?.parameters.language_id).toBe(languageId);
     } finally {
       await rm(path);
     }
@@ -339,32 +398,25 @@ describe("Ghidra language override profile", () => {
     );
   });
 
-  it.each([
-    {
-      overrides: { REA_GHIDRA_LANGUAGE_ID: "x86:LE:31:default" },
-      setting: "REA_GHIDRA_LANGUAGE_ID",
-      constraint: `is not a language defined by Ghidra ${SUPPORTED_GHIDRA_VERSION}`,
-    },
-    {
-      overrides: {
-        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
-        REA_GHIDRA_COMPILER_SPEC_ID: "golang",
+  it("refuses an undefined compiler before launching Ghidra", async () => {
+    const resolved = await provider({
+      REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+      REA_GHIDRA_COMPILER_SPEC_ID: "golang",
+    }).resolveAnalysisProfile(pe);
+    if (resolved.ok) throw new Error("Expected a configuration error");
+    expect(projectAnalysisError(resolved.error)).toMatchObject({
+      code: "configuration_invalid",
+      details: {
+        settings: [
+          {
+            setting: "REA_GHIDRA_COMPILER_SPEC_ID",
+            constraint:
+              "must be one of the selected language's compiler specs: windows, gcc, borlandcpp",
+          },
+        ],
       },
-      setting: "REA_GHIDRA_COMPILER_SPEC_ID",
-      constraint:
-        "must be one of the selected language's compiler specs: windows, gcc, borlandcpp",
-    },
-  ])(
-    "refuses an undefined $setting before launching Ghidra",
-    async ({ overrides, setting, constraint }) => {
-      const resolved = await provider(overrides).resolveAnalysisProfile(pe);
-      if (resolved.ok) throw new Error("Expected a configuration error");
-      expect(projectAnalysisError(resolved.error)).toMatchObject({
-        code: "configuration_invalid",
-        details: { settings: [{ setting, constraint }] },
-      });
-    },
-  );
+    });
+  });
 
   it.each(["raw-binary", "dos-mz", "dos-com"] as const)(
     "attributes a fixed %s import override conflict to the named settings",
@@ -417,7 +469,7 @@ it
     const blocked = join(root, relativePath);
     try {
       const original = await readGhidraLanguageCatalog(root, resources);
-      expect(original.length).toBeGreaterThan(0);
+      expect(original.definitions.length).toBeGreaterThan(0);
       await chmod(blocked, 0);
       await expect(readdir(blocked)).rejects.toMatchObject({ code: "EACCES" });
       await expect(
@@ -466,7 +518,7 @@ describe("Ghidra concurrent language catalog", () => {
     const resources = new ArtifactResourceScope();
     try {
       const catalog = await readGhidraLanguageCatalog(root, resources);
-      expect(catalog.map(({ id }) => id)).toEqual(expectedIds);
+      expect(catalog.definitions.map(({ id }) => id)).toEqual(expectedIds);
     } finally {
       await resources.close();
     }

@@ -1,6 +1,10 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
+import {
+  decodeLimit,
+  malformedInput,
+  ParseFailureError,
+} from "../domain/parseFailure.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
@@ -14,6 +18,8 @@ import {
   withArtifactRegularFile,
 } from "../resources/index.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
+import type { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
+import { parseLimitConstraint } from "../domain/parseFailureAnalysisError.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
@@ -22,6 +28,11 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 export interface GhidraLanguageDefinition {
   readonly id: string;
   readonly compilerSpecIds: readonly string[];
+}
+
+interface GhidraLanguageCatalog {
+  readonly definitions: readonly GhidraLanguageDefinition[];
+  readonly oversizedFiles: readonly string[];
 }
 
 // Language definitions are small XML files; refuse anything implausibly large.
@@ -86,14 +97,14 @@ const languageDirectories = async (
 };
 
 /**
- * Parse one definition before its final close; an oversized file declares
- * nothing. The caller's scope owns a descriptor whose close is unconfirmed.
+ * Parse one definition before its final close. An oversized file remains
+ * unexamined. The caller's scope owns a descriptor whose close is unconfirmed.
  */
 const readLanguageDefinitionFile = (
   path: string,
   resources: ArtifactResourceScope,
   signal: AbortSignal | undefined,
-): Promise<readonly GhidraLanguageDefinition[]> =>
+): Promise<readonly GhidraLanguageDefinition[] | undefined> =>
   withArtifactRegularFile(
     path,
     resources,
@@ -106,7 +117,7 @@ const readLanguageDefinitionFile = (
       });
       // The XML byte owner validates encoding and declaration before syntax
       // parsing; a literal U+FFFD cannot diagnose invalid source bytes.
-      if (bytes === undefined) return [];
+      if (bytes === undefined) return undefined;
       try {
         return parseGhidraLanguageDefinitions(decodeXmlPlistText(bytes));
       } catch (cause: unknown) {
@@ -232,13 +243,13 @@ export const readGhidraLanguageCatalog = (
   installDir: string,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
-): Promise<readonly GhidraLanguageDefinition[]> =>
+): Promise<GhidraLanguageCatalog> =>
   resources.run(async () => {
     const directories = await languageDirectories(installDir, signal);
     const files = await discoverLanguageDefinitionFiles(directories, signal);
     // An empty scan starts no definition reads that could observe cancellation.
     assertArtifactReadActive(signal);
-    const results: Array<readonly GhidraLanguageDefinition[]> = new Array(
+    const results = new Array<readonly GhidraLanguageDefinition[] | undefined>(
       files.length,
     );
     await runBoundedWorkers(
@@ -252,20 +263,46 @@ export const readGhidraLanguageCatalog = (
         );
       },
     );
-    return results.flat();
+    return {
+      definitions: results.flatMap((result) => result ?? []),
+      oversizedFiles: files.filter((_, index) => results[index] === undefined),
+    };
   });
 
 /**
  * Check a configured import language against the installation before launch,
- * so an unknown ID fails as configuration instead of as a failed import.
+ * returning a configuration error for a missing ID only after a complete scan.
  */
 export const admitGhidraLanguageOverride = (
   override: GhidraLanguageOverride,
-  catalog: readonly GhidraLanguageDefinition[],
+  catalog: GhidraLanguageCatalog,
   providerVersion: string,
-): ConfigurationError | null => {
-  const language = catalog.find((value) => value.id === override.languageId);
-  if (language === undefined)
+): ConfigurationError | AnalysisResourceConstraintError | null => {
+  const language = catalog.definitions.find(
+    (value) => value.id === override.languageId,
+  );
+  if (language === undefined) {
+    const path = catalog.oversizedFiles[0];
+    if (path !== undefined)
+      return parseLimitConstraint(
+        "resolve_analysis_profile",
+        "file-size",
+        decodeLimit(
+          "ghidra-language-definition",
+          "The configured Ghidra language could not be confirmed because installed language definitions exceeded the size limit.",
+          { name: "language_definition_bytes", maximum: MAX_LDEFS_BYTES },
+        ),
+        {
+          diagnostics: {
+            path,
+            oversized_definition_count: catalog.oversizedFiles.length,
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+          },
+          retryable: false,
+          remediationAction:
+            "Use a Ghidra installation whose language definitions fit the reported size limit.",
+        },
+      );
     return new ConfigurationError("Invalid REA environment configuration", {
       settings: [
         {
@@ -274,6 +311,7 @@ export const admitGhidraLanguageOverride = (
         },
       ],
     });
+  }
   if (
     override.compilerSpecId !== undefined &&
     !language.compilerSpecIds.includes(override.compilerSpecId)
