@@ -132,6 +132,7 @@ export const clientConfigurationServersKey = (
     case "opencode":
     case "zcode":
     case "kilo":
+    case "mimo":
       return "mcp";
     case "amp":
       return "amp.mcpServers";
@@ -247,6 +248,8 @@ const CLIENT_CONFIGURATION_READERS = {
   claude_code: { ...STRICT_JSON_READER, bom: "accept" },
   // Kimi, LM Studio and ZCode read their files with JSON.parse; an empty
   // file holds nothing to preserve.
+  // MiMo Code reads `mimocode.jsonc`, and its own writer preserves comments.
+  mimo: JSONC_READER,
   kimi: STRICT_JSON_READER,
   lm_studio: STRICT_JSON_READER,
   zcode: STRICT_JSON_READER,
@@ -430,7 +433,10 @@ export const parseClientConfiguration = (
       };
   }
   const environmentKey =
-    format === "opencode" || format === "fx" || format === "kilo"
+    format === "opencode" ||
+    format === "fx" ||
+    format === "kilo" ||
+    format === "mimo"
       ? "environment"
       : format === "goose"
         ? "envs"
@@ -2097,6 +2103,7 @@ export const clientRegistrationLauncherEntry = (
     case "opencode_v2":
     case "fx":
     case "kilo":
+    case "mimo":
       return { type: "local", command: [...command] };
     case "goose":
       return { type: "stdio", cmd: executable, args };
