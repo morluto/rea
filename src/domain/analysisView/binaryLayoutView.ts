@@ -3,7 +3,10 @@ import {
   type AnalysisInputIssue,
 } from "../analysisErrorCore.js";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { isImmutableJsonSnapshot } from "../immutableJson.js";
+import {
+  immutableJsonSnapshotMember,
+  isImmutableJsonSnapshot,
+} from "../immutableJson.js";
 import type { BinaryLayout } from "../native/binaryLayout.js";
 import { err, ok, type Result } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -261,6 +264,10 @@ export const projectBinaryLayoutView = (
           "modules collection applies to analyze_javascript_application Evidence.",
         ),
       );
+    // The validated layout root carries the sealing proof for its collections.
+    // Register only the collection used by an exact-name lookup.
+    if ("name" in view.selector)
+      immutableJsonSnapshotMember(layout, view.collection);
     const selected =
       view.collection === "sections"
         ? selectLayoutItem(view.collection, layout.sections, view.selector)
