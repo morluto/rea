@@ -6,6 +6,6 @@
   "src/application/SupportedClients.ts": 1,
   "src/application/Uninstall.ts": 2,
   "src/application/WebScriptExportService.ts": 1,
-  "src/ghidra/GhidraProviderClient.ts": 1,
+  "src/ghidra/GhidraSessionErrorProjection.ts": 1,
   "src/ida/IdaConfiguration.ts": 1
 }
