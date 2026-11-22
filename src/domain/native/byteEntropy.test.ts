@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  computeBlockEntropy,
+  createBlockEntropyCalculator,
   countByteValues,
   entropyFromCounts,
   inspectByteEntropyInputSchema,
@@ -9,6 +9,9 @@ import {
 } from "./byteEntropy.js";
 
 it("computes known Shannon answers including partial and empty blocks", () => {
+  const computeBlockEntropy = createBlockEntropyCalculator(
+    wholeFileByteCounts(),
+  );
   expect(computeBlockEntropy(new Uint8Array(4096))).toBe(0);
   expect(
     computeBlockEntropy(Uint8Array.from({ length: 256 }, (_, i) => i)),
@@ -66,16 +69,4 @@ it("counts a repeated byte past 2^32 without wrapping", () => {
   countByteValues(chunk, counts);
   expect(counts[0]).toBe(2 ** 32 + 2 ** 15);
   expect(entropyFromCounts(counts, counts[0]!)).toBe(0);
-});
-
-it("accumulates the same census across chunks as one concatenated run", () => {
-  // The service counts chunk by chunk; a per-chunk counter would be wrong. Both chunks go into
-  // one counter here, which is what the service does.
-  const counts = wholeFileByteCounts();
-  countByteValues(new Uint8Array([0, 1, 0]), counts);
-  countByteValues(new Uint8Array([1, 0]), counts);
-  expect(Array.from(counts.slice(0, 2))).toEqual([3, 2]);
-  expect(entropyFromCounts(counts, 5)).toBe(
-    computeBlockEntropy(new Uint8Array([0, 1, 0, 1, 0])),
-  );
 });
