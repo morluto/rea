@@ -109,6 +109,7 @@
 * **setup:** list supported clients instead of a suggestion for an empty client name ([244cb64](https://github.com/morluto/rea/commit/244cb646771dfe594b10e6031cc176df4f1ef560))
 * **setup:** preserve caller comments on detached DSH aliases ([#13032](https://github.com/morluto/rea/issues/13032)) ([270c3a6](https://github.com/morluto/rea/commit/270c3a6b285b30c71bcd2f57fad451417769840f))
 * **setup:** recognize DSH registrations nested in Cordis groups ([#13037](https://github.com/morluto/rea/issues/13037)) ([9fd8c8d](https://github.com/morluto/rea/commit/9fd8c8d90331a16164a9849d56bf84ed8682b139))
+* **setup:** refuse Hermes profiles with an unreadable deletion marker ([#13296](https://github.com/morluto/rea/issues/13296)) ([625bd4b](https://github.com/morluto/rea/commit/625bd4b70aaf920623557e2639e8c2809604998a))
 * **setup:** register aube's bin shim instead of its versioned store path ([#5311](https://github.com/morluto/rea/issues/5311)) ([abba1f4](https://github.com/morluto/rea/commit/abba1f43bb08f71af584a1b4d26895f1e1ece90b))
 * **setup:** unify OpenCode layer resolution and alias ownership ([#13226](https://github.com/morluto/rea/issues/13226)) ([d6c4776](https://github.com/morluto/rea/commit/d6c4776e651474728b17f984346bdf4481d1b55e))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
@@ -151,6 +152,7 @@
 * **mcp:** filter prompt completions before sorting ([#13251](https://github.com/morluto/rea/issues/13251)) ([0299413](https://github.com/morluto/rea/commit/0299413e86660456f5abd4f0c46921a16cbb1102))
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
+* **setup:** index YAML alias bindings in document order ([#13295](https://github.com/morluto/rea/issues/13295)) ([560e2ef](https://github.com/morluto/rea/commit/560e2ef267229e2a133879a1d3d663c1e88d5bbb))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 * **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
 
