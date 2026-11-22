@@ -602,13 +602,15 @@ export class SafeOutputTree {
     ];
     if (parts.length === 0)
       await assertPathIdentity(this.#outputRoot, this.#requireRootIdentity());
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
       const parent = lineage.at(-1);
       if (parent === undefined) throw replacedDirectory(this.#outputRoot);
       const logicalPath =
         logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
-      await assertPathIdentity(parent.path, parent.identity);
+      // A nested parent was checked by the previous level's closing check,
+      // with no filesystem effect since; only the root needs an opening check.
+      if (index === 0) await assertPathIdentity(parent.path, parent.identity);
       const creation = await mkdir(current, { mode: 0o700 }).then(
         () => ({ kind: "created" }) as const,
         (cause: unknown) => {
@@ -626,9 +628,7 @@ export class SafeOutputTree {
           logicalPath,
           creation.cause,
         );
-        const identity = this.#nestedDirectories.get(current);
-        if (identity === undefined) throw replacedDirectory(current);
-        await assertPathIdentity(current, identity);
+        // The closing checks below verify this directory after the scan.
       } else {
         const identity = await readDirectoryIdentity(current).catch(
           (cause: unknown) => {
