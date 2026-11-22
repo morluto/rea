@@ -1,3 +1,6 @@
+import type { BigIntStats } from "node:fs";
+import { stat } from "node:fs/promises";
+import { sameRegularFileState } from "../filesystem/RegularFile.js";
 import {
   classifyProviderFailure,
   type ProviderFailureDialect,
@@ -285,9 +288,13 @@ export class PcapProvider {
   readonly #resources: ArtifactAnalysisResources;
   private readonly environment: Readonly<Record<string, string | undefined>>;
   private readonly launcher: PcapCommandLauncher | undefined;
+  private readonly statVerifyToolIdentity: boolean;
   private readonly wiresharkIdentities = new Map<
     string,
-    ArtifactCommandPath & { readonly identity: WiresharkExecutableIdentity }
+    ArtifactCommandPath & {
+      readonly identity: WiresharkExecutableIdentity;
+      readonly initialStat: BigIntStats | undefined;
+    }
   >();
   private readonly platform: NodeJS.Platform;
   private readonly snapshots = new Set<PcapSnapshot>();
@@ -307,6 +314,7 @@ export class PcapProvider {
       this.platform,
     );
     this.launcher = options.launcher;
+    this.statVerifyToolIdentity = options.artifactReader === undefined;
     this.#resources = createArtifactAnalysisResources(
       "pcap",
       "inspect_pcap_capture",
@@ -347,6 +355,41 @@ export class PcapProvider {
     }
   }
 
+  private async verifyWiresharkExecutable(
+    operation: PcapOperation,
+    selected: ArtifactCommandPath & {
+      readonly identity: WiresharkExecutableIdentity;
+      readonly initialStat: BigIntStats | undefined;
+    },
+    options?: {
+      readonly signal?: AbortSignal | undefined;
+      readonly capturedOutput?: AnalysisCapturedOutput | undefined;
+    },
+  ): Promise<void> {
+    if (this.statVerifyToolIdentity && selected.initialStat !== undefined) {
+      const currentStat = await stat(selected.resolvedPath, {
+        bigint: true,
+      }).catch(() => undefined);
+      if (
+        currentStat !== undefined &&
+        sameRegularFileState(selected.initialStat, currentStat)
+      )
+        return;
+    }
+    const observed = await this.readToolIdentity(
+      operation,
+      selected.resolvedPath,
+      options?.signal,
+    );
+    assertWiresharkExecutableIdentity(
+      operation,
+      selected.resolvedPath,
+      selected.identity,
+      wiresharkExecutableIdentity(observed),
+      options,
+    );
+  }
+
   private async run(
     operation: PcapOperation,
     stage: "version" | "capinfos" | "tshark",
@@ -365,17 +408,7 @@ export class PcapProvider {
     try {
       if (selected !== undefined) {
         await assertArtifactCommandPath(selected, operation, { signal });
-        const before = await this.readToolIdentity(
-          operation,
-          selected.resolvedPath,
-          signal,
-        );
-        assertWiresharkExecutableIdentity(
-          operation,
-          selected.resolvedPath,
-          selected.identity,
-          wiresharkExecutableIdentity(before),
-        );
+        await this.verifyWiresharkExecutable(operation, selected, { signal });
       }
       output = await runPcapCommand({
         operation,
@@ -416,21 +449,11 @@ export class PcapProvider {
             return output.capturedOutput;
           },
         });
-        const after = await this.readToolIdentity(
-          operation,
-          selected.resolvedPath,
-        );
-        assertWiresharkExecutableIdentity(
-          operation,
-          selected.resolvedPath,
-          selected.identity,
-          wiresharkExecutableIdentity(after),
-          {
-            get capturedOutput() {
-              return output.capturedOutput;
-            },
+        await this.verifyWiresharkExecutable(operation, selected, {
+          get capturedOutput() {
+            return output.capturedOutput;
           },
-        );
+        });
       }
       assertValidPcapCommandText(operation, stage, output);
     } catch (cause) {
@@ -511,36 +534,68 @@ export class PcapProvider {
   private async client(operation: PcapOperation, signal?: AbortSignal) {
     const selection = resolvePcapTools(this.environment, this.platform);
     this.wiresharkIdentities.clear();
-    for (const [name, selected] of [
-      ["tshark", selection.tshark],
-      ["capinfos", selection.capinfos],
-    ] as const) {
-      let commandPath: ArtifactCommandPath;
-      try {
-        commandPath = await selectArtifactCommandPath(selected.command, signal);
-      } catch (cause) {
-        if (
-          cause instanceof Error &&
-          "code" in cause &&
-          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-        )
-          throw new PcapConfigurationFailure(
-            `${name}_missing`,
-            `The selected ${name} executable ${selected.command} could not be found at its configured path.`,
-            { command: selected.command },
-            { cause },
+    const admittedTools = await Promise.allSettled(
+      (
+        [
+          ["tshark", selection.tshark],
+          ["capinfos", selection.capinfos],
+        ] as const
+      ).map(async ([name, selected]) => {
+        let commandPath: ArtifactCommandPath;
+        try {
+          commandPath = await selectArtifactCommandPath(
+            selected.command,
+            signal,
           );
-        throw cause;
-      }
-      const snapshot = await this.readToolIdentity(
-        operation,
-        commandPath.resolvedPath,
-        signal,
-      );
-      this.wiresharkIdentities.set(selected.command, {
-        ...commandPath,
-        identity: wiresharkExecutableIdentity(snapshot),
-      });
+        } catch (cause) {
+          if (
+            cause instanceof Error &&
+            "code" in cause &&
+            (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+          )
+            throw new PcapConfigurationFailure(
+              `${name}_missing`,
+              `The selected ${name} executable ${selected.command} could not be found at its configured path.`,
+              { command: selected.command },
+              { cause },
+            );
+          throw cause;
+        }
+        const beforeStat = this.statVerifyToolIdentity
+          ? await stat(commandPath.resolvedPath, { bigint: true }).catch(
+              () => undefined,
+            )
+          : undefined;
+        const snapshot = await this.readToolIdentity(
+          operation,
+          commandPath.resolvedPath,
+          signal,
+        );
+        const afterStat =
+          beforeStat !== undefined
+            ? await stat(commandPath.resolvedPath, { bigint: true }).catch(
+                () => undefined,
+              )
+            : undefined;
+        const initialStat =
+          beforeStat !== undefined &&
+          afterStat !== undefined &&
+          sameRegularFileState(beforeStat, afterStat)
+            ? afterStat
+            : undefined;
+        return {
+          command: selected.command,
+          entry: {
+            ...commandPath,
+            identity: wiresharkExecutableIdentity(snapshot),
+            initialStat,
+          },
+        };
+      }),
+    );
+    for (const settled of admittedTools) {
+      if (settled.status === "rejected") throw settled.reason;
+      this.wiresharkIdentities.set(settled.value.command, settled.value.entry);
     }
     const identity = await inspectPcapClient(
       selection,
