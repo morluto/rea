@@ -12,29 +12,18 @@ import {
 import { InternalInvariantError } from "../domain/internalInvariant.js";
 import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
 import {
-  readNativePlistBytes,
-  resolveNativePlistSelection,
   unreadablePlist,
   type NativePlistSelection,
 } from "./NativePlistSource.js";
-import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
-import {
-  observeNativeUi,
-  finishNativeUiObservation,
-} from "./NativeUiObservation.js";
-import { LldbCallTracer, type NativeCallTracer } from "./LldbCallTracer.js";
-import { realpath, writeFile } from "node:fs/promises";
-import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import { realpath } from "node:fs/promises";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
 
 import { z } from "zod";
 
 import {
   createAnalysisExecution,
-  type ExecutionOptions,
   type AnalysisOperation,
-  type CapabilityDescriptor,
 } from "../ports/AnalysisProvider.js";
 import {
   NATIVE_TOOL_CONTRACTS,
@@ -44,12 +33,9 @@ import {
   isMachOFormat,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
-  AnalysisCapabilityUnavailableError,
   AnalysisOutputError,
-  type AnalysisResourceConstraintError,
   cancelledBy,
   carriedReason,
 } from "../domain/analysisErrorCore.js";
@@ -74,24 +60,16 @@ import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys
 import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
 import {
   inspectPlistSchema,
-  inspectSignatureSchema,
-  listArchitecturesSchema,
   type NativeCommandInvocation,
 } from "../domain/native/nativeInspection.js";
-import { ok, type Result } from "../domain/result.js";
+import type { Result } from "../domain/result.js";
 import {
   NativeCommandFailure,
   failureCapture,
   type NativeCommandCleanupFailure,
   type NativeCommandCapture,
 } from "../providers/NativeCommandRunner.js";
-import { parseCodeSignature } from "./parsers/codesign.js";
-import { parseLipoCapture } from "./parsers/lipo.js";
-import {
-  readPlistJsonSource,
-  parsePlistXml,
-  type ParsedPlist,
-} from "./parsers/plist.js";
+import type { ParsedPlist } from "./parsers/plist.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellation.js";
@@ -102,14 +80,7 @@ import {
   parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
-import {
-  assertSelectedMachoSlice,
-  resolveSelectedMachoSlice,
-} from "./NativeMachoSelectedSlice.js";
-import { NativeUiInterruptionControl } from "./NativeUiInterruptionControl.js";
 import type { ResolvedAppBundleResourceRoot } from "../domain/apple/bundleResourceRoot.js";
-import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../domain/native/nativeCommandOutput.js";
-import { sha256Hex } from "../kernel/sha256Hex.js";
 
 export const nativeCommandCleanupFailure = (
   failures: readonly NativeCommandCleanupFailure[],

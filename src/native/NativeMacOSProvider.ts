@@ -19,8 +19,6 @@ import {
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   bindArtifactFileCleanup,
-  artifactFilePrimaryFacts,
-  ArtifactFileCleanupFailure,
   AnalysisCleanupLeaseGroup,
   ArtifactResourceScope,
   withArtifactTargetIdentity,
@@ -101,9 +99,7 @@ import {
   resolvedAnalysisError,
 } from "../domain/analysisErrorBase.js";
 import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
-import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
-import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
 import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
 import {
   bundleExecutableProvenance,
@@ -121,7 +117,6 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   NativeCommandFailure,
   XcrunCommandRunner,
-  type NativeCommandCleanupFailure,
   type NativeCommandCapture,
   type NativeCommandRunner,
 } from "../providers/NativeCommandRunner.js";
