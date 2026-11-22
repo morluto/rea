@@ -258,6 +258,7 @@
 * **cli:** consolidate JSON document admission and path checks ([#13052](https://github.com/morluto/rea/issues/13052)) ([cf87e47](https://github.com/morluto/rea/commit/cf87e474eb888a2c5235c83e13a4da5b7981b439))
 * **cli:** consolidate launcher alias readiness checks ([#12827](https://github.com/morluto/rea/issues/12827)) ([53a23c0](https://github.com/morluto/rea/commit/53a23c0f0ddb3edca0a34ae29632407ab2974de0))
 * **cli:** consolidate malformed setup dry-run coverage ([#12790](https://github.com/morluto/rea/issues/12790)) ([6bc96f3](https://github.com/morluto/rea/commit/6bc96f3f9900dcebd9c502592d325cd495d554ae))
+* **cli:** consolidate MCP registration admission and policy checks ([#13264](https://github.com/morluto/rea/issues/13264)) ([2dfe475](https://github.com/morluto/rea/commit/2dfe4754ac7e04631f8f7d483e01d7736f8d7e9c))
 * **cli:** consolidate numeric and flag admission checks ([#12933](https://github.com/morluto/rea/issues/12933)) ([48e1af5](https://github.com/morluto/rea/commit/48e1af599036463ecee3cb35f0b6f05e339d5ca0))
 * **cli:** consolidate one-shot cleanup coverage ([#12781](https://github.com/morluto/rea/issues/12781)) ([49f78bd](https://github.com/morluto/rea/commit/49f78bd03b0466adc2fb1e50cb0c1cc866ce8ed5))
 * **cli:** consolidate source Evidence finalization checks ([#12861](https://github.com/morluto/rea/issues/12861)) ([688d129](https://github.com/morluto/rea/commit/688d129aef5eaf8155d2d1401d86c900effb6f33))
