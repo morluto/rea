@@ -227,11 +227,6 @@ export const ubiPebSearchStart = (first: UbiEcHeader): number =>
 const imageSeqsAgree = (left: number, right: number): boolean =>
   left === 0 || right === 0 || left === right;
 
-const sameGeometry = (left: UbiEcHeader, right: UbiEcHeader): boolean =>
-  left.vidHeaderOffset === right.vidHeaderOffset &&
-  left.dataOffset === right.dataOffset &&
-  imageSeqsAgree(left.imageSeq, right.imageSeq);
-
 const findEcHeaderWhere = (
   chunk: Uint8Array,
   chunkOffset: number,
@@ -250,15 +245,17 @@ const findEcHeaderWhere = (
     const at = offset - chunkOffset;
     if (!admit(offset) || !hasMagic(chunk, at, UBI_EC_MAGIC)) continue;
     const read = readEcHeader(chunk.subarray(at, at + UBI_HEADER_BYTES));
-    if (read.state === "valid" && sameGeometry(read.header, first))
-      return offset;
+    if (read.state === "valid") return offset;
   }
   return null;
 };
 
 /**
  * The first aligned offset in `chunk` (read at `chunkOffset`) holding a valid
- * erase-counter header with the first PEB's layout, or null.
+ * erase-counter header, or null. A header whose layout or image_seq disagrees
+ * with the first PEB's still begins an eraseblock: skipping it would measure a
+ * multiple of the real size, so `classifyUbiPeb` and `checkUbiPebs` refuse it
+ * instead.
  */
 export const findUbiEcHeader = (
   chunk: Uint8Array,
@@ -440,7 +437,7 @@ export const ubiSmallerGridOffsets = (
 
 /**
  * The first offset in `chunk` (read at `chunkOffset`) holding a valid
- * erase-counter header with the image's layout at one of `smallerGridOffsets`
+ * erase-counter header, whatever its layout, at one of `smallerGridOffsets`
  * inside a measured eraseblock, or null. Such a header begins an eraseblock
  * the measured size would merge into its neighbor's data.
  */

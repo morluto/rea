@@ -803,6 +803,72 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
   expect(image(full).volumes[0]).toMatchObject({ dataBytes: 65408 });
 });
 
+it("refuses an image whose next erase-counter header disagrees with the first", () => {
+  // A valid header with another image_seq or layout begins an eraseblock, so
+  // it is the eraseblock size and the image is refused, not measured past.
+  const geometry = { pebSize: 32 * 1024 };
+  const [layout0, layout1] = ubiLayoutPebs(RECORDS, geometry);
+  const rootfs = {
+    kind: "leb" as const,
+    volId: 0,
+    lnum: 0,
+    data: Buffer.from("ROOTFS"),
+    sqnum: 2n,
+  };
+  const withSecond = (second: Buffer) =>
+    Buffer.concat([
+      ubiImage([layout0!], geometry),
+      second,
+      ubiImage([layout1!, { kind: "erased" }], geometry),
+    ]);
+  expect(
+    parse(withSecond(ubiImage([rootfs], { ...geometry, imageSeq: 7 }))),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining(
+        "eraseblock 1 declares image_seq 7, which differs",
+      ),
+    },
+  });
+  expect(
+    parse(
+      withSecond(
+        ubiImage([rootfs], {
+          ...geometry,
+          vidHeaderOffset: 128,
+          dataOffset: 192,
+        }),
+      ),
+    ),
+  ).toMatchObject({
+    ok: false,
+    error: {
+      kind: "malformed",
+      message: expect.stringContaining(
+        "eraseblock 1 declares vid_hdr_offset 128 and data_offset 192",
+      ),
+    },
+  });
+
+  // Sequences alternating between two nonzero values are refused rather than
+  // read as eraseblocks of twice the size.
+  const alternating = Buffer.concat(
+    [layout0!, rootfs, layout1!, { kind: "free" as const }].map((peb, index) =>
+      ubiImage([peb], { ...geometry, imageSeq: index % 2 === 0 ? 5 : 6 }),
+    ),
+  );
+  expect(parse(alternating)).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringContaining(
+        "eraseblock 1 declares image_seq 6, which differs from image_seq 5",
+      ),
+    },
+  });
+});
+
 it("refuses two copies of one LEB that share a sequence number", () => {
   const copy = (lnum: number, fill: number, volId = 0) => ({
     kind: "leb" as const,
