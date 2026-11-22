@@ -46,6 +46,45 @@ export interface CompletionCandidate {
   readonly noSpace?: true | undefined;
 }
 
+/** Reassemble adjacent Bash word breaks belonging to a long inline option. */
+export const bashCompletionInput = (
+  words: readonly string[],
+  index: number,
+  line: string,
+  fragment: string,
+) => {
+  const assembled: string[] = [];
+  let end = 0;
+  let inValue = false;
+  for (let position = 0; position <= index; position += 1) {
+    const atCursor = position === index;
+    const word = atCursor ? line.slice(end).trimStart() : words[position]!;
+    const start = atCursor
+      ? line.length - word.length
+      : line.indexOf(word, end);
+    if (start < end) return undefined;
+    const previous = assembled.at(-1);
+    inValue =
+      start === end &&
+      (inValue ||
+        (word.startsWith("=") && previous?.startsWith("--") === true));
+    if (inValue && previous !== undefined)
+      assembled[assembled.length - 1] = previous + word;
+    else assembled.push(word);
+    end = start + word.length;
+  }
+  const current = assembled.pop() ?? "";
+  return {
+    before: assembled.slice(1),
+    current,
+    // Readline leaves the option and '=' in the buffer when it replaces a fragment.
+    replacementPrefix:
+      inValue && current.endsWith(fragment)
+        ? current.slice(0, current.length - fragment.length)
+        : "",
+  };
+};
+
 const identifier = (name: string): string =>
   name.replace(/[^a-zA-Z0-9_]/gu, "_");
 
@@ -56,10 +95,13 @@ export const bashCompletionScript = (name: string): string => {
   return `_incur_complete_${id}() {
     local IFS=$'\\013'
     local _COMPLETE_INDEX=\${COMP_CWORD}
+    local _line=\${COMP_LINE-}
     local _completions _output
     if ! _output=$(
         export COMPLETE="bash"
         export _COMPLETE_INDEX="$_COMPLETE_INDEX"
+        export _COMPLETE_BASH_LINE="\${_line:0:\${COMP_POINT:-0}}"
+        export _COMPLETE_BASH_FRAGMENT="\${2-}"
         ${command} -- "\${COMP_WORDS[@]}"
     ); then
         unset COMPREPLY
@@ -182,17 +224,17 @@ const flagCandidates = (
 };
 
 /**
- * Value candidates for the option before the cursor. `undefined` means the
- * previous word is not a value-taking option of this scope; an empty list
- * means it takes a free-form value.
+ * Value candidates for a separate or inline option. `undefined` means the
+ * option does not take a value in this scope; an empty list means it takes a
+ * free-form value or its enum has no matching values.
  */
 const valueCandidates = (
-  previous: string,
+  option: string,
   current: string,
   options: z.ZodObject,
   alias: Readonly<Record<string, string>> | undefined,
 ): CompletionCandidate[] | undefined => {
-  const key = optionKey(previous, options, alias);
+  const key = optionKey(option, options, alias);
   if (key === undefined) return undefined;
   const field = (options.shape as Record<string, z.ZodType>)[key]!;
   const values = enumValues(field);
@@ -203,11 +245,29 @@ const valueCandidates = (
   return isFlagOption(field) ? undefined : [];
 };
 
+const expectsCommandValue = (
+  words: readonly string[],
+  options: z.ZodObject,
+  alias: Readonly<Record<string, string>> | undefined,
+): boolean => {
+  const shape = options.shape as Record<string, z.ZodType>;
+  let pending = false;
+  for (const word of words) {
+    if (pending || !word.startsWith("-") || word.startsWith("--no-")) {
+      pending = false;
+      continue;
+    }
+    const flag = word.startsWith("--") ? word : `-${word.slice(-1)}`;
+    const key = optionKey(flag, options, alias);
+    pending = key !== undefined && !isFlagOption(shape[key]!);
+  }
+  return pending;
+};
+
 /**
  * Candidates for `words[index]`. Earlier words select the command scope;
- * a dash-prefixed cursor word lists options, a word after a value-taking
- * option lists its enum values, and otherwise subcommands are listed in
- * registration order.
+ * a separated or inline value lists enum values, a dash-prefixed word lists
+ * options, and otherwise subcommands are listed in registration order.
  */
 export const completeWords = (
   commands: ReadonlyMap<string, CompletionCommand>,
@@ -220,7 +280,8 @@ export const completeWords = (
     commands: ReadonlyMap<string, CompletionCommand>;
     leaf: CompletionCommand | undefined;
   } = { commands, leaf: undefined };
-  for (const token of words.slice(0, index)) {
+  const precedingWords = words.slice(0, index);
+  for (const token of precedingWords) {
     if (token.startsWith("-")) continue;
     let entry = scope.commands.get(token);
     if (entry?._alias === true && entry.target !== undefined)
@@ -234,21 +295,35 @@ export const completeWords = (
     }
   }
   const { leaf } = scope;
+  const equals = current.startsWith("--") ? current.indexOf("=") : -1;
+  const previous = index > 0 ? words[index - 1]! : "";
+  if (equals >= 0 || (!current.startsWith("-") && previous.startsWith("-"))) {
+    const option = equals >= 0 ? current.slice(0, equals) : previous;
+    const prefix = equals >= 0 ? current.slice(equals + 1) : current;
+    if (
+      equals >= 0 &&
+      leaf?.options !== undefined &&
+      optionKey(option, globals.schema, globals.alias) === undefined &&
+      expectsCommandValue(precedingWords, leaf.options, leaf.alias)
+    )
+      return [];
+    const values =
+      (leaf?.options === undefined
+        ? undefined
+        : valueCandidates(option, prefix, leaf.options, leaf.alias)) ??
+      valueCandidates(option, prefix, globals.schema, globals.alias);
+    if (equals >= 0)
+      return (values ?? []).map(({ value }) => ({
+        value: `${option}=${value}`,
+      }));
+    if (values !== undefined) return values;
+  }
   const candidates: CompletionCandidate[] = [];
   if (current.startsWith("-")) {
     if (leaf?.options !== undefined)
       flagCandidates(current, leaf.options, leaf.alias, candidates);
     flagCandidates(current, globals.schema, globals.alias, candidates);
     return candidates;
-  }
-  const previous = index > 0 ? words[index - 1]! : "";
-  if (previous.startsWith("-")) {
-    const values =
-      (leaf?.options === undefined
-        ? undefined
-        : valueCandidates(previous, current, leaf.options, leaf.alias)) ??
-      valueCandidates(previous, current, globals.schema, globals.alias);
-    if (values !== undefined) return values;
   }
   for (const [name, entry] of scope.commands)
     if (entry._alias !== true && name.startsWith(current))

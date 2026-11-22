@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
 import { createCliCompletions } from "../../../src/cli/completions.js";
+import type { CompletionShell } from "../../../src/cli/completionProtocol.js";
 import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
 
@@ -13,19 +14,28 @@ const registry = () => {
   const cli = createCommandCli();
   registerCliCommand(cli, "instructions", {
     options: z.object({
+      dryRun: z.boolean().optional(),
+      noDryRun: z.string().optional(),
       procedure: z.string().optional(),
       targetFormat: z.enum(["dos-com", "raw-binary"]).optional(),
     }),
+    alias: { targetFormat: "f" },
     run: () => {
       throw new Error("Completion must not execute a command");
     },
   });
   return cli;
 };
-const complete = (words: string[], index = words.length - 1) => {
+const completionOutput = (
+  shell: CompletionShell,
+  words: string[],
+  index = words.length - 1,
+  transport: Readonly<NodeJS.ProcessEnv> = {},
+) => {
   let text = "";
   const callback = createCliCompletions(registry(), {
-    COMPLETE: "bash",
+    ...transport,
+    COMPLETE: shell,
     _COMPLETE_INDEX: String(index),
   });
   expect(
@@ -35,6 +45,10 @@ const complete = (words: string[], index = words.length - 1) => {
       },
     }),
   ).toBe(true);
+  return text;
+};
+const complete = (words: string[], index = words.length - 1) => {
+  const text = completionOutput("bash", words, index);
   return text === ""
     ? []
     : text
@@ -65,6 +79,9 @@ it("uses canonical global flag metadata and retains command options and enum hin
     ]),
   );
   expect(complete(["rea", "instructions", "--proc"])).toEqual(["--procedure"]);
+  expect(complete(["rea", "instructions", "--target-format", "--he"])).toEqual([
+    "--help",
+  ]);
   expect(complete(["rea", "instructions", "--target-format", ""])).toEqual([
     "dos-com",
     "raw-binary",
@@ -87,6 +104,128 @@ it("uses canonical global flag metadata and retains command options and enum hin
     "--incur-update-check",
   );
   expect(complete(["rea", "instructions", "--"])).not.toContain("--mcp");
+});
+
+it("completes whole-word inline values with their option spelling", () => {
+  expect(
+    JSON.parse(
+      completionOutput("nushell", ["rea", "instructions", "--format=j"]),
+    ),
+  ).toEqual([{ value: "--format=json" }, { value: "--format=jsonl" }]);
+  expect(complete(["rea", "instructions", "--target-format="])).toEqual([
+    "--target-format=dos-com",
+    "--target-format=raw-binary",
+  ]);
+  expect(complete(["rea", "instructions", "--targetFormat=r"])).toEqual([
+    "--targetFormat=raw-binary",
+  ]);
+  expect(complete(["rea", "instructions", "-f", "r"])).toEqual(["raw-binary"]);
+  expect(complete(["rea", "instructions", "-f=r"])).toEqual([]);
+  expect(
+    complete(["rea", "instructions", "example.f", "--target-format=r"]),
+  ).toEqual(["--target-format=raw-binary"]);
+  expect(
+    complete(["rea", "instructions", "--no-dry-run", "--target-format=r"]),
+  ).toEqual(["--target-format=raw-binary"]);
+  expect(
+    complete([
+      "rea",
+      "instructions",
+      "example.bin",
+      "--procedure",
+      "--target-format=r",
+    ]),
+  ).toEqual([]);
+  expect(
+    complete([
+      "rea",
+      "instructions",
+      "--procedure",
+      "--target-format",
+      "--target-format=r",
+    ]),
+  ).toEqual(["--target-format=raw-binary"]);
+  for (const word of [
+    "--unknown=j",
+    "--procedure=j",
+    "--help=t",
+    "--format=j=",
+  ])
+    expect(complete(["rea", "instructions", word])).toEqual([]);
+  expect(complete(["rea", "instructions", "--", "--format=j"])).toEqual([]);
+  expect(
+    JSON.parse(
+      completionOutput("nushell", [
+        "rea",
+        "instructions",
+        "--filter-output",
+        "--format=j",
+      ]),
+    ),
+  ).toEqual([]);
+});
+
+it("preserves command scope and the replacement fragment in Bash inline words", () => {
+  const bash = (line: string, fragment: string, words: string[]) =>
+    completionOutput("bash", ["rea", ...words], words.length, {
+      _COMPLETE_BASH_LINE: `rea ${line}`,
+      _COMPLETE_BASH_FRAGMENT: fragment,
+    });
+  expect(
+    bash("--filter-output=mcp instructions --target-format=r", "r", [
+      "--filter-output",
+      "=",
+      "mcp",
+      "instructions",
+      "--target-format",
+      "=",
+      "r",
+    ]),
+  ).toBe("raw-binary");
+  expect(
+    bash("--filter-output=instructions mcp doctor --format=c", "c", [
+      "--filter-output",
+      "=",
+      "instructions",
+      "mcp",
+      "doctor",
+      "--format",
+      "=",
+      "c",
+    ]),
+  ).toBe("");
+  expect(
+    bash("instructions --filter-output=--format=y", "y", [
+      "instructions",
+      "--filter-output",
+      "=",
+      "--format",
+      "=",
+      "y",
+    ]),
+  ).toBe("");
+  expect(
+    bash("instructions --target-format=", "", [
+      "instructions",
+      "--target-format",
+      "=",
+    ]),
+  ).toBe("dos-com\vraw-binary");
+  expect(
+    bash("instructions --target-format = r", "r", [
+      "instructions",
+      "--target-format",
+      "=",
+      "r",
+    ]),
+  ).toBe("");
+  expect(
+    bash("instructions --target-format=r", "--target-format=r", [
+      "instructions",
+      "word missing from the raw completion line",
+      "--target-format=r",
+    ]),
+  ).toBe("--target-format=raw-binary");
 });
 
 it("serves the Bash script through both public generation routes", async () => {
@@ -201,6 +340,26 @@ COMP_WORDS=(rea instructions --format "")
 COMP_CWORD=3
 _incur_complete_rea || exit
 printf 'format=%s\\n' "\${COMPREPLY[*]}"
+COMP_LINE='rea instructions --format=j'
+COMP_POINT=\${#COMP_LINE}
+COMP_WORDS=(rea instructions --format = j)
+COMP_CWORD=4
+_incur_complete_rea rea j = || exit
+printf 'inline=%s\\n' "\${COMPREPLY[*]}"
+COMP_LINE='rea instructions --format='
+COMP_POINT=\${#COMP_LINE}
+COMP_WORDS=(rea instructions --format =)
+COMP_CWORD=3
+_incur_complete_rea rea '' --format || exit
+printf 'empty-inline=%s\\n' "\${COMPREPLY[*]}"
+COMP_LINE='rea instructions --format = j'
+COMP_POINT=\${#COMP_LINE}
+COMP_WORDS=(rea instructions --format = j)
+COMP_CWORD=4
+_incur_complete_rea rea j = || exit
+printf 'separate-equals=%s\\n' "\${COMPREPLY[*]}"
+COMP_LINE='rea mcp doctor --'
+COMP_POINT=\${#COMP_LINE}
 COMP_WORDS=(rea mcp doctor --)
 COMP_CWORD=3
 _incur_complete_rea || exit
@@ -221,6 +380,11 @@ printf 'doctor=%s\\n' "\${COMPREPLY[*]}"
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("mcp=add doctor\n");
     expect(result.stdout).toContain("format=toon json yaml md jsonl csv tsv\n");
+    expect(result.stdout).toContain("inline=json jsonl\n");
+    expect(result.stdout).toContain(
+      "empty-inline=toon json yaml md jsonl csv tsv\n",
+    );
+    expect(result.stdout).toContain("separate-equals=\n");
     expect(result.stdout).toContain(
       "doctor=--format --json --full-output --help --timings\n",
     );
