@@ -495,10 +495,11 @@ export class ProviderProcessSupervisor {
     this.#recordExit(code, signal);
     this.#outputClosed = true;
     if (!this.#disposed)
-      this.#options.onDiagnostic?.({
-        type: "output-close",
-        snapshot: this.snapshot(),
-      });
+      this.#options.onDiagnostic?.(
+        diagnosticEventWithLazySnapshot({ type: "output-close" }, () =>
+          this.snapshot(),
+        ),
+      );
     this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
@@ -1100,14 +1101,30 @@ export class ProviderProcessSupervisor {
     if (this.#exitObservation !== undefined) return;
     this.#exitObservation = { code, signal };
     this.#exit.resolve(this.#exitObservation);
-    this.#options.onDiagnostic?.({
-      type: "exit",
-      code,
-      signal,
-      snapshot: this.snapshot(),
-    });
+    this.#options.onDiagnostic?.(
+      diagnosticEventWithLazySnapshot({ type: "exit", code, signal }, () =>
+        this.snapshot(),
+      ),
+    );
   }
 }
+
+const diagnosticEventWithLazySnapshot = <
+  Event extends { readonly type: "exit" | "output-close" },
+>(
+  fields: Event,
+  readSnapshot: () => ProviderProcessSnapshot,
+): Event & { readonly snapshot: ProviderProcessSnapshot } => {
+  let snapshot: ProviderProcessSnapshot | undefined;
+  return Object.defineProperty({ ...fields }, "snapshot", {
+    enumerable: true,
+    get() {
+      return (snapshot ??= readSnapshot());
+    },
+  }) as Event & { readonly snapshot: ProviderProcessSnapshot };
+};
+
+const EMPTY_OUTPUT_BUFFER = Buffer.alloc(0);
 
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
@@ -1171,10 +1188,13 @@ class ProcessOutputCapture {
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    return this.#snapshotBuffer(
-      Buffer.concat(this.#chunks, this.#bytes),
-      observedBytes,
-    );
+    const buffer =
+      this.#chunks.length === 0
+        ? EMPTY_OUTPUT_BUFFER
+        : this.#chunks.length === 1
+          ? this.#chunks[0]!
+          : Buffer.concat(this.#chunks, this.#bytes);
+    return this.#snapshotBuffer(buffer, observedBytes);
   }
 
   snapshotRange(

@@ -94,3 +94,35 @@ describe("bounded output excerpts", () => {
     expect(excerpt.text).toBe("�A … [output omitted] … B�");
   });
 });
+
+describe("bounded output ring buffer", () => {
+  it("matches head and tail bytes across repeated small writes wrapping the ring buffer", () => {
+    const limit = 19;
+    const headLimit = Math.ceil(limit / 2);
+    const tailLimit = limit - headLimit;
+    const excerpt = new BoundedOutputExcerpt(limit);
+    const chunks = Array.from({ length: 120 }, (_, index) =>
+      Buffer.from(index % 7 === 0 ? `🙂${index}` : `_${index}_`),
+    );
+    for (const chunk of chunks) excerpt.append(chunk);
+    const full = Buffer.concat(chunks);
+    const expected = new BoundedOutputExcerpt(limit);
+    expected.append(full);
+    expect(excerpt.truncated).toBe(true);
+    expect(full.length).toBeGreaterThan(headLimit + tailLimit);
+    expect(excerpt.text).toBe(expected.text);
+  });
+
+  it("handles zero budget and oversized tail replacement after partial writes", () => {
+    const empty = new BoundedOutputExcerpt(0);
+    empty.append(Buffer.from("abcdef"));
+    expect(empty.truncated).toBe(true);
+    expect(empty.text).toBe(" … [output omitted] … ");
+
+    const replaced = new BoundedOutputExcerpt(10);
+    replaced.append(Buffer.from("1234567"));
+    replaced.append(Buffer.from("ABCDEFGHIJK"));
+    expect(replaced.truncated).toBe(true);
+    expect(replaced.text).toBe("12345 … [output omitted] … GHIJK");
+  });
+});

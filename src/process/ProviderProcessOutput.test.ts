@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import {
@@ -849,4 +849,52 @@ it("retains a stream's latest bytes in tail retention, with checkpoints over wha
     producer.stdout.destroy();
     producer.stderr.destroy();
   }
+});
+
+describe("lazy diagnostic snapshot materialization", () => {
+  it("exposes enumerable memoized snapshots on exit and output-close events", () => {
+    const producer = createProducer();
+    const events: {
+      readonly type: string;
+      readonly snapshot?: unknown;
+    }[] = [];
+    let repeatedExitSnapshotSame = false;
+    let repeatedCloseSnapshotSame = false;
+    const supervisor = new ProviderProcessSupervisor(
+      { process: producer, ownsProcessLifetime: false },
+      {
+        onDiagnostic: (event) => {
+          if (event.type === "exit") {
+            events.push(event);
+            repeatedExitSnapshotSame = event.snapshot === event.snapshot;
+          } else if (event.type === "output-close") {
+            events.push(event);
+            repeatedCloseSnapshotSame = event.snapshot === event.snapshot;
+          }
+        },
+      },
+    );
+    try {
+      producer.stdout.write("hello");
+      producer.emit("exit", 0, null);
+      producer.stdout.end();
+      producer.stderr.end();
+      producer.emit("close", 0, null);
+
+      expect(events).toHaveLength(2);
+      expect(Object.keys(events[0]!)).toContain("snapshot");
+      expect(Object.keys(events[1]!)).toContain("snapshot");
+      expect(repeatedExitSnapshotSame).toBe(true);
+      expect(repeatedCloseSnapshotSame).toBe(true);
+      expect(events[0]?.snapshot).toMatchObject({
+        exitCode: 0,
+        stdout: { text: "hello", bytes: 5 },
+      });
+      expect(events[1]?.snapshot).toEqual(supervisor.snapshot());
+    } finally {
+      supervisor.dispose();
+      producer.stdout.destroy();
+      producer.stderr.destroy();
+    }
+  });
 });
