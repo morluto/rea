@@ -461,12 +461,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         artifact = observed;
         candidates.push(observed);
       });
-      for (const path of new Set([input.path, ...input.candidate_paths])) {
-        if (path === input.path) continue;
-        artifactInput = {
-          path,
-          field: ["candidate_paths", input.candidate_paths.indexOf(path)],
-        };
+      const seenCandidates = new Set([input.path]);
+      for (const [index, path] of input.candidate_paths.entries()) {
+        if (seenCandidates.has(path)) continue;
+        seenCandidates.add(path);
+        artifactInput = { path, field: ["candidate_paths", index] };
         await readSelectedInput(path, (snapshot) => {
           candidates.push({
             path,
