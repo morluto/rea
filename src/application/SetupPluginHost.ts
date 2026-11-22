@@ -2,6 +2,7 @@ import { ArtifactResourceScope } from "../resources/index.js";
 import { CursorLocalPlugin } from "./CursorLocalPlugin.js";
 import { ok } from "../domain/result.js";
 import { compositeKey } from "../domain/unicodeCodePointOrder.js";
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
 import { explicitSetupRegistrationEnvironment } from "./SetupRegistrationEnvironment.js";
 import { SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
@@ -19,6 +20,8 @@ interface PluginSetupOptions {
   readonly signal?: AbortSignal;
   readonly preferPlugins: boolean;
   readonly cursorPlugin?: boolean;
+  /** Keys merged from `rea.json`; they do not request direct registration. */
+  readonly savedDefaults?: ReadonlySet<string>;
 }
 
 /**
@@ -245,8 +248,12 @@ class PluginSetupHost {
   ) => {
     const providerSettings =
       installHopper ||
-      Object.keys(explicitSetupRegistrationEnvironment(this.environment))
-        .length > 0;
+      Object.keys(
+        omitEnvironmentSettings(
+          explicitSetupRegistrationEnvironment(this.environment),
+          this.options.savedDefaults,
+        ),
+      ).length > 0;
     if (providerSettings !== this.providerSettings) {
       this.pending.clear();
       this.routes.clear();

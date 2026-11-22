@@ -344,6 +344,7 @@ const runSetupCommand = async (
         }),
         cursorPlugin: options.cursorPlugin,
         signal,
+        ...(savedDefaults === undefined ? {} : { savedDefaults }),
       },
     ),
     interactive

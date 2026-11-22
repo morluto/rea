@@ -1,10 +1,16 @@
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { failedInspectionDescriptor } from "../../tests/fixtures/processInspectionCleanup.js";
 
 import { launchSetupPluginCommand } from "./SetupPluginCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 const scope = () => {
   const resources = new ArtifactResourceScope();
@@ -153,6 +159,94 @@ describe("launchSetupPluginCommand", () => {
     expect(result.timedOut).toBe(true);
     expect(Date.now() - startedAt).toBeLessThan(10_000);
   });
+});
+
+it("finishes ownership preparation before starting the short command deadline", async () => {
+  vi.useFakeTimers();
+  const ready = createDeferred<void>();
+  let launched = false;
+  const pending = launchSetupPluginCommand(process.execPath, ["--version"], {
+    env: process.env,
+    cwd: process.cwd(),
+    timeoutMs: 300,
+    platform: process.platform,
+    resources: scope(),
+    prepare: () => ready.promise,
+    launcher: async () => {
+      launched = true;
+      throw new Error("launcher must wait for ownership preparation");
+    },
+  });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(launched).toBe(false);
+  ready.resolve();
+  const result = await pending;
+  expect(launched).toBe(true);
+  expect(result.timedOut).toBe(false);
+  expect(result.spawnError).toContain(
+    "launcher must wait for ownership preparation",
+  );
+});
+
+it("retains preparation cleanup owners before reporting a prelaunch failure", async () => {
+  const file = await failedInspectionDescriptor();
+  const resources = new ArtifactResourceScope();
+  onTestFinished(async () => {
+    file.allow();
+    await resources.close();
+  });
+  const result = await launchSetupPluginCommand(
+    process.execPath,
+    ["--version"],
+    {
+      env: process.env,
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      platform: process.platform,
+      resources,
+      launcher: async () => {
+        throw file.failure;
+      },
+    },
+  );
+  expect(result.spawnError).toBe(file.failure.message);
+  expect(resources.hasPending).toBe(true);
+  expect(resources.cleanupResources).toEqual([file.path]);
+  await expect(resources.close()).rejects.toBeDefined();
+  expect(file.handle.fd).toBeGreaterThanOrEqual(0);
+  file.allow();
+  await resources.close();
+  expect(file.handle.fd).toBe(-1);
+  expect(resources.hasPending).toBe(false);
+});
+
+it("retains preparation cleanup owners after an abort discards the spawn error", async () => {
+  const file = await failedInspectionDescriptor();
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  onTestFinished(async () => {
+    file.allow();
+    await resources.close();
+  });
+  await expect(
+    launchSetupPluginCommand(process.execPath, ["--version"], {
+      env: process.env,
+      cwd: process.cwd(),
+      timeoutMs: 5000,
+      platform: process.platform,
+      resources,
+      signal: controller.signal,
+      launcher: async () => {
+        controller.abort("cancel during preparation");
+        throw file.failure;
+      },
+    }),
+  ).rejects.toBeInstanceOf(AnalysisCancelledError);
+  expect(resources.hasPending).toBe(true);
+  expect(resources.cleanupResources).toEqual([file.path]);
+  file.allow();
+  await resources.close();
+  expect(resources.hasPending).toBe(false);
 });
 
 it.runIf(process.platform !== "win32")(

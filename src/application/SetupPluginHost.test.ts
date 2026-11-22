@@ -23,6 +23,94 @@ it.each([
   expect(() => setupPluginOperation(client, args)).toThrow(/Unmodeled/u);
 });
 
+type PluginFixtureState = {
+  nodeVersion: string | undefined;
+  dropNodeOnInstall: boolean;
+  installed: boolean;
+  enabled: boolean;
+  failure: string | undefined;
+  inspectionFailure: string | undefined;
+  inventory: string | undefined;
+  failReadback: boolean;
+  interruptAt: number | undefined;
+  doctorsAtInterrupt: number;
+};
+
+const pluginLaunch =
+  (
+    base: FakeSetupHost,
+    calls: Array<{ command: string; args: readonly string[] }>,
+    state: PluginFixtureState,
+  ): SetupPluginCommandLauncher =>
+  async (command, args) => {
+    if (command === "node")
+      return {
+        exitCode: state.nodeVersion === undefined ? 1 : 0,
+        signal: null,
+        stdout: state.nodeVersion ?? "",
+        stderr: "",
+        timedOut: false,
+        ...(state.nodeVersion === undefined
+          ? { spawnError: "ENOENT: node missing" }
+          : {}),
+      };
+    calls.push({ command, args });
+    const operation = setupPluginOperation(command, args);
+    if (calls.length === state.interruptAt) {
+      state.doctorsAtInterrupt = base.doctorCalls;
+      return {
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: "",
+        timedOut: false,
+        interruptedSignal: "SIGINT",
+        cleanupFailure: "controlled cleanup refusal",
+      };
+    }
+    const listing = operation === "list";
+    if (listing && state.inspectionFailure !== undefined)
+      return {
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: state.inspectionFailure,
+        timedOut: false,
+      };
+    if (!listing && state.failure !== undefined)
+      return {
+        exitCode: 1,
+        signal: null,
+        stdout: "",
+        stderr: state.failure,
+        timedOut: false,
+      };
+    if (operation === "enable") expect(state.installed).toBe(true);
+    if (operation === "install" || operation === "enable") {
+      state.installed = true;
+      state.enabled = true;
+      if (state.dropNodeOnInstall) state.nodeVersion = undefined;
+    }
+    const entries =
+      state.installed && !state.failReadback
+        ? command === "codex"
+          ? [{ pluginId: "rea@rea", name: "rea", enabled: state.enabled }]
+          : [{ id: "rea@rea", scope: "user", enabled: state.enabled }]
+        : [];
+    return {
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stderr: "",
+      stdout: listing
+        ? (state.inventory ??
+          JSON.stringify(
+            command === "codex" ? { installed: entries } : entries,
+          ))
+        : "Installed",
+    };
+  };
+
 const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   const base = new FakeSetupHost(platform);
   base.clients = [
@@ -48,96 +136,41 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
   ];
   base.doctorHealthy = true;
   const calls: Array<{ command: string; args: readonly string[] }> = [];
-  let nodeVersion: string | undefined = "v24.22.1";
-  let dropNodeOnInstall = false;
-  let installed = false;
-  let enabled = false;
-  let failure: string | undefined;
-  let inspectionFailure: string | undefined;
-  let inventory: string | undefined;
-  let failReadback = false;
-  let interruptAt: number | undefined;
-  let doctorsAtInterrupt = 0;
-  const launch: SetupPluginCommandLauncher = async (command, args) => {
-    if (command === "node")
-      return {
-        exitCode: nodeVersion === undefined ? 1 : 0,
-        signal: null,
-        stdout: nodeVersion ?? "",
-        stderr: "",
-        timedOut: false,
-        ...(nodeVersion === undefined
-          ? { spawnError: "ENOENT: node missing" }
-          : {}),
-      };
-    calls.push({ command, args });
-    const operation = setupPluginOperation(command, args);
-    if (calls.length === interruptAt) {
-      doctorsAtInterrupt = base.doctorCalls;
-      return {
-        exitCode: 1,
-        signal: null,
-        stdout: "",
-        stderr: "",
-        timedOut: false,
-        interruptedSignal: "SIGINT",
-        cleanupFailure: "controlled cleanup refusal",
-      };
-    }
-    const listing = operation === "list";
-    if (listing && inspectionFailure !== undefined)
-      return {
-        exitCode: 1,
-        signal: null,
-        stdout: "",
-        stderr: inspectionFailure,
-        timedOut: false,
-      };
-    if (!listing && failure !== undefined)
-      return {
-        exitCode: 1,
-        signal: null,
-        stdout: "",
-        stderr: failure,
-        timedOut: false,
-      };
-    if (operation === "enable") expect(installed).toBe(true);
-    if (operation === "install" || operation === "enable") {
-      installed = true;
-      enabled = true;
-      if (dropNodeOnInstall) nodeVersion = undefined;
-    }
-    const entries =
-      installed && !failReadback
-        ? command === "codex"
-          ? [{ pluginId: "rea@rea", name: "rea", enabled }]
-          : [{ id: "rea@rea", scope: "user", enabled }]
-        : [];
-    return {
-      exitCode: 0,
-      signal: null,
-      timedOut: false,
-      stderr: "",
-      stdout: listing
-        ? (inventory ??
-          JSON.stringify(
-            command === "codex" ? { installed: entries } : entries,
-          ))
-        : "Installed",
-    };
+  const state: PluginFixtureState = {
+    nodeVersion: "v24.22.1",
+    dropNodeOnInstall: false,
+    installed: false,
+    enabled: false,
+    failure: undefined,
+    inspectionFailure: undefined,
+    inventory: undefined,
+    failReadback: false,
+    interruptAt: undefined,
+    doctorsAtInterrupt: 0,
   };
+  const launch = pluginLaunch(base, calls, state);
   return {
     base,
     calls,
     host: (
       preferPlugins = true,
       environment: Readonly<NodeJS.ProcessEnv> = {},
-    ) => withPluginSetup(base, environment, { preferPlugins }, launch),
+      savedDefaults?: ReadonlySet<string>,
+    ) =>
+      withPluginSetup(
+        base,
+        environment,
+        {
+          preferPlugins,
+          ...(savedDefaults === undefined ? {} : { savedDefaults }),
+        },
+        launch,
+      ),
     nodeDisappearsOnInstall: () => {
-      dropNodeOnInstall = true;
+      state.dropNodeOnInstall = true;
     },
     node: (version: string | undefined) => {
-      nodeVersion = version;
+      state.nodeVersion = version;
     },
     setupOptions: {
       ...options(true),
@@ -146,25 +179,25 @@ const fixture = (clientId = "codex", platform: NodeJS.Platform = "win32") => {
     },
     mutations: () => calls.filter(({ args }) => args[1] !== "list"),
     installed: (value = true, isEnabled = true) => {
-      installed = value;
-      enabled = isEnabled;
+      state.installed = value;
+      state.enabled = isEnabled;
     },
     fail: (message: string) => {
-      failure = message;
+      state.failure = message;
     },
     inspectionFailure: (message: string) => {
-      inspectionFailure = message;
+      state.inspectionFailure = message;
     },
     inventory: (value: string) => {
-      inventory = value;
+      state.inventory = value;
     },
     failReadback: () => {
-      failReadback = true;
+      state.failReadback = true;
     },
     interrupt: (at: number) => {
-      interruptAt = at;
+      state.interruptAt = at;
     },
-    doctorsAtInterrupt: () => doctorsAtInterrupt,
+    doctorsAtInterrupt: () => state.doctorsAtInterrupt,
   };
 };
 
@@ -469,6 +502,25 @@ it("preserves custom provider registration settings", async () => {
   expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
     GHIDRA_INSTALL_DIR: "/custom/ghidra",
   });
+});
+
+it("keeps saved config provider settings on the plugin path", async () => {
+  const f = fixture();
+  f.base.ghidra = "/saved/ghidra";
+  expect(
+    (
+      await runSetup(
+        f.setupOptions,
+        f.host(
+          true,
+          { GHIDRA_INSTALL_DIR: "/saved/ghidra" },
+          new Set(["GHIDRA_INSTALL_DIR"]),
+        ),
+      )
+    ).status,
+  ).toBe("ready");
+  expect(f.mutations()).toHaveLength(2);
+  expect(f.base.configurations).toBe(0);
 });
 
 it.each([

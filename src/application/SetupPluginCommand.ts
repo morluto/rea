@@ -12,7 +12,11 @@ import {
   spawnOwnedProviderProcess,
 } from "../process/ProviderProcess.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
-import { ownedCommandResources } from "../process/OwnedCommand.js";
+import {
+  ownedCommandResources,
+  prepareOwnedCommand,
+} from "../process/OwnedCommand.js";
+import { retainArtifactCommandCleanup } from "../providers/OwnedCommandCleanup.js";
 import { BoundedOutputExcerpt } from "../process/BoundedOutputExcerpt.js";
 import { throwIfSetupCancelled } from "./SetupCancellation.js";
 
@@ -45,6 +49,8 @@ export type SetupPluginCommandLauncher = (
     readonly resources: ArtifactResourceScope;
     readonly signal?: AbortSignal;
     readonly launcher?: typeof spawnOwnedProviderProcess;
+    /** Ownership preparation before the short command deadline; production uses prepareOwnedCommand. */
+    readonly prepare?: (signal?: AbortSignal) => Promise<void>;
     readonly windowsVerbatimArguments?: boolean;
   },
 ) => Promise<SetupPluginCommandResult>;
@@ -70,10 +76,7 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
     let interruptedSignal: NodeJS.Signals | undefined;
     let supervisor: ProviderProcessSupervisor | undefined;
     let resource: ArtifactResourceOwner | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort(OwnerCancellation.deadlineElapsed);
-    }, options.timeoutMs);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const signalHandlers = new Map<NodeJS.Signals, () => void>(
       FORWARD_SIGNALS.map((signal) => [
         signal,
@@ -90,6 +93,14 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
     );
     for (const [signal, handler] of signalHandlers) process.on(signal, handler);
     try {
+      // Cold macOS helper compilation has its own deadline; keep it outside the
+      // short client/Node command timer used for inventory and runtime checks.
+      await (options.prepare ?? prepareOwnedCommand)(options.signal);
+      throwIfSetupCancelled(options.signal);
+      timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort(OwnerCancellation.deadlineElapsed);
+      }, options.timeoutMs);
       const launched = await (options.launcher ?? spawnOwnedProviderProcess)({
         command,
         arguments: arguments_,
@@ -140,9 +151,14 @@ export const launchSetupPluginCommand: SetupPluginCommandLauncher = (
       );
       await supervisor.waitForOutputClose(undefined, controller.signal);
     } catch (cause: unknown) {
+      retainArtifactCommandCleanup(
+        cause,
+        options.resources,
+        "setup-plugin-command",
+      );
       if (!controller.signal.aborted) spawnError = errorMessage(cause);
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       try {
         if (resource !== undefined) {
           const released = await options.resources.release(resource);
