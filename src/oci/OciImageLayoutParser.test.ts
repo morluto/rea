@@ -3482,6 +3482,81 @@ it("diagnoses a manifest that declares an unknown media type", async () => {
   expect(report.images).toHaveLength(1);
 });
 
+it("refuses unknown declared media types that accumulate past max_descriptor_bytes", async () => {
+  const root = await createTestTempDirectory("rea-oci-declared-media-bytes-");
+  const written = await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+  const [, hex] = written.manifestDigest.split(":");
+  const manifest = JSON.parse(
+    await readFile(join(root, "blobs", "sha256", hex ?? ""), "utf8"),
+  ) as Record<string, unknown>;
+  const expectDescriptorBytesLimit = async () => {
+    const reader = new DirectoryArtifactReader(root);
+    try {
+      await expect(
+        parseOciImageLayout(
+          reader,
+          inspectOciImageLayoutInputSchema.parse({
+            path: root,
+            max_descriptor_bytes: 1024,
+          }),
+        ),
+      ).rejects.toSatisfy((cause: unknown) => {
+        expect(cause).toBeInstanceOf(ParseFailureError);
+        if (!(cause instanceof ParseFailureError)) return false;
+        expect(cause.failure).toMatchObject({
+          kind: "limit",
+          limit: { name: "max_descriptor_bytes", maximum: 1024 },
+        });
+        return true;
+      });
+    } finally {
+      await reader.close();
+    }
+  };
+
+  // Hash-valid manifests whose own mediaType is a long unknown string are
+  // quoted in findings, so their declarations spend the budget.
+  const manifests = [];
+  for (let index = 0; index < 3; index += 1) {
+    const body = `${JSON.stringify({
+      ...manifest,
+      mediaType: `application/vnd.example.${String(index)}.${"m".repeat(400)}`,
+    })}\n`;
+    manifests.push({
+      mediaType: OCI_MANIFEST,
+      digest: await putOciBlob(root, body),
+      size: Buffer.byteLength(body),
+    });
+  }
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests })}\n`,
+  );
+  await expectDescriptorBytesLimit();
+
+  // Nested indexes are charged the same way.
+  const nested = [];
+  for (let index = 0; index < 3; index += 1) {
+    const body = `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: `application/vnd.example.${String(index)}.${"i".repeat(400)}`,
+      manifests: [],
+    })}\n`;
+    nested.push({
+      mediaType: OCI_INDEX,
+      digest: await putOciBlob(root, body),
+      size: Buffer.byteLength(body),
+    });
+  }
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests: nested })}\n`,
+  );
+  await expectDescriptorBytesLimit();
+});
+
 it("accepts a referenced manifest that omits its optional mediaType", async () => {
   const root = await createTestTempDirectory("rea-oci-manifest-omitted-");
   const digest = await rewriteManifestDocument(root, (manifest) => {

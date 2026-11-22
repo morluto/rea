@@ -1414,6 +1414,9 @@ const inventoryOciImageLayout = async (
     }
     if (declared === admitted) return;
     if (!isOciKnownMediaType(declared)) {
+      // The finding quotes the untrusted declaration, so its escaped text
+      // spends max_descriptor_bytes before the finding is retained.
+      spendDescriptorBytes(Buffer.byteLength(JSON.stringify(declared)));
       recordFinding(
         findings,
         "unknown_media_type",
