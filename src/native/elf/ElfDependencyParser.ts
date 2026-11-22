@@ -65,6 +65,7 @@ import {
   BinaryReader,
   createFileMappingIndex,
   mappedFileOffset,
+  type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
 import {
   resolveMappedFileOffset,
@@ -139,6 +140,10 @@ const STATIC_LIMITATIONS = [
 
 type Artifact = ElfDependencies["artifact"];
 type Range = { readonly offset: number; readonly bytes: number };
+
+interface IndexedElfLoadMappings extends ElfLoadMappings {
+  readonly index: () => FileMappingIndex;
+}
 
 interface LocatedTable {
   readonly offset: number;
@@ -419,7 +424,7 @@ const mapAddress = (
 };
 
 /** File-offset end of the PT_LOAD mapping that contains a virtual address. */
-const mappedExtentEnd = (
+const startingLoadFileEnd = (
   mappings: ElfLoadMappings,
   address: bigint,
 ): number | null => {
@@ -428,11 +433,7 @@ const mappedExtentEnd = (
       address >= range.address && address < range.address + BigInt(range.size),
   );
   if (mapping === undefined) return null;
-  let end = mapping.address + BigInt(mapping.size);
-  for (const zeroFill of mappings.zeroFills)
-    if (zeroFill.address > address && zeroFill.address < end)
-      end = zeroFill.address;
-  return mapping.offset + Number(end - mapping.address);
+  return mapping.offset + mapping.size;
 };
 
 interface SectionAdmission {
@@ -531,7 +532,7 @@ const GNU_VERSYM_SLOT_BYTES = 2;
 
 /** Keep complete leading slots in one proven file translation. */
 const tableFromMappedVersym = (
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   address: bigint | undefined,
   count: number,
 ): LocatedTable | null => {
@@ -543,27 +544,15 @@ const tableFromMappedVersym = (
   );
   if (complete !== null || count <= 1) return complete;
 
-  const mapping = createFileMappingIndex(
-    mappings.fileBacked,
-    mappings.zeroFills,
-  );
-  let low = 0;
-  let high = count - 1;
-  let offset: number | null = null;
-  // A mapped prefix proves every shorter span at the same start.
-  while (low < high) {
-    const slots = Math.ceil((low + high) / 2);
-    try {
-      offset = mapping.offset(address, slots * GNU_VERSYM_SLOT_BYTES);
-      low = slots;
-    } catch (cause) {
-      if (!(cause instanceof BinaryMappingFailure)) throw cause;
-      high = slots - 1;
-    }
-  }
-  if (offset === null) return null;
-  const size = low * GNU_VERSYM_SLOT_BYTES;
-  return { offset, size, location: { offset, bytes: size } };
+  const prefix = mappings
+    .index()
+    .prefix(address, count * GNU_VERSYM_SLOT_BYTES);
+  if (prefix === null) return null;
+  const { offset } = prefix;
+  const size = prefix.size - (prefix.size % GNU_VERSYM_SLOT_BYTES);
+  return size === 0
+    ? null
+    : { offset, size, location: { offset, bytes: size } };
 };
 
 /**
@@ -595,11 +584,11 @@ const sysvSymbolCountAt = (
  */
 const mappedHashWords = (
   reader: BinaryReader,
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   address: bigint,
   coverage: "word" | "prefix" = "word",
 ): ElfHashWordReader => {
-  const index = createFileMappingIndex(mappings.fileBacked, mappings.zeroFills);
+  const index = mappings.index();
   return (offset) => {
     if (offset < 0) return err("precedes its table");
     const start = coverage === "prefix" ? 0 : offset;
@@ -645,7 +634,7 @@ const gnuSymbolCount = function* (
 };
 
 const locateVersionTable = (
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   fileBytes: number,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -659,14 +648,14 @@ const locateVersionTable = (
   if (offset === null) return null;
   // Without a section header the table extent is unknown; keep every later
   // record read inside the PT_LOAD mapping that admitted the table start.
-  const end = mappedExtentEnd(mappings, address);
+  const end = startingLoadFileEnd(mappings, address);
   if (end === null) return null;
-  const size = Math.min(end, fileBytes) - offset;
-  return {
-    offset,
-    size,
-    location: { offset, bytes: size },
-  };
+  const prefix = mappings
+    .index()
+    .prefix(address, Math.min(end, fileBytes) - offset);
+  if (prefix === null) return null;
+  const { size } = prefix;
+  return { offset, size, location: { offset, bytes: size } };
 };
 
 const emptyInventory = (
@@ -762,7 +751,6 @@ export const readElfDependenciesSteps = function* (
   reader.range(phoff, phnum * phentsize, "ELF program headers");
   const fileBacked: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
-  const mappings: ElfLoadMappings = { fileBacked, zeroFills };
   let interp: Range | null = null;
   let dynamic: Range | null = null;
   for (let index = 0; index < phnum; index += 1) {
@@ -795,6 +783,13 @@ export const readElfDependenciesSteps = function* (
     if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
     if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
   }
+  let mappingIndex: FileMappingIndex | undefined;
+  const mappings: IndexedElfLoadMappings = {
+    fileBacked,
+    zeroFills,
+    index: () =>
+      (mappingIndex ??= createFileMappingIndex(fileBacked, zeroFills)),
+  };
   const issues: ElfDependencyIssue[] = [];
   const interpreter = parseInterpreter(reader, interp, issues);
   if (dynamic === null)
@@ -1298,7 +1293,7 @@ const readSections = (
 
 const locateSymbolCount = function* (
   reader: BinaryReader,
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
   gnuHash: SectionFacts | undefined,
@@ -1389,7 +1384,7 @@ const followVersionLink = (
 const parseVerneed = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,
@@ -1533,7 +1528,7 @@ const parseVerneed = (
 const parseVerdef = (
   reader: BinaryReader,
   bytes: Buffer,
-  mappings: ElfLoadMappings,
+  mappings: IndexedElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
   address: bigint | undefined,

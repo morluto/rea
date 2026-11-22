@@ -653,6 +653,31 @@ export const createFileMappingIndex = (
       );
     return Number(address + translation);
   };
+  const prefix = (
+    address: bigint,
+    maximumBytes: number,
+  ): FileMapping | null => {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) return null;
+    const interval = lastAtOrBelow(boundaries, address);
+    const translation = translations[interval];
+    if (typeof translation !== "bigint") return null;
+    const zeroFill = lastAtOrBelow(zeroFilled.starts, address);
+    if (zeroFill >= 0 && (zeroFilled.reach[zeroFill] as bigint) > address)
+      return null;
+    const mappingEnd = runEnd[interval] as bigint;
+    const zeroFillStart = zeroFilled.starts[zeroFill + 1];
+    const backingEnd =
+      zeroFillStart !== undefined && zeroFillStart < mappingEnd
+        ? zeroFillStart
+        : mappingEnd;
+    const limit = address + BigInt(maximumBytes);
+    const end = backingEnd < limit ? backingEnd : limit;
+    return {
+      address,
+      offset: Number(address + translation),
+      size: Number(end - address),
+    };
+  };
   const access: MappedStringAccess = {
     offset,
     mappingAt: (address) => {
@@ -667,6 +692,7 @@ export const createFileMappingIndex = (
   };
   return {
     offset,
+    prefix,
     readCString: (bytes, address, maximumBytes) =>
       readMappedString(bytes, access, address, maximumBytes),
   };
@@ -675,6 +701,11 @@ export const createFileMappingIndex = (
 /** One immutable image's indexed mappings and bounded string access. */
 export interface FileMappingIndex {
   readonly offset: (address: bigint, size: number) => number;
+  /** Longest file-backed prefix up to the requested length with one translation. */
+  readonly prefix: (
+    address: bigint,
+    maximumBytes: number,
+  ) => FileMapping | null;
   readonly readCString: (
     bytes: Buffer,
     address: bigint,
