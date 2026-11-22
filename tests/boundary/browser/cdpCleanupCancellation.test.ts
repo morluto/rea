@@ -15,56 +15,109 @@ import { observeWebSessionInputSchema } from "../../../src/domain/browserSession
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import {
+  startFakeCdpBrowser,
+  type FakeCdpBrowser,
+} from "../../fixtures/fakeCdpBrowser.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 
-it.each(["Page.disable", "Target.detachFromTarget"])(
-  "finishes caller cancellation even when %s has no response",
-  async (hangOnMethod) => {
-    const browser = await startFakeCdpBrowser({ hangOnMethod });
-    onTestFinished(async () => {
+const releaseFixture = (
+  provider: CdpBrowserProvider | CdpElectronProvider,
+  browser: FakeCdpBrowser,
+) =>
+  onTestFinished(async () => {
+    if (vi.isFakeTimers()) vi.useRealTimers();
+    try {
+      await provider.close();
+    } finally {
       await browser.close();
-    });
-    const controller = new AbortController();
-    const result = await new CdpBrowserProvider().observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-        observation_ms: 1_000,
-      }),
-      {
-        signal: controller.signal,
-        progress: {
-          report(update) {
-            if (update.completed === 1) controller.abort();
-            return Promise.resolve();
-          },
+    }
+  });
+
+const expectReleasedSession = async (browser: FakeCdpBrowser) => {
+  const methods = browser.commands.map(({ method }) => method);
+  expect(methods).toContain("Target.detachFromTarget");
+  expect(methods).not.toContain("Target.closeTarget");
+  expect(methods).not.toContain("Browser.close");
+  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+};
+
+it.each([
+  {
+    name: "skips optional domain shutdown for an already cancelled session",
+    hangOnMethod: "Page.disable",
+  },
+  {
+    name: "closes a cancelled session when the detach reply never arrives",
+    hangOnMethod: "Target.detachFromTarget",
+  },
+])("$name", async ({ hangOnMethod }) => {
+  const detach = phaseArrival();
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod,
+    commandError({ method }) {
+      if (method === "Target.detachFromTarget") detach.arrive();
+      return undefined;
+    },
+  });
+  const provider = new CdpBrowserProvider();
+  releaseFixture(provider, browser);
+  const controller = new AbortController();
+  const stallsDetach = hangOnMethod === "Target.detachFromTarget";
+  if (stallsDetach)
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const operation = provider.observeSession(
+    observeWebSessionInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 1_000,
+    }),
+    {
+      signal: controller.signal,
+      progress: {
+        async report(update) {
+          if (update.completed === 1) controller.abort();
         },
       },
-    );
-    expect(result).toMatchObject({
+    },
+  );
+  try {
+    if (stallsDetach) {
+      await detach.reached(operation, "stalled target detach");
+      expect(browser.activeConnectionCount()).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    expect(await operation).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "observe_web_session",
       },
     });
-    const methods = browser.commands.map(({ method }) => method);
-    expect(methods).toContain("Target.detachFromTarget");
-    expect(methods).not.toContain("Target.closeTarget");
-    expect(methods).not.toContain("Browser.close");
-    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
-  },
-);
+  } finally {
+    if (stallsDetach) vi.useRealTimers();
+  }
+  expect(browser.commands.map(({ method }) => method)).not.toContain(
+    "Page.disable",
+  );
+  await expectReleasedSession(browser);
+});
 
 it("releases cleanup when cancellation arrives after capture completes", async () => {
-  const browser = await startFakeCdpBrowser({ hangOnMethod: "Page.disable" });
-  onTestFinished(async () => {
-    await browser.close();
+  const disabling = phaseArrival();
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Page.disable",
+    commandError({ method }) {
+      if (method === "Page.disable") disabling.arrive();
+      return undefined;
+    },
   });
+  const provider = new CdpBrowserProvider();
+  releaseFixture(provider, browser);
   const controller = new AbortController();
-  const pending = new CdpBrowserProvider().observeSession(
+  const pending = provider.observeSession(
     observeWebSessionInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       allowed_origins: [browser.allowedOrigin],
@@ -73,11 +126,7 @@ it("releases cleanup when cancellation arrives after capture completes", async (
     }),
     { signal: controller.signal },
   );
-  await waitFor(() => {
-    expect(
-      browser.commands.some(({ method }) => method === "Page.disable"),
-    ).toBe(true);
-  });
+  await disabling.reached(pending, "optional page shutdown");
   controller.abort();
   const result = await pending;
   expect(result).toMatchObject({
@@ -87,13 +136,7 @@ it("releases cleanup when cancellation arrives after capture completes", async (
       operation: "observe_web_session",
     },
   });
-  expect(browser.commands.map(({ method }) => method)).toContain(
-    "Target.detachFromTarget",
-  );
-  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
-  const methods = browser.commands.map(({ method }) => method);
-  expect(methods).not.toContain("Target.closeTarget");
-  expect(methods).not.toContain("Browser.close");
+  await expectReleasedSession(browser);
   expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
 });
 
@@ -107,10 +150,7 @@ it("retains the page inspection when bundle cleanup is cancelled", async () => {
     },
   });
   const provider = new CdpBrowserProvider();
-  onTestFinished(async () => {
-    await provider.close();
-    await browser.close();
-  });
+  releaseFixture(provider, browser);
 
   const result = await provider.analyzeBundle(
     analyzeWebBundleInputSchema.parse({
@@ -118,6 +158,7 @@ it("retains the page inspection when bundle cleanup is cancelled", async () => {
       allowed_origins: [browser.allowedOrigin],
       target_id: "allowed-page",
       fetch_source_maps: false,
+      observation_ms: 0,
     }),
     { signal: controller.signal },
   );
@@ -136,7 +177,7 @@ it("retains the page inspection when bundle cleanup is cancelled", async () => {
   await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
-it("closes an Electron inspection session when cleanup is cancelled", async () => {
+it("skips optional Electron shutdown after cancellation at the structural read", async () => {
   const root = await createTestTempDirectory("rea-electron-cancel-");
   const page = join(root, "index.html");
   await writeFile(page, "<main>fixture</main>");
@@ -144,15 +185,14 @@ it("closes an Electron inspection session when cleanup is cancelled", async () =
     electronFileUrl: pathToFileURL(page).href,
     hangOnMethod: "Page.disable",
   });
-  onTestFinished(async () => {
-    await browser.close();
-  });
+  const provider = new CdpElectronProvider();
+  releaseFixture(provider, browser);
   const controller = new AbortController();
-  const pending = new CdpElectronProvider().inspectPage(
+  const result = await provider.inspectPage(
     inspectElectronPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       target_id: "electron-page",
-      observation_ms: 1_000,
+      observation_ms: 0,
     }),
     {
       signal: controller.signal,
@@ -164,14 +204,6 @@ it("closes an Electron inspection session when cleanup is cancelled", async () =
       },
     },
   );
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<null>((resolveTimeout) => {
-    timeoutId = setTimeout(() => resolveTimeout(null), 2_000);
-  });
-  const result = await Promise.race([pending, timeout]);
-  if (timeoutId !== undefined) clearTimeout(timeoutId);
-
-  expect(result).not.toBeNull();
   expect(result).toMatchObject({
     ok: false,
     error: {
@@ -181,10 +213,7 @@ it("closes an Electron inspection session when cleanup is cancelled", async () =
   });
   const methods = browser.commands.map(({ method }) => method);
   expect(methods).not.toContain("Page.disable");
-  expect(methods).toContain("Target.detachFromTarget");
-  expect(methods).not.toContain("Target.closeTarget");
-  expect(methods).not.toContain("Browser.close");
-  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await expectReleasedSession(browser);
   expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
 });
 
@@ -202,11 +231,10 @@ it("classifies cancellation that arrives during final Electron detach", async ()
       return { code: -32_000, message: "controlled detach rejection" };
     },
   });
-  onTestFinished(async () => {
-    await browser.close();
-  });
+  const provider = new CdpElectronProvider();
+  releaseFixture(provider, browser);
 
-  const result = await new CdpElectronProvider().inspectPage(
+  const result = await provider.inspectPage(
     inspectElectronPageInputSchema.parse({
       cdp_endpoint: browser.endpoint,
       target_id: "electron-page",
@@ -232,10 +260,7 @@ it("classifies cancellation that arrives during final Electron detach", async ()
   });
   const methods = browser.commands.map(({ method }) => method);
   expect(methods).toContain("Page.getFrameTree");
-  expect(methods).toContain("Target.detachFromTarget");
-  expect(methods).not.toContain("Target.closeTarget");
-  expect(methods).not.toContain("Browser.close");
-  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  await expectReleasedSession(browser);
   expect((await fetch(`${browser.endpoint}/json/version`)).ok).toBe(true);
 });
 

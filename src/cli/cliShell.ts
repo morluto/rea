@@ -1,11 +1,9 @@
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 
 import type { FridaInstrumentationPort } from "../ports/frida/FridaInstrumentationPort.js";
-import { currentClientRegistrationCommand } from "../application/ClientRegistrationIdentity.js";
 import { parseCliGlobalArguments } from "../cliBuiltinArguments.js";
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import { parseLogLevel } from "../config/processStart.js";
-import { parseClientRegistrationCommand } from "../domain/clientRegistrationCommand.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { createLogger } from "../logger.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
@@ -30,6 +28,7 @@ export interface LoadedCliCommandRegistration {
 
 export interface CliShellOptions {
   readonly selectedEnvironment: Readonly<Record<string, string | undefined>>;
+  readonly savedDefaults?: ReadonlySet<string> | undefined;
   /** Registrars to run, in registration order. */
   readonly registrations: readonly LoadedCliCommandRegistration[];
   /** Required when any registrar declares analysis. */
@@ -68,9 +67,6 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
     options.selectedEnvironment,
     HOST_PLATFORM.platform,
   );
-  const defaultRegistration = parseClientRegistrationCommand(
-    currentClientRegistrationCommand({ environment }),
-  );
   // The executable reports an invalid level before every command except doctor.
   // Doctor keeps going so its readiness report can name REA_LOG_LEVEL.
   const level =
@@ -91,6 +87,7 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
       cli,
       logger,
       environment,
+      savedDefaults: options.savedDefaults,
       fridaInstrumentation: options.fridaInstrumentation,
     },
     options,
@@ -114,7 +111,6 @@ export const createCliShell = (options: CliShellOptions): CliInstance => {
     const registration = serveMcpRegistration(
       global,
       environment,
-      defaultRegistration,
       serveOptions ?? {},
     );
     if (registration !== undefined) return registration;

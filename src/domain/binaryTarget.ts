@@ -773,7 +773,7 @@ export const peDebugDirectoryEntry = (
   return { debugRva, debugSize, sizeOfHeaders: fixed.value.sizeOfHeaders };
 };
 
-/** Translate an RVA to an absolute file offset using the PE section table. */
+/** Translate an RVA using declared section content, excluding raw alignment padding. */
 export const peRvaToFileOffset = (
   rva: number,
   sectionTable: Buffer,
@@ -793,11 +793,11 @@ export const peRvaToFileOffset = (
     if (!parsed.ok) return undefined;
     const section = parsed.value;
     const address = BigInt(section.virtual_address);
-    if (section.raw_size > 0)
+    if (section.size > 0)
       mappings.push({
         address,
         offset: section.offset,
-        size: section.raw_size,
+        size: section.size,
       });
     if (section.virtual_size > section.raw_size)
       zeroFills.push({

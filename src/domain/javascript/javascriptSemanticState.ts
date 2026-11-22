@@ -32,6 +32,8 @@ import type {
 export interface JavaScriptSemanticInitializer {
   readonly node: t.Node;
   readonly projection: readonly (string | number | null)[];
+  /** Binding occurrence that must be reached before this source is used. */
+  readonly patternTarget?: t.Identifier;
   readonly entryBody?: t.BlockStatement;
   readonly iterationSources?: readonly {
     readonly node: t.Node;

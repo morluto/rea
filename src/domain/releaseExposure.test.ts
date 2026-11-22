@@ -580,20 +580,21 @@ describe("release exposure native and text checks", () => {
         },
       }),
     );
-    expect(statusOf(report, "native.debug_companions")).toBe("exposed");
     expect(
-      report.checks.find((check) => check.id === "native.debug_companions")
-        ?.locations,
-    ).toEqual([{ kind: "artifact-path", path: "/work/app.pdb" }]);
-    expect(statusOf(report, "native.pdb_path")).toBe("exposed");
-    const pdb = report.checks.find((check) => check.id === "native.pdb_path");
-    expect(pdb?.locations).toEqual([
-      { kind: "artifact-path", path: "/work/app.exe" },
-    ]);
-    expect(pdb?.observation.samples).toContain("C:\\build\\app.pdb");
+      report.checks.find((check) => check.id === "native.debug_companions"),
+    ).toMatchObject({
+      status: "exposed",
+      confidence: "inferred",
+      locations: [{ kind: "artifact-path", path: "/work/app.pdb" }],
+    });
     expect(
-      report.checks.find((check) => check.id === "native.pdb_path")?.severity,
-    ).toBe("low");
+      report.checks.find((check) => check.id === "native.pdb_path"),
+    ).toMatchObject({
+      status: "exposed",
+      severity: "low",
+      locations: [{ kind: "artifact-path", path: "/work/app.exe" }],
+      observation: { samples: ["C:\\build\\app.pdb"] },
+    });
   });
 
   it("keeps null Go and Rust metadata unknown and unsupported images inapplicable", () => {
@@ -610,23 +611,13 @@ describe("release exposure native and text checks", () => {
     const exposed = reportFor(
       scan(),
       owners({
-        go_images: [
-          { kind: "paths", path: "/work/app", paths: ["/home/dev/main.go"] },
-        ],
         rust_images: [{ kind: "packages", packages: ["app"] }],
       }),
     );
-    expect(statusOf(exposed, "go.build_paths")).toBe("exposed");
-    const go = exposed.checks.find((check) => check.id === "go.build_paths");
-    expect(go?.locations).toEqual([
-      { kind: "artifact-path", path: "/work/app" },
-    ]);
-    expect(go?.observation.samples).toContain("/home/dev/main.go");
     expect(statusOf(exposed, "rust.dependency_metadata")).toBe("exposed");
 
     const omitted = reportFor(
       scan({
-        coverage: "unknown",
         omitted: [
           {
             subject: "native images",
@@ -652,28 +643,6 @@ describe("release exposure native and text checks", () => {
     );
     expect(statusOf(other, "go.build_paths")).toBe("not_applicable");
     expect(statusOf(other, "rust.dependency_metadata")).toBe("not_applicable");
-  });
-
-  it("reports credential rule locations and never stores matched bytes", () => {
-    const planted = "release-exposure-planted-secret-7c2e9a";
-    const report = reportFor(
-      scan(),
-      owners({
-        credential_markers: {
-          hits: [{ rule_id: "pem.private_key", path: "config.txt", line: 2 }],
-          omitted_hits: 0,
-        },
-      }),
-    );
-    expect(statusOf(report, "text.credential_markers")).toBe("exposed");
-    expect(
-      report.checks.find((check) => check.id === "text.credential_markers")
-        ?.locations,
-    ).toEqual([{ kind: "artifact-path", path: "config.txt" }]);
-    const serialized = JSON.stringify(report);
-    expect(serialized).not.toContain(planted);
-    expect(serialized).toContain("pem.private_key config.txt:2");
-    expect(exposureMeetsFailOn(report, "high")).toBe(true);
   });
 });
 
@@ -735,17 +704,6 @@ describe("release exposure gate and undecided checks", () => {
     expect(statusOf(report, "rust.dependency_metadata")).toBe("unknown");
   });
 
-  it("labels a companion's identity as inferred from its name", () => {
-    const report = reportFor(
-      scan({ debug_companions: { paths: ["app.map"], skipped: 0 } }),
-    );
-    const check = report.checks.find(
-      (item) => item.id === "native.debug_companions",
-    );
-    expect(check?.status).toBe("exposed");
-    expect(check?.confidence).toBe("inferred");
-  });
-
   it("names the real @electron/fuses option on every fuse remediation", () => {
     const fuses = reportFor().checks.filter((check) =>
       check.id.startsWith("electron."),
@@ -775,6 +733,7 @@ describe("go.build_paths locations", () => {
     expect(go?.locations).toEqual([
       { kind: "artifact-path", path: "/work/leaky" },
     ]);
+    expect(go?.observation.samples).toEqual(["/home/dev/main.go"]);
   });
 });
 

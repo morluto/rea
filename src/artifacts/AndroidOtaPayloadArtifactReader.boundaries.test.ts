@@ -36,13 +36,17 @@ const entries = async (reader: AndroidOtaPayloadArtifactReader) => {
   return result;
 };
 
-it("refuses a v1 payload as unavailable rather than as a container", async () => {
+it("reports the unsupported version at explicit OTA reader admission", async () => {
   const reader = new AndroidOtaPayloadArtifactReader(
     await fixture(v1AndroidOtaPayload()),
   );
   try {
     await expect(entries(reader)).rejects.toMatchObject({
       reason: "unavailable",
+      cause: {
+        kind: "unsupported",
+        message: expect.stringContaining("Android OTA payload major version 1"),
+      },
     });
   } finally {
     await reader.close();
@@ -92,12 +96,18 @@ it("keeps a complete manifest without reading a truncated oversized metadata sig
     expect(await entries(reader)).toMatchObject([{ path: "boot.img" }]);
     expect(reader.formatMetadata()).toMatchObject({
       blob_truncated: true,
+      manifest_size: manifestEnd - 24,
+      metadata_signature_size: metadataSignature.length,
       metadata_signature_count: null,
     });
-    for (const [, , length, offset] of reads.mock
-      .calls as readonly (readonly unknown[])[]) {
-      expect(Number(length) + Number(offset)).toBeLessThanOrEqual(manifestEnd);
-    }
+    const ranges = reads.mock.calls.map(
+      ([, , length, offset]: readonly unknown[]) => ({
+        offset: Number(offset),
+        end: Number(offset) + Number(length),
+      }),
+    );
+    expect(ranges).toContainEqual({ offset: 24, end: manifestEnd });
+    expect(ranges.every(({ end }) => end <= manifestEnd)).toBe(true);
   } finally {
     reads.mockRestore();
     await reader.close();
@@ -105,64 +115,49 @@ it("keeps a complete manifest without reading a truncated oversized metadata sig
   }
 });
 
-it("streams a mismatched REPLACE partition and leaves its declared hash to the scanner", async () => {
-  const reader = new AndroidOtaPayloadArtifactReader(
-    await fixture(
-      buildAndroidOtaPayload({
-        partitions: [
+it("refuses over-budget operation data before reading the sparse carrier body", async () => {
+  const maximum = ANDROID_OTA_MAX_OPERATION_DATA_BYTES;
+  const manifestOnly = buildAndroidOtaPayload({
+    metadataSignature: new Uint8Array(),
+    payloadSignature: new Uint8Array(),
+    signaturesOffset: null,
+    signaturesSize: null,
+    partitions: [
+      {
+        name: "system",
+        newSize: 4096,
+        omitNewHash: true,
+        operations: [
           {
-            name: "boot",
-            newHash: Buffer.alloc(32, 0xaa),
-            operations: [{ type: 0, data: Buffer.from("BOOT") }],
+            type: 0,
+            dataLength: maximum + 1,
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
           },
         ],
-      }),
-    ),
-  );
+      },
+    ],
+  });
+  const path = await fixture(manifestOnly);
+  await truncate(path, manifestOnly.length + maximum + 1);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidOtaPayloadArtifactReader(path, admitted);
+  const read = vi.spyOn(admitted.handle, "read");
   try {
     const [entry] = await entries(reader);
-    expect(entry?.declaredIntegrity).toEqual({
-      algorithm: "sha256",
-      digest: "aa".repeat(32),
-    });
-    const bytes = await buffer(await reader.open(entry!));
-    expect(bytes.subarray(0, 4).toString("latin1")).toBe("BOOT");
-  } finally {
-    await reader.close();
-  }
-});
-
-it("refuses to open a partition whose distinct operation data exceeds the read budget", async () => {
-  const reader = new AndroidOtaPayloadArtifactReader(
-    await fixture(
-      buildAndroidOtaPayload({
-        partitions: [
-          {
-            name: "system",
-            newSize: 4096,
-            operations: [
-              {
-                type: 0,
-                data: Buffer.alloc(
-                  ANDROID_OTA_MAX_OPERATION_DATA_BYTES + 1,
-                  0x41,
-                ),
-                dstExtents: [{ startBlock: 0, numBlocks: 1 }],
-              },
-            ],
-          },
-        ],
-      }),
-    ),
-  );
-  try {
-    const listed = await entries(reader);
-    await expect(reader.open(listed[0]!)).rejects.toMatchObject({
+    if (entry === undefined) throw new Error("Expected the system partition");
+    expect(entry.path).toBe("system.img");
+    expect(read).toHaveBeenCalled();
+    read.mockClear();
+    await expect(reader.open(entry)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
+      cause: { failure: { kind: "limit", limit: { maximum } } },
     });
+    expect(read).not.toHaveBeenCalled();
   } finally {
+    read.mockRestore();
     await reader.close();
+    await admitted.handle.close();
   }
 });
 

@@ -1227,16 +1227,13 @@ export const readGnuPropertyWords = (
   for (const note of notes) {
     if (note.owner !== "GNU" || note.type !== NT_GNU_PROPERTY_TYPE_0) continue;
     const descriptor = note.descriptor;
+    const reader = new BinaryReader(descriptor, little, "elf-notes");
     let cursor = 0;
     while (cursor < descriptor.length) {
       if (descriptor.length - cursor < 8)
         fail("ELF GNU property record is truncated.");
-      const type = little
-        ? descriptor.readUInt32LE(cursor)
-        : descriptor.readUInt32BE(cursor);
-      const dataSize = little
-        ? descriptor.readUInt32LE(cursor + 4)
-        : descriptor.readUInt32BE(cursor + 4);
+      const type = reader.u32(cursor);
+      const dataSize = reader.u32(cursor + 4);
       if (dataSize > descriptor.length - cursor - 8)
         fail("ELF GNU property data extends outside the note descriptor.");
       const step = Math.ceil((8 + dataSize) / propertyAlign) * propertyAlign;
@@ -1248,9 +1245,7 @@ export const readGnuPropertyWords = (
       ) {
         if (dataSize !== 4)
           fail("ELF GNU feature property is not a 4-byte word.");
-        const value = little
-          ? descriptor.readUInt32LE(cursor + 8)
-          : descriptor.readUInt32BE(cursor + 8);
+        const value = reader.u32(cursor + 8);
         const previous = found.get(type);
         found.set(type, {
           value: previous === undefined ? value : previous.value,

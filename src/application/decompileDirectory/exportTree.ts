@@ -47,7 +47,7 @@ import {
 import type { RetainedResourceScope } from "../../ports/AnalysisProvider.js";
 import { ExportResources } from "./exportResources.js";
 import { decompileInputError } from "./inputError.js";
-import { compareProcedureAddresses } from "./selection.js";
+import { sortByProcedureAddress } from "./selection.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export interface ExportIdentity {
@@ -266,9 +266,7 @@ export class DecompileExport {
         inventory_limitations: [...input.latestRun.inventoryLimitations],
       },
       limitations: [...input.limitations],
-      functions: [...this.records.values()].sort((left, right) =>
-        compareProcedureAddresses(left.address, right.address),
-      ),
+      functions: sortByProcedureAddress([...this.records.values()]),
     });
     if (!index.success)
       return err(

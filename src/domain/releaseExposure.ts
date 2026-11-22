@@ -413,8 +413,6 @@ export interface FuseImageFact {
   readonly kind: "unsupported" | "failed" | "report";
   readonly role: "app-bundle" | "native-image";
   readonly path?: string;
-  /** Digest of the file the reader resolved, on a report. */
-  readonly sha256?: string;
   readonly reason?: string;
   readonly implications?: readonly {
     readonly subject: string;

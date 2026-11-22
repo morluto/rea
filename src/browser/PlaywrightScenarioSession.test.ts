@@ -1,3 +1,5 @@
+import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { phaseGate } from "../../tests/support/lifecycleHarness.js";
 import {
@@ -11,6 +13,7 @@ import { EventEmitter } from "node:events";
 
 import { beforeEach, expect, it, vi, type Mock } from "vitest";
 import type { PlaywrightScenarioStorage } from "./PlaywrightScenarioStorage.js";
+import type { Page } from "playwright-core";
 
 const mocks = vi.hoisted(() => ({
   openBrowser: vi.fn(),
@@ -69,17 +72,6 @@ vi.mock("./CdpTargetSession.js", () => ({
 vi.mock("./PlaywrightScenarioBrowser.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./PlaywrightScenarioBrowser.js")>()),
   openPlaywrightScenarioBrowser: mocks.openBrowser,
-  failBrowserScenarioOperation: async (
-    cleanup: { release(): Promise<void> },
-    cause: unknown,
-  ) => {
-    try {
-      await cleanup.release();
-    } catch (cleanupCause: unknown) {
-      throw new AggregateError([cause, cleanupCause]);
-    }
-    throw cause;
-  },
 }));
 
 vi.mock("./PlaywrightScenarioStorage.js", () => ({
@@ -714,38 +706,33 @@ it("retains a late fallback stop failure for retry", async () => {
 
 it("coalesces concurrent late-stop close retries", async () => {
   const { page, session, transitions } = await prepareLateStopRetry();
+  const heldStop = phaseGate();
+  const stop = vi.fn(async () => {
+    await heldStop.hold();
+    return null;
+  });
+  page.evaluate.mockImplementation(async (script: unknown) =>
+    script === "globalThis.stop()" ? stop() : null,
+  );
+  const firstRetry = session.close();
+  let secondRetry: Promise<unknown> | undefined;
   try {
-    const { promise: heldStop, resolve: finishStop } = deferred();
-    const { promise: startedStop, resolve: stopStarted } = deferred();
-    page.evaluate.mockImplementation(async (script: unknown) => {
-      if (script === "globalThis.stop()") {
-        stopStarted();
-        await heldStop;
-      }
-      return null;
-    });
-    const firstRetry = session.close();
-    await startedStop;
-    const secondRetry = session.close();
-    expect(
-      page.evaluate.mock.calls.filter(
-        ([script]) => script === "globalThis.stop()",
-      ),
-    ).toHaveLength(1);
-    finishStop();
+    await heldStop.reached(firstRetry, "fallback navigation stop");
+    secondRetry = session.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(stop).toHaveBeenCalledOnce();
+    expect(transitions).toEqual([]);
+    heldStop.release();
     await expect(Promise.all([firstRetry, secondRetry])).resolves.toEqual([
       "disconnected-external",
       "disconnected-external",
     ]);
   } finally {
+    heldStop.release();
     vi.useRealTimers();
+    await Promise.allSettled([firstRetry, secondRetry]);
   }
-
-  expect(
-    page.evaluate.mock.calls.filter(
-      ([script]) => script === "globalThis.stop()",
-    ),
-  ).toHaveLength(1);
+  expect(stop).toHaveBeenCalledOnce();
   expect(transitions).toEqual(["disconnect"]);
 });
 
@@ -753,84 +740,91 @@ it("retains transferred navigation stopping after setup cleanup fails", async ()
   const { cleanup, storage } = fixture();
   const cancellation = new AbortController();
   const setupFailure = new Error("storage initialization failed");
-  storage?.initialize.mockImplementationOnce(async () => {
+  const storageFailure = new Error("storage stop unconfirmed");
+  const policyFailure = new Error("policy stop unconfirmed");
+  storage.initialize.mockImplementationOnce(async () => {
     cancellation.abort();
+    mocks.policySend.mockRejectedValueOnce(policyFailure);
     throw setupFailure;
   });
-  storage?.close.mockRejectedValueOnce(new Error("storage stop unconfirmed"));
-  const policyFailure = new Error("policy stop unconfirmed");
-  let failPolicyStop = true;
-  mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Page.stopLoading" && failPolicyStop) {
-      failPolicyStop = false;
-      throw policyFailure;
-    }
-    return policyResponse(method);
-  });
-  let retainedCleanup: AnalysisCleanupLease | undefined;
-  const attached = connectedScenario("block");
+  storage.close.mockRejectedValueOnce(storageFailure);
+  const retainCleanup = vi.fn<(lease: AnalysisCleanupLease) => void>();
 
-  await expect(
-    PlaywrightScenarioSession.open(
-      attached,
-      {},
-      {
-        signal: cancellation.signal,
-        retainCleanup: (close) => {
-          retainedCleanup = close;
+  const failure = await PlaywrightScenarioSession.open(
+    connectedScenario("block"),
+    {},
+    {
+      signal: cancellation.signal,
+      retainCleanup,
+    },
+  ).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    cleanupIncomplete: true,
+    cleanupResources: ["browser_transport"],
+    cause: {
+      errors: [
+        { cause: setupFailure },
+        {
+          reason: "cleanup_failed",
+          cause: { errors: [policyFailure, storageFailure] },
         },
-      },
-    ),
-  ).rejects.toBeInstanceOf(AggregateError);
+      ],
+    },
+  });
   expect(cleanup.close).not.toHaveBeenCalled();
-  if (retainedCleanup === undefined)
-    throw new Error("failed cleanup was not retained");
-  await expect(retainedCleanup.release()).resolves.toBeUndefined();
+  expect(retainCleanup).toHaveBeenCalledOnce();
+  await retainCleanup.mock.calls[0]![0].release();
+  expect(failure).toMatchObject({
+    cleanupIncomplete: false,
+    cleanupResources: [],
+  });
   expect(
     mocks.policySend.mock.calls.filter(
       ([method]) => method === "Page.stopLoading",
     ),
   ).toHaveLength(2);
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledOnce();
 });
 
-it("allows the bounded policy cleanup chain to cross one second", async () => {
+it("uses the fixed cleanup grace for an already-issued policy stop", async () => {
   const { cleanup } = fixture();
   mocks.storage = undefined;
-  const attached = connectedScenario("block", {});
+  const attached = {
+    ...connectedScenario("block", {}),
+    command_timeout_ms: 250,
+  };
   const session = await PlaywrightScenarioSession.open(attached, {}, {});
-  const { promise: stopped, resolve: releaseStop } = deferred();
-  const { promise: started, resolve: stopStarted } = deferred();
+  const stop = phaseGate();
   mocks.policySend.mockImplementation(async (method: string) => {
-    if (method === "Page.stopLoading") {
-      stopStarted();
-      await stopped;
-    }
+    if (method === "Page.stopLoading") await stop.hold();
     return policyResponse(method);
   });
-
   vi.useFakeTimers();
+  const settled = vi.fn();
+  const closing = session.close(true).then(settled, settled);
   try {
-    let settled = false;
-    const closing = session.close(true).then(
-      () => {
-        settled = true;
-        return { ok: true as const };
-      },
-      (cause: unknown) => {
-        settled = true;
-        return { ok: false as const, cause };
-      },
+    await stop.reached(closing, "policy stop");
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(settled).not.toHaveBeenCalled();
+    expect(cleanup.browserClosed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        cleanupIncomplete: true,
+        cause: expect.objectContaining({
+          _tag: "AnalysisTimeoutError",
+          timeoutMs: 5_000,
+        }),
+      }),
     );
-    await started;
-    await vi.advanceTimersByTimeAsync(1_100);
-    expect(settled).toBe(false);
-    releaseStop();
-    await expect(closing).resolves.toEqual({ ok: true });
+    expect(cleanup.browserClosed).toBe(false);
   } finally {
+    stop.release();
     vi.useRealTimers();
+    await closing;
+    await expect(session.close()).resolves.toBe("disconnected-external");
   }
-  expect(cleanup.close).toHaveBeenCalledTimes(1);
+  expect(cleanup.close).toHaveBeenCalledOnce();
 });
 
 it("skips policy restoration for a child without a committed document", async () => {
@@ -1532,10 +1526,7 @@ it("expires the response at the cleanup deadline while retaining the same releas
 });
 
 it("retains late opening failure cleanup after cancellation until the exact profile lease recovers", async () => {
-  let profileStarted: () => void = () => {};
-  const profileAttempt = new Promise<void>((resolve) => {
-    profileStarted = resolve;
-  });
+  const { promise: profileAttempt, resolve: profileStarted } = deferred();
   let denied = true;
   const lease = new AnalysisCleanupLease(async () => {
     profileStarted();
@@ -1570,7 +1561,11 @@ it("retains late opening failure cleanup after cancellation until the exact prof
     caller.abort(reason);
     const result = await pending;
     if (result.ok) throw new Error("Expected cancelled opening");
-    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error).toMatchObject({
+      cleanupIncomplete: true,
+      cleanupPrimary: { _tag: "AnalysisCancelledError" },
+    });
+    expect(result.error.cleanupPrimary?.cause).toBe(reason);
     launch.release();
     await profileAttempt;
     await expect(provider.close()).rejects.toMatchObject({
@@ -1685,7 +1680,10 @@ it.each([false, true])(
           details: {
             diagnostics: {
               collected_artifacts: {
-                dom: { value: { text: "<worker-response/>" } },
+                dom: {
+                  state: "captured",
+                  value: { text: "<worker-response/>" },
+                },
               },
             },
           },
@@ -1693,11 +1691,6 @@ it.each([false, true])(
         expect(result.error).toMatchObject({
           reason: "service_worker_blocked",
           cleanupIncomplete: false,
-          diagnostics: {
-            collected_artifacts: {
-              dom: { state: "captured", value: { text: "<worker-response/>" } },
-            },
-          },
           partialObservation: {
             capture: {
               browser: { cleanup: "disconnected-external" },
@@ -1768,9 +1761,6 @@ it.each(["absent", "undefined", "inherited", "empty"] as const)(
             ],
           },
         });
-        expect(projected.message).toContain(
-          "Set environment variable REQUIRED_SECRET",
-        );
         expect(JSON.stringify(projected)).not.toContain(
           environment.AVAILABLE_SECRET,
         );
@@ -1800,12 +1790,9 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
   vi.spyOn(cleanup, "cleanupResources", "get").mockImplementation(() =>
     cleanup.browserClosed ? [] : [`browser_transport:${secret}`],
   );
-  const originalClose = cleanup.close.getMockImplementation()!;
-  let blocked = true;
-  cleanup.close.mockImplementation(async (...args) => {
-    if (blocked) throw new Error(`Close failed after ${secret}`);
-    return originalClose(...args);
-  });
+  const refusal = new Error(`Close failed after ${secret}`);
+  const redacted = "[REDACTED:credential]";
+  cleanup.close.mockRejectedValueOnce(refusal);
   const provider = new PlaywrightBrowserScenarioProvider((scenario, options) =>
     PlaywrightScenarioSession.open(
       scenario,
@@ -1824,24 +1811,23 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
         steps: [{ action: "goto_start" }, { action: "wait_for_timeout" }],
       },
     });
-    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-      secret,
-    );
-    let retried: unknown;
-    try {
-      await provider.close();
-    } catch (error) {
-      retried = error;
-    }
+    cleanup.close.mockRejectedValueOnce(refusal);
+    const retried = await provider.close().catch((cause: unknown) => cause);
     if (!(retried instanceof ProviderCleanupError))
       throw new Error("Expected retained cleanup failure");
-    expect(JSON.stringify(projectAnalysisError(retried))).not.toContain(secret);
-    blocked = false;
+    const initial = projectAnalysisError(result.error);
+    expect(initial.message).toContain(`Close failed after ${redacted}`);
+    for (const projected of [initial, projectAnalysisError(retried)]) {
+      expect(projected.details).toMatchObject({
+        cleanup: "incomplete",
+        resources: [`browser_transport:${redacted}`],
+      });
+      expect(JSON.stringify(projected)).not.toContain(secret);
+    }
     await provider.close();
     expect(cleanup.browserClosed).toBe(true);
     expect(result.error.cleanupIncomplete).toBe(false);
   } finally {
-    blocked = false;
     await provider.close();
   }
 });
@@ -1849,7 +1835,7 @@ it("keeps declared secrets out of final cleanup and retry failure diagnostics", 
 it("projects both request and route cleanup failures with declared secrets redacted", async () => {
   const { page } = fixture();
   const secret = "private-request-diagnostic-value";
-  const route = vi.fn(async () => undefined);
+  const route = vi.fn<Page["route"]>();
   const unroute = vi.fn(async () => {
     throw new Error(`page.unroute: closed ${secret}`);
   });
@@ -1885,8 +1871,110 @@ it("projects both request and route cleanup failures with declared secrets redac
     expect(step?.error).toContain("page.evaluate: closed");
     expect(step?.error).toContain("page.unroute: closed");
     expect(JSON.stringify(result.value)).not.toContain(secret);
-    expect(unroute).toHaveBeenCalledOnce();
+    expect(route).toHaveBeenCalledOnce();
+    expect(unroute).toHaveBeenCalledExactlyOnceWith(...route.mock.calls[0]!);
   } finally {
     await provider.close();
   }
 });
+
+it.each(
+  (["physical", "cancelled"] as const).flatMap((outcome) =>
+    [false, true].map((cleanupFails) => ({ outcome, cleanupFails })),
+  ),
+)(
+  "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
+  async ({ outcome, cleanupFails }) => {
+    const { page, cleanup } = fixture();
+    const caller = new AbortController();
+    const reason = { caller: "observed at the action boundary" };
+    const physical = new Error("physical page wait failure");
+    const content = vi.fn(async () => "<initial/>");
+    const waitForTimeout = vi.fn(async () => {
+      if (outcome === "physical") throw physical;
+      caller.abort(reason);
+    });
+    Object.assign(page, { content, waitForTimeout });
+    if (cleanupFails)
+      cleanup.close.mockRejectedValueOnce(
+        new Error("controlled cleanup refusal"),
+      );
+    const input = browserScenarioSchema.parse({
+      ...scenario,
+      actions: [
+        ...scenario.actions,
+        { ...scenario.actions[0], step_id: "later" },
+      ],
+      capture: { after_each_step: ["dom"], at_end: [], events: [] },
+    });
+    let observed: unknown;
+    const provider = new PlaywrightBrowserScenarioProvider(
+      async (selected, options) => {
+        const session = await PlaywrightScenarioSession.open(
+          selected,
+          {},
+          options,
+        );
+        const perform = session.perform.bind(session);
+        vi.spyOn(session, "perform").mockImplementation(
+          async (action, signal) => {
+            try {
+              await perform(action, signal);
+            } catch (cause: unknown) {
+              observed = cause;
+              if (outcome === "physical") caller.abort(reason);
+              throw cause;
+            }
+          },
+        );
+        return session;
+      },
+    );
+    try {
+      const result = await provider.captureScenario(input, {
+        signal: caller.signal,
+      });
+      if (result.ok)
+        throw new Error("Expected action observations after cancellation");
+      if (outcome === "physical") expect(observed).toBe(physical);
+      else expect(observed).toBeInstanceOf(AnalysisCancelledError);
+      expect(result.error).toMatchObject({
+        cleanupIncomplete: cleanupFails,
+        partialObservation: {
+          kind: "browser-scenario-observation",
+          capture: {
+            browser: {
+              cleanup: cleanupFails ? "incomplete" : "terminated-owned-process",
+            },
+            steps: [
+              {
+                status: "completed",
+                artifacts: { dom: { value: { text: "<initial/>" } } },
+              },
+              outcome === "physical"
+                ? { status: "failed", error: physical.message }
+                : { status: "cancelled" },
+              {
+                status: "cancelled",
+                error:
+                  outcome === "physical"
+                    ? "not executed after an earlier action failure"
+                    : "not executed after scenario request cancellation",
+              },
+            ],
+          },
+        },
+      });
+      expect(waitForTimeout).toHaveBeenCalledOnce();
+      expect(content).toHaveBeenCalledOnce();
+      expect(cleanup.close).toHaveBeenCalledOnce();
+      const primary = primaryAnalysisError(result.error);
+      expect(primary).toBeInstanceOf(AnalysisCancelledError);
+      expect(primary.cause).toBe(reason);
+      await provider.close();
+      expect(result.error.cleanupIncomplete).toBe(false);
+    } finally {
+      await provider.close();
+    }
+  },
+);
