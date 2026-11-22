@@ -16,25 +16,43 @@ export const inspectAnalysisSettingsInputSchema = z.strictObject({
   operation: z.string().min(1).optional(),
   provider: z.string().min(1).optional(),
 });
+const [firstSetSettingChangeSchema, ...otherSetSettingChangeSchemas] =
+  analysisSettingIds.map((setting) =>
+    z.strictObject({
+      setting: z.literal(setting),
+      action: z.literal("set"),
+      value: analysisSettingValueSchema(setting),
+    }),
+  );
+if (firstSetSettingChangeSchema === undefined)
+  throw new Error("Analysis settings registry must not be empty");
+const setSettingChangeSchemas = [
+  firstSetSettingChangeSchema,
+  ...otherSetSettingChangeSchemas,
+] as const;
+const resetSettingChangeSchema = z.strictObject({
+  setting: analysisSettingIdSchema,
+  action: z.literal("reset"),
+});
+const settingChangeSchema = z.discriminatedUnion("action", [
+  z.discriminatedUnion("setting", setSettingChangeSchemas),
+  resetSettingChangeSchema,
+]);
+// Keep canonical JSON Schema flat so advertised input stays within the 10-level depth cap.
+const flatSettingChangeUnion = z.union([
+  ...setSettingChangeSchemas,
+  resetSettingChangeSchema,
+]);
+settingChangeSchema._zod.toJSONSchema = () => {
+  const { $schema: _schema, ...schema } = z.toJSONSchema(
+    flatSettingChangeUnion,
+    { target: "draft-2020-12", io: "input", reused: "inline" },
+  );
+  return schema;
+};
+
 export const updateAnalysisSettingsInputSchema = z.strictObject({
-  changes: z
-    .array(
-      z.union([
-        ...analysisSettingIds.map((setting) =>
-          z.strictObject({
-            setting: z.literal(setting),
-            action: z.literal("set"),
-            value: analysisSettingValueSchema(setting),
-          }),
-        ),
-        z.strictObject({
-          setting: analysisSettingIdSchema,
-          action: z.literal("reset"),
-        }),
-      ]),
-    )
-    .min(1)
-    .max(analysisSettingIds.length),
+  changes: z.array(settingChangeSchema).min(1).max(analysisSettingIds.length),
   expected_revision: z.number().int().nonnegative().optional(),
 });
 const descriptor = z.strictObject({

@@ -142,6 +142,7 @@ const createRizinCommandEvidence = ({
       },
       result: { ...result },
       rawResult: { ...result },
+      authority: "controlled-replay",
       limitations: [
         RIZIN_SESSION_TARGET_LIMITATION,
         ...(launchTarget.unobservedReason === undefined
@@ -474,8 +475,19 @@ export class RizinDebugSessionManager {
           "Persistent Rizin debugger sessions require Linux /proc descriptor readback to verify inferior detachment and output routing.",
         ),
       );
-    if (input.inferior_tty === undefined || input.inferior_tty.length === 0)
-      return err(new AnalysisInputError("start_rizin_debug_session"));
+    if (
+      typeof input.inferior_tty !== "string" ||
+      input.inferior_tty.length === 0
+    )
+      return err(
+        new AnalysisInputError("start_rizin_debug_session", undefined, [
+          {
+            path: ["inferior_tty"],
+            reason: "invalid_value",
+            message: "An explicit non-empty inferior_tty path is required.",
+          },
+        ]),
+      );
     let ttyPath: string;
     let ttyDevice: number;
     let ttyInode: number;
@@ -1510,12 +1522,7 @@ export class RizinDebugSessionManager {
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
     );
-    if (
-      after.some(
-        ([activeFd, activePid]) => activeFd === fd || activePid === pid,
-      ) ||
-      after.length !== 0
-    )
+    if (after.length !== 0)
       throw new Error(
         "Rizin did not confirm that the selected inferior FD was detached.",
       );

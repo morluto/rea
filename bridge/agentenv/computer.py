@@ -43,6 +43,13 @@ def _computer(result):
     return None, "the task deployed no computer"
 
 
+def _stop_at_eof(eof: threading.Event) -> None:
+    """Watch the pipe without holding stdin's buffered lock during signal-driven interpreter shutdown."""
+    while os.read(sys.stdin.fileno(), 64 * 1024):
+        pass
+    eof.set()
+
+
 def main(argv: list[str]) -> int:
     protocol = _protocol()
     bundle, task = argv[1], argv[2] if len(argv) > 2 else "smoke"
@@ -57,9 +64,16 @@ def main(argv: list[str]) -> int:
     except BaseException as error:  # noqa: BLE001 - a signal's RunInterrupted too; run_bundle tore its runs down
         _say(protocol, {"error": f"{type(error).__name__}: {error}"})
         return 2
-    stop = threading.Event()
+    eof = threading.Event()
+    signal_requested = False
+
+    def request_stop(*_) -> None:
+        # Python can run a handler while this thread owns the EOF event's lock.
+        nonlocal signal_requested
+        signal_requested = True
+
     for signum in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(signum, lambda *_: stop.set())
+        signal.signal(signum, request_stop)
     env, problem = _computer(result)
     try:
         if env is None:
@@ -67,8 +81,8 @@ def main(argv: list[str]) -> int:
         else:
             _say(protocol, {"base_url": env.environment_url, "mcp_url": env.mcp_url,
                             "control_token": env.control_token, "sandbox_id": env.sandbox_id})
-            threading.Thread(target=lambda: (sys.stdin.buffer.read(), stop.set()), daemon=True).start()
-            while not stop.wait(0.5):
+            threading.Thread(target=_stop_at_eof, args=(eof,), daemon=True).start()
+            while not signal_requested and not eof.wait(0.5):
                 pass
     finally:
         torn_down = result.teardown()

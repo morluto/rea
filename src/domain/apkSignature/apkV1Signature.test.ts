@@ -1,3 +1,4 @@
+import { isParseLimit } from "../parseFailureAnalysisError.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -140,10 +141,14 @@ describe("APK v1 (JAR) signature detection", () => {
     );
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toEqual({
-      kind: "budget-exceeded",
-      resource: "v1-signature-entries",
-      limit: MAX_V1_SIGNATURE_ENTRIES,
+    expect(isParseLimit(result.error, "apk-v1-central-directory")).toBe(true);
+    expect(result.error).toMatchObject({
+      failure: {
+        limit: {
+          name: "max_v1_signature_entries",
+          maximum: MAX_V1_SIGNATURE_ENTRIES,
+        },
+      },
     });
   });
 

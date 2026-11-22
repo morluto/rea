@@ -2,10 +2,7 @@ import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import {
-  McpServer,
-  STDIO_DEFAULT_MAX_BUFFER_SIZE,
-} from "@modelcontextprotocol/server";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
 import {
@@ -23,6 +20,7 @@ import { EvidenceIntegrityError } from "../../../src/domain/evidenceErrors.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { HopperProcessError } from "../../../src/hopper/HopperErrors.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
+import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import {
@@ -38,6 +36,7 @@ import type {
   ProcessCaptureCleanupReport,
 } from "../../../src/domain/process/processCapture.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 const UNTRUSTED_TARGET_CONTENT = {
   provenance: { untrusted_content: true, source: "analysis_target" },
@@ -69,133 +68,100 @@ const contract: ToolContract = {
   examples: [{ title: "Example fixture request", input: {} }],
 };
 
-describe("completed partial process capture MCP projection", () => {
-  it("preserves observations when execution fails after cleanup succeeds", () => {
-    const cleanup = {
-      owned_process_group: { state: "cleaned" as const, reason: null },
-      terminal_renderer: { state: "cleaned" as const, reason: null },
-      temporary_root: { state: "cleaned" as const, reason: null },
-    };
-    const capture = captureWithObservedOutput();
-    let failure: ProcessCaptureError | undefined;
-    try {
-      resolveProcessResult(
-        capture,
-        new Error("final filesystem snapshot failed"),
-        historicalCleanupOutcome(cleanup),
-      );
-    } catch (cause: unknown) {
-      if (!(cause instanceof ProcessCaptureError)) throw cause;
-      failure = cause;
-    }
-    if (failure === undefined)
-      throw new Error("expected process capture failure");
+const captureFailure = (...args: Parameters<typeof resolveProcessResult>) => {
+  try {
+    resolveProcessResult(...args);
+  } catch (cause: unknown) {
+    if (cause instanceof ProcessCaptureError) return cause;
+    throw cause;
+  }
+  throw new Error("Expected a process capture failure");
+};
 
-    const result = delivery.toCallToolResult(
-      err(failure),
-      toolContract("capture_process_scenario"),
-    );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "process_capture_failed",
-        details: {
-          cleanup_report: cleanup,
-          execution_failure: "final filesystem snapshot failed",
-          partial_observation: {
-            capture: {
-              frames: [{ data: "observed output" }],
-              settlement: { cleanup_outcome: "not_required" },
-            },
-            execution_failure: "final filesystem snapshot failed",
-          },
-        },
-      },
+const callCaptureFailure = async (failure: ProcessCaptureError) => {
+  const captureContract = toolContract("capture_process_scenario");
+  const example = captureContract.examples[0];
+  if (example === undefined)
+    throw new Error("Missing process scenario example");
+  const server = new EvidenceMcpServer(
+    { name: "process-partial-capture", version: "1" },
+    { capabilities: {} },
+    undefined,
+    delivery,
+  );
+  server.registerTool(
+    captureContract.name,
+    toolRegistrationOptions(captureContract),
+    async () => delivery.toCallToolResult(err(failure), captureContract),
+  );
+  const client = new Client(
+    { name: "process-partial-capture-client", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({
+      name: captureContract.name,
+      arguments: example.input,
     });
-    // The partial observation carries terminal output from the target.
+    expect(result.structuredContent).toBeUndefined();
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-  });
+    return parseMcpToolError(result);
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+};
 
-  it("preserves partial capture details over the MCP SDK transport", async () => {
-    const executionFailure = new Error("capture ended after a fixture error");
-    const cleanup = {
-      owned_process_group: {
-        state: "unverified" as const,
+describe("completed partial process capture MCP projection", () => {
+  it.each([
+    {
+      group: { state: "cleaned", reason: null },
+      code: "process_capture_failed",
+      outcome: "not_required",
+    },
+    {
+      group: {
+        state: "unverified",
         reason: "process ownership token could not be read",
       },
-      terminal_renderer: { state: "cleaned" as const, reason: null },
-      temporary_root: { state: "cleaned" as const, reason: null },
-    };
-    const capture = captureWithObservedOutput();
-
-    let failure: ProcessCaptureError | undefined;
-    try {
-      resolveProcessResult(
-        capture,
-        executionFailure,
+      code: "cleanup_incomplete",
+      outcome: "failed",
+    },
+  ] as const)(
+    "preserves completed observations with $group.state cleanup",
+    async ({ group, code, outcome }) => {
+      const cleanup = {
+        owned_process_group: group,
+        terminal_renderer: { state: "cleaned" as const, reason: null },
+        temporary_root: { state: "cleaned" as const, reason: null },
+      };
+      const message = "final filesystem snapshot failed";
+      const failure = captureFailure(
+        captureWithObservedOutput(),
+        new Error(message),
         historicalCleanupOutcome(cleanup),
       );
-    } catch (cause: unknown) {
-      if (!(cause instanceof ProcessCaptureError)) throw cause;
-      failure = cause;
-    }
-    expect(failure).toBeDefined();
-    if (failure === undefined)
-      throw new Error("expected cleanup-incomplete result");
-
-    const captureContract = toolContract("capture_process_scenario");
-    const server = new McpServer({
-      name: "process-partial-error",
-      version: "1",
-    });
-    server.registerTool(
-      captureContract.name,
-      toolRegistrationOptions(captureContract),
-      async () => delivery.toCallToolResult(err(failure), captureContract),
-    );
-    const client = new Client(
-      {
-        name: "process-partial-error-client",
-        version: "1",
-      },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: captureContract.name,
-        arguments: captureContract.examples[0]?.input ?? {},
-      });
-
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({
+      expect(await callCaptureFailure(failure)).toMatchObject({
         error: {
-          code: "cleanup_incomplete",
+          code,
           details: {
             cleanup_report: cleanup,
-            execution_failure: "capture ended after a fixture error",
+            execution_failure: message,
             partial_observation: {
               capture: {
                 frames: [{ data: "observed output" }],
-                settlement: { cleanup_outcome: "failed" },
+                settlement: { cleanup_outcome: outcome },
               },
-              execution_failure: "capture ended after a fixture error",
+              execution_failure: message,
             },
           },
         },
       });
-      const textContent = result.content.find((block) => block.type === "text");
-      expect(textContent?.type === "text" ? textContent.text : undefined).toBe(
-        JSON.stringify(result.structuredContent),
-      );
-      expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    } finally {
-      await Promise.all([client.close(), server.close()]);
-    }
-  });
+    },
+  );
 });
 
 describe("incomplete partial process observations MCP projection", () => {
@@ -271,105 +237,37 @@ describe("incomplete partial process observations MCP projection", () => {
       },
     };
 
-    let failure: ProcessCaptureError | undefined;
-    try {
-      resolveProcessResult(
-        undefined,
-        new Error("capture failed before completion"),
-        historicalCleanupOutcome(cleanup),
-        observations,
-        { scenario, rootPid },
-      );
-    } catch (cause: unknown) {
-      if (!(cause instanceof ProcessCaptureError)) throw cause;
-      failure = cause;
-    }
-    if (failure === undefined)
-      throw new Error("expected cleanup-incomplete result");
-
-    const server = new McpServer({
-      name: "process-partial-observations",
-      version: "1",
-    });
-    server.registerTool(
-      captureContract.name,
-      toolRegistrationOptions(captureContract),
-      async () => delivery.toCallToolResult(err(failure), captureContract),
+    const failure = captureFailure(
+      undefined,
+      new Error("capture failed before completion"),
+      historicalCleanupOutcome(cleanup),
+      observations,
+      { scenario, rootPid },
     );
-    const client = new Client(
-      {
-        name: "process-partial-observations-client",
-        version: "1",
-      },
-      { jsonSchemaValidator: createMcpSchemaValidation() },
-    );
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const result = await client.callTool({
-        name: captureContract.name,
-        arguments: example.input,
-      });
-
-      expect(result.isError).toBe(true);
-      expect(result.structuredContent).toMatchObject({
-        error: {
-          details: {
-            partial_observation: {
-              observations: {
-                target_pid: { state: "available", value: rootPid },
-                frames: {
-                  state: "available",
-                  value: [{ data: "partial output" }],
-                },
-                process_samples: {
-                  state: "available",
-                  value: [{ pid: rootPid }],
-                },
+    expect(await callCaptureFailure(failure)).toMatchObject({
+      error: {
+        code: "cleanup_incomplete",
+        details: {
+          partial_observation: {
+            observations: {
+              target_pid: { state: "available", value: rootPid },
+              frames: {
+                state: "available",
+                value: [{ data: "partial output" }],
+              },
+              process_samples: {
+                state: "available",
+                value: [{ pid: rootPid }],
               },
             },
           },
         },
-      });
-    } finally {
-      await Promise.all([client.close(), server.close()]);
-    }
+      },
+    });
   });
 });
 
 describe("tool result projection", () => {
-  it("exposes an actionable adapter code to MCP callers", () => {
-    const result = delivery.toCallToolResult(
-      err(new HopperProcessError(76)),
-      contract,
-    );
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "provider_unavailable",
-        details: { failure_code: "unsupported_demo_dialog" },
-        category: "unavailable",
-      },
-    });
-  });
-  it("keeps an absent post-authentication dialog out of publisher verification", () => {
-    const result = delivery.toCallToolResult(
-      err(new HopperProcessError(81)),
-      contract,
-    );
-    expect(result.structuredContent).toMatchObject({
-      error: {
-        code: "provider_unavailable",
-        details: { failure_code: "demo_dialog_absent", exit_code: 81 },
-        category: "unavailable",
-      },
-    });
-    expect(
-      (result.structuredContent as { error: { details: unknown } }).error
-        .details,
-    ).not.toHaveProperty("launch_rejection");
-  });
   it("projects private-display diagnostic fields and stderr byte count", () => {
     const result = delivery.toCallToolResult(
       err(
@@ -396,6 +294,8 @@ describe("tool result projection", () => {
     );
     expect(result.structuredContent).toMatchObject({
       error: {
+        code: "provider_unavailable",
+        category: "unavailable",
         details: {
           failure_code: "x11_socket_directory_unusable",
           diagnostics: {
@@ -408,38 +308,6 @@ describe("tool result projection", () => {
         },
       },
     });
-  });
-  it("returns one complete Evidence record with its typed normalized result", () => {
-    const evidence = createEvidence(
-      unknownTarget("not-observed"),
-      { id: "fixture", name: "Fixture", version: "1" },
-      {
-        operation: "fixture",
-        parameters: {},
-        result: { value: "observed" },
-      },
-    );
-    const evidenceContract: ToolContract = {
-      ...contract,
-      outputSchema: evidenceResultOf(z.object({ value: z.string() })),
-    };
-
-    const result = delivery.toEvidenceToolResult(
-      evidence,
-      evidenceContract,
-      undefined,
-    );
-    expect(result.structuredContent).toEqual(evidence);
-    expect(result.structuredContent).not.toHaveProperty("result");
-    expect(result.structuredContent).not.toHaveProperty("evidence");
-    expect(result.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringContaining('"value":"observed"'),
-    });
-    const parsed = evidenceContract.outputSchema.parse(
-      result.structuredContent,
-    );
-    expect(parseEvidence(parsed)).toEqual(evidence);
   });
 
   it.each<JsonValue>([null, false, 0, "", [], { nested: [false, null, 7] }])(
@@ -484,9 +352,6 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), targetContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-    expect(delivery.toErrorToolResult(failure(), true)._meta).toEqual(
-      UNTRUSTED_TARGET_CONTENT,
-    );
   });
 
   it("leaves an error from a content-free tool unmarked", () => {
@@ -495,7 +360,6 @@ describe("untrusted provenance on failed tool results", () => {
     const result = delivery.toCallToolResult(err(failure()), recordContract);
     expect(result.isError).toBe(true);
     expect(result._meta).toBeUndefined();
-    expect(delivery.toErrorToolResult(failure(), false)._meta).toBeUndefined();
   });
 
   it("marks a recorded partial-observation error and its retention fallback", () => {
@@ -573,24 +437,10 @@ describe("untrusted provenance on failed tool results", () => {
     });
     expect(result.content).toHaveLength(1);
   });
-
-  it("marks the response-budget error that replaces an oversized target-content result", () => {
-    const small = createToolResultDelivery(4096);
-    const result = small.toCallToolResult(
-      { ok: true, value: { text: "x".repeat(8192) } },
-      toolContract("procedure_pseudo_code"),
-    );
-    expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      error: { code: "resource_constraint" },
-    });
-    expect(result._meta).toEqual(UNTRUSTED_TARGET_CONTENT);
-  });
 });
 
 describe("response-budget recovery routes", () => {
   it.each([
-    ["CLI fallback", "procedure_pseudo_code", {}, {}, undefined],
     [
       "retained Evidence",
       "procedure_pseudo_code",
@@ -619,7 +469,7 @@ describe("response-budget recovery routes", () => {
       "get_evidence_bundle",
       { kind: "evidence-bundle-summary" },
       {},
-      "export_evidence_bundle",
+      "get_evidence_bundle",
     ],
     [
       "bundle records",

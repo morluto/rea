@@ -4,6 +4,7 @@ import { resolveScenarioSecrets } from "../../../tests/fixtures/browserScenarioS
 import {
   captureNetworkBody,
   captureNetworkHeaders,
+  networkBodyMediaType,
 } from "./PlaywrightNetworkContent.js";
 
 const scenario = browserScenarioSchema.parse({
@@ -20,17 +21,15 @@ const options = {
   maxHeaderAllocationBytes: 16384,
   maxMetadataAllocationBytes: 4096,
 };
-const source = {
-  headers: () => ({ "content-type": "text/plain" }),
-  headersArray: async () => [],
-};
+const textType = () => networkBodyMediaType("text/plain");
+const jsonType = () => networkBodyMediaType("application/json");
 
 it("enforces the retained body byte limit after secret expansion", async () => {
   expect(
     await captureNetworkBody(
       async () => Buffer.from("xxxx"),
       "response",
-      source,
+      textType,
       secrets,
       options,
     ),
@@ -43,7 +42,7 @@ it("enforces the retained body byte limit after secret expansion", async () => {
     await captureNetworkBody(
       async () => Buffer.from("safe"),
       "response",
-      source,
+      textType,
       secrets,
       options,
     ),
@@ -56,17 +55,20 @@ it("enforces the retained body byte limit after secret expansion", async () => {
 
 it("charges discarded credential header values only for their retained projection", async () => {
   const read = async (name: string) =>
-    captureNetworkHeaders(
-      {
-        headers: () => ({}),
-        headersArray: async () => [
-          { name, value: "v".repeat(50_000) },
-          { name: "X-Observed", value: "ordinary" },
-        ],
-      },
-      secrets,
-      options,
-    );
+    (
+      await captureNetworkHeaders(
+        {
+          headers: () => ({}),
+          headersArray: async () => [
+            { name, value: "v".repeat(50_000) },
+            { name: "X-Observed", value: "ordinary" },
+          ],
+        },
+        true,
+        secrets,
+        options,
+      )
+    ).headers;
   expect(await read("Cookie")).toMatchObject({
     state: "captured",
     items: [
@@ -85,12 +87,7 @@ it("redacts later JSON spellings of saved secrets without reserializing unmarked
   const captured = await captureNetworkBody(
     async () => Buffer.from(body),
     "response",
-    {
-      headers: () => ({
-        "content-type": "application/problem+json; charset=utf-8",
-      }),
-      headersArray: async () => [],
-    },
+    jsonType,
     held,
     { ...options, maxBodyBytes: 4096 },
   );
@@ -105,30 +102,13 @@ it("redacts later JSON spellings of saved secrets without reserializing unmarked
   });
 });
 
-it("keeps an empty JSON-labelled response as observed empty bytes", async () => {
-  const captured = await captureNetworkBody(
-    async () => Buffer.alloc(0),
-    "response",
-    {
-      headers: () => ({ "content-type": "application/json" }),
-      headersArray: async () => [],
-    },
-    secrets,
-    options,
-  );
-  expect(captured).toMatchObject({ state: "captured", bytes: 0, content: "" });
-});
-
 it("checks the JSON decoding budget before invoking its decoder", async () => {
   const held = resolveScenarioSecrets(scenario, { SECRET: "declared-value" });
   const decode = vi.spyOn(held, "redactJsonBody");
   const captured = await captureNetworkBody(
     async () => Buffer.from('{"value":"untouched"}'),
     "response",
-    {
-      headers: () => ({ "content-type": "application/json" }),
-      headersArray: async () => [],
-    },
+    jsonType,
     held,
     { ...options, maxBodyBytes: 4096, maxBodyAllocationBytes: 1 },
   );
@@ -147,10 +127,7 @@ it.each(['{"token":"private-token-729d"}', 'A","B'])(
     const captured = await captureNetworkBody(
       async () => Buffer.from(body),
       "request",
-      {
-        headers: () => ({ "content-type": "application/json" }),
-        headersArray: async () => [],
-      },
+      jsonType,
       held,
       { ...options, maxBodyBytes: 4096 },
     );

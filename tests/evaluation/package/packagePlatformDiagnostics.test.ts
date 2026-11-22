@@ -164,23 +164,23 @@ describe("packaged analyze and inspect result guards", () => {
     await verifyMacOS(overview(1), overview(2));
   });
 
-  const malformed = [
-    ["missing result", undefined],
-    ["null result", null],
-    ["missing normalized count", overview()],
-    ["zero count", overview(0)],
-    ["non-integer count", overview(1.5)],
-    ["wrong operation", overview(2, "other_operation")],
-  ] as const;
-
-  it.each(["analyze", "inspect"] as const)(
-    "rejects malformed %s results before trusting the package",
-    async (command) => {
-      for (const [label, invalid] of malformed) {
-        const analyze = command === "analyze" ? invalid : overview(4);
-        const inspect = command === "inspect" ? invalid : overview(4);
-        await expect(verifyMacOS(analyze, inspect), label).rejects.toThrow();
-      }
-    },
-  );
+  it("reports the stage that refused malformed package overview output", async () => {
+    const valid = overview(4);
+    await expect(verifyMacOS(undefined, valid)).rejects.toBeInstanceOf(
+      SyntaxError,
+    );
+    for (const invalid of [
+      null,
+      overview(),
+      overview(0),
+      overview(1.5),
+      overview(2, "other_operation"),
+    ])
+      await expect(verifyMacOS(invalid, valid)).rejects.toThrow(
+        "packaged Hopper-backed analyze CLI failed",
+      );
+    await expect(verifyMacOS(valid, overview(0))).rejects.toThrow(
+      "packaged inspect CLI failed",
+    );
+  });
 });

@@ -2,6 +2,7 @@ import { err, ok, type Result } from "../result.js";
 import { dexDescriptorSchema, dexTypeSchema } from "./dexTypes.js";
 import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
 import { jsonStringByteLength } from "../jsonStringByteLength.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
 /** Retained representation and per-residual-class claim budgets, not file-size limits. */
 export const PROGUARD_MAPPING_LIMITS = Object.freeze({
@@ -17,8 +18,7 @@ export type ProguardMappingFailure =
   | { readonly kind: "no-class-records" }
   | {
       readonly kind: "capacity";
-      readonly resource: "index" | "projection";
-      readonly limit_bytes: number;
+      readonly cause: ParseFailureError<"limit">;
       readonly line: number;
     };
 
@@ -116,11 +116,26 @@ export type ProguardResolution<Mapped, Verifier extends string> =
 
 const HEADER =
   /^#\s*(compiler|compiler_version|min_api|pg_map_id|pg_map_hash):\s*(.*)$/u;
-const CLASS_LINE = /^([^\s:()]+) -> ([^\s:()]+):$/u;
-const FIELD_LINE = /^\s+([^\s:()]+) ([^\s:()]+) -> ([^\s:()]+)$/u;
-const METHOD_LINE =
-  /^\s+(?:(\d+):(?:(\d+):)?)?([^\s:()]+) ([^\s:()]+)\(([^()]*)\)(?::(\d+)(?::(\d+))?)? -> ([^\s:()]+)$/u;
+const MAPPING_NAME = /^[^\s:()]+$/u;
+const FIELD_DECLARATION = /^\s+([^\s:()]+)[ \t]+([^\s:()]+)$/u;
+const METHOD_DECLARATION =
+  /^\s+(?:(\d+):(?:(\d+):)?)?([^\s:()]+)[ \t]+([^\s:()]+)\(([^()]*)\)(?::(\d+)(?::(\d+))?)?$/u;
 const TYPE_TOKEN = /^[^\s(),;<>:[\]]+(?:\[\])*$/u;
+
+interface MappingDeclaration {
+  readonly original: string;
+  readonly residual: string;
+}
+
+/** A single arrow separates both forms of declaration, with optional spacing. */
+const splitDeclaration = (line: string): MappingDeclaration | undefined => {
+  const arrow = line.indexOf("->");
+  if (arrow < 0 || line.indexOf("->", arrow + 2) >= 0) return undefined;
+  return {
+    original: line.slice(0, arrow).trimEnd(),
+    residual: line.slice(arrow + 2).trimStart(),
+  };
+};
 const DEX_PRIMITIVES = new Map([
   ["boolean", "Z"],
   ["byte", "B"],
@@ -219,12 +234,18 @@ const capacity = (
 ): false => {
   state.failure ??= {
     kind: "capacity",
-    resource,
     line,
-    limit_bytes:
-      resource === "index"
-        ? state.limits.indexBytes
-        : state.limits.projectionBytes,
+    cause: decodeLimit(
+      "proguard-mapping",
+      `The mapping exceeds its ${resource} admission budget.`,
+      {
+        name: resource,
+        maximum:
+          resource === "index"
+            ? state.limits.indexBytes
+            : state.limits.projectionBytes,
+      },
+    ),
   };
   return false;
 };
@@ -392,13 +413,20 @@ const parseClassLine = (state: ParseState, line: string, number: number) => {
   closeGroup(state);
   if (state.failure !== undefined) return;
   state.last = undefined;
-  const match = CLASS_LINE.exec(line);
-  if (match === null) {
+  const declaration = splitDeclaration(line);
+  const residual = declaration?.residual.endsWith(":")
+    ? declaration.residual.slice(0, -1)
+    : "";
+  if (
+    declaration === undefined ||
+    !MAPPING_NAME.test(declaration.original) ||
+    !MAPPING_NAME.test(residual)
+  ) {
     state.current = null;
     malformed(state, number, "class-line");
     return;
   }
-  const [, original = "", residual = ""] = match;
+  const { original } = declaration;
   if (
     !chargeIndex(
       state,
@@ -425,10 +453,14 @@ const parseClassLine = (state: ParseState, line: string, number: number) => {
     state.residualAliases.set(record.name, null);
 };
 
-const parseField = (state: ParseState, record: ClassRecord, line: string) => {
-  const match = FIELD_LINE.exec(line);
+const parseField = (
+  state: ParseState,
+  record: ClassRecord,
+  { original, residual: obfuscated }: MappingDeclaration,
+) => {
+  const match = FIELD_DECLARATION.exec(original);
   if (match === null) return false;
-  const [, type = "", name = "", obfuscated = ""] = match;
+  const [, type = "", name = ""] = match;
   if (!validType(type, false)) return false;
   closeGroup(state);
   if (state.failure !== undefined) return true;
@@ -458,8 +490,12 @@ const methodRange = (start?: string, end?: string): string | null | false => {
   return Number(start) > Number(last) ? false : `${start}:${last}`;
 };
 
-const parseMethod = (state: ParseState, record: ClassRecord, line: string) => {
-  const match = METHOD_LINE.exec(line);
+const parseMethod = (
+  state: ParseState,
+  record: ClassRecord,
+  { original, residual: obfuscated }: MappingDeclaration,
+) => {
+  const match = METHOD_DECLARATION.exec(original);
   if (match === null) return false;
   const [
     ,
@@ -470,7 +506,6 @@ const parseMethod = (state: ParseState, record: ClassRecord, line: string) => {
     args = "",
     originalStart,
     originalEnd,
-    obfuscated = "",
   ] = match;
   // Count before split: a small source string can otherwise allocate millions
   // of parameter slots before the retained-representation admission runs.
@@ -543,7 +578,13 @@ const parseMember = (state: ParseState, line: string, number: number) => {
     malformed(state, number, "member-without-class");
     return;
   }
-  if (parseField(state, record, line) || parseMethod(state, record, line))
+  const declaration = splitDeclaration(line);
+  if (
+    declaration !== undefined &&
+    MAPPING_NAME.test(declaration.residual) &&
+    (parseField(state, record, declaration) ||
+      parseMethod(state, record, declaration))
+  )
     return;
   if (state.failure !== undefined) return;
   closeGroup(state);
@@ -614,7 +655,10 @@ const parseMetadata = (
   }
   if (metadata.id !== "com.android.tools.r8.residualsignature") return;
   const target = state.last;
-  if (target === undefined) return;
+  if (target === undefined) {
+    malformed(state, number, "metadata");
+    return;
+  }
   const schema = "outermost" in target ? dexDescriptorSchema : dexTypeSchema;
   const signature = schema.safeParse(metadata.signature);
   if (!signature.success) {
@@ -711,13 +755,19 @@ export const parseProguardMapping = (
   if (state.indexBytes > state.limits.indexBytes) capacity(state, "index");
   if (state.headerBytes > state.limits.projectionBytes)
     capacity(state, "projection");
+  // R8’s BufferedReader-based mapping reader treats CR, LF, and CRLF as
+  // one line ending each. Find boundaries incrementally to keep memory bounded.
+  const lineEnd = /\r\n?|\n/gu;
   let start = 0;
   while (start <= text.length && state.failure === undefined) {
-    const newline = text.indexOf("\n", start);
-    const end = newline < 0 ? text.length : newline;
-    parseLine(state, text.slice(start, end), state.line);
-    if (newline < 0) break;
-    start = newline + 1;
+    const newline = lineEnd.exec(text);
+    parseLine(
+      state,
+      text.slice(start, newline?.index ?? text.length),
+      state.line,
+    );
+    if (newline === null) break;
+    start = lineEnd.lastIndex;
     state.line++;
   }
   if (state.failure !== undefined) return err(state.failure);

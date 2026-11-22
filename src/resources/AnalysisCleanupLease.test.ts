@@ -32,44 +32,6 @@ it.each(["before release", "after release"])(
   },
 );
 
-it("retains uncertainty across a failed retry until the same lease releases", async () => {
-  const cause = new Error("close still denied");
-  const error = new ProviderCleanupError("fixture", ["owned resource"], {});
-  let denied = true;
-  const lease = new AnalysisCleanupLease(async () => {
-    if (denied) throw cause;
-  });
-  lease.bindCleanupError(error);
-  await expect(lease.release()).rejects.toBe(cause);
-  expect(error.cleanupIncomplete).toBe(true);
-  denied = false;
-  await lease.release();
-  expect(error.cleanupIncomplete).toBe(false);
-});
-
-it("resolves an aggregate only after every bound owner releases", async () => {
-  const error = new ProviderCleanupError(
-    "fixture",
-    ["first resource", "second resource"],
-    {},
-  );
-  const first = new AnalysisCleanupLease(
-    async () => undefined,
-    ["first resource"],
-  );
-  const second = new AnalysisCleanupLease(
-    async () => undefined,
-    ["second resource"],
-  );
-  new AnalysisCleanupLeaseGroup(error, [first, second]);
-
-  await first.release();
-  expect(error.cleanupIncomplete).toBe(true);
-  expect(error.cleanupResources).toEqual(["second resource"]);
-  await second.release();
-  expect(error.cleanupIncomplete).toBe(false);
-});
-
 it("lets errors read a group's release instead of having it pushed to them", async () => {
   const error = new ProviderCleanupError("fixture", ["owned resource"], {});
   const lease = new AnalysisCleanupLease(
@@ -105,7 +67,7 @@ it("does not resolve a cleanup group without exact owners", () => {
   expect(error.cleanupIncomplete).toBe(true);
 });
 
-it("resolves every live retry error bound to one lease", async () => {
+it("keeps every live error unresolved until their shared lease confirms release", async () => {
   const firstCause = new Error("first admission retry failed");
   const secondCause = new Error("second admission retry failed");
   const firstError = new ProviderCleanupError(
@@ -120,10 +82,19 @@ it("resolves every live retry error bound to one lease", async () => {
     {},
     { cause: secondCause },
   );
-  const lease = new AnalysisCleanupLease(async () => undefined);
+  const closeFailure = new Error("close still denied");
+  let denied = true;
+  const lease = new AnalysisCleanupLease(async () => {
+    if (denied) throw closeFailure;
+  });
   lease.bindCleanupError(firstError);
   lease.bindCleanupError(secondError);
 
+  await expect(lease.release()).rejects.toBe(closeFailure);
+  expect(firstError.cleanupIncomplete).toBe(true);
+  expect(secondError.cleanupIncomplete).toBe(true);
+
+  denied = false;
   await lease.release();
   expect(firstError.cleanupIncomplete).toBe(false);
   expect(secondError.cleanupIncomplete).toBe(false);

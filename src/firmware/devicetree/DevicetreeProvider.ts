@@ -1,4 +1,8 @@
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  isParseLimit,
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import {
   projectOwnedArtifactIdentityFailure,
   projectSelectedArtifactFileFailure,
@@ -23,7 +27,7 @@ import {
 import { err, ok } from "../../domain/result.js";
 import { DEVICETREE_PROVIDER } from "../../domain/investigationProviders.js";
 import {
-  devicetreeLimitOf,
+  DEVICETREE_FORMAT,
   parseDevicetree,
 } from "../../domain/firmware/devicetreeParser.js";
 
@@ -57,17 +61,16 @@ export class DevicetreeProvider implements DevicetreePort {
           undefined,
           this.#resources,
         );
-        return ok(
-          parseDevicetree(
-            snapshot.bytes,
-            {
-              path: input.path,
-              sha256: snapshot.sha256,
-              bytes: snapshot.bytes.length,
-            },
-            input,
-          ),
+        const { report } = parseDevicetree(
+          snapshot.bytes,
+          {
+            path: input.path,
+            sha256: snapshot.sha256,
+            bytes: snapshot.bytes.length,
+          },
+          input,
         );
+        return ok(report);
       });
     } catch (cause) {
       return err(devicetreeFailure(cause, input, snapshot));
@@ -80,17 +83,12 @@ const devicetreeFailurePrimary = (
   input: InspectDevicetreeInput,
 ) => {
   const { cause, origin } = facts;
-  const limit = devicetreeLimitOf(cause);
-  if (limit !== undefined && cause instanceof Error)
-    return new AnalysisResourceConstraintError(
+  if (isParseLimit(cause, DEVICETREE_FORMAT))
+    return parseLimitConstraint(
       OPERATION,
-      limit.limit === "decoded_bytes" ? "memory" : "capacity",
-      cause.message,
-      {
-        limit: limit.limit,
-        selected: limit.maximum,
-      },
-      { cause, retryable: false, remediationAction: cause.message },
+      cause.failure.limit.name === "decoded_bytes" ? "memory" : "capacity",
+      cause,
+      { retryable: false, remediationAction: cause.failure.detail },
     );
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;

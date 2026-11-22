@@ -8,7 +8,7 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
-  "rejects partial IL2CPP table extents through CLI and MCP without a binary",
+  "reports inconsistent IL2CPP table extents through CLI and MCP without a binary",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-il2cpp-extent-");
     const { call } = await connectLocalToolsMcp();
@@ -16,11 +16,15 @@ cliTest(
       [31, "genericContainers"],
       [31, "genericParameters"],
       [31, "interfaceOffsets"],
+      [39, "genericContainers"],
       [39, "genericParameters"],
+      [39, "parameters"],
     ] as const) {
+      const isCountedContainer = version === 39 && name === "genericContainers";
       const fixture = createIl2cppMetadataFixture({
         version,
         genericOwners: true,
+        ...(isCountedContainer && { interfaceOffsets: false }),
       });
       const path = join(root, `${version}-${name}.dat`);
       await writeFile(path, fixture.bytes);
@@ -30,10 +34,14 @@ cliTest(
       expect(intact.exitCode, intact.stderr).toBe(0);
 
       const damaged = Buffer.from(fixture.bytes);
-      damaged.writeInt32LE(
-        fixture.section(name).size - 1,
-        fixture.header(name, "size"),
-      );
+      if (isCountedContainer || name === "parameters") {
+        damaged.writeInt32LE(300, fixture.header(name, "count"));
+      } else {
+        damaged.writeInt32LE(
+          fixture.section(name).size - 1,
+          fixture.header(name, "size"),
+        );
+      }
       await writeFile(path, damaged);
       const invalid = await cli.run({
         arguments: ["inspect-il2cpp-metadata", path, "--json"],
@@ -45,7 +53,9 @@ cliTest(
             {
               path: ["path"],
               reason: "invalid_format",
-              message: expect.stringContaining("record-size-mismatch"),
+              message: expect.stringContaining(
+                `record-size-mismatch: section ${name}`,
+              ),
             },
           ],
         },

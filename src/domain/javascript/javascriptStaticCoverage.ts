@@ -28,6 +28,8 @@ export const javaScriptStaticCoverageSchema = z.strictObject({
         "dynamic-findings",
         "returned-reference-widening",
         "type-only-module-side-effect",
+        "conditional-loader",
+        "commonjs-wrapper-redeclaration",
       ]),
     ),
   }),
@@ -61,6 +63,7 @@ export const javaScriptStaticParseStatus = (
         coverage.examination.status === "not-examined" ||
         // An unknown finding count cannot establish that none were found.
         coverage.semantics.unknown_findings !== 0 ||
+        coverage.semantics.uncertainty.includes("conditional-loader") ||
         coverage.examination.semantic_resource_limits.includes(
           "alias-selections",
         )
