@@ -62,7 +62,7 @@ const readSkillFileSnapshot = async (
     path,
     async (handle, stats) => {
       if (stats.size > maxBytes) throw new RegularFileChangedError(path);
-      const bytes = await readBoundedFileBytes(handle, maxBytes, {
+      const bytes = await readBoundedFileBytes(handle, stats.size, {
         expectedSize: stats.size,
       });
       if (bytes === undefined || bytes.length !== stats.size)
