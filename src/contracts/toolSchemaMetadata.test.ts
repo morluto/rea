@@ -12,6 +12,8 @@ import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import { ELECTRON_TOOL_CONTRACTS } from "./javascript/electronToolContracts.js";
 import {
   advertisedInputJsonSchema,
+  hasGuaranteedObjectOutputRoot,
+  omitAdvertisedOutputJsonSchema,
   toolInputSchemaWithMetadata,
   toolOutputSchemaWithMetadata,
 } from "./toolSchemaMetadata.js";
@@ -54,6 +56,65 @@ it("declares an object root only on the advertised output of an object union", (
   expect(advertised).toHaveProperty("oneOf");
   // The canonical projection keeps only what parsing enforces.
   expect(z.toJSONSchema(contract.outputSchema)).not.toHaveProperty("type");
+});
+
+it("identifies guaranteed object-root outputs and omits unused output projections safely", async () => {
+  const objectContract = ELECTRON_TOOL_CONTRACTS.find(
+    ({ name }) => name === "analyze_javascript_application",
+  );
+  const unionObjectContract = APPLICATION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "guided_workflows",
+  );
+  const nonObjectUnionContract = APPLICATION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "search_guidance",
+  );
+  if (
+    objectContract === undefined ||
+    unionObjectContract === undefined ||
+    nonObjectUnionContract === undefined
+  )
+    throw new Error("Missing expected contract fixtures");
+
+  expect(
+    hasGuaranteedObjectOutputRoot(toolOutputSchemaWithMetadata(objectContract)),
+  ).toBe(true);
+  expect(
+    hasGuaranteedObjectOutputRoot(
+      toolOutputSchemaWithMetadata(unionObjectContract),
+    ),
+  ).toBe(true);
+  expect(
+    hasGuaranteedObjectOutputRoot(
+      toolOutputSchemaWithMetadata(nonObjectUnionContract),
+    ),
+  ).toBe(false);
+
+  const schema = z.strictObject({ ok: z.literal(true) });
+  const originalOutput = schema["~standard"].jsonSchema.output;
+  let calls = 0;
+  Object.defineProperty(schema, "~standard", {
+    value: {
+      ...schema["~standard"],
+      jsonSchema: {
+        ...schema["~standard"].jsonSchema,
+        output: (options: unknown) => {
+          calls += 1;
+          return originalOutput(options as never);
+        },
+      },
+    },
+  });
+  const omitted = omitAdvertisedOutputJsonSchema(schema);
+  expect(
+    omitted["~standard"].jsonSchema.output({ target: "draft-2020-12" }),
+  ).toEqual({ type: "object" });
+  expect(calls).toBe(0);
+  expect(omitted["~standard"].validate({ ok: true })).toEqual({
+    value: { ok: true },
+  });
+  expect(omitted["~standard"].validate({ ok: false })).toMatchObject({
+    issues: expect.any(Array),
+  });
 });
 
 it("keeps update_analysis_settings compact advertised input inline under the depth cap", () => {

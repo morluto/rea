@@ -859,8 +859,85 @@ const commandShape = (description: ContractCliDescription) => ({
   ),
 });
 
-const schemaSignature = (schema: z.ZodType): string =>
-  JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
+const schemaSignatures = new WeakMap<z.ZodType, string>();
+
+const schemaSignature = (schema: z.ZodType): string => {
+  const cached = schemaSignatures.get(schema);
+  if (cached !== undefined) return cached;
+  const serialized = JSON.stringify(
+    z.toJSONSchema(schema, { unrepresentable: "any" }),
+  );
+  schemaSignatures.set(schema, serialized);
+  return serialized;
+};
+
+const simpleSchemasIdentical = (left: z.ZodType, right: z.ZodType): boolean => {
+  if (left === right) return true;
+  if (
+    z.globalRegistry.get(left) !== undefined ||
+    z.globalRegistry.get(right) !== undefined
+  )
+    return false;
+  const leftDef = left._zod.def as unknown as Readonly<Record<string, unknown>>;
+  const rightDef = right._zod.def as unknown as Readonly<
+    Record<string, unknown>
+  >;
+  if (leftDef.type !== rightDef.type) return false;
+  switch (leftDef.type) {
+    case "boolean":
+    case "string":
+      return (
+        (leftDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined &&
+        (rightDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined
+      );
+    case "number":
+      return (
+        leftDef.format === undefined &&
+        rightDef.format === undefined &&
+        (leftDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined &&
+        (rightDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined
+      );
+    case "literal": {
+      const leftValues = leftDef.values as readonly unknown[];
+      const rightValues = rightDef.values as readonly unknown[];
+      return (
+        leftValues.length === rightValues.length &&
+        leftValues.every((value, index) => Object.is(value, rightValues[index]))
+      );
+    }
+    case "enum": {
+      const leftEntries = Object.entries(
+        leftDef.entries as Record<string, string | number>,
+      );
+      const rightEntries = rightDef.entries as Record<string, string | number>;
+      return (
+        leftEntries.length === Object.keys(rightEntries).length &&
+        leftEntries.every(
+          ([key, value]) =>
+            Object.hasOwn(rightEntries, key) &&
+            Object.is(rightEntries[key], value),
+        )
+      );
+    }
+    case "optional":
+    case "nullable":
+    case "readonly":
+      return simpleSchemasIdentical(
+        leftDef.innerType as z.ZodType,
+        rightDef.innerType as z.ZodType,
+      );
+    default:
+      return false;
+  }
+};
+
+const schemasAgree = (left: z.ZodType, right: z.ZodType): boolean =>
+  simpleSchemasIdentical(left, right) ||
+  schemaSignature(left) === schemaSignature(right);
 
 /**
  * Register one CLI command whose input chooses the contract input it runs,
@@ -902,20 +979,18 @@ export const registerRoutedCommand = (
   const owners = new Map<string, CliCommandRoute>();
   for (const [index, shape] of shapes.entries()) {
     if (
-      shape.args.length !== args.length ||
-      shape.args.some(
-        ([key, schema], position) =>
-          key !== args[position]![0] ||
-          schemaSignature(schema) !== schemaSignature(args[position]![1]),
-      )
+      index > 0 &&
+      (shape.args.length !== args.length ||
+        shape.args.some(
+          ([key, schema], position) =>
+            key !== args[position]![0] ||
+            !schemasAgree(schema, args[position]![1]),
+        ))
     )
       throw new Error(`${name} routes take different arguments`);
     for (const [key, schema] of Object.entries(shape.options)) {
       const shared = options.get(key);
-      if (
-        shared !== undefined &&
-        schemaSignature(shared) !== schemaSignature(schema)
-      )
+      if (shared !== undefined && !schemasAgree(shared, schema))
         throw new Error(`${name} routes disagree on --${key}`);
       options.set(key, schema);
       owners.set(key, routes[index]!);
