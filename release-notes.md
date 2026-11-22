@@ -116,6 +116,7 @@
 * **elf:** report proven version and dynamic symbol facts ([#13441](https://github.com/morluto/rea/issues/13441)) ([c7f89cd](https://github.com/morluto/rea/commit/c7f89cd8b5b11025b72672af3c010e33e40496f3))
 * **elf:** retain authenticated debug-link evidence on interruption ([#13437](https://github.com/morluto/rea/issues/13437)) ([7fc333f](https://github.com/morluto/rea/commit/7fc333ffa0cf6546716120152c2cbf5f54cd0457))
 * **entropy:** keep the whole-file census in a counter that cannot wrap ([a3acfcf](https://github.com/morluto/rea/commit/a3acfcf003a1213c751a46051630f06023766d1f))
+* **environment:** prefer live collection spellings for writes ([#13603](https://github.com/morluto/rea/issues/13603)) ([65943f9](https://github.com/morluto/rea/commit/65943f934b00cab7d8e02837b4b4bd4e090a67da))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
 * **evidence:** evaluate unchanged artifact members in correlation ([460d771](https://github.com/morluto/rea/commit/460d77176e9634a6e052e4993ddd03be1489bec9)), closes [#13211](https://github.com/morluto/rea/issues/13211)
 * **evidence:** keep unobserved correlation paths unknown without complete coverage ([94232d0](https://github.com/morluto/rea/commit/94232d0d5f1addb2b0a45477bc67bd681e3d9282)), closes [#13211](https://github.com/morluto/rea/issues/13211)
