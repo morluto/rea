@@ -200,10 +200,11 @@ const parseNoteStream = (
     assertArtifactReadActive(signal);
     const nameStart = at + ELF_NOTE_HEADER_BYTES;
     const frame = readElfNoteFrame(
-      table.subarray(at, nameStart),
+      table,
       reader.little,
       alignment,
       table.length - at,
+      at,
     );
     if (!frame.ok) return fail(frame.error.message);
     const {
