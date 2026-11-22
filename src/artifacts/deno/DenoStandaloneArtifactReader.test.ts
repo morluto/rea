@@ -847,87 +847,84 @@ const suiNote = (section = buildDenoSection()): Buffer => {
   );
 };
 
-it("fails closed when a confirmed SUI note shares a damaged table", async () => {
-  const bytes = gnuElf("program", Buffer.concat([suiNote(), damagedNote()]));
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toMatchObject({
-    status: "present",
-    failure: { reason: "format" },
-  });
-});
-
-it("fails closed when a SUI note sits beside extended section numbering", async () => {
-  const bytes = patched(gnuElf("both", suiNote()), (image) => {
-    image.writeUInt16LE(0, ELF64_SHNUM);
-  });
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toMatchObject({
-    status: "present",
-    failure: { reason: "format" },
-  });
-});
-
-it("records a reserved direct section count beside an independently confirmed program note", async () => {
-  const bytes = withElf64DirectSectionCount(denoElf(), 0xff00);
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toMatchObject({
-    status: "present",
-    failure: {
-      reason: "format",
-      message: expect.stringContaining("reserved direct section count"),
-    },
-  });
-});
-
-it("does not confirm a Deno carrier from a section note in a malformed table", async () => {
-  const bytes = withElf64DirectSectionCount(
-    gnuElf("section", suiNote()),
-    0xff00,
+const probeElf = async (image: Buffer) => {
+  const handle = await open(
+    await writeCarrier("note-ownership.elf", image),
+    "r",
   );
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toEqual({ status: "absent" });
-});
+  try {
+    return await locateDenoStandalone(handle, image.length);
+  } finally {
+    await handle.close();
+  }
+};
 
-it("reaches a SUI section note past an unreadable program table", async () => {
-  const bytes = patched(gnuElf("both", suiNote()), (image) => {
-    image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF);
-  });
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toMatchObject({
-    status: "present",
-    failure: { reason: "format" },
-  });
-});
+it.each([
+  [
+    "a damaged note follows a confirmed program note",
+    () => gnuElf("program", Buffer.concat([suiNote(), damagedNote()])),
+    true,
+  ],
+  [
+    "extended section numbering sits beside a confirmed program note",
+    () =>
+      patched(gnuElf("both", suiNote()), (image) =>
+        image.writeUInt16LE(0, ELF64_SHNUM),
+      ),
+    true,
+  ],
+  [
+    "a reserved direct section count sits beside a confirmed program note",
+    () => withElf64DirectSectionCount(denoElf(), 0xff00),
+    true,
+    /reserved direct section count/iu,
+  ],
+  [
+    "only a section under a reserved direct count holds the name",
+    () => withElf64DirectSectionCount(gnuElf("section", suiNote()), 0xff00),
+    false,
+  ],
+  [
+    "a confirmed section note sits beyond an unreadable program table",
+    () =>
+      patched(gnuElf("both", suiNote()), (image) =>
+        image.writeBigUInt64LE(BigInt(image.length + 8), ELF64_PHOFF),
+      ),
+    true,
+  ],
+] as const)(
+  "classifies ELF note ownership when %s",
+  async (_, image, confirmed, diagnostic?: RegExp) => {
+    const result = await probeElf(image());
+    if (confirmed)
+      expect(result).toMatchObject({
+        status: "present",
+        failure: {
+          reason: "format",
+          ...(diagnostic === undefined
+            ? {}
+            : { message: expect.stringMatching(diagnostic) }),
+        },
+      });
+    else expect(result).toEqual({ status: "absent" });
+  },
+);
 
-it("leaves a SUI note with an incomplete carrier name unconfirmed", async () => {
-  const stub = Buffer.alloc(4);
-  stub.writeUInt16LE("d3n0l4nd".length);
-  stub.write("d3", 2, "latin1");
-  const bytes = gnuElf("program", elfNote("SUI", 0x53554901, stub));
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toEqual({ status: "absent" });
-});
-
-it("claims a SUI note once its complete carrier name matches", async () => {
-  const stub = Buffer.alloc(2);
-  stub.writeUInt16LE("d3n0l4nd".length);
-  const bytes = gnuElf(
-    "program",
-    elfNote(
-      "SUI",
-      0x53554901,
-      Buffer.concat([stub, Buffer.from("d3n0l4nd", "latin1")]),
-    ),
-  );
-  await expect(
-    locateDenoStandalone(bytesHandle(bytes), bytes.length),
-  ).resolves.toMatchObject({
+it("claims a SUI note only after its full Deno section name is present", async () => {
+  const noteFor = (name: string) => {
+    const length = Buffer.alloc(2);
+    length.writeUInt16LE("d3n0l4nd".length);
+    return gnuElf(
+      "program",
+      elfNote(
+        "SUI",
+        0x53554901,
+        Buffer.concat([length, Buffer.from(name, "latin1")]),
+      ),
+    );
+  };
+  await expect(probeElf(noteFor("d3"))).resolves.toEqual({ status: "absent" });
+  await expect(probeElf(noteFor("d3n0l4nd"))).resolves.toMatchObject({
     status: "present",
     location: { carrier: "elf", embedding: "elf-note", length: 0 },
   });
@@ -1599,20 +1596,16 @@ it("fails closed on a confirmed SUI note whose descriptor size exceeds its table
     return bytes;
   };
   const deno = oversized("d3n0l4nd");
-  await expect(
-    locateDenoStandalone(bytesHandle(deno), deno.length),
-  ).resolves.toMatchObject({
+  await expect(probeElf(deno)).resolves.toMatchObject({
     status: "present",
     failure: {
       reason: "format",
-      message: expect.stringContaining("exceeds its table"),
+      message: expect.stringMatching(/exceeds its table/iu),
     },
   });
   // A SUI note naming another section keeps the damage native.
   const other = oversized("notdeno!");
-  await expect(
-    locateDenoStandalone(bytesHandle(other), other.length),
-  ).resolves.toEqual({ status: "absent" });
+  await expect(probeElf(other)).resolves.toEqual({ status: "absent" });
 });
 
 it("fails closed on a truncated __SUI section record that names d3n0l4nd", async () => {
@@ -1644,17 +1637,7 @@ it("fails closed on a truncated __SUI section record that names d3n0l4nd", async
 });
 
 it("fails closed on nonzero bytes after the last note in a SUI note table", async () => {
-  const nameLength = Buffer.alloc(2);
-  nameLength.writeUInt16LE("d3n0l4nd".length);
-  const sui = elfNote(
-    "SUI",
-    0x53554901,
-    Buffer.concat([
-      nameLength,
-      Buffer.from("d3n0l4nd", "latin1"),
-      buildDenoSection(),
-    ]),
-  );
+  const sui = suiNote();
   const withTail = (notes: Buffer, tail: Buffer): Buffer =>
     elfNoteFixture({
       notes: Buffer.concat([notes, tail]),
@@ -1663,19 +1646,15 @@ it("fails closed on nonzero bytes after the last note in a SUI note table", asyn
     });
   // Eleven bytes are too few for another note header.
   const dirty = withTail(sui, Buffer.alloc(11, 0xff));
-  await expect(
-    locateDenoStandalone(bytesHandle(dirty), dirty.length),
-  ).resolves.toMatchObject({
+  await expect(probeElf(dirty)).resolves.toMatchObject({
     status: "present",
     failure: {
       reason: "format",
-      message: expect.stringContaining("trailing non-zero bytes"),
+      message: expect.stringMatching(/trailing non-zero bytes/iu),
     },
   });
   const padded = withTail(sui, Buffer.alloc(11));
-  await expect(
-    locateDenoStandalone(bytesHandle(padded), padded.length),
-  ).resolves.toMatchObject({
+  await expect(probeElf(padded)).resolves.toMatchObject({
     status: "present",
     location: { embedding: "elf-note" },
   });
@@ -1684,9 +1663,7 @@ it("fails closed on nonzero bytes after the last note in a SUI note table", asyn
     elfNote("GNU", 1, Buffer.from("build-id")),
     Buffer.alloc(11, 0xff),
   );
-  await expect(
-    locateDenoStandalone(bytesHandle(native), native.length),
-  ).resolves.toEqual({ status: "absent" });
+  await expect(probeElf(native)).resolves.toEqual({ status: "absent" });
 });
 
 it("rejects a universal Deno image whose FAT row misstates a slice's CPU", async () => {
