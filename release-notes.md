@@ -199,6 +199,7 @@
 * **dotnet:** push down native boundary and member selection predicates ([#13317](https://github.com/morluto/rea/issues/13317)) ([e0d8cc9](https://github.com/morluto/rea/commit/e0d8cc942faa4c96ce7f36b86731316b5872d76a))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
+* **environment:** defer tombstone scans until held lookup misses ([#13404](https://github.com/morluto/rea/issues/13404)) ([9119533](https://github.com/morluto/rea/commit/91195338d07d4bb7398afa29fc1a8550f555827d))
 * **evidence:** eliminate redundant bundle re-validation, cloning, and nested generator yields ([#13257](https://github.com/morluto/rea/issues/13257)) ([9e379c9](https://github.com/morluto/rea/commit/9e379c958951ed245ba6bdadd9ed56bd1f2b5857))
 * **evidence:** reuse parsed source inventories across correlation mappings ([a486423](https://github.com/morluto/rea/commit/a486423e0e9e933c78875eadf33d85e15e1efb77))
 * **firmware:** bound DfuSe overlap diagnostics before formatting ([#13371](https://github.com/morluto/rea/issues/13371)) ([95220bc](https://github.com/morluto/rea/commit/95220bcde12f085144b34a425e8f9bf4557249b0))
