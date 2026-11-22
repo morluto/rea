@@ -13,6 +13,7 @@ import {
 } from "../../../src/domain/webCaptureDiffSchemas.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import {
+  unselectBodyShapes,
   passiveNetworkCapture,
   withPassiveDroppedEvents,
 } from "../../fixtures/passiveNetworkCapture.js";
@@ -38,17 +39,8 @@ const add = (
   dimension: Case["dimension"],
   status: Case["status"],
 ) => cases.push({ name, before, after, dimension, status });
-const unselectedCapture = (paths: readonly string[] = []) => {
-  const capture = passiveNetworkCapture(paths);
-  capture.completeness.excluded.push({
-    section: "json_body_shapes",
-    reason: "not_approved",
-    count: null,
-  });
-  for (const request of capture.network.requests)
-    request.body_shapes.status = "not_approved";
-  return capture;
-};
+const unselectedCapture = (paths: readonly string[] = []) =>
+  unselectBodyShapes(passiveNetworkCapture(paths));
 const full = unselectedCapture(["/a", "/a"]);
 full.network.requests[1]!.status = 503;
 for (const retained of [0, 1]) {

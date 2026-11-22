@@ -45,7 +45,7 @@ import {
   type IdaConfiguration,
 } from "./IdaConfiguration.js";
 import {
-  jsonObjectSchema,
+  ownedJsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
@@ -62,6 +62,9 @@ import {
   McpHttpUtf8Error,
   validateMcpHttpResponse,
 } from "../providers/Utf8McpResponse.js";
+
+/** A completed upstream tool reply that reported failure, as opposed to an unreadable or missing reply. */
+export class IdaToolRejection extends AnalysisProtocolError {}
 
 /** Injectable MCP boundary used by the provider and transport conformance tests. */
 export interface IdaMcpConnection {
@@ -200,14 +203,14 @@ const parseIdaTextReply = (text: string): JsonValue => {
  */
 export const decodeIdaToolResult = (
   input: unknown,
-  protocol?: "native",
+  protocol?: "native" | "hexrays",
   diagnostic: IdaDiagnosticRedactor = createIdaDiagnosticRedactor(),
 ): JsonValue => {
   const result = toolResultSchema.parse(input);
   const blocks = mcpTextBlocks(result.content);
   if (result.isError === true) {
     const reason = diagnostic.blocks(blocks);
-    throw new AnalysisProtocolError(
+    throw new IdaToolRejection(
       diagnostic.message("IDA MCP tool failed: ", reason),
       {
         diagnostics: { reason },
@@ -235,7 +238,7 @@ export const decodeIdaToolResult = (
     return parseIdaTextReply(text);
   }
   if (result.structuredContent !== undefined) {
-    const value = jsonObjectSchema.parse(result.structuredContent);
+    const value = ownedJsonObjectSchema.parse(result.structuredContent);
     return Object.keys(value).length === 1 && Object.hasOwn(value, "result")
       ? value.result!
       : value;

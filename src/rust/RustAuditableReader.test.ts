@@ -286,7 +286,9 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
 it("names the fixed cap when it bounds a large padded section's inflate allocation", () => {
   // Storage above 128 KiB derives more than the fixed 8 MiB cap, so the cap,
   // not the padded storage size, is the enforced bound.
-  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20), {
+    level: 1,
+  });
   const fileAlignment = 512;
   const stored = Buffer.alloc(132 * 1024);
   compressed.copy(stored);
@@ -380,6 +382,38 @@ it("rejects the first malformed package before schema issues accumulate", () => 
   );
 });
 
+it("admits an explicit empty feature list at its exact normalized graph size", () => {
+  const pkg = {
+    name: "a",
+    version: "1",
+    source: "s",
+    features: [],
+    root: true,
+  };
+  const expected = { ...pkg, kind: null, dependencies: [] };
+  const maxOutputBytes = Buffer.byteLength(JSON.stringify(expected));
+  const payload = deflateSync(
+    Buffer.from(JSON.stringify({ format: 0, packages: [pkg] })),
+  );
+  expect(
+    readAuditableSection(".dep-v0", 0, payload, { maxOutputBytes }).packages,
+  ).toEqual([expected]);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, payload, {
+      maxOutputBytes: maxOutputBytes - 1,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      failure: expect.objectContaining({
+        kind: "limit",
+        limit: expect.objectContaining({
+          name: "dependency graph output bytes",
+          maximum: maxOutputBytes - 1,
+        }),
+      }),
+    }),
+  );
+});
 it("admits dependency expansion before allocating normalized or reverse edges", () => {
   const document = {
     packages: [

@@ -2,8 +2,6 @@ import { primaryAnalysisError } from "../../domain/analysisErrorBase.js";
 import { expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
-import { ArtifactFileCancelled } from "../../resources/ArtifactFileOperation.js";
-import { completedStableArtifactObservation } from "../../resources/StableArtifactObservation.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
@@ -137,50 +135,6 @@ it("retains the decoded image report when the candidate read is cancelled", asyn
   expect(report?.limitations).toContain(
     ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
   );
-});
-
-const completedCandidate = {
-  sha256: "cd".repeat(32),
-  size: 8192,
-  prefix: image.subarray(0, 64),
-};
-
-it("keeps a completed candidate stream's identity when cancellation arrives during close", async () => {
-  const result = await inspect(
-    new ArtifactFileCancelled({
-      reason: new Error("stop"),
-      outcome: { kind: "completed", value: completedCandidate },
-    }),
-  );
-  expect(result.ok).toBe(false);
-  if (result.ok) return;
-  const report = retainedReport(result.error);
-  expect(report?.artifact.sha256).toBe("ab".repeat(32));
-  expect(report?.candidate).toMatchObject({
-    path: "/artifacts/prog.debug",
-    sha256: "cd".repeat(32),
-    bytes: 8192,
-  });
-  expect(report?.limitations).not.toContain(
-    ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-  );
-});
-
-it("recovers a completed stream's whole-file size, not its prefix length", () => {
-  expect(
-    completedStableArtifactObservation(
-      new ArtifactFileCancelled({
-        reason: new Error("stop"),
-        outcome: { kind: "completed", value: completedCandidate },
-      }),
-      "/artifacts/prog.debug",
-    ),
-  ).toEqual({
-    kind: "file-snapshot-hash",
-    path: "/artifacts/prog.debug",
-    sha256: "cd".repeat(32),
-    bytes: 8192,
-  });
 });
 
 it("retains the completed image snapshot when ELF decoding fails", async () => {

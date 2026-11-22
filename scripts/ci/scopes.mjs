@@ -184,6 +184,7 @@ const PATH_SCOPES = {
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
+    "tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
     "tests/boundary/process/darwinProcessRunTokenReader.test.ts",
@@ -305,6 +306,7 @@ const PATH_SCOPES = {
     // Live advertisement, independent of the POSIX-generated catalog.
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
+    "tests/boundary/filesystem/safeOutputTreePublication.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",

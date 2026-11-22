@@ -1,4 +1,4 @@
-import { BinaryReader } from "./binaryContainer.js";
+import { BinaryReader, hasElfMagic } from "./binaryContainer.js";
 import {
   resolveMappedFileOffset,
   type FileMapping,
@@ -27,6 +27,7 @@ import { readPeSectionHeader } from "./peSectionHeader.js";
 import { isStrictUtf8 } from "./strictUtf8.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
 import {
+  hasDosMzMagic,
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
   type MzHeaderEvidence,
@@ -127,9 +128,9 @@ export const claimsExecutableHeader = (
   fileSize = bytes.length,
 ): boolean =>
   (bytes.length >= 4 &&
-    (bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])) ||
+    (hasElfMagic(bytes) ||
       readMachoHeaderPrefixFacts(bytes).format !== null)) ||
-  (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a) ||
+  hasDosMzMagic(bytes) ||
   readFatContainerHeader(bytes, fileSize).state !== "not-fat";
 
 /**
@@ -144,12 +145,8 @@ export const parseExecutableHeader = (
   mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence,
   fatEvidence?: FatSliceHeaderEvidence,
 ): Result<ExecutableMetadata, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  )
-    return parseElf(bytes, fileSize);
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
+  if (hasElfMagic(bytes)) return parseElf(bytes, fileSize);
+  if (hasDosMzMagic(bytes))
     return parseMzExecutableMetadata(
       bytes,
       parseMzHeaderEvidence(bytes, fileSize, mzWindowsHeaderSignature),
@@ -176,10 +173,7 @@ export const readNativeHeaderFormat = (
   bytes: Buffer,
   fileSize = bytes.length,
 ): Result<"elf" | "mach-o" | null, string> => {
-  if (
-    bytes.length >= 4 &&
-    bytes.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
-  ) {
+  if (hasElfMagic(bytes)) {
     const header = readElfFixedHeader(bytes, fileSize);
     return header.ok ? ok("elf") : header;
   }
@@ -773,7 +767,7 @@ export const peDebugDirectoryEntry = (
   return { debugRva, debugSize, sizeOfHeaders: fixed.value.sizeOfHeaders };
 };
 
-/** Translate an RVA to an absolute file offset using the PE section table. */
+/** Translate an RVA using declared section content, excluding raw alignment padding. */
 export const peRvaToFileOffset = (
   rva: number,
   sectionTable: Buffer,
@@ -793,11 +787,11 @@ export const peRvaToFileOffset = (
     if (!parsed.ok) return undefined;
     const section = parsed.value;
     const address = BigInt(section.virtual_address);
-    if (section.raw_size > 0)
+    if (section.size > 0)
       mappings.push({
         address,
         offset: section.offset,
-        size: section.raw_size,
+        size: section.size,
       });
     if (section.virtual_size > section.raw_size)
       zeroFills.push({

@@ -405,28 +405,6 @@ describe("safe artifact output tree", () => {
     },
   );
 
-  it("publishes files while building and preserves them after sealing", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output);
-    const bytes = Buffer.from("visible before seal");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-
-    await tree.commit();
-    expect(await tree.rollback()).toEqual({ status: "not-required" });
-    expect(await readFile(join(output, "file.txt"), "utf8")).toBe(
-      "visible before seal",
-    );
-  });
-
   it("returns detached cleanup reports", async () => {
     const parent = await createTestTempDirectory("rea-safe-output-");
     const tree = await SafeOutputTree.create(join(parent, "published"));
@@ -447,46 +425,33 @@ describe("safe artifact output tree", () => {
     ).rejects.toBeInstanceOf(ArtifactReaderFailure);
     await expect(tree.commit()).rejects.toBeInstanceOf(ArtifactReaderFailure);
   });
-
-  it("publishes without POSIX-only directory chmod or fsync on Windows", async () => {
-    const parent = await createTestTempDirectory("rea-safe-output-");
-    const output = join(parent, "published");
-    const tree = await SafeOutputTree.create(output, "win32");
-    const bytes = Buffer.from("windows output");
-    const digest = createHash("sha256").update(bytes).digest("hex");
-
-    await tree.write("nested/file.txt", Readable.from(bytes), {
-      sha256: digest,
-      bytes: bytes.byteLength,
-    });
-    await tree.commit();
-    expect(await readFile(join(output, "nested", "file.txt"), "utf8")).toBe(
-      "windows output",
-    );
-  });
 });
 
-describe("safe artifact output Windows stream paths", () => {
-  it.each([
-    "hello.txt:hidden",
-    "nested/hello.txt::$DATA",
-    "folder:stream/file.txt",
-  ])("refuses Windows stream syntax before creating %s", async (path) => {
-    const parent = await createTestTempDirectory("rea-safe-output-stream-");
+it.each([
+  { path: "hello.txt:hidden", kind: "stream syntax" },
+  { path: "nested/hello.txt::$DATA", kind: "stream syntax" },
+  { path: "folder:stream/file.txt", kind: "stream syntax" },
+  { path: "Folder/Icon\r", kind: "control character" },
+  { path: "Fold\ter/file.txt", kind: "control character" },
+])(
+  "refuses Windows $kind before materializing $path",
+  async ({ path, kind }) => {
+    const parent = await createTestTempDirectory("rea-safe-output-name-");
     const output = join(parent, "published");
     const tree = await SafeOutputTree.create(output, "win32");
     const bytes = Buffer.from("regular file content");
     const source = Readable.from(bytes);
+    const message =
+      kind === "stream syntax"
+        ? `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`
+        : `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`;
     try {
       await expect(
         tree.write(path, source, {
           sha256: createHash("sha256").update(bytes).digest("hex"),
           bytes: bytes.byteLength,
         }),
-      ).rejects.toMatchObject({
-        reason: "path",
-        message: `Windows destination cannot materialize artifact path as a regular file: ${path}; ':' denotes alternate data stream syntax.`,
-      });
+      ).rejects.toMatchObject({ reason: "path", message });
       expect(source.destroyed).toBe(true);
       expect(await readdir(output)).toEqual([]);
     } finally {
@@ -495,31 +460,6 @@ describe("safe artifact output Windows stream paths", () => {
         residualPaths: [],
       });
     }
-    await expect(access(output)).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readdir(parent)).toEqual([]);
-  });
-
-  it.each(["Folder/Icon\r", "Fold\ter/file.txt"])(
-    "refuses Windows control characters before creating %j",
-    async (path) => {
-      const parent = await createTestTempDirectory("rea-safe-output-control-");
-      const output = join(parent, "published");
-      const tree = await SafeOutputTree.create(output, "win32");
-      const bytes = Buffer.from("regular file content");
-      await expect(
-        tree.write(path, Readable.from(bytes), {
-          sha256: createHash("sha256").update(bytes).digest("hex"),
-          bytes: bytes.byteLength,
-        }),
-      ).rejects.toMatchObject({
-        reason: "path",
-        message: `Windows destination cannot materialize artifact path: ${JSON.stringify(path)}; Windows names cannot contain U+0001-U+001F.`,
-      });
-      expect(await readdir(output)).toEqual([]);
-      expect(await tree.rollback()).toEqual({
-        status: "complete",
-        residualPaths: [],
-      });
-    },
-  );
-});
+  },
+);

@@ -11,16 +11,18 @@ import {
 
 it("resolves default budgets with the launch setting for each startup phase", () => {
   const budgets = resolveMcpStartupBudgets({});
-  expect(budgets).toMatchObject({
-    initialize: { setting: "REA_MCP_INITIALIZE_BUDGET_MS" },
-    toolsList: { setting: "REA_MCP_TOOLS_LIST_BUDGET_MS" },
-    firstCatalog: { setting: "REA_MCP_FIRST_CATALOG_BUDGET_MS" },
-    doctor: { setting: "REA_MCP_DOCTOR_DEADLINE_MS" },
-  });
-  for (const budget of Object.values(budgets))
-    expect(budget.milliseconds, budget.setting).toBe(
-      budget.defaultMilliseconds,
-    );
+  for (const [phase, setting, milliseconds] of [
+    ["initialize", "REA_MCP_INITIALIZE_BUDGET_MS", 15_000],
+    ["toolsList", "REA_MCP_TOOLS_LIST_BUDGET_MS", 5_000],
+    ["firstCatalog", "REA_MCP_FIRST_CATALOG_BUDGET_MS", 20_000],
+    ["doctor", "REA_MCP_DOCTOR_DEADLINE_MS", 30_000],
+  ] as const)
+    expect(budgets[phase]).toMatchObject({
+      setting,
+      milliseconds,
+      defaultMilliseconds: milliseconds,
+      source: "default",
+    });
 });
 
 it("admits distinct overrides for all four startup phases", () => {

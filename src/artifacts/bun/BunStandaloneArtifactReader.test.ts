@@ -47,6 +47,74 @@ it.each(["close", "cancel"] as const)(
   },
 );
 
+it.each([9, 12, 13])(
+  "does not use a %i-module budget to resolve an ambiguous Bun layout",
+  async (moduleCount) => {
+    const path = join(
+      await createTestTempDirectory("rea-bun-layout-budget-"),
+      "app",
+    );
+    // 468 bytes admit thirteen 36-byte records and nine 52-byte records.
+    await writeFile(
+      path,
+      elfAppendedBunPayload(
+        bunModuleGraphPayload({
+          modules: [{ loader: 0, moduleFormat: 0 }],
+          tableLength: 468,
+        }),
+      ),
+    );
+    const limits = resolveArtifactReaderLimits({
+      bun: { module_count: moduleCount },
+    });
+    const reader = new BunStandaloneArtifactReader(path, undefined, limits.bun);
+    try {
+      await expect(collect(reader.entries())).rejects.toMatchObject({
+        reason: moduleCount < 13 ? "limit" : "unavailable",
+      });
+      expect(reader.formatMetadata()).toBeUndefined();
+    } finally {
+      await reader.close();
+    }
+  },
+);
+
+it("admits a unique nine-module layout at its exact budget", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-bun-exact-layout-"),
+    "app",
+  );
+  await writeFile(
+    path,
+    elfAppendedBunPayload(
+      bunModuleGraphPayload({
+        modules: Array.from({ length: 9 }, (_, index) => ({
+          name: `module-${index}.js`,
+          contents: Buffer.from(`source-${index}`),
+        })),
+      }),
+    ),
+  );
+  const reader = new BunStandaloneArtifactReader(
+    path,
+    undefined,
+    resolveArtifactReaderLimits({ bun: { module_count: 9 } }).bun,
+  );
+  try {
+    const entries = await collect(reader.entries());
+    expect(entries).toHaveLength(9);
+    expect(reader.formatMetadata()).toMatchObject({
+      layout_revision: "bun-1.3.9",
+      module_count: 9,
+    });
+    expect((await buffer(await reader.open(entries[8]!))).toString()).toBe(
+      "source-8",
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
 it("keeps duplicate and unsafe names distinct while extracting exact bytes", async () => {
   const path = join(await createTestTempDirectory("rea-bun-reader-"), "app");
   await writeFile(

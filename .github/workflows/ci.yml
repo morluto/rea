@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main, "release/*"]
   schedule:
     - cron: "23 0-2,4-23 * * *"
     - cron: "23 3 * * *"
@@ -503,7 +502,7 @@ jobs:
         shell: bash
         run: |
           # A new Turbo dry run can evict the entries this build just used.
-          node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json
+          node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rea-build-cache
@@ -915,6 +914,7 @@ jobs:
           tests/boundary/cli/nativeMachoArm64_32Cli.test.ts
           tests/boundary/cli/nativeMachoEncryptionCli.test.ts
           tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts
+          tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts
           src/process/capture/FilesystemSnapshot.test.ts
           tests/process-global/filesystemSnapshotFallbackCancellation.test.ts
           tests/boundary/process/darwinProcessRunTokenReader.test.ts
@@ -1059,6 +1059,7 @@ jobs:
           tests/boundary/mcp/absoluteLocalPathSchema.test.ts
           tests/boundary/mcp/toolSchemaValidity.test.ts
           tests/boundary/filesystem/safeOutputTree.test.ts
+          tests/boundary/filesystem/safeOutputTreePublication.test.ts
           tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts
           tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts
           tests/boundary/filesystem/setupUnavailableProvider.test.ts

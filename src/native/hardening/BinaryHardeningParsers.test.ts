@@ -1230,18 +1230,20 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
 });
 
-it("treats the __chk_fail handler import as a FORTIFY sign", () => {
-  const bytes = elfHardeningFixture({
-    fortify: true,
-    fortifyName: "__chk_fail",
-  });
-  const image = readElfHardening(bytes);
-  const row = findRow(image.rows, "fortify");
-  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
-  expect(row.basis).toContain("__chk_fail");
-  const at = row.location?.offset ?? 0;
-  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
-});
+it.each(["__chk", "__chk_fail"])(
+  "recognizes the %s import as a FORTIFY sign",
+  (name) => {
+    const bytes = elfHardeningFixture({ fortify: true, fortifyName: name });
+    const row = findRow(readElfHardening(bytes).rows, "fortify");
+    expect(row).toMatchObject({
+      state: "enabled",
+      location: { bytes: name.length },
+    });
+    expect(row.basis).toContain(name);
+    const at = row.location?.offset ?? 0;
+    expect(bytes.subarray(at, at + name.length).toString("latin1")).toBe(name);
+  },
+);
 
 it("keeps malformed name offsets malformed in both formats", async () => {
   await expect(
@@ -1905,19 +1907,62 @@ it("accepts well-formed segments with sections and file payloads", async () => {
   const probe = machoHardeningFixture({
     extraCommands: [machoSegment(64, { commandSize: size })],
   });
+  const segment = machoSegment(64, {
+    commandSize: size,
+    sections: 1,
+    vmSize: probe.length,
+    fileSize: probe.length,
+  });
+  segment.write("__restrict", 72, "latin1");
   const image = (
     await readMachoHardening(
-      machoHardeningFixture({
-        extraCommands: [
-          machoSegment(64, {
-            commandSize: size,
-            sections: 1,
-            vmSize: probe.length,
-            fileSize: probe.length,
-          }),
-        ],
-      }),
+      machoHardeningFixture({ extraCommands: [segment] }),
     )
   )[0];
   expect(findRow(image?.rows ?? [], "restrict_segment").state).toBe("enabled");
+});
+
+it.each([
+  ["another section", "__other"],
+  ["no section", null],
+] as const)(
+  "reports a __RESTRICT segment with %s as unrestricted, as dyld does",
+  async (_label, restrictSection) => {
+    for (const bits of [32, 64] as const) {
+      const bytes = machoHardeningFixture({
+        bits,
+        restrict: true,
+        restrictSection,
+      });
+      const restrict = findRow(
+        (await readMachoHardening(bytes))[0]?.rows ?? [],
+        "restrict_segment",
+      );
+      expect(restrict).toMatchObject({
+        state: "disabled",
+        basis: expect.stringContaining("no __restrict section"),
+      });
+      const named = restrict.location;
+      if (named === null) throw new Error("Missing segment name location");
+      expect(
+        bytes.subarray(named.offset, named.offset + named.bytes).toString(),
+      ).toBe("__RESTRICT\0\0\0\0\0\0");
+    }
+  },
+);
+
+it("locates the __restrict section that makes dyld restrict an image", async () => {
+  for (const bits of [32, 64] as const) {
+    const bytes = machoHardeningFixture({ bits, restrict: true });
+    const restrict = findRow(
+      (await readMachoHardening(bytes))[0]?.rows ?? [],
+      "restrict_segment",
+    );
+    expect(restrict.state).toBe("enabled");
+    const section = restrict.location;
+    if (section === null) throw new Error("Missing section name location");
+    expect(
+      bytes.subarray(section.offset, section.offset + section.bytes).toString(),
+    ).toBe("__restrict\0\0\0\0\0\0");
+  }
 });

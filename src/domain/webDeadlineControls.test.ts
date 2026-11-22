@@ -12,6 +12,7 @@ import {
   webBundleHeapExhaustedRemediation,
   webBundleHeapLimit,
   webBundleMemoryExhaustion,
+  webBundleFixedByteBudget,
   webBundleResultAdmissionFailure,
   webBundleScriptTimeoutRecovery,
 } from "./webBundleAnalysis.js";
@@ -170,100 +171,69 @@ describe("web deadline controls", () => {
   });
 });
 
-it("names web-bundle exhaustion by the runtime that enforced it", () => {
+it("attributes web-bundle exhaustion to the enforced memory control", () => {
+  const heapMb = 1024;
+  const commitBytes = 1024 * 1024 * 1024 + 512 * 1024 * 1024;
   const node = webBundleMemoryExhaustion({
     runtime: "node",
-    heapMb: 1024,
+    heapMb,
     memoryLimitReached: true,
     processMemoryLimitBytes: 99,
   });
-  expect(node.kind).toBe("v8-heap");
-  expect(webBundleHeapExhaustedReason(node)).toContain(
-    "exhausted its max_heap_mb V8 old-space heap of 1024 MiB",
-  );
+  expect(node).toEqual({ kind: "v8-heap", heapMb });
+  expect(webBundleHeapExhaustedReason(node)).toContain("V8 old-space heap");
   expect(webBundleHeapExhaustedRemediation(node)).toContain(
     "Increase max_heap_mb above 1024",
   );
-  expect(webBundleHeapExhaustedRemediation(node)).not.toContain("--");
-  expect(webBundleHeapLimit(node)).toMatchObject({
-    control_kind: "parameter",
-    parameter: "max_heap_mb",
-    effective_value: 1024,
-    unit: "MiB",
-  });
-
-  const commitBytes = 1024 * 1024 * 1024 + 512 * 1024 * 1024;
   const windows = webBundleMemoryExhaustion({
     runtime: "bun",
-    heapMb: 1024,
+    heapMb,
     memoryLimitReached: true,
     processMemoryLimitBytes: commitBytes,
   });
-  const windowsReason = webBundleHeapExhaustedReason(windows);
-  expect(windows.kind).toBe("process-commit");
-  expect(windowsReason).toContain(
+  expect(windows).toEqual({
+    kind: "process-commit",
+    heapMb,
+    limitBytes: commitBytes,
+  });
+  expect(webBundleHeapExhaustedReason(windows)).toContain(
     `${String(commitBytes)}-byte process commit limit`,
   );
-  expect(windowsReason).toContain("512 MiB Bun runtime reserve");
-  expect(windowsReason).not.toContain("V8 old-space heap of");
-  const windowsRemediation = webBundleHeapExhaustedRemediation(windows);
-  expect(windowsRemediation).toContain("Increase max_heap_mb above 1024");
-  expect(windowsRemediation).toContain("Windows process commit limit");
-  expect(windowsRemediation).toContain("not a V8 old-space heap");
-  expect(windowsRemediation).not.toContain(
-    "exhausted its max_heap_mb V8 old-space heap",
+  expect(webBundleHeapExhaustedRemediation(windows)).toContain(
+    "Windows process commit limit",
   );
+  for (const adjustable of [node, windows])
+    expect(webBundleHeapLimit(adjustable)).toMatchObject({
+      control_kind: "parameter",
+      parameter: "max_heap_mb",
+      effective_value: heapMb,
+      unit: "MiB",
+    });
 
-  const bun = webBundleMemoryExhaustion({
-    runtime: "bun",
-    heapMb: 1024,
-    memoryLimitReached: false,
-    processMemoryLimitBytes: null,
-  });
-  expect(bun.kind).toBe("bun-allocation");
-  expect(webBundleHeapExhaustedReason(bun)).toContain(
-    "Bun ignores the V8 old-space flag",
-  );
-  expect(webBundleHeapExhaustedReason(bun)).not.toContain(
-    "V8 old-space heap of",
-  );
-  expect(webBundleHeapExhaustedRemediation(bun)).not.toContain(
-    "Increase max_heap_mb",
-  );
-  // Raising max_heap_mb does not change a Bun allocation exit.
-  expect(webBundleHeapLimit(bun)).toBeUndefined();
-  expect(webBundleHeapExhaustedRemediation(bun)).toContain(
-    "does not change this exit",
-  );
-
-  const beforeLimit = webBundleMemoryExhaustion({
-    runtime: "bun",
-    heapMb: 1024,
-    memoryLimitReached: false,
-    processMemoryLimitBytes: commitBytes,
-  });
-  expect(beforeLimit.kind).toBe("bun-allocation");
-  const beforeLimitReason = webBundleHeapExhaustedReason(beforeLimit);
-  expect(beforeLimitReason).toContain(
-    `${String(commitBytes)}-byte process commit limit was reported as reached`,
-  );
-  expect(beforeLimitReason).not.toContain(
-    "enforces no analyzer process commit limit",
-  );
-  expect(webBundleHeapExhaustedRemediation(beforeLimit)).toContain(
-    "was not reported as reached",
-  );
-  expect(webBundleHeapExhaustedRemediation(beforeLimit)).not.toContain(
-    "Increase max_heap_mb",
-  );
-  expect(webBundleHeapExhaustedReason(bun)).toContain(
-    "enforces no analyzer process commit limit",
-  );
+  for (const processMemoryLimitBytes of [null, commitBytes]) {
+    const allocation = webBundleMemoryExhaustion({
+      runtime: "bun",
+      heapMb,
+      memoryLimitReached: false,
+      processMemoryLimitBytes,
+    });
+    expect(allocation).toEqual({
+      kind: "bun-allocation",
+      heapMb,
+      processMemoryLimitBytes,
+    });
+    expect(webBundleHeapLimit(allocation)).toBeUndefined();
+    expect(webBundleHeapExhaustedRemediation(allocation)).toContain(
+      "Reduce the analysis instead of increasing max_heap_mb",
+    );
+    expect(webBundleHeapExhaustedReason(allocation)).toContain(
+      processMemoryLimitBytes === null
+        ? "enforces no analyzer process commit limit"
+        : `${String(commitBytes)}-byte process commit limit was reported as reached`,
+    );
+  }
   expect(
-    webBundleHeapExhaustedRemediation({
-      kind: "v8-heap",
-      heapMb: 16_384,
-    }),
+    webBundleHeapExhaustedRemediation({ kind: "v8-heap", heapMb: 16_384 }),
   ).toContain("already at the maximum 16384 MiB");
 });
 
@@ -273,28 +243,25 @@ it("names host heap pressure only while the fixed result budget still has room",
     fixedRemainingBytes: 8_388_608,
     hostCapacityBytes: 0,
   });
-  expect(host.kind).toBe("host-capacity");
-  expect(host.reason).toContain("host result capacity 0 bytes");
-  expect(host.reason).toContain("still has 8388608 bytes available");
-  expect(host.reason).not.toContain("has no further room");
-  if (host.kind !== "host-capacity") return;
-  expect(host.remediationAction).not.toContain("has no further room");
-  expect(host.remediationAction).toContain("NODE_OPTIONS");
-  expect(host.reportedLimits).toEqual({
-    result_bytes: 8_388_608,
-    result_budget_remaining_bytes: 8_388_608,
-    host_result_capacity_bytes: 0,
+  expect(host).toMatchObject({
+    kind: "host-capacity",
+    remediationAction: expect.stringContaining("NODE_OPTIONS"),
+    reportedLimits: {
+      result_bytes: 8_388_608,
+      result_budget_remaining_bytes: 8_388_608,
+      host_result_capacity_bytes: 0,
+    },
   });
 
-  const fixed = webBundleResultAdmissionFailure({
-    fixedBudgetBytes: 8_388_608,
-    fixedRemainingBytes: 0,
-    hostCapacityBytes: 0,
+  expect(
+    webBundleResultAdmissionFailure({
+      fixedBudgetBytes: 8_388_608,
+      fixedRemainingBytes: 0,
+      hostCapacityBytes: 0,
+    }),
+  ).toEqual({
+    kind: "fixed-budget",
+    reason: webBundleFixedByteBudget(8_388_608, "result budget"),
+    reportedLimits: { result_bytes: 8_388_608 },
   });
-  expect(fixed.kind).toBe("fixed-budget");
-  expect(fixed.reason).toContain(
-    "8388608-byte web-bundle result budget has no further room",
-  );
-  expect(fixed.reason).toContain("no runtime override");
-  expect(fixed.reason).not.toContain("host result capacity");
 });

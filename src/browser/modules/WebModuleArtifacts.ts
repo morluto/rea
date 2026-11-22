@@ -5,7 +5,7 @@ import type {
 import type { WebScriptArtifactPort } from "../../ports/WebScriptArtifactPort.js";
 import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import { ArtifactResourceScope } from "../../resources/index.js";
-import { jsonObjectSchema } from "../../domain/jsonValue.js";
+import { ownedJsonObjectSchema } from "../../domain/jsonValue.js";
 import { err, ok } from "../../domain/result.js";
 import { WebArtifactCleanup } from "../WebArtifactCleanup.js";
 import type { WebModuleTraceInput } from "../../domain/webModuleTrace.js";
@@ -100,7 +100,7 @@ export class LocalWebModuleArtifacts implements WebModuleArtifactPort {
         bytes: data.bytes.length,
       },
       baseUrl: selected.base_url,
-      value: jsonObjectSchema.parse(data.value),
+      value: ownedJsonObjectSchema.parse(data.value),
     };
     return ok({ ...loaded.value, importMap });
   }

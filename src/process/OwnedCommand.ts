@@ -35,10 +35,7 @@ import {
 } from "./ProcessOwnership.js";
 import { AbortedWait, waitForAbortable } from "./AbortablePromise.js";
 import type { ManagedRuntime } from "./RuntimeExhaustion.js";
-import {
-  ProviderStartupDeadline,
-  waitForAbortableDelay,
-} from "./ProviderDeadline.js";
+import { ProviderStartupDeadline } from "./ProviderDeadline.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { launcherFailureOf, type LauncherFailure } from "./launchFailure.js";
 
@@ -154,7 +151,7 @@ export const prepareOwnedCommand = async (
 };
 
 /** Both preparation stages preserve physical failures, opaque cancellation and exact owners. */
-function throwCommandPreparationFailure(
+export function throwCommandPreparationFailure(
   cause: unknown,
   interruption: "cancelled" | "timeout" | undefined,
 ): never {
@@ -317,6 +314,12 @@ const collectOwnedCommand = async (
         readonly collectionFailure: boolean;
       }
     | undefined;
+  const waitWake = new AbortController();
+  const wakeSignal = AbortSignal.any([signal, waitWake.signal]);
+  const wakeMonitor = (): void => {
+    if (!waitWake.signal.aborted)
+      waitWake.abort(OwnerCancellation.noLongerNeeded);
+  };
   const supervisor = new ProviderProcessSupervisor(
     {
       ...launched,
@@ -334,6 +337,7 @@ const collectOwnedCommand = async (
           exceeded = true;
           if (deadline.interruption === undefined)
             outputLimitObservedBeforeInterruption = true;
+          wakeMonitor();
         }
         if (event.type === "error") {
           processFailure ??= event.message;
@@ -344,6 +348,7 @@ const collectOwnedCommand = async (
               processError,
               collectionFailure: true,
             };
+          wakeMonitor();
         }
         if (event.type === "exit" && deadline.interruption === undefined) {
           const acceptedNonzeroExit =
@@ -380,6 +385,7 @@ const collectOwnedCommand = async (
             exceeded = true;
             if (deadline.interruption === undefined)
               outputLimitObservedBeforeInterruption = true;
+            wakeMonitor();
           },
         },
   );
@@ -391,6 +397,7 @@ const collectOwnedCommand = async (
         processError,
         collectionFailure: true,
       };
+    if (failed !== undefined) wakeMonitor();
   });
   let inputFailure:
     | {
@@ -420,6 +427,7 @@ const collectOwnedCommand = async (
               collectionFailure: true,
             };
           abandoned.abort(OwnerCancellation.noLongerNeeded);
+          wakeMonitor();
         })
       : Promise.resolve();
   let failure: OwnedCommandFailure | undefined;
@@ -461,7 +469,7 @@ const collectOwnedCommand = async (
     );
   };
   try {
-    while (!(await supervisor.waitForOutputClose(10))) {
+    while (!(await supervisor.waitForOutputClose(undefined, wakeSignal))) {
       const interrupted = interruptionOrObservedFailure(deadline.interruption);
       if (interrupted !== undefined) throw interrupted;
       if (exceeded)
@@ -475,7 +483,7 @@ const collectOwnedCommand = async (
           processError,
           collectionFailure: true,
         });
-      await waitForAbortableDelay(25, signal);
+      if (waitWake.signal.aborted) break;
     }
     // Output has closed, but the sink may still be parsing what it buffered.
     const sinkFailure = await waitForAbortable(consumed, collectionSignal);
@@ -530,6 +538,7 @@ const collectOwnedCommand = async (
           );
   }
   // A finished sink ignores this; an unfinished one is destroyed.
+  wakeMonitor();
   abandoned.abort(OwnerCancellation.noLongerNeeded);
   const stopped = await supervisor.stop(
     limits.termination === undefined ? {} : { termination: limits.termination },
