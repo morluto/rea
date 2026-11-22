@@ -206,6 +206,7 @@
 * **setup:** verify the effective OpenCode project launcher ([#13538](https://github.com/morluto/rea/issues/13538)) ([d185754](https://github.com/morluto/rea/commit/d1857543f3caecbc3db6734b7c54adb814898aa4))
 * **state-view:** preserve partial list status when total count is invalid ([1d78e6a](https://github.com/morluto/rea/commit/1d78e6abe61ab9ed49669ee0a2ecf7c691acf81d))
 * **state-view:** reject unsafe integers in recorded item counts ([00b4082](https://github.com/morluto/rea/commit/00b4082d4c3040116a625cd492c8cc5b7a5bf96e))
+* **target:** preserve IDA signatures across short reads ([#13613](https://github.com/morluto/rea/issues/13613)) ([bb51d8e](https://github.com/morluto/rea/commit/bb51d8e7ea82324fa216c99b840aae0119b1d0de))
 * **test:** reap synthetic test-stub processes on cleanup failure and fail fast on unavailable exit polling ([#13368](https://github.com/morluto/rea/issues/13368)) ([bd9a7fa](https://github.com/morluto/rea/commit/bd9a7fad7efba6a2aad1ace7a9e4388f6cf11101))
 * **tests:** bound oxlint test threads, throttle export spin loop, align process-boundary workers, and use level-1 zlib in large synthetic fixtures ([#13471](https://github.com/morluto/rea/issues/13471)) ([9e9cfba](https://github.com/morluto/rea/commit/9e9cfba67dc4a0a050552aedd364d8436c7b4186))
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
