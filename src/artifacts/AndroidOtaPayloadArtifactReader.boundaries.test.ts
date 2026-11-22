@@ -132,37 +132,49 @@ it("streams a mismatched REPLACE partition and leaves its declared hash to the s
   }
 });
 
-it("refuses to open a partition whose distinct operation data exceeds the read budget", async () => {
-  const reader = new AndroidOtaPayloadArtifactReader(
-    await fixture(
-      buildAndroidOtaPayload({
-        partitions: [
+it("refuses over-budget operation data before reading the sparse carrier body", async () => {
+  const maximum = ANDROID_OTA_MAX_OPERATION_DATA_BYTES;
+  const manifestOnly = buildAndroidOtaPayload({
+    metadataSignature: new Uint8Array(),
+    payloadSignature: new Uint8Array(),
+    signaturesOffset: null,
+    signaturesSize: null,
+    partitions: [
+      {
+        name: "system",
+        newSize: 4096,
+        omitNewHash: true,
+        operations: [
           {
-            name: "system",
-            newSize: 4096,
-            operations: [
-              {
-                type: 0,
-                data: Buffer.alloc(
-                  ANDROID_OTA_MAX_OPERATION_DATA_BYTES + 1,
-                  0x41,
-                ),
-                dstExtents: [{ startBlock: 0, numBlocks: 1 }],
-              },
-            ],
+            type: 0,
+            dataLength: maximum + 1,
+            dstExtents: [{ startBlock: 0, numBlocks: 1 }],
           },
         ],
-      }),
-    ),
-  );
+      },
+    ],
+  });
+  const path = await fixture(manifestOnly);
+  await truncate(path, manifestOnly.length + maximum + 1);
+  const admitted = await openRegularFile(path, { symlinks: "reject" });
+  const reader = new AndroidOtaPayloadArtifactReader(path, admitted);
+  const read = vi.spyOn(admitted.handle, "read");
   try {
-    const listed = await entries(reader);
-    await expect(reader.open(listed[0]!)).rejects.toMatchObject({
+    const [entry] = await entries(reader);
+    if (entry === undefined) throw new Error("Expected the system partition");
+    expect(entry.path).toBe("system.img");
+    expect(read).toHaveBeenCalled();
+    read.mockClear();
+    await expect(reader.open(entry)).rejects.toMatchObject({
       reason: "limit",
       boundary: "capacity",
+      cause: { failure: { kind: "limit", limit: { maximum } } },
     });
+    expect(read).not.toHaveBeenCalled();
   } finally {
+    read.mockRestore();
     await reader.close();
+    await admitted.handle.close();
   }
 });
 

@@ -1,9 +1,6 @@
 import { expect, it } from "vitest";
 import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
-import {
-  managedDecodeBudget,
-  ManagedRepresentationFailure,
-} from "../domain/managed/managedDecodeBudget.js";
+import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import { createManagedConstantReader } from "./ManagedConstants.js";
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
@@ -15,17 +12,29 @@ it("uses the layout's existing representation capacity instead of an independent
   });
   const pe = readManagedPeLayout(bytes);
   if (pe.cli === null) throw new Error("Fixture has no CLI metadata");
-  const layout = readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "metadata"),
-    pe.cli.metadata.size,
+  const { rva, size } = pe.cli.metadata;
+  const offset = pe.rvaToOffset(rva, size, "metadata");
+  const layout = readManagedMetadataLayout(bytes, offset, size, 4096);
+  const alreadyUsed = readManagedMetadataLayout(bytes, offset, size, 4096);
+  expect(
+    createManagedConstantReader(bytes, layout, [])(4, 1, 0x8056),
+  ).toMatchObject({
+    state: "decoded",
+    value: 1,
+  });
+
+  // Earlier facets of the same inspection leave under 576 bytes available.
+  managedDecodeBudget(alreadyUsed).reserve(3520, null);
+  const read = createManagedConstantReader(bytes, alreadyUsed, []);
+  expect(() => read(4, 1, 0x8056)).toThrow(
+    expect.objectContaining({
+      issue: expect.objectContaining({
+        scope: "metadata.representation",
+        limit: expect.objectContaining({
+          parameter: "max_metadata_representation_bytes",
+          effective_value: 4096,
+        }),
+      }),
+    }),
   );
-  const budget = managedDecodeBudget(layout);
-  budget.reserve(63 * 1024 * 1024, null);
-  // Leave less than one KiB, representing earlier facets in this same inspection.
-  expect(() => {
-    for (let i = 0; i < 1024; i++) budget.reserve(1024, null);
-  }).toThrow(ManagedRepresentationFailure);
-  const read = createManagedConstantReader(bytes, layout, []);
-  expect(() => read(4, 1, 0x8056)).toThrow(ManagedRepresentationFailure);
 });

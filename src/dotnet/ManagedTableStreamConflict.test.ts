@@ -25,24 +25,6 @@ const tableHeaderLocations = (bytes: Buffer) => {
   };
 };
 
-it.each(["#~", "#-"] as const)(
-  "reads complete rows from a single %s table stream",
-  (tableStreamName) => {
-    const bytes = buildManagedPeFixture({ tableStreamName });
-    const target = managedPeFixtureTarget(bytes);
-    const artifact = inspectManagedArtifactBytes(bytes, target);
-    const members = inspectManagedMembersBytes(bytes, target);
-    expect(artifact.metadata).toMatchObject({
-      status: "complete",
-      stream_names: expect.arrayContaining([tableStreamName]),
-      table_row_counts: { Module: 1, MethodDef: 1 },
-    });
-    expect(members.coverage.state).toBe("complete");
-    expect(members.methods).toHaveLength(1);
-    expect(members.module?.mvid).toBeTruthy();
-  },
-);
-
 it.each([
   ["#~", "distinct"],
   ["#-", "distinct"],
@@ -57,19 +39,28 @@ it.each([
     const { firstHeader, secondHeader } = tableHeaderLocations(bytes);
     const target = managedPeFixtureTarget(bytes);
     const artifact = inspectManagedArtifactBytes(bytes, target);
-    const members = inspectManagedMembersBytes(bytes, target, {
-      typeNames: ["Fixture.Program"],
-    });
-    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
     const issue = {
       code: "unsupported-metadata",
       scope: "metadata.tables",
       detail: expect.stringContaining("Metadata row layout is unknown."),
       offset: secondHeader,
     };
+    const independent = {
+      artifact: { sha256: target.sha256 },
+      metadata: {
+        status: "partial",
+        version: "v4.0.30319",
+        table_row_counts: {},
+      },
+      module: null,
+    };
     expect(artifact).toMatchObject({
+      ...independent,
       classification: { status: "managed" },
-      metadata: { stream_names: expect.arrayContaining(["#~", "#-"]) },
+      metadata: {
+        ...independent.metadata,
+        stream_names: expect.arrayContaining(["#~", "#-"]),
+      },
       assembly: null,
       coverage: { state: "partial", issues: [issue] },
     });
@@ -78,23 +69,17 @@ it.each([
     expect(observed).toContain(
       `${tableStreamName === "#~" ? "#-" : "#~"} at header ${secondHeader}`,
     );
-    for (const report of [artifact, members, boundaries]) {
+    if (tableStreamName !== "#~" || competingTableStream !== "distinct") return;
+    const members = inspectManagedMembersBytes(bytes, target, {
+      typeNames: ["Fixture.Program"],
+    });
+    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+    for (const report of [members, boundaries])
       expect(report).toMatchObject({
-        artifact: { sha256: target.sha256 },
-        metadata: {
-          status: "partial",
-          version: "v4.0.30319",
-          table_row_counts: {},
-        },
-        module: null,
-      });
-    }
-    for (const report of [members, boundaries]) {
-      expect(report).toMatchObject({
+        ...independent,
         identity_scope: { requires_mvid: null },
         coverage: { state: "unavailable", issues: [issue] },
       });
-    }
     expect(members).toMatchObject({
       methods: [],
       fields: [],

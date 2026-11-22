@@ -60,6 +60,7 @@ import { Buffer } from "node:buffer";
  *   readonly references?: readonly string[];
  *   readonly resourceData?: Buffer;
  *   readonly targetFramework?: string | null;
+ *   readonly secondType?: { readonly name: string; readonly firstField: number };
  *   readonly typeName?: string;
  *   readonly typeNamespace?: string;
  * }} ManagedPeFixtureOptions
@@ -410,6 +411,7 @@ const buildManagedMetadata = (options, methods) => {
   const constructorName = strings.add(".ctor");
   const typeName = strings.add(options.typeName ?? "Program");
   const typeNamespace = strings.add(options.typeNamespace ?? "Fixture");
+  const secondType = options.secondType;
   const fields = options.fields ?? [{ name: options.fieldName ?? "counter" }];
   const namedFields = fields.map((field) => ({
     field,
@@ -484,7 +486,22 @@ const buildManagedMetadata = (options, methods) => {
   const rows = new Map([
     [0, [moduleRow(moduleName)]],
     [1, [typeRefRow(attributeName, attributeNamespace)]],
-    [2, [typeDefRow(typeName, typeNamespace, 1, 1)]],
+    [
+      2,
+      [
+        typeDefRow(typeName, typeNamespace, 1, 1),
+        ...(secondType === undefined
+          ? []
+          : [
+              typeDefRow(
+                strings.add(secondType.name),
+                typeNamespace,
+                secondType.firstField,
+                methods.length + 1,
+              ),
+            ]),
+      ],
+    ],
     [4, fieldRows],
     [6, methodRows],
     [10, [memberRefRow(constructorName, constructorSignature)]],

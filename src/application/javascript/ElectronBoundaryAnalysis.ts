@@ -67,21 +67,12 @@ export const createElectronIpcContext = (
   const owners = new Map(
     records.map((record) => [record.key, applicationOwner(record.file)]),
   );
-  const handlers = records.filter(isMainHandler);
+  const handlerIndex = indexMainHandlers(records);
   const states: ElectronIpcPairingState[] = records
     .filter(isPairableRendererTransmission)
     .map((transmission) => {
       const owner = owners.get(transmission.key);
-      const channel = transmission.finding.channel;
-      const matching =
-        channel === null
-          ? []
-          : handlers.filter(
-              (handler) =>
-                (handler.finding.channel === channel ||
-                  mayReceiveChannel(handler, channel)) &&
-                compatibleIpcModes(transmission.finding, handler.finding),
-            );
+      const matching = matchingMainHandlers(handlerIndex, transmission.finding);
       const candidates = matching.filter(
         (handler) => owners.get(handler.key) === owner,
       );
@@ -125,6 +116,84 @@ export const createElectronIpcContext = (
       : [];
   });
   return { records, owners, states, pairings };
+};
+
+interface MainHandlerIndex {
+  readonly exactByChannel: ReadonlyMap<string, readonly ElectronIpcRecord[]>;
+  readonly guardedByChannel: ReadonlyMap<string, readonly ElectronIpcRecord[]>;
+  readonly wildcardDynamic: readonly ElectronIpcRecord[];
+}
+
+const pushRecordBucket = (
+  map: Map<string, ElectronIpcRecord[]>,
+  key: string,
+  record: ElectronIpcRecord,
+): void => {
+  const bucket = map.get(key);
+  if (bucket === undefined) map.set(key, [record]);
+  else bucket.push(record);
+};
+
+/**
+ * Index main handlers by literal channel, guarded literal invocation channels,
+ * or wildcard dynamic receivers. An unresolved channel may receive any literal
+ * channel, so it competes without ever pairing; a wrapper site whose
+ * invocations all supplied literal channels is represented by their findings,
+ * except guarded invocations, which still compete for their own channels.
+ */
+const indexMainHandlers = (
+  records: readonly ElectronIpcRecord[],
+): MainHandlerIndex => {
+  const exactByChannel = new Map<string, ElectronIpcRecord[]>();
+  const guardedByChannel = new Map<string, ElectronIpcRecord[]>();
+  const wildcardDynamic: ElectronIpcRecord[] = [];
+  for (const record of records) {
+    if (!isMainHandler(record)) continue;
+    const { finding } = record;
+    if (finding.channel !== null) {
+      pushRecordBucket(exactByChannel, finding.channel, record);
+      continue;
+    }
+    if (
+      finding.receiver === undefined &&
+      finding.invocation_channels === "literal"
+    ) {
+      for (const channel of new Set(finding.guarded_invocation_channels ?? []))
+        pushRecordBucket(guardedByChannel, channel, record);
+      continue;
+    }
+    wildcardDynamic.push(record);
+  }
+  return { exactByChannel, guardedByChannel, wildcardDynamic };
+};
+
+const matchingMainHandlers = (
+  index: MainHandlerIndex,
+  transmission: ElectronIpcFinding,
+): ElectronIpcRecord[] => {
+  const channel = transmission.channel;
+  if (channel === null) return [];
+  const exact = index.exactByChannel.get(channel);
+  const guarded = index.guardedByChannel.get(channel);
+  const wildcard = index.wildcardDynamic;
+  const matching: ElectronIpcRecord[] = [];
+  let buckets = 0;
+  for (const list of [exact, guarded, wildcard]) {
+    if (list === undefined || list.length === 0) continue;
+    let addedFromList = false;
+    for (const handler of list) {
+      if (!compatibleIpcModes(transmission, handler.finding)) continue;
+      matching.push(handler);
+      addedFromList = true;
+    }
+    if (addedFromList) buckets += 1;
+  }
+  // Each individual bucket preserves `records` order; sort only when merging multiple buckets.
+  if (buckets > 1)
+    matching.sort((left, right) =>
+      compareUnicodeCodePoints(left.key, right.key),
+    );
+  return matching;
 };
 
 /**
@@ -411,21 +480,6 @@ const isRendererTransmission = ({ finding }: ElectronIpcRecord): boolean =>
 
 const isPairableRendererTransmission = (record: ElectronIpcRecord): boolean =>
   isRendererTransmission(record) && record.finding.operation !== "send-to-host";
-
-/**
- * An unresolved channel may receive any literal channel, so it competes without
- * ever pairing. A wrapper site whose invocations all supplied literal channels
- * is represented by their findings, except guarded invocations, which have none
- * and still compete for their own channels.
- */
-const mayReceiveChannel = (
-  { finding }: ElectronIpcRecord,
-  channel: string,
-): boolean =>
-  finding.channel === null &&
-  (finding.receiver !== undefined ||
-    finding.invocation_channels !== "literal" ||
-    finding.guarded_invocation_channels?.includes(channel) === true);
 
 /** Only an ipcMain registration on the same literal channel can be paired. */
 const isExactIpcHandler = (handler: ElectronIpcRecord | undefined): boolean =>

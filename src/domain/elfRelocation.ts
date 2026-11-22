@@ -1,4 +1,9 @@
-import { BinaryReader } from "./binaryContainer.js";
+import {
+  readInt32At,
+  readInt64At,
+  readUint32At,
+  readUint64At,
+} from "./binaryContainer.js";
 import { err, ok, type Result } from "./result.js";
 
 export const ELF_RELR_DYNAMIC_TAGS = {
@@ -57,6 +62,97 @@ export const decodeElfRelocationInfo = (info: bigint, bits: 32 | 64) => ({
   symbolIndex: Number(info >> (bits === 64 ? 32n : 8n)),
 });
 
+export const ELF_RELOCATION_TRUNCATED_MESSAGE =
+  "ELF relocation entry is truncated";
+const TRUNCATED_RELOCATION = Object.freeze(
+  err<ElfRelocationFailure>({
+    kind: "malformed",
+    message: ELF_RELOCATION_TRUNCATED_MESSAGE,
+  }),
+);
+
+export function readElfRelocationEntryAt(
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  encoding: "rel",
+): ElfRelocationEntry | null;
+export function readElfRelocationEntryAt(
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  encoding: "rela",
+): ElfRelaEntry | null;
+export function readElfRelocationEntryAt(
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  encoding: "rel" | "rela",
+): ElfRelocationEntry | ElfRelaEntry | null;
+/**
+ * Decode standard REL/RELA fields starting at `offset` without creating a
+ * temporary slice or BinaryReader; returns `null` when truncated.
+ */
+export function readElfRelocationEntryAt(
+  bytes: Uint8Array,
+  offset: number,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  encoding: "rel" | "rela",
+): ElfRelocationEntry | ElfRelaEntry | null {
+  const isRela = encoding === "rela";
+  if (bits === 64) {
+    const width = isRela ? 24 : 16;
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      offset > bytes.byteLength - width
+    )
+      return null;
+    const relOffset = readUint64At(bytes, offset, littleEndian);
+    const type = readUint32At(
+      bytes,
+      littleEndian ? offset + 8 : offset + 12,
+      littleEndian,
+    );
+    const symbolIndex = readUint32At(
+      bytes,
+      littleEndian ? offset + 12 : offset + 8,
+      littleEndian,
+    );
+    return isRela
+      ? {
+          offset: relOffset,
+          type,
+          symbolIndex,
+          addend: readInt64At(bytes, offset + 16, littleEndian),
+        }
+      : { offset: relOffset, type, symbolIndex };
+  }
+  const width = isRela ? 12 : 8;
+  if (
+    !Number.isSafeInteger(offset) ||
+    offset < 0 ||
+    offset > bytes.byteLength - width
+  )
+    return null;
+  const relOffset = BigInt(readUint32At(bytes, offset, littleEndian));
+  const info = readUint32At(bytes, offset + 4, littleEndian);
+  const type = info & 0xff;
+  const symbolIndex = info >>> 8;
+  return isRela
+    ? {
+        offset: relOffset,
+        type,
+        symbolIndex,
+        addend: BigInt(readInt32At(bytes, offset + 8, littleEndian)),
+      }
+    : { offset: relOffset, type, symbolIndex };
+}
+
 export function readElfRelocationEntry(
   bytes: Uint8Array,
   bits: 32 | 64,
@@ -69,6 +165,12 @@ export function readElfRelocationEntry(
   littleEndian: boolean,
   encoding: "rela",
 ): Result<ElfRelaEntry, ElfRelocationFailure>;
+export function readElfRelocationEntry(
+  bytes: Uint8Array,
+  bits: 32 | 64,
+  littleEndian: boolean,
+  encoding: "rel" | "rela",
+): Result<ElfRelocationEntry | ElfRelaEntry, ElfRelocationFailure>;
 /** Decode standard REL/RELA fields; architecture-specific application remains with consumers. */
 export function readElfRelocationEntry(
   bytes: Uint8Array,
@@ -76,27 +178,12 @@ export function readElfRelocationEntry(
   littleEndian: boolean,
   encoding: "rel" | "rela",
 ): Result<ElfRelocationEntry | ElfRelaEntry, ElfRelocationFailure> {
-  const wordBytes = bits === 64 ? 8 : 4;
-  if (bytes.byteLength < wordBytes * (encoding === "rela" ? 3 : 2))
-    return err({
-      kind: "malformed",
-      message: "ELF relocation entry is truncated",
-    });
-  const reader = new BinaryReader(
-    Buffer.isBuffer(bytes)
-      ? bytes
-      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+  const entry = readElfRelocationEntryAt(
+    bytes,
+    0,
+    bits,
     littleEndian,
-    "elf",
+    encoding,
   );
-  const offset = reader.word(0, bits);
-  const info = reader.word(wordBytes, bits);
-  const entry = {
-    offset,
-    ...decodeElfRelocationInfo(info, bits),
-  };
-  if (encoding === "rel") return ok(entry);
-  const addend =
-    bits === 64 ? reader.i64(wordBytes * 2) : BigInt(reader.i32(wordBytes * 2));
-  return ok({ ...entry, addend });
+  return entry === null ? TRUNCATED_RELOCATION : ok(entry);
 }

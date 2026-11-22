@@ -7,11 +7,12 @@ import {
   decodeElfRelocationInfo,
   ELF_ANDROID_PACKED_RELOCATION_TABLES,
   ELF_ANDROID_PACKED_RELOCATION_TAGS,
+  ELF_RELOCATION_TRUNCATED_MESSAGE,
   ELF_RELR_DYNAMIC_TAGS,
-  readElfRelocationEntry,
+  readElfRelocationEntryAt,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
-import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbolAt } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
@@ -449,10 +450,21 @@ const RELOCATION_KINDS = [
   })),
 ];
 
+const RELOCATION_KINDS_32 = new Map(
+  RELOCATION_KINDS.filter((kinds) => kinds.bits === 32).map((kinds) => [
+    kinds.machine,
+    kinds,
+  ]),
+);
+const RELOCATION_KINDS_64 = new Map(
+  RELOCATION_KINDS.filter((kinds) => kinds.bits === 64).map((kinds) => [
+    kinds.machine,
+    kinds,
+  ]),
+);
+
 const relocationKinds = (machine: number, bits: 32 | 64) =>
-  RELOCATION_KINDS.find(
-    (kinds) => kinds.machine === machine && kinds.bits === bits,
-  );
+  (bits === 64 ? RELOCATION_KINDS_64 : RELOCATION_KINDS_32).get(machine);
 
 /** R_*_RELATIVE type for a supported ELF machine, or undefined when unsupported. */
 export const elfRelativeRelocationType = (
@@ -471,6 +483,13 @@ export const elfCopyRelocationType = (
   machine: number,
   bits: 32 | 64,
 ): number | undefined => relocationKinds(machine, bits)?.copy;
+
+/** Relocation-kind width table for a supported `(machine, bits)` pair, hoisted outside loops. */
+export const elfRelocationWidthLookup = (
+  machine: number,
+  bits: 32 | 64,
+): ReadonlyMap<number, number> | undefined =>
+  relocationKinds(machine, bits)?.widths;
 
 /** Bytes written by a relocation; type zero is a no-op and unknown types remain undefined. */
 export const elfRelocationWidth = (
@@ -664,12 +683,7 @@ export function* readElfRelocationWritesSteps(
       if (cause instanceof BinaryMappingFailure) return undefined;
       throw cause;
     }
-    const parsed = readElfSymbol(
-      bytes.subarray(at, at + symbolBytes),
-      input.bits,
-      input.little,
-    );
-    return parsed.ok ? parsed.value : undefined;
+    return readElfSymbolAt(bytes, at, input.bits, input.little) ?? undefined;
   };
   const hashWords =
     (address: bigint): ElfHashWordReader =>
@@ -775,7 +789,7 @@ export function* readElfRelocationWritesSteps(
     source: ElfPointerRelocationSource,
   ): Generator<ElfPointerWrite | undefined> {
     const { type: kind, offset: destination, symbolIndex } = parsed;
-    if (elfRelocationWidth(input.machine, kind, input.bits) === 0) return;
+    if (kind === 0 || unknownWidths.get(kind) === 0) return;
     const explicitAddend = parsed.addend;
     if (source.encoding === "rela" && explicitAddend === undefined)
       return malformed("RELA relocation has no decoded addend");
@@ -859,25 +873,18 @@ export function* readElfRelocationWritesSteps(
       return malformed(`${encoding.toUpperCase()} table is not file-backed`);
     for (let at = start; at < start + Number(size); at += width) {
       if ((at - start) % (width * 4096) === 0) yield;
-      const parsed =
-        encoding === "rela"
-          ? readElfRelocationEntry(
-              bytes.subarray(at, at + width),
-              input.bits,
-              input.little,
-              "rela",
-            )
-          : readElfRelocationEntry(
-              bytes.subarray(at, at + width),
-              input.bits,
-              input.little,
-              "rel",
-            );
-      if (!parsed.ok) return malformed(parsed.error.message);
-      yield* applyRelocation(parsed.value, {
+      const parsed = readElfRelocationEntryAt(
+        bytes,
+        at,
+        input.bits,
+        input.little,
+        encoding,
+      );
+      if (parsed === null) return malformed(ELF_RELOCATION_TRUNCATED_MESSAGE);
+      yield* applyRelocation(parsed, {
         encoding,
         record_file_offset: at,
-        kind: parsed.value.type,
+        kind: parsed.type,
       });
     }
   }

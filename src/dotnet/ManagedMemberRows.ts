@@ -54,7 +54,10 @@ import {
 import { methodBody } from "./ManagedMethodBodyReader.js";
 import { createManagedParameterDefaultReader } from "./ManagedParameterDefaults.js";
 import { memberDeclaringTypeRowLookup } from "../domain/managed/managedMemberOwnership.js";
-import type { TypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
+import type {
+  MemberDefinitionTable,
+  TypeMemberListFacts,
+} from "../domain/managed/managedTypeMemberLists.js";
 import {
   readDefinitionField,
   type UnresolvedDefinition,
@@ -71,6 +74,152 @@ const isSelected = (
   declared: { readonly token: string } | undefined,
 ): boolean =>
   selected === null || (declared !== undefined && selected.has(declared.token));
+
+/**
+ * Monotonic TypeDef list pointers without FieldPtr/MethodPtr indirection let
+ * selected scopes iterate `[start, end)` directly instead of scanning or
+ * allocating a full-table owner index. Any out-of-range or decreasing pointer
+ * falls back cleanly to `memberDeclaringTypeRowLookup`.
+ */
+const canIterateMemberIntervals = (
+  layout: ManagedMetadataLayout,
+  table: MemberDefinitionTable,
+  memberLists: TypeMemberListFacts,
+  ranges: readonly TypeRange[],
+): boolean => {
+  const pointers = layout.table(table - 1);
+  if (pointers !== undefined && pointers.rowCount > 0) return false;
+  const typeCount = layout.table(2)?.rowCount ?? 0;
+  if (memberLists.entries.length !== typeCount || ranges.length !== typeCount)
+    return false;
+  for (const entry of memberLists.entries) {
+    const range = table === 4 ? entry.field : entry.method;
+    if (range.start.value === null || range.end === null) return false;
+  }
+  return true;
+};
+
+const inPageRange = (
+  start: number,
+  end: number,
+  methodOffset: number,
+  methodLimit: number,
+): { readonly from: number; readonly to: number } => {
+  const pageStart = methodOffset >= end ? end : methodOffset + 1;
+  const pageEnd =
+    methodLimit >= end - pageStart ? end : pageStart + methodLimit;
+  const from = Math.max(start, pageStart);
+  return { from, to: Math.max(from, pageEnd) };
+};
+
+const memberInterval = (
+  range: TypeRange | undefined,
+  table: MemberDefinitionTable,
+): { readonly start: number | null; readonly end: number | null } =>
+  range === undefined
+    ? { start: null, end: null }
+    : table === 4
+      ? { start: range.fieldStart, end: range.fieldEnd }
+      : { start: range.methodStart, end: range.methodEnd };
+
+const declaringTypeRowFromIntervals = (
+  ranges: readonly TypeRange[],
+  table: MemberDefinitionTable,
+  row: number,
+): number => {
+  if (ranges.length === 0 || row < 1) return 0;
+  const firstStart = memberInterval(ranges[0], table).start;
+  if (firstStart === null || row < firstStart) return 0;
+  let lo = 0;
+  let hi = ranges.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    const { start } = memberInterval(ranges[mid], table);
+    if (start !== null && start <= row) lo = mid;
+    else hi = mid - 1;
+  }
+  const { start, end } = memberInterval(ranges[lo], table);
+  return start !== null && end !== null && row >= start && row < end
+    ? lo + 1
+    : 0;
+};
+
+interface DecodeFieldContext {
+  readonly bytes: Buffer;
+  readonly layout: ManagedMetadataLayout;
+  readonly signatureTypeName: SignatureTypeName;
+  readonly displayTypeName: SignatureDisplayTypeName;
+  readonly declarationTypeName: DeclarationTypeName;
+  readonly selected: SelectedTypeTokens;
+  readonly constant: ManagedConstantReader;
+  readonly fields: ManagedField[];
+  readonly core: Map<string, MemberCore>;
+  readonly issues: ManagedParseIssue[];
+}
+
+const decodeFieldRow = (
+  context: DecodeFieldContext,
+  row: number,
+  owner: number | undefined,
+  declared: TypeRange | undefined,
+): void => {
+  const {
+    bytes,
+    layout,
+    signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
+    selected,
+    constant,
+    fields,
+    core,
+    issues,
+  } = context;
+  readManagedValue(() => {
+    const definition = readFieldDefinitionRow(bytes, layout, row);
+    const { token, rowOffset, flags, signatureIndex } = definition;
+    const name = readFieldDefinitionName(bytes, layout, definition);
+    const owned = owner ?? 0;
+    core.set(token, {
+      token,
+      name,
+      declaringType: declared?.fullName ?? null,
+      kind: "field",
+    });
+    if (!isSelected(selected, declared)) return;
+    const sig = readMetadataBlob(bytes, layout, signatureIndex);
+    const decoded = budgetedSignature(
+      sig,
+      layout,
+      signatureTypeName,
+      displayTypeName,
+      issues,
+      { scope: `Field:${token}.signature`, kind: "field", artifact: bytes },
+    );
+    core.set(token, {
+      token,
+      name,
+      declaringType: declared?.fullName ?? null,
+      kind: "field",
+      identitySha256: memberTargetIdentity(
+        name,
+        declared === undefined ? null : { table: 2, row: owned },
+        decoded,
+        declarationTypeName,
+      ),
+    });
+    fields.push({
+      token,
+      row_offset: rowOffset,
+      declaring_type_token: declared?.token ?? null,
+      declaring_type: declared?.fullName ?? null,
+      name,
+      flags,
+      signature: decoded,
+      constant: constant(4, row, flags),
+    });
+  }, issues);
+};
 
 export const parseFields = (
   bytes: Buffer,
@@ -99,12 +248,40 @@ export const parseFields = (
   const fields: ManagedField[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  const table = layout.table(4);
+  const rowCount = layout.table(4)?.rowCount ?? 0;
+  const context: DecodeFieldContext = {
+    bytes,
+    layout,
+    signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
+    selected,
+    constant,
+    fields,
+    core,
+    issues,
+  };
+  if (
+    selected !== null &&
+    canIterateMemberIntervals(layout, 4, memberLists, ranges)
+  ) {
+    for (let owner = 1; owner <= ranges.length; owner += 1) {
+      const declared = ranges[owner - 1];
+      if (declared === undefined || !isSelected(selected, declared)) continue;
+      const start = declared.fieldStart;
+      const end = declared.fieldEnd;
+      if (start === null || end === null) continue;
+      const lastExclusive = Math.min(end, rowCount + 1);
+      for (let row = start; row < lastExclusive; row += 1)
+        decodeFieldRow(context, row, owner, declared);
+    }
+    return { fields, core, issues };
+  }
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 4, memberLists),
     issues,
   );
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+  for (let row = 1; row <= rowCount; row += 1) {
     // The owner comes from the shared range lookup, not the row itself: a
     // row belonging to no selected type is skipped without a cursor or name
     // charge. A selected method that references such a row keeps its name
@@ -120,50 +297,7 @@ export const parseFields = (
       !isSelected(selected, declared)
     )
       continue;
-    readManagedValue(() => {
-      const definition = readFieldDefinitionRow(bytes, layout, row);
-      const { token, rowOffset, flags, signatureIndex } = definition;
-      const name = readFieldDefinitionName(bytes, layout, definition);
-      const owned = owner ?? 0;
-      core.set(token, {
-        token,
-        name,
-        declaringType: declared?.fullName ?? null,
-        kind: "field",
-      });
-      if (!isSelected(selected, declared)) return;
-      const sig = readMetadataBlob(bytes, layout, signatureIndex);
-      const decoded = budgetedSignature(
-        sig,
-        layout,
-        signatureTypeName,
-        displayTypeName,
-        issues,
-        { scope: `Field:${token}.signature`, kind: "field", artifact: bytes },
-      );
-      core.set(token, {
-        token,
-        name,
-        declaringType: declared?.fullName ?? null,
-        kind: "field",
-        identitySha256: memberTargetIdentity(
-          name,
-          declared === undefined ? null : { table: 2, row: owned },
-          decoded,
-          declarationTypeName,
-        ),
-      });
-      fields.push({
-        token,
-        row_offset: rowOffset,
-        declaring_type_token: declared?.token ?? null,
-        declaring_type: declared?.fullName ?? null,
-        name,
-        flags,
-        signature: decoded,
-        constant: constant(4, row, flags),
-      });
-    }, issues);
+    decodeFieldRow(context, row, owner, declared);
   }
   return { fields, core, issues };
 };
@@ -337,6 +471,202 @@ interface ParseMethodsInput {
   readonly methodLimit?: number;
 }
 
+interface DecodeMethodContext {
+  readonly bytes: Buffer;
+  readonly layout: ManagedMetadataLayout;
+  readonly pe: ManagedPeLayout;
+  readonly signatureTypeName: SignatureTypeName;
+  readonly displayTypeName: SignatureDisplayTypeName;
+  readonly declarationTypeName: DeclarationTypeName;
+  readonly memberRefKinds: ReadonlyMap<string, "field" | "method">;
+  readonly parameterDefaults: (
+    methodRow: number,
+  ) => ManagedMethod["parameter_defaults"];
+  readonly selected: SelectedTypeTokens;
+  readonly methodOffset: number;
+  readonly methodLimit: number;
+  readonly methods: DecodedMethod[];
+  readonly unresolvedDefinitions: UnresolvedDefinition[];
+  readonly core: Map<string, MemberCore>;
+  readonly issues: ManagedParseIssue[];
+  unscannedMethods: number;
+}
+
+const decodeMethodRow = (
+  context: DecodeMethodContext,
+  row: number,
+  owner: number | undefined,
+  declared: TypeRange | undefined,
+): void => {
+  const {
+    bytes,
+    layout,
+    pe,
+    signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
+    memberRefKinds,
+    parameterDefaults,
+    selected,
+    methodOffset,
+    methodLimit,
+    methods,
+    unresolvedDefinitions,
+    core,
+    issues,
+  } = context;
+  const inPage = row > methodOffset && row - methodOffset <= methodLimit;
+  const selectedForEvidence = inPage && isSelected(selected, declared);
+  const mayBeSelected =
+    inPage &&
+    (selected === null ||
+      owner === undefined ||
+      owner === 0 ||
+      isSelected(selected, declared) ||
+      // A type whose name is unreadable may be one the caller requested.
+      declared?.fullName === null);
+  const produced = methods.length;
+  readManagedValue(() => {
+    const definition = readMethodDefinitionRow(bytes, layout, row);
+    const {
+      token,
+      rowOffset,
+      rva,
+      implFlags,
+      flags,
+      signatureIndex,
+      implementation,
+    } = definition;
+    const name = readDefinitionField(
+      () => readMethodDefinitionName(bytes, layout, definition),
+      issues,
+      "Name",
+      definition.nameOffset,
+      definition.nameIndex,
+    );
+    if (typeof name !== "string") {
+      if (selectedForEvidence)
+        unresolvedDefinitions.push(
+          admitManagedProjection(
+            {
+              kind: "MethodDef",
+              token,
+              row_offset: rowOffset,
+              declaring_type_token: declared?.token ?? null,
+              rva,
+              failed_fields: [name],
+            },
+            managedDecodeBudget(layout),
+          ),
+        );
+      return;
+    }
+    const member = {
+      token,
+      name,
+      declaringType: declared?.fullName ?? null,
+      kind: "method",
+    } as const;
+    core.set(token, member);
+    if (!selectedForEvidence) return;
+    const sig = readMetadataBlob(bytes, layout, signatureIndex);
+    const decoded = budgetedSignature(
+      sig,
+      layout,
+      signatureTypeName,
+      displayTypeName,
+      issues,
+      {
+        scope: `MethodDef:${token}.signature`,
+        kind: "method",
+        artifact: bytes,
+      },
+    );
+    core.set(token, {
+      ...member,
+      genericArity: signatureGenericArity(decoded),
+      identitySha256: memberTargetIdentity(
+        name,
+        declared === undefined || owner === undefined
+          ? null
+          : { table: 2, row: owner },
+        decoded,
+        declarationTypeName,
+      ),
+    });
+    const read = methodBody(bytes, pe, rva, {
+      implementation,
+      budget: managedDecodeBudget(layout),
+      metadataLayout: layout,
+      methodToken: token,
+      memberRefKinds,
+    });
+    appendManagedParseIssues(issues, read.issues);
+    if (!read.scanned) context.unscannedMethods += 1;
+    managedDecodeBudget(layout).reserve(128, rowOffset);
+    methods.push({
+      tokenInstructions: read.tokenInstructions,
+      catchTokens: read.catchTokens,
+      method: {
+        token,
+        row_offset: rowOffset,
+        declaring_type_token: declared?.token ?? null,
+        declaring_type: declared?.fullName ?? null,
+        name,
+        rva,
+        impl_flags: implFlags,
+        flags,
+        signature: decoded,
+        body: read.body,
+        parameter_defaults: parameterDefaults(row),
+      },
+    });
+  }, issues);
+  if (mayBeSelected && methods.length === produced)
+    context.unscannedMethods += 1;
+};
+
+const parseSelectedMethodIntervals = (
+  context: DecodeMethodContext,
+  ranges: readonly TypeRange[],
+  selected: ReadonlySet<string>,
+  rowCount: number,
+): void => {
+  const firstStart = ranges[0]?.methodStart ?? rowCount + 1;
+  const unownedEnd = Math.min(firstStart, rowCount + 1);
+  if (unownedEnd > 1) {
+    const unownedPage = inPageRange(
+      1,
+      unownedEnd,
+      context.methodOffset,
+      context.methodLimit,
+    );
+    context.unscannedMethods += unownedPage.to - unownedPage.from;
+  }
+  for (let owner = 1; owner <= ranges.length; owner += 1) {
+    const declared = ranges[owner - 1];
+    if (declared === undefined) continue;
+    const start = declared.methodStart;
+    const end = declared.methodEnd;
+    if (start === null || end === null) continue;
+    const lastExclusive = Math.min(end, rowCount + 1);
+    if (!isSelected(selected, declared)) {
+      if (declared.fullName === null) {
+        const page = inPageRange(
+          start,
+          lastExclusive,
+          context.methodOffset,
+          context.methodLimit,
+        );
+        context.unscannedMethods += page.to - page.from;
+      }
+      continue;
+    }
+    for (let row = start; row < lastExclusive; row += 1)
+      decodeMethodRow(context, row, owner, declared);
+  }
+};
+
 export const parseMethods = ({
   bytes,
   layout,
@@ -366,19 +696,48 @@ export const parseMethods = ({
   const unresolvedDefinitions: UnresolvedDefinition[] = [];
   const core = new Map<string, MemberCore>();
   const issues: ManagedParseIssue[] = [];
-  let unscannedMethods = 0;
-  const parameterDefaults = createManagedParameterDefaultReader(
+  const context: DecodeMethodContext = {
     bytes,
     layout,
+    pe,
+    signatureTypeName,
+    displayTypeName,
+    declarationTypeName,
+    memberRefKinds,
+    parameterDefaults: createManagedParameterDefaultReader(
+      bytes,
+      layout,
+      issues,
+      constant,
+    ),
+    selected,
+    methodOffset,
+    methodLimit,
+    methods,
+    unresolvedDefinitions,
+    core,
     issues,
-    constant,
-  );
-  const table = layout.table(6);
+    unscannedMethods: 0,
+  };
+  const rowCount = layout.table(6)?.rowCount ?? 0;
+  if (
+    selected !== null &&
+    canIterateMemberIntervals(layout, 6, memberLists, ranges)
+  ) {
+    parseSelectedMethodIntervals(context, ranges, selected, rowCount);
+    return {
+      methods,
+      core,
+      issues,
+      unscannedMethods: context.unscannedMethods,
+      unresolvedDefinitions,
+    };
+  }
   const ownerRow = readManagedValue(
     () => memberDeclaringTypeRowLookup(bytes, layout, 6, memberLists),
     issues,
   );
-  for (let row = 1; row <= (table?.rowCount ?? 0); row += 1) {
+  for (let row = 1; row <= rowCount; row += 1) {
     // The owner is read first: a row that produced no method hides a selected
     // body only when its owner is selected, unknown, or unreadably named.
     const owner =
@@ -386,128 +745,29 @@ export const parseMethods = ({
         ? undefined
         : readManagedValue(() => ownerRow(row), issues);
     const declared = owner === undefined ? undefined : ranges[owner - 1];
-    const inPage = row > methodOffset && row - methodOffset <= methodLimit;
-    const selectedForEvidence = inPage && isSelected(selected, declared);
-    const mayBeSelected =
-      inPage &&
-      (selected === null ||
-        owner === undefined ||
-        owner === 0 ||
-        isSelected(selected, declared) ||
-        // A type whose name is unreadable may be one the caller requested.
-        declared?.fullName === null);
     // As in parseFields: a row belonging to no selected type is skipped
     // without reading it. The unscanned count keeps its existing meaning:
     // a skipped row hides a selected body only when its owner is unknown
-    // or unreadably named, which is exactly when mayBeSelected holds.
+    // or unreadably named.
     if (
       owner !== undefined &&
       selected !== null &&
       !isSelected(selected, declared)
     ) {
-      if (mayBeSelected) unscannedMethods += 1;
+      const inPage = row > methodOffset && row - methodOffset <= methodLimit;
+      if (inPage && (owner === 0 || declared?.fullName === null))
+        context.unscannedMethods += 1;
       continue;
     }
-    const produced = methods.length;
-    readManagedValue(() => {
-      const definition = readMethodDefinitionRow(bytes, layout, row);
-      const {
-        token,
-        rowOffset,
-        rva,
-        implFlags,
-        flags,
-        signatureIndex,
-        implementation,
-      } = definition;
-      const name = readDefinitionField(
-        () => readMethodDefinitionName(bytes, layout, definition),
-        issues,
-        "Name",
-        definition.nameOffset,
-        definition.nameIndex,
-      );
-      if (typeof name !== "string") {
-        if (selectedForEvidence)
-          unresolvedDefinitions.push(
-            admitManagedProjection(
-              {
-                kind: "MethodDef",
-                token,
-                row_offset: rowOffset,
-                declaring_type_token: declared?.token ?? null,
-                rva,
-                failed_fields: [name],
-              },
-              managedDecodeBudget(layout),
-            ),
-          );
-        return;
-      }
-      const member = {
-        token,
-        name,
-        declaringType: declared?.fullName ?? null,
-        kind: "method",
-      } as const;
-      core.set(token, member);
-      if (!selectedForEvidence) return;
-      const sig = readMetadataBlob(bytes, layout, signatureIndex);
-      const decoded = budgetedSignature(
-        sig,
-        layout,
-        signatureTypeName,
-        displayTypeName,
-        issues,
-        {
-          scope: `MethodDef:${token}.signature`,
-          kind: "method",
-          artifact: bytes,
-        },
-      );
-      core.set(token, {
-        ...member,
-        genericArity: signatureGenericArity(decoded),
-        identitySha256: memberTargetIdentity(
-          name,
-          declared === undefined || owner === undefined
-            ? null
-            : { table: 2, row: owner },
-          decoded,
-          declarationTypeName,
-        ),
-      });
-      const read = methodBody(bytes, pe, rva, {
-        implementation,
-        budget: managedDecodeBudget(layout),
-        metadataLayout: layout,
-        methodToken: token,
-        memberRefKinds,
-      });
-      appendManagedParseIssues(issues, read.issues);
-      if (!read.scanned) unscannedMethods += 1;
-      managedDecodeBudget(layout).reserve(128, rowOffset);
-      methods.push({
-        tokenInstructions: read.tokenInstructions,
-        catchTokens: read.catchTokens,
-        method: {
-          token,
-          row_offset: rowOffset,
-          declaring_type_token: declared?.token ?? null,
-          declaring_type: declared?.fullName ?? null,
-          name,
-          rva,
-          impl_flags: implFlags,
-          flags,
-          signature: decoded,
-          body: read.body,
-          parameter_defaults: parameterDefaults(row),
-        },
-      });
-    }, issues);
-    if (mayBeSelected && methods.length === produced) unscannedMethods += 1;
+    decodeMethodRow(context, row, owner, declared);
   }
-  return { methods, core, issues, unscannedMethods, unresolvedDefinitions };
+  return {
+    methods,
+    core,
+    issues,
+    unscannedMethods: context.unscannedMethods,
+    unresolvedDefinitions,
+  };
 };
 
 /**
@@ -534,10 +794,14 @@ export const readReferencedMemberCores = (
     if (!ownerRows.has(table))
       ownerRows.set(
         table,
-        readManagedValue(
-          () => memberDeclaringTypeRowLookup(bytes, layout, table, memberLists),
-          issues,
-        ),
+        canIterateMemberIntervals(layout, table, memberLists, ranges)
+          ? (targetRow) =>
+              declaringTypeRowFromIntervals(ranges, table, targetRow)
+          : readManagedValue(
+              () =>
+                memberDeclaringTypeRowLookup(bytes, layout, table, memberLists),
+              issues,
+            ),
       );
     return ownerRows.get(table)?.(row) ?? 0;
   };
