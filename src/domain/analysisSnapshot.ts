@@ -586,22 +586,25 @@ export const snapshotEvidenceForQuery = (
     )
       continue;
     let recordKey: string | undefined;
-    const getRecordKey = (): string =>
-      (recordKey ??= compositeKey([
-        evidenceQueryKey(record),
-        evidenceContentDigest(record),
-      ]));
+    const getRecordKey = (): string => (recordKey ??= evidenceMatchKey(record));
     const matchesEntry =
       entry !== undefined &&
-      isCorrespondingEvidence(record, snapshot) &&
-      getRecordKey() ===
-        (expectedEntryKey ??= entryEvidenceKey(entry, snapshot.binding));
+      matchesProviderEvidence(
+        record,
+        snapshot,
+        getRecordKey,
+        () => (expectedEntryKey ??= entryEvidenceKey(entry, snapshot.binding)),
+      );
     const matchesWorkflow =
       !matchesEntry &&
       workflowEntry !== undefined &&
-      isWorkflowEvidence(record, snapshot, workflowEntry) &&
-      getRecordKey() ===
-        (expectedWorkflowKey ??= workflowEntryEvidenceKey(workflowEntry));
+      matchesWorkflowEvidence(
+        record,
+        snapshot,
+        workflowEntry,
+        getRecordKey,
+        () => (expectedWorkflowKey ??= workflowEntryEvidenceKey(workflowEntry)),
+      );
     if (!matchesEntry && !matchesWorkflow) continue;
     // Entries bind the result, not every part of the Evidence commitment
     // (for example, upstream links). Do not choose provenance by ID sort order.
@@ -654,11 +657,12 @@ export const evidenceMatchesEntry = (
   entry: AnalysisSnapshotEntry,
   snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
 ): boolean =>
-  isCorrespondingEvidence(evidence, snapshot) &&
-  compositeKey([
-    evidenceQueryKey(evidence),
-    evidenceContentDigest(evidence),
-  ]) === entryEvidenceKey(entry, snapshot.binding);
+  matchesProviderEvidence(
+    evidence,
+    snapshot,
+    () => evidenceMatchKey(evidence),
+    () => entryEvidenceKey(entry, snapshot.binding),
+  );
 
 /** Compute the stable lookup key for one provider/profile-specific query. */
 export const analysisQueryId = (
@@ -1017,11 +1021,34 @@ export const evidenceMatchesWorkflowEntry = (
   entry: AnalysisSnapshotWorkflowEntry,
   snapshot: Pick<AnalysisSnapshot, "target">,
 ): boolean =>
+  matchesWorkflowEvidence(
+    evidence,
+    snapshot,
+    entry,
+    () => evidenceMatchKey(evidence),
+    () => workflowEntryEvidenceKey(entry),
+  );
+
+const evidenceMatchKey = (evidence: Evidence): string =>
+  compositeKey([evidenceQueryKey(evidence), evidenceContentDigest(evidence)]);
+
+const matchesProviderEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target" | "binding">,
+  recordKey: () => string,
+  expectedKey: () => string,
+): boolean =>
+  isCorrespondingEvidence(evidence, snapshot) && recordKey() === expectedKey();
+
+const matchesWorkflowEvidence = (
+  evidence: Evidence,
+  snapshot: Pick<AnalysisSnapshot, "target">,
+  entry: AnalysisSnapshotWorkflowEntry,
+  recordKey: () => string,
+  expectedKey: () => string,
+): boolean =>
   isWorkflowEvidence(evidence, snapshot, entry) &&
-  compositeKey([
-    evidenceQueryKey(evidence),
-    evidenceContentDigest(evidence),
-  ]) === workflowEntryEvidenceKey(entry);
+  recordKey() === expectedKey();
 
 const evidenceContentMetadata = (evidence: Evidence) => {
   return {
