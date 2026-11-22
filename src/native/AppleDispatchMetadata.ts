@@ -432,6 +432,7 @@ export const inspectAppleDispatchMetadata = async (
       if (signal?.aborted) throw cancelled();
       const read = await readBoundedFileBytes(handle, maximumBytes, {
         signal,
+        expectedSize: before.size,
         cancellationFailure: () => cancelled(),
       });
       if (read === undefined) throw inputBudgetExceeded(admission, null);
