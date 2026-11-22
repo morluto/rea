@@ -147,6 +147,11 @@ export const analysisClientFailureForOperation = (
   } else if (cause instanceof AnalysisTimeoutError)
     result = new AnalysisTimeoutError(operation, cause.timeoutMs, {
       ...context,
+      ...(cause.elapsedMs === undefined ? {} : { elapsedMs: cause.elapsedMs }),
+      ...(cause.targetBytes === undefined
+        ? {}
+        : { targetBytes: cause.targetBytes }),
+      ...(cause.envName === undefined ? {} : { envName: cause.envName }),
       ...(cause.userMessage === undefined
         ? {}
         : { userMessage: cause.userMessage }),

@@ -32,6 +32,7 @@ import type { Logger } from "pino";
 import type { ProgressUpdate } from "../../../../src/ports/ProgressReporter.js";
 
 import { err, ok } from "../../../../src/domain/result.js";
+import * as GhidraTargetSnapshot from "../../../../src/ghidra/GhidraTargetSnapshot.js";
 import * as GhidraTransport from "../../../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../../../src/ghidra/GhidraClient.js";
 import { GhidraAdmissionError } from "../../../../src/ghidra/GhidraAdmissionError.js";
@@ -449,6 +450,32 @@ it.each([false, true])(
     );
   },
 );
+
+it("discards the previous target admission before retrying snapshot acquisition", async () => {
+  const admission = { source: { size: 4096 } };
+  const snapshots = vi
+    .spyOn(GhidraTargetSnapshot, "createGhidraTargetSnapshot")
+    .mockResolvedValueOnce({
+      path: fixturePath,
+      sha256: TARGET_SHA256,
+      admission,
+    })
+    .mockRejectedValueOnce(new Error("second snapshot unavailable"));
+  try {
+    const client = clientFor({
+      launch: async () => err(new GhidraLaunchError("launch failed")),
+    });
+    const first = await client.start();
+    if (first.ok) throw new Error("Expected first launch failure");
+    expect(first.error.diagnostics.target_admission).toEqual(admission);
+    const second = await client.start();
+    if (second.ok) throw new Error("Expected second snapshot failure");
+    expect(snapshots).toHaveBeenCalledTimes(2);
+    expect(second.error.diagnostics).not.toHaveProperty("target_admission");
+  } finally {
+    snapshots.mockRestore();
+  }
+});
 
 it("hashes snapshot section ranges in the same pass as the whole-file digest", async () => {
   const client = clientFor(new FixtureLauncher());

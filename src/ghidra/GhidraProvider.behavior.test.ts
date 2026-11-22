@@ -118,7 +118,10 @@ import {
   ghidraPdbLimitations,
 } from "./GhidraSessionValues.js";
 import type { Result } from "../domain/result.js";
-import { GhidraSessionError } from "./GhidraSessionError.js";
+import {
+  GhidraSessionError,
+  type GhidraSessionErrorOptions,
+} from "./GhidraSessionError.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { silentLogger } from "../logger.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -4795,13 +4798,15 @@ const ghidraTimedOut = async (
   message: string,
   environment: Readonly<Record<string, string>> = {},
   callerLifetime: AnalysisCallerLifetime = "continuing",
+  failureOptions: GhidraSessionErrorOptions = {},
+  diagnostics: Readonly<Record<string, JsonValue>> = {
+    failure_kind: "timeout",
+  },
 ) => {
-  const failure = new GhidraSessionError(
-    "timeout",
-    message,
-    { failure_kind: "timeout" },
-    { timeoutMs: 250 },
-  );
+  const failure = new GhidraSessionError("timeout", message, diagnostics, {
+    timeoutMs: 250,
+    ...failureOptions,
+  });
   const ghidra = provider(
     installationHost(),
     () => ({
@@ -4824,6 +4829,67 @@ const ghidraTimedOut = async (
   if (result.ok) throw new Error("Expected a Ghidra timeout");
   return projectAnalysisError(result.error, callerLifetime);
 };
+
+describe("Ghidra structured startup-timeout diagnostics", () => {
+  it("reports structured startup-timeout fields without a target size", async () => {
+    const projected = await ghidraTimedOut(
+      "start",
+      "Ghidra startup deadline elapsed",
+      {},
+      "continuing",
+      { elapsedMs: 251 },
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: {
+        timeout_ms: 250,
+        elapsed_ms: 251,
+        env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+      },
+    });
+    expect(Object.hasOwn(projected.details ?? {}, "target_bytes")).toBe(false);
+  });
+
+  it("reports the admitted target size when the failure retains the admission", async () => {
+    const projected = await ghidraTimedOut(
+      "start",
+      "Ghidra startup deadline elapsed",
+      {},
+      "continuing",
+      { elapsedMs: 251 },
+      {
+        failure_kind: "timeout",
+        target_admission: {
+          source: { size: 4096 },
+          snapshot: { size: 4096 },
+        },
+      },
+    );
+    expect(projected).toMatchObject({
+      code: "provider_timeout",
+      details: {
+        timeout_ms: 250,
+        elapsed_ms: 251,
+        target_bytes: 4096,
+        env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+      },
+    });
+  });
+
+  it("keeps bridge request deadlines free of startup-timeout fields", async () => {
+    const projected = await ghidraTimedOut(
+      "request",
+      "Ghidra bridge request timed out",
+      {},
+      "continuing",
+      { elapsedMs: 251 },
+    );
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).not.toContain("REA_GHIDRA_STARTUP_TIMEOUT_MS");
+    expect(Object.hasOwn(projected.details ?? {}, "env_name")).toBe(false);
+    expect(Object.hasOwn(projected.details ?? {}, "elapsed_ms")).toBe(false);
+  });
+});
 
 describe("Ghidra deadline guidance", () => {
   it("names the startup deadline setting and its value when startup times out", async () => {
@@ -4865,11 +4931,15 @@ describe("Ghidra deadline guidance", () => {
       "start",
       "Ghidra startup deadline elapsed",
       { REA_GHIDRA_PROJECT_PATH: join(root, "large.gpr") },
+      "continuing",
+      { elapsedMs: 251 },
     );
     expect(projected).toMatchObject({
       code: "provider_timeout",
       details: {
         timeout_ms: 250,
+        elapsed_ms: 251,
+        env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
         limit: { setting: "ghidra.startup_timeout_ms" },
       },
     });
@@ -5112,10 +5182,15 @@ it("identifies checkpoint recovery for a timed-out startup", async () => {
       "Ghidra startup deadline elapsed",
       { REA_GHIDRA_CHECKPOINT_DIR: root },
       lifetime,
+      { elapsedMs: 251 },
     );
     expect(projected).toMatchObject({
       code: "provider_timeout",
-      details: { timeout_ms: 250 },
+      details: {
+        timeout_ms: 250,
+        elapsed_ms: 251,
+        env_name: "REA_GHIDRA_STARTUP_TIMEOUT_MS",
+      },
     });
     expect(projected.message).toMatch(/checkpoint restore.*initial analysis/u);
     expect(projected.remediation.action).toContain(
