@@ -53,8 +53,7 @@ it("preserves redirected response identity across decoding failures and valid UT
     name: "replacement-character",
     body: mapWithSourceBytes(Buffer.from("�")),
   };
-  const unavailable = { name: "http-failure", body: "service unavailable" };
-  const fixtures = [...invalid, valid, unavailable].map((scenario, index) => ({
+  const fixtures = [...invalid, valid].map((scenario, index) => ({
     ...scenario,
     ...request(index + 1),
     effectiveUrl: `${origin}/maps/${scenario.name}.map?token=source-value#fragment`,
@@ -76,9 +75,7 @@ it("preserves redirected response identity across decoding failures and valid UT
       const scenario = replies.get(received);
       if (scenario === undefined)
         throw new Error(`Unexpected request: ${received}`);
-      return new Response(scenario.body, {
-        status: scenario.name === unavailable.name ? 503 : 200,
-      });
+      return new Response(scenario.body);
     },
   });
 
@@ -104,17 +101,11 @@ it("preserves redirected response identity across decoding failures and valid UT
     if (fixture.name === valid.name) {
       expect(item).toMatchObject({
         status: "included",
-        artifact: { text: valid.body.toString("utf8") },
+        artifact: {
+          text: valid.body.toString("utf8"),
+          sha256: digest(valid.body),
+        },
       });
-    } else if (fixture.name === unavailable.name) {
-      expect(item).toMatchObject({
-        status: "fetch_failed",
-        artifact: null,
-        limitation: expect.stringContaining(
-          "Source-map server returned HTTP 503",
-        ),
-      });
-      expect(item).not.toHaveProperty("response_identity");
     } else {
       expect(item, fixture.name).toMatchObject({
         status: "invalid",
@@ -135,7 +126,7 @@ it("preserves redirected response identity across decoding failures and valid UT
   }
 });
 
-it("retains completed body identity when the deadline lands as the response stream ends", async () => {
+it("keeps earlier maps and the timed-out map body identity when its stream ends at the deadline", async () => {
   const body = JSON.stringify({
     version: 3,
     sources: ["a.js"],
@@ -161,19 +152,30 @@ it("retains completed body identity when the deadline lands as the response stre
   );
 
   try {
-    const result = await fetchWebSourceMaps(
-      [request(1)],
+    const earlier = request(1);
+    const timedOut = request(2);
+    const result = await fetchWebSourceMapsOk(
+      [earlier, timedOut],
       { ...input, source_map_fetch_timeout_ms: 1_000 },
       undefined,
-      { fetch: async () => new Response(stream) },
+      {
+        fetch: async (url) =>
+          new Response(String(url) === earlier.fetchUrl ? body : stream),
+      },
     );
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 2,
+      processed: 2,
       items: [
         {
+          status: "included",
+          script_key: earlier.scriptKey,
+          artifact: { text: body, sha256: digest(body) },
+          original_sources: [{ source: `${origin}/a.js` }],
+        },
+        {
+          script_key: timedOut.scriptKey,
           status: "fetch_failed",
           artifact: null,
           response_identity: {

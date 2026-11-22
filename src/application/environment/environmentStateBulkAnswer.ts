@@ -87,6 +87,7 @@ const namedTargets = (
     supplied: false,
   }));
   const targets: BulkTarget[] = [];
+  const seen = new Set<BulkTarget["entity"]>();
   for (const { id, body: members } of named) {
     // A body's id is the entity's as written, never a percent-encoded spelling of another.
     const entity = namedEntity(serving.store, type, {
@@ -101,13 +102,14 @@ const namedTargets = (
           `The state holds no ${type} entity ${id}; the state is unchanged.`,
         ),
       );
-    if (targets.some((target) => target.entity === entity))
+    if (seen.has(entity))
       return err(
         refused(
           tool,
           `The body names ${type} entity ${entity.id} more than once; the state is unchanged.`,
         ),
       );
+    seen.add(entity);
     targets.push({ entity, body: members });
   }
   return ok(targets);

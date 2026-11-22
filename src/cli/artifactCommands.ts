@@ -1,5 +1,5 @@
 import { ARTIFACT_TOOL_CONTRACTS } from "../contracts/artifactToolContracts.js";
-import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
+import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/openBinaryToolContract.js";
 import {
   contractNamed,
   type CliSessionTarget,

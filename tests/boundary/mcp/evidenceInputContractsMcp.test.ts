@@ -1,10 +1,14 @@
 import { expect, it } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 it("borrows SDK Evidence inputs while leaving ordinary request constraints active", async () => {
-  const contract = toolContract("build_call_path");
+  const contract = SESSION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "build_call_path",
+  );
+  if (contract?.name !== "build_call_path")
+    throw new Error("Expected the build_call_path contract");
   const registration = toolRegistrationOptions(contract);
   const source = Object.defineProperty({}, "normalized_result", {
     enumerable: true,

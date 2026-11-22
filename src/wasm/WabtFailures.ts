@@ -133,16 +133,13 @@ const wabtUnavailable = (
 
 /** Past the output budget, retained text is a prefix of an oversized stream; keep a bounded excerpt of each. */
 const outputLimitExcerpt = (snapshot: ProviderProcessSnapshot) => ({
+  ...capturedProviderOutput(snapshot),
   stdout: utf8HeadExcerpt(snapshot.stdout.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   stderr: utf8HeadExcerpt(snapshot.stderr.text, OUTPUT_LIMIT_EXCERPT_BYTES)
     .text,
   // The command reports output-limit only after retention was truncated.
   truncated: true,
-  stdout_bytes: snapshot.stdout.bytes,
-  stderr_bytes: snapshot.stderr.bytes,
-  exit_code: snapshot.exitCode ?? null,
-  signal: snapshot.signal ?? null,
 });
 /** WABT's per-call command deadline and the setting that changes it. */
 const wabtCommandTimeout = (execution: WabtFailureContext | undefined) => {

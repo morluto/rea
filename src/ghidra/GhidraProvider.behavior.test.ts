@@ -21,7 +21,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
-  ghidraFunctionSeedRecovery,
+  ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   limitationsFor,
   type GhidraSessionSource,
@@ -97,6 +97,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import type { GhidraExtensionResult } from "./extensions/GhidraExtensions.js";
 import { GhidraClient, type GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   ghidraMissingProgramGuidance,
@@ -104,6 +105,7 @@ import {
   type GhidraProviderClientFactory,
 } from "./GhidraProviderClient.js";
 import { GhidraLaunchError, GhidraHeadlessLauncher } from "./GhidraLauncher.js";
+import { strippedMachoWithMain } from "./GhidraMachoEntryHint.fixture.js";
 import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
@@ -1584,28 +1586,6 @@ describe("Ghidra result projection", () => {
     });
   });
 
-  it("projects terminal-call facts from the function bridge into execution limitations", async () => {
-    const limitation =
-      "Ghidra Listing reports a terminal call at 0x401020 to 0x7f001000 __tls_get_addr (external=true, thunk=false, hasNoReturn=true); fallthrough is excluded by Ghidra's flow model. This records Ghidra's FunctionManager flag, not an independent verification that the callee cannot return.";
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () =>
-        Promise.resolve(
-          ok({ value: "void main() {}", limitations: [limitation] }),
-        ),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
-    const execution = await client.execute("procedure_pseudo_code", {
-      procedure: "main",
-    });
-    if (!execution.ok) throw execution.error;
-    expect(execution.value.result).toBe("void main() {}");
-    expect(execution.value.limitations).toContain(limitation);
-    expect(execution.value.rawResult).toBeNull();
-    await client.close();
-  });
-
   it.each([
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],
@@ -1746,14 +1726,14 @@ describe("Ghidra procedure lookup projection", () => {
       message:
         "Unknown Ghidra procedure name or address: Unresolved_Selected_Name",
       remedy: "list_procedures",
-      qualification: "does not prove",
+      qualification: "presence in the artifact unknown",
     },
     {
       code: "procedure_not_found",
       selector: "0x14b0c",
       message: "No procedure exists at the requested address: 0x14b0c",
       remedy: "list_procedures",
-      qualification: "does not prove",
+      qualification: "presence in the artifact unknown",
     },
     {
       code: "file_offset_unmapped",
@@ -1811,10 +1791,9 @@ describe("Ghidra procedure lookup projection", () => {
         expect(projected.remediation.action).not.toContain(
           "REA_GHIDRA_PROJECT_PATH",
         );
-        // Code that auto-analysis never reached has a declared-entry recovery.
-        expect(
-          projected.remediation.action.includes("REA_GHIDRA_SEED_FILE"),
-        ).toBe(code === "procedure_not_found");
+        expect(projected.remediation.action).not.toContain(
+          "REA_GHIDRA_SEED_FILE",
+        );
       } finally {
         await client.close();
       }
@@ -1870,11 +1849,7 @@ describe("Ghidra procedure lookup projection", () => {
           "completeness is unknown",
         );
         expect(projected.remediation.action).toContain(
-          "will not include the selected project's annotations or other edits",
-        );
-        // Seeds apply only to that fresh import, never to the selected project.
-        expect(projected.remediation.action).toContain(
-          ghidraFunctionSeedRecovery("existing-project"),
+          "excludes the selected project's annotations and other edits",
         );
       } finally {
         await client.close();
@@ -1883,6 +1858,253 @@ describe("Ghidra procedure lookup projection", () => {
       await ghidra.closeOwnedResources();
     }
   });
+});
+
+const MACHO_MAIN_RETRY =
+  "Retry the same operation at Ghidra procedure address 0x100000460";
+const universalArm64Target: BinaryTarget = {
+  path: "/tmp/fixture",
+  sha256: "a".repeat(64),
+  kind: "executable",
+  format: "mach-o-universal",
+  architecture: "arm64",
+  availableArchitectures: ["arm64"],
+  universalSlice: { offset: 0, size: 32 },
+};
+const missingMachoMain = async (options: {
+  readonly target: BinaryTarget;
+  readonly selector: string;
+  readonly remoteCode?: string;
+  readonly observedEntry?: string | null;
+  readonly lookupFailure?: GhidraSessionError;
+  readonly snapshotFailure?: GhidraSessionError;
+  readonly session?: GhidraSessionInfo;
+  readonly environment?: Readonly<Record<string, string>>;
+}) => {
+  const remoteCode = options.remoteCode ?? "procedure_not_found";
+  const message = `Unknown Ghidra procedure name or address: ${options.selector}`;
+  const image = strippedMachoWithMain();
+  const snapshot = { reads: 0 };
+  const ghidra = provider(
+    installationHost(),
+    () => ({
+      start: async () => ok(options.session ?? sessionInfo()),
+      callTool: async (operation) => {
+        if (operation === "procedure_address") {
+          if (options.lookupFailure !== undefined)
+            return err(options.lookupFailure);
+          if (options.observedEntry !== null)
+            return ok(options.observedEntry ?? "0x100000460");
+        }
+        return err(
+          new GhidraSessionError(
+            "remote",
+            message,
+            { remote_code: remoteCode },
+            { remoteCode },
+          ),
+        );
+      },
+      readTargetSnapshotRanges: async <T>(
+        read: (
+          range: (position: number, length: number) => Promise<Uint8Array>,
+          size: number,
+        ) => Promise<T>,
+      ) => {
+        snapshot.reads += 1;
+        if (options.snapshotFailure !== undefined)
+          return err(options.snapshotFailure);
+        return ok(
+          await read(
+            async (position, length) =>
+              image.subarray(position, position + length),
+            image.byteLength,
+          ),
+        );
+      },
+      close: async () => ok(null),
+    }),
+    options.environment,
+  );
+  onTestFinished(async () => {
+    await ghidra.closeOwnedResources();
+  });
+  const resolved = await ghidra.resolveAnalysisProfile(options.target);
+  if (!resolved.ok) throw resolved.error;
+  if (resolved.value.profile === null)
+    throw new Error("Expected a bound Ghidra profile");
+  const client = ghidra.createClient(options.target, resolved.value.profile);
+  try {
+    const result = await client.execute("procedure_pseudo_code", {
+      procedure: options.selector,
+    });
+    if (result.ok) throw new Error("Expected a missing procedure");
+    return {
+      error: result.error,
+      projected: projectAnalysisError(result.error),
+      snapshot,
+    };
+  } finally {
+    await client.close();
+  }
+};
+
+describe("Ghidra missing main on a Mach-O with LC_MAIN", () => {
+  it.each(["main", "_main", "MAIN", " main "])(
+    "names the LC_MAIN entry address for %j on a thin Mach-O",
+    async (selector) => {
+      const { projected, snapshot } = await missingMachoMain({
+        target: executableTarget("mach-o", "arm64"),
+        selector,
+      });
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: {
+          related_operations: ["list_procedures", "search_procedures"],
+          diagnostics: { remote_code: "procedure_not_found" },
+        },
+      });
+      expect(projected.remediation.action).toContain("list_procedures");
+      expect(projected.remediation.action.startsWith(MACHO_MAIN_RETRY)).toBe(
+        true,
+      );
+      expect(projected.remediation.action).toContain("--procedure 0x100000460");
+      expect(projected.remediation.action).not.toContain(
+        "REA_GHIDRA_SEED_FILE",
+      );
+      expect(snapshot.reads).toBe(1);
+    },
+  );
+
+  it.each([null, "0x100000450"])(
+    "keeps inventory recovery if the provider reports %s instead of the exact candidate",
+    async (observedEntry) => {
+      const { projected } = await missingMachoMain({
+        target: executableTarget("mach-o", "arm64"),
+        selector: "main",
+        observedEntry,
+      });
+      expect(projected.remediation.action).toContain("search_procedures");
+      expect(projected.remediation.action).not.toContain("LC_MAIN");
+    },
+  );
+
+  it.each([
+    {
+      name: "another procedure name",
+      target: executableTarget("mach-o", "arm64"),
+      selector: "foo",
+    },
+    {
+      name: "an ELF target",
+      target: executableTarget("elf", "x86_64"),
+      selector: "main",
+    },
+    {
+      name: "a universal Mach-O whose Ghidra slice is not committed",
+      target: universalArm64Target,
+      selector: "main",
+    },
+    {
+      name: "an ambiguous main",
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      remoteCode: "procedure_ambiguous",
+    },
+  ])(
+    "leaves the recovery unchanged for $name without reading the snapshot",
+    async (options) => {
+      const { projected, snapshot } = await missingMachoMain(options);
+      expect(projected.remediation.action).not.toContain("LC_MAIN");
+      expect(snapshot.reads).toBe(0);
+    },
+  );
+
+  it("leaves a selected project's recovery unchanged because its image base is not established", async () => {
+    const root = await createTestTempDirectory("rea-missing-main-project-");
+    await mkdir(join(root, "selected.rep"));
+    await writeFile(join(root, "selected.gpr"), "marker");
+    const { projected, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      session: {
+        ...sessionInfo(),
+        read_only: true,
+        existing_project: true as const,
+        analysis_complete: null,
+        capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
+          (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
+        ),
+      },
+      environment: { REA_GHIDRA_PROJECT_PATH: join(root, "selected.gpr") },
+    });
+    expect(projected.remediation.action).toContain("REA_GHIDRA_PROJECT_PATH");
+    expect(projected.remediation.action).not.toContain("LC_MAIN");
+    expect(snapshot.reads).toBe(0);
+  });
+});
+
+describe("Ghidra advisory entry observation failures", () => {
+  it("keeps the original failure and generic recovery when the snapshot read fails", async () => {
+    const { projected, snapshot } = await missingMachoMain({
+      target: executableTarget("mach-o", "arm64"),
+      selector: "main",
+      snapshotFailure: new GhidraSessionError(
+        "protocol",
+        "Ghidra target snapshot read or finalization did not complete",
+      ),
+    });
+    expect(snapshot.reads).toBe(1);
+    expect(projected).toMatchObject({
+      code: "invalid_request",
+      details: { diagnostics: { remote_code: "procedure_not_found" } },
+    });
+    expect(projected.remediation.action).toContain("search_procedures");
+    expect(projected.remediation.action).not.toContain("LC_MAIN");
+  });
+
+  it.each(["snapshot", "lookup"] as const)(
+    "attaches failed %s cleanup to the original missing-procedure error",
+    async (stage) => {
+      const cleanup = new ProviderCleanupError(
+        "ghidra",
+        ["controlled snapshot descriptor"],
+        { reason: "controlled close failure" },
+      );
+      const lease = new AnalysisCleanupLease(async () => {}, [
+        "controlled snapshot descriptor",
+      ]);
+      lease.bindCleanupError(cleanup);
+      onTestFinished(() => lease.release());
+      const failure = new GhidraSessionError(
+        "protocol",
+        "Ghidra entry observation finalization did not complete",
+      ).withCleanupFailure(cleanup);
+      const { error, snapshot } = await missingMachoMain({
+        target: executableTarget("mach-o", "arm64"),
+        selector: "main",
+        ...(stage === "snapshot"
+          ? { snapshotFailure: failure }
+          : { lookupFailure: failure }),
+      });
+      expect(snapshot.reads).toBe(1);
+      expect(error.cleanupIncomplete).toBe(true);
+      expect(error.cleanupResources).toEqual([
+        "controlled snapshot descriptor",
+      ]);
+      const primary = error.cleanupPrimary;
+      if (primary === undefined) throw new Error("Expected a cleanup primary");
+      const projected = projectAnalysisError(primary);
+      expect(projected).toMatchObject({
+        code: "invalid_request",
+        details: { diagnostics: { remote_code: "procedure_not_found" } },
+      });
+      expect(projected.remediation.action).toContain("search_procedures");
+      expect(projected.remediation.action).not.toContain("LC_MAIN");
+      await lease.release();
+      expect(error.cleanupIncomplete).toBe(false);
+    },
+  );
 });
 
 describe("Ghidra file-offset outcome projection", () => {
@@ -4165,6 +4387,31 @@ describe("Ghidra empty instruction reference facets", () => {
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
+
+  it("names the code seed recovery when the address is not in Ghidra's listing", async () => {
+    const limitations = await executeInspect({
+      ...compactInstruction(),
+      status: "not-in-listing",
+      bytes: null,
+      length: null,
+      mnemonic: null,
+      raw_disassembly: null,
+      incoming_references: [compactReference()],
+    });
+    expect(
+      limitations.filter((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toEqual([ghidraNotInListingLimitation("fresh-import")]);
+  });
+
+  it.each([
+    ["decoded", instruction([compactReference()], [compactReference()])],
+    ["data", definedData([compactReference()])],
+  ])("adds no seed recovery to a %s instruction answer", async (_, result) => {
+    const limitations = await executeInspect(result);
+    expect(
+      limitations.some((item) => item.includes("REA_GHIDRA_SEED_FILE")),
+    ).toBe(false);
+  });
 });
 
 describe("Ghidra containing-procedure absence", () => {
@@ -4322,97 +4569,102 @@ const peTarget = (
 });
 
 describe("Ghidra extension failures", () => {
-  it.each(["unsupported", "failed", "malformed"] as const)(
+  it.each([
+    "unsupported",
+    "failed",
+    "wrong artifact",
+    "loader failure",
+  ] as const)(
     "preserves %s recovery diagnostics and closes without restarting",
-    async (status) => {
+    async (scenario) => {
       const directory = await createTestTempDirectory(
         "rea-provider-extension-",
       );
       const jar = join(directory, "addon.jar");
-      await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
-      const config = parseConfig({
-        GHIDRA_INSTALL_DIR: INSTALL,
-        REA_GHIDRA_NATIVEAOT_JAR: jar,
-      });
-      if (!config.ok) throw config.error;
-      let starts = 0,
-        calls = 0,
-        closes = 0;
-      const ghidra = new GhidraProvider(
-        config.value,
-        silentLogger,
-        {},
+      const bytes = Buffer.from([0x50, 0x4b, 3, 4]);
+      await writeFile(jar, bytes);
+      const status =
+        scenario === "unsupported" || scenario === "wrong artifact"
+          ? "unsupported"
+          : "failed";
+      const reason =
+        scenario === "loader failure"
+          ? "Extension loading/analysis failed: ClassNotFoundException"
+          : "directory-discovery: Unsupported layout at 0x401000";
+      const report: GhidraExtensionResult = {
+        id: "nativeaot",
+        sha256:
+          scenario === "wrong artifact"
+            ? "0".repeat(64)
+            : createHash("sha256").update(bytes).digest("hex"),
+        status,
+        reason,
+        result:
+          scenario === "loader failure"
+            ? { loader_failure: reason }
+            : {
+                id: "nativeaot",
+                integration_api: 1,
+                source_revision: "effeb734fc570c32650f88b159608979dc7b423e",
+                source_revision_authority: "build-reported-unattested",
+                status,
+                reason,
+                method_tables: 0,
+                diagnostics: ["exact producer diagnostic"],
+              },
+      };
+
+      const counts = { starts: 0, calls: 0, closes: 0 };
+      const ghidra = provider(
         installationHost(),
         () => ({
-          start: () => {
-            starts++;
-            return Promise.resolve(
-              ok({
-                ...sessionInfo(),
-                analysis_extensions: [
-                  {
-                    id: "nativeaot",
-                    sha256:
-                      status === "malformed"
-                        ? "0".repeat(64)
-                        : createHash("sha256")
-                            .update(Buffer.from([0x50, 0x4b, 3, 4]))
-                            .digest("hex"),
-                    status: status === "malformed" ? "failed" : status,
-                    reason:
-                      "directory-discovery: Unsupported layout at 0x401000",
-                    result: {
-                      id: "nativeaot",
-                      integration_api: 1,
-                      source_revision:
-                        "effeb734fc570c32650f88b159608979dc7b423e",
-                      source_revision_authority: "build-reported-unattested",
-                      status: status === "malformed" ? "failed" : status,
-                      reason:
-                        "directory-discovery: Unsupported layout at 0x401000",
-                      method_tables: 0,
-                      diagnostics: ["exact producer diagnostic"],
-                    },
-                  },
-                ],
-              }),
-            );
+          start: async () => {
+            counts.starts++;
+            return ok({ ...sessionInfo(), analysis_extensions: [report] });
           },
-          callTool: () => {
-            calls++;
-            return Promise.resolve(ok(null));
+          callTool: async () => {
+            counts.calls++;
+            return ok(null);
           },
-          close: () => {
-            closes++;
-            return Promise.resolve(ok(null));
+          close: async () => {
+            counts.closes++;
+            return ok(null);
           },
         }),
+        { REA_GHIDRA_NATIVEAOT_JAR: jar },
       );
-      const target = executableTarget("elf", "x86_64");
-      const resolved = await ghidra.resolveAnalysisProfile(target);
-      if (!resolved.ok || resolved.value.profile === null)
-        throw new Error("expected extension profile");
-      const client = ghidra.createClient(target, resolved.value.profile);
+      onTestFinished(async () => {
+        await ghidra.closeOwnedResources();
+      });
+      const client = await createElfClient(ghidra);
+      onTestFinished(async () => {
+        await client.close();
+      });
       const failed = await client.execute("health", {});
-      expect(failed.ok).toBe(false);
-      if (!failed.ok) {
-        expect(failed.error._tag).toBe(
-          status === "unsupported"
-            ? "AnalysisCapabilityUnavailableError"
-            : "ProviderAdapterError",
-        );
-        expect(JSON.stringify(failed.error)).toContain(
-          status === "malformed"
-            ? "identity mismatch"
-            : "Unsupported layout at 0x401000",
-        );
+      if (failed.ok) throw new Error("Expected extension handshake refusal");
+      if (scenario === "unsupported") {
+        expect(projectAnalysisError(failed.error)).toMatchObject({
+          code: "capability_unavailable",
+          retryable: false,
+          details: { reason: expect.stringContaining(reason) },
+          remediation: {
+            action: expect.stringContaining("REA_GHIDRA_NATIVEAOT_JAR"),
+          },
+        });
+      } else {
+        expect(failed.error).toMatchObject({
+          _tag: "ProviderAdapterError",
+          diagnostics: {
+            reason:
+              scenario === "wrong artifact"
+                ? expect.stringContaining("identity mismatch")
+                : reason,
+            analysis_extensions: [report],
+          },
+        });
       }
       expect(await client.execute("list_procedures", {})).toEqual(failed);
-      expect({ starts, calls, closes }).toEqual({
-        starts: 1,
-        calls: 0,
-        closes: 1,
-      });
+      expect(counts).toEqual({ starts: 1, calls: 0, closes: 1 });
     },
   );
 });
@@ -7049,63 +7301,57 @@ it("keeps saved project reports as shared historical Evidence without applying f
   ).toEqual([history.evidence_id]);
 });
 
-it.each(["search_procedures", "search_strings"] as const)(
-  "%s applies shared folding after validation and preserves native source rows",
-  async (operation) => {
-    const rows = [
-      { address: "0x1000", value: "ſource" },
-      { address: "0x1001", value: "SOURCE" },
-      { address: "0x1002", value: "İource" },
-      { address: "0x1003", value: "unrelated" },
-    ].map((row) => ({
-      ...row,
-      ...(operation === "search_procedures"
-        ? { procedure: { external: false, thunk: false, thunk_target: null } }
-        : {
-            string: {
-              encoding: "UTF-8",
-              termination: "present_or_not_required",
-              byte_length: Buffer.byteLength(row.value, "utf8") + 1,
-            },
-          }),
-    }));
-    const ghidra = provider(installationHost(), () => ({
-      start: () => Promise.resolve(ok(sessionInfo())),
-      callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),
-      close: () => Promise.resolve(ok(null)),
-    }));
-    const client = await createElfClient(ghidra);
-    try {
-      const result = await client.execute(operation, { pattern: "source" });
-      if (!result.ok) throw result.error;
-      expect(result.value.result).toEqual(rows.slice(0, 2));
-      expect(result.value.rawResult).toEqual(rows);
-      expect(result.value.limitations).toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-      const regex = await client.execute(operation, {
-        pattern: "source",
-        mode: "regex",
-      });
-      if (!regex.ok) throw regex.error;
-      expect(regex.value.result).toEqual(rows);
-      expect(regex.value.limitations).not.toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-      const sensitive = await client.execute(operation, {
-        pattern: "source",
-        case_sensitive: true,
-      });
-      if (!sensitive.ok) throw sensitive.error;
-      expect(sensitive.value.result).toEqual(rows);
-      expect(sensitive.value.limitations).not.toContain(
-        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
-      );
-    } finally {
-      await client.close();
-    }
-  },
-);
+it("filters string candidates and preserves their raw Evidence", async () => {
+  const operation = "search_strings";
+  const rows = [
+    { address: "0x1000", value: "ſource" },
+    { address: "0x1001", value: "SOURCE" },
+    { address: "0x1002", value: "İource" },
+    { address: "0x1003", value: "unrelated" },
+  ].map((row) => ({
+    ...row,
+    string: {
+      encoding: "UTF-8",
+      termination: "present_or_not_required",
+      byte_length: Buffer.byteLength(row.value, "utf8") + 1,
+    },
+  }));
+  const ghidra = provider(installationHost(), () => ({
+    start: () => Promise.resolve(ok(sessionInfo())),
+    callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),
+    close: () => Promise.resolve(ok(null)),
+  }));
+  const client = await createElfClient(ghidra);
+  try {
+    const result = await client.execute(operation, { pattern: "source" });
+    if (!result.ok) throw result.error;
+    expect(result.value.result).toEqual(rows.slice(0, 2));
+    expect(result.value.rawResult).toEqual(rows);
+    expect(result.value.limitations).toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+    const regex = await client.execute(operation, {
+      pattern: "source",
+      mode: "regex",
+    });
+    if (!regex.ok) throw regex.error;
+    expect(regex.value.result).toEqual(rows);
+    expect(regex.value.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+    const sensitive = await client.execute(operation, {
+      pattern: "source",
+      case_sensitive: true,
+    });
+    if (!sensitive.ok) throw sensitive.error;
+    expect(sensitive.value.result).toEqual(rows);
+    expect(sensitive.value.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+  } finally {
+    await client.close();
+  }
+});
 
 describe("Windows Ghidra readiness repair", () => {
   it("carries the native readiness repair into candidate capabilities and explicit selection", async () => {

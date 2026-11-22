@@ -102,8 +102,8 @@ const historicalCapture = (
   stages: {
     launch: covered(
       test(
-        HISTORICAL_DECODER,
-        "cancels after snapshot acquisition before launch and removes private input declarations",
+        "tests/boundary/browser/historicalCapturePreparationCleanup.test.ts",
+        "cancels after snapshot acquisition without launching or adopting the opaque caller reason",
       ),
     ),
     handshake: notApplicable(
@@ -482,7 +482,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
-          "cancels queued work and stops active provider work on cancellation",
+          "retains cancellation reasons before admission, in the queue, and on the wire (%j)",
         ),
         test(
           "tests/boundary/providers/ghidra/ghidraClient.test.ts",
@@ -675,13 +675,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/ida/IdaSessionClient.test.ts",
-          "retains the private workspace and reports cleanup failure when worker release is unverified",
+          "retries failed worker release through the retained connection",
         ),
       ),
       retry: covered(
         test(
-          "src/ida/IdaSessionClient.test.ts",
-          "retries failed worker release through the retained connection before removing its workspace",
+          "tests/boundary/providers/ida/retainedConnectionRetry.test.ts",
+          "retries cleanup through the detached stdio connection",
         ),
       ),
     },
@@ -1298,7 +1298,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/elfDebugLinkCli.test.ts",
-        "verifies a matching debug file from absolute and relative paths",
+        "verifies a debug file while preserving both relative caller paths",
       ),
     ),
     covered(
@@ -1307,8 +1307,8 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "returns typed resource and cancellation failures",
       ),
       test(
-        "src/native/elf/ElfDebugLinkProvider.test.ts",
-        "keeps a completed candidate stream's identity when cancellation arrives during close",
+        "tests/boundary/filesystem/elfDebugLink.test.ts",
+        "retains streamed candidate Evidence when cancelled during %s",
       ),
     ),
   ),
@@ -1504,7 +1504,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/peCertificatesCli.test.ts",
-        "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
+        "reports PKCS#7 signer identity and BER lengths through both adapters",
       ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),
@@ -1552,23 +1552,19 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/PlaywrightScenarioBrowser.test.ts",
-          "applies command_timeout_ms to the primary connect handshake when service workers are allowed",
-        ),
-        test(
-          "src/browser/PlaywrightScenarioBrowser.test.ts",
           "closes a browser that connects after its deadline without waiting to report the timeout",
         ),
       ),
       operation: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "returns an initial state and every step of a long scenario",
+          "retains all long-scenario steps and monotonic elapsed time",
         ),
       ),
       cancel: covered(
         test(
-          "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "cancels an active action and still closes the session",
+          "src/browser/PlaywrightScenarioSession.test.ts",
+          "preserves $outcome action rejection through provider cancellation (cleanup refused: $cleanupFails)",
         ),
       ),
       cleanup: covered(
@@ -1580,7 +1576,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       retry: covered(
         test(
           "src/browser/PlaywrightBrowserScenarioProvider.test.ts",
-          "shares concurrent close and retries browser cleanup after failure",
+          "retries all opening leases after a refusal and reports only those still owned",
         ),
       ),
     },
@@ -1609,13 +1605,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cancel: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "cancels a windowless wait action and cleans up the owned application",
+          "cancels a windowless wait action and cleans up the owned application (%s)",
         ),
       ),
       cleanup: covered(
         test(
           "src/browser/PlaywrightElectronActiveProvider.test.ts",
-          "keeps cleanup failure precedence over cancellation observed during cleanup",
+          "retains cancellation first observed during failed %s cleanup through retry",
         ),
       ),
       retry: covered(
@@ -1662,7 +1658,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/v8CodeCacheCli.test.ts",
-        "reports wide and synthetic narrow header extents through the public CLI",
+        "reports wide, synthetic narrow and synthetic six-word header extents through the public CLI",
       ),
     ),
     covered(
@@ -1720,17 +1716,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       handshake: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "closes a browser whose connection completes after cancellation",
-        ),
-        test(
-          "src/browser/modules/NativeModuleResolver.test.ts",
-          "reports failed cleanup of a browser whose connection completes after cancellation",
+          "awaits and closes the late browser connection after cancellation",
         ),
       ),
       operation: covered(
         test(
           "tests/boundary/filesystem/webModuleArtifacts.test.ts",
-          "verifies original bytes and tolerates relocation without inventing URL paths",
+          "verifies relocated source identity before accepting the captured bytes",
         ),
       ),
       cancel: covered(
@@ -1746,7 +1738,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           "src/browser/modules/NativeModuleResolver.test.ts",
-          "returns cleanup_incomplete when owned cleanup fails after an engine error",
+          "retries retained browser cleanup before launching the next resolution",
         ),
       ),
       retry: covered(
@@ -1786,7 +1778,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       operation: covered(
         test(
           "tests/boundary/filesystem/webSourceLocationArtifacts.test.ts",
-          "reads exact selected map bytes, retaining a BOM and explicitly selected URL context",
+          "retains exact selected map bytes and completed reads across failures",
         ),
       ),
       cancel: covered(
@@ -2036,7 +2028,9 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "decodes an LZMA-custom section through the owned worker and derives it",
         ),
       ),
-      handshake: ONE_SHOT,
+      handshake: notApplicable(
+        "The decoder child writes one framed reply per request; there is no handshake.",
+      ),
       operation: covered(
         test(
           "tests/acceptance/uefiFirmware.test.ts",
@@ -2052,13 +2046,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
       retry: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
     },

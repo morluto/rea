@@ -19,7 +19,7 @@ import {
 import { peSubjectArchitecture } from "../../domain/peMachine.js";
 import type { PeDataDirectory } from "../../domain/peOptionalHeader.js";
 import { readPeImage } from "../../domain/native/peImage.js";
-import { parsePeLoadConfig } from "../pe/PeLoadConfigParser.js";
+import { parsePeLoadConfigFromImage } from "../pe/PeLoadConfigParser.js";
 
 const IMAGE_DLLCHARACTERISTICS_HIGH_ENTROPY_VA = 0x0020;
 const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040;
@@ -80,8 +80,9 @@ export const readPeHardening = async (
   let loadConfig: PeLoadConfig | undefined;
   let loadConfigFailure = "";
   try {
-    loadConfig = await parsePeLoadConfig(
+    loadConfig = await parsePeLoadConfigFromImage(
       bytes,
+      image,
       artifact,
       {
         path: artifact.path,

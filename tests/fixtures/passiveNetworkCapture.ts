@@ -116,6 +116,20 @@ export const passiveNetworkCapture = (paths: readonly string[] = ["/a"]) => {
   });
 };
 
+/** Declare policy omission so missing body shapes do not limit comparison. */
+export const unselectBodyShapes = (
+  capture: WebPageInspection,
+): WebPageInspection => {
+  capture.completeness.excluded.push({
+    section: "json_body_shapes",
+    reason: "not_approved",
+    count: null,
+  });
+  for (const request of capture.network.requests)
+    request.body_shapes.status = "not_approved";
+  return capture;
+};
+
 /** Use the production completeness classifier without inventing section-list entries. */
 export const withPassiveDroppedEvents = (
   capture: WebPageInspection,

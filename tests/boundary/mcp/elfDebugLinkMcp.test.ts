@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../../src/cli/contractCliDescription.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+import { DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES } from "../../../src/domain/native/elfDebugLink.js";
 import { createServer } from "../../../src/server/createServer.js";
 import {
   debuglinkSection,
@@ -77,13 +78,19 @@ mcpTest(
       expect(evidence.parameters).toEqual({ path });
       const explicit = await client.callTool({
         name: "inspect_elf_debug_link",
-        arguments: { path, max_entries: 32 },
+        arguments: {
+          path,
+          max_entries: DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+        },
       });
       expect(explicit.isError).not.toBe(true);
       const selected = debugLinkContract.outputSchema.parse(
         explicit.structuredContent,
       );
-      expect(selected.parameters).toEqual({ path, max_entries: 32 });
+      expect(selected.parameters).toEqual({
+        path,
+        max_entries: DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+      });
       expect(selected.normalized_result).toEqual(evidence.normalized_result);
       expect(selected.evidence_id).not.toBe(evidence.evidence_id);
     } finally {
@@ -116,11 +123,13 @@ mcpTest("verifies one caller-selected debug file", async ({ mcp }) => {
     );
     expect(evidence.normalized_result.verification?.status).toBe("matches");
     expect(evidence.normalized_result.candidate?.debug_info).toBe("present");
-    const meta = "_meta" in response ? response._meta : undefined;
-    if (meta !== undefined)
-      expect(meta).toMatchObject({
-        provenance: { untrusted_content: true, source: "analysis_target" },
-      });
+    expect(evidence.locations).toContainEqual({
+      kind: "artifact-path",
+      path: candidatePath,
+    });
+    expect("_meta" in response ? response._meta : undefined).toMatchObject({
+      provenance: { untrusted_content: true, source: "analysis_target" },
+    });
   } finally {
     await session.close();
   }

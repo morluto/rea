@@ -10,7 +10,6 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
   isZeroFilledSpan,
   type BinaryContainer,
   type FileMappingIndex,
@@ -79,6 +78,8 @@ export interface NativeImage {
   readonly container: BinaryContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
+  /** Indexed executable load mappings for constant/log-time code ownership checks. */
+  readonly executableMappings: FileMappingIndex;
   readonly imageBase: bigint;
   /** ELF loader writes retain virtual identity; source bytes stay unchanged. */
   readonly elfPointerOverlay?: ElfVirtualPointerWrites;
@@ -234,6 +235,10 @@ export function* openImageSteps(
       container.mappings,
       container.zero_fills,
     ),
+    executableMappings: createFileMappingIndex(
+      container.executable_mappings ?? [],
+      [],
+    ),
     imageBase,
     ...(elfPointerOverlay === undefined ? {} : { elfPointerOverlay }),
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
@@ -342,10 +347,7 @@ export const hasPointerArrayCoverage = (
 export const isExecutable = (image: NativeImage, address: bigint): boolean => {
   try {
     const offset = image.fileMappings.offset(address, 1);
-    return (
-      offset ===
-      mappedFileOffset(image.container.executable_mappings ?? [], address, 1)
-    );
+    return offset === image.executableMappings.offset(address, 1);
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return false;
     throw cause;

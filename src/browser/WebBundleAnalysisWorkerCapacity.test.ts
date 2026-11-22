@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
 
 const heapLimit = vi.hoisted(() => ({ override: null as number | null }));
@@ -17,7 +16,7 @@ vi.mock("node:v8", async (importOriginal) => {
 });
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { createWebTextArtifact } from "../domain/webContentArtifact.js";
+import { webBundleWorkerScript as makeScript } from "../../tests/fixtures/webBundleAnalysis.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import { WebBundleAnalysisWorker } from "./WebBundleAnalysisWorker.js";
 
@@ -68,24 +67,4 @@ it("refuses before spawning or reading source when no host result capacity remai
     heapLimit.override = null;
     await worker.close();
   }
-});
-
-const makeScript = (text: string): IncludedScript => ({
-  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
-  frame_id: "frame-1",
-  url: "https://app.example.test/app.js",
-  origin: "https://app.example.test",
-  cdp_hash: null,
-  length: Buffer.byteLength(text),
-  is_module: false,
-  language: "JavaScript",
-  source_map_url: null,
-  resource_reconciliation: {
-    status: "unmatched",
-    reason: "no_exact_sanitized_url",
-  },
-  source: {
-    included: true,
-    artifact: createWebTextArtifact(text, "application/javascript"),
-  },
 });

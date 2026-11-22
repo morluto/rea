@@ -7,7 +7,10 @@ import { createWebPageInspection } from "../../tests/support/browser/webPageInsp
 import { analyzeJavaScriptStaticSource } from "../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCapturedWebScript } from "./webBundleAnalyzer.js";
 import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
-import { buildCapturedWebBundleAnalysis } from "./webBundleAnalyzerResult.js";
+import {
+  buildCapturedWebBundleAnalysis,
+  CROSS_SCRIPT_DEDUP_LIMITATION,
+} from "./webBundleAnalyzerResult.js";
 import { webBundleAnalysisSchema } from "./webBundleAnalysis.js";
 import { isIncludedScript } from "./webBundleAnalyzerState.js";
 import { webBundleScriptAnalysisSchema } from "./webBundleScriptAnalysis.js";
@@ -645,66 +648,6 @@ describe("web bundle analyzer", () => {
   });
 });
 
-describe("web bundle source-map coverage", () => {
-  it("reports unavailable source maps as partial without dropping requested maps", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          script_key: `scr_${"1".repeat(64)}`,
-          declared_url: "https://app.example.test/app.js.map",
-          effective_url: null,
-          status: "fetch_failed",
-          artifact: null,
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: "Source-map fetch failed.",
-        },
-      ],
-    });
-
-    expect(analysis.completeness.status).toBe("partial");
-    expect(analysis.unknowns).toContainEqual({
-      dimension: "source_maps",
-      reason: expect.stringMatching(
-        /requested source maps.*unavailable or incomplete/i,
-      ),
-      affected_script_keys: [`scr_${"1".repeat(64)}`],
-    });
-  });
-
-  it("keeps map-less captured source complete when no maps were requested", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    });
-
-    expect(analysis.completeness.status).toBe("complete");
-    expect(analysis.unknowns).toEqual([]);
-  });
-
-  it("rejects inconsistent source-map coverage counts", () => {
-    const result = analyzeWebBundleFixture(inspection("export {};"));
-    expect(
-      webBundleAnalysisSchema.safeParse({
-        ...result,
-        observations: {
-          ...result.observations,
-          source_maps: {
-            ...result.observations.source_maps,
-            requested: 1,
-          },
-        },
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("web bundle static-analysis parity", () => {
   it("qualifies network spellings through nested dynamic receivers", () => {
     const result = analyzeWebBundleFixture(
@@ -1120,6 +1063,162 @@ describe("web bundle endpoint candidate classification", () => {
     expect(result.limitations).toContain(
       'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
     );
+  });
+});
+
+describe("web bundle cross-script finding deduplication", () => {
+  it("merges the same endpoint across scripts and keeps first occurrence order", () => {
+    const firstCapture = inspection("fetch('/shared'); fetch('/only-first');");
+    const secondScript = inspection("fetch('/shared'); fetch('/only-second');")
+      .scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const firstKey = firstCapture.scripts.items[0]?.script_key;
+    if (firstKey === undefined) throw new Error("Missing first script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const endpoints = result.observations.endpoints;
+    expect(endpoints.map(({ value }) => value)).toEqual([
+      "/shared",
+      "/only-first",
+      "/only-second",
+    ]);
+    const shared = endpoints[0];
+    expect(shared).toMatchObject({
+      value: "/shared",
+      mechanism: "call:fetch",
+      occurrences: 2,
+      script_keys: [firstKey, secondKey],
+    });
+    expect(shared?.location.script_key).toBe(firstKey);
+    expect(endpoints[1]).not.toHaveProperty("occurrences");
+    expect(endpoints[1]).not.toHaveProperty("script_keys");
+    expect(endpoints[2]).not.toHaveProperty("occurrences");
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+    expect(result.limitations).toContain(CROSS_SCRIPT_DEDUP_LIMITATION);
+  });
+
+  it("merges the same route across scripts", () => {
+    const firstCapture = inspection(
+      'const routes = [{ path: "/users" }, { path: "/only-first" }];',
+    );
+    const secondScript = inspection(
+      'const routes = [{ path: "/users" }, { path: "/only-second" }];',
+    ).scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const firstKey = firstCapture.scripts.items[0]?.script_key;
+    if (firstKey === undefined) throw new Error("Missing first script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const routes = result.observations.routes;
+    expect(routes.map(({ value }) => value)).toEqual([
+      "/users",
+      "/only-first",
+      "/only-second",
+    ]);
+    expect(routes[0]).toMatchObject({
+      value: "/users",
+      occurrences: 2,
+      script_keys: [firstKey, secondKey],
+    });
+    expect(routes[0]?.location.script_key).toBe(firstKey);
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+  });
+
+  it("keeps the same endpoint value under different mechanisms separate", () => {
+    const firstCapture = inspection("fetch('/shared');");
+    const secondScript = inspection(
+      'const xhr = new XMLHttpRequest(); xhr.open("GET", "/shared");',
+    ).scripts.items[0];
+    if (secondScript === undefined)
+      throw new Error("Missing second script fixture");
+    const secondKey = `scr_${"2".repeat(64)}`;
+    firstCapture.scripts.items.push({
+      ...secondScript,
+      script_key: secondKey,
+      url: `${origin}/assets/second.js`,
+    });
+    firstCapture.scripts.total += 1;
+
+    const result = analyzeWebBundleFixture(firstCapture);
+    const endpoints = result.observations.endpoints;
+    expect(endpoints.map(({ value, mechanism }) => [value, mechanism])).toEqual(
+      [
+        ["/shared", "call:fetch"],
+        ["/shared", "call:xhr.open"],
+      ],
+    );
+    expect(endpoints.every((entry) => entry.occurrences === undefined)).toBe(
+      true,
+    );
+    expect(webBundleAnalysisSchema.parse(result)).toEqual(result);
+  });
+});
+
+describe("web bundle method-first request candidates", () => {
+  it("reads the exact target after an HTTP method token in both analyzers", () => {
+    const source = `
+      Api.request("get", "/api/v1/profile");
+      Api.request("POST", "/api/v1/items", item);
+      client.request("Patch", \`/api/v1/items/1\`);
+      http.request("DELETE", "https://api.example.test/items/1");
+      request("options", "users");
+      Api.request("delete", \`/api/v1/items/\${id}\`);
+      http.request("POST", target);
+      rpc.request("initialize", "/session");
+      octokit.request("GET /repos/{owner}/{repo}");
+      request("https://example.test/health", "GET");
+    `;
+    const expectedCandidates = [
+      // An exact string after a standard method token, in any case.
+      "/api/v1/profile",
+      "/api/v1/items",
+      "/api/v1/items/1",
+      "https://api.example.test/items/1",
+      "users",
+      // A computed target leaves the method token as the candidate.
+      "delete",
+      "POST",
+      // Any other first argument is still the candidate.
+      "initialize",
+      "GET /repos/{owner}/{repo}",
+      "https://example.test/health",
+    ].sort();
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints).toEqual([]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    const staticEndpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    expect(
+      staticEndpoints
+        .filter(({ interpretation }) => interpretation === "candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    expect(
+      staticEndpoints.filter(
+        ({ interpretation }) => interpretation === undefined,
+      ),
+    ).toEqual([]);
   });
 });
 

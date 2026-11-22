@@ -29,7 +29,7 @@ const nativeMemoryRegionSchema = z.object({
   readable: z.boolean().nullable(),
   writable: z.boolean().nullable(),
   executable: z.boolean().nullable(),
-  permissions: z.union([
+  permissions: z.discriminatedUnion("available", [
     z.object({ available: z.literal(false), reason: z.string() }),
     availableMemoryPermissions,
   ]),

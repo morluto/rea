@@ -11,21 +11,20 @@ import {
   staticInferenceEvidence,
 } from "./JavaScriptArtifactGraphEvidence.js";
 import { completeApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import type { JavaScriptHtmlScriptObservation } from "./JavaScriptArtifactAnalysisTypes.js";
 import { resolveArtifactPathByContext } from "./JavaScriptArtifactPathResolution.js";
 
 /** Project HTML renderer entrypoints and their local script assets. */
 export const addJavaScriptHtmlRoles = (
   context: JavaScriptArtifactGraphContext,
 ): void => {
-  const byHtml = new Map<string, typeof context.analysis.html_scripts>();
+  const byHtml = new Map<string, JavaScriptHtmlScriptObservation[]>();
   for (const script of context.analysis.html_scripts) {
     if (script.script_type !== "classic" && script.script_type !== "module")
       continue;
     const existing = byHtml.get(script.html_path);
-    byHtml.set(
-      script.html_path,
-      existing === undefined ? [script] : [...existing, script],
-    );
+    if (existing === undefined) byHtml.set(script.html_path, [script]);
+    else existing.push(script);
   }
   for (const [htmlPath, scripts] of byHtml) {
     const html = context.filesByPath.get(htmlPath);

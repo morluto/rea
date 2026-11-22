@@ -307,6 +307,9 @@ represented exactly as UTF-8 paths leave the walk incomplete with a reason.
 `$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
 to the object declaring that dependency before full-path lookup and request
 deduplication; the same spelling in two libraries can name two different files.
+DT_NEEDED names containing `$LIB` or `$PLATFORM` (including braced forms)
+remain unresolved because this walk does not establish the loader's
+substitution. They are not looked up as literal file paths.
 Lookup paths retain directory symlinks and subsequent `..` components until the
 filesystem resolves them. The selected leaf name and its physical target are
 queried for package ownership, keeping the original alias-qualified lookup

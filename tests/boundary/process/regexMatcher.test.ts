@@ -466,8 +466,17 @@ it("stops a slow match at the configured deadline and names the setting", async 
   });
 });
 
-it("matches a trivial pattern in a real worker at the heap floor", async () => {
-  const directory = await createTestTempDirectory("rea-regex-heap-floor-");
+const runIsolatedRegexProbe = async (
+  prefix: string,
+  buildValuesExpression: string,
+  pattern: string,
+  heapMiB: number,
+): Promise<{
+  readonly ok: boolean;
+  readonly indices?: readonly number[];
+  readonly message?: string;
+}> => {
+  const directory = await createTestTempDirectory(prefix);
   const probe = join(directory, "probe.mjs");
   const repository = fileURLToPath(new URL("../../../", import.meta.url));
   const tsxApi = pathToFileURL(
@@ -482,13 +491,14 @@ it("matches a trivial pattern in a real worker at the heap floor", async () => {
     probe,
     `import { tsImport } from ${JSON.stringify(tsxApi)};
 const { matchRegexValues } = await tsImport(${JSON.stringify(matcher)}, import.meta.url);
+const values = ${buildValuesExpression};
 const result = await matchRegexValues({
   operation: "search_procedures",
-  pattern: "^a",
+  pattern: ${JSON.stringify(pattern)},
   caseSensitive: true,
-  values: ["a"],
+  values,
   heapRequest: {
-    heapMiB: ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)},
+    heapMiB: ${String(heapMiB)},
     source: "setting",
   },
 });
@@ -506,7 +516,21 @@ if (!result.ok) process.exitCode = 1;
     timeout: 30_000,
   });
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({ ok: true, indices: [0] });
+  return JSON.parse(result.stdout) as {
+    readonly ok: boolean;
+    readonly indices?: readonly number[];
+    readonly message?: string;
+  };
+};
+
+it("matches a trivial pattern in a real worker at the heap floor", async () => {
+  const outcome = await runIsolatedRegexProbe(
+    "rea-regex-heap-floor-",
+    '["a"]',
+    "^a",
+    MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  );
+  expect(outcome).toEqual({ ok: true, indices: [0] });
 });
 
 it("preserves Unicode matching order and refuses a pre-cancelled match", async () => {
@@ -625,4 +649,37 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
     },
   });
   await search.close();
+});
+
+it("returns ordered matching indices across large batches in the supervised worker", async () => {
+  const values = Array.from({ length: 2500 }, (_, i) =>
+    i % 2 === 0 ? `sym_hit_${String(i)}` : `sym_miss_${String(i)}`,
+  );
+  const matched = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^sym_hit_\\d+$",
+    caseSensitive: true,
+    values,
+  });
+  expect(matched.ok).toBe(true);
+  if (!matched.ok) return;
+  expect(matched.value.length).toBe(1250);
+  expect(matched.value[0]).toBe(0);
+  expect(matched.value[1]).toBe(2);
+  expect(matched.value.at(-1)).toBe(2498);
+});
+
+it("matches a 1M inventory inside a constrained 16 MiB worker heap without structured-clone OOM", async () => {
+  const outcome = await runIsolatedRegexProbe(
+    "rea-regex-1m-16mib-",
+    `(() => {
+  const list = new Array(1_000_000);
+  for (let i = 0; i < list.length; i += 1)
+    list[i] = i === 987_654 ? "sym_needle_hit_value" : \`sym_padding_entry_\${i}\`;
+  return list;
+})()`,
+    "^sym_needle_",
+    16,
+  );
+  expect(outcome).toEqual({ ok: true, indices: [987_654] });
 });

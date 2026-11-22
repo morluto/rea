@@ -7,67 +7,109 @@ import { expect, it } from "vitest";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 
-it("selects original source language from decoded URL paths while retaining URL evidence", async () => {
-  const typescriptContent = 'import "./dep.ts"; const value = <number>1;';
-  const annotatedContent = 'import "./dep.ts"; const value: number = 1;';
-  const javascriptContent = 'import "./dep.ts"; const value = 1;';
-  const declarations = [
-    {
-      path: "plain.ts?revision=2#view.tsx",
-      mediaType: "text/typescript",
-      content: typescriptContent,
-    },
-    {
-      path: "escaped%2Ets?revision=2#view.tsx",
-      mediaType: "text/typescript",
-      content: typescriptContent,
-    },
-    {
-      path: "escaped.%74s?revision=2#view.tsx",
-      mediaType: "text/typescript",
-      content: typescriptContent,
-    },
-    {
-      path: "escaped%2E%54S?revision=2#original.js",
-      mediaType: "text/typescript",
-      content: typescriptContent,
-    },
-    {
-      path: "invalid%.ts?revision=2#view.tsx",
-      mediaType: "text/typescript",
-      content: typescriptContent,
-    },
-    {
-      path: "view.tsx#original.ts",
-      mediaType: "text/typescript",
-      content: 'import "./dep.ts"; export const view: JSX.Element = <main />;',
-    },
-    {
-      path: "module.mts",
-      mediaType: "text/typescript",
-      content: annotatedContent,
-    },
-    {
-      path: "module.MTS",
-      mediaType: "text/typescript",
-      content: annotatedContent,
-    },
-    {
-      path: "common.cts",
-      mediaType: "text/typescript",
-      content: annotatedContent,
-    },
-    {
-      path: "main.js?filename=main.ts#original.ts",
-      mediaType: "text/javascript",
-      content: javascriptContent,
-    },
-    {
-      path: "extensionless?revision=2",
-      mediaType: "text/javascript",
-      content: javascriptContent,
-    },
-  ];
+const typescriptContent = 'import "./dep.ts"; const value = <number>1;';
+const annotatedContent = 'import "./dep.ts"; const value: number = 1;';
+const javascriptContent = 'import "./dep.ts"; const value = 1;';
+const commonJsContent = [
+  '// import "./comment.js";',
+  String.raw`const quoted = "require(\"./string.js\")";`,
+  "const template = `import './template-comment.js'`;",
+  `export { value } from "./it's-real.js";`,
+  'import "package-name";',
+  'import("./dynamic.js");',
+  "import(`./dep.js`);",
+  "import(`./dep.${name}.js`);",
+  'require("./normal.cjs");',
+  "require(`./templated.cjs`);",
+  "require(`./${name}.cjs`);",
+  'require?.("./optional.cjs");',
+  'function local(require) { require?.("./shadowed.cjs"); }',
+  "require?.(selectedModule);",
+].join("\n");
+
+const commonJsEdges = [
+  ["static_import", "./it's-real.js"],
+  ["static_import", "package-name"],
+  ["dynamic_import", "./dynamic.js"],
+  ["dynamic_import", "./dep.js"],
+  ["require", "./normal.cjs"],
+  ["require", "./templated.cjs"],
+  ["require", "./optional.cjs"],
+] as const;
+
+const declarations = [
+  {
+    path: "main.cjs",
+    mediaType: "text/javascript",
+    content: commonJsContent,
+    edges: commonJsEdges,
+  },
+  {
+    path: "plain.ts?revision=2#view.tsx",
+    mediaType: "text/typescript",
+    content: typescriptContent,
+  },
+  {
+    path: "escaped%2Ets?revision=2#view.tsx",
+    mediaType: "text/typescript",
+    content: typescriptContent,
+  },
+  {
+    path: "escaped.%74s?revision=2#view.tsx",
+    mediaType: "text/typescript",
+    content: typescriptContent,
+  },
+  {
+    path: "escaped%2E%54S?revision=2#original.js",
+    mediaType: "text/typescript",
+    content: typescriptContent,
+  },
+  {
+    path: "invalid%.ts?revision=2#view.tsx",
+    mediaType: "text/typescript",
+    content: typescriptContent,
+  },
+  {
+    path: "view.tsx#original.ts",
+    mediaType: "text/typescript",
+    content: 'import "./dep.ts"; export const view: JSX.Element = <main />;',
+  },
+  {
+    path: "module.mts",
+    mediaType: "text/typescript",
+    content: annotatedContent,
+  },
+  {
+    path: "module.MTS",
+    mediaType: "text/typescript",
+    content: annotatedContent,
+  },
+  {
+    path: "common.cts",
+    mediaType: "text/typescript",
+    content: [
+      annotatedContent,
+      '(require as typeof require)("./asserted.cjs");',
+      'require!("./non-null.cjs");',
+      "function local(require: (id: string) => unknown) {",
+      '  (require as typeof require)("./shadowed.cjs");',
+      "}",
+    ].join("\n"),
+    requires: ["./asserted.cjs", "./non-null.cjs"],
+  },
+  {
+    path: "main.js?filename=main.ts#original.ts",
+    mediaType: "text/javascript",
+    content: javascriptContent,
+  },
+  {
+    path: "extensionless?revision=2",
+    mediaType: "text/javascript",
+    content: javascriptContent,
+  },
+];
+
+it("selects the language of HTTP map originals and retains exact URLs and dependencies", async () => {
   const text = JSON.stringify({
     version: 3,
     names: [],
@@ -108,7 +150,11 @@ it("selects original source language from decoded URL paths while retaining URL 
     expect(result.items[0]).toMatchObject({
       status: "included",
       limitation: null,
-      artifact: { text },
+      artifact: {
+        text,
+        bytes: Buffer.byteLength(text),
+        sha256: createHash("sha256").update(text).digest("hex"),
+      },
       original_sources: sources.map(({ source, content, mediaType }) => ({
         source,
         artifact: {
@@ -122,12 +168,24 @@ it("selects original source language from decoded URL paths while retaining URL 
         generated_line: index + 1,
         source,
       })),
-      original_module_edges: sources.map(({ source }) => ({
-        from_source: source,
-        kind: "static_import",
-        specifier: "./dep.ts",
-        resolved_source: `${origin}/maps/dep.ts`,
-      })),
+      original_module_edges: sources.flatMap(
+        ({ source, edges, requires = [] }, declaration_index) => {
+          const imports = edges ?? [
+            ["static_import", "./dep.ts"] as const,
+            ...requires.map((specifier) => ["require", specifier] as const),
+          ];
+          return imports.map(([kind, specifier]) => ({
+            declaration_index,
+            from_source: source,
+            kind,
+            specifier,
+            resolved_source:
+              specifier === "package-name"
+                ? null
+                : new URL(specifier, source).href,
+          }));
+        },
+      ),
     });
   } finally {
     server.closeAllConnections();

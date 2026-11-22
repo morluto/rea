@@ -17,8 +17,10 @@ import type { Readable, Writable } from "node:stream";
 import { WindowsOwnedProcess } from "../windows/WindowsOwnedProcess.js";
 
 import {
+  materializeProcessOutputToken,
   ProcessOutputTokenScanner,
   type ProviderProcessOutputToken,
+  type RawProcessOutputToken,
 } from "./ProcessOutputTokenScanner.js";
 
 import type {
@@ -494,11 +496,13 @@ export class ProviderProcessSupervisor {
   ): void => {
     this.#recordExit(code, signal);
     this.#outputClosed = true;
-    if (!this.#disposed)
-      this.#options.onDiagnostic?.({
-        type: "output-close",
-        snapshot: this.snapshot(),
-      });
+    const onDiagnostic = this.#options.onDiagnostic;
+    if (!this.#disposed && onDiagnostic !== undefined) {
+      const raw = this.#captureSnapshotRaw();
+      onDiagnostic(
+        diagnosticEventWithLazySnapshot({ type: "output-close" }, raw),
+      );
+    }
     this.#outputClose.resolve(undefined);
   };
   readonly #onError = (cause: Error): void => {
@@ -584,6 +588,26 @@ export class ProviderProcessSupervisor {
       ...(this.#stopRequested ? { stopRequested: true } : {}),
       ...(outputIncomplete ? { outputIncomplete: true } : {}),
       ...this.#runtimeExhaustionWithin({ stdout: 0, stderr: 0 }),
+    };
+  }
+
+  /** Capture event-time bytes and flags without materializing UTF-8 strings yet. */
+  #captureSnapshotRaw(): RawProviderProcessSnapshot {
+    const outputIncomplete =
+      this.#outputIncomplete || this.launch.process.outputIncomplete === true;
+    return {
+      diagnosticTruncated: this.#diagnosticTruncated || outputIncomplete,
+      stdout: this.#stdout.snapshotRaw(this.#stdoutObservedBytes),
+      stderr: this.#stderr.snapshotRaw(this.#stderrObservedBytes),
+      exitCode: this.#exitObservation?.code,
+      signal: this.#exitObservation?.signal,
+      memoryLimitReached: this.launch.process.memoryLimitReached === true,
+      stopRequested: this.#stopRequested,
+      outputIncomplete,
+      runtimeExhaustion: this.#captureRuntimeExhaustionWithin({
+        stdout: 0,
+        stderr: 0,
+      }),
     };
   }
 
@@ -678,27 +702,35 @@ export class ProviderProcessSupervisor {
   }
 
   /** The runtime's exhaustion report after a position; stderr is preferred. */
-  #runtimeExhaustionWithin(position: {
+  #captureRuntimeExhaustionWithin(position: {
     readonly stdout: number;
     readonly stderr: number;
-  }): Pick<ProviderProcessSnapshot, "runtimeExhaustion"> {
+  }): RawRuntimeExhaustion | undefined {
     const runtime = this.#options.runtime;
-    if (runtime === undefined) return {};
-    const stderr = this.#stderrMarker?.latestWithin(
+    if (runtime === undefined) return undefined;
+    const stderr = this.#stderrMarker?.snapshotLatestWithin(
       position.stderr,
       this.#stderrObservedBytes,
     );
     if (stderr !== undefined)
-      return {
-        runtimeExhaustion: runtimeExhaustion(runtime, "stderr", stderr),
-      };
-    const stdout = this.#stdoutMarker?.latestWithin(
+      return { runtime, stream: "stderr", token: stderr };
+    const stdout = this.#stdoutMarker?.snapshotLatestWithin(
       position.stdout,
       this.#stdoutObservedBytes,
     );
     return stdout === undefined
+      ? undefined
+      : { runtime, stream: "stdout", token: stdout };
+  }
+
+  #runtimeExhaustionWithin(position: {
+    readonly stdout: number;
+    readonly stderr: number;
+  }): Pick<ProviderProcessSnapshot, "runtimeExhaustion"> {
+    const raw = this.#captureRuntimeExhaustionWithin(position);
+    return raw === undefined
       ? {}
-      : { runtimeExhaustion: runtimeExhaustion(runtime, "stdout", stdout) };
+      : { runtimeExhaustion: materializeRuntimeExhaustion(raw) };
   }
 
   #resetMarkers(): void {
@@ -1100,17 +1132,130 @@ export class ProviderProcessSupervisor {
     if (this.#exitObservation !== undefined) return;
     this.#exitObservation = { code, signal };
     this.#exit.resolve(this.#exitObservation);
-    this.#options.onDiagnostic?.({
-      type: "exit",
-      code,
-      signal,
-      snapshot: this.snapshot(),
-    });
+    const onDiagnostic = this.#options.onDiagnostic;
+    if (onDiagnostic === undefined) return;
+    const raw = this.#captureSnapshotRaw();
+    onDiagnostic(
+      diagnosticEventWithLazySnapshot({ type: "exit", code, signal }, raw),
+    );
   }
 }
 
+interface RawRuntimeExhaustion {
+  readonly runtime: ManagedRuntime;
+  readonly stream: "stdout" | "stderr";
+  readonly token: RawProcessOutputToken;
+}
+
+interface RawOutputCapture {
+  readonly chunks: readonly Buffer[];
+  readonly bytes: number;
+  readonly observedBytes: number;
+}
+
+interface RawProviderProcessSnapshot {
+  readonly diagnosticTruncated: boolean;
+  readonly stdout: RawOutputCapture;
+  readonly stderr: RawOutputCapture;
+  readonly exitCode: number | null | undefined;
+  readonly signal: NodeJS.Signals | null | undefined;
+  readonly memoryLimitReached: boolean;
+  readonly stopRequested: boolean;
+  readonly outputIncomplete: boolean;
+  readonly runtimeExhaustion: RawRuntimeExhaustion | undefined;
+}
+
+const materializeRuntimeExhaustion = (
+  raw: RawRuntimeExhaustion,
+): RuntimeExhaustion =>
+  runtimeExhaustion(
+    raw.runtime,
+    raw.stream,
+    materializeProcessOutputToken(raw.token),
+  );
+
+const materializeProviderProcessSnapshot = (
+  raw: RawProviderProcessSnapshot,
+): ProviderProcessSnapshot => ({
+  ...(raw.diagnosticTruncated ? { diagnosticTruncated: true } : {}),
+  stdout: materializeCapturedOutput(
+    raw.stdout.chunks,
+    raw.stdout.bytes,
+    raw.stdout.observedBytes,
+  ),
+  stderr: materializeCapturedOutput(
+    raw.stderr.chunks,
+    raw.stderr.bytes,
+    raw.stderr.observedBytes,
+  ),
+  exitCode: raw.exitCode,
+  signal: raw.signal,
+  ...(raw.memoryLimitReached ? { memoryLimitReached: true } : {}),
+  ...(raw.stopRequested ? { stopRequested: true } : {}),
+  ...(raw.outputIncomplete ? { outputIncomplete: true } : {}),
+  ...(raw.runtimeExhaustion === undefined
+    ? {}
+    : {
+        runtimeExhaustion: materializeRuntimeExhaustion(raw.runtimeExhaustion),
+      }),
+});
+
+const diagnosticEventWithLazySnapshot = <
+  Event extends { readonly type: "exit" | "output-close" },
+>(
+  fields: Event,
+  raw: RawProviderProcessSnapshot,
+): Event & { readonly snapshot: ProviderProcessSnapshot } => {
+  let pending: RawProviderProcessSnapshot | undefined = raw;
+  let snapshot: ProviderProcessSnapshot | undefined;
+  return Object.defineProperty({ ...fields }, "snapshot", {
+    enumerable: true,
+    get() {
+      if (snapshot === undefined) {
+        snapshot = materializeProviderProcessSnapshot(pending!);
+        pending = undefined;
+      }
+      return snapshot;
+    },
+  }) as Event & { readonly snapshot: ProviderProcessSnapshot };
+};
+
+const EMPTY_CHUNKS: readonly Buffer[] = [];
+const EMPTY_OUTPUT_BUFFER = Buffer.alloc(0);
+
+const materializeCapturedOutput = (
+  chunks: readonly Buffer[],
+  bytes: number,
+  observedBytes: number,
+): ProviderProcessSnapshot["stdout"] => {
+  const buffer =
+    chunks.length === 0
+      ? EMPTY_OUTPUT_BUFFER
+      : chunks.length === 1
+        ? chunks[0]!
+        : Buffer.concat(chunks, bytes);
+  return snapshotOutputBuffer(buffer, observedBytes);
+};
+
+const snapshotOutputBuffer = (
+  buffer: Buffer,
+  observedBytes: number,
+): ProviderProcessSnapshot["stdout"] => {
+  if (buffer.byteLength === 0) return { text: "", bytes: 0, observedBytes };
+  const text = buffer.toString("utf8");
+  const invalidUtf8 = !isStrictUtf8(buffer);
+  return {
+    text,
+    bytes: buffer.byteLength,
+    observedBytes,
+    ...(invalidUtf8 ? { invalidUtf8: true } : {}),
+  };
+};
+
 class ProcessOutputCapture {
-  readonly #chunks: Buffer[] = [];
+  #chunks: Buffer[] = [];
+  // Copy-on-write: shared with pending lazy snapshots until the next mutation or reset.
+  #sharedChunks = false;
   // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
   #bytes = 0;
   /** Observed bytes before the first retained one, which tail retention dropped. */
@@ -1120,15 +1265,28 @@ class ProcessOutputCapture {
     return this.#bytes;
   }
 
+  #mutableChunks(): Buffer[] {
+    if (this.#sharedChunks) {
+      this.#chunks = this.#chunks.slice();
+      this.#sharedChunks = false;
+    }
+    return this.#chunks;
+  }
+
   reset(): void {
-    this.#chunks.length = 0;
+    if (this.#sharedChunks) {
+      this.#chunks = [];
+      this.#sharedChunks = false;
+    } else {
+      this.#chunks.length = 0;
+    }
     this.#bytes = 0;
     this.#start = 0;
   }
 
   append(chunk: Buffer): void {
     this.#bytes += chunk.byteLength;
-    this.#chunks.push(Buffer.from(chunk));
+    this.#mutableChunks().push(Buffer.from(chunk));
   }
 
   /**
@@ -1161,8 +1319,9 @@ class ProcessOutputCapture {
         ((first[drop] ?? 0) & 0xc0) === 0x80
       )
         drop += 1;
-      if (drop === first.byteLength) this.#chunks.shift();
-      else if (drop > 0) this.#chunks[0] = Buffer.from(first.subarray(drop));
+      if (drop === first.byteLength) this.#mutableChunks().shift();
+      else if (drop > 0)
+        this.#mutableChunks()[0] = Buffer.from(first.subarray(drop));
       this.#bytes -= drop;
       this.#start += drop;
       remaining -= Math.min(remaining, drop);
@@ -1170,11 +1329,19 @@ class ProcessOutputCapture {
     }
   }
 
-  snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    return this.#snapshotBuffer(
-      Buffer.concat(this.#chunks, this.#bytes),
+  snapshotRaw(observedBytes: number): RawOutputCapture {
+    if (this.#chunks.length === 0)
+      return { chunks: EMPTY_CHUNKS, bytes: 0, observedBytes };
+    this.#sharedChunks = true;
+    return {
+      chunks: this.#chunks,
+      bytes: this.#bytes,
       observedBytes,
-    );
+    };
+  }
+
+  snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
+    return materializeCapturedOutput(this.#chunks, this.#bytes, observedBytes);
   }
 
   snapshotRange(
@@ -1197,24 +1364,10 @@ class ProcessOutputCapture {
     }
     const buffer = Buffer.concat(chunks, availableEnd - availableStart);
     return {
-      stream: this.#snapshotBuffer(buffer, Math.max(0, end - start)),
+      stream: snapshotOutputBuffer(buffer, Math.max(0, end - start)),
       complete:
         start === end ||
         (start >= this.#start && start <= retainedEnd && end <= retainedEnd),
-    };
-  }
-
-  #snapshotBuffer(
-    buffer: Buffer,
-    observedBytes: number,
-  ): ProviderProcessSnapshot["stdout"] {
-    const text = buffer.toString("utf8");
-    const invalidUtf8 = !isStrictUtf8(buffer);
-    return {
-      text,
-      bytes: buffer.byteLength,
-      observedBytes,
-      ...(invalidUtf8 ? { invalidUtf8: true } : {}),
     };
   }
 }
