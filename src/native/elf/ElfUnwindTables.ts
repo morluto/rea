@@ -1,10 +1,5 @@
 import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
-import {
-  BinaryReader,
-  readUint16At,
-  readUint32At,
-  readUint64At,
-} from "../../domain/binaryContainer.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { readLeb128, SLEB64, ULEB64 } from "../../domain/leb128.js";
 import {
   allKeyed,
@@ -17,7 +12,7 @@ import {
 } from "../../resources/index.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
 import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
-import { elfSymbolSize } from "../../domain/elfSymbol.js";
+import { elfSymbolSize, readElfSymbolAt } from "../../domain/elfSymbol.js";
 import {
   elfStringTableText,
   observeElfStringTableEntry,
@@ -1820,7 +1815,7 @@ interface MatchedSymbol {
 
 /**
  * Exact-start symbol names for the FDE starts in `wanted`. Candidate records
- * are pre-filtered on raw bytes (type, section, address) before reading names,
+ * are filtered on decoded symbol facts before reading names,
  * and each name stays a view of the string table decoded only for returned rows.
  */
 const scanSymbols = (
@@ -1838,12 +1833,7 @@ const scanSymbols = (
   const tables = directory.sections.filter(
     (section) => section.type === SHT_SYMTAB || section.type === SHT_DYNSYM,
   );
-  const wide = directory.bits === 64;
   const standard = elfSymbolSize(directory.bits);
-  const infoOffset = wide ? 4 : 12;
-  const shndxOffset = wide ? 6 : 14;
-  const valueOffset = wide ? 8 : 4;
-  const little = directory.little;
   const relocatable = directory.elf_type === 1;
   const isArm = directory.machine === EM_ARM;
   // First section per index, matching a directory-order find.
@@ -1900,23 +1890,30 @@ const scanSymbols = (
     for (let index = 0; index < count; index += 1) {
       assertArtifactReadActive(signal);
       const at = start + index * width;
-      if (at + width > bytes.length) {
+      const symbol = readElfSymbolAt(
+        bytes,
+        at,
+        directory.bits,
+        directory.little,
+      );
+      if (symbol === null) {
         fail("A symbol record is truncated.");
         break;
       }
-      const symbolType = bytes[at + infoOffset]! & 15;
+      const {
+        type: symbolType,
+        section_index: sectionIndex,
+        name_offset: nameOffset,
+      } = symbol;
       if (
         symbolType !== STT_FUNC &&
         symbolType !== STT_GNU_IFUNC &&
         symbolType !== STT_NOTYPE
       )
         continue;
-      const sectionIndex = readUint16At(bytes, at + shndxOffset, little);
       if (sectionIndex === SHN_UNDEF) continue;
       if (sectionIndex >= SHN_LORESERVE && sectionIndex !== SHN_ABS) continue;
-      let address = wide
-        ? readUint64At(bytes, at + valueOffset, little)
-        : BigInt(readUint32At(bytes, at + valueOffset, little));
+      let address = symbol.value;
       if (relocatable && sectionIndex !== SHN_ABS) {
         const owner = byIndex.get(sectionIndex);
         if (owner !== undefined) address += owner.address;
@@ -1926,7 +1923,6 @@ const scanSymbols = (
       if (isArm && symbolType !== STT_NOTYPE) address &= ~1n;
       // Only a symbol at a decoded FDE start can name a range.
       if (!wanted.has(address)) continue;
-      const nameOffset = readUint32At(bytes, at, little);
       let name = names.get(nameOffset);
       if (name === undefined) {
         const observed = observeElfStringTableEntry(

@@ -119,6 +119,8 @@ export const readSessionStatus = async (
       context.mcpReq.signal,
       (family) => server.advertisesFamily(family),
     );
+    // Snapshot the session only after readiness inspection finishes so
+    // session changes occurring before probe completion are reflected.
     status = await session.status({
       signal: context.mcpReq.signal,
       detail: input.detail,
