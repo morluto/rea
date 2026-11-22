@@ -52,39 +52,41 @@ const ISO_SECONDS = {
 const stateOf = (rows: readonly TimedCaptureRow[]): StateView =>
   environmentStateViewOf(timedCaptureEvidence(rows));
 
-it("retains learned clock rules but withholds their serving when the global clock is unknown", () => {
-  const baseline = stateOf(BOOK_ROWS);
-  const unknown = stateOf([
-    ...BOOK_ROWS,
-    ["GET", "/api/health", { ready: true }, 200, undefined, -1],
-  ]);
-  expect(baseline.write_clock).not.toBeNull();
-  expect(unknown.write_clock).toBeNull();
-  const generatesClock = (plan: StateView["writes"][number]) =>
-    plan.rules.some((rule) =>
-      ["clock", "held-clock", "nested-clock"].includes(rule.rule),
-    );
-  const clockPlans = baseline.writes.filter(
-    (plan) => plan.served && generatesClock(plan),
-  );
-  expect(clockPlans.length).toBeGreaterThan(0);
-  for (const plan of clockPlans)
-    expect(
-      unknown.writes.find((candidate) => candidate.tool === plan.tool),
-    ).toEqual({
-      ...plan,
-      served: false,
-      reason: "unknown-clock",
-    });
-  const independent = baseline.writes.filter(
-    (plan) => plan.served && !generatesClock(plan),
-  );
-  expect(independent.length).toBeGreaterThan(0);
-  for (const plan of independent)
-    expect(
-      unknown.writes.find((candidate) => candidate.tool === plan.tool),
-    ).toEqual(plan);
-});
+it.each([-1, undefined])(
+  "withholds only clocked writes when a record at start offset %s has unknown completion",
+  (startOffsetSeconds) => {
+    const baseline = stateOf(BOOK_ROWS);
+    const unknown = stateOf([
+      ...BOOK_ROWS,
+      [
+        "GET",
+        "/api/health",
+        { ready: true },
+        200,
+        undefined,
+        -1,
+        startOffsetSeconds,
+      ],
+    ]);
+    expect(baseline.write_clock).toBe(BOOK_WRITE_CLOCK);
+    expect(unknown.write_clock).toBeNull();
+    const generatesClock = (plan: StateView["writes"][number]) =>
+      plan.rules.some((rule) =>
+        ["clock", "held-clock", "nested-clock"].includes(rule.rule),
+      );
+    const served = baseline.writes.filter((plan) => plan.served);
+    expect(served.some(generatesClock)).toBe(true);
+    expect(served.some((plan) => !generatesClock(plan))).toBe(true);
+    for (const plan of served)
+      expect(
+        unknown.writes.find((candidate) => candidate.tool === plan.tool),
+      ).toEqual(
+        generatesClock(plan)
+          ? { ...plan, served: false, reason: "unknown-clock" }
+          : plan,
+      );
+  },
+);
 
 it.each([
   ["000000000", 0, "2026-10-17T18:00:12.000Z"],
