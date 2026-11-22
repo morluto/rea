@@ -130,7 +130,9 @@ export const readSessionStatus = async (
     if (!(cause instanceof AnalysisError)) throw cause;
     return err(cause);
   }
-  const statusObject = ownedJsonObjectSchema.parse(status);
+  const statusObject = status as unknown as Readonly<
+    Record<string, import("../domain/jsonValue.js").JsonValue>
+  >;
   // Availability is derived from the complete provider facts: an
   // advertised composed tool still depends on direct operations the
   // registration hides. Advertisement narrows only the public report.
