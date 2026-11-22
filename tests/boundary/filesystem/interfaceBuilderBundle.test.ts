@@ -2,7 +2,7 @@ import { createVerifierCommands } from "../../../scripts/lib/verify-commands.mjs
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { binaryKeyedArchiveUidShapes } from "../../fixtures/keyedArchiveUidShapes.js";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { buildBinary } from "plist";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -2193,28 +2193,48 @@ describe.skipIf(process.platform !== "darwin")(
   },
 );
 
-it("reports a plain plist named nib as undecoded while retaining a valid empty archive", async () => {
+it("reports invalid plain plists and classifies storyboard scenes without changing archive paths", async () => {
   const bundle = await createTestTempDirectory("rea-ib-archive-recognition-");
   await writeFile(
     join(bundle, "Plain.nib"),
     buildBinary({ CFBundleIdentifier: "sample" }),
   );
-  await writeFile(
-    join(bundle, "Empty.nib"),
-    buildBinary({ "com.apple.ibtool.document.objects": {} }),
-  );
+  const valid = [
+    ["Empty.nib", "nib", "scene"],
+    ["Lower.storyboardc/Scene.nib", "storyboard_scene", "storyboard"],
+    ["Upper.STORYBOARDC/Scene.NIB", "storyboard_scene", "storyboard"],
+  ] as const;
+  const emptyArchive = buildBinary({ "com.apple.ibtool.document.objects": {} });
+  for (const [path] of valid) {
+    await mkdir(dirname(join(bundle, path)), { recursive: true });
+    await writeFile(join(bundle, path), emptyArchive);
+  }
   const result = await analyzeInterfaceBuilderBundle({
     bundlePath: bundle,
     targetSha256: "a".repeat(64),
   });
-  expect(result.documents.map(({ relative_path }) => relative_path)).toEqual([
-    "Empty.nib",
-  ]);
+  expect(
+    result.documents.map(({ relative_path, document_kind }) => [
+      relative_path,
+      document_kind,
+    ]),
+  ).toEqual(valid.map(([path, kind]) => [path, kind]));
+  expect(result.graph.nodes).toEqual(
+    expect.arrayContaining(
+      valid.map(([path, kind, nodeKind]) =>
+        expect.objectContaining({
+          name: path,
+          kind: nodeKind,
+          attributes: { document_kind: kind },
+        }),
+      ),
+    ),
+  );
   expect(
     result.graph.coverage.find(({ facet }) => facet === "archive_decode"),
   ).toMatchObject({
     status: "partial",
-    examined: 2,
+    examined: 4,
     reason: "one_or_more_archives_invalid",
   });
 });
@@ -2237,20 +2257,43 @@ it("preserves authored binary UID-shaped dictionaries through UI archive decodin
   });
 });
 
-it.each(["embedded", "segue", "neither"] as const)(
+it.each([
+  ["embedded", "embedded_nib_archive_not_decoded", false],
+  ["segue", "storyboard_segue_template_not_decoded", false],
+  ["neither", null, false],
+  [
+    "embedded with ownerless connector",
+    "embedded_nib_archive_not_decoded",
+    true,
+  ],
+] as const)(
   "reports recognized unexamined nib source coverage: %s",
-  async (source) => {
+  async (source, reason, ownerless) => {
+    const embedded = reason === "embedded_nib_archive_not_decoded";
     const bundle = await createTestTempDirectory("rea-ui-unexamined-sources-");
     await writeFile(
       join(bundle, "Main.nib"),
       encodeNibArchiveFixture({
-        classes: ["UINib", "UIStoryboardShowSegueTemplate", "NSView"],
+        classes: [
+          "UINib",
+          "UIStoryboardShowSegueTemplate",
+          "NSView",
+          "UIRuntimeEventConnection",
+        ],
         objects: [
           { classIndex: 2, values: {} },
-          ...(source === "embedded"
+          ...(embedded
             ? [{ classIndex: 0, values: { "UINib.archiveData": { ref: 0 } } }]
             : []),
           ...(source === "segue" ? [{ classIndex: 1, values: {} }] : []),
+          ...(ownerless
+            ? [
+                {
+                  classIndex: 3,
+                  values: { UIDestination: { ref: 0 }, UIEventMask: 64 },
+                },
+              ]
+            : []),
         ],
       }),
     );
@@ -2262,23 +2305,36 @@ it.each(["embedded", "segue", "neither"] as const)(
       expect(
         result.graph.coverage.find(({ facet }) => facet === `${kind}:Main.nib`)
           ?.status,
-      ).toBe(source === "embedded" ? "partial" : "complete");
+      ).toBe(embedded ? "partial" : "complete");
     expect(
       result.graph.coverage.find(
         ({ facet }) => facet === "connections:Main.nib",
-      )?.status,
-    ).toBe(source === "neither" ? "complete" : "partial");
-    expect(
-      result.graph.coverage.find(({ facet }) => facet === "archive_decode")
-        ?.status,
-    ).toBe(source === "neither" ? "complete" : "partial");
+      ),
+    ).toMatchObject({
+      status: source === "neither" ? "complete" : "partial",
+      reason,
+      examined: 0,
+      omitted: ownerless ? 1 : 0,
+    });
+    expect(result.documents[0]?.connection_count).toBe(ownerless ? 1 : 0);
+    for (const [facet, partial] of [
+      ["archive_decode", reason !== null],
+      ["archive_object_decode", embedded],
+    ] as const) {
+      expect(
+        result.graph.coverage.find((row) => row.facet === facet),
+      ).toMatchObject({
+        status: partial ? "partial" : "complete",
+        reason: partial ? "serialized_archive_content_unexamined" : null,
+        examined: 1,
+        omitted: 0,
+      });
+    }
     if (source !== "neither") {
       expect(result.graph.truncated).toBe(true);
       expect(result.limitations).toContainEqual(
         expect.stringContaining(
-          source === "embedded"
-            ? "embedded archive data"
-            : "segue template object",
+          embedded ? "embedded archive data" : "segue template object",
         ),
       );
     }
