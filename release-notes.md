@@ -7,8 +7,11 @@
 
 ### Features
 
+* **browser:** count credential-named members in HAR capture inspection ([#8708](https://github.com/morluto/rea/issues/8708)) ([3c7ea1c](https://github.com/morluto/rea/commit/3c7ea1ce850c20c067add363ffcddbc1d48f2aac))
 * **config:** persist provider settings in a user config file ([#3023](https://github.com/morluto/rea/issues/3023)) ([8d6552e](https://github.com/morluto/rea/commit/8d6552e928704a6477edec3674a17c3ba2f4f4af))
+* **evidence:** paginate retained evidence discovery summaries ([#9084](https://github.com/morluto/rea/issues/9084)) ([a16669a](https://github.com/morluto/rea/commit/a16669ab2adf8341b0261e9527bb26c98c1d7b21))
 * **ida:** support the official Hex-Rays IDA MCP headlessly ([#4813](https://github.com/morluto/rea/issues/4813)) ([6822ebe](https://github.com/morluto/rea/commit/6822ebe1f3a4caec007fcd046754d66317d3349f))
+* **native:** retain Apple bundle executable provenance ([b8995f8](https://github.com/morluto/rea/commit/b8995f81489dda3e7f8be61317f366b7fabd97c7))
 * **setup:** discover project-scoped MCP registrations in doctor and … ([#7283](https://github.com/morluto/rea/issues/7283)) ([63c50ec](https://github.com/morluto/rea/commit/63c50ecfc0a849d3298c44b1ce06e2e759f1303c))
 * **website:** publish page-specific previews with the original REA blue ([1dd25d8](https://github.com/morluto/rea/commit/1dd25d87c7ba440b6256c644a556901eac1b3bbb))
 * **website:** recognize contributors in a shared commit-ranked directory ([ba31a11](https://github.com/morluto/rea/commit/ba31a111809e727891c238d1ca5ff9d62f751f0b))
@@ -99,6 +102,8 @@
 * **mcp:** settle independent launch preparation owners ([#13259](https://github.com/morluto/rea/issues/13259)) ([178467f](https://github.com/morluto/rea/commit/178467f6a7c77f6c61f81008ccffeaa7d0061d38))
 * **model:** recognize F8_E4M3 GGUF tensors from ggml v0.29.0 ([afc040c](https://github.com/morluto/rea/commit/afc040ccebb9af1f8b9eb6c5dbbdbc322a58ded2))
 * **native:** label XML plists that file calls data as xml ([#12910](https://github.com/morluto/rea/issues/12910)) ([f03cce9](https://github.com/morluto/rea/commit/f03cce9c01d184ffade34dcb36fd05c0c0350a5e))
+* **native:** preserve bundle provenance in partial reports ([9ffaca5](https://github.com/morluto/rea/commit/9ffaca54477d33c0f41f7042688b8e11f08d25b0))
+* **native:** refresh bundle provenance on reopen ([e35780d](https://github.com/morluto/rea/commit/e35780d042a9428c0a619ec42cf11794f5d7525c))
 * **native:** require dyld's __restrict section before reporting a restricted Mach-O ([#13024](https://github.com/morluto/rea/issues/13024)) ([7a11884](https://github.com/morluto/rea/commit/7a11884c0897062867e62c0c6d1079342ef8d861))
 * **pe:** exclude section padding from RVA metadata reads ([#12755](https://github.com/morluto/rea/issues/12755)) ([c5b5d9f](https://github.com/morluto/rea/commit/c5b5d9f7ea3f0f32a3ebf0834314ae3888ab4132))
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
@@ -668,6 +673,7 @@
 
 ### Continuous Integration
 
+* **apple:** run the bundle executable provenance regression on macOS ([5d136df](https://github.com/morluto/rea/commit/5d136df3ce720385a7cb33137bf77962733c08aa))
 * **limits:** enforce numeric inventory drift on documentation changes ([#12881](https://github.com/morluto/rea/issues/12881)) ([aaf151f](https://github.com/morluto/rea/commit/aaf151f5d6cca927823ac605699e587dfca2c043))
 * **release:** preserve unpublished versions and verify npm before tagging ([#12770](https://github.com/morluto/rea/issues/12770)) ([ad2b34c](https://github.com/morluto/rea/commit/ad2b34ca9b30769ec8ff8ef26025a38a9a32c589))
 
