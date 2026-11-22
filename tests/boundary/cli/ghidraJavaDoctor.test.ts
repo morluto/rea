@@ -1,14 +1,11 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { expect } from "vitest";
 import { elf, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import {
-  observeOwnedProcessGroups,
-  systemProcessOwnershipHost,
-} from "../../../src/process/ProcessOwnershipObservation.js";
+import { observeOwnedProcessGroups } from "../../../src/process/ProcessOwnershipObservation.js";
+import { testWaitDeadline } from "../../support/testWait.js";
 import { resolveProcessScenarioRuntimePaths } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 
@@ -145,49 +142,19 @@ process.on("SIGTERM", () => {});
 fs.writeFileSync(${JSON.stringify(`${started}.tmp`)}, JSON.stringify({ pid: process.pid, runId: process.env.REA_PROCESS_RUN_ID }));
 fs.renameSync(${JSON.stringify(`${started}.tmp`)}, ${JSON.stringify(started)});
 setInterval(() => { if (fs.existsSync(${JSON.stringify(release)})) process.exit(0); }, 50);
-setTimeout(() => process.exit(92), 12000);
+setTimeout(() => process.exit(92), ${testWaitDeadline()});
 `,
       { mode: 0o700 },
     );
-    const pending = cli.run({
-      arguments: ["doctor", "--provider", "ghidra", "--json"],
-      environment: {
-        JAVA_HOME: jdk,
-        GHIDRA_INSTALL_DIR: install,
-        REA_LOG_LEVEL: "silent",
-      },
-    });
-    // Capture the actual group while the selected process is alive; the PID
-    // alone is never used as cleanup authority. Release is a private protocol.
-    let identity: { pid: number; runId: string } | undefined;
-    let processGroupId: number | undefined;
     try {
-      for (let attempt = 0; attempt < 80; attempt++) {
-        try {
-          identity = JSON.parse(
-            await readFile(started, "utf8"),
-          ) as typeof identity;
-        } catch (cause: unknown) {
-          if (
-            !(
-              cause instanceof Error &&
-              "code" in cause &&
-              cause.code === "ENOENT"
-            )
-          )
-            throw cause;
-        }
-        if (identity !== undefined) break;
-        await delay(50);
-      }
-      if (identity === undefined)
-        throw new Error("Selected Java command did not start");
-      expect(identity.runId).toEqual(expect.any(String));
-      processGroupId = (await systemProcessOwnershipHost.listProcesses()).find(
-        (entry) => entry.pid === identity?.pid,
-      )?.processGroupId;
-      expect(processGroupId).toBeDefined();
-      const result = await pending;
+      const result = await cli.run({
+        arguments: ["doctor", "--provider", "ghidra", "--json"],
+        environment: {
+          JAVA_HOME: jdk,
+          GHIDRA_INSTALL_DIR: install,
+          REA_LOG_LEVEL: "silent",
+        },
+      });
       expect(result.exitCode, `${result.stdout}\n${result.stderr}`).toBe(1);
       expect(result.signal).toBeNull();
       expect(result.json).toMatchObject({
@@ -206,28 +173,20 @@ setTimeout(() => process.exit(92), 12000);
           }),
         ]),
       });
-      if (processGroupId !== undefined) {
-        const observed = await observeOwnedProcessGroups(identity.runId, [
-          processGroupId,
-        ]);
-        expect(observed.get(processGroupId)).toEqual({ state: "empty" });
-      }
+      // The POSIX owned-command launcher starts Java as its process-group leader.
+      // Read the durable acknowledgement after doctor settles, with the run ID
+      // that identifies the owned group even if its leader has already exited.
+      const identity = JSON.parse(await readFile(started, "utf8")) as {
+        pid: number;
+        runId: string;
+      };
+      expect(identity.runId).toEqual(expect.any(String));
+      const observed = await observeOwnedProcessGroups(identity.runId, [
+        identity.pid,
+      ]);
+      expect(observed.get(identity.pid)).toEqual({ state: "empty" });
     } finally {
       await writeFile(release, "release");
-      await pending;
-      if (identity !== undefined && processGroupId !== undefined) {
-        for (let attempt = 0; attempt < 40; attempt++) {
-          const observed = await observeOwnedProcessGroups(identity.runId, [
-            processGroupId,
-          ]);
-          if (observed.get(processGroupId)?.state === "empty") break;
-          await delay(50);
-        }
-        const observed = await observeOwnedProcessGroups(identity.runId, [
-          processGroupId,
-        ]);
-        expect(observed.get(processGroupId)).toEqual({ state: "empty" });
-      }
     }
   },
 );
