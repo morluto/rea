@@ -1,4 +1,4 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { sectionRelocations } from "./ElfInitializerSymbols.js";
 import { InitializerNotes } from "./initializerNotes.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
@@ -48,6 +48,35 @@ it.each([
   },
 );
 
+describe("sectionRelocations partial-write coverage", () => {
+  it("keeps coverage incomplete when a partial-mapping relocation lies outside wanted VA bounds", async () => {
+    const bytes = Buffer.alloc(64);
+    bytes.writeBigUInt64LE(0x2000n, 0); // r_offset outside wanted [0x100, 0x108)
+    bytes.writeBigUInt64LE(8n, 8); // R_X86_64_RELATIVE
+    bytes.writeBigInt64LE(0x100n, 16);
+    const notes = new InitializerNotes();
+    const result = await sectionRelocations({
+      bytes,
+      bits: 64,
+      little: true,
+      machine: 62,
+      sections: [
+        section({ type: 4, flags: 2n, offset: 0n, size: 24n, entry_size: 24n }),
+      ],
+      relocatable: false,
+      wanted: [{ va: 0x100n, sectionIndex: null }],
+      tables: new Map(),
+      notes,
+      fileOffset: (address, width) =>
+        address === 0x2000n && width === 1 ? 0 : null,
+    });
+    expect(result.complete).toBe(false);
+    expect(notes.list()).toContain(
+      "A section relocation extends beyond its target mapping; affected slots are unresolved.",
+    );
+  });
+});
+
 it("keeps an unrelated known section from invalidating a wanted slot", async () => {
   const sections = [
     section(),
@@ -92,3 +121,32 @@ it.each([true, false])(
     expect(result.complete).toBe(false);
   },
 );
+
+describe("sectionRelocations partial-write coverage", () => {
+  it("keeps coverage incomplete when a partial-mapping relocation lies outside wanted VA bounds", async () => {
+    const bytes = Buffer.alloc(64);
+    bytes.writeBigUInt64LE(0x2000n, 0); // r_offset outside wanted [0x100, 0x108)
+    bytes.writeBigUInt64LE(8n, 8); // R_X86_64_RELATIVE
+    bytes.writeBigInt64LE(0x100n, 16);
+    const notes = new InitializerNotes();
+    const result = await sectionRelocations({
+      bytes,
+      bits: 64,
+      little: true,
+      machine: 62,
+      sections: [
+        section({ type: 4, flags: 2n, offset: 0n, size: 24n, entry_size: 24n }),
+      ],
+      relocatable: false,
+      wanted: [{ va: 0x100n, sectionIndex: null }],
+      tables: new Map(),
+      notes,
+      fileOffset: (address, width) =>
+        address === 0x2000n && width === 1 ? 0 : null,
+    });
+    expect(result.complete).toBe(false);
+    expect(notes.list()).toContain(
+      "A section relocation extends beyond its target mapping; affected slots are unresolved.",
+    );
+  });
+});
