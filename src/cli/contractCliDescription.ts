@@ -57,18 +57,20 @@ import type {
   ContractCliDescription,
 } from "./contractCliDescriptionTypes.js";
 
-/**
- * The command a projection registers: the contract's own command, which the
- * contract declares with `cli: true` so the CLI inventory can be derived from
- * the registry, or the command a route names.
- */
+/** The CLI key of a session target, which no contract field supplies. */
 const SESSION_TARGET_KEY = "path";
 
+/** Help for `--view`, which names the delivery it needs. */
 const viewOptionHelp = (viewDelivery: CliViewDelivery): string =>
   viewDelivery.viewSelectsSummary === true
     ? "JSON page selection; selects summary delivery, which requires --evidence_output"
     : "JSON page selection; requires --detail summary and --evidence_output";
 
+/**
+ * The command a projection registers: the contract's own command, which the
+ * contract declares with `cli: true` so the CLI inventory can be derived from
+ * the registry, or the command a route names.
+ */
 const projectedCommand = (
   contract: DocumentContract,
   command: string | undefined,

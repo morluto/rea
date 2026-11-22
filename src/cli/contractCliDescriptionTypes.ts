@@ -356,8 +356,6 @@ export interface ContractCliSessionTarget {
   ) => Result<Readonly<Record<string, unknown>>, AnalysisInputError>;
 }
 
-/** The CLI key of a session target, which no contract field supplies. */
-
 /**
  * Contract fields each supplied by the source contract's Evidence for one
  * target. The source fields are its options; each target is admitted by the
@@ -424,7 +422,6 @@ export interface CliViewDelivery {
   readonly viewSelectsSummary?: true;
 }
 
-/** Help for `--view`, which names the delivery it needs. */
 /** A CLI option with no contract field, such as `--evidence_output`. */
 export interface CliOnlyOption {
   readonly key: string;
