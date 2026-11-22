@@ -198,33 +198,25 @@ it("forwards method, URL, headers and the request body as a web Request", async 
   expect(request.headers.get("host")).toBe(new URL(origin).host);
 });
 
-it("forwards GET requests without a body", async () => {
-  const origin = await serve((request) =>
-    Response.json({ bodyless: request.body === null }),
-  );
-  const response = await fetch(`${origin}/mcp`);
-  await expect(response.json()).resolves.toEqual({ bodyless: true });
-});
-
 it("streams response chunks as the handler produces them", async () => {
   let release: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const origin = await serve(
-    () =>
-      new Response(
-        new ReadableStream({
-          async start(controller) {
-            controller.enqueue(encoder.encode("event: message\ndata: 1\n\n"));
-            await gate;
-            controller.enqueue(encoder.encode("event: message\ndata: 2\n\n"));
-            controller.close();
-          },
-        }),
-        { headers: { "content-type": "text/event-stream" } },
-      ),
-  );
+  const origin = await serve((request) => {
+    expect(request.body).toBeNull();
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          controller.enqueue(encoder.encode("event: message\ndata: 1\n\n"));
+          await gate;
+          controller.enqueue(encoder.encode("event: message\ndata: 2\n\n"));
+          controller.close();
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  });
   const response = await fetch(`${origin}/stream`);
   expect(response.headers.get("content-type")).toBe("text/event-stream");
   const reader = response.body?.getReader();
