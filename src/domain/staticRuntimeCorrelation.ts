@@ -11,7 +11,10 @@ import {
   comparisonSourceEvidenceIds,
   comparisonSourceEvidenceSides,
 } from "./comparisonSourceEvidence.js";
-import { unreportedArtifactPathStatus } from "./artifactComparison.js";
+import {
+  prepareUnreportedArtifactPaths,
+  type UnreportedArtifactPathClassifier,
+} from "./artifactComparison.js";
 import {
   readComparisonResult,
   type ParsedComparisonEvidence,
@@ -154,6 +157,18 @@ type RuntimeComparison = ParsedComparisonEvidence<"compare_process_captures">;
 /** Exact retained source records, used to classify unreported artifact paths. */
 type SourceEvidenceLookup = (evidenceId: string) => Evidence | undefined;
 
+/**
+ * Per-call resolver for an artifact comparison's unreported paths; undefined
+ * when its source inventories are unavailable.
+ */
+type UnreportedPathResolver = (
+  comparison: ArtifactComparisonEvidence,
+) => UnreportedArtifactPathClassifier | undefined;
+type ArtifactComparisonEvidence = Extract<
+  StaticComparison,
+  { operation: "compare_artifacts" }
+>;
+
 /** Correlation options that do not change the public input contract. */
 export interface StaticRuntimeCorrelationOptions {
   /**
@@ -197,15 +212,9 @@ export const correlateStaticAndRuntime = (
   );
   const staticById = byId(staticEvidence);
   const runtimeById = byId(runtimeEvidence);
+  const unreportedPaths = unreportedPathResolver(options.sourceEvidence);
   const correlations = data.mappings.map((mapping, index) =>
-    correlate(
-      mapping,
-      staticById,
-      runtimeById,
-      options.sourceEvidence,
-      input,
-      index,
-    ),
+    correlate(mapping, staticById, runtimeById, unreportedPaths, input, index),
   );
   const duplicateMappingIndex = firstDuplicateIndex(
     correlations.map(({ correlation_id }) => correlation_id),
@@ -259,7 +268,7 @@ const correlate = (
   mapping: Mapping,
   staticById: ReadonlyMap<string, StaticComparison>,
   runtimeById: ReadonlyMap<string, RuntimeComparison>,
-  sourceEvidence: SourceEvidenceLookup | undefined,
+  unreportedPaths: UnreportedPathResolver,
   input: unknown,
   mappingIndex: number,
 ): CorrelationItem => {
@@ -280,7 +289,7 @@ const correlate = (
   const { limitations: selectedLimitations, ...selectedStatic } = selectStatic(
     staticEvidence,
     mapping.static.selector,
-    sourceEvidence,
+    unreportedPaths,
     input,
     ["mappings", mappingIndex, "static", "selector"],
   );
@@ -327,7 +336,7 @@ const correlate = (
 const selectStatic = (
   comparison: StaticComparison,
   selector: z.infer<typeof staticSelectorSchema>,
-  sourceEvidence: SourceEvidenceLookup | undefined,
+  unreportedPaths: UnreportedPathResolver,
   input: unknown,
   path: readonly (string | number)[],
 ): Pick<CorrelationItem["static"], "status" | "conclusion_kind"> & {
@@ -369,7 +378,7 @@ const selectStatic = (
     return selectUnreportedArtifactPath(
       comparison,
       selector.logical_path,
-      sourceEvidence,
+      unreportedPaths,
       input,
       path,
     );
@@ -395,24 +404,16 @@ const INVALID_ARTIFACT_SELECTOR =
  * a path neither inventory observed remains invalid caller input.
  */
 const selectUnreportedArtifactPath = (
-  comparison: Extract<StaticComparison, { operation: "compare_artifacts" }>,
+  comparison: ArtifactComparisonEvidence,
   logicalPath: string,
-  sourceEvidence: SourceEvidenceLookup | undefined,
+  unreportedPaths: UnreportedPathResolver,
   input: unknown,
   path: readonly (string | number)[],
 ): Pick<CorrelationItem["static"], "status" | "conclusion_kind"> & {
   readonly limitations: readonly string[];
 } => {
-  const sides = comparisonSourceEvidenceSides(comparison.evidence);
-  const resolve = (ids: readonly string[]) => {
-    const records = ids.map((id) => sourceEvidence?.(id));
-    return records.every((record): record is Evidence => record !== undefined)
-      ? records
-      : undefined;
-  };
-  const left = resolve(sides.left);
-  const right = resolve(sides.right);
-  if (left === undefined || right === undefined)
+  const classify = unreportedPaths(comparison);
+  if (classify === undefined)
     return {
       status: "unknown",
       conclusion_kind: "unresolved_branch",
@@ -420,11 +421,7 @@ const selectUnreportedArtifactPath = (
         "The selected artifact path has no reported change, and the comparison's source inventories were unavailable to establish that it was compared as unchanged.",
       ],
     };
-  const unreported = unreportedArtifactPathStatus(
-    comparison.result,
-    { left, right },
-    logicalPath,
-  );
+  const unreported = classify(logicalPath);
   if (unreported.status === "unobserved")
     throw callerInputError(input, path, INVALID_ARTIFACT_SELECTOR);
   return unreported.status === "unchanged"
@@ -438,6 +435,40 @@ const selectUnreportedArtifactPath = (
         conclusion_kind: "unresolved_branch",
         limitations: [unreported.limitation],
       };
+};
+
+/**
+ * Resolve and validate each artifact comparison's source inventories at most
+ * once per correlation call, so many mappings into one comparison share the
+ * parsed inventories and path index. A validation failure still fails the
+ * whole call on first use.
+ */
+const unreportedPathResolver = (
+  sourceEvidence: SourceEvidenceLookup | undefined,
+): UnreportedPathResolver => {
+  const prepared = new Map<
+    string,
+    UnreportedArtifactPathClassifier | undefined
+  >();
+  return (comparison) => {
+    const id = comparison.evidence.evidence_id;
+    if (prepared.has(id)) return prepared.get(id);
+    const sides = comparisonSourceEvidenceSides(comparison.evidence);
+    const resolve = (ids: readonly string[]) => {
+      const records = ids.map((sourceId) => sourceEvidence?.(sourceId));
+      return records.every((record): record is Evidence => record !== undefined)
+        ? records
+        : undefined;
+    };
+    const left = resolve(sides.left);
+    const right = resolve(sides.right);
+    const classifier =
+      left === undefined || right === undefined
+        ? undefined
+        : prepareUnreportedArtifactPaths(comparison.result, { left, right });
+    prepared.set(id, classifier);
+    return classifier;
+  };
 };
 
 const parseStatic = (
