@@ -627,4 +627,3 @@ export const ubiVolumeMetadataSchema = z.strictObject({
   ),
 });
 export type UbiVolumeMetadata = z.infer<typeof ubiVolumeMetadataSchema>;
-
