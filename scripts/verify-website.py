@@ -13,7 +13,7 @@ from zipfile import BadZipFile, ZipFile
 
 from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, social_image_path, sync_pages
 from website_i18n import is_language_code
-from website_references import MARKDOWN, markdown_references, split_reference
+from website_references import markdown_references, parse_markdown, split_reference
 
 LEGACY_ORIGIN = "morluto.github.io"
 SITE_TEXT_URL = re.compile(
@@ -34,7 +34,7 @@ def heading_text(tokens):
 
 def markdown_ids(path):
     """Collect GitHub heading anchors and explicit HTML IDs in local Markdown."""
-    tokens = MARKDOWN.parse(path.read_text(encoding="utf-8"))
+    tokens = parse_markdown(path.read_text(encoding="utf-8"))
     parser = HtmlReferences()
     identifiers = set()
     counts = {}

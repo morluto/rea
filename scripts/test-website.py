@@ -546,6 +546,10 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             (root / "website").mkdir()
             (root / "docs").mkdir()
             (root / "docs/guide.md").write_text(dedent("""\
+                ---
+                title: Guide
+                ---
+
                 ````markdown
                 ```
                 # Example heading
@@ -564,19 +568,27 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
 
                 An <span id="inline-id">inline anchor</span>.
             """), encoding="utf-8")
+            (root / "docs/rule.md").write_text("---\nOrdinary heading\n---\n", encoding="utf-8")
             page = root / "website/README.md"
             page.write_text(dedent("""\
+                ---
+                description: "[Metadata](../docs/not-a-link.md)"
+                ---
+
                 [Setext](../docs/guide.md#guide-heading)
+                [Leading rule](../docs/rule.md#ordinary-heading)
                 [Formatted](../docs/guide.md#read-the-guide-with-rea)
                 [Image alt text](../docs/guide.md#caf%C3%A9-cr%C3%A8me)
                 [Block ID](../docs/guide.md#block-id)
                 [Inline ID](../docs/guide.md#inline-id)
+                [Metadata title](../docs/guide.md#title-guide)
                 [Fenced heading](../docs/guide.md#example-heading)
                 [Fenced ID](../docs/guide.md#example-id)
             """), encoding="utf-8")
 
             source = page.relative_to(root)
             self.assertEqual(VERIFY.check_repository_links(root), [
+                f"{source}: missing Markdown fragment: ../docs/guide.md#title-guide",
                 f"{source}: missing Markdown fragment: ../docs/guide.md#example-heading",
                 f"{source}: missing Markdown fragment: ../docs/guide.md#example-id",
             ])
