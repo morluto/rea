@@ -1,17 +1,9 @@
-import { bindProcessInspectionCancellations } from "../providers/OwnedCommandCleanup.js";
-import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
-import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import {
-  MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS,
-  DEFAULT_GHIDRA_VALUE_FLOW_MAX_INPUTS_PER_OPERATION,
-} from "../domain/analysisResourceLimits.js";
+import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
-import { isDeepStrictEqual } from "node:util";
-import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -19,32 +11,8 @@ import {
   type GhidraLauncherFailure,
 } from "./GhidraDiagnostics.js";
 
-import type {
-  AnalysisClient,
-  AnalysisOperation,
-} from "../ports/AnalysisProvider.js";
+import type { AnalysisOperation } from "../ports/AnalysisProvider.js";
 import type { AppConfig } from "../config/types.js";
-import {
-  ghidraPinnedLanguage,
-  ghidraProfileDisabledAnalyzers,
-  ghidraProfileLanguageOverride,
-  ghidraProfilePinnedLanguage,
-  sameGhidraDisabledAnalyzers,
-  sameGhidraLanguageOverride,
-} from "./GhidraAnalysisProfile.js";
-import {
-  ghidraMipsProfileMismatchReason,
-  GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
-  ghidraMips1Limitations,
-  ghidraMipsSoftFloatFailure,
-  ghidraMipsElfImageBase,
-  ghidraMipsElfImageBaseCommitment,
-  ghidraMipsRelocatableLimitations,
-  ghidraMipsSharedLimitations,
-  ghidraMipsSoftFloatLimitations,
-  isGhidraMipsSoftFloatTarget,
-} from "./GhidraMipsProfile.js";
-import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   AnalysisCancelledError,
   AnalysisArtifactChangedError,
@@ -65,42 +33,8 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import type { Logger } from "pino";
-import type { GhidraClientOptions } from "./GhidraClientTypes.js";
-import {
-  isGhidraInventoryOperation,
-  parseGhidraInventoryInput,
-  parseGhidraInventoryResult,
-} from "./GhidraInventoryValues.js";
-import {
-  isGhidraPspTarget,
-  GHIDRA_PSP_LIMITATIONS,
-} from "./GhidraPspProfile.js";
-import {
-  ghidraRiscvCallingConvention,
-  ghidraRiscvCallingConventionFailure,
-  ghidraRiscvCallingConventionLimitations,
-  ghidraRiscvLimitations,
-} from "./GhidraRiscvProfile.js";
-import {
-  ghidraKnownProviderDefectLimitations,
-  unverifiedGhidraBuildLimitation,
-} from "./GhidraReleasePolicy.js";
 import { GhidraLaunchError } from "./GhidraLauncher.js";
-import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
-import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
-import {
-  type GhidraSessionSource,
-  ghidraEmptyIncomingReferencesLimitation,
-  ghidraEmptyExternalOutgoingLimitation,
-  ghidraEmptyOutgoingReferencesLimitation,
-  ghidraNotInProcedureLimitation,
-  limitationsFor,
-} from "./GhidraProviderCapabilities.js";
-import {
-  ghidraMachoMainEntryCandidate,
-  isGhidraMainSelector,
-} from "./GhidraMachoEntryHint.js";
+import type { GhidraSessionSource } from "./GhidraProviderCapabilities.js";
 import {
   GHIDRA_STARTUP_DEADLINE_ELAPSED,
   isGhidraInputFailureCode,
@@ -114,14 +48,11 @@ import {
   ghidraFileOffsetOutcome,
   ghidraFileOffsetUnavailable,
 } from "./GhidraFileOffsetFailure.js";
-import { ghidraExtensionFailure } from "./extensions/GhidraExtensionFailures.js";
-import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   JVM_EXHAUSTION_DETAILS,
   RUNTIME_EXHAUSTION_AREAS,
   type RuntimeExhaustionArea,
 } from "../process/RuntimeExhaustion.js";
-import { ghidraDolLanguage, ghidraDolSectionFile } from "./GhidraDolProfile.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 
 /** Configured deadlines that Ghidra failure projections name. */
