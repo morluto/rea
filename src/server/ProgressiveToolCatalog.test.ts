@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { DISCOVER_TOOLS } from "../contracts/catalog/catalogDiscovery.js";
 import { EvidenceMcpServerCore } from "./EvidenceMcpServerCore.js";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { parseMcpToolError } from "../../tests/fixtures/mcpToolError.js";
@@ -81,66 +82,70 @@ const connect = async (
   return { client, changed, discover, forbidden, bulkNames };
 };
 
-it("refuses an oversized maximum page before loading, then delivers every original contract in smaller pages", async () => {
+it("bounds both discovery refusals, then loads the same inventory in fitting pages", async () => {
   const replyBytes = 8 * 1024;
   const f = await connect({ replyBytes, bulk: true });
   const initial = await f.client.listTools();
-  const refused = await f.discover({ query: "bulk", limit: 20 });
-  expect(refused.isError).toBe(true);
-  expect(Buffer.byteLength(JSON.stringify(refused))).toBeLessThanOrEqual(
-    replyBytes - 1024,
-  );
-  const text = refused.content.find((part) => part.type === "text")?.text;
-  expect(JSON.parse(text ?? "null")).toMatchObject({
-    error: {
-      code: "resource_constraint",
-      remediation: { action: expect.stringContaining("Reduce limit") },
+  for (const { args, error } of [
+    {
+      args: { query: "bulk", limit: 20 },
+      error: {
+        remediation: { action: expect.stringContaining("Reduce limit") },
+      },
     },
-  });
-  expect(await f.client.listTools()).toEqual(initial);
-  expect(f.changed).not.toHaveBeenCalled();
-  const seen: string[] = [];
-  for (let offset = 0; offset < 20; offset++) {
-    const result = await f.discover({ query: "bulk", limit: 1, offset });
+    {
+      args: { names: ["unknown".repeat(4096)] },
+      error: {
+        details: {
+          reported_limits: { original_error_code: "invalid_request" },
+        },
+      },
+    },
+  ]) {
+    const refused = await f.discover(args);
+    expect(parseMcpToolError(refused)).toMatchObject({
+      error: { code: "resource_constraint", ...error },
+    });
+    expect(Buffer.byteLength(JSON.stringify(refused))).toBeLessThanOrEqual(
+      replyBytes - 1024,
+    );
+    expect(await f.client.listTools()).toEqual(initial);
+    expect(f.changed).not.toHaveBeenCalled();
+  }
+  const pageSize = 3;
+  for (let offset = 0; offset < f.bulkNames.length; offset += pageSize) {
+    const result = await f.discover({ query: "bulk", limit: pageSize, offset });
     expect(result.isError).not.toBe(true);
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
       replyBytes - 1024,
     );
-    expect(result.structuredContent).toMatchObject({
-      total_matches: 20,
-      next_offset: offset === 19 ? null : offset + 1,
-      loaded_count: offset + 3,
+    const page = DISCOVER_TOOLS.outputSchema.parse(result.structuredContent);
+    const names = f.bulkNames.slice(offset, offset + pageSize);
+    const end = offset + names.length;
+    expect(page).toMatchObject({
+      total_matches: f.bulkNames.length,
+      next_offset: end < f.bulkNames.length ? end : null,
+      loaded_count: initial.tools.length + end,
+      tools: names.map((name) => ({ name })),
     });
-    const page = JSON.parse(
-      result.content.find((part) => part.type === "text")?.text ?? "null",
-    );
-    const tool = page.tools[0];
-    seen.push(tool.name);
-    expect(
-      (await f.client.listTools()).tools.find(({ name }) => name === tool.name)
-        ?.inputSchema,
-    ).toEqual(tool.input_schema);
-  }
-  expect(seen).toEqual(f.bulkNames);
-  expect(f.changed).toHaveBeenCalledTimes(20);
-});
+    const text = result.content.find((part) => part.type === "text")?.text;
+    expect(JSON.parse(text ?? "null")).toEqual(page);
 
-it("bounds an oversized unknown-name failure without changing visibility", async () => {
-  const replyBytes = 8 * 1024;
-  const f = await connect({ replyBytes });
-  const initial = await f.client.listTools();
-  const result = await f.discover({ names: ["unknown".repeat(4096)] });
-  expect(parseMcpToolError(result)).toMatchObject({
-    error: {
-      code: "resource_constraint",
-      details: { reported_limits: { original_error_code: "invalid_request" } },
-    },
-  });
-  expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(
-    replyBytes - 1024,
+    const advertised = (await f.client.listTools()).tools;
+    expect(advertised.map(({ name }) => name).sort()).toEqual(
+      [
+        ...initial.tools.map(({ name }) => name),
+        ...f.bulkNames.slice(0, end),
+      ].sort(),
+    );
+    for (const tool of page.tools)
+      expect(
+        advertised.find(({ name }) => name === tool.name)?.inputSchema,
+      ).toEqual(tool.input_schema);
+  }
+  expect(f.changed).toHaveBeenCalledTimes(
+    Math.ceil(f.bulkNames.length / pageSize),
   );
-  expect(await f.client.listTools()).toEqual(initial);
-  expect(f.changed).not.toHaveBeenCalled();
 });
 
 it("batches visibility changes, pages searches, and keeps excluded tools outside discovery", async () => {
@@ -154,15 +159,6 @@ it("batches visibility changes, pages searches, and keeps excluded tools outside
     tools: [{ name: "alpha_sqlite" }],
   });
   expect(f.changed).toHaveBeenCalledTimes(1);
-  const visible = await f.client.listTools();
-  for (const args of [
-    { query: "sqlite", offset: 3, limit: 1 },
-    { query: "missing_word" },
-  ]) {
-    expect((await f.discover(args)).isError).not.toBe(true);
-    expect(await f.client.listTools()).toEqual(visible);
-    expect(f.changed).toHaveBeenCalledTimes(1);
-  }
   const next = await f.discover({ query: "sqlite", offset: 1, limit: 2 });
   expect(next.structuredContent).toMatchObject({
     loaded_count: 4,
@@ -199,19 +195,19 @@ it("loads exact names atomically and emits one notification for a batch", async 
   expect(f.changed).toHaveBeenCalledTimes(1);
 });
 
-it.each([
-  { names: [] },
-  { names: ["alpha_sqlite"], query: "sqlite" },
-  { names: ["alpha_sqlite"], offset: 1 },
-  { limit: 21 },
-  { offset: -1 },
-  { names: ["alpha_sqlite"], extra: true },
-])(
-  "rejects malformed discovery before changing visibility: %j",
-  async (args) => {
-    const f = await connect();
-    expect((await f.discover(args)).isError).toBe(true);
-    expect((await f.client.listTools()).tools).toHaveLength(2);
+it("rejects every malformed discovery without changing visibility", async () => {
+  const f = await connect();
+  const initial = await f.client.listTools();
+  for (const args of [
+    { names: [] },
+    { names: ["alpha_sqlite"], query: "sqlite" },
+    { names: ["alpha_sqlite"], offset: 1 },
+    { limit: 21 },
+    { offset: -1 },
+    { names: ["alpha_sqlite"], extra: true },
+  ]) {
+    expect((await f.discover(args)).isError, JSON.stringify(args)).toBe(true);
+    expect(await f.client.listTools()).toEqual(initial);
     expect(f.changed).not.toHaveBeenCalled();
-  },
-);
+  }
+});

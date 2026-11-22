@@ -61,6 +61,11 @@ export type ClientRegistrationDialect =
   | ClientConfigurationFormat
   | "opencode_v2";
 
+/** In this dialect, a higher server row supplies all of its own fields. */
+export const clientServerRowsReplace = (
+  dialect: ClientRegistrationDialect | undefined,
+) => dialect === "opencode_v2";
+
 /** Validated client document and its server table, preserving unrelated settings. */
 export interface ClientConfigurationDocument {
   readonly document: Record<string, unknown>;
@@ -526,7 +531,18 @@ export const parseClientConfiguration = (
   };
 };
 
-/** The registration a client loads for `name`, including OpenCode V1 entries. */
+/** Interpret activation in the authored dialect and preserve malformed values. */
+export const openCodeDisabled = (
+  { enabled, disabled }: Record<string, unknown>,
+  dialect: "opencode" | "opencode_v2",
+): unknown =>
+  dialect === "opencode" && enabled !== undefined
+    ? typeof enabled === "boolean"
+      ? !enabled
+      : enabled
+    : disabled;
+
+/** Read a server row in the shared effective representation. */
 export const effectiveClientServer = (
   parsed: ClientConfigurationDocument,
   name: string,
@@ -544,13 +560,13 @@ export const effectiveClientServer = (
     Array.isArray(value)
   )
     return value;
-  const { enabled, ...registration } = value as Record<string, unknown>;
-  // OpenCode migrates legacy activation before merging layers. An enabled V1
-  // fragment must override inherited disabled:true; native V2 ignores enabled.
-  return (parsed.dialect === "opencode" || !native) &&
-    typeof enabled === "boolean"
-    ? { ...registration, disabled: !enabled }
-    : registration;
+  const entry = value as Record<string, unknown>;
+  const disabled = openCodeDisabled(
+    entry,
+    parsed.dialect === "opencode_v2" && native ? "opencode_v2" : "opencode",
+  );
+  const { enabled: _enabled, disabled: _disabled, ...registration } = entry;
+  return disabled === undefined ? registration : { ...registration, disabled };
 };
 
 /** Preserve source policy when editing its native table. A legacy OpenCode
