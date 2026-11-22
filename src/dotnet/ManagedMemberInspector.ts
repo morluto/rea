@@ -165,35 +165,6 @@ const selectTypes = (
 };
 
 /**
- * Literals sit beside the member inventory with their own coverage, so a
- * capacity failure while decoding them keeps the member facts and reports the
- * literals as not examined to completion.
- */
-const withoutUserStrings = (
-  inspection: ManagedMemberInspection,
-  failure: ManagedRepresentationFailure,
-): ManagedMemberInspection =>
-  // Without the literals the members can still exceed capacity; that report
-  // already explains the shared limit.
-  inspection.coverage.issues.some(
-    ({ code, scope }) =>
-      code === failure.issue.code && scope === failure.issue.scope,
-  )
-    ? managedMemberInspectionSchema.parse(inspection)
-    : managedMemberInspectionSchema.parse({
-        ...inspection,
-        user_strings: {
-          state: "partial",
-          literals: [],
-          issues: [{ ...failure.issue, scope: "metadata.#US" }],
-        },
-        limitations: [
-          ...inspection.limitations,
-          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
-        ],
-      });
-
-/**
  * Inspect metadata members and method bodies without loading target code.
  * Selected type names restrict full decoding to members of those exact types.
  * A caller that never reads literals, such as member comparison, can skip
@@ -536,9 +507,27 @@ export const inspectManagedMembersBytes = (
         budget,
       );
     } catch (cause: unknown) {
-      if (cause instanceof ManagedRepresentationFailure)
-        return withoutUserStrings(baseInspection, cause);
-      throw cause;
+      if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
+      // Keep admitted member facts and report the #US overflow separately.
+      if (
+        coverageIssues.some(
+          ({ code, scope }) =>
+            code === cause.issue.code && scope === cause.issue.scope,
+        )
+      )
+        return managedMemberInspectionSchema.parse(baseInspection);
+      return managedMemberInspectionSchema.parse({
+        ...baseInspection,
+        user_strings: {
+          state: "partial",
+          literals: [],
+          issues: [{ ...cause.issue, scope: "metadata.#US" }],
+        },
+        limitations: [
+          ...baseInspection.limitations,
+          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
+        ],
+      });
     }
     return managedMemberInspectionSchema.parse({
       ...baseInspection,
