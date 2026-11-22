@@ -18,8 +18,6 @@ export const lzmaStreamRequestSchema = z.strictObject({
     .max(UEFI_FIRMWARE_LIMITS.lzmaOutputBytes),
 });
 
-export type UefiLzmaStreamRequest = z.infer<typeof lzmaStreamRequestSchema>;
-
 export const lzmaRequestSchema = z.strictObject({
   format: z.enum(["lzma", "lzmaf86"]),
   payload_path: z.string(),
