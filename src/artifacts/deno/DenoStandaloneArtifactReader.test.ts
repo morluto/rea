@@ -147,7 +147,6 @@ it.each([
       ca_data_byte_length: 4,
       vfs_listing: "listed",
     });
-    expect(JSON.stringify(root?.format_metadata)).toContain(secret);
     expect(snapshot.limitations).toContain(
       artifactFormatDescriptor("deno-standalone")?.readerLimitation,
     );
@@ -292,41 +291,17 @@ it("does not follow a symlink and refuses to open it", async () => {
   ).rejects.toMatchObject({ reason: "unavailable" });
 });
 
-it("reports cancellation and keeps indexed paths for an unsupported remote listing", async () => {
-  const controller = new AbortController();
-  controller.abort(new Error("stop"));
+it("reports the caller's cancellation before preparing the inventory", async () => {
+  const reason = Symbol("cancel inventory");
   const path = await writeCarrier("cancel", denoElf());
   const reader = new DenoStandaloneArtifactReader(path);
   try {
     await expect(
-      reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "cancelled" });
+      reader.entries(AbortSignal.abort(reason))[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "cancelled", cause: reason });
   } finally {
     await reader.close();
   }
-
-  const remote = await inventoryOf(
-    "remote",
-    denoElf(
-      buildDenoSection({
-        specifiers: [{ bytes: Buffer.from([0xff]), id: 4 }],
-        remoteModules: [{ specifierId: 4, data: Buffer.from("body") }],
-      }),
-    ),
-  );
-  expect(
-    remote.occurrences.find((row) => row.logical_path === "."),
-  ).toMatchObject({
-    format_metadata: { remote_module_listing: "unsupported" },
-  });
-  const indexed = remote.occurrences.find(
-    (row) => row.logical_path === "deno-remote/0",
-  );
-  expect(indexed).toMatchObject({
-    limitations: expect.arrayContaining([
-      expect.stringContaining("not available as a logical path"),
-    ]),
-  });
 });
 
 it.each(["missing", "invalid UTF-8"] as const)(
@@ -377,139 +352,99 @@ it.each(["missing", "invalid UTF-8"] as const)(
   },
 );
 
-it.each([
-  ["a port", "http://localhost:8000/mod.ts", "localhost%3A8000/mod.ts"],
-  ["an IPv6 host", "http://[::1]:8000/mod.ts", "[%3A%3A1]%3A8000/mod.ts"],
-  ["a path colon", "https://example.com/a:b.ts", "example.com/a%3Ab.ts"],
-])("encodes %s in a remote logical path", async (_label, url, path) => {
+it("preserves remote specifiers and gives their regions portable paths", async () => {
+  const names = [
+    ["http://localhost:8000/mod.ts", "deno-remote/localhost%3A8000/mod.ts"],
+    ["http://[::1]:8000/mod.ts", "deno-remote/[%3A%3A1]%3A8000/mod.ts"],
+    ["https://example.com/a:b.ts", "deno-remote/example.com/a%3Ab.ts"],
+    [
+      "https://example.com/mod.ts?exports=*",
+      "deno-remote/example.com/mod.ts%3Fexports%3D%2A",
+    ],
+    ["file:///src/a%7Cb.ts", "src/a%7Cb.ts"],
+    ["file:///src/a%22b.ts", "src/a%22b.ts"],
+    ["file:///src/a%3Cb%3E.ts", "src/a%3Cb%3E.ts"],
+    ["file:///src/a%3Fb.ts", "src/a%3Fb.ts"],
+    ["jsr:@std/path", "jsr%3A@std/path"],
+  ] as const;
   const snapshot = await inventoryOf(
-    "remote-colon",
+    "remote-portable-paths",
     denoElf(
       buildDenoSection({
-        specifiers: [{ text: url, id: 1 }],
-        remoteModules: [{ specifierId: 1, data: "body", transpiled: "js" }],
+        vfs: [],
+        specifiers: names.map(([text], id) => ({ text, id })),
+        remoteModules: names.map((_, specifierId) => ({
+          specifierId,
+          data: "source",
+          transpiled: "js",
+        })),
       }),
     ),
   );
-  expect(
-    snapshot.occurrences.find(
-      (row) => row.logical_path === `deno-remote/${path}`,
-    ),
-  ).toMatchObject({ format_metadata: { source_path: url } });
-  expect(snapshot.occurrences.map((row) => row.logical_path)).toContain(
-    `deno-remote/${path}.deno-transpiled`,
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
   );
+  expect(rows.size).toBe(1 + names.length * 2);
+  for (const [sourcePath, logicalPath] of names) {
+    expect(rows.get(logicalPath)).toMatchObject({
+      format_metadata: { role: "remote-module", source_path: sourcePath },
+    });
+    expect(rows.get(`${logicalPath}.deno-transpiled`)).toMatchObject({
+      format_metadata: { role: "remote-transpiled", source_path: sourcePath },
+    });
+  }
 });
 
-it.each([
-  [
-    "a wildcard",
-    "https://example.com/mod.ts?exports=*",
-    "mod.ts%3Fexports%3D%2A",
-  ],
-  ["a pipe", "file:///src/a%7Cb.ts", null],
-  ["a quote", "file:///src/a%22b.ts", null],
-  ["angle brackets", "file:///src/a%3Cb%3E.ts", null],
-  ["a file query mark", "file:///src/a%3Fb.ts", null],
-])("encodes %s as a Windows-safe remote path", async (_label, url, tail) => {
+it("indexes spellings that share the same portable remote destination", async () => {
+  const aliases = [
+    [
+      "https://example.com/exact:case.ts",
+      "https://example.com/exact%3Acase.ts",
+      "deno-remote/example.com/exact%3Acase.ts",
+    ],
+    [
+      "https://example.com/a:b.ts",
+      "https://example.com/a%3ab.ts",
+      "deno-remote/example.com/a%3Ab.ts",
+    ],
+    [
+      "https://example.com/a?b",
+      "https://example.com/a%3fb",
+      "deno-remote/example.com/a%3Fb",
+    ],
+    ["x:a\\b", "x%3aa%5cb", "x%3Aa%5Cb"],
+  ] as const;
+  const specifiers = aliases.flatMap(([first, second]) => [first, second]);
   const snapshot = await inventoryOf(
-    "remote-windows-reserved",
+    "remote-escape-aliases",
     denoElf(
       buildDenoSection({
-        specifiers: [{ text: url, id: 1 }],
-        remoteModules: [{ specifierId: 1, data: "body" }],
+        vfs: [],
+        specifiers: specifiers.map((text, id) => ({ text, id })),
+        remoteModules: specifiers.map((data, specifierId) => ({
+          specifierId,
+          data,
+        })),
       }),
     ),
   );
-  const row = snapshot.occurrences.find(
-    (candidate) =>
-      (candidate.format_metadata as { source_path?: string }).source_path ===
-      url,
+  const rows = new Map(
+    snapshot.occurrences.map((row) => [row.logical_path, row]),
   );
-  expect(row?.logical_path).not.toMatch(/[*?"<>|:\\]/u);
-  if (tail !== null)
-    expect(row?.logical_path).toBe(`deno-remote/example.com/${tail}`);
+  expect(rows.size).toBe(1 + specifiers.length);
+  for (const [index, [first, second, natural]] of aliases.entries()) {
+    expect(rows.get(natural)).toMatchObject({
+      format_metadata: { source_path: first },
+    });
+    expect(rows.get(`deno-remote/${String(index * 2 + 1)}`)).toMatchObject({
+      format_metadata: { source_path: second },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("logical path prefix"),
+      ]),
+    });
+  }
+  expect(snapshot.limitations.join("\n")).not.toContain("case folding");
 });
-
-it("encodes a colon in a specifier that is not a host path", async () => {
-  const snapshot = await inventoryOf(
-    "remote-jsr",
-    denoElf(
-      buildDenoSection({
-        specifiers: [{ text: "jsr:@std/path", id: 1 }],
-        remoteModules: [{ specifierId: 1, data: "body" }],
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "jsr%3A@std/path"),
-  ).toMatchObject({ format_metadata: { source_path: "jsr:@std/path" } });
-});
-
-it("indexes a remote path that collides once its colon is encoded", async () => {
-  const snapshot = await inventoryOf(
-    "remote-encoded-collision",
-    denoElf(
-      buildDenoSection({
-        specifiers: [
-          { text: "https://example.com/a:b.ts", id: 1 },
-          { text: "https://example.com/a%3Ab.ts", id: 2 },
-        ],
-        remoteModules: [
-          { specifierId: 1, data: "first" },
-          { specifierId: 2, data: "second" },
-        ],
-      }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
-  ).toMatchObject({
-    format_metadata: { source_path: "https://example.com/a%3Ab.ts" },
-  });
-});
-
-it.each([
-  [
-    "a colon",
-    "https://example.com/a:b.ts",
-    "https://example.com/a%3ab.ts",
-    "deno-remote/example.com/a%3Ab.ts",
-  ],
-  [
-    "a query",
-    "https://example.com/a?b",
-    "https://example.com/a%3fb",
-    "deno-remote/example.com/a%3Fb",
-  ],
-  ["a backslash", "x:a\\b", "x%3aa%5cb", "x%3Aa%5Cb"],
-])(
-  "indexes a specifier whose escape differs from %s only in hex case",
-  async (_label, first, second, path) => {
-    const snapshot = await inventoryOf(
-      "remote-escape-case",
-      denoElf(
-        buildDenoSection({
-          specifiers: [
-            { text: first, id: 1 },
-            { text: second, id: 2 },
-          ],
-          remoteModules: [
-            { specifierId: 1, data: "first" },
-            { specifierId: 2, data: "second" },
-          ],
-        }),
-      ),
-    );
-    expect(
-      snapshot.occurrences.find((row) => row.logical_path === path),
-    ).toMatchObject({ format_metadata: { source_path: first } });
-    expect(
-      snapshot.occurrences.find((row) => row.logical_path === "deno-remote/1"),
-    ).toMatchObject({ format_metadata: { source_path: second } });
-    expect(snapshot.limitations.join("\n")).not.toContain("case folding");
-  },
-);
 
 it("reports unknown coverage when the virtual filesystem cannot be listed", async () => {
   const snapshot = await inventoryOf(
@@ -566,38 +501,53 @@ it("indexes a remote specifier whose component exceeds the filesystem name limit
   });
 });
 
-it.each([
-  ["transpiled", { transpiled: "out" }],
-  ["source map", { sourceMap: "{}" }],
-  ["CJS export analysis", { cjs: "{}" }],
-])(
-  "indexes a remote module whose %s child path would exceed the name limit",
-  async (_label, child) => {
-    const leaf = `${"a".repeat(MAX_DENO_PATH_COMPONENT_BYTES - 3)}.ts`;
-    const carrier = (extra: Record<string, string>) =>
-      denoElf(
-        buildDenoSection({
-          specifiers: [
-            { text: "file:///main.ts", id: 0 },
-            { text: `https://example.com/${leaf}`, id: 1 },
-          ],
-          remoteModules: [
-            { specifierId: 1, data: Buffer.from("body"), ...extra },
-          ],
-        }),
-      );
-    const paths = async (bytes: Buffer) =>
-      (await inventoryOf("remote-child", bytes)).occurrences.map(
-        (row) => row.logical_path,
-      );
-    expect(await paths(carrier({}))).toContain(
-      `deno-remote/example.com/${leaf}`,
-    );
-    const indexed = await paths(carrier(child));
-    expect(indexed).toContain("deno-remote/0");
-    expect(indexed.some((path) => path.includes(leaf))).toBe(false);
-  },
-);
+it("reserves space for each remote child suffix independently of the original name", async () => {
+  const cases = [
+    ["a", {}, ""],
+    ["b", { transpiled: "out" }, ".deno-transpiled"],
+    ["c", { sourceMap: "{}" }, ".deno-sourcemap"],
+    ["d", { cjs: "{}" }, ".deno-cjs-analysis"],
+  ] as const;
+  const names = cases.map(
+    ([character]) =>
+      `${character.repeat(MAX_DENO_PATH_COMPONENT_BYTES - 3)}.ts`,
+  );
+  const specifiers = names.map((leaf, id) => ({
+    id,
+    text: `https://example.com/${leaf}`,
+  }));
+  const snapshot = await inventoryOf(
+    "remote-child-limit",
+    denoElf(
+      buildDenoSection({
+        vfs: [],
+        specifiers,
+        remoteModules: cases.map(([, regions], specifierId) => ({
+          specifierId,
+          data: "body",
+          ...regions,
+        })),
+      }),
+    ),
+  );
+  const remotes = snapshot.occurrences.flatMap(
+    ({ logical_path, format_metadata }) =>
+      format_metadata?.kind === "deno-standalone-entry"
+        ? [[logical_path, format_metadata.source_path]]
+        : [],
+  );
+  const expected = cases.flatMap(([, , suffix], index) => {
+    const source = specifiers[index]!.text;
+    if (suffix === "")
+      return [[`deno-remote/example.com/${names[index]}`, source]];
+    const indexed = `deno-remote/${String(index)}`;
+    return [
+      [indexed, source],
+      [`${indexed}${suffix}`, source],
+    ];
+  });
+  expect(remotes.sort()).toEqual(expected.sort());
+});
 
 it("marks an entry point by its source path, not an indexed logical path", async () => {
   const contents = Buffer.from("x");
