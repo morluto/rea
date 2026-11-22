@@ -11,7 +11,7 @@ import {
   abortIfNeeded,
   ArtifactResourceScope,
 } from "../resources/index.js";
-import { readFileHandlePrefix } from "../filesystem/readFileHandlePrefix.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { Transform, pipeline, type Readable } from "node:stream";
 import {
   parseInesLayout,
@@ -72,7 +72,7 @@ export class InesArtifactReader implements ArtifactReader {
   ): AsyncIterable<ArtifactEntry> {
     const layout = await this.#scope.run(async () => {
       await this.#verifySource(signal);
-      const prefix = await readFileHandlePrefix(this.source.handle, 16, () =>
+      const prefix = await readFileHandleRange(this.source.handle, 0, 16, () =>
         abortIfNeeded(signal),
       );
       abortIfNeeded(signal);

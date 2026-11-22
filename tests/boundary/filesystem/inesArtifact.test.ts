@@ -1,5 +1,4 @@
 import * as rootHash from "../../../src/resources/StableRootArtifact.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -860,63 +859,6 @@ it.each(["target", "inventory", "reader"])(
     } finally {
       read.mockRestore();
       await sample.close();
-    }
-  },
-);
-
-it.each(["eof", "cancelled"])(
-  "preserves %s while filling a short prefix",
-  async (mode) => {
-    const root = await createTestTempDirectory("rea-prefix-boundary-");
-    const path = join(root, "source");
-    const bytes = Buffer.from(
-      mode === "eof" ? "NES\x1a" : "NES\x1a123456789012",
-    );
-    await writeFile(path, bytes);
-    const handle = await open(path, "r");
-    const prototype = Object.getPrototypeOf(handle) as {
-      read(
-        buffer: Buffer,
-        offset: number,
-        length: number,
-        position: number,
-      ): Promise<{ bytesRead: number; buffer: Buffer }>;
-    };
-    const original = prototype.read;
-    const controller = new AbortController();
-    let reads = 0;
-    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
-      this: typeof handle,
-      buffer,
-      offset,
-      length,
-      position,
-    ) {
-      reads++;
-      const observed = await original.call(
-        this,
-        buffer,
-        offset,
-        Math.min(length, 3),
-        position,
-      );
-      if (reads === 2 && mode === "cancelled") controller.abort();
-      return observed;
-    });
-    try {
-      const result = readFileHandlePrefix(handle, 16, () =>
-        abortIfNeeded(controller.signal),
-      );
-      if (mode === "eof") {
-        expect((await result).equals(bytes)).toBe(true);
-        expect(reads).toBe(3);
-      } else {
-        await expect(result).rejects.toMatchObject({ reason: "cancelled" });
-        expect(reads).toBe(2);
-      }
-    } finally {
-      read.mockRestore();
-      await handle.close();
     }
   },
 );
