@@ -90,25 +90,28 @@ export class ProcessOutputTokenScanner {
       const isPending = end === chunk.byteLength;
       const isConfirmed = !isPending && !isWordByte(chunk[end]!);
       if (isPending || isConfirmed) {
-        const hasNewlineBefore =
-          carried === 0 ||
-          (index > 0 && chunk.lastIndexOf(NEWLINE, index - 1) >= 0);
-        const match = hasNewlineBefore
-          ? this.#record(chunk, index, start)
-          : this.#record(
+        const needsCarriedPrefix =
+          carried > 0 &&
+          index <= PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES &&
+          (index === 0 || chunk.lastIndexOf(NEWLINE, index - 1) < 0);
+        // Keep one byte beyond the suffix allowance so #record can tell a
+        // newline at the limit from an omitted byte on the same line.
+        const match = needsCarriedPrefix
+          ? this.#record(
               Buffer.concat([
                 this.#lineTail,
                 chunk.subarray(
                   0,
                   Math.min(
                     chunk.byteLength,
-                    end + PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES,
+                    end + PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES + 1,
                   ),
                 ),
               ]),
               carried + index,
               start - carried,
-            );
+            )
+          : this.#record(chunk, index, start);
         if (isPending) this.#pending = match;
         else {
           this.#latest = match;

@@ -132,6 +132,32 @@ describe("ProcessOutputTokenScanner", () => {
     });
   });
 
+  it.each([
+    { label: "a newline exactly at the limit", extra: 0, ending: "\n" },
+    { label: "a newline past the limit", extra: 1, ending: "\n" },
+    { label: "EOF past the limit", extra: 1, ending: "" },
+  ])("reports suffix completeness with $label", ({ extra, ending }) => {
+    const prefix = "x";
+    const suffix = `:${"s".repeat(EXPECTED_CONTEXT_BYTES - 1 + extra)}`;
+    const scanner = new ProcessOutputTokenScanner(MARKER);
+    const lastChunk = Buffer.from(`${MARKER}${suffix}${ending}`);
+    scanner.scan(Buffer.from(prefix), 0);
+    scanner.scan(lastChunk, prefix.length);
+    const expected = {
+      offset: prefix.length,
+      line: `${prefix}${MARKER}${suffix.slice(0, EXPECTED_CONTEXT_BYTES)}`,
+      truncated: extra > 0,
+      ...(extra > 0 ? { trailingContextIncomplete: true } : {}),
+    };
+    expect(scanner.latestWithin(0, prefix.length + lastChunk.length)).toEqual(
+      expected,
+    );
+    scanner.finish();
+    expect(scanner.latestWithin(0, prefix.length + lastChunk.length)).toEqual(
+      expected,
+    );
+  });
+
   it("keeps the latest of several markers", () => {
     const scanner = new ProcessOutputTokenScanner(MARKER);
     const text = `first ${MARKER}\nsecond ${MARKER}: Metaspace\n`;
