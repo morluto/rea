@@ -1,4 +1,7 @@
-import { releaseExposureFailure } from "./releaseExposure/releaseExposureFailures.js";
+import {
+  RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
+  releaseExposureFailure,
+} from "./releaseExposure/releaseExposureFailures.js";
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
@@ -129,7 +132,6 @@ import { parseJavaScriptSource } from "../domain/javascript/javascriptSourcePars
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
 
-const OPERATION = "audit_release_exposure";
 const SIBLING_LIST_LIMIT = 4096;
 const CONTAINER_LIST_LIMIT = 4096;
 const OPEN_CONTAINER_LIMIT = 8;

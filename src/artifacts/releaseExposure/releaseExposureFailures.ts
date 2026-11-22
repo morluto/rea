@@ -24,7 +24,7 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
-const OPERATION = "inspect_release_exposure";
+export const RELEASE_EXPOSURE_AUDIT_OPERATION = "audit_release_exposure";
 const PROVIDER_ID = RELEASE_EXPOSURE_PROVIDER.id;
 
 export const fileSizeRecovery = (maxFileBytes: number) =>
@@ -48,7 +48,7 @@ const asarHeaderAdmissionFailure = (
   admission: ArtifactAdmissionLimit,
 ): AnalysisResourceConstraintError =>
   new AnalysisResourceConstraintError(
-    OPERATION,
+    RELEASE_EXPOSURE_AUDIT_OPERATION,
     "capacity",
     admission.requiredBytes === undefined
       ? `An ASAR header/index exceeds ${String(admission.maximumBytes)} bytes.`
@@ -82,7 +82,7 @@ export const releaseExposureLimitFailure = (
 ): AnalysisResourceConstraintError =>
   cause.admission === undefined
     ? new AnalysisResourceConstraintError(
-        OPERATION,
+        RELEASE_EXPOSURE_AUDIT_OPERATION,
         "file-size",
         cause.message,
         { max_file_bytes: maxFileBytes },
@@ -103,14 +103,14 @@ const releaseExposureFailurePrimary = (
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "integrity"
   )
-    return readerIntegrityFailure(OPERATION, path, cause);
+    return readerIntegrityFailure(RELEASE_EXPOSURE_AUDIT_OPERATION, path, cause);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
     cause.reason === "cancelled"
   )
     return cancelledBy(
-      OPERATION,
+      RELEASE_EXPOSURE_AUDIT_OPERATION,
       carriedReason(artifactFileCancellationCause(cause)),
     );
   if (
@@ -120,17 +120,17 @@ const releaseExposureFailurePrimary = (
     if (cause.reason === "limit")
       return releaseExposureLimitFailure(cause, maxFileBytes);
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(RELEASE_EXPOSURE_AUDIT_OPERATION, { cause }, [
         { path: ["path"], reason: "invalid_format", message: cause.message },
       ]);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
+      return new AnalysisAccessDeniedError(RELEASE_EXPOSURE_AUDIT_OPERATION, path, cause.code, {
         cause,
       });
     if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
+      return new AnalysisInputError(RELEASE_EXPOSURE_AUDIT_OPERATION, { cause }, [
         {
           path: ["path"],
           reason: "invalid_value",
@@ -138,7 +138,7 @@ const releaseExposureFailurePrimary = (
         },
       ]);
   }
-  return new ProviderAdapterError(PROVIDER_ID, OPERATION, {
+  return new ProviderAdapterError(PROVIDER_ID, RELEASE_EXPOSURE_AUDIT_OPERATION, {
     cause,
     diagnostics: {
       path,
@@ -161,5 +161,5 @@ export const releaseExposureFailure = (
     ),
     path,
     PROVIDER_ID,
-    OPERATION,
+    RELEASE_EXPOSURE_AUDIT_OPERATION,
   );
