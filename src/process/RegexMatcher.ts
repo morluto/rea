@@ -5,7 +5,6 @@ import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { readFileSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
-import { errorMessage } from "../kernel/errorMessage.js";
 import { isRecord } from "../kernel/isRecord.js";
 
 import type {
@@ -662,13 +661,6 @@ export const matchRegexValues = async (input: {
     input.heapRequest,
   );
   if (!admitted.ok) return admitted;
-  try {
-    // Reject invalid pattern syntax without spawning a supervised worker.
-    void new RegExp(input.pattern, input.caseSensitive ? "u" : "iu");
-  } catch (cause: unknown) {
-    return err(invalidRegexPatternError(input.operation, errorMessage(cause)));
-  }
-  if (input.values.length === 0) return ok([]);
   const { deadline, heapRequest } = admitted.value;
   let worker: Worker;
   try {

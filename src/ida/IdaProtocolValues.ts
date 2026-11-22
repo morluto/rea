@@ -211,6 +211,26 @@ export const openDatabaseSchema = z
       .passthrough(),
   })
   .passthrough();
+/**
+ * ida-pro-mcp's database supervisor (snapshot c133c385) rejects an open whose
+ * worker outlived IDA_MCP_OPEN_TIMEOUT with this sentence and the whole-second
+ * deadline. Only that exact prefix is read; any other rejection keeps its text.
+ */
+const SUPERVISOR_OPEN_TIMEOUT =
+  /^idalib worker timed out after (\d+)s while opening and analyzing /u;
+
+/** The supervisor's open deadline in seconds when a rejection reports it. */
+export const supervisorOpenTimeoutSeconds = (
+  reason: string,
+): number | undefined => {
+  const digits = SUPERVISOR_OPEN_TIMEOUT.exec(reason)?.[1];
+  if (digits === undefined) return undefined;
+  const seconds = Number(digits);
+  return seconds > 0 && Number.isSafeInteger(seconds * 1000)
+    ? seconds
+    : undefined;
+};
+
 /** Only an explicit completed rejection preserves legacy no-worker cleanup. */
 export const rejectedOpenDatabaseSchema = z
   .object({

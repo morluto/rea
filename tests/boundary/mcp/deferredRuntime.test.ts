@@ -157,7 +157,7 @@ it.each([
         minItems: 1,
         maxItems: 20,
       },
-      offset: { type: "integer", minimum: 0, maximum: 9007199254740991 },
+      offset: { type: "integer", minimum: 0 },
       limit: { type: "integer", minimum: 1, maximum: 20 },
     });
     expect(JSON.stringify(discovery.inputSchema)).not.toContain('"default"');

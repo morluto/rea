@@ -76,6 +76,7 @@ export const inspectObjcClassImportBindings = (input: {
       "Candidate address scan reached the existing max_records limit",
     );
 
+  const reader = new BinaryReader(bytes, true, "macho-chained-fixup-bindings");
   for (const requestedAddress of candidates) {
     if (examinedAddresses.has(requestedAddress)) continue;
     examinedAddresses.add(requestedAddress);
@@ -89,11 +90,7 @@ export const inspectObjcClassImportBindings = (input: {
       const offset = layout.offset(parsedAddress, 8);
       // The loader already resolved this address to an 8-byte slot; the shared reader
       // repeats the range check and names the format if the slice is short.
-      const raw = new BinaryReader(
-        bytes,
-        true,
-        "macho-chained-fixup-bindings",
-      ).word(offset, 64);
+      const raw = reader.word(offset, 64);
       const decoded = fixups.decode(parsedAddress, raw);
       if (decoded.kind === "unsupported") {
         reasons.add(`${requestedAddress}: ${decoded.reason}`);

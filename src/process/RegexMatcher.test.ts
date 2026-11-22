@@ -547,7 +547,7 @@ it.each([
   },
 );
 
-it("validates invalid patterns and empty candidate lists before starting a worker", async () => {
+it("validates patterns even when the worker has no candidate values", async () => {
   const invalid = await matchRegexValues({
     operation: "search_procedures",
     pattern: "[",

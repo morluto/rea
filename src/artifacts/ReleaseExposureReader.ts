@@ -257,13 +257,17 @@ const namedMapReference = (
 interface OpenContainer {
   readonly path: string;
   readonly reader: ArtifactReader;
-  entries: readonly ArtifactEntry[] | null;
+  listing: ContainerListing | null;
+}
+
+interface ContainerListing {
+  readonly entries: readonly ArtifactEntry[];
   /**
    * Entries by container-relative logical path, in listing order. Inventory
    * numbers same-path occurrences in that order, so an occurrence's duplicate
    * ordinal selects its entry no matter which read path reaches it first.
    */
-  readonly byPath: Map<string, ArtifactEntry[]>;
+  readonly byPath: ReadonlyMap<string, readonly ArtifactEntry[]>;
 }
 
 /** Read-only inventory and bounded member scan for one shipped artifact. */
@@ -3035,7 +3039,7 @@ const scanUnexpandedContainer = async (
   containers: Map<string, OpenContainer>,
   state: ScanState,
 ): Promise<void> => {
-  let entries: readonly ArtifactEntry[];
+  let listing: ContainerListing;
   try {
     const container = await openContainer(
       containers,
@@ -3052,13 +3056,8 @@ const scanUnexpandedContainer = async (
       noteUnexaminedPackage(state);
       return;
     }
-    entries = await containerEntries(
-      container,
-      state,
-      input.signal,
-      (entry) => {
-        noteUnlistedEntry(state, entry);
-      },
+    listing = await listContainer(container, state, input.signal, (entry) =>
+      noteUnlistedEntry(state, entry),
     );
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -3066,7 +3065,7 @@ const scanUnexpandedContainer = async (
     pushLimitation(state, `Could not list ${filePath}.`);
     return;
   }
-  for (const entry of entries) {
+  for (const entry of listing.entries) {
     if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
@@ -3187,8 +3186,8 @@ const readContainerMember = async (
       input.signal,
     );
     if (container === null) return { kind: "unread" };
-    await containerEntries(container, state, input.signal);
-    const entry = container.byPath.get(entryPath(occurrence, parent))?.[
+    const { byPath } = await listContainer(container, state, input.signal);
+    const entry = byPath.get(entryPath(occurrence, parent))?.[
       ordinals.get(occurrence.occurrence_id) ?? 0
     ];
     if (entry === undefined || entry.kind !== "file") return { kind: "unread" };
@@ -3243,8 +3242,7 @@ const openContainer = async (
   const container: OpenContainer = {
     path: filePath,
     reader,
-    entries: null,
-    byPath: new Map(),
+    listing: null,
   };
   containers.set(id, container);
   if (expectedSha256 !== undefined)
@@ -3252,14 +3250,15 @@ const openContainer = async (
   return container;
 };
 
-const containerEntries = async (
+const listContainer = async (
   container: OpenContainer,
   state: ScanState,
   signal: AbortSignal | undefined,
   onPastCap?: (entry: ArtifactEntry) => void,
-): Promise<readonly ArtifactEntry[]> => {
-  if (container.entries !== null) return container.entries;
+): Promise<ContainerListing> => {
+  if (container.listing !== null) return container.listing;
   const listed: ArtifactEntry[] = [];
+  const byPath = new Map<string, ArtifactEntry[]>();
   const traversal = new ArtifactTraversalObservation();
   let count = 0;
   let truncated = false;
@@ -3279,16 +3278,17 @@ const containerEntries = async (
     }
     listed.push(entry);
     const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
-    const sameName = container.byPath.get(key);
-    if (sameName === undefined) container.byPath.set(key, [entry]);
+    const sameName = byPath.get(key);
+    if (sameName === undefined) byPath.set(key, [entry]);
     else sameName.push(entry);
   }
   const coverage = traversal.snapshot();
   if (coverage.status === "unknown") state.coverageUnknown = true;
   for (const limitation of coverage.limitations)
     pushLimitation(state, limitation);
-  container.entries = listed;
-  return listed;
+  const listing = { entries: listed, byPath };
+  container.listing = listing;
+  return listing;
 };
 
 const readEntryBytes = async (
