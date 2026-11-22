@@ -244,3 +244,32 @@ it("rejects a second module after a CR-terminated line comment", () => {
     }),
   );
 });
+
+it("resolves repeated typed signatures across many functions while stopping at bodies", () => {
+  const functions = Array.from(
+    { length: 200 },
+    (_, i) =>
+      `(func $f${i} (type $sig) (local i32 i64) local.get 0 i64.extend_i32_s)`,
+  ).join("\n");
+  const exports = Array.from(
+    { length: 200 },
+    (_, i) => `(export "e${i}" (func $f${i}))`,
+  ).join("\n");
+  const report = parseWabtWat(`(module
+    (type $sig (func\u00a0(param i32) (result i64)))
+    (import "env" "imp" (func (type $sig)))
+    ${functions}
+    ${exports})`).interface;
+  expect(report.state).toBe("complete");
+  expect(report.entries).toHaveLength(201);
+  expect(report.entries[0]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+  expect(report.entries[200]?.signature).toEqual({
+    kind: "func",
+    params: ["i32"],
+    results: ["i64"],
+  });
+});
