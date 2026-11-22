@@ -591,6 +591,7 @@
 * **go:** consolidate native pointer mapping coverage ([#13449](https://github.com/morluto/rea/issues/13449)) ([87180a8](https://github.com/morluto/rea/commit/87180a86d9e8c28cdb2207e96e4f39facf22c9eb))
 * **go:** consolidate retained metadata views ([#12875](https://github.com/morluto/rea/issues/12875)) ([aa84c59](https://github.com/morluto/rea/commit/aa84c59d8b8eed8822295a4c029bd0c282b91c52))
 * **go:** shrink cumulative header search fixtures ([#12800](https://github.com/morluto/rea/issues/12800)) ([fce3470](https://github.com/morluto/rea/commit/fce34706dd0e8175a9121a20e8b67e96f3f79984))
+* **gpu:** consolidate AMD note provenance coverage ([#13568](https://github.com/morluto/rea/issues/13568)) ([61c7f2b](https://github.com/morluto/rea/commit/61c7f2b47f5da5de298b5d7bc05d30431feae69c))
 * **guards:** verify CLI prose exemptions independently ([#12828](https://github.com/morluto/rea/issues/12828)) ([9af5501](https://github.com/morluto/rea/commit/9af55017cf508a49b9cb49d18000380edb670ea3))
 * **guidance:** consolidate search and locator contracts ([#13312](https://github.com/morluto/rea/issues/13312)) ([ae4e0c8](https://github.com/morluto/rea/commit/ae4e0c83dd327076501d2f8fdb801e1bde4ae09d))
 * **har:** consolidate producer and evidence coverage ([#13202](https://github.com/morluto/rea/issues/13202)) ([1c982b8](https://github.com/morluto/rea/commit/1c982b82fea64a1562d2dc1a863e4ec76dccee9d))
