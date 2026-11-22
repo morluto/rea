@@ -154,6 +154,10 @@ const HEAVY_SHARED_MODULES = [
     path: "/dist/contracts/sessionToolContracts.js",
   },
   {
+    name: "application-tool-contracts",
+    path: "/dist/contracts/applicationToolContracts.js",
+  },
+  {
     name: "evidence-bundle-commands",
     path: "/dist/application/EvidenceBundleCommands.js",
   },
@@ -423,14 +427,21 @@ describe("Bundled heavy startup controls", () => {
     );
     expect(viewResolved).toContain("analysis-view-service");
     expect(viewResolved).toContain("analysis-view-result");
+    const appContractResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "trace-application-feature", "--help"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(appContractResolved).toContain("application-tool-contracts");
   });
 
-  it("does not load AnalysisView or session contracts for single-command startup", async () => {
+  it("does not load AnalysisView, session, or application contract barrels for single-command startup", async () => {
     for (const command of [
       "inspect-uefi-nvram",
       "inspect-sqlite-database",
       "inspect-wasm-artifact",
       "guided-workflows",
+      "compare-source-to-bundle",
+      "compare-static-and-observed-endpoints",
     ]) {
       await expect(
         resolvedPackages(
