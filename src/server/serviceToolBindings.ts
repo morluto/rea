@@ -456,11 +456,11 @@ const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
     : undefined;
 };
 
-/** Deliver a workflow's typed output as the JSON value its contract declares. */
+/** Deliver a workflow's freshly built output as the JSON value its contract declares. */
 const jsonValueResult = <Error>(
   result: Result<unknown, Error>,
 ): Result<JsonValue, Error> =>
-  result.ok ? ok(jsonValueSchema.parse(result.value)) : result;
+  result.ok ? ok(ownedJsonValueSchema.parse(result.value)) : result;
 
 type Bind<Service> = (
   service: Service,

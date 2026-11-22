@@ -12,7 +12,7 @@ import {
   inspectMachoSchema,
   type NativeCommandInvocation,
 } from "../domain/native/nativeInspection.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { machoRuntimeSymbolName } from "../domain/native/machoSymbolName.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -474,7 +474,7 @@ export const inspectNativeMacho = async (
             limitations: [...normalized.limitations, ...locationLimitations],
           });
   return ok({
-    result: jsonValueSchema.parse({
+    result: ownedJsonValueSchema.parse({
       ...result,
       ...(context.bundleProvenance === undefined
         ? {}
