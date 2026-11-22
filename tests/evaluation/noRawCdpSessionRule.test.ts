@@ -61,6 +61,7 @@ it("allows raw Playwright CDP sessions only in their owner and tests, including 
     process.execPath,
     [
       resolve("node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
       "-c",
       config,
       "--format",

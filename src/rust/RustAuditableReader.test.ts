@@ -286,7 +286,9 @@ it("names the padded-storage basis when a padded section overflows inflate alloc
 it("names the fixed cap when it bounds a large padded section's inflate allocation", () => {
   // Storage above 128 KiB derives more than the fixed 8 MiB cap, so the cap,
   // not the padded storage size, is the enforced bound.
-  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20));
+  const compressed = deflateSync(Buffer.alloc(9 * 1024 * 1024, 0x20), {
+    level: 1,
+  });
   const fileAlignment = 512;
   const stored = Buffer.alloc(132 * 1024);
   compressed.copy(stored);

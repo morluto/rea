@@ -61,7 +61,11 @@ const lintDiagnostics = async (root: string) =>
 it("covers the lint inventory and root tool configs in resolved cache inputs", () => {
   const scan = spawnSync(
     process.execPath,
-    [join(repository, "node_modules/oxlint/bin/oxlint"), "--debug=files"],
+    [
+      join(repository, "node_modules/oxlint/bin/oxlint"),
+      "--threads=1",
+      "--debug=files",
+    ],
     { cwd: repository, encoding: "utf8", timeout: 15_000 },
   );
   expect(scan.error).toBeUndefined();
