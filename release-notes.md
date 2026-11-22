@@ -440,6 +440,7 @@
 * **ghidra:** consolidate literal search boundary coverage ([#12925](https://github.com/morluto/rea/issues/12925)) ([5f9e931](https://github.com/morluto/rea/commit/5f9e9313651feeacd228ca1a1cbf6a714754cdac))
 * **ghidra:** consolidate load-image snapshot attestation ([#12926](https://github.com/morluto/rea/issues/12926)) ([7d31b97](https://github.com/morluto/rea/commit/7d31b974567a8d89c435b77fa22036bc2728ff61))
 * **ghidra:** consolidate PE PDB provenance coverage ([#12919](https://github.com/morluto/rea/issues/12919)) ([76585bc](https://github.com/morluto/rea/commit/76585bc08506ba154e267b09590e7f2210380e64))
+* **ghidra:** consolidate raw profile and packaged producer proof ([#13379](https://github.com/morluto/rea/issues/13379)) ([64d42d2](https://github.com/morluto/rea/commit/64d42d297132ebd52f00a99dea7b0b2dc8c4f916))
 * **ghidra:** consolidate request recovery assertions ([#12916](https://github.com/morluto/rea/issues/12916)) ([c8b9382](https://github.com/morluto/rea/commit/c8b938252d914d550cb45e646a0820632e9da492))
 * **ghidra:** consolidate saved project selection and history ([#12920](https://github.com/morluto/rea/issues/12920)) ([d1242fa](https://github.com/morluto/rea/commit/d1242fa30b2c9d18631fc2f37b2a1d615f92a9af))
 * **ghidra:** consolidate seed commitment and report coverage ([#12918](https://github.com/morluto/rea/issues/12918)) ([73e1b67](https://github.com/morluto/rea/commit/73e1b675163841a9da34c1284f00f45f1f443a9f))
