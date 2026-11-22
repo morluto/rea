@@ -41,6 +41,7 @@ import {
   mcpDoctorDeadlineRecovery,
 } from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import { MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES } from "./config/mcpTargetEnvironment.js";
 import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
 import { isRecord } from "./kernel/isRecord.js";
 import { sha256Hex } from "./kernel/sha256Hex.js";
@@ -152,11 +153,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       // The caller supplies the complete base. Use the process owner's
       // platform-aware overlay to remove target selection before launching.
       hostEnvironment: options.environment,
-      env: {
-        HOPPER_TARGET_PATH: undefined,
-        HOPPER_TARGET_KIND: undefined,
-        HOPPER_LOADER_ARGS_JSON: undefined,
-      },
+      env: MCP_TARGET_FREE_ENVIRONMENT_OVERRIDES,
       // A server can start its own providers in separate process groups.
       sweepTokenOwnedProcesses: true,
     },
