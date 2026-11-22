@@ -442,8 +442,11 @@ export const findUbiSmallerGridHeader = (
 
 /**
  * Whether every mapped LEB's declared data and padding fit the LEB of
- * `smallerPebSize`, as Linux UBI requires of a VID header. A LEB larger than
- * that rules the smaller size out whatever its header positions hold.
+ * `smallerPebSize`, as Linux UBI requires of a VID header: padding shorter
+ * than the LEB, as `classifyUbiPeb` and a volume table alignment no larger
+ * than the LEB also demand, and data within what the padding leaves. A LEB
+ * that does not fit rules the smaller size out whatever its header positions
+ * hold.
  */
 export const ubiSmallerPebSizeHoldsLebs = (
   geometry: UbiGeometry,
@@ -453,7 +456,9 @@ export const ubiSmallerPebSizeHoldsLebs = (
   const lebSize = smallerPebSize - geometry.dataOffset;
   return pebs.every(
     (peb) =>
-      peb.state !== "mapped" || peb.vid.dataSize + peb.vid.dataPad <= lebSize,
+      peb.state !== "mapped" ||
+      (peb.vid.dataPad < lebSize &&
+        peb.vid.dataSize <= lebSize - peb.vid.dataPad),
   );
 };
 

@@ -1012,6 +1012,21 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
       32 * 1024,
     ),
   ).toBe(true);
+  // Padding that fills the whole smaller LEB is invalid there even when a
+  // dynamic LEB declares no data, so it rules the smaller size out.
+  const wholeLebPad = 32 * 1024 - parsed.geometry.dataOffset;
+  expect(
+    ubiSmallerPebSizeHoldsLebs(
+      parsed.geometry,
+      [
+        {
+          ...padded,
+          vid: { ...padded.vid, volType: 1, dataSize: 0, dataPad: wholeLebPad },
+        },
+      ],
+      32 * 1024,
+    ),
+  ).toBe(false);
 });
 
 it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () => {
