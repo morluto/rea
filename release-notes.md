@@ -161,6 +161,7 @@
 * **mcp:** reduce deferred catalog startup data ([#13039](https://github.com/morluto/rea/issues/13039)) ([8f2b865](https://github.com/morluto/rea/commit/8f2b865c0645aab11a1d5d4c027d34089a925bf2))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **native:** pre-screen IL2CPP slots and reuse ObjC/PE indices ([#13314](https://github.com/morluto/rea/issues/13314)) ([ac4f655](https://github.com/morluto/rea/commit/ac4f65585846fc8542234ce1366b8a251336a790))
+* **schemas:** eliminate generator/clone overhead in schema compaction and compact union projections ([#13313](https://github.com/morluto/rea/issues/13313)) ([87243c0](https://github.com/morluto/rea/commit/87243c0c0e1d5ff9e99daf85d93c046c49e2ef11))
 * **setup:** index YAML alias bindings in document order ([#13295](https://github.com/morluto/rea/issues/13295)) ([560e2ef](https://github.com/morluto/rea/commit/560e2ef267229e2a133879a1d3d663c1e88d5bbb))
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
