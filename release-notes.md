@@ -582,6 +582,7 @@
 * **reference:** verify exact exclusions against failed ancestors ([68e6953](https://github.com/morluto/rea/commit/68e6953897c1100faed203ad8af22c41c2a823a0))
 * **reference:** verify exclusion and missing-root outcomes ([#12831](https://github.com/morluto/rea/issues/12831)) ([68e6953](https://github.com/morluto/rea/commit/68e6953897c1100faed203ad8af22c41c2a823a0))
 * **release-exposure:** consolidate native and packaged evidence checks ([#13382](https://github.com/morluto/rea/issues/13382)) ([ca7572d](https://github.com/morluto/rea/commit/ca7572d6e926b744c6ee9bd9f343974d63154f93))
+* **release:** consolidate immutable checkpoint fixtures ([#13388](https://github.com/morluto/rea/issues/13388)) ([1a613fd](https://github.com/morluto/rea/commit/1a613fd0d548aa978febfa55374ddf8bf55766f8))
 * **resources:** consolidate directory reader identity checks ([#12941](https://github.com/morluto/rea/issues/12941)) ([8a971e1](https://github.com/morluto/rea/commit/8a971e192ad60cd73956f79dd24d8a77061e9aa0))
 * **resources:** consolidate output publication coverage ([#12938](https://github.com/morluto/rea/issues/12938)) ([329510a](https://github.com/morluto/rea/commit/329510a5e189333b88dabcb7062e33dcb7d5c95a))
 * **resources:** consolidate scope close and lease checks ([#12849](https://github.com/morluto/rea/issues/12849)) ([6c067ec](https://github.com/morluto/rea/commit/6c067ec9afd12feba801a18f1e675559f699f3ce))
