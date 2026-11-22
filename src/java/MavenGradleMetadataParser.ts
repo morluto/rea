@@ -239,7 +239,8 @@ const parseMavenDependency = (
   const version = childText(element, "version");
   const type = childText(element, "type");
   const scope = childText(element, "scope");
-  const bom_import = type === "pom" && scope === "import";
+  const bom_import =
+    origin === "dependencyManagement" && type === "pom" && scope === "import";
   const exclusions = mavenExclusionElements(element).map((exclusion) => ({
     group_id: childText(exclusion, "groupId"),
     artifact_id: childText(exclusion, "artifactId"),
