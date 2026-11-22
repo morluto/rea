@@ -47,14 +47,8 @@ import {
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
 import { ok } from "../../../src/domain/result.js";
-import {
-  resolveMcpStartupBudgets,
-  MCP_PHASE_BUDGET_FLOOR_MS,
-} from "../../../src/config/mcpStartupBudgets.js";
-import {
-  mcpDoctorDeadlineRecovery,
-  MCP_STARTUP_POLICY,
-} from "../../../src/config/mcpStartupPolicy.js";
+import { MCP_PHASE_BUDGET_FLOOR_MS } from "../../../src/config/mcpStartupBudgets.js";
+import { MCP_STARTUP_POLICY } from "../../../src/config/mcpStartupPolicy.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { waitFor } from "../../support/testWait.js";
 import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
@@ -96,13 +90,6 @@ const expectDoctorDeadline = (
   detail: string | undefined,
   milliseconds: number,
 ) => {
-  expect(detail).toContain(
-    mcpDoctorDeadlineRecovery(
-      resolveMcpStartupBudgets({
-        REA_MCP_DOCTOR_DEADLINE_MS: String(milliseconds),
-      }).doctor,
-    ),
-  );
   expect(detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
   expect(detail).toContain(`${String(milliseconds)} ms`);
   expect(detail).toContain("source setting");
@@ -909,31 +896,45 @@ describe("production MCP doctor request-flow deadline", () => {
   });
 
   it.each([
-    "unrelated fixture method refusal",
-    "Request timed out while reading a remote fixture",
-    "Maximum total timeout exceeded in a remote operation",
-    "Production MCP doctor deadline expired is remote diagnostic text",
-  ])(
-    "does not infer the doctor deadline from remote failure prose: %s",
-    async (message) => {
+    [
+      "refuse-list",
+      "transport",
+      "Request timed out while reading a remote fixture",
+    ],
+    [
+      "refuse-call",
+      "request-flow",
+      "Maximum total timeout exceeded in a remote operation",
+    ],
+    ["refuse-call", "request-flow", "Production MCP doctor deadline expired"],
+  ] as const)(
+    "keeps initialization evidence when %s reports %s: %s",
+    async (mode, failedCheck, message) => {
       const result = await runCachedMcpDoctor({
         command: process.execPath,
         args: [resolve("tests/fixtures/mcpStartupProbeChild.mjs")],
         cwd: process.cwd(),
         environment: {
           ...process.env,
-          REA_MCP_PROBE_MODE: "refuse-call",
+          REA_MCP_PROBE_MODE: mode,
           REA_MCP_PROBE_ERROR_MESSAGE: message,
           REA_MCP_DOCTOR_DEADLINE_MS: "5000",
         },
       });
-      expect(result.server).not.toBeNull();
-      const requestFlow = result.checks.find(
-        (check) => check.name === "request-flow",
-      );
-      expect(requestFlow?.ok).toBe(false);
-      expect(requestFlow?.detail).toContain(message);
-      expect(requestFlow?.detail).not.toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+      expect(result.server).toEqual({
+        name: "probe-fixture",
+        version: "1",
+        protocol_version: expect.any(String),
+      });
+      expect(result.checks).toContainEqual({
+        name: "initialize",
+        ok: false,
+        detail: `probe-fixture@1; protocol=${result.server?.protocol_version}`,
+      });
+      const refusal = result.checks.find(({ name }) => name === failedCheck);
+      expect(refusal?.ok).toBe(false);
+      expect(refusal?.detail).toContain(message);
+      expect(refusal?.detail).not.toContain("REA_MCP_DOCTOR_DEADLINE_MS");
     },
   );
 
