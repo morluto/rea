@@ -1461,6 +1461,99 @@ describe("headless IDA completed-database retention", () => {
   });
 });
 
+describe("headless IDA retained close after unverified later health", () => {
+  it.each([
+    {
+      label: "times out",
+      failHealth: (producer: RecordingIdaMcp) => {
+        producer.beforeCall = async (name) => {
+          if (name === "server_health")
+            throw new AnalysisTimeoutError("server_health", 1000);
+        };
+      },
+    },
+    {
+      label: "is malformed",
+      failHealth: (producer: RecordingIdaMcp) => {
+        producer.overrideCall = (name) =>
+          name === "server_health" ? { status: "ok" } : undefined;
+      },
+    },
+  ])(
+    "closes unsaved after a later health read $label",
+    async ({ failHealth }) => {
+      const { producer, client, root } = await fixture("headless");
+      expect((await client.execute("health", {})).ok).toBe(true);
+      const workspace = dirname(producer.inputPath);
+      const idbPath = `${producer.inputPath}.i64`;
+      failHealth(producer);
+      const result = await client.execute("list_procedures", {});
+      if (result.ok) throw new Error("Expected a later health failure");
+      expect(result.error.diagnostics).toMatchObject({
+        retained_database: {
+          workspace,
+          idb_path: idbPath,
+          save: "not_requested",
+          reason: expect.stringContaining("identity is unverified"),
+        },
+      });
+      const database = producer.database;
+      expect((await client.close()).ok).toBe(true);
+      expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual(
+        [{ name: "idb_close", args: { database, save: false } }],
+      );
+      expect(producer.closes).toBe(1);
+      expect((await stat(workspace)).isDirectory()).toBe(true);
+      expect(await readdir(root)).toEqual(
+        expect.arrayContaining(["target.elf", basename(workspace)]),
+      );
+    },
+  );
+
+  it("keeps the recovered database path when a later health read changes the IDB path", async () => {
+    const { producer, client, root } = await fixture("headless");
+    expect((await client.execute("health", {})).ok).toBe(true);
+    const workspace = dirname(producer.inputPath);
+    const idbPath = `${producer.inputPath}.i64`;
+    const rejectedPath = `${producer.inputPath}.changed.i64`;
+    producer.overrideCall = (name) =>
+      name === "server_health"
+        ? {
+            status: "ok",
+            input_path: producer.inputPath,
+            idb_path: rejectedPath,
+            module: "target.elf",
+            imagebase: "0x1000",
+            auto_analysis_ready: true,
+          }
+        : undefined;
+    const result = await client.execute("list_procedures", {});
+    if (result.ok) throw new Error("Expected a session identity refusal");
+    expect(result.error.message).toContain(
+      "target or image base changed during the REA session",
+    );
+    expect(result.error.diagnostics).toMatchObject({
+      retained_database: {
+        workspace,
+        idb_path: idbPath,
+        save: "not_requested",
+      },
+    });
+    expect(result.error.diagnostics).not.toMatchObject({
+      retained_database: { idb_path: rejectedPath },
+    });
+    const database = producer.database;
+    expect((await client.close()).ok).toBe(true);
+    expect(producer.calls.filter(({ name }) => name === "idb_close")).toEqual([
+      { name: "idb_close", args: { database, save: false } },
+    ]);
+    expect((await stat(workspace)).isDirectory()).toBe(true);
+    expect(await readdir(root)).toEqual(
+      expect.arrayContaining(["target.elf", basename(workspace)]),
+    );
+  });
+});
+
 it.each([
   {
     label: "inactive blank worker",

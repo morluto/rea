@@ -324,12 +324,14 @@ export class IdaSessionClient implements AnalysisClient {
   #analysisCompleted = false;
   /** Set when a later tool call fails after #analysisCompleted in headless mode. */
   #retainCompletedDatabase = false;
-  /** False once a later health read no longer verifies the selected target. */
+  /** True only after the latest health observation verified current identity. */
   #databaseIdentityCurrent = false;
   #completedDatabasePath: string | undefined;
   #retainedDatabaseFailure: AnalysisError | undefined;
   #databaseSaveOutcome: "pending" | "saved" | "not_requested" | "unknown" =
     "pending";
+  /** True when a retained close requested `save: true` on the supervisor. */
+  #savedCloseRequested = false;
   #blockingSessions: readonly UpstreamSession[] | undefined;
   #callGraphAdvertised = false;
   #surveyAdvertised = false;
@@ -726,7 +728,9 @@ export class IdaSessionClient implements AnalysisClient {
       save,
       reason:
         save === "unknown"
-          ? "Auto-analysis completed before this later tool call failed. The worker was released, but REA could not confirm that the retained database was saved."
+          ? this.#savedCloseRequested
+            ? "Auto-analysis completed before this later tool call failed. The worker was released, but REA could not confirm that the retained database was saved."
+            : "Auto-analysis completed before this later tool call failed. Hex-Rays close_database has no save argument, so the saved state of the retained database is unconfirmed."
           : save === "not_requested"
             ? "Auto-analysis completed before this later tool call failed. The current database identity is unverified, so REA keeps the workspace without requesting a save."
             : "Auto-analysis completed before this later tool call failed. On close, REA saves the private database and keeps the workspace at this path instead of deleting it.",
@@ -1023,7 +1027,12 @@ export class IdaSessionClient implements AnalysisClient {
     options?: ExecutionOptions,
     onObserved?: (metadata: JsonValue) => void,
   ): Promise<JsonValue> {
+    // A later health timeout or malformed payload must not leave a previous
+    // verification in place; restore eligibility only after this observation
+    // completes every identity check.
+    if (this.config.mode === "headless") this.#databaseIdentityCurrent = false;
     let identity: string;
+    let completedDatabasePath: string | undefined;
     if (this.config.mode === "attached") {
       const raw = await this.#nativeMetadata(options?.signal);
       const metadata = attachedMetadataSchema.parse(raw);
@@ -1099,9 +1108,7 @@ export class IdaSessionClient implements AnalysisClient {
           },
         );
       this.#analysisCompleted = true;
-      this.#databaseIdentityCurrent = true;
-      if (metadata.idb_path !== null)
-        this.#completedDatabasePath = metadata.idb_path;
+      if (metadata.idb_path !== null) completedDatabasePath = metadata.idb_path;
       identity = JSON.stringify([
         this.#database,
         metadata.input_path,
@@ -1121,6 +1128,11 @@ export class IdaSessionClient implements AnalysisClient {
       );
     }
     this.#initialIdentity = identity;
+    if (this.config.mode === "headless") {
+      this.#databaseIdentityCurrent = true;
+      if (completedDatabasePath !== undefined)
+        this.#completedDatabasePath = completedDatabasePath;
+    }
     return this.#metadata;
   }
 
@@ -1195,6 +1207,7 @@ export class IdaSessionClient implements AnalysisClient {
         return false;
       }
     }
+    if (save) this.#savedCloseRequested = true;
     const response = await this.connection.call("idb_close", {
       database,
       save,
@@ -1316,7 +1329,14 @@ export class IdaSessionClient implements AnalysisClient {
       this.#closed = true;
       if (
         this.#retainCompletedDatabase &&
-        this.#databaseSaveOutcome === "unknown"
+        this.#databaseSaveOutcome === "pending" &&
+        idaCompatibilityProfile(this.config).protocol === "hexrays"
+      )
+        this.#databaseSaveOutcome = "unknown";
+      if (
+        this.#retainCompletedDatabase &&
+        this.#databaseSaveOutcome === "unknown" &&
+        this.#savedCloseRequested
       ) {
         const failure = new AnalysisProtocolError(
           "IDA released the worker, but the saved state of the retained database is unknown.",
