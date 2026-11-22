@@ -4693,9 +4693,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
             List.copyOf(computedCallSites));
     }
 
+    private boolean isX86_32Program() {
+        return currentProgram.getDefaultPointerSize() == 4 &&
+            "x86".equalsIgnoreCase(currentProgram.getLanguage().getProcessor().toString());
+    }
+
     private final class FunctionBoundaryLimitations {
         private final Function function;
         private final boolean checkLoaderRelocations = !loaderInitializedRelocations.isEmpty();
+        private final boolean checkBorlandSeh = isX86_32Program();
         private final List<String> limitations = new ArrayList<>();
         private boolean inferredNoReturnCall;
         private final Set<Address> observedLoaderRelocations = new HashSet<>();
@@ -4728,13 +4734,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     limitations.add(loaderInitializedRelocationLimitation(relocation));
                 }
             }
-            if (beforePrevious != null && previous != null) {
-                String seh = borlandSehHandlerLimitation(
-                    function, beforePrevious, previous, instruction);
-                if (seh != null) limitations.add(seh);
+            if (checkBorlandSeh) {
+                if (beforePrevious != null && previous != null) {
+                    String seh = borlandSehHandlerLimitation(
+                        function, beforePrevious, previous, instruction);
+                    if (seh != null) limitations.add(seh);
+                }
+                beforePrevious = previous;
+                previous = instruction;
             }
-            beforePrevious = previous;
-            previous = instruction;
         }
 
         private List<String> values() {
@@ -5232,26 +5240,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonArray referencedStrings(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String[]> resolved = new HashMap<>();
+        Listing listing = currentProgram.getListing();
         for (Reference reference : references) {
             monitor.checkCancelled();
-            Data data = currentProgram.getListing().getDefinedDataContaining(
-                reference.getToAddress()
-            );
-            if (data == null || !data.hasStringValue()) {
+            Address target = reference.getToAddress();
+            String[] entry;
+            if (resolved.containsKey(target)) {
+                entry = resolved.get(target);
+            } else {
+                Data data = listing.getDefinedDataContaining(target);
+                String value = data != null && data.hasStringValue()
+                    ? StringDataInstance.getStringDataInstance(data).getStringValue()
+                    : null;
+                entry = value == null ? null : new String[] { canonicalAddress(data.getAddress()), value };
+                resolved.put(target, entry);
+            }
+            if (entry == null) {
                 continue;
             }
-            String value = StringDataInstance.getStringDataInstance(data).getStringValue();
-            if (value == null) {
-                continue;
-            }
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(data.getAddress()));
-            item.addProperty("value", value);
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(data.getAddress()) + "\u0000" + value + "\u0000" +
-                canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", entry[0]);
+            item.addProperty("value", entry[1]);
+            item.addProperty("source_address", sourceAddress);
+            String key = entry[0] + "\u0000" + entry[1] + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
@@ -5259,22 +5274,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private JsonArray referencedNames(List<Reference> references) throws Exception {
         TreeMap<String, JsonObject> observed = new TreeMap<>();
+        Map<Address, String> resolved = new HashMap<>();
+        SymbolTable symbolTable = currentProgram.getSymbolTable();
         for (Reference reference : references) {
             monitor.checkCancelled();
-            Symbol symbol = currentProgram.getSymbolTable().getPrimarySymbol(
-                reference.getToAddress()
-            );
-            if (symbol == null) {
+            Address target = reference.getToAddress();
+            String name;
+            if (resolved.containsKey(target)) {
+                name = resolved.get(target);
+            } else {
+                Symbol symbol = symbolTable.getPrimarySymbol(target);
+                name = symbol == null ? null : symbol.getName(true);
+                resolved.put(target, name);
+            }
+            if (name == null) {
                 continue;
             }
+            String targetAddress = canonicalAddress(target);
+            String sourceAddress = canonicalAddress(reference.getFromAddress());
             JsonObject item = new JsonObject();
-            item.addProperty("address", canonicalAddress(reference.getToAddress()));
-            item.addProperty("value", symbol.getName(true));
-            item.addProperty("source_address", canonicalAddress(reference.getFromAddress()));
-            String key = canonicalAddress(reference.getToAddress()) + "\u0000" +
-                symbol.getName(true) + "\u0000" + canonicalAddress(reference.getFromAddress());
+            item.addProperty("address", targetAddress);
+            item.addProperty("value", name);
+            item.addProperty("source_address", sourceAddress);
+            String key = targetAddress + "\u0000" + name + "\u0000" + sourceAddress;
             observed.put(key, item);
-            }
+        }
         JsonArray result = new JsonArray();
         observed.values().forEach(result::add);
         return result;
