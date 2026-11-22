@@ -22,6 +22,8 @@ const OPERATION = "inspect_pcap_capture";
 export const TSHARK_JSON_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_RETAINED_BYTES = 16 * 1024 * 1024;
 const MAX_DECODED_BYTES = 128 * 1024 * 1024;
+const MAX_REQUEST_TARGET_CACHE_ENTRIES = 1024;
+const MAX_REQUEST_TARGET_CACHE_KEY_LENGTH = 512;
 
 const DNS_FAMILIES = ["dns", "mdns", "llmnr"] as const;
 const DNS_RAW_FAMILIES = ["dns_raw", "mdns_raw", "llmnr_raw"] as const;
@@ -557,7 +559,11 @@ const recordPacketHttpUris = (
     let parsed = state.requestTargetCache.get(value);
     if (parsed === undefined) {
       parsed = parsePcapHttpUri(value, "request-target");
-      state.requestTargetCache.set(value, parsed);
+      if (
+        value.length <= MAX_REQUEST_TARGET_CACHE_KEY_LENGTH &&
+        state.requestTargetCache.size < MAX_REQUEST_TARGET_CACHE_ENTRIES
+      )
+        state.requestTargetCache.set(value, parsed);
     }
     if (parsed.origin !== null) {
       absoluteRequests ??= new Map();
@@ -833,8 +839,8 @@ const processPacketDns = (
         treeAddresses,
       )
     : false;
-  if (hasSelected)
-    packetUnattributed ||= reconcileSelectedDns(
+  if (hasSelected) {
+    const selectedUnattributed = reconcileSelectedDns(
       chargeState,
       dnsState,
       index,
@@ -842,6 +848,8 @@ const processPacketDns = (
       treeQueries!,
       treeAddresses!,
     );
+    packetUnattributed ||= selectedUnattributed;
+  }
   if (packetUnattributed) dnsState.unattributedPackets += 1;
 };
 

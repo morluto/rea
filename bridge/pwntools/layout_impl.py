@@ -79,69 +79,6 @@ def _name_in_validated_table(display, table_start, table_size, offset, content, 
             "location": {"offset": off_hex, "bytes": bytes_hex}, "unknown_reason": None}
 
 
-def name_reference(display, section, offset, content):
-    header = getattr(section, "header", None)
-    if header is None or header.sh_type != "SHT_STRTAB":
-        return {"display": display, "bytes_base64": None, "location": None,
-                "unknown_reason": "Referenced string table could not be resolved."}
-    return name_in_table(display, header.sh_offset, header.sh_size, offset, content)
-
-
-def name_in_table(display, table_start, table_size, offset, content):
-    length = len(content)
-    if not file_range(table_start, table_size, length):
-        raise LayoutFailure("format", "ELF contains a file-backed range outside the selected snapshot.")
-    return _name_in_validated_table(display, table_start, table_size, offset, content, length)
-
-
-def dynamic_name_reference(tags, offset, image, content):
-    starts = []
-    sizes = []
-    for tag in tags:
-        if tag.d_tag == "DT_STRTAB":
-            starts.append(tag.d_val)
-        elif tag.d_tag == "DT_STRSZ":
-            sizes.append(tag.d_val)
-    if not starts or not sizes:
-        raise LayoutFailure("format", "ELF dependency requires DT_STRTAB and DT_STRSZ.")
-    if len(starts) != 1 or len(sizes) != 1:
-        raise LayoutFailure("unsupported-target", "ELF dependency string-table tags are ambiguous: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes}))
-    if not 0 <= offset < sizes[0]:
-        raise LayoutFailure("format", f"ELF dependency name offset {offset} lies outside declared DT_STRSZ {sizes[0]}.")
-    offsets = set()
-    for segment in image.iter_segments_by_type("PT_LOAD"):
-        h = segment.header
-        if starts[0] >= h.p_vaddr and starts[0] + sizes[0] <= h.p_vaddr + h.p_filesz:
-            offsets.add(h.p_offset + starts[0] - h.p_vaddr)
-    if len(offsets) != 1:
-        raise LayoutFailure("unsupported-target", "Dynamic string table lacks a unique file-backed mapping: " + repr({"DT_STRTAB": starts, "DT_STRSZ": sizes, "candidate_file_offsets": sorted(offsets)}))
-    return name_in_table(None, offsets.pop(), sizes[0], offset, content)
-
-
-def symbol_value_meaning(raw, image_type, sections):
-    index = raw.st_shndx
-    if raw.st_info.type == "STT_FILE": return "no-address"
-    if index == "SHN_UNDEF": return "undefined"
-    if index == "SHN_COMMON": return "alignment"
-    if index == "SHN_ABS": return "absolute-value"
-    if not isinstance(index, int) or not 0 < index < len(sections) or index >= 0xff00:
-        return "unknown-section-index"
-    if sections[index].header.sh_type == "SHT_NULL":
-        return "unknown-section-index"
-    if image_type == "ET_REL": return "section-offset"
-    if raw.st_info.type == "STT_TLS": return "tls-offset"
-    return "linked-virtual-address"
-
-
-def relocation_target(image_type, section_index, offset, sections):
-    if image_type != "ET_REL":
-        return {"kind": "linked-virtual-address", "address": address(offset)}
-    if section_index == 0 or sections[section_index].header.sh_type == "SHT_NULL":
-        return {"kind": "unknown-section", "reported_section_index": section_index,
-                "offset": address(offset), "unknown_reason": "undefined-section-reference" if section_index == 0 else "inactive-section-header"}
-    return {"kind": "section-offset", "section_index": section_index, "offset": address(offset)}
-
-
 def inspect_elf(path, cache):
     for package, expected in PACKAGES.items():
         try:
