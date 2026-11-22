@@ -221,13 +221,31 @@ const decompiledFunction = (code, name) => {
   };
 };
 
-/** The single expression a straight-line function returns. */
+/**
+ * Whether `statement` writes `variable`: plain or compound assignment, or an
+ * increment or decrement.
+ */
+const writes = (statement, variable) =>
+  new RegExp(
+    `(?<![\\w.>])${variable}\\s*(?:(?:[-+*/%&|^]|<<|>>)?=(?!=)|\\+\\+|--)|(?:\\+\\+|--)\\s*${variable}\\b`,
+    "u",
+  ).test(statement);
+
+/**
+ * The single expression a straight-line function returns, in terms of its
+ * parameters' incoming values: no statement may write a parameter.
+ */
 const returnedExpression = (code, name) => {
   const { parameters, statements } = decompiledFunction(code, name);
   const returns = statements
     .map((statement) => RETURN.exec(statement))
     .filter((match) => match !== null);
   assert.equal(returns.length, 1, `${name} must return once: ${code}`);
+  for (const parameter of parameters)
+    assert.ok(
+      !statements.some((statement) => writes(statement, parameter)),
+      `${name} must not write its parameter ${parameter}: ${code}`,
+    );
   return { parameters, expression: returns[0][1] };
 };
 
@@ -238,14 +256,10 @@ const returnsResult = (statements, index, call) => {
   const assignment = ASSIGNMENT.exec(statements[index]);
   if (assignment === null || operand(assignment[2]) !== call) return false;
   const [, temporary] = assignment;
-  const reassigned = new RegExp(
-    `^${temporary}\\s*(?:[-+*/%&|^]|<<|>>)?=(?!=)`,
-    "u",
-  );
   for (const statement of statements.slice(index + 1)) {
     const returned = RETURN.exec(statement);
     if (returned !== null) return operand(returned[1]) === temporary;
-    if (reassigned.test(statement)) return false;
+    if (writes(statement, temporary)) return false;
   }
   return false;
 };

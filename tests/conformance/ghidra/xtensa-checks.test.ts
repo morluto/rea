@@ -230,11 +230,28 @@ describe("Xtensa lane decompiled dataflow", () => {
       error: /must return the rea_xtensa_leaf result/u,
     },
     {
+      name: "the call result incremented",
+      entry: ENTRY.replace("return uVar1", "uVar1++;\n  return uVar1"),
+      leaf: LEAF,
+      error: /must return the rea_xtensa_leaf result/u,
+    },
+    {
       name: "a leaf that ignores its argument",
       entry: ENTRY,
       leaf: leafWith("return in_a2 + 7;"),
       error: /must return its argument plus 7/u,
     },
+    ...[
+      "param_1 = param_1 + 100;",
+      "param_1 += 100;",
+      "param_1++;",
+      "--param_1;",
+    ].map((write) => ({
+      name: `a leaf that writes its argument (${write})`,
+      entry: ENTRY,
+      leaf: leafWith(`${write}\n  return param_1 + 7;`),
+      error: /rea_xtensa_leaf must not write its parameter param_1/u,
+    })),
   ])("refuses $name", ({ entry, leaf, error }) => {
     expect(() => assertXtensaFixturePseudocode(entry, leaf, VALUES)).toThrow(
       error,
@@ -279,6 +296,12 @@ describe("Xtensa lane decompiled dataflow", () => {
       entry: C_ENTRY,
       scale: C_SCALE.replace("value * factor + ", ""),
       error: /must return value \* factor \+ 0x1234567/u,
+    },
+    {
+      name: "a callee that writes its value before the product",
+      entry: C_ENTRY,
+      scale: C_SCALE.replace("  return", "  value = value << 1;\n  return"),
+      error: /rea_xtensa_c_scale must not write its parameter value/u,
     },
   ])("refuses $name", ({ entry, scale, error }) => {
     expect(() =>
