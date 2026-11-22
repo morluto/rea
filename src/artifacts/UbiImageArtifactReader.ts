@@ -287,34 +287,6 @@ export class UbiImageArtifactReader implements ArtifactReader {
             ubiSpacingConflict(measured.value.pebSize, header),
           );
       }
-    // Erased eraseblocks between headers fit a smaller size equally well; a
-    // written byte at any of its off-grid header positions rules it out, as
-    // does a LEB too large for it.
-    for (const smaller of ubiSmallerPebSizes(measured.value)) {
-      let fits = ubiSmallerPebSizeHoldsLebs(measured.value, pebs, smaller);
-      let probes = 0;
-      for (
-        let offset = smaller;
-        fits && offset < size;
-        offset += smaller, probes += 1
-      ) {
-        if (offset % measured.value.pebSize === 0) continue;
-        if (probes % 256 === 0) await setImmediate();
-        this.#assertOpen(signal);
-        fits = ubiPebHeadersErased(
-          await readArtifactFileBytes(
-            handle,
-            offset,
-            measured.value.headerReadBytes,
-            size,
-            signal,
-          ),
-          measured.value,
-        );
-      }
-      if (fits)
-        throw parseFailure(ubiAmbiguousPebSize(measured.value, smaller));
-    }
     const geometry = checkUbiPebs(measured.value, pebs);
     if (!geometry.ok) throw parseFailure(geometry.error);
     const verifiedCopies = new Set<number>();
@@ -346,10 +318,41 @@ export class UbiImageArtifactReader implements ArtifactReader {
               signal,
             ),
       );
-    const table = parseUbiVolumeTable(
-      [copies[0] ?? null, copies[1] ?? null],
-      geometry.value,
-    );
+    const tableCopies = [copies[0] ?? null, copies[1] ?? null] as const;
+    // Erased eraseblocks between headers fit a smaller size equally well; a
+    // written byte at any of its off-grid header positions rules it out, as
+    // does a LEB too large for it or a volume table invalid under it.
+    for (const smaller of ubiSmallerPebSizes(measured.value)) {
+      let fits = ubiSmallerPebSizeHoldsLebs(
+        measured.value,
+        pebs,
+        smaller,
+        tableCopies,
+      );
+      let probes = 0;
+      for (
+        let offset = smaller;
+        fits && offset < size;
+        offset += smaller, probes += 1
+      ) {
+        if (offset % measured.value.pebSize === 0) continue;
+        if (probes % 256 === 0) await setImmediate();
+        this.#assertOpen(signal);
+        fits = ubiPebHeadersErased(
+          await readArtifactFileBytes(
+            handle,
+            offset,
+            measured.value.headerReadBytes,
+            size,
+            signal,
+          ),
+          measured.value,
+        );
+      }
+      if (fits)
+        throw parseFailure(ubiAmbiguousPebSize(measured.value, smaller));
+    }
+    const table = parseUbiVolumeTable(tableCopies, geometry.value);
     if (!table.ok) throw parseFailure(table.error);
     await this.#source.read(signal);
     this.#assertOpen(signal);

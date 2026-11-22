@@ -115,6 +115,51 @@ it("refuses an eraseblock size that also fits with erased eraseblocks between", 
   }
 });
 
+it("reads an eraseblock size whose volume table padding rules out a smaller one", async () => {
+  // Under 64 KiB eraseblocks alignment 6144 would pad nothing, so this
+  // table's data_pad of 4096 fits only the 128 KiB size.
+  const geometry = {
+    pebSize: 128 * 1024,
+    vidHeaderOffset: 2048,
+    dataOffset: 4096,
+  };
+  const reader = new UbiImageArtifactReader(
+    await fixture(
+      ubiImage(
+        [
+          ...ubiLayoutPebs(
+            [
+              {
+                id: 0,
+                name: "rootfs",
+                type: "dynamic",
+                reservedPebs: 1,
+                alignment: 6144,
+                dataPad: 4096,
+              },
+            ],
+            geometry,
+          ),
+          {
+            kind: "leb",
+            volId: 0,
+            lnum: 0,
+            data: Buffer.from("ROOTFS"),
+            sqnum: 2n,
+            dataPad: 4096,
+          },
+        ],
+        geometry,
+      ),
+    ),
+  );
+  try {
+    expect(await entries(reader)).toHaveLength(1);
+  } finally {
+    await reader.close();
+  }
+});
+
 it("refuses two copies of one LEB that share a sequence number", async () => {
   const records = [
     { id: 0, name: "rootfs", type: "dynamic" as const, reservedPebs: 1 },

@@ -86,17 +86,6 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   );
   if (header !== null)
     return { ok: false, error: ubiSpacingConflict(pebSize, header) };
-  for (const smaller of ubiSmallerPebSizes(measured.value)) {
-    let fits = ubiSmallerPebSizeHoldsLebs(measured.value, pebs, smaller);
-    for (let at = smaller; fits && at < bytes.length; at += smaller)
-      if (at % pebSize !== 0)
-        fits = ubiPebHeadersErased(
-          bytes.subarray(at, at + headerReadBytes),
-          measured.value,
-        );
-    if (fits)
-      return { ok: false, error: ubiAmbiguousPebSize(measured.value, smaller) };
-  }
   const geometry = checkUbiPebs(measured.value, pebs);
   if (!geometry.ok) return geometry;
   const verifiedCopies = new Set(
@@ -119,7 +108,24 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
           peb * pebSize + dataOffset + tableBytes,
         );
   const [left, right] = ubiLayoutVolumePebs(pebs, verifiedCopies);
-  const table = parseUbiVolumeTable([copy(left), copy(right)], geometry.value);
+  const tableCopies = [copy(left), copy(right)] as const;
+  for (const smaller of ubiSmallerPebSizes(measured.value)) {
+    let fits = ubiSmallerPebSizeHoldsLebs(
+      measured.value,
+      pebs,
+      smaller,
+      tableCopies,
+    );
+    for (let at = smaller; fits && at < bytes.length; at += smaller)
+      if (at % pebSize !== 0)
+        fits = ubiPebHeadersErased(
+          bytes.subarray(at, at + headerReadBytes),
+          measured.value,
+        );
+    if (fits)
+      return { ok: false, error: ubiAmbiguousPebSize(measured.value, smaller) };
+  }
+  const table = parseUbiVolumeTable(tableCopies, geometry.value);
   if (!table.ok) return table;
   return {
     ok: true,
@@ -869,6 +875,76 @@ it("refuses an image whose next erase-counter header disagrees with the first", 
   });
 });
 
+it("accepts an eraseblock size whose volume table padding rules out the smaller one", () => {
+  // 128 KiB eraseblocks with data_offset 4096 leave a 126976-byte LEB, so
+  // alignment 6144 pads 4096 bytes. A 64 KiB eraseblock would leave a
+  // 61440-byte LEB that alignment 6144 divides, so its table would need
+  // data_pad 0 and cannot describe this image, though every header position
+  // on that grid is erased.
+  const geometry = {
+    pebSize: 128 * 1024,
+    vidHeaderOffset: 2048,
+    dataOffset: 4096,
+  };
+  const records: UbiFixtureVolumeRecord[] = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic",
+      reservedPebs: 1,
+      alignment: 6144,
+      dataPad: 4096,
+    },
+  ];
+  const bytes = ubiImage(
+    [
+      ...ubiLayoutPebs(records, geometry),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.from("ROOTFS"),
+        sqnum: 2n,
+        dataPad: 4096,
+      },
+    ],
+    geometry,
+  );
+  const parsed = image(bytes);
+  expect(parsed.geometry).toMatchObject({ pebSize: 131072, pebCount: 3 });
+  expect(parsed.volumes[0]).toMatchObject({
+    name: "rootfs",
+    alignment: 6144,
+    dataPad: 4096,
+  });
+
+  // With alignment 1 both sizes pad nothing, so the ambiguity stands.
+  const unaligned = ubiImage(
+    [
+      ...ubiLayoutPebs(
+        [{ ...records[0]!, alignment: 1, dataPad: 0 }],
+        geometry,
+      ),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: Buffer.from("ROOTFS"),
+        sqnum: 2n,
+      },
+    ],
+    geometry,
+  );
+  expect(parse(unaligned)).toMatchObject({
+    ok: false,
+    error: {
+      message: expect.stringContaining(
+        "also fits a 65536-byte eraseblock size",
+      ),
+    },
+  });
+});
+
 it("refuses two copies of one LEB that share a sequence number", () => {
   const copy = (lnum: number, fill: number, volId = 0) => ({
     kind: "leb" as const,
@@ -1088,6 +1164,8 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
   );
   expect(parsed.geometry).toMatchObject({ pebSize: 65536, pebCount: 3 });
   expect(parsed.volumes[0]).toMatchObject({ dataBytes: data.length });
+  const table = ubiVolumeTable(records, ubiVolumeTableSlots(wide));
+  const tables = [table, table] as const;
   expect(
     ubiSmallerPebSizeHoldsLebs(
       parsed.geometry,
@@ -1111,6 +1189,7 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
         },
       ],
       32 * 1024,
+      tables,
     ),
   ).toBe(false);
   const padded = {
@@ -1130,14 +1209,15 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
       sqnum: 2n,
     },
   };
-  expect(ubiSmallerPebSizeHoldsLebs(parsed.geometry, [padded], 32 * 1024)).toBe(
-    false,
-  );
+  expect(
+    ubiSmallerPebSizeHoldsLebs(parsed.geometry, [padded], 32 * 1024, tables),
+  ).toBe(false);
   expect(
     ubiSmallerPebSizeHoldsLebs(
       parsed.geometry,
       [{ ...padded, vid: { ...padded.vid, dataPad: 10 } }],
       32 * 1024,
+      tables,
     ),
   ).toBe(true);
   // Padding that fills the whole smaller LEB is invalid there even when a
@@ -1153,6 +1233,7 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
         },
       ],
       32 * 1024,
+      tables,
     ),
   ).toBe(false);
 });

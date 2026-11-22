@@ -453,25 +453,50 @@ export const findUbiSmallerGridHeader = (
   );
 
 /**
- * Whether every mapped LEB's declared data and padding fit the LEB of
- * `smallerPebSize`, as Linux UBI requires of a VID header: padding shorter
- * than the LEB, as `classifyUbiPeb` and a volume table alignment no larger
- * than the LEB also demand, and data within what the padding leaves. A LEB
- * that does not fit rules the smaller size out whatever its header positions
- * hold.
+ * Whether the image still reads as eraseblocks of `smallerPebSize`: every
+ * mapped LEB's declared data and padding fit the smaller LEB, as Linux UBI
+ * requires of a VID header (padding shorter than the LEB, as `classifyUbiPeb`
+ * and a volume table alignment no larger than the LEB also demand, and data
+ * within what the padding leaves), and a volume table copy (`tableCopies`,
+ * read at the layout volume's LEB 0 and LEB 1) stays valid, its data_pad
+ * matching the smaller LEB size. A size that fails either is ruled out
+ * whatever its header positions hold.
  */
 export const ubiSmallerPebSizeHoldsLebs = (
   geometry: UbiGeometry,
   pebs: readonly UbiPeb[],
   smallerPebSize: number,
+  tableCopies: readonly [Uint8Array | null, Uint8Array | null],
 ): boolean => {
   const lebSize = smallerPebSize - geometry.dataOffset;
-  return pebs.every(
-    (peb) =>
-      peb.state !== "mapped" ||
-      (peb.vid.dataPad < lebSize &&
-        peb.vid.dataSize <= lebSize - peb.vid.dataPad),
-  );
+  if (
+    !pebs.every(
+      (peb) =>
+        peb.state !== "mapped" ||
+        (peb.vid.dataPad < lebSize &&
+          peb.vid.dataSize <= lebSize - peb.vid.dataPad),
+    )
+  )
+    return false;
+  const smaller: UbiGeometry = {
+    ...geometry,
+    pebSize: smallerPebSize,
+    lebSize,
+    pebCount: (geometry.pebCount * geometry.pebSize) / smallerPebSize,
+    volumeTableSlots: Math.min(
+      UBI_MAX_VOLUMES,
+      Math.floor(lebSize / UBI_VTBL_RECORD_BYTES),
+    ),
+  };
+  const tableBytes = ubiVolumeTableBytes(smaller);
+  const [left, right] = tableCopies;
+  return parseUbiVolumeTable(
+    [
+      left?.subarray(0, tableBytes) ?? null,
+      right?.subarray(0, tableBytes) ?? null,
+    ],
+    smaller,
+  ).ok;
 };
 
 /**
