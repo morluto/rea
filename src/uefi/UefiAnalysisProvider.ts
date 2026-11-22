@@ -24,7 +24,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { jsonValueSchema, ownedJsonValueSchema } from "../domain/jsonValue.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { Result } from "../domain/result.js";
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
@@ -753,7 +753,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     if (publication.failure !== undefined) {
       throw publication.failure.retainPartialObservation({
         kind: "uefi",
-        result: jsonValueSchema.parse(result),
+        result: ownedJsonValueSchema.parse(result),
         provenance: { path: input.path, sha256: imageSha256 },
       });
     }

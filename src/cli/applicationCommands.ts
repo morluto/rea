@@ -9,8 +9,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
-import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
-import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
 import { registerContractDocumentCommand } from "./contractCommand.js";
@@ -88,8 +86,6 @@ export const registerApplicationCommands = (
       return result.ok ? { ok: true, value: result.value.evidence } : result;
     },
   });
-  registerSourceToBundleCommand(cli, logger);
-  registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
   registerEvtxArchiveCommand(cli, logger);
   registerNtfsJournalCommand(cli, logger);

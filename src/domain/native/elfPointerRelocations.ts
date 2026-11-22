@@ -123,7 +123,10 @@ export interface ElfPointerRelocationInput {
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
-  readonly dynamicSegments: readonly ElfDynamicSegment[];
+  readonly dynamicSegments: readonly Pick<
+    ElfDynamicSegment,
+    "offset" | "size"
+  >[];
   readonly mappings: readonly FileMapping[];
   readonly zeroFills: readonly ZeroFillMapping[];
 }

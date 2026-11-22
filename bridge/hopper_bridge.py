@@ -943,6 +943,26 @@ def _search_inventory(document, kind):
     return inventory
 
 
+def _search_inventory_folded(document, kind):
+    """Cache pre-casefolded search text alongside an unchanged document inventory."""
+    key = (id(document), f"{kind}_folded")
+    folded = _search_inventory_cache.get(key)
+    if folded is None:
+        inventory = _search_inventory(document, kind)
+        if kind == "string":
+            folded = tuple(
+                (address, record, record["value"].casefold())
+                for address, record in inventory
+            )
+        else:
+            folded = tuple(
+                (address, value, value.casefold())
+                for address, value in inventory
+            )
+        _search_inventory_cache[key] = folded
+    return folded
+
+
 def _search_results(document, kind, params):
     pattern = params.get("pattern")
     if not isinstance(pattern, str) or not pattern:
@@ -954,22 +974,33 @@ def _search_results(document, kind, params):
     if not isinstance(case_sensitive, bool):
         raise InvalidRequestError("case_sensitive must be a boolean")
 
-    if mode == "literal":
-        needle = pattern if case_sensitive else pattern.casefold()
-        matches = lambda value: needle in (value if case_sensitive else value.casefold())
-    else:
+    if mode != "literal":
         raise CapabilityUnavailableError("Regex matching requires REA's supervised worker; the native bridge only executes literal searches")
 
+    if case_sensitive:
+        if kind == "string":
+            return [
+                {"address": address, **record}
+                for address, record in _search_inventory(document, kind)
+                if pattern in record["value"]
+            ]
+        return [
+            {"address": address, "value": value}
+            for address, value in _search_inventory(document, kind)
+            if pattern in value
+        ]
+
+    needle = pattern.casefold()
     if kind == "string":
         return [
             {"address": address, **record}
-            for address, record in _search_inventory(document, kind)
-            if matches(record["value"])
+            for address, record, folded in _search_inventory_folded(document, kind)
+            if needle in folded
         ]
     return [
         {"address": address, "value": value}
-        for address, value in _search_inventory(document, kind)
-        if matches(value)
+        for address, value, folded in _search_inventory_folded(document, kind)
+        if needle in folded
     ]
 
 

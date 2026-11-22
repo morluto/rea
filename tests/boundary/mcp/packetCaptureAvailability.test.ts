@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
@@ -131,13 +131,17 @@ const readPacketCaptureEntry = async (
 };
 
 it.skipIf(process.platform === "win32")(
-  "defers tshark PATH probing until binary_session and detects newly added tshark",
+  "defers TShark probing and refreshes availability after install and removal",
   async () => {
     const directory = await createTestTempDirectory("rea-packet-lazy-");
     const bin = join(directory, "bin");
     await mkdir(bin);
     const probeSpy = vi.spyOn(pcapConfiguration, "locateWiresharkTool");
-    onTestFinished(() => probeSpy.mockRestore());
+    const now = vi.spyOn(performance, "now").mockReturnValue(10_000);
+    onTestFinished(() => {
+      now.mockRestore();
+      probeSpy.mockRestore();
+    });
 
     const session = createTestBinarySession(() => {
       throw new Error("binary analysis must not start during status discovery");
@@ -159,14 +163,28 @@ it.skipIf(process.platform === "win32")(
     expect(probeSpy).toHaveBeenCalledTimes(1);
 
     const tshark = join(bin, "tshark");
-    await writeFile(tshark, "");
-    await chmod(tshark, 0o700);
+    await writeFile(tshark, "", { mode: 0o700 });
+    now.mockReturnValue(10_999);
+    expect(await readPacketCaptureEntry(client)).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+    });
+    expect(probeSpy).toHaveBeenCalledTimes(1);
 
+    now.mockReturnValue(11_000);
     expect(await readPacketCaptureEntry(client)).toMatchObject({
       available: true,
       reason: "available",
     });
     expect(probeSpy).toHaveBeenCalledTimes(2);
+
+    await unlink(tshark);
+    now.mockReturnValue(12_000);
+    expect(await readPacketCaptureEntry(client)).toMatchObject({
+      available: false,
+      reason: "provider_missing",
+    });
+    expect(probeSpy).toHaveBeenCalledTimes(3);
   },
 );
 
