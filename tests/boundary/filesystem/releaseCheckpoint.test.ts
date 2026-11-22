@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
 import { parse } from "yaml";
+import { inspectReleaseCheckpoint } from "../../../scripts/lib/release-checkpoint.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createTestWorkspace,
@@ -70,7 +71,14 @@ async function metadata(
         },
       },
     },
-    "package.json": { name: "rea-agents", version },
+    "package.json": {
+      name: "rea-agents",
+      version,
+      repository: {
+        type: "git",
+        url: "git+https://github.com/fixture/rea.git",
+      },
+    },
     "package-lock.json": { version, packages: { "": { version } } },
     ".release-please-manifest.json": { ".": version },
     "server.json": {
@@ -499,6 +507,147 @@ it.each([
       conventionalTitle: subject,
       breaking,
     });
+  },
+);
+
+it.each([
+  {
+    label: "local descriptive PR link with a different candidate repository",
+    candidateRepository: "https://github.com/elsewhere/other.git",
+    reference: () => "[paths](https://github.com/fixture/rea/pull/948)",
+    accepted: true,
+  },
+  {
+    label: "local descriptive issue link",
+    reference: () => "[paths](https://github.com/fixture/rea/issues/948)",
+    accepted: true,
+  },
+  {
+    label: "foreign PR with the same displayed number",
+    reference: () => "[#948](https://github.com/elsewhere/other/pull/948)",
+    accepted: false,
+  },
+  {
+    label: "foreign commit with the same displayed SHA",
+    reference: (sha: string) =>
+      `[${sha}](https://github.com/elsewhere/other/commit/${sha})`,
+    accepted: false,
+  },
+  {
+    label: "unrelated hexadecimal token",
+    reference: (sha: string) => `ffff${sha.slice(0, 7)}ffff`,
+    accepted: false,
+  },
+  {
+    label: "standalone uppercase URL to a foreign commit",
+    reference: (sha: string) =>
+      `HTTPS://github.com/elsewhere/other/commit/${sha}`,
+    accepted: false,
+  },
+  {
+    label: "local descriptive commit link",
+    reference: (sha: string) =>
+      `[paths](HTTPS://GitHub.COM/fixture/rea/commit/${sha})`,
+    accepted: true,
+  },
+  {
+    label: "standalone full SHA in a source with no repository field",
+    legacySource: true,
+    reference: (sha: string) => sha,
+    accepted: true,
+  },
+])(
+  "validates breaking note identity using $label",
+  async ({ reference, accepted, candidateRepository, legacySource }) => {
+    const f = await fixture();
+    let source = f;
+    if (legacySource === true) {
+      await writeFile(
+        join(f.directory, "package.json"),
+        '{"name":"rea-agents","version":"5.0.0"}',
+      );
+      await git(f.directory, ["add", "package.json"]);
+      await git(f.directory, [
+        "commit",
+        "-m",
+        "chore: record historical package metadata",
+      ]);
+      source = {
+        ...f,
+        sourceSha: await git(f.directory, ["rev-parse", "HEAD"]),
+      };
+    }
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\n* Changes to path inputs ${reference(f.changedSha)}.`,
+      candidateRepository === undefined
+        ? {}
+        : {
+            "package.json": JSON.stringify({
+              name: "rea-agents",
+              version: "6.0.0",
+              repository: { url: candidateRepository },
+            }),
+          },
+    );
+    const result = verify(source);
+    if (accepted)
+      expect(
+        reportSchema.parse(JSON.parse((await result).stdout)).missingNotes,
+      ).toEqual([]);
+    else
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          `migration notes omit unreleased breaking changes: ${f.changedSha}`,
+        ),
+      });
+  },
+);
+
+it.each([
+  { peer: "reportable", secondSubject: "fix!: require a selected target" },
+  { peer: "hidden", secondSubject: "chore: adjust internal details" },
+])(
+  "refuses a breaking SHA abbreviation shared by a $peer commit",
+  async ({ peer, secondSubject }) => {
+    const f = await fixture();
+    const prefix = "9a310de";
+    const first = prefix + "1".repeat(33);
+    const second = prefix + "2".repeat(33);
+    const firstSubject = "fix!: require an absolute path";
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\n* Migration ${prefix}.`,
+    );
+    await expect(
+      inspectReleaseCheckpoint(
+        async (args: string[]) =>
+          args[0] === "log"
+            ? [
+                first,
+                firstSubject,
+                firstSubject,
+                second,
+                secondSubject,
+                secondSubject,
+                "",
+              ].join("\0")
+            : git(f.directory, args),
+        {
+          phase: "prepare",
+          stage: "candidate",
+          releaseBranch: "release/6.0.0",
+          sourceSha: f.sourceSha,
+          candidateSha: await git(f.directory, ["rev-parse", "HEAD"]),
+        },
+      ),
+    ).rejects.toThrow(
+      `migration notes omit unreleased breaking changes: ${first} ${firstSubject}` +
+        (peer === "reportable" ? `; ${second} ${secondSubject}` : ""),
+    );
   },
 );
 
