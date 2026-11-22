@@ -3,7 +3,7 @@ import type { FileHandle } from "node:fs/promises";
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../../artifacts/AnalysisCleanupLease.js";
+} from "../../resources/index.js";
 import {
   ProcessCaptureError,
   describeProcessCaptureExecutionFailure,

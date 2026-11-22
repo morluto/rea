@@ -1,12 +1,11 @@
+import { createLoadImageChecks } from "./GhidraLoadImageChecks.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { DolHeader } from "../domain/gamecubeDol.js";
-import type { JsonValue } from "../domain/jsonValue.js";
 import { nativeAddressCoordinateInputSchema } from "../domain/native/nativeAddress.js";
 import {
   nativeLoadImageSchema,
   type NativeLoadImage,
-  type NativeLoadImageCheck,
   type NativeLoadImageObservation,
 } from "../domain/native/nativeLoadImage.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -50,9 +49,9 @@ type FileFacts = {
   readonly loaded: boolean;
   readonly overlay: boolean;
   readonly address_space: string;
-  readonly readable?: boolean | undefined;
-  readonly writable?: boolean | undefined;
-  readonly executable?: boolean | undefined;
+  readonly readable: boolean;
+  readonly writable: boolean;
+  readonly executable: boolean;
 };
 type BssFacts = Omit<FileFacts, "file_offset" | "sha256" | "source_file_index">;
 const hex = (value: number): string => `0x${value.toString(16)}`;
@@ -89,23 +88,7 @@ export const attestGhidraDolLoadImage = (
   if (snapshot.sectionSha256.length !== header.sections.length)
     return err("Ghidra DOL snapshot section digests do not match the header");
   const language = ghidraDolLanguage(languageOverride);
-  const checks: NativeLoadImageCheck[] = [];
-  const check = (
-    name: string,
-    expected: JsonValue,
-    observed: JsonValue,
-    fileOffset: number | null = null,
-    location: string | null = null,
-  ): void => {
-    checks.push({
-      name,
-      matched: JSON.stringify(expected) === JSON.stringify(observed),
-      expected,
-      observed,
-      file_offset: fileOffset,
-      address: location,
-    });
-  };
+  const { checks, check } = createLoadImageChecks();
 
   // Field order is fixed: checks compare serialized values.
   const fileFacts = (mapping: FileFacts) => ({
@@ -119,9 +102,9 @@ export const attestGhidraDolLoadImage = (
     loaded: mapping.loaded,
     overlay: mapping.overlay,
     address_space: mapping.address_space,
-    readable: mapping.readable ?? null,
-    writable: mapping.writable ?? null,
-    executable: mapping.executable ?? null,
+    readable: mapping.readable,
+    writable: mapping.writable,
+    executable: mapping.executable,
   });
   const bssFacts = (mapping: BssFacts) => ({
     start: mapping.start,
@@ -131,9 +114,9 @@ export const attestGhidraDolLoadImage = (
     loaded: mapping.loaded,
     overlay: mapping.overlay,
     address_space: mapping.address_space,
-    readable: mapping.readable ?? null,
-    writable: mapping.writable ?? null,
-    executable: mapping.executable ?? null,
+    readable: mapping.readable,
+    writable: mapping.writable,
+    executable: mapping.executable,
   });
 
   const expectedFileMappings = header.sections
@@ -188,18 +171,6 @@ export const attestGhidraDolLoadImage = (
   const observedBss = observedBssBlocks
     .map((mapping) => bssFacts(mapping))
     .sort(byStart);
-  // Permissions are attested only when measured; an older observation without them fails closed.
-  const unmeasured = observations.mappings
-    .filter(
-      (mapping) =>
-        (mapping.source_file_index !== null ||
-          observedBssBlocks.includes(mapping)) &&
-        (mapping.readable === undefined ||
-          mapping.writable === undefined ||
-          mapping.executable === undefined),
-    )
-    .map((mapping) => mapping.block);
-
   const source = observations.source_files[0];
   check("executable_format", "Raw Binary", observations.executable_format);
   check("language_id", language.languageId, observations.language_id);
@@ -253,8 +224,6 @@ export const attestGhidraDolLoadImage = (
       (entry) => entry === hex(header.entryPoint),
     ) ?? null,
   );
-  if (unmeasured.length > 0)
-    check("block_permissions_measured", [], unmeasured);
   check("relocation_records", [], observations.relocations);
   return ok(
     nativeLoadImageSchema.parse({

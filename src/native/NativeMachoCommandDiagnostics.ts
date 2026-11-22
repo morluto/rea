@@ -1,6 +1,6 @@
 import type { AnalysisCapturedOutput } from "../domain/analysisErrorBase.js";
 import { AnalysisOutputError } from "../domain/analysisErrorCore.js";
-import type { NativeCommandCapture } from "./CommandRunner.js";
+import type { NativeCommandCapture } from "../providers/NativeCommandRunner.js";
 import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 /** Path the command received. Diagnostics echo this operand, not the selected subject. */

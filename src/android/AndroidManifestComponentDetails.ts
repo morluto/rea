@@ -6,11 +6,11 @@ import type {
   androidIntentFilterSchema,
   androidComponentMetadataSchema,
 } from "../domain/android/androidManifestComponents.js";
+import { isUnqualifiedXmlElement } from "../domain/xmlDocument.js";
 import {
   androidAttribute,
   createManifestLocationReader,
   isAndroidAttribute,
-  isManifestElement,
 } from "./AndroidManifestXml.js";
 
 type Filter = z.output<typeof androidIntentFilterSchema>;
@@ -37,7 +37,7 @@ const declaresAction = (filter: Element): boolean => {
   for (let index = 0; index < filter.childNodes.length; index += 1) {
     const member = filter.childNodes.item(index);
     if (
-      isManifestElement(member) &&
+      isUnqualifiedXmlElement(member) &&
       member.nodeName === "action" &&
       androidAttribute(member, "name") !== null
     )
@@ -64,6 +64,7 @@ export const createAndroidManifestDetailsReader = (
     let detailLimited = false;
     let processLimited = false;
     let unsupported = 0;
+    let unnamedFilterMembers = 0;
     let remainingRecords = limits.intentValues;
     const take = (value: string | null): string | null => {
       if (value === null) return null;
@@ -116,7 +117,7 @@ export const createAndroidManifestDetailsReader = (
     let actionFilter = false;
     for (let index = 0; index < component.childNodes.length; index += 1) {
       const child = component.childNodes.item(index);
-      if (!isManifestElement(child)) continue;
+      if (!isUnqualifiedXmlElement(child)) continue;
       if (child.nodeName === "meta-data") {
         if (admit())
           metadata.push({
@@ -126,10 +127,10 @@ export const createAndroidManifestDetailsReader = (
         continue;
       }
       if (child.nodeName !== "intent-filter") continue;
-      // Checked past the filter bound too; one action-bearing filter suffices.
-      actionFilter ||= declaresAction(child);
       const filterIndex = filterCount++;
       if (filterIndex >= limits.intentFilters) {
+        // Export defaults still consider action presence past the detail bound.
+        actionFilter ||= declaresAction(child);
         partial = true;
         legacyTruncated = true;
         continue;
@@ -141,18 +142,24 @@ export const createAndroidManifestDetailsReader = (
       const priority = take(androidAttribute(child, "priority"));
       for (let at = 0; at < child.childNodes.length; at += 1) {
         const member = child.childNodes.item(at);
-        if (!isManifestElement(member)) continue;
+        if (!isUnqualifiedXmlElement(member)) continue;
         if (member.nodeName === "action" || member.nodeName === "category") {
           const value = androidAttribute(member, "name");
-          if (value === null) continue;
-          const names =
-            member.nodeName === "action" ? actionNames : categoryNames;
+          if (value === null) {
+            unnamedFilterMembers += 1;
+            filterPartial = true;
+            partial = true;
+            continue;
+          }
+          const isAction = member.nodeName === "action";
+          actionFilter ||= isAction;
+          const names = isAction ? actionNames : categoryNames;
           if (!names.has(value)) {
             if (legacyValuesRemaining === 0) legacyTruncated = true;
             else {
               legacyValuesRemaining -= 1;
               names.add(value);
-              (member.nodeName === "action" ? actions : categories).push(value);
+              (isAction ? actions : categories).push(value);
             }
           }
           if (!admit()) {
@@ -164,10 +171,7 @@ export const createAndroidManifestDetailsReader = (
             filterPartial = true;
             continue;
           }
-          (member.nodeName === "action"
-            ? filterActions
-            : filterCategories
-          ).push(copied);
+          (isAction ? filterActions : filterCategories).push(copied);
         } else if (member.nodeName === "data") {
           if (!admit()) {
             filterPartial = true;
@@ -260,6 +264,7 @@ export const createAndroidManifestDetailsReader = (
       detailLimited,
       processLimited,
       unsupported,
+      unnamedFilterMembers,
       nonliteralEnabled: enabledDeclaration !== null && enabled === null,
       nonliteralGrant: grantDeclaration !== null && grant === null,
     };

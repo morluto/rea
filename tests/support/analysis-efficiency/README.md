@@ -5,8 +5,7 @@ real local Codex CLI and the retained resource/agent runners. See
 [MCP catalog evaluation](../../../docs/mcp-catalog-evaluation.md) for its matrix,
 observed-token accounting, isolation and completed-task limits.
 
-These files support the existing comparison, independent-oracle, receipt and
-cleanup regressions. The TypeScript consumers live in `tests/boundary/`,
+These files support the existing comparison, receipt and cleanup regressions. The TypeScript consumers live in `tests/boundary/`,
 `tests/evaluation/` and `tests/conformance/`; `npm run test:python` discovers
 the Python checks here. Build first for checks that use the compiled runtime.
 

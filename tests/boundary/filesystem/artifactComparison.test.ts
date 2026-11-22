@@ -1,3 +1,8 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -136,9 +141,9 @@ describe("leaf artifact comparison", () => {
     const { coverage: _coverage, ...withoutCoverage } = parsed;
     const malformed = createEvidence(
       {
-        path: left.subject!.local_path,
-        sha256: left.subject!.digest.sha256,
-        format: left.subject!.format,
+        path: fileSubjectDisplay(left.subject).local_path,
+        sha256: fileIdentity(left.subject).sha256,
+        format: fileIdentity(left.subject).format,
       },
       PROVIDER,
       {
@@ -298,9 +303,9 @@ describe("artifact inventory coverage", () => {
     );
     const unknownCoverage = createEvidence(
       {
-        path: complete.subject!.local_path,
-        sha256: complete.subject!.digest.sha256,
-        format: complete.subject!.format,
+        path: fileSubjectDisplay(complete.subject).local_path,
+        sha256: fileIdentity(complete.subject).sha256,
+        format: fileIdentity(complete.subject).format,
       },
       PROVIDER,
       {
@@ -340,9 +345,9 @@ describe("artifact inventory coverage", () => {
     );
     const mixed = createEvidence(
       {
-        path: fragment.subject!.local_path,
-        sha256: fragment.subject!.digest.sha256,
-        format: fragment.subject!.format,
+        path: fileSubjectDisplay(fragment.subject).local_path,
+        sha256: fileIdentity(fragment.subject).sha256,
+        format: fileIdentity(fragment.subject).format,
       },
       PROVIDER,
       {
@@ -441,7 +446,7 @@ describe("artifact comparison", () => {
     const incomplete = createEvidence(
       {
         path: root,
-        sha256: complete.subject?.digest.sha256 ?? "0".repeat(64),
+        sha256: fileIdentity(complete.subject).sha256 ?? "0".repeat(64),
         format: "directory",
       },
       PROVIDER,
@@ -567,7 +572,7 @@ describe("artifact comparison completeness", () => {
       summary: { unchanged: 502, unknown: 0 },
       changes: [],
     });
-  }, 15_000);
+  });
 });
 
 it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)(
@@ -949,7 +954,7 @@ describe("artifact comparison fragment integrity", () => {
     const conflictingScope = createEvidence(
       {
         path: leftPath,
-        sha256: left.subject?.digest.sha256 ?? "",
+        sha256: fileIdentity(left.subject).sha256 ?? "",
         format: "directory",
       },
       PROVIDER,
@@ -974,7 +979,7 @@ describe("artifact comparison fragment integrity", () => {
         issues: [expect.objectContaining({ path: ["left"] })],
       }),
     );
-  }, 15_000);
+  });
 
   it("rejects non-inventory and tampered Evidence", async () => {
     const root = await createTestTempDirectory("rea-artifact-invalid-");
@@ -982,11 +987,15 @@ describe("artifact comparison fragment integrity", () => {
     expect(() =>
       compareArtifacts({ ...evidence, operation: "binary_overview" }, evidence),
     ).toThrow(/identifier/u);
-    const wrongOperation = createEvidence(undefined, PROVIDER, {
-      operation: "binary_overview",
-      parameters: {},
-      result: evidence.normalized_result,
-    });
+    const wrongOperation = createEvidence(
+      unknownTarget("not-observed"),
+      PROVIDER,
+      {
+        operation: "binary_overview",
+        parameters: {},
+        result: evidence.normalized_result,
+      },
+    );
     expect(() => compareArtifacts(wrongOperation, evidence)).toThrowError(
       expect.objectContaining({
         _tag: "AnalysisInputError",

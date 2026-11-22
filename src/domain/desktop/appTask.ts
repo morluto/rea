@@ -1,6 +1,8 @@
 import { isPortableBundleName } from "../portableBundleName.js";
 import { z } from "zod";
 
+import { jsonRecordSchema } from "../jsonRecord.js";
+import { jsonPointerSyntaxProblem } from "../jsonPointer.js";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { describeValidationFailure } from "../validationFailure.js";
@@ -15,12 +17,10 @@ const line = z
   .refine((value) => !value.includes("\n"), "a line cannot hold a line break");
 const lines = z.array(line).min(1).max(100);
 const count = z.int().min(0);
-const where = z
-  .record(z.string().min(1), jsonValueSchema)
-  .refine(
-    (columns) => Object.keys(columns).length > 0,
-    "name at least one column",
-  );
+const where = jsonRecordSchema(jsonValueSchema, z.string().min(1)).refine(
+  (columns) => Object.keys(columns).length > 0,
+  "name at least one column",
+);
 const comparison = {
   equals: count.optional(),
   at_least: count.optional(),
@@ -123,7 +123,7 @@ export const READER_TIMEOUT_S = { default: 60, max: 300 } as const;
 const readerSchema = z.strictObject({
   id: z
     .string()
-    .regex(/^[a-z0-9][a-z0-9-]{0,63}$/u)
+    .regex(/^[a-z0-9][a-z0-9\x2d]{0,63}$/u)
     .describe(
       "Lowercase letters, digits and hyphens; a check names the reader by it.",
     ),
@@ -291,8 +291,11 @@ const pointerProblem = (check: PointerCheck): string | undefined => {
     return check.kind === "member_count"
       ? undefined
       : "the empty pointer names the whole file; point at the value that changed";
-  if (!check.pointer.startsWith("/"))
+  const syntax = jsonPointerSyntaxProblem(check.pointer);
+  if (syntax === "missing-slash")
     return `pointer ${JSON.stringify(check.pointer)} must start with /`;
+  if (syntax === "invalid-escape")
+    return `pointer ${JSON.stringify(check.pointer)} uses an invalid escape; use ~0 or ~1 for ~ or /`;
   return check.kind === "text_contains" &&
     check.normalize_whitespace === true &&
     collapseWhitespace(check.value) === ""

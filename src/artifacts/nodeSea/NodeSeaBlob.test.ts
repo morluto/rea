@@ -3,16 +3,12 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { DEFAULT_NODE_SEA_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
-import {
-  NODE_SEA_MAGIC,
-  decodeNodeSeaBlob,
-  observeNodeSeaFuseMatches,
-} from "./NodeSeaBlob.js";
-import { buildNodeSeaBlob } from "./NodeSea.fixture.js";
+import { decodeNodeSeaBlob, observeNodeSeaFuseMatches } from "./NodeSeaBlob.js";
+import { buildNodeSeaBlob, NODE_SEA_FIXTURE_MAGIC } from "./NodeSea.fixture.js";
 
 const header = (flags: number, extension = 1): Buffer => {
   const bytes = Buffer.alloc(9);
-  bytes.writeUInt32LE(NODE_SEA_MAGIC, 0);
+  bytes.writeUInt32LE(NODE_SEA_FIXTURE_MAGIC, 0);
   bytes.writeUInt32LE(flags, 4);
   bytes[8] = extension;
   return bytes;
@@ -54,6 +50,44 @@ it("rejects an unknown exec argv extension", async () => {
   await expect(decodeNodeSeaBlob(header(0, 9))).rejects.toMatchObject({
     reason: "format",
     message: expect.stringMatching(/exec argv extension.*unknown/iu),
+  });
+});
+
+it.each([
+  [0, "commonjs"],
+  [1, "module"],
+] as const)(
+  "retains the main code format byte %i and payload ranges",
+  async (mainCodeFormat, name) => {
+    const main = "x".repeat(2048);
+    const bytes = buildNodeSeaBlob({
+      mainCodeFormat,
+      codePath: "a.js",
+      main,
+      assets: [{ name: "asset", body: "bytes" }],
+      execArgv: ["--no-warnings"],
+    });
+    const decoded = await decodeNodeSeaBlob(bytes);
+    expect(decoded).toMatchObject({
+      mainCodeFormat: name,
+      codePath: "a.js",
+      assets: [{ name: "asset" }],
+      execArgv: ["--no-warnings"],
+    });
+    const range = decoded.mainScript;
+    if (range === null) throw new Error("Expected main script");
+    expect(
+      bytes.toString("utf8", range.offset, range.offset + range.length),
+    ).toBe(main);
+  },
+);
+
+it("rejects an unknown main code format in the newer header", async () => {
+  const bytes = buildNodeSeaBlob({ mainCodeFormat: 1 });
+  bytes[9] = 2;
+  await expect(decodeNodeSeaBlob(bytes)).rejects.toMatchObject({
+    reason: "format",
+    message: expect.stringMatching(/main code format.*unknown/iu),
   });
 });
 
@@ -150,6 +184,50 @@ it("rejects impossible asset rows before applying resource admission", async () 
     readerLimit: undefined,
   });
 });
+
+it.each([
+  {
+    field: "asset_count" as const,
+    bytes: buildNodeSeaBlob({
+      assets: [
+        { name: "a", body: "" },
+        { name: "b", body: "" },
+      ],
+      execArgv: ["x"],
+    }),
+    missingBytes: 17,
+  },
+  {
+    field: "asset_name_bytes" as const,
+    bytes: buildNodeSeaBlob({ assets: [{ name: "asset-name", body: "" }] }),
+    missingBytes: 8,
+  },
+  {
+    field: "argument_bytes" as const,
+    bytes: buildNodeSeaBlob({ execArgv: ["argument", ""] }),
+    missingBytes: 8,
+  },
+])(
+  "reports missing mandatory framing before $field capacity",
+  async ({ field, bytes, missingBytes }) => {
+    const limits = { ...DEFAULT_NODE_SEA_READER_LIMITS, [field]: 1 };
+    await expect(
+      decodeNodeSeaBlob(bytes.subarray(0, -missingBytes), undefined, limits),
+    ).rejects.toMatchObject({
+      reason: "format",
+      message: expect.stringMatching(/Node SEA.*truncated/iu),
+    });
+    await expect(
+      decodeNodeSeaBlob(bytes, undefined, limits),
+    ).rejects.toMatchObject({
+      reason: "limit",
+      readerLimit: {
+        parameter: `artifact_limits.node_sea.${field}`,
+        effective_value: 1,
+      },
+    });
+  },
+);
 
 it.each([
   { field: "asset_count" as const, limit: 1, raised: 2 },

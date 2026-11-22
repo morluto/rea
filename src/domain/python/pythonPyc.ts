@@ -6,8 +6,23 @@ import {
 } from "../localPath.js";
 
 export const PYTHON_PYC_HEADER_BYTES = 16;
-export const PYTHON_PYC_HASH_BASED = 0x1;
-export const PYTHON_PYC_CHECK_SOURCE = 0x2;
+const PYTHON_PYC_HASH_BASED = 0x1;
+const PYTHON_PYC_CHECK_SOURCE = 0x2;
+/** CPython 3.14a1 magic 3608 added TYPE_SLICE to marshal (gh-125063). */
+export const PYTHON_PYC_SLICE_MAGIC = 3608;
+
+/** PEP 552 stores the check-source bit even where hash validation is inapplicable. */
+export const interpretPythonPycHeaderFlags = (flags: number) => {
+  const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
+  const checkSource = (flags & PYTHON_PYC_CHECK_SOURCE) !== 0;
+  return {
+    hashBased,
+    checkSource,
+    inactiveCheckSource: checkSource && !hashBased,
+    hasUnknownFlags:
+      (flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE)) !== 0,
+  };
+};
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const index = z.number().int().nonnegative();
@@ -59,6 +74,11 @@ export const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
   ...consecutiveProfiles(3494, 3495, "py311"),
   ...consecutiveProfiles(3500, 3531, "py311"),
   ...consecutiveProfiles(3550, 3571, "py311"),
+  // 3.14 and 3.15 keep the 3.11 code layout; 3.14a1 magic 3608 adds slice
+  // constants to marshal, which the reader gates by magic. Only magics checked
+  // against a real interpreter are pinned: 3627 (CPython 3.14.6) and 3666
+  // (CPython 3.15.0b3). Other pre-release magics stay unpinned.
+  ...profiles([3627, 3666], "py311"),
 ]);
 
 export const pythonPycMarshalProfile = (
@@ -160,6 +180,7 @@ const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("frozenset"), length: uint }),
   z.strictObject({ kind: z.literal("dict"), length: uint }),
   z.strictObject({ kind: z.literal("ellipsis") }),
+  z.strictObject({ kind: z.literal("slice") }),
   z.strictObject({
     kind: z.literal("complex"),
     real: pythonFloatSchema,
@@ -212,7 +233,11 @@ export const pythonPycHeaderSchema = z
     code_layout: z.enum(PYTHON_PYC_CODE_LAYOUTS),
     flags: uint,
     hash_based: z.boolean(),
-    check_source: z.boolean(),
+    check_source: z
+      .boolean()
+      .describe(
+        "Stored PEP 552 check-source bit. It applies only when hash_based is true.",
+      ),
     source_hash_hex: z
       .string()
       .regex(/^[0-9a-f]{16}$/u)
@@ -221,30 +246,33 @@ export const pythonPycHeaderSchema = z
     source_size: uint.nullable(),
   })
   .superRefine((header, context) => {
-    for (const [field, flag] of [
-      ["hash_based", PYTHON_PYC_HASH_BASED],
-      ["check_source", PYTHON_PYC_CHECK_SOURCE],
+    const { hashBased, checkSource } = interpretPythonPycHeaderFlags(
+      header.flags,
+    );
+    for (const [field, value] of [
+      ["hash_based", hashBased],
+      ["check_source", checkSource],
     ] as const)
-      if (header[field] !== ((header.flags & flag) !== 0))
+      if (header[field] !== value)
         context.addIssue({
           code: "custom",
           path: [field],
           message: `${field} disagrees with its recorded header flag.`,
         });
-    if (header.hash_based === (header.source_hash_hex === null))
+    if (hashBased === (header.source_hash_hex === null))
       context.addIssue({
         code: "custom",
         path: ["source_hash_hex"],
         message:
           "Hash-based pycs require an 8-byte source hash; others must omit it.",
       });
-    if (header.hash_based === (header.source_mtime !== null))
+    if (hashBased === (header.source_mtime !== null))
       context.addIssue({
         code: "custom",
         path: ["source_mtime"],
         message: "Timestamp pycs require mtime; hash-based pycs must omit it.",
       });
-    if (header.hash_based === (header.source_size !== null))
+    if (hashBased === (header.source_size !== null))
       context.addIssue({
         code: "custom",
         path: ["source_size"],
@@ -253,7 +281,7 @@ export const pythonPycHeaderSchema = z
       });
   });
 
-/** Bounded CPython 3.7–3.13 pyc observation; marshal is walked, bytecode is not decompiled. */
+/** Bounded CPython 3.7–3.15 pyc observation; marshal is walked, bytecode is not decompiled. */
 export const pythonPycSchema = z
   .strictObject({
     artifact: z.strictObject({

@@ -13,6 +13,7 @@ import { ScreenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 import { BuildComputerLongRuns } from "../../desktop/BuildComputerLongRuns.js";
 import { DesktopBuildComputers } from "./DesktopBuildComputers.js";
 import { DesktopRemoteTaskReaders } from "./DesktopRemoteTaskReaders.js";
+import { readHostFile } from "../../desktop/HostFileRead.js";
 
 it("resolves the original failed start's cleanup after its retained computer closes", async () => {
   const release = vi
@@ -30,10 +31,13 @@ it("resolves the original failed start's cleanup after its retained computer clo
   const connect = vi
     .spyOn(AgentEnvComputer, "connect")
     .mockRejectedValue(new Error("readiness failed"));
-  const computers = new DesktopBuildComputers({
-    REA_AGENT_ENV_COMMAND: "/runner",
-    REA_DOCKER_COMMAND: "/docker",
-  });
+  const computers = new DesktopBuildComputers(
+    {
+      REA_AGENT_ENV_COMMAND: "/runner",
+      REA_DOCKER_COMMAND: "/docker",
+    },
+    readHostFile,
+  );
   try {
     const started = await computers.start(
       { source: { kind: "bundle", path: "/bundle" } },
@@ -75,10 +79,13 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     const connect = vi
       .spyOn(AgentEnvComputer, "connect")
       .mockRejectedValue(original);
-    const computers = new DesktopBuildComputers({
-      REA_AGENT_ENV_COMMAND: "/runner",
-      REA_DOCKER_COMMAND: "/docker",
-    });
+    const computers = new DesktopBuildComputers(
+      {
+        REA_AGENT_ENV_COMMAND: "/runner",
+        REA_DOCKER_COMMAND: "/docker",
+      },
+      readHostFile,
+    );
     try {
       const started = await computers.start(
         { source: { kind: "bundle", path: bundle } },
@@ -117,11 +124,14 @@ it("retains a failed bundle workspace and its write error until shutdown retries
       );
       return workspace;
     });
-  const computers = new DesktopBuildComputers({
-    REA_AGENT_ENV_COMMAND: "/runner",
-    REA_DOCKER_COMMAND: "/docker",
-    REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
-  });
+  const computers = new DesktopBuildComputers(
+    {
+      REA_AGENT_ENV_COMMAND: "/runner",
+      REA_DOCKER_COMMAND: "/docker",
+      REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    },
+    readHostFile,
+  );
   try {
     const started = await computers.start(
       {
@@ -188,10 +198,13 @@ it.each([false, true])(
       computer: { close: computerClose, sandboxId: "sandbox" },
       frame: { structured: null, content: [] },
     } as never);
-    const computers = new DesktopBuildComputers({
-      REA_AGENT_ENV_COMMAND: "/runner",
-      REA_DOCKER_COMMAND: "/docker",
-    });
+    const computers = new DesktopBuildComputers(
+      {
+        REA_AGENT_ENV_COMMAND: "/runner",
+        REA_DOCKER_COMMAND: "/docker",
+      },
+      readHostFile,
+    );
     try {
       const started = await computers.start(
         { source: { kind: "bundle", path: "/bundle" } },
@@ -228,6 +241,73 @@ it.each([false, true])(
   },
 );
 
+it("tears the computer down when a long run is unsettled, and resolves that run only after teardown", async () => {
+  const computerClose = vi
+    .fn()
+    .mockResolvedValueOnce({
+      verified: false,
+      reason: "container busy",
+      resources: ["sandbox"],
+    })
+    .mockResolvedValue({ verified: true, teardown: "agentenv" });
+  const resolve = vi.spyOn(
+    BuildComputerLongRuns.prototype,
+    "resolveAfterVerifiedComputerTeardown",
+  );
+  const commands = vi
+    .spyOn(BuildComputerLongRuns.prototype, "release")
+    .mockResolvedValue({
+      verified: false,
+      reason: "command output is incomplete",
+      resources: ["job"],
+    });
+  const spawn = vi
+    .spyOn(ComputerHelper, "spawn")
+    .mockResolvedValue({} as never);
+  const connect = vi.spyOn(AgentEnvComputer, "connect").mockResolvedValue({
+    computer: { close: computerClose, sandboxId: "sandbox" },
+    frame: { structured: null, content: [] },
+  } as never);
+  const computers = new DesktopBuildComputers(
+    {
+      REA_AGENT_ENV_COMMAND: "/runner",
+      REA_DOCKER_COMMAND: "/docker",
+    },
+    readHostFile,
+  );
+  try {
+    const started = await computers.start(
+      { source: { kind: "bundle", path: "/bundle" } },
+      new AbortController().signal,
+    );
+    if (!started.ok) throw started.error;
+    const id = started.value.value.computer_id;
+    const first = await computers.close(id);
+    if (first.ok) throw new Error("expected incomplete cleanup");
+    expect(computerClose).toHaveBeenCalledTimes(1);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(first.error.cleanupResources).toEqual(
+      expect.arrayContaining(["job", "sandbox"]),
+    );
+    expect(first.error.diagnostics?.reason).toContain(
+      "command output is incomplete",
+    );
+    expect(first.error.diagnostics?.reason).toContain("container busy");
+    const second = await computers.close(id);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error("expected teardown");
+    expect(computerClose).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(first.error.cleanupIncomplete).toBe(false);
+  } finally {
+    await computers.closeAll().catch(() => computers.closeAll());
+    resolve.mockRestore();
+    commands.mockRestore();
+    spawn.mockRestore();
+    connect.mockRestore();
+  }
+});
+
 it("retains the computer while command and reader cleanup fail, but still releases the judge", async () => {
   const computerClose = vi
     .fn()
@@ -263,10 +343,13 @@ it("retains the computer while command and reader cleanup fail, but still releas
     computer: { close: computerClose, sandboxId: "sandbox" },
     frame: { structured: null, content: [] },
   } as never);
-  const computers = new DesktopBuildComputers({
-    REA_AGENT_ENV_COMMAND: "/runner",
-    REA_DOCKER_COMMAND: "/docker",
-  });
+  const computers = new DesktopBuildComputers(
+    {
+      REA_AGENT_ENV_COMMAND: "/runner",
+      REA_DOCKER_COMMAND: "/docker",
+    },
+    readHostFile,
+  );
   try {
     const started = await computers.start(
       { source: { kind: "bundle", path: "/bundle" } },

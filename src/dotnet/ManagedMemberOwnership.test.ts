@@ -3,18 +3,24 @@ import { describe, expect, vi } from "vitest";
 
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
-import { managedDecodeBudget } from "./ManagedDecodeBudget.js";
-import { memberDeclaringTypeRowLookup } from "./ManagedMemberOwnership.js";
-import { memberListIndexSize } from "./ManagedMemberPointers.js";
-import { readTypeMemberListFacts } from "./ManagedTypeMemberLists.js";
-import { readManagedMetadataLayout } from "./ManagedMetadataLayout.js";
+import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
+import * as ownershipProducer from "../domain/managed/managedMemberOwnership.js";
+import { memberListIndexSize } from "../domain/managed/managedMemberPointers.js";
+import { readTypeMemberListFacts } from "../domain/managed/managedTypeMemberLists.js";
+import {
+  metadataRowOffset,
+  readManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
+import { buildManagedMemberSelectionCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
+
+const { memberDeclaringTypeRowLookup } = ownershipProducer;
 import {
   buildManagedMemberPointerFixture,
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
-import { readManagedPeLayout } from "./ManagedPeReader.js";
-import { ManagedReaderFailure } from "./ManagedReaderFailure.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
+import { ManagedReaderFailure } from "../domain/managed/managedReaderFailure.js";
 
 const metadataLayout = (bytes: Buffer) => {
   const pe = readManagedPeLayout(bytes);
@@ -152,6 +158,78 @@ describe("managed declaring type ownership", () => {
     } finally {
       vi.unstubAllGlobals();
       admission.mockRestore();
+    }
+  });
+});
+
+describe("selected FieldList and MethodList interval iteration", () => {
+  it("skips building full-table owner lookups when monotonic intervals apply", () => {
+    const bytes = buildManagedMemberSelectionCapacityFixture(200);
+    const target = managedPeFixtureTarget(bytes);
+    const spy = vi.spyOn(ownershipProducer, "memberDeclaringTypeRowLookup");
+    try {
+      const selected = inspectManagedMembersBytes(bytes, target, {
+        typeNames: ["Fixture.Empty0"],
+      });
+      expect(spy).not.toHaveBeenCalled();
+      expect(selected.coverage).toEqual({ state: "complete", issues: [] });
+      expect(selected.fields).toMatchObject([
+        { name: "Field0", declaring_type: "Fixture.Empty0" },
+      ]);
+      expect(selected.methods).toMatchObject([
+        { name: "Method0", declaring_type: "Fixture.Empty0" },
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("falls back cleanly when FieldList or MethodList pointers decrease", () => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 3,
+      fieldRowCount: 3,
+      methodRowCount: 3,
+      distinctMemberNames: true,
+    });
+    const layout = metadataLayout(bytes);
+    const fieldColOffset =
+      4 + 2 * layout.stringIndexSize + layout.codedIndexSize("TypeDefOrRef");
+    const methodColOffset = fieldColOffset + memberListIndexSize(layout, 4);
+    const row2 = metadataRowOffset(layout, 2, 2);
+    const row3 = metadataRowOffset(layout, 2, 3);
+    const row4 = metadataRowOffset(layout, 2, 4);
+    bytes.writeUInt16LE(2, row2 + fieldColOffset);
+    bytes.writeUInt16LE(3, row3 + fieldColOffset);
+    bytes.writeUInt16LE(2, row4 + fieldColOffset);
+    bytes.writeUInt16LE(2, row2 + methodColOffset);
+    bytes.writeUInt16LE(3, row3 + methodColOffset);
+    bytes.writeUInt16LE(2, row4 + methodColOffset);
+
+    const spy = vi.spyOn(ownershipProducer, "memberDeclaringTypeRowLookup");
+    try {
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+        { typeNames: ["Fixture.Empty0", "Fixture.Empty1"] },
+      );
+      expect(spy).toHaveBeenCalled();
+      expect(result.coverage.state).toBe("partial");
+      expect(result.coverage.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            code: "invalid-row",
+            detail: expect.stringContaining("FieldList start 2 decreases"),
+          }),
+          expect.objectContaining({
+            code: "invalid-row",
+            detail: expect.stringContaining("MethodList start 2 decreases"),
+          }),
+        ]),
+      );
+      expect(result.fields.map(({ name }) => name)).toEqual(["Field0"]);
+      expect(result.methods.map(({ name }) => name)).toEqual(["Method0"]);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

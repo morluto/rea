@@ -6,6 +6,62 @@ import { StructuredContentMcpClient } from "../providers/StructuredContentMcpCli
 import { AgentEnvComputer } from "./AgentEnvComputer.js";
 import type { ComputerHelper } from "./AgentEnvComputerHelper.js";
 
+it("refuses a home-file answer larger than the reported size", async () => {
+  const connect = vi
+    .spyOn(StructuredContentMcpClient.prototype, "connect")
+    .mockResolvedValue(undefined);
+  const close = vi
+    .spyOn(StructuredContentMcpClient.prototype, "close")
+    .mockResolvedValue(undefined);
+  const call = vi
+    .spyOn(StructuredContentMcpClient.prototype, "callTool")
+    .mockResolvedValue({ content: [] });
+  const fetch = vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ ready: true }))
+    .mockResolvedValueOnce(
+      Response.json({
+        result: {
+          parts: [
+            {
+              kind: "file",
+              file: { bytes: Buffer.from("larger").toString("base64") },
+              metadata: {
+                "urn:agentenv:data-objects/v1": { path: "out.json" },
+              },
+            },
+          ],
+        },
+      }),
+    );
+  try {
+    const { computer } = await AgentEnvComputer.connect(
+      {
+        handshake: async () => ({
+          sandbox_id: "controlled-sandbox",
+          base_url: "http://127.0.0.1:1",
+          mcp_url: "http://127.0.0.1:1/mcp",
+          control_token: null,
+        }),
+        release: async () => ({ verified: true, teardown: "agentenv" }),
+      } as unknown as ComputerHelper,
+      new AbortController().signal,
+    );
+    try {
+      await expect(computer.homeFiles(["out.json"], 1)).rejects.toMatchObject({
+        reportedLimits: { guest_file_bytes: 1, decoded_file_bytes: 6 },
+      });
+    } finally {
+      await computer.close();
+    }
+  } finally {
+    fetch.mockRestore();
+    call.mockRestore();
+    close.mockRestore();
+    connect.mockRestore();
+  }
+});
+
 it.each(["http", "invalid_json", "readiness"] as const)(
   "redacts the complete control token in %s failure diagnostics",
   async (failure) => {
@@ -66,10 +122,16 @@ it.each(["http", "invalid_json", "readiness"] as const)(
     }
   },
 );
-it.each(["canonical", "missing", "rpc_error"] as const)(
+it.each([
+  "canonical",
+  "missing",
+  "rpc_error",
+  "trailing_base64",
+  "scalar_metadata",
+] as const)(
   "validates recording replies and redacts their errors (%s)",
   async (answer) => {
-    const present = answer === "canonical";
+    const present = answer !== "missing" && answer !== "rpc_error";
     const token = "fake-recording-control-token-123456789";
     const path = "rec-0123/0000.mp4";
     const homePath = `.agentenv-recordings/${path}`;
@@ -95,11 +157,16 @@ it.each(["canonical", "missing", "rpc_error"] as const)(
                   parts: [
                     {
                       kind: "file",
-                      file: { bytes: bytes.toString("base64") },
+                      file: {
+                        bytes:
+                          bytes.toString("base64") +
+                          (answer === "trailing_base64" ? "!ignored" : ""),
+                      },
                       metadata: {
-                        "urn:unrelated": {
-                          path: present ? "wrong-path" : homePath,
-                        },
+                        "urn:unrelated":
+                          answer === "scalar_metadata"
+                            ? "recording label"
+                            : { path: present ? "wrong-path" : homePath },
                         ...(present
                           ? {
                               "urn:agentenv:data-objects/v1": {
@@ -138,7 +205,9 @@ it.each(["canonical", "missing", "rpc_error"] as const)(
           },
         ],
       });
-      if (present) await expect(read).resolves.toEqual([{ path, bytes }]);
+      if (answer === "trailing_base64")
+        await expect(read).rejects.toThrow("Expected canonical padded base64");
+      else if (present) await expect(read).resolves.toEqual([{ path, bytes }]);
       else if (answer === "rpc_error") {
         const failure = await read.catch((cause: unknown) => cause);
         expect(failure).toBeInstanceOf(Error);

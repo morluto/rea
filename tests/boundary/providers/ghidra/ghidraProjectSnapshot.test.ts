@@ -3,6 +3,7 @@ import {
   rm,
   mkdir,
   readFile,
+  readlink,
   readdir,
   realpath,
   stat,
@@ -11,27 +12,28 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
-import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../../src/resources/ArtifactResourceScope.js";
 import {
   copyExistingGhidraProject,
   fingerprintGhidraProject,
-  GHIDRA_PROJECT_PROFILE_MISMATCH,
   resolveGhidraProject,
 } from "../../../../src/ghidra/GhidraProjectSnapshot.js";
 import { parseConfig } from "../../../../src/config/parseConfig.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 let resources: ArtifactResourceScope;
+const GHIDRA_PROJECT_PROFILE_MISMATCH =
+  "Selected Ghidra project content no longer matches the profile committed by open_binary; when it changed is not established";
 beforeEach(() => {
   resources = new ArtifactResourceScope();
 });
 afterEach(async () => {
   await resources.close();
 });
-const fixture = async () => {
+const fixture = async ({ sharedParent = false } = {}) => {
   const root = await createTestTempDirectory("rea-ghidra-selected-project-");
   const source = join(root, "source");
-  const destination = join(root, "runtime", "project");
+  const destination = join(sharedParent ? source : root, "runtime", "project");
   await mkdir(join(source, "selected.rep"), { recursive: true });
   await mkdir(destination, { recursive: true });
   await writeFile(join(source, "selected.gpr"), "marker");
@@ -39,42 +41,53 @@ const fixture = async () => {
   return { source, destination };
 };
 
-it.skipIf(process.platform === "win32")(
-  "copies and fingerprints only the selected project, leaving unrelated siblings untouched",
-  async () => {
-    const { source, destination } = await fixture();
-    await symlink("unrelated-missing-project", join(source, "unrelated.gpr"));
-    const commitment = await resolveGhidraProject(
-      { path: join(source, "selected.gpr"), programName: "target.elf" },
-      { path: "/tmp/target.elf" },
-      resources,
-    );
-    await copyExistingGhidraProject(source, destination, {
-      projectName: "selected",
-      expectedSha256: commitment.sha256,
-      resources,
-    });
-    expect((await readdir(destination)).sort()).toEqual([
-      "selected.gpr",
-      "selected.rep",
-    ]);
-    expect(await fingerprintGhidraProject(source, "selected", resources)).toBe(
-      commitment.sha256,
-    );
-    expect(
-      await readFile(join(destination, "selected.rep", "data"), "utf8"),
-    ).toBe("original program");
-  },
-);
+it("copies only the selected project beside the caller's project and its unrelated entries", async () => {
+  const { source, destination } = await fixture({ sharedParent: true });
+  const unrelated = join(source, "unrelated.gpr");
+  if (process.platform === "win32")
+    await writeFile(unrelated, "unrelated marker");
+  else await symlink("unrelated-missing-project", unrelated);
 
-it("rejects a project whose copied content differs from the committed analysis profile", async () => {
+  const commitment = await resolveGhidraProject(
+    { path: join(source, "selected.gpr"), programName: "target.elf" },
+    { path: "/tmp/target.elf" },
+    resources,
+  );
+  await copyExistingGhidraProject(source, destination, {
+    projectName: "selected",
+    expectedSha256: commitment.sha256,
+    resources,
+  });
+  expect((await readdir(destination)).sort()).toEqual([
+    "selected.gpr",
+    "selected.rep",
+  ]);
+  expect(await readFile(join(destination, "selected.gpr"), "utf8")).toBe(
+    "marker",
+  );
+  expect(
+    await readFile(join(destination, "selected.rep", "data"), "utf8"),
+  ).toBe("original program");
+  expect(await fingerprintGhidraProject(source, "selected", resources)).toBe(
+    commitment.sha256,
+  );
+  if (process.platform === "win32")
+    expect(await readFile(unrelated, "utf8")).toBe("unrelated marker");
+  else expect(await readlink(unrelated)).toBe("unrelated-missing-project");
+});
+
+it("rejects a copy whose last block differs from the committed project", async () => {
   const { source, destination } = await fixture();
+  const data = join(source, "selected.rep", "data");
+  const contents = Buffer.alloc(64 * 1024 + 1, 0x61);
+  await writeFile(data, contents);
   const original = await fingerprintGhidraProject(
     source,
     "selected",
     resources,
   );
-  await writeFile(join(source, "selected.rep", "data"), "modified program");
+  contents[contents.length - 1] = 0x62;
+  await writeFile(data, contents);
   expect(
     await fingerprintGhidraProject(source, "selected", resources),
   ).not.toBe(original);
@@ -96,6 +109,7 @@ it("parses an opt-in project once for shared CLI/MCP configuration and rejects i
   const environment = {
     REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "existing.gpr"),
     REA_GHIDRA_PROGRAM_NAME: "program.elf",
+    REA_GHIDRA_DISABLED_ANALYZERS: ", ,",
   };
   expect(parseConfig(environment)).toMatchObject({
     ok: true,
@@ -107,6 +121,7 @@ it("parses an opt-in project once for shared CLI/MCP configuration and rejects i
     },
   });
   for (const extra of [
+    { REA_GHIDRA_DISABLED_ANALYZERS: "Decompiler Parameter ID" },
     { REA_GHIDRA_LANGUAGE_ID: "x86:LE:64:default" },
     { REA_GHIDRA_SEED_FILE: join(process.cwd(), "seeds") },
     { REA_GHIDRA_PROGRAM_NAME: "*" },
@@ -115,22 +130,6 @@ it("parses an opt-in project once for shared CLI/MCP configuration and rejects i
   expect(parseConfig({ REA_GHIDRA_PROGRAM_NAME: "program.elf" }).ok).toBe(
     false,
   );
-});
-
-it("accepts a blank analyzer override beside an existing project and rejects a named one", () => {
-  const environment = {
-    REA_GHIDRA_PROJECT_PATH: join(process.cwd(), "existing.gpr"),
-  };
-  for (const blank of ["", " ", ", ,"])
-    expect(
-      parseConfig({ ...environment, REA_GHIDRA_DISABLED_ANALYZERS: blank }).ok,
-    ).toBe(true);
-  expect(
-    parseConfig({
-      ...environment,
-      REA_GHIDRA_DISABLED_ANALYZERS: "Decompiler Parameter ID",
-    }).ok,
-  ).toBe(false);
 });
 
 it("reports an invalid derived program name at its selection boundary", async () => {
@@ -166,22 +165,6 @@ it("derives a bundle program from the resolved executable while preserving expli
       )
     ).program_name,
   ).toBe("CallerSelected");
-});
-
-it("allows selected project files beside an owned runtime under the same parent", async () => {
-  const { source } = await fixture();
-  const destination = join(source, "owned-runtime", "project");
-  await mkdir(destination, { recursive: true });
-  const sha256 = await fingerprintGhidraProject(source, "selected", resources);
-  await copyExistingGhidraProject(source, destination, {
-    projectName: "selected",
-    expectedSha256: sha256,
-    resources,
-  });
-  expect((await readdir(destination)).sort()).toEqual([
-    "selected.gpr",
-    "selected.rep",
-  ]);
 });
 
 it.each([null, "caller stopped", { kind: "stop-project-read" }])(
@@ -249,9 +232,11 @@ it.skipIf(process.platform === "win32")(
       project_path: await realpath(join(root, "actual")),
       project_name: "project",
     });
+    await writeFile(join(root, "missing.gpr"), "sibling decoy");
+    await mkdir(join(root, "missing.rep"));
     await expect(
       resolveGhidraProject(
-        { path: join(root, "missing.gpr") },
+        { path: `${root}/link/../missing.gpr` },
         { path: join(root, "target") },
         resources,
       ),
@@ -305,5 +290,80 @@ it.skipIf(process.platform === "win32")(
         projectName: "selected",
       }),
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+  },
+);
+
+it("copies multi-chunk and empty files in one pass matching fingerprint parity and file modes", async () => {
+  const { source, destination } = await fixture();
+  const large = Buffer.alloc(256 * 1024 + 17, 0x41);
+  large[0] = 0x5a;
+  large[256 * 1024] = 0x7e;
+  await writeFile(join(source, "selected.rep", "data"), large);
+  await writeFile(join(source, "selected.rep", "empty"), Buffer.alloc(0));
+
+  const commitment = await resolveGhidraProject(
+    { path: join(source, "selected.gpr"), programName: "target.elf" },
+    { path: "/tmp/target.elf" },
+    resources,
+  );
+  await copyExistingGhidraProject(source, destination, {
+    projectName: "selected",
+    expectedSha256: commitment.sha256,
+    resources,
+  });
+
+  expect(
+    (await readFile(join(destination, "selected.rep", "data"))).equals(large),
+  ).toBe(true);
+  expect(
+    await readFile(join(destination, "selected.rep", "empty")),
+  ).toHaveLength(0);
+  expect(
+    await fingerprintGhidraProject(destination, "selected", resources),
+  ).toBe(commitment.sha256);
+  if (process.platform !== "win32") {
+    expect(
+      (await stat(join(destination, "selected.rep", "data"))).mode & 0o777,
+    ).toBe(0o600);
+    expect(
+      (await stat(join(destination, "selected.rep", "empty"))).mode & 0o777,
+    ).toBe(0o600);
+    expect((await stat(join(destination, "selected.rep"))).mode & 0o777).toBe(
+      0o700,
+    );
+  }
+});
+
+it("refuses expectedSha256 without a resource scope before copying any files", async () => {
+  const { source, destination } = await fixture();
+  await expect(
+    copyExistingGhidraProject(source, destination, {
+      projectName: "selected",
+      expectedSha256: "a".repeat(64),
+    }),
+  ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+  expect(await readdir(destination)).toEqual([]);
+});
+
+it.each([null, "stop-copy"])(
+  "preserves copy cancellation reason %j without leaving partial verification",
+  async (reason) => {
+    const { source, destination } = await fixture();
+    const commitment = await resolveGhidraProject(
+      { path: join(source, "selected.gpr"), programName: "target.elf" },
+      { path: "/tmp/target.elf" },
+      resources,
+    );
+    const controller = new AbortController();
+    controller.abort(reason);
+    await expect(
+      copyExistingGhidraProject(source, destination, {
+        projectName: "selected",
+        expectedSha256: commitment.sha256,
+        resources,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
+    expect(await readdir(destination)).toEqual([]);
   },
 );

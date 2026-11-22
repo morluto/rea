@@ -40,6 +40,10 @@ const inlineCacheProfiles = (
  * profile only where their source changes do not alter cache widths or IDs.
  * Final 3.13 magic 3571 matches the opcode IDs and cache widths in CPython
  * v3.13.17's Lib/_opcode_metadata.py and Lib/opcode.py.
+ * The 3.14 and 3.15 tables are pinned only to magics checked against a real
+ * interpreter: 3627 equals `opcode._inline_cache_entries` and `opcode.opmap`
+ * in CPython 3.14.6, and 3666 equals them in CPython 3.15.0b3. Other 3.14 and
+ * 3.15 pre-release magics have no table here and are not decoded.
  */
 const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
   number,
@@ -414,6 +418,57 @@ const INLINE_CACHE_ENTRIES_BY_MAGIC: ReadonlyMap<
       [104, 1],
       [108, 4],
       [117, 1],
+    ],
+  ),
+  ...inlineCacheProfiles(
+    [3627],
+    [
+      [38, 1],
+      [39, 3],
+      [44, 5],
+      [52, 3],
+      [55, 3],
+      [56, 1],
+      [57, 1],
+      [70, 1],
+      [75, 1],
+      [80, 9],
+      [92, 4],
+      [96, 1],
+      [100, 1],
+      [101, 1],
+      [102, 1],
+      [103, 1],
+      [106, 1],
+      [110, 4],
+      [119, 1],
+    ],
+  ),
+  ...inlineCacheProfiles(
+    [3666],
+    [
+      [4, 1],
+      [36, 1],
+      [37, 3],
+      [42, 5],
+      [50, 3],
+      [53, 3],
+      [54, 1],
+      [55, 1],
+      [68, 1],
+      [70, 1],
+      [74, 1],
+      [79, 9],
+      [91, 4],
+      [95, 1],
+      [99, 1],
+      [100, 1],
+      [101, 1],
+      [102, 1],
+      [105, 1],
+      [109, 4],
+      [118, 1],
+      [128, 1],
     ],
   ),
 ]);

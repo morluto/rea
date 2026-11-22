@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 import { digestSchema } from "../digests.js";
 import { analyzeJavaScriptApplicationInputSchema } from "./javascriptApplicationAnalysis.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -65,7 +66,7 @@ export const javascriptRecoveryResultSchema = z.strictObject({
     rewrite_level:
       javascriptRecoveryInputSchema.shape.rewrite_level.removeDefault(),
   }),
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   detected_formats: z.array(z.string()),
   reported_safety: z.string(),
   reported_strategy: z.string(),

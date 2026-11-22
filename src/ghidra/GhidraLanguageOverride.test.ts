@@ -1,13 +1,6 @@
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readdir,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, parse, relative } from "node:path";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { parseConfig } from "../config/parseConfig.js";
@@ -18,14 +11,17 @@ import {
   ghidraProfileLanguageOverride,
   sameGhidraLanguageOverride,
 } from "./GhidraAnalysisProfile.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  createSimulatedInstallDirectory,
+  ghidraProfileInstallationHost as host,
+} from "./GhidraInstallation.fixture.js";
 import {
   admitGhidraLanguageOverride,
   parseGhidraLanguageDefinitions,
   readGhidraLanguageCatalog,
 } from "./GhidraLanguageCatalog.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 
 // Abbreviated from Ghidra 12.1.4 Processors/x86/data/languages/x86.ldefs.
 const X86_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -106,26 +102,32 @@ const legacyMips: BinaryTarget = {
 };
 
 let installDir = "";
-let ownedInstallDir = "";
+let disposeInstallDir: (() => Promise<void>) | undefined;
 beforeAll(async () => {
-  const root =
-    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
-  await mkdir(root, { recursive: true });
-  ownedInstallDir = await mkdtemp(join(root, "rea-ghidra-languages-"));
-  // The simulated Linux host needs a POSIX absolute path. Keep the owned
-  // native path for cleanup and derive the simulated path on the same drive.
-  installDir =
-    process.platform === "win32"
-      ? `/${relative(parse(ownedInstallDir).root, ownedInstallDir).replaceAll("\\", "/")}`
-      : ownedInstallDir;
+  const directory = await createSimulatedInstallDirectory(
+    "rea-ghidra-languages-",
+  );
+  installDir = directory.path;
+  disposeInstallDir = directory.dispose;
   const languages = join(installDir, "Ghidra/Processors/x86/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "x86.ldefs"), X86_LDEFS);
 });
 afterAll(async () => {
-  if (ownedInstallDir !== "")
-    await rm(ownedInstallDir, { recursive: true, force: true });
+  await disposeInstallDir?.();
 });
+
+const lowScoreDosCom = async (target: BinaryTarget): Promise<BinaryTarget> => {
+  const directory = await createTestTempDirectory("rea-com-profile-");
+  const path = join(directory, "fixture.com");
+  const bytes = Buffer.from("b83412c3", "hex");
+  await writeFile(path, bytes);
+  return {
+    ...target,
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+};
 
 const provider = (environment: Record<string, string>) => {
   const parsed = parseConfig({
@@ -360,7 +362,7 @@ describe("Ghidra language override profile", () => {
       loader: "auto-from-header",
       language_id: "x86:LE:32:default",
       compiler_spec_id: "borlandcpp",
-      language_selection: "configured-v1",
+      language_selection: "configured",
     });
     expect(ghidraProfileLanguageOverride(parameters)).toEqual({
       languageId: "x86:LE:32:default",
@@ -385,7 +387,7 @@ describe("Ghidra language override profile", () => {
       expect(resolved.value.profile?.parameters).toMatchObject({
         language_id: "MIPS:LE:32:default",
         compiler_spec_id: "default",
-        language_selection: "configured-v1",
+        language_selection: "configured",
       });
     } finally {
       await rm(mipsLanguages, { recursive: true, force: true });
@@ -458,7 +460,9 @@ describe("Ghidra language override profile", () => {
           ],
         },
       });
-      const automatic = await provider({}).resolveAnalysisProfile(target);
+      const admitted =
+        format === "dos-com" ? await lowScoreDosCom(target) : target;
+      const automatic = await provider({}).resolveAnalysisProfile(admitted);
       expect(automatic.ok).toBe(true);
     },
   );
@@ -505,3 +509,76 @@ it
     }
   },
 );
+
+describe("Ghidra concurrent language catalog", () => {
+  it("preserves sorted module and entry order across >8 modules with missing language dirs", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-catalog-many-");
+    const expectedIds: string[] = [];
+    for (let index = 24; index >= 0; index -= 1) {
+      const module = `M_${String(index).padStart(2, "0")}`;
+      const modDir = join(root, "Ghidra/Processors", module);
+      if (index % 5 === 0) {
+        await mkdir(modDir, { recursive: true });
+        continue;
+      }
+      const languages = join(modDir, "data/languages");
+      await mkdir(languages, { recursive: true });
+      for (const part of ["b", "a"]) {
+        const id = `${module}_${part}:LE:32:default`;
+        await writeFile(
+          join(languages, `${part}.ldefs`),
+          `<language_definitions><language id="${id}"><compiler id="default"/></language></language_definitions>`,
+        );
+      }
+    }
+    for (let index = 0; index < 25; index += 1) {
+      if (index % 5 === 0) continue;
+      const module = `M_${String(index).padStart(2, "0")}`;
+      expectedIds.push(
+        `${module}_a:LE:32:default`,
+        `${module}_b:LE:32:default`,
+      );
+    }
+    const resources = new ArtifactResourceScope();
+    try {
+      const catalog = await readGhidraLanguageCatalog(root, resources);
+      expect(catalog.map(({ id }) => id)).toEqual(expectedIds);
+    } finally {
+      await resources.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "rethrows the lowest-index directory failure when multiple concurrent directories fail",
+    async () => {
+      const root = await createTestTempDirectory("rea-ghidra-catalog-order-");
+      const dirs: string[] = [];
+      for (let index = 0; index < 12; index += 1) {
+        const languages = join(
+          root,
+          "Ghidra/Processors",
+          `P_${String(index).padStart(2, "0")}`,
+          "data/languages",
+        );
+        await mkdir(languages, { recursive: true });
+        await writeFile(
+          join(languages, "arch.ldefs"),
+          `<language_definitions><language id="P${index}:LE:32:default"/></language_definitions>`,
+        );
+        dirs.push(languages);
+      }
+      await chmod(dirs[2]!, 0);
+      await chmod(dirs[9]!, 0);
+      const resources = new ArtifactResourceScope();
+      try {
+        await expect(
+          readGhidraLanguageCatalog(root, resources),
+        ).rejects.toMatchObject({ code: "EACCES", path: dirs[2] });
+      } finally {
+        await chmod(dirs[2]!, 0o755);
+        await chmod(dirs[9]!, 0o755);
+        await resources.close();
+      }
+    },
+  );
+});

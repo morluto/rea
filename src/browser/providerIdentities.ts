@@ -1,4 +1,4 @@
-import type { ProviderIdentity } from "../application/AnalysisProvider.js";
+import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 
 /** Identity available without loading the CdpBrowserProvider implementation. */
 export const CDP_BROWSER_PROVIDER_IDENTITY: ProviderIdentity = Object.freeze({

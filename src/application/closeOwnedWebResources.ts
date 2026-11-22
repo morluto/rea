@@ -1,6 +1,8 @@
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { providerCleanupErrorFromCloseRejections } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Attempt every web workflow cleanup owner and report all failures. */
 export const closeOwnedWebResources = async (
@@ -21,18 +23,23 @@ export const closeOwnedWebResources = async (
     throw new ProviderCleanupError(
       "web-workflow",
       [],
-      { reason: failure instanceof Error ? failure.message : String(failure) },
+      { reason: errorMessage(failure) },
       { cause: failure, operation: "close_web_workflow" },
     );
   }
   if (failures.length > 1) {
     const normalized = failures.map((cause) => ({
       cause,
+      // A resolved error without an owner does not establish that this close settled.
+      cleanupOwner:
+        cause instanceof AnalysisError &&
+        (cause.cleanupIncomplete || cause.hasCleanupOwner)
+          ? cause
+          : undefined,
       projection:
         cause instanceof AnalysisError
           ? projectAnalysisError(cause)
           : undefined,
-      resources: cause instanceof AnalysisError ? cause.cleanupResources : [],
     }));
     const recoveryActions = [
       ...new Set(
@@ -41,35 +48,24 @@ export const closeOwnedWebResources = async (
         ),
       ),
     ];
-    const aggregate = new ProviderCleanupError(
+    throw providerCleanupErrorFromCloseRejections(
       "web-workflow",
-      [...new Set(normalized.flatMap(({ resources }) => resources))],
+      normalized,
       {
         failures: normalized.map(
           ({ cause, projection }) =>
             projection ?? {
-              message: cause instanceof Error ? cause.message : String(cause),
+              message: errorMessage(cause),
             },
         ),
       },
       {
-        cause: new AggregateError(
-          normalized.map(({ cause }) => cause),
-          message,
-        ),
         operation: "close_web_workflow",
+        message,
         ...(recoveryActions.length === 0
           ? {}
           : { remediationAction: recoveryActions.join("; ") }),
       },
     );
-    const dependencies = failures.filter(
-      (cause): cause is AnalysisError =>
-        cause instanceof AnalysisError && cause.cleanupIncomplete,
-    );
-    // Opaque or already-resolved rejections supply no live release authority.
-    if (dependencies.length === failures.length)
-      aggregate.bindCleanupDependencies(dependencies);
-    throw aggregate;
   }
 };

@@ -8,9 +8,9 @@ import { describe, expect, it } from "vitest";
 import { scanArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
 import { AsarArtifactReader } from "../../../src/artifacts/AsarArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { asarHeaderBytes } from "../../fixtures/asarHeader.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const fixture = async () => {
   const root = await createTestTempDirectory("rea-ingestion-content-identity-");

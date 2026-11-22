@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import type { AndroidAnalysisService } from "./AndroidAnalysisService.js";
 import {
   requireAnalysisViewRetention,

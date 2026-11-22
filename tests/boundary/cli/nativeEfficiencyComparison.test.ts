@@ -28,7 +28,7 @@ const build=async digit=>{
     if(name==='open_binary'||name==='close_binary')return {};
     if(name==='inspect_native_load_image')return {evidence_id:'ev_'+digit.repeat(63)+'6',normalized_result:{status:'verified',target_sha256:stale?'f'.repeat(64):sha,entry:{linear_address:'0x1000'}}};
     if(name==='resolve_containing_procedure')return {evidence_id:'ev_'+digit.repeat(63)+'7',normalized_result:{found:true}};
-    if(name==='analyze_function')return {evidence_id:parent,subject:{digest:{sha256:sha}},normalized_result:dossier};
+    if(name==='analyze_function')return {evidence_id:parent,subject:{identity:{sha256:sha}},normalized_result:dossier};
     const id='ev_'+digit.repeat(63)+(collision==='containing-collision'?7:collision==='load-collision'?6:duplicate?1:++ordinal);
     if(args.view.kind==='summary')return {evidence_id:id};
     const facet=args.view.facet;

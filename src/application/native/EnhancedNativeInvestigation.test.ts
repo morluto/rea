@@ -1,4 +1,4 @@
-import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { AnalysisCleanupLease } from "../../resources/AnalysisCleanupLease.js";
 // Fake-backed composition coverage; real provider verification lives in
 // `npm run verify:hopper` and `npm run verify:ghidra`.
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,7 @@ import {
   createAnalysisExecution,
   type AnalysisExecution,
   type AnalysisOperation,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -642,10 +642,6 @@ describe("native dispatch inventory", () => {
       label: "malformed value with a legacy name",
       entry: { ...methodInventoryEntry, value: 42, name: methodName },
     },
-    {
-      label: "undeclared field",
-      entry: { address: "0x1000", value: methodName, unexpected: true },
-    },
   ])(
     "rejects $label inventory in both dispatch consumers",
     async ({ entry }) => {
@@ -663,12 +659,32 @@ describe("native dispatch inventory", () => {
           error: {
             _tag: "AnalysisOutputError",
             operation: "list_names",
-            reason: "provider returned an invalid inventory",
+            reason: "Provider returned an invalid name inventory",
           },
         });
       }
     },
   );
+
+  it("accepts an inventory row with an undeclared provider field in both dispatch consumers", async () => {
+    const tools = new EnhancedTools(
+      testAnalysis({
+        list_names: () =>
+          execution("list_names", [
+            { ...methodInventoryEntry, provider_rank: 1 },
+          ]),
+      }),
+    );
+    for (const [operation, parameters] of [
+      ["inspect_native_dispatch_metadata", { max_records: 10 }],
+      ["trace_native_ui_action", { action: "buildTapped:" }],
+    ] as const) {
+      const result = await tools.execute(operation, parameters);
+      expect(result.ok ? null : result.error._tag).not.toBe(
+        "AnalysisOutputError",
+      );
+    }
+  });
 });
 
 describe("native UI query outcomes", () => {
@@ -862,7 +878,7 @@ describe("native UI trace boundaries", () => {
     });
   });
 
-  it("matches handlers after the dispatch inventory's former default limit", async () => {
+  it("matches a handler listed after 5,000 unrelated names", async () => {
     const names = Array.from({ length: 5_000 }, (_, index) => ({
       address: `0x${(index + 1).toString(16)}`,
       value: `unrelated_symbol_${index}`,
@@ -1085,4 +1101,168 @@ it("keeps a complete UI graph trace untruncated when no bound is reached", async
       "The supplied graph was truncated; relationships omitted from that source remain unknown.",
     ]),
   );
+});
+
+describe("native UI action archive coverage", () => {
+  it("keeps archive coverage unknown when the decoder did not report it", async () => {
+    const trace = async (
+      coverage: z.input<typeof nativeInvestigationGraphSchema>["coverage"],
+    ) => {
+      const result = await new EnhancedTools(
+        testAnalysis({}, { ...graph, coverage }),
+      ).execute("trace_native_ui_action", { action: "missing-selector" });
+      if (!result.ok) throw result.error;
+      return nativeInvestigationTraceSchema
+        .parse(result.value)
+        .coverage.filter(({ facet }) => facet === "interface_builder_archives");
+    };
+    // One document was found but no archive_decode facet was reported.
+    expect(await trace([])).toEqual([
+      {
+        facet: "interface_builder_archives",
+        status: "unknown",
+        reason: "archive_decode_coverage_not_reported",
+        examined: 1,
+        omitted: null,
+      },
+    ]);
+    const reported = {
+      facet: "archive_decode",
+      status: "partial" as const,
+      reason: "archive_decode_failed",
+      examined: 2,
+      omitted: 1,
+    };
+    expect(await trace([reported])).toEqual([
+      { ...reported, facet: "interface_builder_archives" },
+    ]);
+  });
+});
+
+describe("object-match action resolution and graph node depths", () => {
+  it("resolves an Interface Builder object ID to its action and computes exact DAG expansion depths", async () => {
+    const deepDiamondGraph = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        {
+          id: "native:function:0x1000",
+          kind: "function" as const,
+          name: "BuildViewController buildTapped:",
+          location: { address: "0x1000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-a",
+          kind: "function" as const,
+          name: "helperA",
+          location: { address: "0x2000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+        {
+          id: "helper-b",
+          kind: "function" as const,
+          name: "helperB",
+          location: { address: "0x3000", file_offset: null },
+          attributes: {},
+          evidence,
+        },
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: "dispatch-direct",
+          from: "selector",
+          to: "native:function:0x1000",
+          relation: "objc_dispatch" as const,
+          resolution: "resolved" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "fn-a",
+          from: "native:function:0x1000",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          id: "a-b",
+          from: "helper-a",
+          to: "helper-b",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+        {
+          // Shortcut makes helper-b reachable at shortest depth 3 instead of 4.
+          id: "selector-a",
+          from: "selector",
+          to: "helper-a",
+          relation: "direct_call" as const,
+          resolution: "observed" as const,
+          evidence,
+          limitations: [],
+        },
+      ],
+    };
+    const atDepth3 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 3,
+    });
+    if (!atDepth3.ok) throw atDepth3.error;
+    const parsed3 = nativeInvestigationTraceSchema.parse(atDepth3.value);
+    expect(parsed3.start).toBe("action");
+    expect(parsed3.truncated).toBe(true);
+    expect(parsed3.nodes.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        "action",
+        "native:function:0x1000",
+        "helper-a",
+        "helper-b",
+      ]),
+    );
+    expect(parsed3.nodes.map(({ id }) => id)).not.toContain(
+      "native:function:0x4000",
+    );
+
+    const atDepth4 = await new EnhancedTools(
+      testAnalysis(
+        {
+          list_names: () => execution("list_names", [methodInventoryEntry]),
+          procedure_callees: (params) =>
+            execution(
+              "procedure_callees",
+              params.procedure === "0x3000" ? ["0x4000"] : [],
+            ),
+        },
+        deepDiamondGraph,
+      ),
+    ).execute("trace_native_ui_action", {
+      action: "button",
+      max_depth: 4,
+    });
+    if (!atDepth4.ok) throw atDepth4.error;
+    const parsed4 = nativeInvestigationTraceSchema.parse(atDepth4.value);
+    expect(parsed4.nodes.map(({ id }) => id)).toContain(
+      "native:function:0x4000",
+    );
+  });
 });

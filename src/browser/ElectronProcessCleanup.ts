@@ -1,30 +1,37 @@
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   cleanupOwnedProcessGroup,
   cleanupWindowsProcessTree,
   verifyNoTokenOwnedProcesses,
-  type OwnedProcessGroup,
   type PersistentOwnedProcessGroup,
   type ProcessCleanupResult,
   type ProcessLineageObservation,
-  type OwnershipSweepUnverifiedProcess,
   type ProcessOwnershipHost,
 } from "../process/ProcessOwnership.js";
 import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { selectCapturedProcessGroupIds } from "../process/ProcessOwnershipProcessTree.js";
 
+/** The process operations an Electron cleanup uses on one host. */
+export interface ElectronCleanupHost {
+  readonly platform: NodeJS.Platform;
+  readonly terminateTree: typeof cleanupWindowsProcessTree;
+  readonly processOwnershipHost?: ProcessOwnershipHost;
+}
+
+/** System process operations for the selected (by default the running) host. */
+export const systemElectronCleanupHost = (
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
+): ElectronCleanupHost => ({
+  platform,
+  terminateTree: cleanupWindowsProcessTree,
+  processOwnershipHost: systemProcessOwnershipHost,
+});
+
 /** Clean up an Electron launch. Windows signals a process only after lineage is verified. */
 export const cleanupElectronProcesses = async (
   ownership: PersistentOwnedProcessGroup,
   lineage: ProcessLineageObservation | undefined,
-  host: {
-    readonly platform: NodeJS.Platform;
-    readonly terminateTree: typeof cleanupWindowsProcessTree;
-    readonly processOwnershipHost?: ProcessOwnershipHost;
-  } = {
-    platform: process.platform,
-    terminateTree: cleanupWindowsProcessTree,
-    processOwnershipHost: systemProcessOwnershipHost,
-  },
+  host: ElectronCleanupHost = systemElectronCleanupHost(),
 ): Promise<ProcessCleanupResult> => {
   if (
     lineage?.status === "verified" &&

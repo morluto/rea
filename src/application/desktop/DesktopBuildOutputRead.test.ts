@@ -1,12 +1,10 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { redactSecrets } from "../../domain/desktop/buildSecrets.js";
 import { createEvidence } from "../../domain/evidence.js";
-import {
-  GUEST_FILE_ANSWER_SOURCE,
-  guestFileAnswerCeiling,
-} from "../../desktop/AgentEnvComputer.js";
+import { guestFileAnswerCeiling } from "../../desktop/AgentEnvComputer.js";
 import { readOutput } from "./DesktopBuildCommands.js";
 import { endedCapture } from "./DesktopBuildCaptureFailure.js";
 import {
@@ -38,13 +36,44 @@ describe("readOutput", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
   });
 
+  it.each([
+    [
+      "invalid UTF-8",
+      Buffer.concat([
+        Buffer.from('{"code":"busy","message":"'),
+        Buffer.from([0xff]),
+        Buffer.from('"}'),
+      ]),
+    ],
+    ["invalid JSON", Buffer.from("incomplete output")],
+  ] as const)(
+    "refuses %s in guest command output without quoting the bytes",
+    async (_name, body) => {
+      const computer = {
+        homeFiles: () => Promise.resolve(new Map([["out.json", body]])),
+        redacted: (text: string) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      };
+      await expect(
+        readOutput(
+          computer,
+          "out.json",
+          body.length,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(
+        /^The build computer's REA output is not valid UTF-8 JSON\.$/u,
+      );
+    },
+  );
+
   it("reads a reported failure that fits the ceiling", async () => {
     const body = Buffer.from(
-      JSON.stringify({ code: "busy", message: "the app is busy" }),
+      JSON.stringify({ code: "busy", message: "the app is busy — 正在运行" }),
     );
     let reported = 0;
     const output = await readOutput(
@@ -65,7 +94,7 @@ describe("readOutput", () => {
     if (output.kind !== "failure") return;
     expect(output.failure).toMatchObject({
       code: "busy",
-      message: "the app is busy",
+      message: "the app is busy — 正在运行",
     });
   });
 });
@@ -101,7 +130,7 @@ describe("endedCapture", () => {
       guest_file_bytes: Number.MAX_SAFE_INTEGER,
       file_count: 1,
       answer_ceiling_bytes: guestFileAnswerCeiling(),
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ceiling_source: "v8.heap_size_limit/4",
     });
   });
 
@@ -122,7 +151,7 @@ describe("endedCapture", () => {
     };
     const body = Buffer.from(
       JSON.stringify(
-        createEvidence(undefined, DESKTOP_PROVIDER, {
+        createEvidence(unknownTarget("not-observed"), DESKTOP_PROVIDER, {
           predicateType: "rea.desktop-application-capture",
           operation: DESKTOP_OPERATION,
           parameters: {},

@@ -9,6 +9,14 @@ import {
   parseRecordedTransportUrl,
   parseUrlQueryParameterNames,
 } from "./recordedTransportUrl.js";
+import {
+  unknownTarget,
+  type UnknownTargetIdentity,
+  type UrlTargetIdentity,
+} from "./targetIdentity.js";
+
+/** Retain observed three-digit statuses, including nonstandard values above 599. */
+export const browserResponseStatusSchema = z.int().min(100).max(999);
 
 const parseExactOrigin = (value: string): string | undefined => {
   let url: URL;
@@ -334,6 +342,25 @@ const credentialFreeHref = (parsed: URL): string => {
   parsed.username = "";
   parsed.password = "";
   return parsed.href;
+};
+
+/**
+ * The target identity of the live document URL a browser provider reported:
+ * the URL without userinfo, and its origin. A value that is not a URL, such
+ * as the placeholder for a document outside the selected origins, does not
+ * identify the document.
+ */
+export const browserUrlTargetIdentity = (
+  value: string,
+): UrlTargetIdentity | UnknownTargetIdentity => {
+  const observation = observeBrowserUrl(value);
+  return observation.kind === "parsed"
+    ? {
+        kind: "url",
+        url: observation.sanitized.url,
+        origin: observation.sanitized.origin,
+      }
+    : unknownTarget("not-observed");
 };
 
 /** Normalize endpoint candidates without discarding local query or fragment data. */

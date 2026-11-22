@@ -32,7 +32,7 @@ describe("Go producer module text", () => {
 
   it("decodes Go quoting including byte, octal and Unicode escapes without JSON substitution", () => {
     const text =
-      String.raw`build\t"key=quoted"="\a\v\xC3\xA9\303\251\u263a\U0001F680"`.replace(
+      String.raw`build\t"key=quoted"="literal路𐐷\a\v\xC3\xA9\303\251\u263a\U0001F680 end"`.replace(
         "\\t",
         "\t",
       ) +
@@ -40,7 +40,7 @@ describe("Go producer module text", () => {
       "build\traw=`a\rb`\n";
     expect(parseGoModuleBytes(Buffer.from(text))).toMatchObject({
       settings: [
-        { key: "key=quoted", value: "\x07\x0béé☺🚀" },
+        { key: "key=quoted", value: "literal路𐐷\x07\x0béé☺🚀 end" },
         { key: "raw", value: "ab" },
       ],
       complete: true,

@@ -263,7 +263,7 @@ test("reports lookup failures with recovery for the selected target, not the inp
   for (const [procedure, guidance] of [
     ["0x1335", "list_procedures"],
     ["absent_name", "search_procedures"],
-    ["audit_transform", "exact address"],
+    ["audit_transform", "details.refusal.candidates"],
   ]) {
     const response = await client.callTool({
       name: "procedure_address",
@@ -292,4 +292,48 @@ test("reports lookup failures with recovery for the selected target, not the inp
   expect(missingAddress.recovery).toBeUndefined();
   expect(missingAddress.message).toContain("no inventory entry named");
   expect(missingAddress.remediation.action).toContain("address");
+});
+
+test("indexes and searches procedures with more than eight aliases and repeated spellings", async ({
+  mcp,
+}) => {
+  const { search } = await aliasSession(mcp, "rea-kuna-many-aliases-", {
+    functions: [
+      {
+        name: "many_primary",
+        addr: "0x1000",
+        aliases: [
+          "alias_0",
+          "alias_1",
+          "many_primary",
+          "alias_2",
+          "alias_3",
+          "alias_1",
+          "alias_4",
+          "alias_5",
+          "alias_6",
+          "alias_7",
+          "alias_hit",
+          "alias_hit",
+        ],
+      },
+      { name: "other_fn", addr: "0x1040", aliases: ["only_other"] },
+    ],
+  });
+  expect(
+    await search({
+      pattern: "^alias_hit$",
+      mode: "regex",
+      case_sensitive: true,
+    }),
+  ).toEqual([
+    {
+      address: "0x1000",
+      value: "many_primary",
+      matched_aliases: ["alias_hit"],
+    },
+  ]);
+  expect(await search({ pattern: "other_fn", mode: "regex" })).toEqual([
+    { address: "0x1040", value: "other_fn" },
+  ]);
 });

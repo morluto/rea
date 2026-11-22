@@ -1,4 +1,6 @@
+import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
+import { isAbortOf } from "../process/SignalAbort.js";
 import { err, ok, type Result } from "../domain/result.js";
 
 /** Why a URL was refused before any vendor response could be admitted. */
@@ -49,29 +51,16 @@ export type HopperRequestFailure = HopperDownloadFailure & {
 export const HOPPER_DOWNLOAD_BYTES = 100_000_000;
 
 /** Longest wait for the response or its next bytes before a download stalls. */
-export const HOPPER_DOWNLOAD_STALL_MS = 30_000;
+const HOPPER_DOWNLOAD_STALL_MS = 30_000;
 
 /**
  * Overall bound for one download. A slow connection that keeps delivering
  * bytes is bounded here rather than by a deadline sized for fast networks.
  */
-export const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+const HOPPER_DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 
 /** Small release feed and key requests must not use the package bounds. */
 export const HOPPER_METADATA_TIMEOUT_MS = 10_000;
-
-/** Attribute a raw rejection to this caller's exact cancellation. */
-export const isHopperRequestCancellation = (
-  cause: unknown,
-  signal: AbortSignal | undefined,
-): boolean =>
-  signal?.aborted === true &&
-  (cause === signal.reason ||
-    (cause instanceof Error &&
-      cause.name === "AbortError" &&
-      "code" in cause &&
-      cause.code === "ABORT_ERR" &&
-      cause.cause === signal.reason));
 
 /**
  * Bound observed response bytes before retaining them, including chunked bodies.
@@ -114,7 +103,7 @@ export const downloadHopperPackage = async (
   const deadline = new AbortController();
   const expire = (limit: "stalled" | "deadline", limitMs: number) => {
     expired ??= { limit, timeoutMs: limitMs, receivedBytes };
-    deadline.abort();
+    deadline.abort(OwnerCancellation.deadlineElapsed);
   };
   const overall = setTimeout(() => {
     expire("deadline", timeoutMs);
@@ -148,14 +137,11 @@ export const downloadHopperPackage = async (
       progressed,
     });
   } catch (observed: unknown) {
-    const cause = isHopperRequestCancellation(observed, transport.signal)
+    const cause = isAbortOf(observed, transport.signal)
       ? selectedSignal.reason
       : observed;
-    if (isHopperRequestCancellation(cause, options.signal)) throw cause;
-    if (
-      expired !== undefined &&
-      isHopperRequestCancellation(cause, deadline.signal)
-    )
+    if (isAbortOf(cause, options.signal)) throw cause;
+    if (expired !== undefined && isAbortOf(cause, deadline.signal))
       return err({ url: reported, kind: "timeout", ...expired });
     // Fetch reports network errors (DNS, TLS, reset, truncated body) as TypeError.
     if (cause instanceof TypeError)

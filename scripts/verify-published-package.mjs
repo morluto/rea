@@ -1,7 +1,6 @@
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -13,6 +12,7 @@ import {
   verifyInstalledCanaryPackage,
 } from "./lib/release-package-canary.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const verifierRun = createVerifierRun();
 
@@ -24,17 +24,19 @@ if (
 )
   throw new Error("Usage: node scripts/verify-published-package.mjs <version>");
 
-const canaryRoot = await mkdtemp(join(tmpdir(), "rea-published-canary-"));
+// npm and the package's children write beneath the root, as under the former mkdtemp.
+const fixture = await VerifierFixture.open({
+  prefix: "rea-published-canary-",
+  private: false,
+});
+const canaryRoot = fixture.path;
 const serverEnvironment = {
   ...process.env,
   npm_config_cache: join(canaryRoot, "npm-cache"),
 };
-delete serverEnvironment.HOPPER_TARGET_PATH;
 const commands = await createPackageVerifierCommands({
-  workspace: {
-    path: canaryRoot,
-    close: () => rm(canaryRoot, { recursive: true, force: true }),
-  },
+  // The package command owner releases the fixture after its commands close.
+  workspace: { path: canaryRoot, close: () => fixture.release() },
 });
 let surface;
 let update;
@@ -99,8 +101,7 @@ async function verifyPublishedUpdate({
     environment,
   );
 
-  await commands.exec(
-    "npm",
+  await commands.execNpm(
     [
       "install",
       "--global",
@@ -118,7 +119,7 @@ async function verifyPublishedUpdate({
   );
 
   const npmRoot = (
-    await commands.exec("npm", ["root", "--global"], {
+    await commands.execNpm(["root", "--global"], {
       cwd: canaryRoot,
       env: environment,
       timeout: 30000,
@@ -186,8 +187,7 @@ if (result.status === "failed") process.exitCode = 1;
 }
 
 async function findPreviousPublishedVersion(targetVersion, cwd, environment) {
-  const { stdout } = await commands.exec(
-    "npm",
+  const { stdout } = await commands.execNpm(
     ["view", "rea-agents", "versions", "--json"],
     { cwd, env: environment, timeout: 30000, maxBuffer: 16 * 1024 * 1024 },
   );

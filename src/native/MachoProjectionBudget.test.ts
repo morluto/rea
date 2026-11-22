@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { readMachoCommandNames } from "./MachoCommandNames.js";
+import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
 
 it.each([0xff, 0x01])(
@@ -42,8 +42,13 @@ it.each([0xff, 0x01])(
         projectedBudget - 1,
       ),
     ).rejects.toMatchObject({
-      maximum: projectedBudget - 1,
-      unit: "projected_bytes",
+      failure: {
+        kind: "limit",
+        limit: {
+          name: "macho_load_command_projected_bytes",
+          maximum: projectedBudget - 1,
+        },
+      },
     });
   },
 );
@@ -74,8 +79,13 @@ it("rejects section expansion before reading or allocating section records", asy
       64 * 1024 * 1024,
     ),
   ).rejects.toMatchObject({
-    maximum: 64 * 1024 * 1024,
-    unit: "projected_bytes",
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "macho_load_command_projected_bytes",
+        maximum: 64 * 1024 * 1024,
+      },
+    },
   });
   expect(offsets).toEqual(expect.arrayContaining([0, 32]));
   expect(offsets.every((offset) => offset < 104)).toBe(true);
@@ -95,11 +105,64 @@ it("reserves the projection envelope for an empty command table", async () => {
     await expect(
       readMachoCommandNames(read, image.length, 0, 0, budget),
     ).rejects.toMatchObject({
-      maximum: budget,
-      unit: "projected_bytes",
+      failure: {
+        kind: "limit",
+        limit: { name: "macho_load_command_projected_bytes", maximum: budget },
+      },
     });
   }
 });
+
+it.each([
+  {
+    field: "load command",
+    countAt: 16,
+    valid: 2,
+    invalid: 3,
+    maximumRecords: 1,
+  },
+  {
+    field: "linker option",
+    countAt: 40,
+    valid: 2,
+    invalid: 5,
+    maximumRecords: 2,
+  },
+])(
+  "distinguishes an impossible $field count from a framed over-budget declaration",
+  async ({ field, countAt, valid, invalid, maximumRecords }) => {
+    const bytes = Buffer.alloc(48);
+    bytes.writeUInt32LE(0xfeedfacf, 0);
+    bytes.writeUInt32LE(16, 20);
+    if (field === "linker option") {
+      bytes.writeUInt32LE(1, 16);
+      bytes.writeUInt32LE(0x2d, 32);
+      bytes.writeUInt32LE(16, 36);
+      bytes.write("a\0b\0", 44);
+    } else {
+      // Two header-only commands, each with a complete eight-byte frame.
+      for (const offset of [32, 40]) {
+        bytes.writeUInt32LE(0x0a, offset);
+        bytes.writeUInt32LE(8, offset + 4);
+      }
+    }
+    const inspect = () =>
+      readMachoCommandNames(
+        async (offset, size) => bytes.subarray(offset, offset + size),
+        bytes.length,
+        128,
+        maximumRecords,
+      );
+    bytes.writeUInt32LE(valid, countAt);
+    await expect(inspect()).rejects.toMatchObject({
+      failure: { kind: "limit", limit: { name: "macho_load_command_records" } },
+    });
+    bytes.writeUInt32LE(invalid, countAt);
+    await expect(inspect()).rejects.toMatchObject({
+      failure: { kind: "malformed", detail: expect.stringContaining(field) },
+    });
+  },
+);
 
 it("bounds a growing linker option before reading its remaining payload", async () => {
   const commandSize = 8208;
@@ -120,8 +183,13 @@ it("bounds a growing linker option before reading its remaining payload", async 
   await expect(
     readMachoCommandNames(read, image.length, 16384, 2, projectedBudget),
   ).rejects.toMatchObject({
-    maximum: projectedBudget,
-    unit: "projected_bytes",
+    failure: {
+      kind: "limit",
+      limit: {
+        name: "macho_load_command_projected_bytes",
+        maximum: projectedBudget,
+      },
+    },
   });
 });
 
@@ -150,8 +218,13 @@ it.each([
     await expect(
       readMachoCommandNames(read, image.length, 16384, 1, projectedBudget),
     ).rejects.toMatchObject({
-      maximum: projectedBudget,
-      unit: "projected_bytes",
+      failure: {
+        kind: "limit",
+        limit: {
+          name: "macho_load_command_projected_bytes",
+          maximum: projectedBudget,
+        },
+      },
     });
     image[stringAt + 32] = 0;
     const parsed = await readMachoCommandNames(

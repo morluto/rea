@@ -1,6 +1,7 @@
+import { escapeJsonPointerToken } from "../../domain/jsonPointer.js";
 import { ResponseBodyCleanup } from "../../providers/ResponseBodyCleanup.js";
 import type { EnvironmentStateStore } from "../../application/environment/environmentStateStore.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import type { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   CANCELLED,
@@ -10,6 +11,7 @@ import {
   type RpcError,
   type StateIntake,
 } from "./stateIntake.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 /** One data-plane method's outcome; undefined from a method table means the method is not served. */
 export type RpcOutcome =
@@ -23,17 +25,11 @@ export type RpcMethods = (
   signal?: AbortSignal,
 ) => Promise<RpcOutcome | undefined>;
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const pointerSegment = (segment: string | number): string =>
-  String(segment).replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** The first document problem as `-32602`, located by a JSON pointer into the document. */
 const documentError = (error: AnalysisInputError): RpcError => {
   const issue = error.issues[0];
   const pointer = (issue?.path ?? [])
-    .map((segment) => `/${pointerSegment(segment)}`)
+    .map((segment) => `/${escapeJsonPointerToken(String(segment))}`)
     .join("");
   return invalidParams(
     `${pointer === "" ? "the document" : pointer} ${issue?.message ?? "is not a rea-state/v1 document"}`,

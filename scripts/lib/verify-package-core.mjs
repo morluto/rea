@@ -6,11 +6,15 @@ import { Ajv2020 } from "ajv/dist/2020.js";
  * Only this operation needs built contracts; path checks remain source-only.
  */
 export const verifyCompleteToolCatalog = async (client, options) => {
-  const [{ requireMcpLifecycleResult, sortVerifierNames }, { TOOL_CONTRACTS }] =
-    await Promise.all([
-      import("./mcp-verifier-results.mjs"),
-      import("../../dist/contracts/toolContracts.js"),
-    ]);
+  const [
+    { requireMcpLifecycleResult, sortVerifierNames },
+    { TOOL_CONTRACTS },
+    dialect,
+  ] = await Promise.all([
+    import("./mcp-verifier-results.mjs"),
+    import("../../dist/contracts/toolContracts.js"),
+    import("../../dist/contracts/advertisedDialect.js"),
+  ]);
   const listed = await client.listTools(undefined, options);
   const canonical = sortVerifierNames(TOOL_CONTRACTS.map(({ name }) => name));
   const observed = sortVerifierNames(listed.tools.map(({ name }) => name));
@@ -35,6 +39,19 @@ export const verifyCompleteToolCatalog = async (client, options) => {
           `packaged MCP has invalid ${tool.name}.${kind}: ${ajv.errorsText(ajv.errors)}`,
         );
     }
+  }
+  const violations = listed.tools.flatMap((tool) => [
+    ...dialect.advertisedInputDialectViolations(tool),
+    ...dialect.advertisedOutputPatternViolations(tool),
+  ]);
+  if (violations.length > 0) {
+    const diagnostics = violations.map(
+      ({ tool, schema, path, rule, detail }) =>
+        `${tool} ${schema} ${path}: ${detail === undefined ? rule : `${rule} ${detail}`}`,
+    );
+    throw new Error(
+      `packaged MCP advertises constructs outside the portable schema dialect: ${diagnostics.join("; ")}`,
+    );
   }
   const sessionDefinition = listed.tools.find(
     ({ name }) => name === "binary_session",
@@ -67,4 +84,29 @@ export const pathExists = async (path) => {
       return false;
     throw cause;
   }
+};
+
+/**
+ * Run bounded concurrent work, stop taking new items after the first failure,
+ * and wait for every started worker to settle before propagating failures.
+ */
+export const runSettledConcurrent = async (items, concurrency, worker) => {
+  if (items.length === 0) return;
+  let index = 0;
+  const failures = [];
+  await Promise.allSettled(
+    Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (failures.length === 0 && index < items.length) {
+        const current = index++;
+        try {
+          await worker(items[current]);
+        } catch (cause) {
+          failures.push(cause);
+        }
+      }
+    }),
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Concurrent verifier tasks failed");
 };
