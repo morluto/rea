@@ -2028,7 +2028,9 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
           "decodes an LZMA-custom section through the owned worker and derives it",
         ),
       ),
-      handshake: ONE_SHOT,
+      handshake: notApplicable(
+        "The decoder child writes one framed reply per request; there is no handshake.",
+      ),
       operation: covered(
         test(
           "tests/acceptance/uefiFirmware.test.ts",
@@ -2044,13 +2046,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
       cleanup: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
       retry: covered(
         test(
           UEFI_PROVIDER,
-          "retains the worker root across a failed descriptor retry and releases its child before root removal",
+          "retains the worker root across a failed child stop retry and stops its child before root removal",
         ),
       ),
     },
