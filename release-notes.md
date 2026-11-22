@@ -694,6 +694,7 @@
 * **python:** verify malformed signed marshal count defects ([db01712](https://github.com/morluto/rea/commit/db0171297d14c71127b39915f2063561ae1b8a84))
 * **reference:** consolidate Git exclusion and policy checks ([#12846](https://github.com/morluto/rea/issues/12846)) ([18cd307](https://github.com/morluto/rea/commit/18cd307b6edbdd31ae85445cb76d5c8c9f6d0258))
 * **reference:** consolidate Git metadata and policy checks ([18cd307](https://github.com/morluto/rea/commit/18cd307b6edbdd31ae85445cb76d5c8c9f6d0258))
+* **reference:** consolidate import and descriptor ownership coverage ([#13526](https://github.com/morluto/rea/issues/13526)) ([a5afd70](https://github.com/morluto/rea/commit/a5afd70bee139f90844dacfc4cfa1ae10cbdc0d0))
 * **reference:** consolidate reader scheduling and failure checks ([#12835](https://github.com/morluto/rea/issues/12835)) ([4f5d1b2](https://github.com/morluto/rea/commit/4f5d1b250c0d90d6cb53009ffb56a0fdd0a7a929))
 * **reference:** verify exact exclusions against failed ancestors ([68e6953](https://github.com/morluto/rea/commit/68e6953897c1100faed203ad8af22c41c2a823a0))
 * **reference:** verify exclusion and missing-root outcomes ([#12831](https://github.com/morluto/rea/issues/12831)) ([68e6953](https://github.com/morluto/rea/commit/68e6953897c1100faed203ad8af22c41c2a823a0))
