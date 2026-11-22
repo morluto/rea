@@ -13,6 +13,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
         context.cli,
         context.logger,
         context.environment,
+        context.savedDefaults,
       ),
   ),
   coreAnalysis: withAnalysis(
@@ -38,6 +39,15 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./cutterCommands.js"),
     (module, context) =>
       module.registerCutterCommands(
+        context.cli,
+        context.logger,
+        context.environment,
+      ),
+  ),
+  userConfig: plain(
+    () => import("./userConfigCommands.js"),
+    (module, context) =>
+      module.registerUserConfigCommands(
         context.cli,
         context.logger,
         context.environment,
@@ -444,7 +454,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     Family in "setup" | ToolFamilyId
   ]: readonly CliCommandRegistrationId[];
 } = {
-  setup: ["setup"],
+  setup: ["setup", "userConfig"],
   direct: ["coreAnalysis"],
   enhanced: [],
   native: ["reverseEngineering", "cutter", "utility", "binaryDiagnostics"],

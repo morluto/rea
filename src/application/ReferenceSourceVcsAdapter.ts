@@ -1,7 +1,7 @@
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   locateReferenceSourceGitDirectory,
   ReferenceSourceGitDirectoryCancelled,
@@ -203,7 +203,8 @@ const resolveSourceVcs = async (
         if (path === undefined)
           throw new TypeError("Git metadata path is required");
         try {
-          const bytes = await readMetadataBytes(path);
+          // Keep filesystem reads and cleanup resources in host spelling.
+          const bytes = await readMetadataBytes(path.replaceAll("/", sep));
           const encoding =
             typeof options === "string"
               ? options

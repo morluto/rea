@@ -442,6 +442,7 @@ const expectResourceSchemaBranches = async (client: Client): Promise<void> => {
         archive_path: "Resources/data.archive",
         archive_sha256: "b".repeat(64),
         archive_format: "binary-plist",
+        archiver: "NSKeyedArchiver",
         roots: {},
         objects: [],
         references: [],

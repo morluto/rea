@@ -1030,6 +1030,28 @@ const opaqueCodeMayReachBindingReference = (
 ): boolean =>
   semanticBindingMayHaveOpaqueEffect(binding, state, capturePoint, "reference");
 
+/** Whether a binding can acquire members outside its retained assignment sources. */
+export const bindingHasUnmodeledMemberValues = (
+  binding: JavaScriptSemanticBindingState,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (opaqueCodeMayReachBindingReference(binding, state, undefined))
+    return true;
+  if (
+    binding.memberWrites.some((effect) => effect.assignedSources === undefined)
+  )
+    return true;
+  // The queried store itself can mark its selected slot escaped. Its retained
+  // RHS still participates in the source proof.
+  const storeIsModeled = binding.memberWrites.some(
+    (effect) => effect.node === write,
+  );
+  return binding.escapedPaths.some(
+    (effect) => effect.node !== write || !storeIsModeled,
+  );
+};
+
 const inactiveMemberWriteNodes = new WeakMap<
   JavaScriptSemanticAnalysisState,
   WeakSet<t.Node>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <title>Notion copies two clipboard formats</title>
+  <rect width="1200" height="630" fill="#101923"/>
+  <text x="65" y="93" fill="#83dfff" font-size="24" font-family="DejaVu Sans" font-weight="bold">REA   /   NOTION</text>
+  <text x="65" y="179" fill="#e8f2f9" font-size="65" font-family="DejaVu Sans" font-weight="bold">One copy, two formats</text>
+  <rect x="65" y="240" width="1070" height="290" rx="16" fill="#1d2b39"/>
+  <text x="112" y="395" fill="#e8f2f9" font-size="46" font-family="DejaVu Sans" font-weight="normal">Copy block</text>
+  <path d="M401 385h90v-68h98m-98 68v69h98" fill="none" stroke="#ff9753" stroke-width="5"/>
+  <text x="637" y="330" fill="#4dd2ff" font-size="49" font-family="DejaVu Sans Mono" font-weight="normal">text/plain</text>
+  <text x="637" y="465" fill="#4dd2ff" font-size="49" font-family="DejaVu Sans Mono" font-weight="normal">text/html</text>
+</svg>

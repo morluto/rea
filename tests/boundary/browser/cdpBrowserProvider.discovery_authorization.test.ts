@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -10,29 +11,46 @@ import { observeWebSessionInputSchema } from "../../../src/domain/browserSession
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
-import {
-  startFakeCdpBrowser,
-  type FakeOptions,
-} from "../../fixtures/fakeCdpBrowser.js";
+import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { frameNavigated, trackBrowser } from "./cdpBrowserProvider.support.js";
 
-const inspectWithNetworkEvents = async (
-  commandEvents: NonNullable<FakeOptions["commandEvents"]>,
+const inspectWithFrameEvent = async (
+  frame: Readonly<Record<string, unknown>> | undefined,
 ) => {
   const browser = await startFakeCdpBrowser({
     eventsBeforeReply: ["Network.enable"],
-    commandEvents,
+    commandEvents: (command, origin) => {
+      if (command.method !== "Network.enable") return undefined;
+      const event = frameNavigated(command, {
+        url: `${origin}/app?token=frame-secret`,
+        ...frame,
+      });
+      return [frame === undefined ? { ...event, params: undefined } : event];
+    },
   });
   trackBrowser(browser);
-  const result = await new CdpBrowserProvider().inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 1,
-    }),
-  );
-  return { browser, result };
+  const provider = new CdpBrowserProvider();
+  return withVerifierCleanup(async () => {
+    const result = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+    const enabled = browser.commands.find(
+      ({ method }) => method === "Network.enable",
+    );
+    expect(enabled?.sessionId).toEqual(expect.any(String));
+    expect(
+      browser.commands.filter(
+        ({ method }) => method === "Target.detachFromTarget",
+      ),
+    ).toMatchObject([{ params: { sessionId: enabled?.sessionId } }]);
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+    return { browser, result };
+  }, [() => provider.close()]);
 };
 
 it("applies exact origin selection while retaining caller-visible URLs", async () => {
@@ -233,82 +251,37 @@ it("lists only usable direct transports and accounts for exclusions before captu
   }
 });
 
-it("fails with a protocol error after an unidentifiable frame event and detaches", async () => {
-  const { browser, result } = await inspectWithNetworkEvents((command) =>
-    command.method === "Network.enable"
-      ? [
-          {
-            method: "Page.frameNavigated",
-            ...(command.sessionId === undefined
-              ? {}
-              : { sessionId: command.sessionId }),
-            params: undefined,
-          },
-        ]
-      : undefined,
-  );
+it.each([
+  ["a missing payload", undefined, "protocol_error"],
+  [
+    "a self-parented frame",
+    { id: "candidate-root", parentId: "candidate-root" },
+    "protocol_error",
+  ],
+  [
+    "a replacement root with the same URL and loader",
+    { id: "replacement-main", loaderId: "loader-main" },
+    "target_changed",
+  ],
+] as const)("fails and detaches after %s", async (_label, frame, reason) => {
+  const { result } = await inspectWithFrameEvent(frame);
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+    error: { _tag: "BrowserObservationError", reason },
   });
-  await expect.poll(() => browser.activeConnectionCount()).toBe(0);
 });
 
 it("retains malformed child-frame identity as frame coverage while completing capture", async () => {
-  const { browser, result } = await inspectWithNetworkEvents((command) =>
-    command.method === "Network.enable"
-      ? [
-          frameNavigated(command, {
-            id: 3,
-            parentId: "frame-main",
-            url: "https://outside.invalid/child",
-          }),
-        ]
-      : undefined,
-  );
+  const { browser, result } = await inspectWithFrameEvent({
+    id: 3,
+    parentId: "frame-main",
+    url: "https://outside.invalid/child",
+  });
   if (!result.ok) throw result.error;
   expect(result.value.completeness.unavailable_sections).toContain("frames");
   expect(result.value.target.url).toBe(
     `${browser.allowedOrigin}/app?token=frame-secret`,
   );
-});
-
-it("fails capture on a contradictory self-parented frame instead of accepting it as a child", async () => {
-  const { browser, result } = await inspectWithNetworkEvents(
-    (command, origin) =>
-      command.method === "Network.enable"
-        ? [
-            frameNavigated(command, {
-              id: "candidate-root",
-              parentId: "candidate-root",
-              url: `${origin}/app?token=frame-secret`,
-            }),
-          ]
-        : undefined,
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: { reason: "protocol_error" },
-  });
-  await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-});
-
-it("treats a same-URL and same-loader root frame ID change as a capture change", async () => {
-  const { result } = await inspectWithNetworkEvents((command, origin) =>
-    command.method === "Network.enable"
-      ? [
-          frameNavigated(command, {
-            id: "replacement-main",
-            loaderId: "loader-main",
-            url: `${origin}/app?token=frame-secret`,
-          }),
-        ]
-      : undefined,
-  );
-  expect(result).toMatchObject({
-    ok: false,
-    error: { _tag: "BrowserObservationError", reason: "target_changed" },
-  });
 });
 
 describe("CdpBrowserProvider: discovery authorization 2", () => {

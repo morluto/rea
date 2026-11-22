@@ -5,7 +5,11 @@ import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, normalize } from "node:path";
-import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  isQualifiedCallerPath,
+} from "../filesystem/callerPath.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -42,7 +46,11 @@ export const resolveIdaWorkspaceParent = async (
   return realpath(root);
 };
 
-/** Private input copy isolates upstream database and sidecar writes from the original. */
+/**
+ * Private input copy isolates upstream database and sidecar writes from the
+ * original. An IDA database target is copied whole, so the worker unpacks and
+ * releases only the copy; the selected database is never opened for writing.
+ */
 export class IdaWorkspace {
   readonly sessionId = `rea-${randomUUID()}`;
   #inputSha256: string | undefined;
@@ -59,6 +67,13 @@ export class IdaWorkspace {
   }
 
   /** SHA-256 of the private input bytes copyInput admitted; undefined until prepared. */
+  /** Upstream publishes absolute, canonical host paths for its databases. */
+  containsPath(path: string): boolean {
+    return (
+      isQualifiedCallerPath(path) && isPathWithinRoot(this.directory, path)
+    );
+  }
+
   get inputSha256(): string | undefined {
     return this.#inputSha256;
   }

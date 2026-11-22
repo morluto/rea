@@ -122,11 +122,23 @@ export const parseCaptureJson = (
       onArrayEnd: () => endContainer("array"),
       onLiteralValue: (value: unknown, offset, length) => {
         admitNode();
-        if (typeof value === "number")
-          append(new LosslessNumber(text.slice(offset, offset + length)));
-        // jsonc-parser 3.3.1 builds an escaped string fragment by fragment,
-        // which V8 keeps as a rope several times larger than its text.
-        // JSON.parse of the same accepted token returns one flat string.
+        if (typeof value === "number") {
+          const literal = text.slice(offset, offset + length);
+          // V8 turns >= 13-character slices into SlicedStrings pointing at `text`;
+          // detach long numeric literals so retained LosslessNumber spellings
+          // cannot pin discarded multi-megabyte JSON source buffers.
+          append(
+            new LosslessNumber(
+              length > 12 ? String(JSON.parse(`"${literal}"`)) : literal,
+            ),
+          );
+        }
+        // jsonc-parser 3.3.1 builds escaped strings as V8 ropes several times
+        // larger than the decoded text and slices unescaped strings (>= 13 chars)
+        // with substring(), producing V8 SlicedStrings pointing at `text`.
+        // JSON.parse of the accepted token solves both: it avoids rope inflation
+        // and allocates a detached flat string so retained short strings cannot
+        // pin oversized omitted payloads via V8 SlicedString parent pointers.
         else if (typeof value === "string")
           append(JSON.parse(text.slice(offset, offset + length)));
         else if (value === null || typeof value === "boolean") append(value);

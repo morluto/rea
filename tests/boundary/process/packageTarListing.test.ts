@@ -18,6 +18,7 @@ const bridge = "package/bridge/hopper_bridge.py";
 const members = [
   bridge,
   "package/bridge/cutter/rea_bridge.py",
+  "package/bridge/ida/hexrays_queries.py",
   "package/bridge/agentenv/capture.py",
   "package/bridge/agentenv/computer.py",
   "package/bridge/agentenv/solve.py",

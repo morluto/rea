@@ -39,7 +39,11 @@ import {
   semanticArrayPropertyReferences,
 } from "./javascriptSemanticObjectReferences.js";
 import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
-import { classifyNextAppRoutePath, routePath } from "./javascriptRoutePaths.js";
+import {
+  classifyExpoRouterContextKey,
+  classifyNextAppRoutePath,
+  routePath,
+} from "./javascriptRoutePaths.js";
 import type {
   JavaScriptRouteCandidate,
   JavaScriptRouteSegment,
@@ -265,6 +269,7 @@ export class JavaScriptRouteScan {
   readonly #nextPaths: { value: string; node: t.Node; computed: boolean }[] =
     [];
   readonly #literalPaths: { value: string; node: t.Node }[] = [];
+  readonly #contextMaps: t.ObjectExpression[] = [];
   readonly #propertyValues = new WeakSet<t.Node>();
   readonly #dynamicValues = new WeakMap<t.Node, DynamicRouteValueOwner>();
   readonly #expressionParents = new WeakMap<t.Node, t.Node>();
@@ -653,6 +658,20 @@ export class JavaScriptRouteScan {
         this.onLegacyRoute?.({ node, value, mechanism: `call:${fullName}` });
     }
     if (this.#result.capacity !== null || t.isNewExpression(node)) return;
+    if (fullName === "Object.defineProperties") {
+      // Metro compiles each `require.context` into getters on a fresh object.
+      const [target, map] = node.arguments;
+      if (
+        node.arguments.length === 2 &&
+        t.isObjectExpression(target) &&
+        target.properties.length === 0 &&
+        t.isObjectExpression(map) &&
+        map.properties.length > 0 &&
+        this.#queue(map)
+      )
+        this.#contextMaps.push(map);
+      return;
+    }
     if (structuredCalls.has(name)) {
       if (this.#queue(node))
         this.#calls.push({
@@ -762,6 +781,10 @@ export class JavaScriptRouteScan {
           node,
           false,
         );
+    }
+    for (const map of this.#contextMaps) {
+      if (this.#result.capacity !== null) return this.#result;
+      yield* this.#expoRouterContextSteps(map);
     }
     if (
       this.#calls.length > 0 ||
@@ -873,6 +896,53 @@ export class JavaScriptRouteScan {
         );
     }
     return this.#result;
+  }
+
+  /** Read a bundled Metro `require.context` map as Expo Router route files. */
+  *#expoRouterContextSteps(map: t.ObjectExpression): Generator<void> {
+    // Establish applicability without retaining derived paths; only admitted
+    // facts below hold route text, each charged before it is kept.
+    let conventions = false;
+    for (const property of map.properties) {
+      yield;
+      if (
+        !this.#queue(property) ||
+        !t.isObjectProperty(property) ||
+        property.computed ||
+        !t.isStringLiteral(property.key)
+      )
+        return;
+      const file = classifyExpoRouterContextKey(property.key.value);
+      // Any other key makes this a different file or data map.
+      if (file === undefined) return;
+      if (file.kind !== "route") conventions = true;
+    }
+    // A layout or `+` file establishes Expo Router file-route applicability.
+    if (!conventions) {
+      this.#unknown(
+        "expo-router-context-key",
+        map,
+        "The bundled require.context file map has no Expo Router layout or special route file, so its keys do not establish file routes.",
+      );
+      return;
+    }
+    for (const property of map.properties) {
+      yield;
+      if (this.#result.capacity !== null) return;
+      // The first pass admitted only string-keyed, non-computed properties.
+      if (!t.isObjectProperty(property) || !t.isStringLiteral(property.key))
+        continue;
+      const { key } = property;
+      const file = classifyExpoRouterContextKey(key.value);
+      if (file?.kind !== "route") continue;
+      this.#emit(
+        file.path,
+        "expo-router-context-key",
+        [{ value: key.value, location: range(key), origin: "literal" }],
+        key,
+        true,
+      );
+    }
   }
 
   *#indexRouteParents(index: JavaScriptBindingIndex): Generator<void> {

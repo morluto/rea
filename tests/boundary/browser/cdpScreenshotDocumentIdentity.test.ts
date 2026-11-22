@@ -40,25 +40,6 @@ const withCssViewport = (metrics: Readonly<Record<string, unknown>>) => ({
 });
 
 describe("screenshot authorization during metrics reads", () => {
-  it("explains current-document origin refusal without suggesting host installation repair", async () => {
-    const { browser, result } = await captureWithFake({
-      attachedFrameUrl: "https://outside.example.test/",
-    });
-    if (result.ok) throw new Error("Expected a scope refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      code: "target_unavailable",
-      message: expect.stringContaining(
-        "outside the permitted HTTP(S) origin scope",
-      ),
-      remediation: { action: expect.stringContaining("allowed_origins") },
-      details: { reason: "target_not_allowed" },
-    });
-    expect(
-      browser.commands.some(
-        ({ method }) => method === "Page.captureScreenshot",
-      ),
-    ).toBe(false);
-  });
   it("stops at either metrics read when navigation invalidates capture", async () => {
     const viewport = {
       pageX: 0,
@@ -155,7 +136,7 @@ describe("screenshot authorization during metrics reads", () => {
 });
 
 describe("screenshot initial root identity", () => {
-  it("requires a valid root before measuring or capturing even with a readable child", async () => {
+  it("requires a valid, authorized root before measuring or capturing even with a readable child", async () => {
     const invalidRoots = [
       { label: "missing ID", identity: {} },
       { label: "wrong ID type", identity: { id: 7 } },
@@ -174,12 +155,18 @@ describe("screenshot initial root identity", () => {
       },
     ];
     let identity: Readonly<Record<string, unknown>> = {};
+    let foreign = false;
     const browser = await startFakeCdpBrowser({
       commandResult: ({ method }, origin) =>
         method === "Page.getFrameTree"
           ? {
               frameTree: {
-                frame: { ...identity, url: `${origin}/app?token=frame-secret` },
+                frame: {
+                  ...identity,
+                  url: foreign
+                    ? "https://outside.example/page"
+                    : `${origin}/app?token=frame-secret`,
+                },
                 childFrames: [
                   {
                     frame: {
@@ -201,16 +188,44 @@ describe("screenshot initial root identity", () => {
       target_id: "allowed-page",
     });
     try {
-      for (const invalid of invalidRoots) {
+      const refusal = {
+        code: "target_unavailable",
+        message: expect.stringContaining(
+          "outside the permitted HTTP(S) origin scope",
+        ),
+        remediation: { action: expect.stringContaining("allowed_origins") },
+        details: { reason: "target_not_allowed" },
+      };
+      const cases = [
+        ...invalidRoots.map((row) => ({
+          ...row,
+          foreign: false,
+          expected: {
+            code: "unreadable_output",
+            details: { reason: "protocol_error" },
+          },
+        })),
+        {
+          label: "foreign root",
+          identity: { id: "frame-main", loaderId: "loader-main" },
+          foreign: true,
+          expected: refusal,
+        },
+        {
+          label: "foreign root with malformed ID",
+          identity: { id: 7 },
+          foreign: true,
+          expected: refusal,
+        },
+      ];
+      for (const invalid of cases) {
         identity = invalid.identity;
+        foreign = invalid.foreign;
         const before = browser.commands.length;
         const result = await provider.captureScreenshot(input);
         if (result.ok) throw new Error(`Expected refusal for ${invalid.label}`);
         expect(projectAnalysisError(result.error), invalid.label).toMatchObject(
-          {
-            code: "unreadable_output",
-            details: { reason: "protocol_error" },
-          },
+          invalid.expected,
         );
         const methods = browser.commands
           .slice(before)
@@ -219,6 +234,7 @@ describe("screenshot initial root identity", () => {
         expect(methods, invalid.label).not.toContain("Page.captureScreenshot");
       }
 
+      foreign = false;
       identity = { id: "frame-main", loaderId: "loader-main" };
       const valid = await provider.captureScreenshot(input);
       if (!valid.ok) throw valid.error;
@@ -231,30 +247,6 @@ describe("screenshot initial root identity", () => {
       await provider.close();
     }
     await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-  });
-
-  it("retains a known foreign origin refusal when the root ID is malformed", async () => {
-    const { browser, result } = await captureWithFake({
-      commandResult: ({ method }) =>
-        method === "Page.getFrameTree"
-          ? {
-              frameTree: {
-                frame: { id: 7, url: "https://outside.example/page" },
-              },
-            }
-          : undefined,
-    });
-    if (result.ok) throw new Error("Expected known origin refusal");
-    expect(projectAnalysisError(result.error)).toMatchObject({
-      message: expect.stringContaining(
-        "outside the permitted HTTP(S) origin scope",
-      ),
-      remediation: { action: expect.stringContaining("allowed_origins") },
-      details: { reason: "target_not_allowed" },
-    });
-    expect(browser.commands.map(({ method }) => method)).not.toContain(
-      "Page.captureScreenshot",
-    );
   });
 });
 
@@ -355,22 +347,6 @@ describe("screenshot viewport freshness", () => {
       await provider.close();
     }
   });
-
-  it("reports a malformed screenshot reply at the data field and detaches", async () => {
-    const { browser, result } = await captureWithFake({
-      commandResult: ({ method }) =>
-        method === "Page.captureScreenshot" ? { data: 5 } : undefined,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        reason: "protocol_error",
-        command: "Page.captureScreenshot",
-        pointer: "/data",
-      },
-    });
-    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-  });
 });
 
 it("uses CSS clip coordinates and scaled device-pixel dimensions for clipped recovery", async () => {
@@ -455,7 +431,7 @@ describe("screenshot surface compatibility", () => {
   });
 
   it("refuses a clipped recovery that still omits visible content", async () => {
-    const browser = await startFakeCdpBrowser({
+    const { browser, result } = await captureWithFake({
       commandResult: ({ method }) =>
         method === "Page.getLayoutMetrics"
           ? withCssViewport({
@@ -469,14 +445,6 @@ describe("screenshot surface compatibility", () => {
             })
           : undefined,
     });
-    onTestFinished(() => browser.close());
-    const result = await new CdpBrowserProvider().captureScreenshot(
-      captureWebScreenshotInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-      }),
-    );
     expect(result).toMatchObject({
       ok: false,
       error: { reason: "protocol_error" },
@@ -489,7 +457,7 @@ describe("screenshot surface compatibility", () => {
   });
 
   it("does not retry a cropped surface after the target leaves scope", async () => {
-    const browser = await startFakeCdpBrowser({
+    const { browser, result } = await captureWithFake({
       navigateDuringScreenshotUrl: "https://outside.test/",
       commandResult: ({ method }) =>
         method === "Page.getLayoutMetrics"
@@ -504,14 +472,6 @@ describe("screenshot surface compatibility", () => {
             })
           : undefined,
     });
-    onTestFinished(() => browser.close());
-    const result = await new CdpBrowserProvider().captureScreenshot(
-      captureWebScreenshotInputSchema.parse({
-        cdp_endpoint: browser.endpoint,
-        allowed_origins: [browser.allowedOrigin],
-        target_id: "allowed-page",
-      }),
-    );
     expect(result).toMatchObject({
       ok: false,
       error: { reason: "target_not_allowed" },
@@ -611,65 +571,69 @@ it("rejects malformed viewport metrics at the relevant field before capture can 
   }
 });
 
-it("rejects an unidentifiable navigation and releases the screenshot connection", async () => {
-  const { browser, result } = await captureWithFake({
-    commandEvents: (command) =>
-      command.method === "Page.captureScreenshot"
-        ? [
-            {
-              method: "Page.frameNavigated",
-              ...(command.sessionId === undefined
-                ? {}
-                : { sessionId: command.sessionId }),
-              params: undefined,
-            },
-          ]
-        : undefined,
+it("rejects unreadable and self-parented root navigation before retrying a cropped screenshot", async () => {
+  const viewport = {
+    pageX: 0,
+    pageY: 0,
+    clientWidth: 2,
+    clientHeight: 2,
+    scale: 1,
+  };
+  const cases = ["unreadable event", "self-parented root"] as const;
+  let scenario: (typeof cases)[number] = cases[0];
+  let captures = 0;
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Page.captureScreenshot"],
+    commandResult: ({ method }) => {
+      if (method === "Page.getLayoutMetrics")
+        return withCssViewport({ visualViewport: viewport });
+      if (method === "Page.captureScreenshot") captures += 1;
+      return undefined;
+    },
+    commandEvents: (command, origin) => {
+      if (command.method !== "Page.captureScreenshot") return undefined;
+      if (scenario === "unreadable event")
+        return [
+          {
+            method: "Page.frameNavigated",
+            ...(command.sessionId === undefined
+              ? {}
+              : { sessionId: command.sessionId }),
+            params: undefined,
+          },
+        ];
+      return [
+        frameNavigated(command, {
+          id: "candidate-root",
+          parentId: "candidate-root",
+          url: `${origin}/app`,
+        }),
+      ];
+    },
   });
-  expect(result).toMatchObject({
-    ok: false,
-    error: { reason: "protocol_error" },
+  onTestFinished(() => browser.close());
+  const provider = new CdpBrowserProvider();
+  const input = captureWebScreenshotInputSchema.parse({
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
   });
-  await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-});
-
-describe("screenshot frame identity transitions", () => {
-  it("rejects a self-parented root candidate and detaches without retrying the cropped screenshot", async () => {
-    const { browser, result } = await captureWithFake({
-      commandResult: ({ method }) =>
-        method === "Page.getLayoutMetrics"
-          ? withCssViewport({
-              visualViewport: {
-                pageX: 0,
-                pageY: 0,
-                clientWidth: 2,
-                clientHeight: 2,
-                scale: 1,
-              },
-            })
-          : undefined,
-      commandEvents: (command, origin) =>
-        command.method === "Page.captureScreenshot"
-          ? [
-              frameNavigated(command, {
-                id: "candidate-root",
-                parentId: "candidate-root",
-                url: `${origin}/app`,
-              }),
-            ]
-          : undefined,
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: { reason: "protocol_error" },
-    });
-    expect(
-      browser.commands.filter(
-        ({ method }) => method === "Page.captureScreenshot",
-      ),
-    ).toHaveLength(1);
-    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-  });
+  try {
+    for (const invalid of cases) {
+      scenario = invalid;
+      captures = 0;
+      expect(await provider.captureScreenshot(input), invalid).toMatchObject({
+        ok: false,
+        error: { reason: "protocol_error" },
+      });
+      expect(captures, invalid).toBe(1);
+      await expect
+        .poll(() => browser.activeConnectionCount(), { message: invalid })
+        .toBe(0);
+    }
+  } finally {
+    await provider.close();
+  }
 });
 
 it("preserves the screenshot when navigation events leave the selected document unchanged", async () => {
@@ -898,8 +862,8 @@ it("separates unreadable screenshot document URLs from known scope loss at each 
   }
 });
 
-it("rejects noncanonical base64 and unreadable PNG without attempting a clipped capture", async () => {
-  let data = "";
+it("rejects invalid screenshot replies without attempting a clipped capture", async () => {
+  let data: string | number = "";
   const browser = await startFakeCdpBrowser({
     commandResult: ({ method }) =>
       method === "Page.captureScreenshot" ? { data } : undefined,
@@ -918,16 +882,30 @@ it("rejects noncanonical base64 and unreadable PNG without attempting a clipped 
     browser.commands.filter(({ method }) => method === "Page.captureScreenshot")
       .length;
   try {
-    // Keep the length divisible by four so the first reply reaches the canonical byte check.
-    for (const invalid of [`    ${png}`, invalidHeader.toString("base64")]) {
-      data = invalid;
+    const replies = [
+      {
+        label: "invalid data field",
+        data: 5,
+        detail: { command: "Page.captureScreenshot", pointer: "/data" },
+      },
+      // Keep the length divisible by four so this reaches the canonical byte check.
+      { label: "noncanonical base64", data: `    ${png}` },
+      { label: "invalid PNG header", data: invalidHeader.toString("base64") },
+    ];
+    for (const invalid of replies) {
+      data = invalid.data;
       const before = screenshotCount();
-      expect(await provider.captureScreenshot(input)).toMatchObject({
+      expect(
+        await provider.captureScreenshot(input),
+        invalid.label,
+      ).toMatchObject({
         ok: false,
-        error: { reason: "protocol_error" },
+        error: { reason: "protocol_error", ...invalid.detail },
       });
-      expect(screenshotCount() - before).toBe(1);
-      await expect.poll(() => browser.activeConnectionCount()).toBe(0);
+      expect(screenshotCount() - before, invalid.label).toBe(1);
+      await expect
+        .poll(() => browser.activeConnectionCount(), { message: invalid.label })
+        .toBe(0);
     }
   } finally {
     await provider.close();

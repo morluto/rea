@@ -2174,7 +2174,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

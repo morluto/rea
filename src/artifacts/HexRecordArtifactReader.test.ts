@@ -1,6 +1,6 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
-import { writeFile } from "node:fs/promises";
+import { stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   INTEL_HEX_I32_GAP,
   SREC_S19,
+  intelHexInterleavedRuns,
   intelHexRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -77,17 +78,10 @@ it("reports unknown coverage and termination facts as limitations", async () => 
   );
 });
 
-it("fails closed on over-limit records", async () => {
-  const runs = [intelHexRecord(0, 0, [1])];
-  for (let index = 1; index <= 65_536; index += 1) {
-    const address = index * 2;
-    if (address % 0x1_0000 === 0)
-      runs.push(intelHexRecord(4, 0, [0, address >>> 16]));
-    runs.push(intelHexRecord(0, address & 0xffff, [1]));
-  }
+it("refuses one over-limit physical run even when all addresses could merge", async () => {
   await expect(
     scanCanonicalArtifactInventory(
-      await writeImage("runs.hex", `${runs.join("\n")}\n`),
+      await writeImage("runs.hex", intelHexInterleavedRuns(true)),
     ),
   ).rejects.toMatchObject({
     reason: "limit",
@@ -152,7 +146,7 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
   try {
     const entries = [];
     for await (const entry of reader.entries()) entries.push(entry);
-    const entry = entries[0];
+    const entry = entries[1];
     if (entry === undefined) throw new Error("Missing region");
     await expect(
       reader.open({ ...entry, declaredSize: 1 }),
@@ -160,9 +154,20 @@ it("rejects forged entries and changed carrier identity, then closes idempotentl
     await expect(
       reader.open({ ...entry, adapterKey: "hex-records:9" }),
     ).rejects.toMatchObject({ reason: "integrity" });
-    await writeFile(path, INTEL_HEX_I32_GAP.replace(":00000001FF\n", ""));
+    expect(entry.path).toBe("0x08000100-0x08000103.bin");
+    const replacement = INTEL_HEX_I32_GAP.replace(
+      ":04010000DEADBEEFC3",
+      ":04020000DEADBEEFC2",
+    );
+    expect(replacement).not.toBe(INTEL_HEX_I32_GAP);
+    const { size } = await stat(path);
+    await writeFile(path, replacement);
+    // Stabilize the distinct timestamp even on a coarse-resolution volume.
+    await utimes(path, 1_000_000_000, 1_000_000_000);
+    expect((await stat(path)).size).toBe(size);
     await expect(reader.open(entry)).rejects.toMatchObject({
       reason: "integrity",
+      integrityCheck: "container-identity",
     });
   } finally {
     await reader.close();
