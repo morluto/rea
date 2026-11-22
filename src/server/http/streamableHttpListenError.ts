@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../../domain/result.js";
+import { errorMessage } from "../../kernel/errorMessage.js";
 
 /** Parsed listener failure facts for recovery guidance. */
 export type StreamableHttpListenFailure =
@@ -115,8 +116,8 @@ export class StreamableHttpListenError extends Error {
   constructor(cause: unknown, phase: StreamableHttpListenPhase = "startup") {
     super(
       phase === "startup"
-        ? `MCP HTTP listener startup failed: ${cause instanceof Error ? cause.message : String(cause)}`
-        : `MCP HTTP listener failed after binding: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ? `MCP HTTP listener startup failed: ${errorMessage(cause)}`
+        : `MCP HTTP listener failed after binding: ${errorMessage(cause)}`,
       { cause },
     );
     this.phase = phase;

@@ -201,18 +201,37 @@ describe("JSON shape completeness and ordering", () => {
     }
   });
 
-  it("retains every parsed property beyond the former shape-node limit", () => {
-    const content = Object.fromEntries(
-      Array.from({ length: 5_001 }, (_, index) => [`field_${index}`, index]),
+  // The caller's byte allowance is the only bound: a shape that fits exactly
+  // is complete, and one byte less is a capacity refusal naming both sizes.
+  it("retains every parsed property within the byte allowance and refuses one byte less", () => {
+    const source = JSON.stringify(
+      Object.fromEntries(
+        Array.from({ length: 5_001 }, (_, index) => [`field_${index}`, index]),
+      ),
     );
-    const shape = completeShape(JSON.stringify(content));
+    const unbounded = inferJsonShape(source, Number.MAX_SAFE_INTEGER);
+    if (!unbounded.ok) throw unbounded.error;
+    const { serializedBytes } = unbounded.value;
+    expect(serializedBytes).toBe(
+      Buffer.byteLength(JSON.stringify(unbounded.value.shape)),
+    );
 
-    expect(shape.properties).toHaveLength(5_001);
-    expect(shape.node_count).toBe(5_002);
-    expect(shape.properties).toContainEqual({
+    const exact = inferJsonShape(source, serializedBytes);
+    if (!exact.ok) throw exact.error;
+    expect(exact.value.shape.properties).toHaveLength(5_001);
+    expect(exact.value.shape.node_count).toBe(5_002);
+    expect(exact.value.shape.properties).toContainEqual({
       path: [property("field_5000")],
       types: ["number"],
       observations: 1,
     });
+
+    const refused = inferJsonShape(source, serializedBytes - 1);
+    if (refused.ok || refused.error.kind !== "capacity")
+      throw new Error("A shape one byte over its allowance was admitted");
+    expect(refused.error.maximumBytes).toBe(serializedBytes - 1);
+    expect(refused.error.requiredBytesAtLeast).toBeGreaterThan(
+      serializedBytes - 1,
+    );
   });
 });

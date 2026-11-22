@@ -42,11 +42,26 @@ that invoke PowerShell themselves remain subject to their own policy checks.
 | `npm run test:python`             | LLDB and mitmproxy producer contracts plus analysis-efficiency checks; no real debugger or proxy required               |
 | `npm run test:watch`              | Dirty source tests in watch mode, without build                                                                         |
 | `npm run test:watch:all`          | Changed tests from every project; builds at startup, so rebuild after production edits before relying on compiled tests |
-| `npm run check:fast`              | Cached typecheck and lint                                                                                               |
+| `npm run check:fast`              | Cached typecheck and lint, then the architecture guards and their counted baselines                                     |
 | `npm run check:changed`           | Cached typecheck/lint and branch-related source feedback                                                                |
-| `npm run check:pr`                | Opt-in complete local deterministic gate and generated-file checks                                                      |
+| `npm run check:pr`                | Opt-in deterministic test suite and generated-file checks                                                               |
 | `npm run docs:check`              | Generated-document validation and fresh onboarding example consistency checks                                           |
-| `npm run docs:build`              | Render VitePress documentation and apply its page-link checks; no live external-link or GitHub fragment verification    |
+| `npm run docs:build`              | Generate and build the VitePress site for local preview                                                                 |
+| `npm run verify:docs:routes`      | Build the VitePress site and verify rendered local routes, anchors, images, and physical edit targets                   |
+
+`typecheck` also checks the JavaScript verification scripts listed in
+`tsconfig.scripts.json` (`checkJs`, with the main compiler options). Those
+scripts import built modules through the package-private `#dist/*` alias, which
+Node resolves to `./dist/*` at run time and the check resolves to `./src/*`, so a
+domain signature change that breaks a listed script fails `check:fast` without a
+build. To add a script, switch its `../dist/` imports and those of the local
+modules it loads to `#dist/`, add it to the list, and fix what the check
+reports with JSDoc types. Name tool results with the
+`scripts/lib/mcp-verifier-results.mjs` typedefs (`ToolName`,
+`VerifierOperationResult<N>`) so a result reads with its named contract's
+type. `tests/support/analysis-efficiency/android-mapping-retention.mjs` stays
+outside the check: it imports `dist` modules by path from a caller-selected
+checkout at run time, so no import in this tree names their types.
 
 The general source suite above runs on Linux in CI, and Windows CI runs a
 curated lane ([Native platform baseline in CI](#native-platform-baseline-in-ci)).
@@ -56,11 +71,11 @@ semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
 
-The CI documentation lane runs both `docs:check` and `docs:build` when the
-existing change classifier selects documentation or its producing inputs.
-Generated facts and rendered page links have separate checks. VitePress does not
-establish that every external URL or GitHub-rendered localized heading exists;
-verify those destinations when editing them.
+The CI documentation lane runs `docs:check` and `verify:docs:routes` when the
+change classifier selects documentation or its producing inputs. Follow the
+[documentation authoring checks](documentation.md#generated-ownership-and-checks)
+and verify external URLs and GitHub-rendered headings separately when editing
+them.
 
 For example:
 
@@ -111,29 +126,29 @@ API dependency, and independent fixture compiler oracles keep their existing
 TypeScript versions.
 
 `npm run build:cached` compiles the CLI/MCP runtime and its packaged skill.
-The build also records `dist/mcp-catalog.json` (compact inputs) and
-`dist/mcp-catalog-full.json` from the canonical SDK registrations and binds
-each to the runtime with its own SHA-256 digest. These are
-runtime artifacts, separate from the test catalog below. Default target-free
-MCP startup serves its schemas without constructing analysis validators;
-the first tool or guided-workflow request materializes the canonical runtime
-on that same SDK server. Explicit compact/full input selections preserve
-their advertised schemas throughout materialization. Initial-target,
-HTTP and output-schema-off startup keep the eager path; source runs without
-recorded artifacts also use eager composition. Compare memory both after discovery and after a completed
-request; report diagnostic GC separately from normal resident memory.
+The build also records `dist/mcp-catalog.json` (compact inputs) from the
+canonical SDK registrations and binds it to the runtime with its SHA-256
+digest. Target-free stdio MCP startup with the default catalog and output
+profiles serves its schemas without constructing analysis validators, including
+when `REA_MCP_TOOL_FAMILIES` limits which tools and prompts are advertised.
+The internal catalog stores object roots for the SDK's result codec, preserves
+non-object output schemas for legacy wrapping, and retains the complete
+`binary_session` output schema for `rea mcp doctor`.
+The first tool or guided-workflow request materializes the canonical runtime
+on that same SDK server. It preserves the advertised schemas throughout
+materialization. Initial-target, HTTP, compact output, and family-scoped hot/cold
+startup use eager composition, as do source runs without recorded artifacts.
+Compare memory both after discovery and after a completed request; report
+diagnostic GC separately from normal resident memory.
 
 Turbo's strict task environment preserves caller-selected `GOMAXPROCS`,
 `GOMEMLIMIT`, and `UV_THREADPOOL_SIZE` for resource-constrained builds and
 checks. These execution controls do not change artifact content, so changing
 their values retains cache reuse. They control individual runtimes; monitor
 the complete process family separately when enforcing a total memory budget.
-`npm run test:prepare` also generates the MCP contract test catalog, product
-catalog, and portable managed evidence used by the complete suite. Focused
-tests prepare those extra outputs only when their selected files consume them.
-The MCP test catalog is JSON in `.cache/mcp-tool-catalog.json`; the tracked
-test loader supplies its types without making generation a source-check
-prerequisite. Run `npm run mcp-catalog:generate` to refresh it independently.
+`npm run test:prepare` also generates the product catalog and portable managed
+evidence used by the complete suite. Focused tests prepare those extra outputs
+only when their selected files consume them.
 Documentation generation and managed conformance run through their separate
 `docs:generate` and `evidence:generate` task graphs.
 
@@ -180,12 +195,30 @@ cause when a directly checked caller `AbortSignal` is converted to an
 follow indirect cancellation helpers, or prove that an explicit cause equals
 the caller's reason. Keep focused boundary and lifecycle tests for those facts.
 
+Build a cancellation with `cancelledBy` from `src/domain/analysisErrorCore.ts`.
+Its reason argument is required: an aborted `AbortSignal`, an earlier
+`AnalysisCancelledError`, a `carriedReason(...)` recovered from an inner
+failure, or an `OwnerCancellation` when REA itself closed the work's owner. The
+architecture guard rejects a direct `new AnalysisCancelledError(` outside that
+module. No file is allowed one, so this guard has no baseline file; a guard
+without one allows zero copies. Other counted guards still list the files that
+keep copies, with their counts; a file may not exceed its count, and after
+removing copies run `node scripts/verify/architecture-guards.mjs --shrink-baselines`
+to lower it. Each counted guard keeps its baseline in its own
+`scripts/verify/baselines/<guard-key>.json`, with paths sorted by code unit, so
+changes to different guards never edit the same file. Resolve a conflict in one
+of these files by keeping both sides' entries (the higher count where they
+differ) and rerunning `--shrink-baselines`.
+
 `rea/no-evidence-json-preadmission` rejects direct generic JSON parses in
 `createEvidence` payload expressions; it does not analyze intermediate values.
 `rea/no-positional-tool-contract` rejects catalog indices used to select
 operation names, schemas or types; display-only selection remains allowed.
 `rea/no-fixture-root-cleanup` follows `const` fixture-root aliases into teardown
 deletion; mutable bindings and mixed root arrays remain outside its scope.
+`rea/project-wait-deadline` resolves Vitest's `vi` and `expect` bindings,
+including aliases and namespace imports; a shadowed local or a fixture method
+with the same name is not reported.
 
 `rea/no-shared-module-mock` resolves Vitest import bindings before rejecting
 module mocks in projects without per-file isolation. The test-project definitions
@@ -199,9 +232,9 @@ directives are errors. `vitest/valid-expect` warns (`maxArgs: 2`) because valid 
 collected assertions can be awaited later. `import/no-duplicates` warns with
 `preferInline: false`.
 
-`no-useless-escape` keeps intentional `\-` regex escapes because advertised
-patterns must also compile in `v` mode; the catalog regression checks every
-advertised pattern.
+`no-useless-escape` keeps intentional `\-` regex escapes. Source regexes need
+no escaping for clients: the presentation re-emits every advertised pattern in
+the portable grammar (`src/contracts/portablePattern.ts`).
 
 Fast lint stays syntax-based. `npm run lint:typed` runs serially with pinned
 `oxlint-tsgolint` 7.0.2005 and records native plus typed diagnostics in
@@ -232,18 +265,21 @@ does not cap the complete process family's memory; measure the full invocation
 when enforcing a host budget.
 
 Routine iterations and rebases need focused regressions and relevant checks.
-Before handing off a PR, run `npm run check` and generated-document checks when
-applicable; CI owns the full suite and coverage. Use the full local gate for
-broad changes or diagnosing CI, rather than after every edit. Package/install
-changes additionally need package verification; provider changes need actual
-provider evidence.
+Follow the [contributor checks](https://github.com/morluto/rea/blob/main/CONTRIBUTING.md#development-feedback-and-pr-verification)
+before handing off a PR. Use `check:pr` for broad changes or CI diagnosis.
+Architecture guards run in `check`, `check:fast`, and `check:ci:deep`.
+The standalone test-discovery check runs in `check:ci:deep`.
 
-Vitest projects use up to two workers, bounded by host parallelism.
+Vitest projects use up to two workers, bounded by host parallelism. GitHub
+Actions jobs own their runner and use up to four; see
+[test deadlines](#developer-commands) for how deadlines scale there.
 `process-boundary` runs later with serial files because process-tree sampling
 shares host resources. Acceptance and process-global cases use isolated forks
 without serial scheduling. Pure domain/service, composition, conformance,
 evaluation, CLI boundary, and MCP boundary projects share module graphs. Their
-tests avoid process-global state and keep resource cleanup test-scoped. Each
+tests avoid process-global state and keep resource cleanup test-scoped. Source
+projects run those shared graphs in forked workers, so each worker owns its own
+heap and no single process holds the whole lane. Each
 MCP session still owns its resources, and CLI cases retain fresh command
 instances or subprocesses. Fixtures using `vi.mock` or `vi.doMock` need an
 isolated project. CLI/MCP fixtures normally live in `tests/process-global/`.
@@ -274,16 +310,84 @@ operation name rather than array position.
 
 Check advertised schemas after SDK conversion for every supported schema
 profile. Meta-schema validity does not establish client acceptance or useful
-rendered declarations. Keep canonical rejection checks separate from the
+rendered declarations. `src/contracts/advertisedDialect.ts` owns the portable
+advertised dialect: the keyword allowlist, size and depth limits, and the regex
+grammar that compiles in V8, Python, RE2 and Rust. `advertisedDialect.test.ts`
+lists every output and catalog profile combination and requires zero dialect
+violations; there is no baseline, so a construct outside the dialect fails the
+test by name. The packaged catalog check applies the same rule to the default
+profiles.
+Advertised patterns, input and output, are enforced at zero:
+`portablePattern.ts` re-emits each one exactly, widens it, or omits it, and the
+presentation drops any enclosing `not` or `if` and turns `oneOf` into `anyOf`
+when a pattern widens. `portablePattern.test.ts` pins the same acceptance of
+BMP strings in V8's plain, `u` and `v` modes. Python, Go and Rust read code
+points as `u` does; Python's `$` also matches before a final newline, which
+only widens. A client compiling without `u` may still reject one astral
+character where a wildcard, shorthand or negated class must match it (for
+example `^[\S]$`); `PortablePatternProjection` documents this accepted
+limitation. Keep canonical rejection checks separate from the
 intentionally reduced compact advertisement, and probe actual client renderers
 when changing schema representations.
+
+The grammar rules are not evidence that an engine accepts a pattern.
+`npm run verify:advertised-schemas` lists tools from the built package's stdio
+entry in every input, output and catalog profile, then compiles each distinct
+advertised regular expression (`pattern` values and `patternProperties` keys)
+with the engines clients run: V8 (plain, `u`, `v`), Go `regexp` (RE2), C++
+RE2, Python `re`, and Rust `regex` and `fancy-regex` through the Rust
+`jsonschema` crate. A refusal names the engine, its error, and each tool,
+schema path and profile that advertises the pattern. Go is the host
+toolchain, run with `GOTOOLCHAIN=local` so it is never downloaded. The other
+engines are pinned, hash-checked wheels listed in
+`scripts/verify/advertised-schemas/requirements.txt`; nothing installs them on
+a developer machine. To check them locally, install that file into a virtual
+environment with `pip install --require-hashes -r` and set
+`REA_SCHEMA_ENGINES_PYTHON` to its interpreter. A missing engine is reported
+as not verified rather than passed; `REA_REQUIRE_SCHEMA_ENGINES=1` turns it
+into a failure. CI's build job sets it after uploading the build, using the
+runner's Go and a virtual environment cached by the requirements file's
+digest, so every code change runs every engine. The pre-push hook does not
+run the check, because it needs a current build. `--package-root=DIR` lists
+an installed package instead of the checkout's build; the release guide uses
+it to [check the qualified archive](releasing.md#check-the-packed-catalog-with-client-engines).
+
+The same run compares the listings with the per-tool summaries in
+`scripts/verify/advertised-schemas/tools/`: each file records one tool's
+schema digest per input or output profile and the patterns its schemas
+advertise. A difference fails the check and prints aggregated lines such as
+`119 tool schemas gained pattern /…/`, so a change that reaches many tools at
+once is visible in review, followed by the expected contents of every missing
+or stale file. Commit those contents with the schema change, or regenerate
+them with `npm run verify:advertised-schemas -- --update-summary`, which also
+deletes the files of removed tools. A PR that adds a tool adds only its own
+file, so PRs adding different tools do not conflict. Absolute local paths
+advertise the host's pattern, so the summaries record the POSIX advertisement
+and Windows hosts skip the comparison.
+
+The same run builds a validator for every distinct advertised input and output
+schema with the Rust `jsonschema` crate's defaults, which check the declared
+draft's meta-schema and formats and compile every subschema, as a Rust client
+using that crate does. `--complete` adds Python `jsonschema`'s
+`check_schema`, which `jsonschema.validate` runs before validating a
+structured result in Python clients; it takes several seconds, so CI runs it
+only in full qualification. Ajv
+strict mode is not part of the check: it rejects authoring constructs such as
+unknown formats that no supported client has been seen to refuse, and Ajv's
+default meta-schema validation already runs in the package verifier. Clients
+whose validators cannot run here keep their documented rejections as rules in
+`advertisedDialect.ts`, each citing its report: the keyword allowlist and type
+rules encode Gemini's function-declaration subset, and the root-shape rule the
+Anthropic and OpenAI function-calling root. OpenAI strict mode (`strict: true`)
+is not covered: it requires every property to be required, which REA's
+optional inputs do not meet, and REA does not claim strict-mode support.
 
 The reused CLI boundary workers cap V8 old space at 512 MiB, with or without
 coverage. Ordinary CI also exhausted the former 384 MiB budget after earlier
 files loaded the shared source/contract graph, while later command registration
 and schema/help rendering still needed transient allocation space. This is a
 measured capacity control, not a suite-wide speedup claim. The worker count
-remains bounded at two, and spawned REA processes retain their own heap settings.
+remains bounded, and spawned REA processes retain their own heap settings.
 Coverage enablement still controls instrumentation, test deadlines and coverage
 thresholds; explicitly disabling it or selecting only a provider does not enable
 instrumentation.
@@ -298,6 +402,33 @@ and profile a bounded representative case before retrying. Separate production
 work from fixture generation, schema compilation, subprocess startup and cleanup.
 Choose elapsed, CPU and process-family memory limits before the run; a worker
 count or test timeout alone does not enforce those limits.
+
+A test deadline turns a hang into a named failure; it is not a performance
+assertion. `vitest.config.ts` applies the deadlines in
+`tests/support/testDeadlines.ts` per project: 30 seconds for source projects
+and 120 seconds for built projects, with hooks sharing their project's
+deadline. Coverage doubles every deadline, and so does hosted CI, where
+CPU-bound cases share every core with other workers and their subprocesses.
+Do not pass a per-test timeout to fit a slow host. A child run through a
+test process registry (`processTest`, `cli.run`, or `createTestProcessRegistry`)
+gets the running test's remaining deadline less a reporting reserve, so a hung
+child fails with its captured output. Pass `timeoutMs` only when the child's deadline is itself under test. Tag a bounded workload that needs longer with
+`{ tags: ["long-running"] }`, or a whole file with
+`// @module-tag long-running`. Assert elapsed time explicitly when speed is the
+behavior under test. Derive an explicit deadline only when a test must outlive
+an operation deadline whose diagnostics it checks.
+
+Waits follow the same policy; Vitest's one-second `expect.poll` and
+`vi.waitFor` defaults assume a host's speed. A wait may take as long as its
+test may run, less the reporting reserve: projects configure `expect.poll`
+that way, and `waitFor` from `tests/support/testWait.ts` replaces `vi.waitFor`.
+Fixture waits such as `awaitAcknowledgement` default to the same deadline.
+`expect.poll` keeps its project's budget in a `long-running` test, while
+`waitFor` follows the deadline the tag applies.
+`rea/project-wait-deadline` rejects `vi.waitFor` and explicit poll timeouts. When promptness is the behavior under test, such as
+cancellation that must preempt a slower production deadline, a wait timeout is
+not its oracle: order the condition before releasing the gate that would
+otherwise satisfy it, or compare elapsed time with the deadline it must beat.
 
 Keep capacity fixtures intact when diagnosing a test failure. For byte equality
 of large buffers, use `Buffer.equals` or `Buffer.compare`; a generic structural
@@ -343,11 +474,17 @@ The process restarts when the environment changes, after 32 commands, or when
 the worker reports a resident set of at least 1 GiB. A fatal worker failure
 or a broken session frame retires that process and waits for it to exit before
 the next command starts.
-`cli.run` still starts a fresh process, including stdin and explicit deadlines.
-`runFileCli` uses the file session for commands that have neither. Go binary,
-IL2CPP metadata, and dylib-resolution commands use that session. File teardown
-stops the shared CLI process, including startup still in flight, and does not
-open another after close.
+In a `cliTest` file, `cli.run` uses that shared process when it reports the
+command exactly as a fresh `rea` process would. Both run the same one-shot
+owner (`src/cliOneShot.ts`), and the shared process presents the launcher's
+entrypoint. A command starts a fresh process instead when it supplies stdin or
+an explicit deadline, enters MCP or the MCP doctor (which the launcher routes
+first), sets `NODE_OPTIONS`, or enables logging, which writes outside the
+per-command capture. Pass `freshProcess: true` for process-level facts such as
+startup, signals, or exit, and keep one fresh check beside reused cases where
+dispatch itself is under test. `createTestCli` drivers always start a fresh
+process. File teardown stops the shared CLI process, including startup still in
+flight, and does not open another after close.
 `exportedFunctionBindingsCli.test.ts` uses the shared compiled CLI session for
 its file and compares its JSON command results with the MCP session. It selects
 20-second startup and command deadlines; other callers retain their existing
@@ -380,6 +517,49 @@ Do not report the warm result as a cold-suite improvement, and do not enable
 the cache in coverage or benchmark CI without first showing that its
 instrumentation remains equivalent.
 
+### Verifier scripts
+
+Compilers, linkers, `readelf`, and the REA CLI that a verifier starts go through
+`createVerifierCommands()` in `scripts/lib/verify-commands.mjs`. The helper loads
+`scripts/lib/verifier-command-owner.mts` and runs each command with
+`runOwnedCommand` (`src/process/OwnedCommand.ts`). POSIX commands spawn through
+`spawnOwnedProviderProcess` (`src/process/ProviderProcess.ts`); Windows commands
+use the owned job from `scripts/lib/windows-owned-command.mjs`. Pass the
+deadline to `exec` as `timeout` in milliseconds. An omitted timeout, or `0`,
+keeps only caller cancellation. When the deadline elapses, owned cleanup kills
+the process family: the POSIX process group and descendants that carry the
+command run token, or the Windows job. Cleanup that does not confirm stays
+on the verifier resource scope. `close()` aborts commands still running, and a
+failed close stays registered for retry.
+
+`createVerifierRun()` and `completeVerifierRun()` in
+`scripts/lib/verifier-run.mjs` bracket the run. Call
+`assertVerifierCleanupComplete` on the completed lineage. It accepts only status
+`verified` with an empty descendant list, confirming that no owned process
+survived. An `unavailable` lineage fails the assertion. Windows reports this
+observation unavailable because the verifier has no retained Job Object lease
+for it; provider jobs are verified by their native owners. A verified lineage
+has checked every live descendant's `REA_PROCESS_RUN_ID`. An empty descendant
+list means none were live during that observation. It does not prove that the
+verifier never launched children earlier in the run. A PID is not ownership
+proof.
+
+Close the command owner before that assertion. If shutdown fails, retain the
+diagnostic workspace. `scripts/verify-real-ghidra-ppc64.mjs` shares one command
+owner for the compiler, `readelf`, and the CLI, closes it through
+`workspaceFixture.closeEarly` before `completeVerifierRun`, and applies the same
+lineage condition. The script retains the workspace when close fails, the
+lineage is unverified, or the run fails, and releases the workspace only after
+those checks pass.
+
+Create the command owner before resolving or starting a tool, then start the
+tool with that owner's `exec`. `execFile`, `spawn`, `execFileSync`, and
+`promisify(execFile)` leave the process outside this owner. The example's
+pre-workspace toolchain probe is `requireLaneToolchain`, which runs each probe
+through `runOwnedCommand` so the tool starts under an owner. Scripts that still
+call `execFile` directly are known debt. Migrate them separately; a new or
+touched verifier uses these helpers.
+
 ## CodeQL production scope
 
 [The production configuration](https://github.com/morluto/rea/blob/main/.github/codeql/production.yml) excludes
@@ -407,9 +587,14 @@ relying on the new scope. While the variable is unset, the existing default
 setup continues scanning. Adding the configuration file alone does not change
 default setup in this user-owned repository.
 
-Pull-request scans are cancelled when superseded. Active scans on `main` finish
-so frequent pushes cannot prevent a complete baseline from being uploaded.
-Cancelled runs skip the SARIF artifact upload when no report was produced.
+Pull-request scans are cancelled when superseded, skip pure test/prose diffs via
+`paths-ignore`, and select only the CodeQL languages (`javascript-typescript`,
+`python`, `actions`) whose production inputs changed (failing closed to all
+three languages on shared CodeQL configuration or unclassified paths). Active
+scans on `main`, weekly schedules, and manual dispatches always analyze all
+three languages so frequent pushes cannot prevent a complete baseline from being
+uploaded. Cancelled runs skip the SARIF artifact upload when no report was
+produced.
 
 Each analysis uses two threads and a 4096 MiB CodeQL memory budget; language
 jobs run one at a time. Complete SARIF reports are retained for seven days.
@@ -427,14 +612,14 @@ integration, then a producer golden; use the table to select quick feedback and
 claim-specific additional evidence. Provider-behavior claims require the
 matching real-provider lane.
 
-| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                     |
-| ----------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------- |
-| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port    |
-| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope |
-| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run docs:build` for rendered pages and links           |
-| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup           |
-| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services              |
-| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence            |
+| Change or claim                           | Fast feedback                                                 | Claim-specific coverage                                      |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
+| Source semantics                          | `npm run test:local -- PATH...`                               | Relevant boundary cases when the behavior crosses a port     |
+| CLI/MCP workflow                          | `npm run test:focused -- PATH...`                             | Actual public calls; an injected provider has limited scope  |
+| Documentation or generated metadata       | `npm run docs:check`                                          | `npm run verify:docs:routes` for rendered routes and anchors |
+| Engine adapter                            | Its real-provider lane below                                  | Host, version, target identity, and owned cleanup            |
+| Client configuration or schema conversion | [Native client lane](client-verification.md)                  | Distinguish loopback models from live services               |
+| Agent investigation quality               | [Agent evaluation](#agent-evaluation-and-conformance-records) | Review transcript and scenario-specific evidence             |
 
 ### Provider-backed workflow verification
 
@@ -472,12 +657,23 @@ affected consumer.
   ability to discover it. Run the matching real-provider and agent lanes when
   their respective claims require them.
 
+Every provider capability that `src/composition/capabilityDeclarations.ts`
+binds to a provider needs an entry in
+`tests/conformance/providerCapabilityCases.ts`. The entry is either a
+CLI, MCP or acceptance test that exercises one of the capability's operations,
+or an exemption that states why no such case exists.
+`tests/conformance/providerCapabilityConformance.test.ts` iterates the
+declarations, so a new capability fails the suite until it has one.
+
 For prerequisite recovery, include a case where only the wrong alternative is
 configured: Unblob cannot enable Binwalk inspection, and Binwalk cannot enable
 Unblob extraction. Check the final readiness or capability output retains the
 producer's repair instructions, including which launch environment must change.
 When feasible, follow the advice and verify that the same operation now works.
 Report unexecuted recovery steps explicitly.
+
+Real-provider scripts that start compilers, linkers, readers, or the REA CLI
+follow [Verifier scripts](#verifier-scripts).
 
 ### Checking installers and publisher downloads
 
@@ -591,6 +787,28 @@ consumers. Add [lifecycle regressions](#lifecycle-regressions) when resource
 ownership or finalization changes; a single malformed fixture cannot establish
 the whole contract.
 
+When consolidating interpretation across consumers, use the same authored
+input at the boundary where each consumer previously made its own decision.
+Choose a case that makes competing interpretations disagree and a control
+that should succeed. Assert the expected fact and its provenance independently
+of the implementation. Allow differences in recovery or display when those
+belong to the consumer. For generated installers and verifiers, exercise the
+emitted artifact in its supported runtime.
+
+When the operation changes state, verify the published or retained result as
+well as preflight. When ownership includes cleanup, check who retains
+responsibility after a failed attempt and what happens on retry.
+
+When detection and detailed inspection share a reader, compare a valid
+input, a recognizable malformed input, and a valid input whose examined
+prefix ends at the budget when those cases apply. Assert the recognized
+format, which fields are established, and the coverage and diagnostics in
+each consumer. If the source feeds both a digest and a converter, exercise a
+change to the original between the snapshot read and conversion. Assert that
+the digest and converted value describe the same bytes, or that the operation
+returns a typed failure. Check advertised effects and the lifecycle of any
+temporary copy.
+
 | Failure class                         | Regression that catches it                                                                                                                                                                                                                                                                                                                         |
 | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Format assumptions                    | Pair valid padding, offsets, or names containing delimiters with malformed input. Identify the producer revision when behavior varies by version; an unrelated runtime API's range is not an on-disk format limit.                                                                                                                                 |
@@ -608,9 +826,11 @@ control that keeps completed Evidence inline and preserves the original failure.
 
 For a seekable file with a known extent, distinguish a provably impossible wire
 extent from an independent representation limit. Pair the malformed declaration
-with a structurally possible over-limit control. A count-only truncated fixture
-does not establish capacity behavior. This does not require decoding an opaque
-compressed payload merely to apply its declared expansion limit.
+with a structurally possible over-limit control. Include a length that fits the
+remaining bytes by itself but would consume the framing required for a later
+field or row. A count-only truncated fixture does not establish capacity
+behavior. This does not require decoding an opaque compressed payload merely
+to apply its declared expansion limit.
 
 When producer order is unspecified, synchronize fixtures on the observed request
 or completion event. A filename, generated key, or fixed delay does not prove
@@ -642,21 +862,26 @@ to reach their original memory, depth, cycle or representation boundary; retain
 those stronger assertions.
 
 When a matrix already holds a named tool definition from live `tools/list`,
-pass that definition through the SDK's `toolDefinition` call option. This keeps
-the selected output-schema validation without eagerly compiling unrelated
-catalog schemas. Re-read definitions if the server advertises a changed list.
+pass that definition through the SDK's `toolDefinition` call option, with the
+canonical output schema attached (`tools/list` omits output schemas by default).
+This keeps output-schema validation without eagerly compiling unrelated catalog
+schemas. Re-read definitions if the server advertises a changed list.
 
-For exact nested input constraints, select the full profile explicitly or use
-the full-SDK conformance suite that owns the field. Compact workflow tests
+For exact nested input constraints, assert the canonical input schema
+(`advertisedInputJsonSchema`) or use the full-SDK conformance suite that owns
+the field. Compact workflow tests
 should assert canonical failure categories and provider-call controls where
 rejection before provider work matters. Do not make today's omission of a
 constraint a compact-profile invariant.
 
-When a file repeatedly validates the same MCP schemas, use
-`createMcpSchemaValidation` for file-owned preparation and clear it in
-`afterAll`. Its content keys include the complete schema, and the SDK provider
-keeps dialect and format validation. Keep sessions and connections scoped to
-each test; share immutable schema preparation through the fixture's validator
+Give every MCP SDK test client the validator from
+`createMcpSchemaValidation` (or use `mcpTest`); the architecture guards count
+clients that keep the SDK default. Compiled validators are shared across the
+worker in a bounded cache keyed by the complete schema, and the SDK provider
+keeps dialect and format validation. A fixture created inline for one client
+is released with that client. When a file holds one fixture for several
+clients, clear it in `afterAll`. Keep sessions and connections scoped to each
+test; share immutable schema preparation through the fixture's validator
 dependency.
 
 Artifact verification uses `artifactMcpCall` for both lifecycle and analysis
@@ -712,6 +937,12 @@ the affected owners and applicable scenarios below. Include temporary snapshots
 and one-shot commands. Use public CLI/MCP workflows where practical and a
 controlled production seam for interleavings that cannot be reproduced reliably.
 
+To assert that a POSIX process or process group has stopped, use
+`processHasStopped` or `processGroupHasStopped` from
+`tests/support/process/observePosixProcess.ts`, not signal 0. Signal 0 still
+reaches a zombie, and an orphan stays one wherever PID 1 does not reap it, as in
+a container started without an init process.
+
 | Scenario                                                                                | Assertion and control                                                                                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Target admitted; startup still pending                                                  | Status preserves the readiness distinction and observed startup activity; readiness requires the provider's documented proof.                                                                                                                                                             |
@@ -723,6 +954,12 @@ controlled production seam for interleavings that cannot be reproduced reliably.
 | Cleanup owners recover after an error was returned                                      | Retain the original child and aggregate errors and project them after each owner releases. A successful peer stays released; the aggregate remains incomplete until all owners release. Preserve the first cause even when rejection is `undefined`.                                      |
 | Target exits without an acknowledgement, or transport disappears while it stays alive   | Positive owned exit proof resolves target lifetime; other resources still need cleanup. Lost transport alone does not prove exit. Verify unrelated/attached targets survive and same-connection recovery works when supported.                                                            |
 
+Owners that finalize through `runOwned` inherit the precedence rows above from
+`src/providers/runOwned.lifecycle.test.ts`, which runs each scenario over a
+table of adopter shapes (partial or diagnostics record, publication, lease).
+Add a shape to that table instead of repeating those cases per provider; a
+provider's own tests cover how its work and close reach `runOwned`.
+
 Shared process-supervision controls separate leader exit from output closure.
 Cover output during held or failed cleanup, bounded retention and drain timeout,
 retry, and borrowed stream authority. The POSIX inherited-stderr control uses a
@@ -731,7 +968,18 @@ native Windows Job Object behavior.
 
 Synchronize cancellation with the finalization boundary being tested; a fixed
 delay after dispatch does not establish that phase. Use markers, barriers, or
-owned cleanup seams while preserving real cleanup where feasible. Check server
+owned cleanup seams while preserving real cleanup where feasible.
+`tests/support/lifecycleHarness.ts` provides the shared controls: `phaseGate`
+holds a late handshake or in-flight work at a boundary and releases it with a
+value or a rejection, `phaseArrival` marks a boundary whose work waits on
+something else (an abort, another owner), `cancelDuringCleanup`
+cancels from inside final cleanup, and `controlledCleanup` gives children
+refused or confirmed outcomes with counted retries.
+`tests/support/providerLifecycleCoverage.ts` maps every registered provider id
+to its launch, handshake, operation, cancellation, cleanup and retry
+regressions or a reason a stage does not apply. Name the test file and the
+title at its registration site when a change adds or moves a lifecycle
+regression. The check rejects uncovered applicable stages. Check server
 settlement and retained resources even if the MCP SDK rejects the client promise
 before the handler finishes. A cancellation during active execution does not
 cover cancellation during final cleanup.
@@ -739,7 +987,10 @@ For ZIP extraction, replace the pathname after inventory reader close while the
 admitted root descriptor remains owned. Verify that identical member bytes in a
 different carrier, a directory, or a missing pathname cannot switch the
 materialized source. Exercise descriptor close failure and retry before output
-publication.
+publication. Inject a producer finalization failure after its output sink
+closes and verify that the consumer observes the failure. Successful EOF
+requires the producer to settle successfully, even when all output bytes have
+arrived.
 Use explicit abort reasons and assert their identity at admission and after
 provider completion, alongside retained observations and cleanup state.
 Include a physical I/O failure reused as the abort reason and genuine
@@ -1000,8 +1251,8 @@ partial diagnostics and preflights do not establish complete mutation outcomes
 or qualify the release revision for mutation coverage.
 
 Fast CI starts the source-only projects after classification, independently of
-build and static checks, and runs eight built-dependent shards after the build.
-Those nine test jobs still select every portable test. Full qualification keeps six
+build and static checks, and runs twelve built-dependent shards after the build.
+Those thirteen test jobs still select every portable test. Full qualification keeps twelve
 complete Vitest shards with coverage. Neither tier retries tests. Canonical
 project ownership lives in `scripts/lib/test-projects.mjs`, shared by Vitest,
 CI group execution, and development-test preparation. A test importing compiled
@@ -1010,18 +1261,19 @@ Source and built blobs have separate labels to prevent merge collisions.
 Each test job emits a blob report; the merge job produces JUnit and JSON diagnostics, a module timing
 report, plus aggregate coverage during full qualification. It retains available
 reports even when a shard fails, uploads available diagnostics, and writes the
-slowest files to the workflow summary. Partial reports are marked diagnostic
+slowest files to the workflow summary. When a merged run fails, the summary
+and job log also list up to 20 reported failed test files and the count of
+unhandled Vitest errors when reported. Partial reports are marked diagnostic
 only. Failed, cancelled, or missing selected shards still fail the required gate,
 and aggregate coverage thresholds remain enforced in full qualification.
-Only a successful complete merge on the default branch publishes shard history,
-and only from a push, schedule, or manual run. Fast runs publish
-`test-timings-fast`. Full runs publish `test-timings-full`. Pull requests do not
-publish it: the lookup reads one unpaginated artifact page, and pull-request
-artifacts would crowd out the default branch. The build job downloads the
-artifact that matches its tier, so fast shards use durations measured without
-coverage and full shards keep coverage-weighted durations. A tier with no
-qualifying artifact leaves history unset. The download is that small
-checkout-relative timing file, not the coverage/JUnit bundle. Timing weights come from Vitest module
+A complete shard merge on a default-branch push, schedule, or manual run can
+publish timing history. Fast runs publish `test-timings-fast` and full runs
+publish `test-timings-full`. The build job accepts only verified artifacts from
+successful default-branch CI runs that match its tier. It lists one page of
+matching artifacts and checks up to five producer runs individually. When
+eligible artifacts remain, it can check them against one page of successful CI
+runs. A tier with no qualifying artifact leaves history unset. The build
+downloads the small, checkout-relative timing file. Timing weights come from Vitest module
 diagnostics and include tests and hooks, worker preparation, environment,
 imports, and setup. Import timings already include transform waits, which are
 not added again. The weights describe file costs under the measured worker and
@@ -1077,36 +1329,18 @@ existing four-minute timing collection plus the bounded diagnostic stages.
 
 Fast built shards target under ten minutes of uncontended shard-job execution.
 That figure is the `test-shard` job. The job waits for classification and the
-build, and the portable-test merge runs after the slowest shard. On 2026-10-20,
-run `39451548945` measured those surrounding jobs with runner queue excluded:
-classification 15 seconds, build 49 seconds, and the portable-test merge 29
-seconds. Shard 1/5 of that run spent 22 seconds before built Vitest and 3
-seconds after it, including `npm ci` at 9 seconds. `node_modules` is about 674
-MiB, so publishing it as a shared artifact would transfer more data than that
-install saves. The npm download cache stays the setup cache.
-
-File timings from that run put the built suite at 7944 seconds of module time.
-The sequencer keeps each file's full duration on one worker. Extra workers
-overlap other files in the same sequence group, and `process-boundary` runs
-after that group. Scheduling the unsplit inventory onto five shards peaks at
-820 seconds of tests. That run's slowest built shard job lasted 925 seconds
-(shard 4/5), and shard 1/5 spent 874 seconds in built Vitest, so hosted job
-time sits above the file schedule. Six shards of the same inventory peak at
-684 seconds of tests. Eight shards, after the 578-second loader file is split
-by case count (54 cases stay in that file and 46 move into each of three
-files), peak at 513 seconds of tests. With the measured 25-second shard setup,
-that shard job is about 538 seconds. Adding the measured classification, build,
-and merge makes an uncontended portable critical path of about 631 seconds,
-still before the gap between this file schedule and hosted Vitest. Runner queue
-is separate and grows when more shard jobs compete for runners.
+build, and the portable-test merge runs after the slowest shard. Runner queue is
+separate and grows when more shard jobs compete for runners. The npm download
+cache stays the setup cache rather than a shared `node_modules` artifact.
 `process-boundary` stays serial because process-tree sampling shares the host.
-Raising the worker cap from two to four on this four-core host cut a six-file
-acceptance sample from 96–101 seconds to 71 seconds and did not remove the
-single-file floor, so the cap stays two. Full qualification keeps six covered
+Hosted CI jobs use four workers; other hosts stay at two
+because they are shared with other checks. Full qualification keeps twelve covered
 shards; its longer instrumentation is outside this fast budget.
 
 The separate `CI timings` workflow batches recent completed CI and Release runs
-hourly or on manual dispatch. It uploads `ci-job-timings-batch` with raw API pages and
+every six hours or on manual dispatch, and snapshots pull-request CI health across
+the preceding twelve hours using full ISO 8601 timestamps within a ten-page
+(1,000-run) API budget. It uploads `ci-job-timings-batch` with raw API pages and
 a normalized point-in-time report for each collected workflow attempt, plus a
 batch manifest describing examined coverage, failures, and limits. Overlapping
 lookback windows may collect an attempt again; identify records by run ID and
@@ -1127,8 +1361,8 @@ memory usage, or billing. Step names identify samples, not complete transfer
 costs. Its queue, execution, and failures are independent of the required gate
 and publication. CPU time and peak process-family memory are not measured by this API.
 
-The build job saves portable Turbo outputs across runs. Eight Linux real-system
-lanes reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
+The build job saves portable Turbo outputs across runs. Linux real-system lanes
+that pass `build_cache_artifact` reuse its current-run artifact; standalone dispatches restore the cross-run cache. The shared action
 derives its key from `test:prepare --dry=json` task hashes, runner OS and
 architecture, `.npmrc`, `.nvmrc`, and the lockfile; test-only changes can reuse compiled outputs. Every
 build and verification command still runs, so Turbo checks task inputs and
@@ -1136,9 +1370,18 @@ rebuilds misses. A restore prefix with the same platform and toolchain permits
 partial task reuse when one generator's inputs change; Turbo still invalidates
 that generator's entry. Native outputs are not stored in this cache.
 
-Native package jobs, the Windows curated lane, and the Apple artifact lane reuse
-the same workflow's Turbo cache for portable compiled JavaScript, skills, and
-catalogs. The key parser retains the validated `test:prepare` task identities in
+POSIX native package jobs, documentation checks, Go binary verification, and the
+Apple artifact lane reuse the same workflow's portable Turbo cache
+(`rea-build-cache`) for compiled JavaScript, skills, and catalogs. Windows jobs
+(`windows-curated` and Windows `package-e2e`) compile with `typescript` rather
+than Linux's accelerated `tsrs` checker, so they restore and publish a separate
+Windows `.turbo/cache/` family (`rea-windows-build-v1-Windows-X64-*`, pruned to
+two generations by `cache-retention.mjs`). `windows-native-build` caches
+cross-compiled MinGW outputs keyed by source/fixture hashes, runner
+`ImageOS`/`ImageVersion`, and UTC date (bounding lifetime to 24 hours so
+upstream toolchain updates refresh daily) while running
+`npm run verify:windows-native:artifact` unconditionally on every cache hit. The
+key parser retains the validated `test:prepare` task identities in
 `.cache/ci-build-plan.json`; staging reads this plan without starting another
 Turbo run that could evict cache entries. The producer stages matching archives,
 metadata, and available manifests into `.cache/ci-build-cache/`.
@@ -1183,106 +1426,102 @@ and workspace rather than reporting successful removal. The controlled
 `packageUpdateRegistryFailure` regression needs built process modules, uses no
 public registry, and checks both the primary failure and live descendant absence.
 
+## Pull-request test selection
+
+CI on a pull request runs static checks, the build and the portable tests the
+change affects. The complete portable suite runs on every push to `main`, on
+the scheduled and manual qualification runs, in release qualification, and on a
+PR labelled `ci:full`. Those complete runs catch a consumer that selection
+missed, after it has merged. Add `ci:full` to a PR when its effect reaches
+further than its imports show, such as runtime registration, generated files,
+subprocesses or bridges. Adding the label starts full qualification at once,
+and later pushes stay on the full tier while the label remains.
+
+`scripts/ci/test-selection.mjs` owns the selection. It reads the checked-out
+revision and selects:
+
+- changed test files;
+- tests that import a changed module, directly or through test-only helpers
+  (non-test modules under `tests/` and `src/**/*.fixture*.ts`). Selection never
+  follows production importers transitively;
+- tests beside a changed module that share its stem, or that scan their
+  directory with `readdir`;
+- the boundary tests of a changed leaf adapter (the owner table in the same
+  file), which reach their sources through the built CLI, the MCP server or a
+  fake provider process;
+- tests whose text names a changed path.
+
+Verifier scripts (`scripts/verify-*.mjs`, `scripts/verify/**/*.mjs`) and shared
+script libraries (`scripts/lib/*`, when no untraced consumer imports or names
+them) are traced like source modules. Changed Markdown, non-code `docs/` assets,
+issue templates, `LICENSE`, and `licenses/` inventories outside `src/` and
+`tests/` select only the tests that name them. Declarations, guard and layer
+baselines (`scripts/verify/baselines/*.json`,
+`scripts/lib/module-layers.baseline.json`), `.git-blame-ignore-revs`, Python
+analysis-efficiency test scripts, and advertised-schema summaries select no
+portable Vitest tests unless named by path, because static, Python, and build
+jobs check them. `EXPLICIT_TEST_OWNERS` binds inputs with a known test suite the
+selector cannot reach by imports or file names. These include non-module CLI
+parity fixtures and the managed pointer rows integration test. Selection falls
+back to the complete suite if a declared owner is missing.
+
+The PR falls back to the complete fast suite when it cannot decide:
+
+- a shared production boundary (`src/process/`, `src/filesystem/`,
+  `src/contracts/tool*`, `src/server/createServer*`, `src/cli.ts`,
+  `scripts/ci/`) changed;
+- any other changed input is not traced, such as workflows, package metadata,
+  build and test-runner scripts, untraced `scripts/lib/` consumers, or unmapped
+  fixtures and data;
+- no test is selected;
+- more than 400 test files are selected;
+- a selected file has no single owning test project.
+
+A selection runs as one `Test shard (k/n)` job per group of up to 50 files, at
+most eight jobs, using exact file identity (`scripts/ci/test-group.mjs selected`).
+The separate `Source tests` job does not run, because the groups include the
+selected source tests. The `Classify changes` summary gives the mode and its
+reason.
+
+The required checks still report on every PR and fail closed:
+
+- `Portable tests` checks that the merged report contains exactly the selected
+  files: none missing, none unplanned, no duplicates.
+- `CI required` accepts a selected plan only for a fast `pull_request` run with
+  code changes, and then requires `build` and every selected test group.
+- A missing or malformed plan fails classification, the test group and the gate.
+- A selected run never publishes timing history.
+
 ## Real-toolchain verification lanes
 
-See [Real-toolchain verification lanes](../testing-lanes.md#real-toolchain-verification-lanes).
+Use [Testing lanes and provider verification](../testing-lanes.md) to choose a
+command for the host, provider, and workflow you changed. Record which lane
+ran and which coverage was unavailable.
 
-## Android APK analysis
+<!-- Keep fragment links from earlier versions of this page working. -->
 
-See [Android APK analysis](../testing-lanes.md#android-apk-analysis).
-
-## Apktool resource decoding
-
-See [Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding).
-
-## Flutter build identification
-
-See [Flutter build identification](../testing-lanes.md#flutter-build-identification).
-
-## ADB device acquisition
-
-See [ADB device acquisition](../testing-lanes.md#adb-device-acquisition).
-
-## Optional NativeAOT Ghidra analysis
-
-See [Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis).
-
-## IDA MCP adapter
-
-See [IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter).
-
-## Kuna lane
-
-See [Kuna lane](../testing-lanes.md#kuna-lane).
-
-## DOS Ghidra analysis
-
-See [DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis).
-
-## Apple Interface Builder archives
-
-See [Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives).
-
-## Native platform baseline in CI
-
-See [Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci).
-
-### Termux Android browser smoke test
-
-See [Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test).
-
-## Packet capture analysis
-
-See [Packet capture analysis](../testing-lanes.md#packet-capture-analysis).
-
-## Apple native metadata and UI
-
-See [Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui).
-
-### Firmware adapters
-
-See [Firmware adapters](../testing-lanes.md#firmware-adapters).
-
-### JavaScript source recovery
-
-See [JavaScript source recovery](../testing-lanes.md#javascript-source-recovery).
-
-### Captured website source-map lane
-
-See [Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane).
-
-### JavaScript large-output lane
-
-See [JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane).
-
-### Website runtime attribution lane
-
-See [Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane).
-
-### Offline binary layout
-
-See [Offline binary layout](../testing-lanes.md#offline-binary-layout).
-
-### Offline EVM interface
-
-See [Offline EVM interface](../testing-lanes.md#offline-evm-interface).
-
-### Recorded crash evidence
-
-See [Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence).
-
-### Exported environment bundles
-
-See [Exported environment bundles](../testing-lanes.md#exported-environment-bundles).
-
-## Agent evaluation and conformance records
-
-See [Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records).
-
-## Frida instrumentation
-
-See [Frida instrumentation](../testing-lanes.md#frida-instrumentation).
-
-### Offline WASM artifacts
-
-See [Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts).
+- <a id="android-apk-analysis"></a>[Android APK analysis](../testing-lanes.md#android-apk-analysis)
+- <a id="apktool-resource-decoding"></a>[Apktool resource decoding](../testing-lanes.md#apktool-resource-decoding)
+- <a id="flutter-build-identification"></a>[Flutter build identification](../testing-lanes.md#flutter-build-identification)
+- <a id="adb-device-acquisition"></a>[ADB device acquisition](../testing-lanes.md#adb-device-acquisition)
+- <a id="optional-nativeaot-ghidra-analysis"></a>[Optional NativeAOT Ghidra analysis](../testing-lanes.md#optional-nativeaot-ghidra-analysis)
+- <a id="ida-mcp-adapter"></a>[IDA MCP adapter](../testing-lanes.md#ida-mcp-adapter)
+- <a id="kuna-lane"></a>[Kuna lane](../testing-lanes.md#kuna-lane)
+- <a id="dos-ghidra-analysis"></a>[DOS Ghidra analysis](../testing-lanes.md#dos-ghidra-analysis)
+- <a id="apple-interface-builder-archives"></a>[Apple Interface Builder archives](../testing-lanes.md#apple-interface-builder-archives)
+- <a id="native-platform-baseline-in-ci"></a>[Native platform baseline in CI](../testing-lanes.md#native-platform-baseline-in-ci)
+- <a id="termux-android-browser-smoke-test"></a>[Termux Android browser smoke test](../testing-lanes.md#termux-android-browser-smoke-test)
+- <a id="packet-capture-analysis"></a>[Packet capture analysis](../testing-lanes.md#packet-capture-analysis)
+- <a id="apple-native-metadata-and-ui"></a>[Apple native metadata and UI](../testing-lanes.md#apple-native-metadata-and-ui)
+- <a id="firmware-adapters"></a>[Firmware adapters](../testing-lanes.md#firmware-adapters)
+- <a id="javascript-source-recovery"></a>[JavaScript source recovery](../testing-lanes.md#javascript-source-recovery)
+- <a id="captured-website-source-map-lane"></a>[Captured website source-map lane](../testing-lanes.md#captured-website-source-map-lane)
+- <a id="javascript-large-output-lane"></a>[JavaScript large-output lane](../testing-lanes.md#javascript-large-output-lane)
+- <a id="website-runtime-attribution-lane"></a>[Website runtime attribution lane](../testing-lanes.md#website-runtime-attribution-lane)
+- <a id="offline-binary-layout"></a>[Offline binary layout](../testing-lanes.md#offline-binary-layout)
+- <a id="offline-evm-interface"></a>[Offline EVM interface](../testing-lanes.md#offline-evm-interface)
+- <a id="recorded-crash-evidence"></a>[Recorded crash evidence](../testing-lanes.md#recorded-crash-evidence)
+- <a id="exported-environment-bundles"></a>[Exported environment bundles](../testing-lanes.md#exported-environment-bundles)
+- <a id="agent-evaluation-and-conformance-records"></a>[Agent evaluation and conformance records](../testing-lanes.md#agent-evaluation-and-conformance-records)
+- <a id="frida-instrumentation"></a>[Frida instrumentation](../testing-lanes.md#frida-instrumentation)
+- <a id="offline-wasm-artifacts"></a>[Offline WASM artifacts](../testing-lanes.md#offline-wasm-artifacts)

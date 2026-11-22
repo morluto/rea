@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { EnhancedTools } from "./EnhancedTools.js";
-import { createAnalysisExecution } from "./AnalysisProvider.js";
+import { createAnalysisExecution } from "../ports/AnalysisProvider.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,

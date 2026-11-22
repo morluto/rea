@@ -11,6 +11,7 @@ import {
 } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { phaseGate } from "../support/lifecycleHarness.js";
 
 const fault = vi.hoisted(() => ({
   path: "",
@@ -22,6 +23,7 @@ const fault = vi.hoisted(() => ({
   readFailure: undefined as Error | undefined,
   abortRead: undefined as AbortController | undefined,
   readGate: undefined as (() => Promise<void>) | undefined,
+  closeGate: undefined as (() => Promise<void>) | undefined,
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -41,6 +43,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       fault.handles.push(handle);
       const close = handle.close.bind(handle);
       handle.close = async () => {
+        if (fault.closeGate !== undefined) await fault.closeGate();
         fault.abortClose?.abort(null);
         if (fault.blocked) throw new Error("controlled endpoint close failure");
         await close();
@@ -55,26 +58,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         }
         return await Reflect.apply(read, handle, values);
       }) as FileHandle["read"];
-      const readFile = handle.readFile.bind(handle);
-      handle.readFile = (async (...values: unknown[]) => {
-        fault.reads += 1;
-        await fault.readGate?.();
-        if (fault.readFailure !== undefined) {
-          fault.abortRead?.abort(null);
-          throw fault.readFailure;
-        }
-        return await Reflect.apply(readFile, handle, values);
-      }) as FileHandle["readFile"];
       return handle;
     },
   };
 });
 
-import { ArtifactResourceScope } from "../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../src/resources/ArtifactResourceScope.js";
 import {
   ArtifactFileCleanupFailure,
   artifactFilePrimaryFacts,
-} from "../../src/artifacts/ArtifactFileOperation.js";
+} from "../../src/resources/ArtifactFileOperation.js";
 import { observeGhidraEndpoint } from "../../src/ghidra/GhidraTransport.js";
 import { GhidraClient } from "../../src/ghidra/GhidraClient.js";
 import {
@@ -85,8 +78,6 @@ import { waitForExit } from "../support/process/processFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const clients: GhidraClient[] = [];
-const operations: Promise<unknown>[] = [];
-let releaseRead: (() => void) | undefined;
 beforeEach(() => {
   fault.path = "";
   fault.matchEndpoints = false;
@@ -97,15 +88,14 @@ beforeEach(() => {
   fault.readFailure = undefined;
   fault.abortRead = undefined;
   fault.readGate = undefined;
+  fault.closeGate = undefined;
 });
 afterEach(async () => {
   fault.blocked = false;
   fault.abortClose = undefined;
   fault.readFailure = undefined;
   fault.abortRead = undefined;
-  releaseRead?.();
-  releaseRead = undefined;
-  await Promise.allSettled(operations.splice(0));
+  fault.closeGate = undefined;
   for (const client of clients.splice(0)) await client.close();
   for (const handle of fault.handles)
     if (handle.fd !== -1) await handle.close();
@@ -228,33 +218,40 @@ it.skipIf(process.platform === "win32")(
   "keeps endpoint observation admitted until its read and close finish",
   async () => {
     const { endpoint, resources } = await fixture();
-    let entered: (() => void) | undefined;
-    const observed = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-    fault.readGate = async () => {
-      entered?.();
-      await gate;
-    };
+    const endpointRead = phaseGate();
+    const endpointClose = phaseGate();
+    fault.readGate = () => endpointRead.hold();
+    fault.closeGate = () => endpointClose.hold();
     const pending = observeGhidraEndpoint(endpoint, {
       resourceScope: resources,
     });
-    operations.push(pending);
-    await observed;
+    let closing: Promise<void> | undefined;
     let closed = false;
-    const closing = resources.close().then(() => {
-      closed = true;
-    });
-    operations.push(closing);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(closed).toBe(false);
-    releaseRead?.();
-    await expect(pending).resolves.toMatchObject({ ok: true });
-    await closing;
-    expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
+    try {
+      await endpointRead.reached(pending, "Ghidra endpoint read");
+      closing = resources.close().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      endpointRead.release();
+      await endpointClose.reached(pending, "Ghidra endpoint descriptor close");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      expect(fault.handles).toHaveLength(1);
+      expect(fault.handles[0]?.fd).toBeGreaterThanOrEqual(0);
+      endpointClose.release();
+      await expect(pending).resolves.toEqual({
+        ok: true,
+        value: { host: "127.0.0.1", port: 49152 },
+      });
+      await closing;
+      expect(fault.handles.map(({ fd }) => fd)).toEqual([-1]);
+    } finally {
+      endpointRead.release();
+      endpointClose.release();
+      await Promise.allSettled([pending, closing]);
+    }
   },
 );
 

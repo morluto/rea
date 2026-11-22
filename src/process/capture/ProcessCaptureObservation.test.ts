@@ -4,8 +4,10 @@ import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "./FilesystemSnapshot.js";
-import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { isInitializedPtyRoot } from "./ProcessSampling.js";
+import {
+  buildCaptureResult,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+} from "./ProcessCaptureLifecycle.js";
 import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
@@ -231,70 +233,6 @@ it("collects and deduplicates children from every Linux thread", async () => {
   });
 });
 
-it("admits PTY samples only after stable session and token setup", () => {
-  const initialized = {
-    pid: 100,
-    parent_pid: 10,
-    process_group_id: 100,
-    session_id: 100,
-    startTime: "200",
-  };
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, process_group_id: 10, session_id: 10 },
-      observedRunId: undefined,
-      after: initialized,
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: { ...initialized, startTime: "201" },
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "other-run",
-      after: initialized,
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: { ...initialized, parent_pid: 11 },
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: initialized,
-    }),
-  ).toBe(true);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, session_id: null },
-      observedRunId: "run-token",
-      after: { ...initialized, session_id: null },
-    }),
-  ).toBe(true);
-});
-
 it("cancels filesystem snapshots before traversing declared roots", async () => {
   const controller = new AbortController();
   controller.abort();
@@ -394,3 +332,54 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
     expect(result.truncated).toBe(false);
   },
 );
+
+it("records the PTY session-leader SIGHUP limitation on POSIX captures only", () => {
+  const capture = emptyCapture();
+  const buildForPlatform = (platform: string) =>
+    buildCaptureResult({
+      frames: [],
+      exit: { exitCode: 0, reason: "exited" },
+      samples: [],
+      before: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      after: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      truncationDetails: truncationDetails([], [], []),
+      scenario: processScenarioSchema.parse(base),
+      rootPid: 1,
+      samplingPartial: false,
+      renderedFrames: [],
+      interactions: [],
+      checkpoints: capture.filesystem_checkpoints,
+      settlement: {
+        state: capture.settlement.state,
+        elapsed_ms: capture.settlement.elapsed_ms,
+      },
+      manifest: { ...capture.manifest, platform },
+      eventJournal: [],
+    });
+
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(
+    /PTY session leader/iu,
+  );
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/SIGHUP/u);
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/group/iu);
+  for (const posixPlatform of ["linux", "darwin"]) {
+    expect(buildForPlatform(posixPlatform).limitations).toContain(
+      POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+    );
+  }
+  const winLimitations = buildForPlatform("win32").limitations;
+  expect(winLimitations).not.toContain(
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+  );
+  expect(winLimitations.some((line) => line.includes("SIGHUP"))).toBe(false);
+});

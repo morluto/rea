@@ -1,11 +1,32 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { z } from "zod";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { createTestProcessRegistry } from "../../tests/support/process/processFixture.js";
-import { resolveMcpRegistrationClientId } from "./McpRegistrationCatalog.js";
+import { resolveMcpRegistrationClients } from "./McpRegistrationCatalog.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
+
+const selectAgent = async (agent: string) => {
+  const root = await createTestTempDirectory("rea-mcp-alias-");
+  const resources = new ArtifactResourceScope();
+  try {
+    return await resolveMcpRegistrationClients(
+      {
+        agents: [agent],
+        global: true,
+        cwd: root,
+        home: root,
+        platform: process.platform,
+        environment: {},
+      },
+      resources,
+    );
+  } finally {
+    await resources.close();
+  }
+};
 
 it.each([
   ["cline-vscode", "cline"],
@@ -23,15 +44,22 @@ it.each([
   ["kiro", "kiro-cli"],
   ["mastra", "mastracode"],
   ["pi-agent", "pi"],
-])("retains helper alias %s as %s", (alias, expected) => {
-  expect(resolveMcpRegistrationClientId(alias.toUpperCase())).toBe(expected);
+])("resolves registration alias %s as %s", async (alias, expected) => {
+  const result = await selectAgent(alias.toUpperCase());
+  if (!result.ok) throw result.error;
+  expect(result.value.map(({ id }) => id)).toEqual([expected]);
 });
 
-it("does not treat prototype names or unknown strings as client identities", () => {
-  expect(resolveMcpRegistrationClientId("__proto__")).toBeUndefined();
-  expect(resolveMcpRegistrationClientId("constructor")).toBeUndefined();
-  expect(resolveMcpRegistrationClientId("unknown-client")).toBeUndefined();
-});
+it.each(["__proto__", "constructor", "unknown-client"])(
+  "rejects unknown registration identity %s",
+  async (agent) => {
+    const result = await selectAgent(agent);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ConfigurationError" },
+    });
+  },
+);
 
 const clientSchema = z.object({
   id: z.string(),
@@ -40,7 +68,7 @@ const clientSchema = z.object({
   configPaths: z.array(z.string()).optional(),
   scope: z.enum(["global", "project"]),
   format: z.string(),
-  privateProfile: z.literal(true).optional(),
+  privateProfile: z.object({ home: z.string() }).optional(),
   inlineConfiguration: z
     .object({ origin: z.literal("KILO_CONFIG_CONTENT"), parsed: z.unknown() })
     .optional(),
@@ -76,6 +104,8 @@ const catalogObservationsSchema = z.object({
   invalidGit: resultSchema.nullable(),
   unterminatedGit: resultSchema.nullable(),
   linkedWorktree: resultSchema.nullable(),
+  bareWorktree: resultSchema.nullable(),
+  incompleteBareWorktree: resultSchema.nullable(),
   missingTarget: resultSchema.nullable(),
   cancelledGit: resultSchema.nullable(),
   repeatedFile: resultSchema,
@@ -91,7 +121,7 @@ else if (state.unterminated) process.stdout.write(state.root);
 else if (state.hang) { fs.writeFileSync(state.hang,"ready"); setInterval(()=>{},1000); }
 else {
  const key=process.argv[3];
- process.stdout.write(key==="--show-toplevel"?state.root+"\n":key==="--git-dir"?state.git+"\n":key==="--git-common-dir"?state.common+"\n":"worktree "+state.primary+"\0HEAD inert\0\0");
+ process.stdout.write(key==="--show-toplevel"?state.root+"\n":key==="--git-dir"?state.git+"\n":key==="--git-common-dir"?state.common+"\n":(state.listing ?? "worktree "+state.primary+"\0HEAD inert\0\0"));
 }
 `;
 
@@ -106,17 +136,18 @@ const CATALOG_PROGRAM = `
         if (path.startsWith('..') || isAbsolute(path)) throw Error('Fixture location escaped: ' + key);
       }
       const { resolveMcpRegistrationClients } = await import(${JSON.stringify(new URL("./McpRegistrationCatalog.ts", import.meta.url).href)});
-      const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../artifacts/ArtifactResourceScope.ts", import.meta.url).href)});
+      const { ArtifactResourceScope } = await import(${JSON.stringify(new URL("../resources/ArtifactResourceScope.ts", import.meta.url).href)});
       const resources = new ArtifactResourceScope();
       try {
       const posix = process.platform !== 'win32';
       const cwd = join(home, 'project');
       await mkdir(cwd);
-      const selection = { agents: [], global: true, home, cwd, platform: process.platform, environment: process.env };
+      // Goose's system layer stays inside HOME, so no test reads the host's file.
+      const selection = { agents: [], global: true, home, cwd, platform: process.platform, environment: process.env, systemPaths: { gooseSystemConfig: join(home, 'goose-system.yaml') } };
       const observe = async (changes = {}) => {
         const result = await resources.run(() => resolveMcpRegistrationClients({ ...selection, ...changes }, resources));
         if (!result.ok) return { ok: false, error: { tag: result.error._tag, message: result.error.message } };
-        for (const client of result.value) for (const source of [client.configPath,...client.configPaths ?? []]) {
+        for (const client of result.value) for (const source of [client.configPath,...(client.configPaths ?? [])]) {
           const path = relative(home, source);
           if (path.startsWith('..') || isAbsolute(path)) throw Error('Catalog path escaped temporary HOME: ' + client.id);
         }
@@ -180,6 +211,15 @@ const CATALOG_PROGRAM = `
       await writeFile(join(primary,'nested','.kilo','opencode.json'),'{}');
       await writeFile(gitState,JSON.stringify({...state,common:join(primary,'.git'),primary}));
       const linkedWorktree = await observeProject({cwd:nested});
+      const bare = join(home,'repository.git');
+      await mkdir(join(bare,'.kilo'),{recursive:true});
+      await writeFile(join(bare,'.kilo','kilo.json'),'{}');
+      const nul = String.fromCharCode(0);
+      const bareRecord = ['worktree '+bare,'bare'].join(nul);
+      await writeFile(gitState, JSON.stringify({...state,common:bare,listing:[bareRecord,'','worktree '+primary,'HEAD inert','',''].join(nul)}));
+      const bareWorktree = await observeProject({cwd:nested});
+      await writeFile(gitState, JSON.stringify({...state,common:bare,listing:bareRecord}));
+      const incompleteBareWorktree = await observeProject({cwd:nested});
       await writeFile(gitState,JSON.stringify(state));
       const emptyRoot = join(home,'empty-worktree');
       await mkdir(join(emptyRoot,'.git'),{recursive:true});
@@ -223,7 +263,7 @@ const CATALOG_PROGRAM = `
       const unknownDetection = await observe();
       const controller = new AbortController(); controller.abort({ fixture: 'cancel' });
       const cancelled = await observe({ agents: ['amp'], signal: controller.signal });
-      console.log(JSON.stringify({ empty, layeredKilo, layeredOpenCode, explicit, detected, project, onlyGlobal, defaultProject, projectAmp, unknown, blockedCandidate, unknownDetection, cancelled, ancestorLayers, selectedLayers, projectReadonly, noRepository, disabled, invalidInline, invalidGit, unterminatedGit, linkedWorktree, missingTarget, cancelledGit, repeatedFile, repeatedDirectory, whitespaceWorktree }));
+      console.log(JSON.stringify({ empty, layeredKilo, layeredOpenCode, explicit, detected, project, onlyGlobal, defaultProject, projectAmp, unknown, blockedCandidate, unknownDetection, cancelled, ancestorLayers, selectedLayers, projectReadonly, noRepository, disabled, invalidInline, invalidGit, unterminatedGit, linkedWorktree, bareWorktree, incompleteBareWorktree, missingTarget, cancelledGit, repeatedFile, repeatedDirectory, whitespaceWorktree }));
       } finally { await resources.close(); if(resources.hasPending) throw Error("Git cleanup remained owned."); }
     `;
 
@@ -256,133 +296,136 @@ const REVIEWED_CLIENT_IDS = [
   "amp",
 ];
 
-it("resolves selected-environment paths and scopes without external catalog readers", async () => {
-  const home = await createTestTempDirectory("rea-registration-catalog-");
-  const processes = createTestProcessRegistry();
-  try {
-    await mkdir(join(home, "config"));
-    const child = await processes.run(
-      process.execPath,
-      ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
-      {
-        timeoutMs: 50_000,
-        env: {
-          PATH: process.env.PATH,
-          SystemRoot: process.env.SystemRoot,
-          WINDIR: process.env.WINDIR,
-          TMPDIR: process.env.TMPDIR,
-          TMP: process.env.TMP,
-          TEMP: process.env.TEMP,
-          HOME: home,
-          USERPROFILE: home,
-          XDG_CONFIG_HOME: join(home, "config"),
-          XDG_DATA_HOME: join(home, "data"),
-          XDG_CACHE_HOME: join(home, "cache"),
-          XDG_STATE_HOME: join(home, "state"),
-          APPDATA: join(home, "appdata"),
-          LOCALAPPDATA: join(home, "localappdata"),
+it(
+  "resolves selected-environment paths and scopes without external catalog readers",
+  { tags: ["long-running"] },
+  async () => {
+    const home = await createTestTempDirectory("rea-registration-catalog-");
+    const processes = createTestProcessRegistry();
+    try {
+      await mkdir(join(home, "config"));
+      const child = await processes.run(
+        process.execPath,
+        ["--import", "tsx", "--input-type=module", "--eval", CATALOG_PROGRAM],
+        {
+          env: {
+            PATH: process.env.PATH,
+            SystemRoot: process.env.SystemRoot,
+            WINDIR: process.env.WINDIR,
+            TMPDIR: process.env.TMPDIR,
+            TMP: process.env.TMP,
+            TEMP: process.env.TEMP,
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: join(home, "config"),
+            XDG_DATA_HOME: join(home, "data"),
+            XDG_CACHE_HOME: join(home, "cache"),
+            XDG_STATE_HOME: join(home, "state"),
+            APPDATA: join(home, "appdata"),
+            LOCALAPPDATA: join(home, "localappdata"),
+          },
         },
-      },
-    );
-    expect(child.exitCode, child.stderr).toBe(0);
-    const result = catalogObservationsSchema.parse(JSON.parse(child.stdout));
-    assertKiloNativeLayers(result, home);
-    expect(result.empty.ok).toBe(true);
-    if (!result.empty.ok) throw new Error(result.empty.error.message);
-    expect(result.empty.value.map((client) => client.id)).toEqual(
-      REVIEWED_CLIENT_IDS,
-    );
-    expect(result.layeredKilo.ok).toBe(true);
-    if (!result.layeredKilo.ok)
-      throw new Error(result.layeredKilo.error.message);
-    const kiloLayers = [
-      "config.json",
-      "kilo.json",
-      "kilo.jsonc",
-      "opencode.json",
-      "opencode.jsonc",
-    ].map((name) => join(home, "layered", "kilo", name));
-    expect(result.layeredKilo.value[0]).toMatchObject({
-      configPath: kiloLayers.at(-1),
-      configPaths: kiloLayers,
-    });
-    expect(result.layeredOpenCode.ok).toBe(true);
-    if (!result.layeredOpenCode.ok)
-      throw new Error(result.layeredOpenCode.error.message);
-    expect(result.layeredOpenCode.value[0]?.configPaths).toEqual(
-      ["config.json", "opencode.json", "opencode.jsonc"].map((name) =>
-        join(home, "config", "opencode", name),
-      ),
-    );
-    expect(result.explicit.ok).toBe(true);
-    if (!result.explicit.ok) throw new Error(result.explicit.error.message);
-    expect(result.explicit.value.map((client) => client.id)).toEqual([
-      "codex",
-      "amp",
-      "gemini-cli",
-      "fx",
-      "windsurf",
-    ]);
-    expect(result.explicit.value[0]?.configPath).toBe(
-      join(home, "selected-codex", "config.toml"),
-    );
-    expect(
-      result.explicit.value.find((client) => client.id === "fx"),
-    ).toMatchObject({ format: "fx", privateProfile: true });
-    expect(result.detected.ok).toBe(true);
-    if (!result.detected.ok) throw new Error(result.detected.error.message);
-    expect(result.detected.value.map((client) => client.id)).toEqual([
-      "claude-code",
-      "cursor",
-      "amp",
-    ]);
-    expect(result.project.ok, JSON.stringify(result.project)).toBe(true);
-    if (!result.project.ok) throw new Error(result.project.error.message);
-    expect(result.project.value[0]?.format).toBe("copilot_cli_project");
-    expect(
-      result.project.value.map(({ configPath, scope }) => ({
-        configPath,
-        scope,
-      })),
-    ).toEqual([
-      {
-        configPath: join(home, "project", ".github", "mcp.json"),
-        scope: "project",
-      },
-      ...(process.platform === "win32"
-        ? []
-        : [
-            {
-              configPath: join(home, "project", ".kilocode", "kilo.jsonc"),
-              scope: "project",
-            },
-          ]),
-      {
-        configPath: join(home, "project", "opencode.jsonc"),
-        scope: "project",
-      },
-    ]);
-    for (const refused of [
-      result.onlyGlobal,
-      result.defaultProject,
-      result.projectAmp,
-      result.unknown,
-      ...(result.blockedCandidate === null ? [] : [result.blockedCandidate]),
-      result.unknownDetection,
-    ]) {
-      expect(refused.ok).toBe(false);
-      if (refused.ok) throw new Error("Expected preflight refusal.");
-      expect(refused.error.tag).toBe("ConfigurationError");
+      );
+      expect(child.exitCode, child.stderr).toBe(0);
+      const result = catalogObservationsSchema.parse(JSON.parse(child.stdout));
+      assertKiloNativeLayers(result, home);
+      expect(result.empty.ok).toBe(true);
+      if (!result.empty.ok) throw new Error(result.empty.error.message);
+      expect(result.empty.value.map((client) => client.id)).toEqual(
+        REVIEWED_CLIENT_IDS,
+      );
+      expect(result.layeredKilo.ok).toBe(true);
+      if (!result.layeredKilo.ok)
+        throw new Error(result.layeredKilo.error.message);
+      const kiloLayers = [
+        "config.json",
+        "kilo.json",
+        "kilo.jsonc",
+        "opencode.json",
+        "opencode.jsonc",
+      ].map((name) => join(home, "layered", "kilo", name));
+      expect(result.layeredKilo.value[0]).toMatchObject({
+        configPath: kiloLayers.at(-1),
+        configPaths: kiloLayers,
+      });
+      expect(result.layeredOpenCode.ok).toBe(true);
+      if (!result.layeredOpenCode.ok)
+        throw new Error(result.layeredOpenCode.error.message);
+      expect(result.layeredOpenCode.value[0]?.configPaths).toEqual(
+        ["config.json", "opencode.json", "opencode.jsonc"].map((name) =>
+          join(home, "config", "opencode", name),
+        ),
+      );
+      expect(result.explicit.ok).toBe(true);
+      if (!result.explicit.ok) throw new Error(result.explicit.error.message);
+      expect(result.explicit.value.map((client) => client.id)).toEqual([
+        "codex",
+        "amp",
+        "gemini-cli",
+        "fx",
+        "windsurf",
+      ]);
+      expect(result.explicit.value[0]?.configPath).toBe(
+        join(home, "selected-codex", "config.toml"),
+      );
+      expect(
+        result.explicit.value.find((client) => client.id === "fx"),
+      ).toMatchObject({ format: "fx", privateProfile: { home } });
+      expect(result.detected.ok).toBe(true);
+      if (!result.detected.ok) throw new Error(result.detected.error.message);
+      expect(result.detected.value.map((client) => client.id)).toEqual([
+        "claude-code",
+        "cursor",
+        "amp",
+      ]);
+      expect(result.project.ok, JSON.stringify(result.project)).toBe(true);
+      if (!result.project.ok) throw new Error(result.project.error.message);
+      expect(result.project.value[0]?.format).toBe("copilot_cli_project");
+      expect(
+        result.project.value.map(({ configPath, scope }) => ({
+          configPath,
+          scope,
+        })),
+      ).toEqual([
+        {
+          configPath: join(home, "project", ".github", "mcp.json"),
+          scope: "project",
+        },
+        ...(process.platform === "win32"
+          ? []
+          : [
+              {
+                configPath: join(home, "project", ".kilocode", "kilo.jsonc"),
+                scope: "project",
+              },
+            ]),
+        {
+          configPath: join(home, "project", "opencode.jsonc"),
+          scope: "project",
+        },
+      ]);
+      for (const refused of [
+        result.onlyGlobal,
+        result.defaultProject,
+        result.projectAmp,
+        result.unknown,
+        ...(result.blockedCandidate === null ? [] : [result.blockedCandidate]),
+        result.unknownDetection,
+      ]) {
+        expect(refused.ok).toBe(false);
+        if (refused.ok) throw new Error("Expected preflight refusal.");
+        expect(refused.error.tag).toBe("ConfigurationError");
+      }
+      expect(result.cancelled).toMatchObject({
+        ok: false,
+        error: { tag: "AnalysisCancelledError" },
+      });
+    } finally {
+      await processes.shutdown();
+      await rm(home, { recursive: true, force: true });
     }
-    expect(result.cancelled).toMatchObject({
-      ok: false,
-      error: { tag: "AnalysisCancelledError" },
-    });
-  } finally {
-    await processes.shutdown();
-    await rm(home, { recursive: true, force: true });
-  }
-}, 60_000);
+  },
+);
 
 const assertKiloNativeLayers = (
   result: z.infer<typeof catalogObservationsSchema>,
@@ -410,7 +453,8 @@ const assertKiloNativeLayers = (
       | "ancestorLayers"
       | "selectedLayers"
       | "projectReadonly"
-      | "linkedWorktree",
+      | "linkedWorktree"
+      | "bareWorktree",
   ) => {
     const value = result[name];
     if (value === null) throw Error(`Missing POSIX ${name} observation`);
@@ -457,6 +501,10 @@ const assertKiloNativeLayers = (
       join(home, "primary", "nested", ".kilo", "opencode.json"),
       ...native.slice(4),
     ],
+  });
+  expect(client("bareWorktree")).toMatchObject({
+    configPath: native.at(-1),
+    configPaths: native,
   });
   if (result.missingTarget === null)
     throw Error("Missing POSIX planned target observation");
@@ -516,9 +564,177 @@ const assertKiloNativeLayers = (
     "invalidInline",
     "invalidGit",
     "unterminatedGit",
+    "incompleteBareWorktree",
   ] as const)
     expect(result[name]).toMatchObject({
       ok: false,
       error: { tag: "ConfigurationError" },
     });
 };
+
+const resolveWith = async (
+  agent: string,
+  environment: NodeJS.ProcessEnv,
+  prepare: (home: string) => Promise<void> = async () => {},
+) => {
+  const home = await createTestTempDirectory("rea-mcp-override-");
+  await prepare(home);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await resolveMcpRegistrationClients(
+      {
+        agents: agent === "" ? [] : [agent],
+        global: true,
+        cwd: home,
+        home,
+        // Real temporary paths need the host's path rules.
+        platform: process.platform,
+        environment: Object.fromEntries(
+          Object.entries(environment).map(([key, value]) => [
+            key,
+            value?.replace("<home>", home),
+          ]),
+        ),
+      },
+      resources,
+    );
+    return { home, result };
+  } finally {
+    await resources.close();
+  }
+};
+
+it.each([
+  { name: "default", env: {}, path: ".fx/mcp.json" },
+  {
+    name: "FX_HOME",
+    env: { FX_HOME: "<home>/profile/" },
+    path: "profile/mcp.json",
+  },
+])(
+  "registers fx in the profile folder fx reads ($name)",
+  async ({ env, path }) => {
+    const { home, result } = await resolveWith("fx", env);
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.configPath).toBe(join(home, path));
+  },
+);
+
+it.each([
+  "relative/fx",
+  "/",
+  "<home>",
+  "<home>/",
+  // Aliases of the home folder would give it the profile's private mode.
+  "<home>/.",
+  "<home>/profile/..",
+])("refuses an FX_HOME of %s that fx itself refuses", async (value) => {
+  const { result } = await resolveWith("fx", { FX_HOME: value });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("FX_HOME") },
+  });
+});
+
+it.each([
+  {
+    name: "legacy default",
+    env: {},
+    existing: [],
+    path: ".mcporter/mcporter.json",
+  },
+  {
+    name: "absolute XDG default",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [],
+    path: "xdg/mcporter/mcporter.json",
+  },
+  {
+    name: "existing legacy file under XDG",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [".mcporter/mcporter.jsonc"],
+    path: ".mcporter/mcporter.jsonc",
+  },
+  {
+    name: "XDG file before legacy file",
+    env: { XDG_CONFIG_HOME: "<home>/xdg" },
+    existing: [".mcporter/mcporter.json", "xdg/mcporter/mcporter.jsonc"],
+    path: "xdg/mcporter/mcporter.jsonc",
+  },
+  {
+    name: "relative XDG ignored",
+    env: { XDG_CONFIG_HOME: "xdg" },
+    existing: [],
+    path: ".mcporter/mcporter.json",
+  },
+  {
+    name: "MCPORTER_CONFIG exclusive",
+    env: { MCPORTER_CONFIG: " ~/selected.json " },
+    existing: [".mcporter/mcporter.json"],
+    path: "selected.json",
+  },
+  {
+    name: "MCPORTER_CONFIG resolved lexically like path.resolve",
+    env: { MCPORTER_CONFIG: "<home>/missing/../selected.json" },
+    existing: [],
+    path: "selected.json",
+  },
+])(
+  "registers MCPorter in the home file it loads ($name)",
+  async ({ env, existing, path }) => {
+    const { home, result } = await resolveWith(
+      "mcporter",
+      env,
+      async (root) => {
+        for (const file of existing) {
+          await mkdir(join(root, file, ".."), { recursive: true });
+          await writeFile(join(root, file), "{}\n");
+        }
+      },
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value[0]?.configPath).toBe(join(home, path));
+  },
+);
+
+it("detects MCPorter from the file MCPORTER_CONFIG selects in default registration", async () => {
+  const { home, result } = await resolveWith(
+    "",
+    { MCPORTER_CONFIG: "<home>/elsewhere/mcporter.json" },
+    async (root) => {
+      await mkdir(join(root, ".cursor"), { recursive: true });
+      await mkdir(join(root, "elsewhere"), { recursive: true });
+      await writeFile(join(root, "elsewhere", "mcporter.json"), "{}\n");
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.find((client) => client.id === "mcporter")?.configPath,
+  ).toBe(join(home, "elsewhere", "mcporter.json"));
+});
+
+it("detects MCPorter from an existing legacy file when XDG_CONFIG_HOME is absolute", async () => {
+  const { home, result } = await resolveWith(
+    "",
+    { XDG_CONFIG_HOME: "<home>/xdg" },
+    async (root) => {
+      await mkdir(join(root, ".cursor"), { recursive: true });
+      await mkdir(join(root, ".mcporter"), { recursive: true });
+      await writeFile(join(root, ".mcporter", "mcporter.json"), "{}\n");
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(
+    result.value.find((client) => client.id === "mcporter")?.configPath,
+  ).toBe(join(home, ".mcporter", "mcporter.json"));
+});
+
+it("refuses a relative MCPORTER_CONFIG whose file depends on each command's directory", async () => {
+  const { result } = await resolveWith("mcporter", {
+    MCPORTER_CONFIG: "config/selected.json",
+  });
+  expect(result).toMatchObject({
+    ok: false,
+    error: { message: expect.stringContaining("MCPORTER_CONFIG is relative") },
+  });
+});

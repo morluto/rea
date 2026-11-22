@@ -343,7 +343,7 @@ export const projectFeatureTraceView = (
           : { semantic_discovery: result.semantic_discovery }),
         limitation_count: new Set(limitations).size,
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
   return ok(tracePage(result, view, { ...shared, ...context }));
 };

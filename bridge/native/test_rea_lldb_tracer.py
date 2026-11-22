@@ -1,9 +1,9 @@
 """Source-owned tests for the LLDB bridge's bounded retention helpers."""
 
-from io import BytesIO
 import importlib.util
 import json
 import os
+from pathlib import Path
 import sys
 import tempfile
 import types
@@ -298,34 +298,23 @@ class NativeTraceBudgetTests(unittest.TestCase):
         self.assertEqual(result["status"], "target-integrity-error")
         self.assertIs(result["target_process_created"], False)
 
-    def test_journal_checks_exact_byte_budget_before_writing(self):
-        record = {"kind": "other-stop", "reason": "signal"}
-        encoded_size = len((tracer.json.dumps(record) + "\n").encode("utf-8"))
-        stream = BytesIO()
-        journal = tracer._ObservationJournal(stream, max_bytes=encoded_size - 1)
-        self.assertFalse(journal.append(record))
-        self.assertEqual(stream.getvalue(), b"")
-        self.assertEqual(journal.bytes, 0)
-
-    def test_journal_appends_each_row_once_and_flushes_it(self):
-        class CountingStream(BytesIO):
-            writes = 0
-            flushes = 0
-
-            def write(self, value):
-                self.writes += 1
-                return super().write(value)
-
-            def flush(self):
-                self.flushes += 1
-                return super().flush()
-
-        stream = CountingStream()
-        journal = tracer._ObservationJournal(stream, max_bytes=4096)
-        journal.append({"kind": "event", "event": {"sequence": 0}})
-        journal.append({"kind": "other-stop", "reason": "signal"})
-        self.assertEqual((stream.writes, stream.flushes), (2, 2))
-        self.assertEqual(journal.bytes, len(stream.getvalue()))
+    def test_journal_flushes_complete_rows_within_its_exact_byte_budget(self):
+        first = {"kind": "event", "event": {"sequence": 0}}
+        last = {"kind": "event", "event": {"sequence": 1}}
+        too_large = {"kind": "event", "event": {"sequence": 10}}
+        expected = "".join(json.dumps(row) + "\n" for row in (first, last)).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "observations.jsonl"
+            with path.open("wb") as stream:
+                journal = tracer._ObservationJournal(stream, max_bytes=len(expected))
+                self.assertTrue(journal.append(first))
+                prefix = path.read_bytes()
+                self.assertEqual([json.loads(line) for line in prefix.splitlines()], [first])
+                self.assertFalse(journal.append(too_large))
+                self.assertEqual(path.read_bytes(), prefix)
+                self.assertTrue(journal.append(last))
+                self.assertEqual(path.read_bytes(), expected)
+                self.assertEqual(journal.bytes, len(expected))
 
     def test_aggregate_trace_budget_uses_the_selected_admission(self):
         limits = {"trace_bytes": 100, "trace_frames": 10}
@@ -387,16 +376,14 @@ class NativeTraceBudgetTests(unittest.TestCase):
             capture = os.path.join(directory, "stdout.capture")
             sink = tracer._OutputPipe(fifo, capture, 5)
             sink.start()
-            sink.mark_launched()
-            writer = os.open(fifo, os.O_WRONLY)
             try:
-                for index in range(100):
-                    chunk = (b"hello world" if index == 0 else b"x" * 4096)
-                    os.write(writer, chunk)
+                with open(fifo, "wb", buffering=0) as writer:
+                    sink.mark_launched()
+                    for index in range(100):
+                        chunk = b"hello world" if index == 0 else b"x" * 4096
+                        writer.write(chunk)
             finally:
-                os.close(writer)
-            sink.drain()
-            sink.close(expected_exit=True)
+                sink.close(expected_exit=True)
             with open(capture, "rb") as retained:
                 self.assertEqual(retained.read(), b"hello")
             self.assertEqual(sink.bytes, 11 + 99 * 4096)
@@ -616,6 +603,87 @@ class NativeTraceBudgetTests(unittest.TestCase):
                             for location in row["locations"]
                         )
                     )
+
+
+class NativeStopAttributionTests(unittest.TestCase):
+    SIGNAL, EXCEPTION, BREAKPOINT = 5, 6, 3
+
+    def thread(self, reason, data=(), pc=0x928, description="stop"):
+        frame = types.SimpleNamespace(GetPC=lambda: pc)
+        return types.SimpleNamespace(
+            GetStopReason=lambda: reason,
+            GetStopReasonDataCount=lambda: len(data),
+            GetStopReasonDataAtIndex=lambda index: data[index],
+            GetFrameAtIndex=lambda _index: frame,
+            GetStopDescription=lambda _size: description,
+        )
+
+    @staticmethod
+    def breakpoint(*addresses):
+        return types.SimpleNamespace(
+            FindLocationByAddress=lambda address: types.SimpleNamespace(
+                IsValid=lambda: address in addresses
+            )
+        )
+
+    def stop(self, threads, created):
+        context = {
+            "process": threads,
+            "created": created,
+            "unattributed_breakpoint_stops": 0,
+            "config": {"capture_limits": {"other_stops": 10}},
+        }
+        hits = []
+
+        def handle(_context, frame, index):
+            hits.append((frame.GetPC(), index))
+            return None
+
+        other_stops = []
+        with patch.object(tracer.lldb, "eStopReasonSignal", self.SIGNAL, create=True), patch.object(
+            tracer.lldb, "eStopReasonException", self.EXCEPTION, create=True
+        ), patch.object(tracer, "_handle_breakpoint", side_effect=handle):
+            outcome = tracer._handle_stop(context, other_stops)
+        return outcome, hits, other_stops, context["unattributed_breakpoint_stops"]
+
+    def test_trap_at_requested_location_is_that_requests_hit(self):
+        trap = (tracer.MACH_EXC_BREAKPOINT, 1, 0x928)
+        outcome, hits, other_stops, unattributed = self.stop(
+            [self.thread(self.EXCEPTION, trap, description="EXC_BREAKPOINT (code=1, subcode=0x928)")],
+            [[self.breakpoint(0x928)], [self.breakpoint(0x500)], [self.breakpoint(0x500), self.breakpoint(0x928)]],
+        )
+        self.assertIsNone(outcome)
+        self.assertEqual(hits, [(0x928, 0), (0x928, 2)])
+        self.assertEqual(other_stops, [])
+        self.assertEqual(unattributed, 0)
+
+    def test_unattributed_trap_or_stop_on_a_location_is_retained_and_counted(self):
+        created = [[self.breakpoint(0x928)]]
+        for thread in (
+            self.thread(self.EXCEPTION, (tracer.MACH_EXC_BREAKPOINT, 1, 0x700), pc=0x700, description="elsewhere"),
+            self.thread(self.EXCEPTION, (tracer.MACH_EXC_BREAKPOINT, 1, 0x928), pc=0x92C, description="moved"),
+            self.thread(self.SIGNAL, (17,), pc=0x928, description="signal SIGSTOP"),
+            self.thread(self.EXCEPTION, (1, 2, 0x10), pc=0x928, description="EXC_BAD_ACCESS"),
+        ):
+            outcome, hits, other_stops, unattributed = self.stop([thread], created)
+            self.assertIsNone(outcome)
+            self.assertEqual(hits, [])
+            self.assertEqual(other_stops, [thread.GetStopDescription(256)])
+            self.assertEqual(unattributed, 1)
+
+    def test_other_stops_are_not_counted_as_possible_hits(self):
+        outcome, hits, other_stops, unattributed = self.stop(
+            [
+                self.thread(self.SIGNAL, (11,), pc=0x700, description="signal SIGSEGV"),
+                self.thread(self.EXCEPTION, (1, 2, 0x928), pc=0x700, description="EXC_BAD_ACCESS"),
+                self.thread(self.BREAKPOINT, (1, 1), description="breakpoint 1.1"),
+            ],
+            [[self.breakpoint(0x928)]],
+        )
+        self.assertIsNone(outcome)
+        self.assertEqual(hits, [])
+        self.assertEqual(other_stops, ["signal SIGSEGV", "EXC_BAD_ACCESS"])
+        self.assertEqual(unattributed, 0)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  bandOf,
   difficultyRecord,
   difficultySection,
   nextSolve,
@@ -42,7 +41,17 @@ describe("the adaptive band", () => {
       [pass, unfinished, pass, miss],
     ],
   ] as const)("places %s as %s", (_label, band, solves) => {
-    expect(bandOf(solves)).toBe(band);
+    const record = difficultyRecord({
+      model: "fixture",
+      agent: "fixture",
+      solves,
+      budgetUsd: 10,
+      stopped: "budget",
+      taskSha256: "ab".repeat(32),
+      versions: { rea: "fixture", agentenv: null },
+      measuredAt: "2026-11-07T01:00:00.000Z",
+    });
+    expect(record.band).toBe(band);
   });
 
   it("asks for 3 solves, stops at 0 or 3 of 3, asks for 2 more otherwise and stops at 5", () => {
@@ -127,6 +136,23 @@ describe("the difficulty record", () => {
       versions: { rea: "6.8.0", agentenv: "0.9.1431" },
     });
     expect(record.solves).toHaveLength(6);
+  });
+
+  it("leaves the total cost unknown when a solve reported no cost", () => {
+    const record = difficultyRecord({
+      model: "m",
+      agent: "claude-code",
+      solves: [pass, solve("passed", { usd: null })],
+      budgetUsd: 8,
+      stopped: "cost_unknown",
+      taskSha256: "ab".repeat(32),
+      versions: { rea: "6.8.0", agentenv: null },
+      measuredAt: "2026-11-07T01:00:00.000Z",
+    });
+    expect(record.usd).toBeNull();
+    expect(difficultySection({ task: record })).toContain(
+      "passed 2 of 2, undecided, cost unknown.",
+    );
   });
 
   it("counts failures of checks named like an object's own members as plain numbers", () => {

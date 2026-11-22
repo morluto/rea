@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { wasmArtifactSchema } from "../../../src/domain/wasm/wasmArtifact.js";
 import { observeProcessStartIdentity } from "../../../src/process/ProcessOwnershipObservation.js";
@@ -181,10 +181,8 @@ cliTest.skipIf(process.platform === "win32")(
       if (decoder === undefined)
         throw new Error("No decoder process was observed");
       await expect
-        .poll(
-          () =>
-            observeProcessStartIdentity(decoder.pid, undefined, decoder.run_id),
-          { timeout: 6000 },
+        .poll(() =>
+          observeProcessStartIdentity(decoder.pid, undefined, decoder.run_id),
         )
         .toBeUndefined();
     }

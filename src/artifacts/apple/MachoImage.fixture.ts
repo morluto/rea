@@ -1,21 +1,8 @@
 /** Little-endian Mach-O images and FAT containers built field by field for tests. */
 
-export const LC = {
-  LOAD_DYLIB: 0xc,
-  ID_DYLIB: 0xd,
-  LOAD_WEAK_DYLIB: 0x80000018,
-  REEXPORT_DYLIB: 0x8000001f,
-  LAZY_LOAD_DYLIB: 0x20,
-  LOAD_UPWARD_DYLIB: 0x80000023,
-  RPATH: 0x8000001c,
-  DYLD_ENVIRONMENT: 0x27,
-  CODE_SIGNATURE: 0x1d,
-  BUILD_VERSION: 0x32,
-  VERSION_MIN_MACOSX: 0x24,
-  VERSION_MIN_IPHONEOS: 0x25,
-  VERSION_MIN_TVOS: 0x2f,
-  VERSION_MIN_WATCHOS: 0x30,
-} as const;
+import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
+
+export { LC };
 
 export const CPU = {
   i386: { type: 7, subtype: 3 },
@@ -310,6 +297,30 @@ export const fatImage = (
     bytes.set(slice.bytes, offset);
   });
   return bytes;
+};
+
+/**
+ * The file range of FAT entry `index` as target admission records it, read
+ * back from a container built by {@link fatImage}.
+ */
+export const fatSliceRange = (
+  fat: Uint8Array,
+  index: number,
+): { readonly offset: number; readonly size: number } => {
+  const view = new DataView(fat.buffer, fat.byteOffset, fat.byteLength);
+  const magic = view.getUint32(0, false);
+  const littleEndian = magic === 0xbebafeca || magic === 0xbfbafeca;
+  const wide = magic === 0xcafebabf || magic === 0xbfbafeca;
+  const base = 8 + index * (wide ? 32 : 20);
+  return wide
+    ? {
+        offset: Number(view.getBigUint64(base + 8, littleEndian)),
+        size: Number(view.getBigUint64(base + 16, littleEndian)),
+      }
+    : {
+        offset: view.getUint32(base + 8, littleEndian),
+        size: view.getUint32(base + 12, littleEndian),
+      };
 };
 
 /** A minimal BSD ar archive containing one inert member for container tests. */

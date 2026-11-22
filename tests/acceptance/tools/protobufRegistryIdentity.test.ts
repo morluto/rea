@@ -110,14 +110,16 @@ cliTest(
               {
                 path: ["protobuf", "schema", "descriptor_set_path"],
                 reason: "invalid_format",
+                message: expect.stringContaining(
+                  "Duplicate fully qualified type name",
+                ),
               },
             ],
           },
         };
-        // Both orders cross the actual CLI adapter; other geometries reuse
-        // the production MCP session and the same application workflow.
-        if (scope === "same-file") {
-          const output = await cli.sharedCliRun!({
+        // Keep CLI refusal parity on one collision and both orders in MCP.
+        if (scope === "same-file" && !reverse) {
+          const output = await cli.run({
             arguments: [
               "inspect-web-network-capture",
               capture,

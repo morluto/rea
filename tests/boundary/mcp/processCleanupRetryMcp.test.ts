@@ -23,9 +23,11 @@ import {
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const createTemporaryRoot = (): Promise<string> =>
-  mkdtemp(join(tmpdir(), "rea-mcp-process-cleanup-retry-"));
+  createTestTempDirectory("rea-mcp-process-cleanup-retry-");
 
 const cleanupOptions = (
   root: string,
@@ -54,7 +56,10 @@ const connectSession = async () => {
     { kind: "session", session },
     { logger: silentLogger },
   );
-  const client = new Client({ name: "process-cleanup-retry", version: "1" });
+  const client = new Client(
+    { name: "process-cleanup-retry", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   onTestFinished(() => closeSession({ client, server, session }));
@@ -162,9 +167,6 @@ it("projects the retained process root through close_binary and resolves its ret
     async () => {
       await closeSession(resources);
     },
-    async () => {
-      await rm(root, { recursive: true, force: true });
-    },
   ]);
 });
 
@@ -191,15 +193,17 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       });
     const callClose = () =>
       resources.client.callTool({ name: "close_binary", arguments: {} });
-    const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
+    const delivery = vi.spyOn(
+      ToolResultDelivery.prototype,
+      "toPartialErrorToolResult",
+    );
 
     await withVerifierCleanup(async () => {
       const failed = parseMcpToolError(await callClose());
       const firstWire = JSON.stringify(failed);
-      const delivered = delivery.mock.calls.at(-1)?.[0];
-      if (delivered === undefined || delivered.ok)
+      const composed = delivery.mock.calls.at(-1)?.[0];
+      if (composed === undefined)
         throw new Error("Expected the composed lifecycle error at delivery");
-      const composed = delivered.error;
       // The session failure did not retire its target under a retained
       // cleanup, so its own recovery applies before any close retry.
       expect(failed.error).not.toHaveProperty("recovery");
@@ -262,9 +266,6 @@ it.each(["returned", "thrown", "synchronous"] as const)(
       },
       async () => {
         await closeSession(resources);
-      },
-      async () => {
-        await rm(root, { recursive: true, force: true });
       },
     ]);
   },

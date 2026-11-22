@@ -3,20 +3,19 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
-import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
   omitUnretainedEvidenceFromError,
   projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
   unretainedEvidenceCandidates,
   type AnalysisErrorProjection,
 } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { NoBinaryOpenError } from "../domain/configurationErrors.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
-import { estimateJsonStorage } from "../application/JsonAuthenticationHeadroom.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
@@ -30,12 +29,14 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  errorTextWireBytes,
   measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
   TARGET_CONTENT_RESULT_META,
   type ToolResultEncoding,
 } from "./toolResultEncoding.js";
+import { isRecord } from "../kernel/isRecord.js";
 
 /** Project a response-budget refusal without labeling REA's reserved string limit as Node's ceiling. */
 export const mcpResponseOverflowProjection = (input: {
@@ -74,30 +75,88 @@ export const mcpResponseOverflowProjection = (input: {
  * Each projection owns a different next step when it exceeds one MCP frame.
  */
 const evidenceBundleProjection = (value: JsonValue): JsonValue | undefined => {
-  const payload =
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "result" in value
-      ? value.result
-      : value;
-  return typeof payload === "object" &&
-    payload !== null &&
-    !Array.isArray(payload)
-    ? payload.kind
-    : undefined;
+  const payload = isRecord(value) && "result" in value ? value.result : value;
+  return isRecord(payload) ? payload.kind : undefined;
 };
 
-const evidenceBundleOverflowStep = (value: JsonValue): string => {
+/**
+ * The recovery for an overflowing completed result: its prose and, when it
+ * names one MCP operation to call first, that operation. The CLI fallback
+ * names none.
+ */
+interface OverflowNextStep {
+  readonly text: string;
+  readonly operation?: string;
+}
+
+const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
   const projection = evidenceBundleProjection(value);
   // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
-    return MCP_TRANSPORT_EVIDENCE_EXPORT;
-  if (projection === "evidence-link-inspection")
-    return MCP_TRANSPORT_EVIDENCE_LINKS;
-  return projection === "evidence-record-selection"
-    ? MCP_TRANSPORT_EVIDENCE_RECORDS
-    : MCP_TRANSPORT_EVIDENCE_DISCOVERY;
+    return {
+      text: MCP_TRANSPORT_EVIDENCE_EXPORT,
+      operation: "export_evidence_bundle",
+    };
+  return {
+    text:
+      projection === "evidence-link-inspection"
+        ? MCP_TRANSPORT_EVIDENCE_LINKS
+        : projection === "evidence-record-selection"
+          ? MCP_TRANSPORT_EVIDENCE_RECORDS
+          : MCP_TRANSPORT_EVIDENCE_DISCOVERY,
+    operation: "get_evidence_bundle",
+  };
+};
+
+/**
+ * Rows in an overflowing `list_unknowns` page, delivered as a session
+ * `{ result }` envelope; a smaller limit only helps above one.
+ */
+const unknownPageItems = (value: JsonValue): number => {
+  const page = isRecord(value) ? value.result : undefined;
+  return isRecord(page) && Array.isArray(page.items)
+    ? page.items.length
+    : Number.POSITIVE_INFINITY;
+};
+
+const overflowNextStep = (
+  value: JsonValue,
+  contract: ToolContract,
+  recovery: Readonly<Record<string, JsonValue>>,
+): OverflowNextStep => {
+  if (recovery.committed_unknown !== undefined)
+    return {
+      text: "Export this session with export_evidence_bundle to inspect the committed unknown and its mutation Evidence. Do not repeat the completed mutation; an individual unknown may be too large for a list_unknowns page.",
+      operation: "export_evidence_bundle",
+    };
+  if (recovery.continuation !== undefined)
+    return {
+      text: "Call inspect_analysis_view with the supplied continuation arguments to read retained analysis. Follow coverage.next_offset for subsequent pages; reduce the page limit if needed, or export the complete retained Evidence.",
+      operation: "inspect_analysis_view",
+    };
+  if (recovery.evidence_reference !== undefined)
+    return {
+      text: "Export retained evidence to consume the complete analysis, or use complete CLI JSON output.",
+      operation: "export_evidence_bundle",
+    };
+  if (contract.name === "list_unknowns" && unknownPageItems(value) <= 1)
+    return {
+      text: "One unknown does not fit a list_unknowns response on this connection, so a smaller limit cannot help. Export the session with export_evidence_bundle to recover it.",
+      operation: "export_evidence_bundle",
+    };
+  if (contract.name === "list_unknowns")
+    return {
+      text: "Call list_unknowns on this same connection with the same filters and offset, using a smaller limit, then follow next_offset. If a single unknown cannot fit, export the session with export_evidence_bundle to recover it.",
+      operation: "list_unknowns",
+    };
+  if (contract.name === "get_evidence_bundle")
+    return evidenceBundleOverflowStep(value);
+  if (contract.name === "inspect_address_context")
+    return {
+      text: "Call get_evidence_bundle with detail summary to discover retained facet observations, then export_evidence_bundle to inspect complete records. Some facets may not have been retained; a new analysis can differ.",
+      operation: "get_evidence_bundle",
+    };
+  return { text: "Use complete CLI JSON output to consume the analysis." };
 };
 
 /** Immutable encoding and recovery policy shared by one MCP server. */
@@ -137,12 +196,20 @@ export class ToolResultDelivery {
       budgetBytes: number,
     ) => Iterable<JsonValue>,
   ): CallToolResult {
+    // A session tool's result is delivered inside `result`, alternatives too.
+    const shaped = (value: JsonValue): JsonValue =>
+      contract.kind === "session" ? { result: value } : value;
     return result.ok
       ? this.successResult(
-          contract.kind === "session" ? { result: result.value } : result.value,
+          shaped(result.value),
           contract,
           recovery,
-          alternatives,
+          alternatives === undefined
+            ? undefined
+            : function* (failure, budgetBytes) {
+                for (const alternative of alternatives(failure, budgetBytes))
+                  yield shaped(alternative);
+              },
         )
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
@@ -276,22 +343,18 @@ export class ToolResultDelivery {
     return this.projectedErrorResult(projected, targetContent);
   }
 
-  /** Include the session owner's selection at the end of this open attempt. */
-  toOpenFailureToolResult(
-    failure: Extract<BinaryOpenResult, { ok: false }>,
+  /**
+   * Deliver an error with facts its operation observed alongside it (an
+   * open's selection at failure, say) added to the error's own details.
+   */
+  toDetailedErrorToolResult(
+    error: AnalysisError,
+    details: Readonly<Record<string, JsonValue>>,
     targetContent: boolean,
   ): CallToolResult {
-    const projected = projectAnalysisError(failure.error);
+    const projected = projectAnalysisError(error);
     return this.projectedErrorResult(
-      {
-        ...projected,
-        details: {
-          ...projected.details,
-          selection_at_failure: failure.selection,
-          target_at_open_completion: failure.targetAtCompletion,
-          provider_id_at_open_completion: failure.providerIdAtCompletion,
-        },
-      },
+      { ...projected, details: { ...projected.details, ...details } },
       targetContent,
     );
   }
@@ -314,11 +377,19 @@ export class ToolResultDelivery {
           ...projected,
           details: {
             ...projected.details,
-            partial_observation: {
+            // The ledger states whether the record is already retained; only
+            // without that fact is retention unknown.
+            partial_observation: ledgerRetentionFact(
+              recorded.error.partialObservation,
+              partial.value,
+            ) ?? {
               kind: "inline-evidence",
               retention: "unknown",
               evidence: partial.value,
             },
+            retention_error: projectAnalysisErrorWithoutPartialObservation(
+              recorded.error,
+            ),
           },
         },
         targetContent,
@@ -351,43 +422,57 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    let candidateProjection = projected;
-    while (!encoded.ok) {
-      const limit = encoded;
-      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
-        .map((candidate) => ({
-          candidate,
-          size: estimateJsonStorage(candidate.value, {
-            maximumValueBytes: this.resultBudgetBytes,
-            includeSerialized: false,
-          }).valueBytes,
-        }))
-        .sort((left, right) => right.size - left.size);
-      let next: AnalysisErrorProjection | undefined;
-      for (const { candidate } of candidates) {
-        const compact = omitUnretainedEvidenceFromError(
-          candidateProjection,
-          limit,
-          candidate,
-        );
-        if (compact === undefined) continue;
-        next ??= compact;
-        const content = { error: compact };
-        const compactEncoded = encodeToolResult(
-          content,
-          this.resultBudgetBytes,
-          "error-text",
-          targetContent,
-        );
-        if (compactEncoded.ok) {
-          structuredContent = content;
-          encoded = compactEncoded;
-          break;
+    if (!encoded.ok) {
+      let candidateProjection = projected;
+      const rawCandidates = [
+        ...unretainedEvidenceCandidates(candidateProjection),
+      ];
+      const remaining =
+        rawCandidates.length <= 1
+          ? rawCandidates
+          : rawCandidates
+              .map((candidate) => ({
+                candidate,
+                size: errorTextWireBytes(
+                  candidate.value,
+                  this.resultBudgetBytes,
+                ),
+              }))
+              .sort((left, right) => right.size - left.size)
+              .map(({ candidate }) => candidate);
+      while (!encoded.ok && remaining.length > 0) {
+        const limit = encoded;
+        let next: AnalysisErrorProjection | undefined;
+        let nextIndex = -1;
+        for (const [index, candidate] of remaining.entries()) {
+          const compact = omitUnretainedEvidenceFromError(
+            candidateProjection,
+            limit,
+            candidate,
+          );
+          if (compact === undefined) continue;
+          if (next === undefined) {
+            next = compact;
+            nextIndex = index;
+          }
+          const content = { error: compact };
+          const compactEncoded = encodeToolResult(
+            content,
+            this.resultBudgetBytes,
+            "error-text",
+            targetContent,
+          );
+          if (compactEncoded.ok) {
+            structuredContent = content;
+            encoded = compactEncoded;
+            break;
+          }
         }
+        if (encoded.ok) break;
+        if (next === undefined) break;
+        candidateProjection = next;
+        remaining.splice(nextIndex, 1);
       }
-      if (encoded.ok) break;
-      if (next === undefined) break;
-      candidateProjection = next;
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
@@ -436,26 +521,12 @@ export class ToolResultDelivery {
           ? { _meta: TARGET_CONTENT_RESULT_META }
           : {}),
       };
-    const retainedEvidence = recovery.evidence_reference !== undefined;
-    const nextStep =
-      recovery.committed_unknown !== undefined
-        ? "Export this session with export_evidence_bundle to inspect the committed unknown and its mutation Evidence. Do not repeat the completed mutation; an individual unknown may be too large for a list_unknowns page."
-        : recovery.continuation !== undefined
-          ? "Call inspect_analysis_view with the supplied continuation arguments to read retained analysis. Follow coverage.next_offset for subsequent pages; reduce the page limit if needed, or export the complete retained Evidence."
-          : retainedEvidence
-            ? "Export retained evidence to consume the complete analysis, or use complete CLI JSON output."
-            : contract.name === "list_unknowns"
-              ? "Call list_unknowns on this same connection with the same filters and offset, using a smaller limit, then follow next_offset. If a single unknown cannot fit, export the session with export_evidence_bundle to recover it."
-              : contract.name === "get_evidence_bundle"
-                ? evidenceBundleOverflowStep(value)
-                : contract.name === "inspect_address_context"
-                  ? "Call get_evidence_bundle with detail summary to discover retained facet observations, then export_evidence_bundle to inspect complete records. Some facets may not have been retained; a new analysis can differ."
-                  : "Use complete CLI JSON output to consume the analysis.";
+    const nextStep = overflowNextStep(value, contract, recovery);
     const projected = mcpResponseOverflowProjection({
       completed: true,
       constraint: encoded.constraint,
       effectiveResponseBytes: this.maximumResponseBytes,
-      nextStep,
+      nextStep: nextStep.text,
     });
     return this.toErrorToolResult(
       new AnalysisResourceConstraintError(
@@ -471,6 +542,9 @@ export class ToolResultDelivery {
           response_code_units_at_least: encoded.codeUnitsAtLeast,
           constraint: encoded.constraint,
           ...recovery,
+          ...(nextStep.operation === undefined
+            ? {}
+            : { next_operation: nextStep.operation }),
         },
         { remediationAction: projected.remediationAction },
       ),
@@ -478,3 +552,26 @@ export class ToolResultDelivery {
     );
   }
 }
+
+/** The ledger's own retained/unretained fact for this exact record, if it gave one. */
+const ledgerRetentionFact = (
+  fact: unknown,
+  evidence: Evidence,
+):
+  | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
+  | undefined => {
+  if (typeof fact !== "object" || fact === null) return undefined;
+  const value = fact as {
+    readonly kind?: unknown;
+    readonly evidence_id?: unknown;
+  };
+  if (
+    value.kind === "retained-evidence" &&
+    value.evidence_id === evidence.evidence_id
+  )
+    return { kind: "retained-evidence", evidence_id: evidence.evidence_id };
+  if (value.kind === "unretained-evidence")
+    return { kind: "unretained-evidence", evidence };
+  return undefined;
+};

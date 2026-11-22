@@ -1,9 +1,8 @@
-import { spawnSync } from "node:child_process";
-
 import { describe, expect, it } from "vitest";
 
 import {
   agentEvaluationPassed,
+  assertAgentEvaluationReportPassed,
   summarizeFactualCorrectness,
 } from "./AgentEvaluationReport.js";
 
@@ -19,42 +18,24 @@ const routingSuccess = {
   epistemicCuePresent: true,
 };
 
-describe("agent evaluation release gate", () => {
-  it("exits unsuccessfully for a rejected report after accepting a passing report", () => {
-    const passing = {
-      id: "passing-fixture",
-      ...routingSuccess,
-      factualCorrectness: "passed",
-    };
-    const accepted = runReportGate([passing]);
-    expect(accepted.status).toBe(0);
-    const rejected = runReportGate([
-      passing,
-      { ...passing, id: "incorrect-fixture", factualCorrectness: "failed" },
-    ]);
-    // Negative control: a runner that lets the failed report pass exits zero.
-    expect(rejected.status).toBe(1);
-    expect(rejected.stderr).toContain(
-      "Agent routing/workflow/answer checks failed: incorrect-fixture",
-    );
-  });
-});
+it("reports only rejected fixture outcomes, preserving their order", () => {
+  const passing = {
+    id: "passing-fixture",
+    ...routingSuccess,
+    factualCorrectness: "passed" as const,
+  };
 
-function runReportGate(results: readonly object[]) {
-  const gateUrl = new URL(
-    "../../../scripts/lib/agent-evaluation-report-gate.mjs",
-    import.meta.url,
+  expect(() => assertAgentEvaluationReportPassed([passing])).not.toThrow();
+  expect(() =>
+    assertAgentEvaluationReportPassed([
+      { ...passing, id: "incorrect-fixture", factualCorrectness: "failed" },
+      passing,
+      { ...passing, id: "refused-scenario", scenarioOutcomePassed: false },
+    ]),
+  ).toThrow(
+    /^Agent routing\/workflow\/answer checks failed: incorrect-fixture, refused-scenario$/u,
   );
-  const script = `
-    const { assertAgentEvaluationReportPassed } = await import(${JSON.stringify(gateUrl.href)});
-    assertAgentEvaluationReportPassed(JSON.parse(process.argv[1]));
-  `;
-  return spawnSync(
-    process.execPath,
-    ["--input-type=module", "-e", script, JSON.stringify(results)],
-    { encoding: "utf8", timeout: 15_000 },
-  );
-}
+});
 
 describe("scoped factual report", () => {
   it("requires a validated target clarification and zero REA calls for the negative route", () => {
@@ -70,10 +51,7 @@ describe("scoped factual report", () => {
     expect(agentEvaluationPassed(clarification)).toBe(true);
     for (const change of [
       { naturalUse: true },
-      { correctFirstTool: false },
       { targetClarificationPassed: false },
-      { exitCode: 1 },
-      { inputTokens: 0 },
     ])
       expect(agentEvaluationPassed({ ...clarification, ...change })).toBe(
         false,

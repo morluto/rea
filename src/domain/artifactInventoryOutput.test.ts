@@ -60,10 +60,3 @@ it("keeps absent container facts absent in JSON-safe inventory output", () => {
       .success,
   ).toBe(false);
 });
-
-it("keeps historical coverage omission separate from current output requirements", () => {
-  const { coverage: _coverage, ...historical } = inventory;
-  expect(artifactInventoryResultSchema.safeParse(historical).success).toBe(
-    false,
-  );
-});

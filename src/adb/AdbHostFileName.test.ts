@@ -34,7 +34,7 @@ describe("adbHostFileName", () => {
     ["/data\0/local/tmp/file", "unsupported_character"],
     ["/data/local/tmp/a\0b", "unsupported_character"],
   ] as const)("refuses %s as %s", (devicePath, reason) => {
-    expect(adbHostFileName(devicePath)).toEqual({ ok: false, reason });
+    expect(adbHostFileName(devicePath, "linux")).toEqual({ ok: false, reason });
   });
 
   it.each([

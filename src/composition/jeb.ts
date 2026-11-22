@@ -1,4 +1,4 @@
-import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
+import type { JebAnalysisPort } from "../ports/jeb/JebAnalysisPort.js";
 import { parseJebMcpTimeoutMs } from "../config/environment.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";

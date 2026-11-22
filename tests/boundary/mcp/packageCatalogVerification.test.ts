@@ -1,11 +1,14 @@
 import { expect, it } from "vitest";
-import { z } from "zod";
 import { verifyCompleteToolCatalog } from "../../../scripts/lib/verify-package-core.mjs";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 
 it("verifies canonical names, converted schemas and session metadata together", async () => {
-  const harness = await createApplicationMcpHarness();
+  const harness = await createApplicationMcpHarness({
+    serverOptions: {
+      environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact" },
+    },
+  });
   try {
     const listed = await harness.client.listTools();
     const sessionDefinition = listed.tools.find(
@@ -13,6 +16,7 @@ it("verifies canonical names, converted schemas and session metadata together", 
     );
     if (sessionDefinition === undefined)
       throw new Error("Expected the binary_session definition");
+    expect(sessionDefinition.outputSchema).toBeDefined();
     // Catalog order must not select which schema validates the lifecycle call.
     const tools = {
       ...listed,
@@ -53,33 +57,17 @@ it("verifies canonical names, converted schemas and session metadata together", 
     const omitted = tools.tools[0];
     if (omitted === undefined) throw new Error("Expected canonical tools");
     const reduced = { ...tools, tools: tools.tools.slice(1) };
-    const body = z
-      .object({
-        result: z
-          .object({
-            tool_availability: z
-              .object({
-                groups: z.array(
-                  z.object({ names: z.array(z.string()) }).passthrough(),
-                ),
-              })
-              .passthrough(),
-          })
-          .passthrough(),
-      })
-      .passthrough()
-      .parse(
-        JSON.parse(
-          status.content.find((item) => item.type === "text")?.text ?? "null",
-        ),
-      );
+    const schema = toolContract("binary_session").outputSchema;
+    const body = schema.parse(status.structuredContent);
+    if (body.result.detail !== "summary")
+      throw new Error("Expected a binary_session summary");
     body.result.tool_availability.groups = body.result.tool_availability.groups
       .map((group) => ({
         ...group,
         names: group.names.filter((name) => name !== omitted.name),
       }))
       .filter((group) => group.names.length > 0);
-    toolContract("binary_session").outputSchema.parse(body);
+    schema.parse(body);
     const disagreeingOmission = {
       ...status,
       content: [{ type: "text" as const, text: JSON.stringify(body) }],
@@ -155,6 +143,38 @@ it("verifies canonical names, converted schemas and session metadata together", 
         }),
       }),
     ).resolves.toEqual(canonical);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("refuses a packaged catalog with a pattern outside the portable dialect", async () => {
+  const harness = await createApplicationMcpHarness();
+  try {
+    const listed = await harness.client.listTools();
+    const [first, ...rest] = listed.tools;
+    if (first === undefined) throw new Error("Expected canonical tools");
+    // RE2 and Rust refuse look-around, and one refused pattern makes some
+    // clients reject every tool. The check runs before any tool call.
+    for (const kind of ["inputSchema", "outputSchema"] as const) {
+      const lookAround = {
+        ...first,
+        [kind]: {
+          type: "object" as const,
+          properties: { name: { type: "string", pattern: "^(?!con$)[a-z]+$" } },
+        },
+      };
+      await expect(
+        verifyCompleteToolCatalog({
+          listTools: async () => ({ ...listed, tools: [lookAround, ...rest] }),
+          callTool: async () => {
+            throw new Error("The dialect check must refuse before any call");
+          },
+        }),
+      ).rejects.toThrow(
+        `${first.name} ${kind === "inputSchema" ? "input" : "output"} $.properties.name: pattern look-around`,
+      );
+    }
   } finally {
     await harness.close();
   }

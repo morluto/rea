@@ -382,6 +382,46 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
   );
 });
 
+it("counts a nonflash comment whose address cannot describe a flash range", () => {
+  const flash = uf2Block({
+    address: 0x1000,
+    payload: [1, 2],
+    blockNo: 0,
+    numBlocks: 2,
+  });
+  const decode = (flags: number) =>
+    image(
+      uf2File([
+        flash,
+        uf2Block({
+          address: 0xffffffff,
+          payload: [3, 4],
+          blockNo: 1,
+          numBlocks: 2,
+          flags,
+        }),
+      ]),
+    );
+
+  const comment = decode(UF2_FLAGS.notMainFlash);
+  expect(comment.complete).toBe(true);
+  expect(comment.metadata).toMatchObject({
+    invalid_block_count: 0,
+    missing_block_count: 0,
+    not_main_flash_block_count: 1,
+    flash_block_count: 1,
+    region_count: 1,
+  });
+  expect(comment.regions.map(({ bytes }) => [...bytes])).toEqual([[1, 2]]);
+  for (const flags of [0, UF2_FLAGS.notMainFlash | UF2_FLAGS.fileContainer]) {
+    expect(decode(flags).metadata).toMatchObject({
+      invalid_block_count: 1,
+      missing_block_count: 1,
+      not_main_flash_block_count: 0,
+    });
+  }
+});
+
 it("excludes invalid blocks and a truncated final block, leaving coverage unknown", () => {
   const blocks = uf2Image(RP2040_FAMILY, 0x1000_0000, patternBytes(768));
   const badEnd = uf2Block({

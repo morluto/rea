@@ -62,31 +62,36 @@ const cases = [
   },
 ] as const;
 
-processTest.for(cases)(
-  "resolves $name in an owned subprocess without a native abort",
-  async (scenario, { processes }) => {
-    const sourceRoot = "root" in scenario ? scenario.root : null;
-    // Import the built production helper in a child. A native assertion must
-    // become a failed signal assertion here, never terminate the Vitest worker.
-    const result = await processes.run(
-      process.execPath,
-      [
-        "--input-type=module",
-        "--eval",
-        `import { resolveJavaScriptSourceMapReferences } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
-       const [source, root] = JSON.parse(process.argv[1]);
-       console.log(JSON.stringify(resolveJavaScriptSourceMapReferences([source], root, "maps/main.js.map")[0]));`,
-        JSON.stringify([scenario.source, sourceRoot]),
-      ],
-      { timeoutMs: 10_000 },
-    );
+processTest(
+  "preserves UNC host resolution and source spelling in an owned subprocess",
+  async ({ processes }) => {
+    const inputs = cases.map((scenario) => ({
+      name: scenario.name,
+      source: scenario.source,
+      root: "root" in scenario ? scenario.root : null,
+    }));
+    const result = await processes.run(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { resolveJavaScriptSourceMapReference } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
+     const inputs = JSON.parse(process.argv[1]);
+     const references = inputs.map(({ name, source, root }) => {
+       console.error("Resolving", name);
+       return resolveJavaScriptSourceMapReference(source, root, "maps/main.js.map");
+     });
+     console.log(JSON.stringify(references));`,
+      JSON.stringify(inputs),
+    ]);
+
     expect(result.signal, result.stderr).toBeNull();
     expect(result.exitCode, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      source_name: scenario.source,
-      source_root: sourceRoot,
-      map_path: "maps/main.js.map",
-      resolution: scenario.expected,
-    });
+    expect(JSON.parse(result.stdout)).toMatchObject(
+      cases.map((scenario) => ({
+        source_name: scenario.source,
+        source_root: "root" in scenario ? scenario.root : null,
+        map_path: "maps/main.js.map",
+        resolution: scenario.expected,
+      })),
+    );
   },
 );

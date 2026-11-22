@@ -1,18 +1,30 @@
 import { open, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, vi } from "vitest";
-import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
 import { ModelArtifactService } from "../../../src/application/model/ModelArtifactService.js";
 import { ModelArtifactProvider } from "../../../src/model/ModelArtifactProvider.js";
+import type { EvidenceWriter } from "../../../src/application/investigation/InvestigationRecordPort.js";
 import { InvestigationRecords } from "../../../src/application/investigation/InvestigationRecords.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
-import { registerModelArtifactTools } from "../../../src/server/registerModelArtifactTools.js";
+import { registerServiceTools } from "../../../src/server/serviceToolBindings.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { silentLogger } from "../../../src/logger.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { ggufFixture, safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
+
+const registerModelArtifact = (
+  server: EvidenceMcpServer,
+  service: ModelArtifactService,
+  recordEvidence: EvidenceWriter["recordEvidence"] | undefined,
+) =>
+  registerServiceTools(
+    server,
+    { modelArtifact: service },
+    { logger: silentLogger, recordEvidence },
+  );
 
 const interruptedFixture = (fullHash: boolean) => {
   const seed = ggufFixture();
@@ -115,12 +127,11 @@ mcpTest.for([
       createToolResultDelivery(undefined),
     );
     const records = new InvestigationRecords();
-    registerModelArtifactTools(
-      server,
-      new ModelArtifactService(provider),
-      silentLogger,
-      retained ? (evidence) => records.recordEvidence(evidence) : undefined,
-    );
+    const service = new ModelArtifactService(provider);
+    const recordEvidence = retained
+      ? (evidence: Evidence) => records.recordEvidence(evidence)
+      : undefined;
+    registerModelArtifact(server, service, recordEvidence);
     const client = await mcp.connect(server);
     try {
       const response = await client.callTool({

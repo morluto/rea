@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { SqliteDatabaseService } from "../../../src/application/sqlite/SqliteDatabaseService.js";
-import { ArtifactFileCleanupFailure } from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactFileCleanupFailure } from "../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { registerSqliteCommands } from "../../../src/cli/sqliteCommands.js";
 import { createSqliteDatabaseService } from "../../../src/composition/sqlite.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -170,7 +170,7 @@ const serveInspection = async (
   vi.mocked(createSqliteDatabaseService).mockReturnValue(
     new SqliteDatabaseService(provider),
   );
-  const cli = Cli.create("rea-sqlite-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerSqliteCommands(cli, silentLogger, {});
   let stdout = "";
   await cli.serve(["inspect-sqlite-database", path, "--json"], {
@@ -464,8 +464,7 @@ nativeInspectionTest.each([
       parameters: input,
       subject: {
         local_path: input.path,
-        format: "file",
-        digest: { sha256: databaseDigest },
+        identity: { format: "file", sha256: databaseDigest },
       },
       normalized_result: {
         artifact: {
