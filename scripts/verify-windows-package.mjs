@@ -156,6 +156,22 @@ try {
     },
   ]);
 
+  timings.begin("mcp_doctor_target_free");
+  const mcpDoctor = JSON.parse(
+    (
+      await commands.exec(
+        process.execPath,
+        [entry, "mcp", "doctor", "--json"],
+        {
+          env: { ...environment, hopper_target_kind: "invalid-fixture-kind" },
+          windowsHide: true,
+        },
+      )
+    ).stdout,
+  );
+  if (mcpDoctor.healthy !== true || mcpDoctor.request_flow?.ok !== true)
+    throw new Error("Packaged Windows MCP doctor did not start target-free");
+
   timings.begin("setup");
   const home = join(workspace, "home");
   const setupEnvironment = {
@@ -285,6 +301,7 @@ try {
     platform: process.platform,
     package: packageResult.filename,
     tools: toolCount,
+    mcp_doctor_target_free: true,
     ghidra_bridge: "present",
     agent_setup: ["opencode", "vscode", "copilot_cli"],
     setup_idempotent: true,

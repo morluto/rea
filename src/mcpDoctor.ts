@@ -134,10 +134,14 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       command: options.command,
       arguments: [...options.args],
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      // The caller's environment is the child's complete base. The launcher
-      // would otherwise merge the ambient process environment, including the
-      // target selection the doctor removes.
-      hostEnvironment: targetFreeEnvironment(options.environment),
+      // The caller supplies the complete base. Use the process owner's
+      // platform-aware overlay to remove target selection before launching.
+      hostEnvironment: options.environment,
+      env: {
+        HOPPER_TARGET_PATH: undefined,
+        HOPPER_TARGET_KIND: undefined,
+        HOPPER_LOADER_ARGS_JSON: undefined,
+      },
       // A server can start its own providers in separate process groups.
       sweepTokenOwnedProcesses: true,
     },
@@ -558,23 +562,6 @@ const requestOptions = (deadline: number, signal: AbortSignal) => ({
   signal,
   timeout: Math.max(1, Math.ceil(deadline - performance.now())),
 });
-
-const targetFreeEnvironment = (
-  environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> => {
-  const result = Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-  for (const name of [
-    "HOPPER_TARGET_PATH",
-    "HOPPER_TARGET_KIND",
-    "HOPPER_LOADER_ARGS_JSON",
-  ])
-    delete result[name];
-  return result;
-};
 
 let cachedVerifiedCatalog: RecordedMcpCatalog | null | undefined;
 
