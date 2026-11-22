@@ -14,6 +14,7 @@ import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   INTEL_HEX_I32_GAP,
   SREC_S19,
+  intelHexInterleavedRuns,
   intelHexRecord,
 } from "../domain/firmware/hexRecords.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -77,17 +78,10 @@ it("reports unknown coverage and termination facts as limitations", async () => 
   );
 });
 
-it("fails closed on over-limit records", async () => {
-  const runs = [intelHexRecord(0, 0, [1])];
-  for (let index = 1; index <= 65_536; index += 1) {
-    const address = index * 2;
-    if (address % 0x1_0000 === 0)
-      runs.push(intelHexRecord(4, 0, [0, address >>> 16]));
-    runs.push(intelHexRecord(0, address & 0xffff, [1]));
-  }
+it("refuses one over-limit physical run even when all addresses could merge", async () => {
   await expect(
     scanCanonicalArtifactInventory(
-      await writeImage("runs.hex", `${runs.join("\n")}\n`),
+      await writeImage("runs.hex", intelHexInterleavedRuns(true)),
     ),
   ).rejects.toMatchObject({
     reason: "limit",
