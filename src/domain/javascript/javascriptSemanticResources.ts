@@ -4,7 +4,8 @@ import { rejectsSemanticEventListener } from "./javascriptSemanticAsyncEffects.j
 import {
   BUILTIN_RESOURCE_SPECIFIERS,
   BUILTIN_RESOURCE_METHODS,
-  BUILTIN_RESOURCE_RELEASE_METHODS,
+  builtinResourceReleases,
+  type BuiltinResourceReleaseMember,
 } from "./javascriptBuiltinResourceMethods.js";
 import type {
   JavaScriptSemanticCallable,
@@ -22,6 +23,8 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticGlobalReference.js";
 import {
+  bindingEffectsConfinedToReceiverCalls,
+  bindingMethodMayHaveChanged,
   opaqueCodeMayRebindBinding,
   prototypeMutationMayPrecede,
 } from "./javascriptSemanticEffectLog.js";
@@ -30,31 +33,19 @@ import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
+  type JavaScriptSemanticMemberEffect,
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectIdentity,
   dataEffectMemberCallee,
   outerDataEffectBinding,
+  requiredModuleChanged,
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
-
-/**
- * Release methods the value from this acquisition actually has. An unlisted
- * specifier/method pair admits none, so a call to it emits no release fact.
- */
-const releaseMethodsFor = (
-  acquisition: ResourceCandidate,
-): readonly ("close" | "destroy" | "end")[] => {
-  const key = `${acquisition.specifier}:${acquisition.method}`;
-  const table: Readonly<
-    Record<string, readonly ("close" | "destroy" | "end")[]>
-  > = BUILTIN_RESOURCE_RELEASE_METHODS;
-  return table[key] ?? [];
-};
 
 interface ResourceCandidate {
   readonly builtinAuthority?: "candidate";
@@ -426,6 +417,25 @@ const collectAcquisitions = (
   return output;
 };
 
+/** FileHandle.close can run close listeners. Exempt receiver effects only
+ * when the binding has no writes or exposures besides direct native closes. */
+const hasOnlyDirectCloseInvocations = (
+  binding: JavaScriptSemanticBindingState,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  bindingEffectsConfinedToReceiverCalls(binding, (node) => {
+    if (!t.isCallExpression(node) || node.arguments.length !== 0) return false;
+    const member = dataEffectMemberCallee(node);
+    return (
+      member !== null &&
+      t.isIdentifier(member.object) &&
+      semanticStaticPropertyName(member.property, member.computed) ===
+        "close" &&
+      resolveSemanticBindingState(state, member.object, member.object.name) ===
+        binding
+    );
+  });
+
 const collectReleases = (
   program: t.Program,
   context: DataEffectTraversalContext,
@@ -439,6 +449,7 @@ const collectReleases = (
     byBinding.set(acquisition.resultBindingId, existing);
   }
   const output: JavaScriptSemanticResourceOperation[] = [];
+  const isolatedFileHandles = new Map<string, boolean>();
   traverseDataEffects(program, context, (node) => {
     if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return;
     const member = dataEffectMemberCallee(node);
@@ -462,21 +473,38 @@ const collectReleases = (
       context.state,
       member.object,
     );
-    const receiver = candidates.some(({ resultIsPromise }) => resultIsPromise)
-      ? semanticBindingAtRead(binding, member.object, context.state).binding
-      : binding;
+    const receiver = semanticBindingAtRead(
+      binding,
+      member.object,
+      context.state,
+    );
     const knownAcquisitions = new Set<t.Node>(
       candidates
         .filter(({ builtinAuthority }) => builtinAuthority === undefined)
         .map(({ node }) => node),
     );
+    const selectedSources = [
+      ...receiver.binding.initializers,
+      ...receiver.binding.referenceInitializers,
+    ];
+    const fresh =
+      receiver.status === "ordered" &&
+      receiver.hasDefiniteInitializer &&
+      selectedSources.length > 0 &&
+      selectedSources.every(
+        ({ node, projection }) =>
+          projection.length === 0 &&
+          knownAcquisitions.has(resourceInitializer(node).value),
+      );
+    const releasesFor = (acquisition: ResourceCandidate) =>
+      builtinResourceReleases(acquisition.specifier, acquisition.method);
     const linked = candidates.filter(
       (acquisition) =>
-        releaseMethodsFor(acquisition).includes(method) &&
+        releasesFor(acquisition)?.[method] !== undefined &&
         (!acquisition.resultIsPromise ||
           opaqueReceiver ||
           mayReceiveFulfilledHandle(
-            receiver,
+            receiver.binding,
             acquisition,
             knownAcquisitions,
             context.state,
@@ -485,6 +513,47 @@ const collectReleases = (
     // No linked acquisition exposes this release method, so the call is not a
     // release of it at all: Node throws at the call site instead.
     if (linked.length === 0) return;
+    const possibleAcquisitions = new Set(linked.map(({ node }) => node));
+    const [first] = linked;
+    const members =
+      linked.length === 1 && first ? releasesFor(first) : undefined;
+    const release = members?.[method];
+    const streamConstructor =
+      first?.specifier !== "fs"
+        ? undefined
+        : first.method === "createReadStream"
+          ? "ReadStream"
+          : first.method === "createWriteStream"
+            ? "WriteStream"
+            : undefined;
+    const streamConstructorMayHaveChanged =
+      first !== undefined &&
+      streamConstructor !== undefined &&
+      requiredModuleChanged(
+        "fs",
+        [streamConstructor],
+        first.node,
+        context.state,
+      );
+    let isolatedNativeCloses = false;
+    if (
+      fresh &&
+      first?.specifier === "fs/promises" &&
+      release?.owner === "instance"
+    ) {
+      isolatedNativeCloses =
+        isolatedFileHandles.get(binding.bindingId) ??
+        hasOnlyDirectCloseInvocations(binding, context.state);
+      isolatedFileHandles.set(binding.bindingId, isolatedNativeCloses);
+      isolatedNativeCloses =
+        isolatedNativeCloses &&
+        !requiredModuleChanged(
+          "events",
+          ["prototype", "emit"],
+          member,
+          context.state,
+        );
+    }
     output.push({
       resourceId: `resource:release:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
       kind: "release",
@@ -498,16 +567,78 @@ const collectReleases = (
         : {}),
       resolution:
         !opaqueReceiver &&
-        linked.length === 1 &&
-        (binding.kind !== "parameter" ||
-          semanticBindingAtRead(binding, member.object, context.state)
-            .hasDefiniteInitializer) &&
+        !streamConstructorMayHaveChanged &&
+        release !== undefined &&
+        !releaseMethodMayHaveChanged(
+          binding,
+          method,
+          member,
+          context.state,
+          possibleAcquisitions,
+          { fresh, release, isolatedNativeCloses },
+        ) &&
+        !release.delegates?.some((dependency) =>
+          releaseMethodMayHaveChanged(
+            binding,
+            dependency,
+            node,
+            context.state,
+            possibleAcquisitions,
+            { fresh, release: members?.[dependency] },
+          ),
+        ) &&
+        (binding.kind !== "parameter" || receiver.hasDefiniteInitializer) &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
           : "partial",
     });
   });
   return output;
+};
+
+/** Receiver identity alone cannot prove a release method survived mutation. */
+const releaseMethodMayHaveChanged = (
+  binding: JavaScriptSemanticBindingState,
+  method: string,
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  acquisitions: ReadonlySet<t.Node>,
+  {
+    fresh,
+    release,
+    isolatedNativeCloses = false,
+  }: {
+    fresh: boolean;
+    release: BuiltinResourceReleaseMember | undefined;
+    isolatedNativeCloses?: boolean;
+  },
+): boolean => {
+  const targetsAcquisition = (
+    effect: JavaScriptSemanticMemberEffect,
+  ): boolean => {
+    const capture = effect.receiverAt ?? effect.node;
+    if (capture === undefined) return true;
+    const selected = semanticBindingAtRead(binding, capture, state);
+    if (selected.status !== "ordered") return true;
+    // Empty incoming values cannot be the fresh acquisition selected later.
+    // Keep ambiguous aliases and projections unless the owner excludes them.
+    return [
+      ...selected.binding.initializers,
+      ...selected.binding.referenceInitializers,
+    ].some(
+      ({ node, projection }) =>
+        projection.length > 0 ||
+        !binding.initializers.some((source) => source.node === node) ||
+        acquisitions.has(resourceInitializer(node).value),
+    );
+  };
+  return bindingMethodMayHaveChanged(binding, method, read, state, {
+    fresh,
+    inherited: release?.owner !== "instance",
+    definingPrototypeDepth: fresh ? release?.definingPrototypeDepth : undefined,
+    isolatedNativeCloses,
+    targets: targetsAcquisition,
+  });
 };
 
 /** Unwrap only direct awaits; a standalone await does not write its operand. */

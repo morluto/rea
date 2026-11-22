@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { copyFile, lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { json } from "node:stream/consumers";
 import { z } from "zod";
 
 const output = ".cache/ci-build-cache";
 const plan = ".cache/ci-build-plan.json";
 
-function readTasks() {
+async function readTasks() {
   const { tasks } = z
     .object({
       tasks: z
@@ -20,7 +20,8 @@ function readTasks() {
         )
         .min(1),
     })
-    .parse(JSON.parse(readFileSync(0, "utf8")));
+    // Node 24's synchronous UTF-8 read can abort on short pipe reads.
+    .parse(await json(process.stdin));
   const identities = new Set();
   for (const { taskId } of tasks) {
     if (identities.has(taskId))
@@ -129,7 +130,7 @@ if (extra.length || !["key", "snapshot"].includes(mode))
 // validation must not leave stale plans or snapshots for downstream reuse.
 if (mode === "snapshot") await rm(output, { recursive: true, force: true });
 else await rm(plan, { force: true });
-const tasks = readTasks();
+const tasks = await readTasks();
 if (mode === "key") {
   const prefix = z
     .string()

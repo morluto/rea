@@ -46,6 +46,7 @@ it("renders type placeholders, shown defaults and aliases", () => {
       "  --format <toon|json|csv>  Output format",
       "  --full-output             Show full output envelope",
       "  --help                    Show help",
+      "  --json                    Shorthand for --format json",
       "  --llms, --llms-full       Print LLM-readable manifest",
       "  --schema                  Show JSON Schema for command",
       "  --token-count             Print token count of output (instead of output)",

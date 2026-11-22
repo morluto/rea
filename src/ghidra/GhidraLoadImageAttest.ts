@@ -21,6 +21,7 @@ import {
 } from "./GhidraVerifiedLoadImageFormats.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
+import type { GhidraComImportSelection } from "./GhidraComImport.js";
 import type { GhidraClient } from "./GhidraClient.js";
 import type { GhidraSessionError } from "./GhidraSessionError.js";
 
@@ -41,6 +42,7 @@ type NativeLoadImageAttestationInput = {
   readonly nativeAotResult?: NativeAotPeResult | undefined;
   /** Import language committed by the profile; DOL attestation expects it. */
   readonly languageOverride?: GhidraLanguageOverride | undefined;
+  readonly comSelection?: GhidraComImportSelection | undefined;
   readonly signal?: AbortSignal | undefined;
 };
 
@@ -208,6 +210,13 @@ const compareLoadImage = async (
     const compared = await client.attestDosTargetSnapshot(observations, signal);
     return compared.ok ? compared : err(sourceFailure(compared.error));
   }
+  if (input.comSelection === undefined)
+    return err(
+      comparisonFailure(
+        input,
+        "The DOS COM import selection was not committed.",
+      ),
+    );
   if (client.readTargetSnapshot === undefined)
     return err(
       comparisonFailure(
@@ -228,6 +237,7 @@ const compareLoadImage = async (
     snapshot.value.bytes,
     target.sha256,
     observations,
+    input.comSelection,
   );
   return attested.ok ? attested : err(comparisonFailure(input, attested.error));
 };

@@ -39,7 +39,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform)).for([
       await mkdir(path, { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(
       join(install, "support/analyzeHeadless"),
@@ -135,7 +135,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     await mkdir(join(install, "Ghidra"), { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(
       join(jdk, "bin/java"),
@@ -260,7 +260,7 @@ cliTest.skipIf(!["darwin", "linux"].includes(process.platform))(
     await mkdir(join(install, "support"), { recursive: true });
     await writeFile(
       join(install, "Ghidra/application.properties"),
-      "application.version=12.1.4\napplication.java.min=21\n",
+      "application.version=12.2\napplication.java.min=25\n",
     );
     await writeFile(marker, "unexecuted");
     const launcher = `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "executed");\n`;

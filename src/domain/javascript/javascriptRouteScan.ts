@@ -1356,7 +1356,7 @@ export class JavaScriptRouteScan {
     }
     for (const element of node.elements)
       if (element !== null && !this.#queue(element)) return [];
-    return semanticArrayPropertyReferences(node, [key]);
+    return semanticArrayPropertyReferences(node, [key], this.index.bindings);
   }
 
   #retainSelection(

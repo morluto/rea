@@ -235,15 +235,13 @@ const redactionMarker = (
 ): string => {
   const candidates = [`${REDACTION_PREFIX}${id}]`, "[REDACTED]", "…", ""];
   return (
-    candidates.find((candidate) =>
-      patterns.every(
-        (pattern) =>
-          !patternMatches(
-            candidate,
-            lowercasePercentEscapes(candidate),
-            pattern,
-          ),
-      ),
+    candidates.find(
+      (candidate) =>
+        !containsSecretPattern(
+          candidate,
+          lowercasePercentEscapes(candidate),
+          patterns,
+        ),
     ) ?? ""
   );
 };
@@ -566,10 +564,10 @@ export class BrowserScenarioSecrets {
       retention.maxAllocationBytes,
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return redacted.value.bytes ?? body;
   }
 
-  /** Decode JSON only when redaction is active; other bytes retain their existing binary policy. */
+  /** Check JSON spellings only while redaction is active, including bodies of unknown type. */
   redactJsonBody(
     body: Buffer,
     retention: {
@@ -577,7 +575,8 @@ export class BrowserScenarioSecrets {
       readonly maxAllocationBytes: number;
     },
     scope: ScenarioRedactionScope = "current",
-  ): Buffer {
+    mode: "json" | "unknown" = "json",
+  ): { readonly bytes: Buffer; readonly json: boolean } {
     if (
       body.length === 0 ||
       (scope === "response"
@@ -585,17 +584,24 @@ export class BrowserScenarioSecrets {
         : this.textPatterns
       ).length === 0
     )
-      return body;
-    const text = decodeStrictUtf8(body, "preserve");
+      return { bytes: body, json: mode === "json" };
+    let text: string;
+    try {
+      text = decodeStrictUtf8(body, "preserve");
+    } catch (cause: unknown) {
+      if (mode === "unknown") return { bytes: body, json: false };
+      throw cause;
+    }
     const redacted = redactResponseSource(
       text,
       [],
       (value) => this.redact(value, scope),
       retention.maxBytes,
       retention.maxAllocationBytes,
+      mode === "unknown",
     );
     if (!redacted.ok) throw new Error(redacted.error.message);
-    return redacted.value ?? body;
+    return { bytes: redacted.value.bytes ?? body, json: redacted.value.json };
   }
 
   private retainSavedRedactions(

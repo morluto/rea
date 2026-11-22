@@ -43,7 +43,11 @@ export const peResourceFixture = (
   ],
   sectionBytes = 65536,
   recordAlignment: 2 | 4 = 4,
+  peOffset = 0x80,
 ) => {
+  const optional = peOffset + 24;
+  const headerBytes = Math.ceil((optional + 240 + 40) / 512) * 512 + 512;
+  const resourceRva = Math.max(0x2000, Math.ceil(headerBytes / 4096) * 4096);
   const tree: Tree = { children: new Map() };
   for (const resource of resources) {
     let parent = tree;
@@ -122,38 +126,38 @@ export const peResourceFixture = (
   for (const { dataAt, resource } of leaves) {
     const payloadAt = allocate(resource.payload.length, 4);
     resource.payload.copy(section, payloadAt);
-    section.writeUInt32LE(0x2000 + payloadAt, dataAt);
+    section.writeUInt32LE(resourceRva + payloadAt, dataAt);
     section.writeUInt32LE(resource.payload.length, dataAt + 4);
     section.writeUInt32LE(65001, dataAt + 8);
   }
   const rawSize = Math.ceil(cursor / 512) * 512;
-  const bytes = Buffer.alloc(0x400 + rawSize);
+  const bytes = Buffer.alloc(headerBytes + rawSize);
   bytes.writeUInt16LE(0x5a4d, 0);
-  bytes.writeUInt32LE(0x80, 60);
-  bytes.writeUInt32LE(0x4550, 0x80);
-  bytes.writeUInt16LE(plus ? 0x8664 : 0x14c, 0x84);
-  bytes.writeUInt16LE(1, 0x86);
+  bytes.writeUInt32LE(peOffset, 60);
+  bytes.writeUInt32LE(0x4550, peOffset);
+  bytes.writeUInt16LE(plus ? 0x8664 : 0x14c, peOffset + 4);
+  bytes.writeUInt16LE(1, peOffset + 6);
   const optionalSize = plus ? 240 : 224;
-  bytes.writeUInt16LE(optionalSize, 0x94);
-  bytes.writeUInt16LE(plus ? 0x20b : 0x10b, 0x98);
-  bytes.writeUInt32LE(0x400, 0x98 + 60);
-  bytes.writeUInt32LE(16, 0x98 + (plus ? 108 : 92));
-  const directoryAt = 0x98 + (plus ? 112 : 96) + 16;
-  bytes.writeUInt32LE(0x2000, directoryAt);
+  bytes.writeUInt16LE(optionalSize, peOffset + 20);
+  bytes.writeUInt16LE(plus ? 0x20b : 0x10b, optional);
+  bytes.writeUInt32LE(headerBytes, optional + 60);
+  bytes.writeUInt32LE(16, optional + (plus ? 108 : 92));
+  const directoryAt = optional + (plus ? 112 : 96) + 16;
+  bytes.writeUInt32LE(resourceRva, directoryAt);
   bytes.writeUInt32LE(cursor, directoryAt + 4);
-  const sectionAt = 0x98 + optionalSize;
+  const sectionAt = optional + optionalSize;
   bytes.write(".rsrc", sectionAt, "ascii");
   bytes.writeUInt32LE(cursor, sectionAt + 8);
-  bytes.writeUInt32LE(0x2000, sectionAt + 12);
+  bytes.writeUInt32LE(resourceRva, sectionAt + 12);
   bytes.writeUInt32LE(rawSize, sectionAt + 16);
-  bytes.writeUInt32LE(0x400, sectionAt + 20);
-  section.copy(bytes, 0x400, 0, rawSize);
+  bytes.writeUInt32LE(headerBytes, sectionAt + 20);
+  section.copy(bytes, headerBytes, 0, rawSize);
   return {
     bytes,
     directoryAt,
     sectionAt,
-    entryOffsets: entryOffsets.map((at) => at + 0x400),
-    directoryOffsets: directories.map((at) => at + 0x400),
-    dataOffsets: leaves.map(({ dataAt }) => dataAt + 0x400),
+    entryOffsets: entryOffsets.map((at) => at + headerBytes),
+    directoryOffsets: directories.map((at) => at + headerBytes),
+    dataOffsets: leaves.map(({ dataAt }) => dataAt + headerBytes),
   };
 };

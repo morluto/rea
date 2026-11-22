@@ -29,13 +29,20 @@ requires an absolute filesystem path and preserves that exact selection:
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 
 `identity` reports `id`, `version`, `authors`, and `description` as present in
-the `.nuspec` metadata. Missing fields are `null`. When no `.nuspec` can be
+the `.nuspec` metadata. Authors and description follow NuGet's first eligible
+leaf rule with case-insensitive local names. Empty leaves and ordinary
+whitespace-only leaves are skipped. Whitespace preserved by CDATA or
+`xml:space` can occupy the first slot and yield `null` even when a later leaf
+has text. The package ID and version use their case-sensitive names in the
+metadata namespace. Missing fields are `null`. In the `.nuspec` and OPC
+relationships, XML end-of-line handling maps CRLF and lone CR to LF. When no `.nuspec` can be
 selected, `identity` is `null`.
 
-`license` reports the `.nuspec` license element: `type` is `expression` or
-`file` when that attribute is present, otherwise `null`, and `value` is the
-element text. `repository` reports `type`, `url`, `commit`, and `branch`
-attributes when a repository element is present. Absent elements stay `null`.
+`license` reports the `.nuspec` license element. `type` is `expression` or
+`file` after a case-insensitive match, and `null` for missing or unrecognized
+types. `value` is the element text. `repository` reports `type`, `url`, `commit`,
+and `branch` attributes when a repository element is present. Absent elements
+stay `null`.
 Transport URL userinfo is excluded, with `url_credentials_redacted` marking
 that exclusion; a URL whose credential span cannot be located is `null` with
 that flag set. Other URL spelling and query values are preserved. OPC
@@ -44,15 +51,21 @@ relationship diagnostics apply the same exclusion.
 `dependency_groups` lists each `.nuspec` dependency group with its
 `target_framework` and dependencies (`id`, `version` range as spelled,
 `include`, `exclude`, `development_dependency`). Ungrouped dependencies appear
-as a group with `target_framework: null`. Version ranges are recorded as text;
-restore results are unknown.
+as a group with `target_framework: null` when the `.nuspec` has no `<group>`.
+Beside `<group>` elements, in any `<dependencies>` element, they are omitted and
+a limitation gives their count: NuGet's restore-time reader ignores them, and
+`nuget pack` refuses that mix. Version ranges are recorded as text; restore
+results are unknown.
 
 `contents` lists file ZIP members with the stored ZIP `name`, a logical `path`
 (backslashes as `/`, leading `./` removed), uncompressed and compressed sizes,
 an `encrypted` flag, and a `path`-derived `role` (`lib`, `ref`, `runtimes`,
 `native`, `analyzers`, `build`, `buildTransitive`, `buildMultiTargeting`,
-`content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). Directory
-markers are omitted. Encrypted members are listed and not extracted.
+`content`, `contentFiles`, `tools`, `nuspec`, `opc`, or `unknown`). `opc` marks
+OPC packaging parts: `[Content_Types].xml`, `.rels` relationship parts, and
+members under `_rels/` or `package/`, where `nuget pack` writes the core
+properties `.psmdcp`. Directory markers are omitted. Encrypted members are
+listed and not extracted.
 Unflagged non-ASCII names use the ZIP CP437 fallback unless a valid Unicode Path
 extra field supplies the name. For fallback names, limitations identify the
 member, retain the exact raw filename bytes as hex, and mark the source encoding
@@ -62,11 +75,19 @@ not carry that uncertainty warning.
 `nuspec` names the selected manifest path, decoded byte length, and whether it
 came from an OPC `_rels/.rels` manifest relationship or a unique root `.nuspec`.
 When selection is missing or ambiguous, `nuspec` is `null` and the inventory
-still succeeds with a limitation.
+still succeeds with a limitation. OPC part names match without regard to ASCII
+case. Multiple equivalent ZIP member names leave the manifest ambiguous, even
+when the target exactly spells one member name.
 
-The `.nuspec` is chosen from a unique OPC relationship whose Type ends in
-`/manifest` when that target exists in the ZIP. Otherwise a unique `.nuspec` at
-the package root is used. Multiple conflicting manifests are not decoded.
+The `.nuspec` is chosen from a unique OPC relationship with Type
+`http://schemas.microsoft.com/packaging/2010/07/manifest` when that target
+exists in the ZIP. `TargetMode` must be omitted or exactly `Internal` for
+the relationship to select a package member. Both `Relationships` and
+`Relationship` must use the OPC relationships namespace. The inspector skips
+other child elements and considers eligible relationships beside them.
+Without an eligible target, it
+uses a unique `.nuspec` at the package root. Multiple conflicting manifests
+are not decoded.
 
 ## Limits and failures
 

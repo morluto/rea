@@ -23,7 +23,9 @@ import { analysisClientFailureForOperation } from "../providers/AnalysisClientFa
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../resources/index.js";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { GHIDRA_BRIDGE_SOURCES } from "./GhidraBridgeSources.js";
+import { ghidraProfileComImport } from "./GhidraComImport.js";
 import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import {
@@ -61,6 +63,8 @@ import {
   GHIDRA_MIPS_SOFT_FLOAT_STORAGE,
   ghidraMips1Limitations,
   ghidraMipsSoftFloatFailure,
+  ghidraMipsElfImageBase,
+  ghidraMipsElfImageBaseCommitment,
   ghidraMipsRelocatableLimitations,
   ghidraMipsSharedLimitations,
   ghidraMipsSoftFloatLimitations,
@@ -120,7 +124,10 @@ import {
   ghidraRiscvLimitations,
 } from "./GhidraRiscvProfile.js";
 import { ghidraPePdbLimitations } from "./GhidraPeProfile.js";
-import { unverifiedGhidraBuildLimitation } from "./GhidraReleasePolicy.js";
+import {
+  ghidraKnownProviderDefectLimitations,
+  unverifiedGhidraBuildLimitation,
+} from "./GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher, GhidraLaunchError } from "./GhidraLauncher.js";
 import { attestGhidraNativeLoadImage } from "./GhidraLoadImageAttest.js";
 import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
@@ -136,6 +143,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraFunctionSeedRecovery,
+  ghidraNotInListingLimitation,
   ghidraNotInProcedureLimitation,
   windowsP0Limitations,
   limitationsFor,
@@ -339,6 +347,22 @@ const containingProcedureAbsenceCaveat = (
     : [];
 };
 
+/**
+ * Caveat for an instruction query in mapped memory that Ghidra's listing does
+ * not cover: no decode was attempted, so code there remains possible.
+ */
+const instructionListingAbsenceCaveat = (
+  operation: GhidraFunctionOperation,
+  normalized: JsonValue,
+  source: GhidraSessionSource,
+): readonly string[] => {
+  if (operation !== "inspect_native_instruction") return [];
+  const record = referenceObservationRecord(normalized);
+  return record?.status === "not-in-listing"
+    ? [ghidraNotInListingLimitation(source)]
+    : [];
+};
+
 /** Build one AnalysisClient for an admitted Ghidra target and profile. */
 export const createGhidraProviderClient = (input: {
   readonly config: AppConfig;
@@ -355,6 +379,13 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return prerequisites;
   const committedProfile = prerequisites.value.profile;
+  const comImport =
+    target.format === "dos-com"
+      ? ghidraProfileComImport(committedProfile.parameters)
+      : undefined;
+  if (comImport?.ok === false)
+    return err(ghidraProfileConflict("open_binary", comImport.error));
+  const comSelection = comImport?.value;
   const checkpoint = ghidraCheckpointSelectionSchema
     .optional()
     .safeParse(committedProfile.parameters.owned_checkpoint);
@@ -398,6 +429,21 @@ export const createGhidraProviderClient = (input: {
         "open_binary",
         "Resolve the soft-float MIPS storage policy into the analysis profile before opening the session.",
       ),
+    );
+  const elfImageBase = ghidraMipsElfImageBase(target);
+  if (
+    !isDeepStrictEqual(
+      committedProfile.parameters.elf_image_base,
+      ghidraMipsElfImageBaseCommitment(target),
+    )
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve the MIPS shared-image link base into the analysis profile before opening the session.",
+        },
+      }),
     );
   const riscvCallingConvention = ghidraRiscvCallingConvention(target);
   if (
@@ -662,11 +708,14 @@ export const createGhidraProviderClient = (input: {
         ? { pspExtension: pspExtension.data }
         : {}),
       ...(softFloat ? { mipsSoftFloat: true as const } : {}),
+      ...(elfImageBase === undefined ? {} : { elfImageBase }),
       ...(riscvCallingConvention === undefined
         ? {}
         : { riscvCallingConvention }),
       ...(target.format === "dos-mz" ? { dosMz: true } : {}),
-      ...(target.format === "dos-com" ? { dosCom: true } : {}),
+      ...(comSelection === undefined
+        ? {}
+        : { dosCom: { loader: comSelection.loader } }),
       ...(rawLanguage === undefined || target.format !== "raw-binary"
         ? {}
         : {
@@ -731,6 +780,9 @@ export const createGhidraProviderClient = (input: {
           expectedCompilerSpecId: "default",
         }
       : {}),
+    ...(elfImageBase === undefined
+      ? {}
+      : { expectedImageBase: `0x${elfImageBase}` }),
     ...(context === undefined ? {} : { runId: context.runId }),
     logger: logger.child({ layer: "ghidra-bridge" }),
   });
@@ -861,6 +913,9 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
+  const knownDefectLimitations = ghidraKnownProviderDefectLimitations(
+    prerequisites.value.providerVersion,
+  );
   const sessionLimitations = (): readonly string[] => {
     const restored = client.checkpointRestore?.();
     return [
@@ -883,6 +938,7 @@ export const createGhidraProviderClient = (input: {
       ...disabledAnalyzerLimitations,
       ...pdbLimitations,
       ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
+      ...knownDefectLimitations,
     ];
   };
   const nativeAotOwner =
@@ -973,6 +1029,7 @@ export const createGhidraProviderClient = (input: {
       measured: observed,
       client,
       languageOverride: importLanguage,
+      comSelection,
       mapSessionError: (failure) =>
         projectSessionError(
           operation,
@@ -1099,7 +1156,14 @@ export const createGhidraProviderClient = (input: {
       let { value: normalized, ...observation } = result.value;
       let executionMetadata: GhidraExecutionMetadata = observation;
       const absenceCaveats = isGhidraFunctionOperation(operation)
-        ? emptyReferenceCaveat(operation, normalized)
+        ? [
+            ...emptyReferenceCaveat(operation, normalized),
+            ...instructionListingAbsenceCaveat(
+              operation,
+              normalized,
+              projection.source,
+            ),
+          ]
         : containingProcedureAbsenceCaveat(
             operation,
             normalized,
@@ -1911,7 +1975,7 @@ const ghidraSessionRestart = (source: GhidraSessionSource): string =>
  * can raise the deadline only for a new invocation; a continuing caller can
  * update it for the next operation on the same Program.
  */
-export const ghidraDecompileTimeoutRecovery = (
+const ghidraDecompileTimeoutRecovery = (
   seconds: number,
   source: GhidraSessionSource,
 ): {

@@ -1,14 +1,53 @@
 name: Select Ubuntu package archive
 description: Use the official HTTPS Ubuntu archive before resolving fixture toolchains.
+inputs:
+  noble-azure-fallback:
+    description: Use the Ubuntu Azure archive for the final index refresh attempt on Noble.
+    default: "false"
 runs:
   using: composite
   steps:
     - shell: bash
+      env:
+        REA_NOBLE_AZURE_FALLBACK: ${{ inputs.noble-azure-fallback }}
       run: |
+        if [[ "$REA_NOBLE_AZURE_FALLBACK" == 'true' ]]; then
+          . /etc/os-release
+          if [[ "${ID:-}" != ubuntu || "${VERSION_CODENAME:-}" != noble ]]; then
+            echo 'The Azure archive fallback is only configured for Ubuntu Noble' >&2
+            exit 1
+          fi
+        fi
         # Hosted Ubuntu runners can use Azure or regional EC2 mirrors.
-        for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+        sources=(/etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources)
+        for source in "${sources[@]}"; do
           if [ -f "$source" ]; then
             sudo sed -Ei.bak 's|https?://([[:alnum:]-]+\.)*archive\.ubuntu\.com/|https://archive.ubuntu.com/|g' "$source"
           fi
         done
-        sudo apt-get update
+        # Fixture installation needs package indexes, not localized descriptions.
+        # Three attempts, including kill grace and backoff, consume at most
+        # 165 seconds. Fail even when APT could continue with stale indexes.
+        for attempt in 1 2 3; do
+          if [[ "$REA_NOBLE_AZURE_FALLBACK" == 'true' && "$attempt" -eq 3 ]]; then
+            echo 'Retrying the Noble index refresh using the Ubuntu Azure archive' >&2
+            for source in "${sources[@]}"; do
+              if [ -f "$source" ]; then
+                # Keep source stanzas, signing keys, suites and components intact.
+                sudo perl -pi.azure.bak -e 's{(?<!\S)https?://(?:archive|security)\.ubuntu\.com/ubuntu(?=/|\s|$)}{https://azure.archive.ubuntu.com/ubuntu}g' "$source"
+              fi
+            done
+          fi
+          if sudo timeout --kill-after=5s 45s \
+            apt-get -o Acquire::Retries=2 -o Acquire::Languages=none --error-on=any update; then
+            exit 0
+          else
+            status=$?
+            echo "Ubuntu archive update attempt ${attempt} failed (exit ${status})" >&2
+          fi
+          if [ "$attempt" -lt 3 ]; then
+            sleep $((attempt * 5))
+          fi
+        done
+        echo 'Ubuntu archive update failed after three bounded attempts' >&2
+        exit 1

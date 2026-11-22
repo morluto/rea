@@ -10,7 +10,6 @@ import { tsImport } from "tsx/esm/api";
 
 import { PRODUCT_IDENTITY } from "../dist/identity.js";
 import { createAgentEvaluationCommands } from "./lib/agent-evaluation-commands.mjs";
-import { assertAgentEvaluationReportPassed } from "./lib/agent-evaluation-report-gate.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
@@ -43,13 +42,14 @@ const {
   ).href,
   import.meta.url,
 );
-const { summarizeFactualCorrectness } = await tsImport(
-  new URL(
-    "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+const { assertAgentEvaluationReportPassed, summarizeFactualCorrectness } =
+  await tsImport(
+    new URL(
+      "../tests/evaluation/model-evals/AgentEvaluationReport.ts",
+      import.meta.url,
+    ).href,
     import.meta.url,
-  ).href,
-  import.meta.url,
-);
+  );
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const verifierRun = createVerifierRun();

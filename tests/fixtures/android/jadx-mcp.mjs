@@ -239,7 +239,7 @@ register("get_method_body", ({ method_name, overload_index }) => {
   const selected = methods.filter((method) => method.name === method_name)[
     overload_index
   ];
-  return json({
+  const identity = {
     class_name: "fixture.Target",
     method_name,
     full_name: `fixture.Target.${method_name}`,
@@ -247,7 +247,18 @@ register("get_method_body", ({ method_name, overload_index }) => {
       mode === "wrong-method" ? overload_index + 1 : overload_index,
     overload_count: method_name === "choose" ? 2 : 1,
     dex_descriptor:
-      mode === "wrong-descriptor" ? "()V" : selected.dex_descriptor,
+      mode === "wrong-descriptor" || mode === "unavailable-wrong-descriptor"
+        ? "()V"
+        : selected.dex_descriptor,
+  };
+  if (mode === "unavailable-body" || mode === "unavailable-wrong-descriptor")
+    return json({
+      ...identity,
+      mode: "unavailable",
+      body_unavailable_reason: `Disassembly could not establish one selected method: ${selected.raw_name}${selected.dex_descriptor}`,
+    });
+  return json({
+    ...identity,
     mode:
       mode === "smali" || mode === "selected-overload-smali" ? "smali" : "java",
     fell_back: mode === "smali" || mode === "selected-overload-smali",

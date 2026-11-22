@@ -73,11 +73,11 @@ processTest(
     const result = await processes.run(process.execPath, [
       "--input-type=module",
       "--eval",
-      `import { resolveJavaScriptSourceMapReferences } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
+      `import { resolveJavaScriptSourceMapReference } from "./dist/domain/javascript/javascriptSourceMapPaths.js";
      const inputs = JSON.parse(process.argv[1]);
      const references = inputs.map(({ name, source, root }) => {
        console.error("Resolving", name);
-       return resolveJavaScriptSourceMapReferences([source], root, "maps/main.js.map")[0];
+       return resolveJavaScriptSourceMapReference(source, root, "maps/main.js.map");
      });
      console.log(JSON.stringify(references));`,
       JSON.stringify(inputs),

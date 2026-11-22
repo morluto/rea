@@ -1,4 +1,5 @@
 import { LC } from "./machoLoadCommandCodes.js";
+import { machoWordReader } from "./machoLoadCommands.js";
 import type {
   MachoEncryptedRange,
   MachoEncryptionCommand,
@@ -6,8 +7,16 @@ import type {
   MachoSliceEncryption,
 } from "./machoEncryption.js";
 import { validateFatSliceIdentity } from "./machoContainer.js";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
-import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
+import {
+  isMachoZeroFillSection,
+  machoSectionHeaderSize,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
+import {
+  machoSegmentHeaderSize,
+  machoSegmentSectionTableFits,
+  readMachoSegmentHeader,
+} from "./machoSegmentHeader.js";
 import {
   frameLoadCommands,
   readMachoContainer,
@@ -20,8 +29,6 @@ import {
 
 // loader.h: encryption_info_command is five 32-bit words; the 64-bit form adds `pad`.
 const ENCRYPTION_COMMAND_SIZE = { 32: 20, 64: 24 } as const;
-// loader.h section types whose bytes occupy no file range.
-const ZEROFILL_SECTION_TYPES = new Set([0x1, 0xc, 0x12]);
 // A second encryption command already makes a slice malformed; later ones
 // are counted, not retained.
 const RETAINED_ENCRYPTION_COMMANDS = 2;
@@ -258,9 +265,9 @@ const decodeEncryptionCommand = ({
   body,
   index,
 }: MachoLoadCommand): MachoEncryptionCommand => {
-  const view = viewOf(body);
+  const reader = machoWordReader(body, true);
   const word = (at: number): number | null =>
-    body.byteLength >= at + 4 ? view.getUint32(at, true) : null;
+    body.byteLength >= at + 4 ? reader.u32(at) : null;
   const wide = command === LC.ENCRYPTION_INFO_64;
   return {
     kind: wide ? "LC_ENCRYPTION_INFO_64" : "LC_ENCRYPTION_INFO",
@@ -462,7 +469,10 @@ const mappingRecords = ({ command, body }: MachoLoadCommand): number => {
     2 +
     Math.max(
       0,
-      Math.floor((body.byteLength - (wide ? 72 : 56)) / (wide ? 80 : 68)),
+      Math.floor(
+        (body.byteLength - machoSegmentHeaderSize(wide)) /
+          machoSectionHeaderSize(wide),
+      ),
     )
   );
 };
@@ -482,11 +492,8 @@ const decodeSegment = ({
   const fileSize = Number(segment.fileSize);
   if (!Number.isSafeInteger(fileOffset + fileSize))
     return `load command ${index} segment file range exceeds the safe range`;
-  const sectionSize = wide ? 80 : 68;
-  if (
-    segment.sectionCount >
-    (body.byteLength - segment.headerSize) / sectionSize
-  )
+  const sectionSize = machoSectionHeaderSize(wide);
+  if (!machoSegmentSectionTableFits(segment, body.byteLength, wide))
     return `load command ${index} section records exceed cmdsize`;
   const sections: SegmentFacts["sections"][number][] = [];
   for (let section = 0; section < segment.sectionCount; section += 1) {
@@ -502,7 +509,7 @@ const decodeSegment = ({
       name: fixedName(header.value.nameBytes),
       offset: header.value.offset,
       size: Number(header.value.size),
-      zerofill: ZEROFILL_SECTION_TYPES.has(header.value.flags & 0xff),
+      zerofill: isMachoZeroFillSection(header.value.flags),
     });
   }
   return {
@@ -527,6 +534,3 @@ const fixedName = (bytes: Uint8Array): string => {
 };
 
 const hex = (value: bigint): string => `0x${value.toString(16)}`;
-
-const viewOf = (bytes: Uint8Array): DataView =>
-  new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

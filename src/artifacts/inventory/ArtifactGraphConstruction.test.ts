@@ -74,6 +74,21 @@ it("joins only observed PE signature bytes across stream chunks", () => {
   ).toBe("pe");
 });
 
+it("retains a PE record whose optional header crosses the retained prefix", () => {
+  const bytes = pe(0x8664, 8_000);
+  const probe = createArtifactClassificationProbe();
+  probe.write(bytes.subarray(0, 8_192));
+  const partial = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", partial, bytes.length).format,
+  ).toBe("unknown");
+  probe.write(bytes.subarray(8_192));
+  const complete = probe.finish(bytes.length);
+  expect(
+    classifyArtifactContent("native.exe", complete, bytes.length).format,
+  ).toBe("pe");
+});
+
 it("classifies original DOS header padding as an executable", () => {
   const bytes = Buffer.alloc(128);
   bytes.write("MZ", 0, "ascii");

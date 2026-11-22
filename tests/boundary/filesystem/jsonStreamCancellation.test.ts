@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import { readJsonObjectMembersFile } from "../../../src/application/JsonFiles.js";
 import { RegularFileOperationCancelled } from "../../../src/filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 
 const observedStream = vi.hoisted(() => ({
   stream: undefined as
@@ -76,19 +77,9 @@ it.each([
           : new Error("independent member consumer failure");
     if (consumerFailure instanceof AggregateError)
       consumerFailure.errors.push(consumerFailure);
-    let accepting = () => {};
-    const accepted = new Promise<void>((resolve) => {
-      accepting = resolve;
-    });
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let sawEof = () => {};
+    const consumerGate = phaseGate();
+    const eof = phaseArrival();
     let eofObserved = false;
-    const ended = new Promise<void>((resolve) => {
-      sawEof = resolve;
-    });
     const probe = await open(path, "r");
     const prototype = Object.getPrototypeOf(probe) as {
       read(
@@ -107,7 +98,7 @@ it.each([
         const value = await read.call(this, ...args);
         if (value.bytesRead === 0) {
           eofObserved = true;
-          sawEof();
+          eof.arrive();
         }
         return value;
       });
@@ -124,8 +115,7 @@ it.each([
                 throw cause;
               },
               async accept() {
-                accepting();
-                await gate;
+                await consumerGate.hold();
                 if (consumer !== "complete") throw consumerFailure;
               },
             },
@@ -135,9 +125,9 @@ it.each([
       controller.signal,
     );
     try {
-      await accepted;
+      await consumerGate.reached(pending, "selected JSON items consumer");
       if (phase === "after EOF") {
-        await ended;
+        await eof.reached(pending, "JSON descriptor EOF");
         // The zero-byte descriptor read resumes its generator before cancellation.
         await new Promise<void>((resolve) => setImmediate(resolve));
       }
@@ -150,8 +140,9 @@ it.each([
           throw new Error("Missing JSON stream");
         observedStream.stream.on("error", () => controller.abort(reason));
       }
-      release();
+      consumerGate.release();
       const result = await pending;
+      expect(controller.signal.reason).toBe(reason);
       if (result.ok)
         throw new Error("Expected cancellation or consumer failure");
       if (consumer === "complete") {
@@ -177,9 +168,8 @@ it.each([
       }
     } finally {
       controller.abort(reason);
-      release();
-      await pending;
-      reading.mockRestore();
+      consumerGate.release();
+      await pending.finally(() => reading.mockRestore());
     }
   },
 );
@@ -221,14 +211,7 @@ it.each([
     aggregate: undefined as AggregateError | undefined,
   };
   runtimeFailure.injection = injection;
-  let accepting = () => {};
-  const accepted = new Promise<void>((resolve) => {
-    accepting = resolve;
-  });
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+  const consumerGate = phaseGate();
   const pending = readJsonObjectMembersFile(
     path,
     [
@@ -241,10 +224,7 @@ it.each([
             reject(cause: unknown) {
               throw cause;
             },
-            async accept() {
-              accepting();
-              await gate;
-            },
+            accept: () => consumerGate.hold(),
           },
         ],
       ]),
@@ -252,9 +232,9 @@ it.each([
     controller.signal,
   );
   try {
-    await accepted;
+    await consumerGate.reached(pending, "selected JSON items consumer");
     controller.abort(reason);
-    release();
+    consumerGate.release();
     const result = await pending;
     if (result.ok) throw new Error("Expected the mixed pipeline failure");
     expect(result.error).toMatchObject({
@@ -265,8 +245,9 @@ it.each([
     expect(result.error.cause).toBe(injection.aggregate);
   } finally {
     controller.abort(reason);
-    release();
-    await pending;
-    runtimeFailure.injection = undefined;
+    consumerGate.release();
+    await pending.finally(() => {
+      runtimeFailure.injection = undefined;
+    });
   }
 });

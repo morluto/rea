@@ -205,15 +205,29 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
   }
 });
 
-it.each(["\\kilo.json", "/kilo.json"])(
-  "refuses a drive-less Windows KILO_CONFIG %s that follows Kilo's current drive",
-  (value) => {
-    const row = supportedClients("C:\\Users\\x", "win32", {
-      KILO_CONFIG: value,
-    }).find(({ name }) => name === "kilo");
-    expect(row?.configPathError).toContain("has no drive");
-  },
-);
+it("keeps incomplete Windows paths unresolved for Kilo's file and roots", () => {
+  const path = "\\\\kilo-config";
+  const home = "C:\\Users\\x";
+  for (const [label, selectedHome, env] of [
+    ["KILO_CONFIG", home, { KILO_CONFIG: path }],
+    ["XDG_CONFIG_HOME", home, { XDG_CONFIG_HOME: path }],
+    ["home", path, {}],
+    [
+      "home below an explicit XDG root",
+      path,
+      { XDG_CONFIG_HOME: "D:\\config" },
+    ],
+  ] as const) {
+    const row = supportedClients(selectedHome, "win32", env).find(
+      ({ name }) => name === "kilo",
+    );
+    expect(row, label).toMatchObject({
+      configPath: path,
+      configPathError: expect.stringContaining("has no drive"),
+    });
+    expect(row, label).not.toHaveProperty("markerPath");
+  }
+});
 
 it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
   const home = await createTestTempDirectory("rea-kilo-lifecycle-");
@@ -483,6 +497,54 @@ it("reports REA's Kilo entry that only KILO_CONFIG_CONTENT sets instead of calli
   expect(details.match(/KILO_CONFIG_CONTENT sets/g)).toHaveLength(1);
   expect(await readFile(join(root, "kilo.json"), "utf8")).toBe(other);
 });
+
+it.each(["lower", "upper"])(
+  "keeps an inline Kilo registration disabled by its %s file during uninstall",
+  async (layer) => {
+    const home = await createTestTempDirectory("rea-kilo-uninstall-disabled-");
+    const lowerRoot = join(home, ".config", "kilo");
+    const upperRoot = join(home, ".kilo");
+    await mkdir(lowerRoot, { recursive: true });
+    await mkdir(upperRoot);
+    const lower = join(lowerRoot, "kilo.json");
+    const upper = join(upperRoot, "kilo.json");
+    const disabled = JSON.stringify({ mcp: { rea: { enabled: false } } });
+    const other = JSON.stringify({ mcp: { other: { command: ["x"] } } });
+    await writeFile(lower, layer === "lower" ? disabled : other);
+    await writeFile(upper, layer === "upper" ? disabled : other);
+    const environment = {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command } },
+      }),
+    };
+    const row = await kiloRow(home, environment);
+    if (row === undefined) throw new Error("Kilo row is missing");
+    const before = await readEffectiveClientRegistrationConfiguration(
+      row,
+      undefined,
+      platform,
+    );
+    expect(before).toMatchObject({
+      ok: true,
+      value: { document: { servers: { rea: { enabled: false } } } },
+    });
+    const { kilo } = await uninstallKilo(home, environment);
+    expect(kilo).toBeDefined();
+    expect(kilo?.status).not.toBe("failed");
+    const enabled = await uninstallKilo(home, {
+      KILO_CONFIG_CONTENT: JSON.stringify({
+        mcp: { rea: { type: "local", command, enabled: true } },
+      }),
+    });
+    expect(enabled.kilo?.status).toBe("failed");
+    expect(await readFile(lower, "utf8")).toBe(
+      layer === "lower" ? disabled : other,
+    );
+    expect(await readFile(upper, "utf8")).toBe(
+      layer === "upper" ? disabled : other,
+    );
+  },
+);
 
 it("leaves a stale Kilo registration KILO_CONFIG_CONTENT pins out of update maintenance", async () => {
   const home = await createTestTempDirectory("rea-kilo-update-inline-");

@@ -91,6 +91,7 @@ const providerCapabilityFacts = {
   limitations: z.array(z.string()),
   native_value_flow: nativeValueFlowDeclaration.exactOptional(),
   independent_decompile: z.literal(true).exactOptional(),
+  call_destination_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -128,6 +129,8 @@ const providerCapabilityGroupFacts = {
   limitations: z.array(z.string()),
   native_value_flow: nativeValueFlowDeclaration.exactOptional(),
   independent_decompile: providerCapabilityFacts.independent_decompile,
+  call_destination_decompile:
+    providerCapabilityFacts.call_destination_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -172,6 +175,9 @@ export const expandProviderCapabilities = (
           ...(group.independent_decompile === undefined
             ? {}
             : { independent_decompile: group.independent_decompile }),
+          ...(group.call_destination_decompile === undefined
+            ? {}
+            : { call_destination_decompile: group.call_destination_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
