@@ -242,6 +242,13 @@ interface ProcessOwnershipValidationFailure {
     | "environment-unreadable"
     | "run-token-mismatch"
     | "process-identity-unavailable";
+  /**
+   * Set only when the environment was readable but contained no
+   * REA_PROCESS_RUN_ID. Absence is not proof the process is foreign:
+   * on Linux, Chromium processes do not expose the launch environment
+   * in /proc/<pid>/environ. Omitted for a different observed token.
+   */
+  readonly tokenAbsent?: boolean;
   readonly diagnostic?: string;
   /**
    * Native identity read after an unreadable token. It names the live
@@ -1341,21 +1348,27 @@ const cleanupValidationFailure = (
   const unreadable = failures.filter(
     ({ reason }) => reason === "environment-unreadable",
   );
-  if (failures.some(({ reason }) => reason === "run-token-mismatch"))
+  if (failures.some(({ reason }) => reason === "run-token-mismatch")) {
+    const mismatches = failures.filter(
+      ({ reason }) => reason === "run-token-mismatch",
+    );
+    const mismatchPids = [...new Set(mismatches.map(({ pid }) => pid))]
+      .sort((left, right) => left - right)
+      .join(", ");
+    if (mismatches.every(({ tokenAbsent }) => tokenAbsent === true))
+      return {
+        cleaned: false,
+        reason: `REA_PROCESS_RUN_ID was absent from the readable environment for PID(s): ${mismatchPids}; process lineage ownership remains unverified — on Linux, Chromium processes do not expose the launch environment in /proc/<pid>/environ`,
+        failures,
+        ...unverifiedEntry,
+      };
     return {
       cleaned: false,
-      reason: `process ownership token mismatch for PID(s): ${[
-        ...new Set(
-          failures
-            .filter(({ reason }) => reason === "run-token-mismatch")
-            .map(({ pid }) => pid),
-        ),
-      ]
-        .sort((left, right) => left - right)
-        .join(", ")}`,
+      reason: `process ownership token mismatch for PID(s): ${mismatchPids}`,
       failures,
       ...unverifiedEntry,
     };
+  }
   if (failures.some(({ reason }) => reason === "process-identity-unavailable"))
     return {
       cleaned: false,
@@ -1564,7 +1577,13 @@ const processOwnershipFailures = async (
       if (fact.token.state === "unavailable") {
         failures.push(unreadableTokenFailure(fact, fact.token.reason));
       } else if (fact.token.runId !== runId) {
-        failures.push({ pid: fact.process.pid, reason: "run-token-mismatch" });
+        failures.push({
+          pid: fact.process.pid,
+          reason: "run-token-mismatch",
+          ...(fact.token.runId === undefined
+            ? { tokenAbsent: true as const }
+            : {}),
+        });
       } else {
         validatedMembers.push(fact.process);
       }
@@ -1590,7 +1609,13 @@ const processRunTokenFailures = async (
   )) {
     if (observation.state === "readable") {
       if (observation.runId !== runId)
-        failures.push({ pid: member.pid, reason: "run-token-mismatch" });
+        failures.push({
+          pid: member.pid,
+          reason: "run-token-mismatch",
+          ...(observation.runId === undefined
+            ? { tokenAbsent: true as const }
+            : {}),
+        });
       continue;
     }
     failures.push({
@@ -1927,6 +1952,10 @@ const scanWithOwnershipEvidence = async (
           retainedCandidate.applicability === "identity-unresolved"
             ? "process-identity-unavailable"
             : "run-token-mismatch",
+        ...(retainedCandidate.applicability === "identity-unresolved" ||
+        fact.token.runId !== undefined
+          ? {}
+          : { tokenAbsent: true as const }),
       });
     if (fact.token.state !== "unavailable") continue;
     const relationBefore =
