@@ -7,6 +7,7 @@ import { prefixedDigestSchema } from "./../domain/digests.js";
 import {
   EVIDENCE_LINK_INSPECTION_LIMIT,
   EVIDENCE_RECORD_SELECTION_LIMIT,
+  EVIDENCE_SUMMARY_SELECTION_LIMIT,
   evidenceLinkStatusFilterSchema,
   evidenceLinkTraversalSchema,
   evidenceRecordFiltersSchema,
@@ -23,13 +24,15 @@ export const getEvidenceBundleInputSchema = z.strictObject({
     .int()
     .nonnegative()
     .optional()
-    .describe("records or links: first matching row to return; default 0."),
+    .describe(
+      "summary, records or links: first matching row to return; default 0. Summary returns every match when neither offset nor limit is supplied.",
+    ),
   limit: z
     .int()
     .positive()
     .optional()
     .describe(
-      `records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
+      `summary: maximum metadata rows, default ${String(EVIDENCE_SUMMARY_SELECTION_LIMIT)} when paging is selected. records: maximum complete records, default ${String(EVIDENCE_RECORD_SELECTION_LIMIT)}. links: maximum link rows, default ${String(EVIDENCE_LINK_INSPECTION_LIMIT)}.`,
     ),
   traversal: evidenceLinkTraversalSchema
     .optional()

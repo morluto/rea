@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "./commandCli.js";
 import pino from "pino";
 
 import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
@@ -26,7 +26,7 @@ export const invokeApktoolCli = async (argv: readonly string[]) => {
       );
     },
   };
-  const cli = Cli.create("rea", { sync: false });
+  const cli = createCommandCli();
   registerApktoolCommands(cli, pino({ level: "silent" }), {}, provider);
   presentOmittableDefaults(cli);
 

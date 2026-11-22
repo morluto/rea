@@ -80,13 +80,12 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
-  analysisErrorWithCleanupFailure,
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
 } from "../../domain/analysisErrorCleanup.js";
-import { ConfigurationError } from "../../domain/configurationErrors.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -221,6 +220,11 @@ export class BinarySession
     super(records);
     this.#providerRouter = providerRouter;
     this.#bundleResourceFactory = bundleResourceFactory;
+  }
+
+  /** Create an isolated session over this session's auxiliary providers. */
+  createManagedBinarySession(): BinarySession {
+    return new BinarySession(this.#providerRouter.auxiliaryOnly());
   }
 
   /** Open an app resource root without requiring CFBundleExecutable. */
@@ -379,6 +383,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -538,6 +544,9 @@ export class BinarySession
         kind: "binary",
         path: this.#active.target.path,
         sha256: this.#active.target.sha256,
+        ...(this.#active.target.callerInputPath === undefined
+          ? {}
+          : { caller_input_path: this.#active.target.callerInputPath }),
       };
     if (this.#activeBundleResources !== undefined)
       return {
@@ -612,11 +621,11 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
+            analysisErrorWithCleanupDependencies(
               cancelledBy("open_binary", options.signal),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }
@@ -652,27 +661,11 @@ export class BinarySession
       profile = route.profile;
     }
     const runId = randomUUID();
-    let client: ReturnType<typeof route.createClient>;
-    try {
-      client = route.createClient(target, {
-        runId,
-      });
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(
-        previous === undefined
-          ? cause
-          : await this.#restoreAfterFailedOpen(previous, cause),
-      );
-    }
+    const client = route.createClient(target, {
+      runId,
+    });
     const run: SessionRun = { client, route, runId };
-    let started: Awaited<ReturnType<typeof client.execute>>;
-    try {
-      started = await client.execute("health", {}, options);
-    } catch (cause: unknown) {
-      if (!(cause instanceof ConfigurationError)) throw cause;
-      return err(await this.#failedOpen(run, previous, cause));
-    }
+    const started = await client.execute("health", {}, options);
     if (!started.ok) {
       return err(await this.#failedOpen(run, previous, started.error));
     }
@@ -1230,12 +1223,16 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
+    if (!closed.ok) {
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
         "open_binary",
       );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1245,6 +1242,7 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
@@ -1481,12 +1479,13 @@ export class BinarySession
       const execution = { ...result.value, subject: null };
       return ok(execution);
     }
+    const sessionBinding = this.#active;
     const prepared = prepareSessionExecution({
-      active: this.#active,
+      active: sessionBinding,
       operation: name,
       parameters: arguments_,
       snapshotContext: options?.snapshotContext,
-      nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
+      nativeSourceAdmitted: sessionBinding?.nativeSourceAdmitted === true,
       isOperationAvailable: (operation) => this.#currentlyAvailable(operation),
       isOperationAdvertised: options?.isOperationAdvertised,
       unboundOperationError: (operation, route) =>
@@ -1501,13 +1500,19 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    let dispatched: Awaited<ReturnType<typeof active.client.execute>>;
-    try {
-      dispatched = await active.client.execute(name, arguments_, options);
-    } catch (cause: unknown) {
-      if (cause instanceof ConfigurationError) return err(cause);
-      throw cause;
-    }
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
@@ -1529,12 +1534,14 @@ export class BinarySession
         : profiled;
     // A successful Ghidra operation proves this client's native source snapshot
     // was admitted; a composite health response and parsed path do not.
+    const currentBinding = this.#active;
     if (
       execution.ok &&
       capability.provider.id === "ghidra" &&
-      this.#active === active
+      currentBinding !== undefined &&
+      currentBinding.runId === sessionBinding?.runId
     )
-      this.#active.nativeSourceAdmitted = true;
+      currentBinding.nativeSourceAdmitted = true;
     if (
       this.#runtimeAvailability.observe(
         dispatch,
@@ -1590,7 +1597,10 @@ export class BinarySession
         name,
         arguments_,
         evidenceExecution,
-        this.admitRecoveryObservation.bind(this),
+        {
+          callerTarget: active.target,
+          admit: this.admitRecoveryObservation.bind(this),
+        },
       );
       if (!admitted.ok) return admitted;
       const evidence = createAnalysisExecutionEvidence(
@@ -1598,6 +1608,7 @@ export class BinarySession
         arguments_,
         evidenceExecution,
         "observed",
+        { callerTarget: active.target },
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) {
@@ -1612,6 +1623,7 @@ export class BinarySession
           : bindSessionEvidenceExecution(
               { ...execution.value, evidenceId: evidence.evidence_id },
               authenticated,
+              active.target.callerInputPath,
             );
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({
@@ -1726,6 +1738,13 @@ export class BinarySession
     } catch {
       return false;
     }
+  }
+
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
   }
 
   async #restore(

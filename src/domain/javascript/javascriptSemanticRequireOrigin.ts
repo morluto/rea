@@ -20,6 +20,7 @@ import type { JavaScriptModuleOrigin } from "./javascriptSemanticIr.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticPrototypeOwners,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptBindingIndex,
@@ -31,6 +32,7 @@ import {
   semanticBindingHasPriorValueWrite,
 } from "./javascriptSemanticMutationInitializers.js";
 import {
+  readExactJavaScriptLiteral,
   semanticStaticPropertyKey,
   semanticMemberChain,
   semanticWriteSiteTarget,
@@ -49,12 +51,18 @@ import {
 import {
   ambientBindingMayObserveWriteAt,
   ambientPathMayObserveAt,
+  ambientPathOrMemberMayHaveChanged,
+  bindingHasUnmodeledMemberValues,
+  opaqueCodeMayRebindBinding,
   semanticEffectMayPrecede,
+  semanticMemberWriteSources,
 } from "./javascriptSemanticEffectLog.js";
+import { semanticGlobalCodeSites } from "./javascriptSemanticEffectRecord.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import {
   semanticCommonJsRequireOwnEnumerableAt,
+  semanticReferenceIterationUnknown,
   semanticReferenceSourcesInactive,
 } from "./javascriptSemanticReferenceSources.js";
 import {
@@ -128,7 +136,7 @@ const commonJsDelegateChangedAt = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
   writesModuleRequire(state).some((write) =>
-    semanticEffectMayPrecede(state, node, write.node),
+    semanticEffectMayPrecede(state, node, write),
   );
 
 const commonJsLoaderAt = (
@@ -982,13 +990,9 @@ const isWrapperRequireInitializerCall = (
 };
 
 type ModuleSourceMatch = "possible" | "no-match" | "incomplete";
-type ModuleRequireWrite = {
-  readonly node: t.Node;
-  readonly resolution: "possible" | "incomplete";
-};
 const moduleRequireWrites = new WeakMap<
   JavaScriptSemanticAnalysisState,
-  readonly ModuleRequireWrite[]
+  readonly t.Node[]
 >();
 const moduleReturnedReferences = new WeakMap<
   JavaScriptSemanticAnalysisState,
@@ -1138,7 +1142,7 @@ const loaderObjectPropertySources = (
   return semanticAliasSelectionChoices(key).flatMap((choice) =>
     (t.isObjectExpression(object)
       ? semanticObjectPropertyReferences(object, [choice], state)
-      : semanticArrayPropertyReferences(object, [choice])
+      : semanticArrayPropertyReferences(object, [choice], state)
     )
       .filter(
         (source) =>
@@ -1554,21 +1558,125 @@ export const semanticModuleRequireCallAt = (
   );
 };
 
+/**
+ * An exhausted selector walk can still exclude the host on a closed graph of
+ * local values. Follow every retained source and member-write RHS without
+ * expanding selector paths. Opaque inputs and an unfinished graph stay unknown.
+ */
+const hasClosedLocalReceiverSources = (
+  root: t.Node,
+  write: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (
+    !state.memberMutationFactsComplete ||
+    // The closure follows inherited members without selecting a read time.
+    semanticGlobalCodeSites(state).length > 0 ||
+    semanticPrototypeOwners.some((owner) =>
+      ambientPathOrMemberMayHaveChanged(state, ["global", owner]),
+    )
+  )
+    return false;
+  const pending: t.Node[] = [];
+  const scheduled = new Set<t.Node>();
+  const enqueue = (source: t.Node): boolean => {
+    const node = unwrapJavaScriptExpression(source).node;
+    if (scheduled.has(node)) return true;
+    if (scheduled.size >= state.precision.alias_selections) return false;
+    scheduled.add(node);
+    pending.push(node);
+    return true;
+  };
+  if (!enqueue(root)) return false;
+  const bindings = new Set<string>();
+  while (pending.length > 0) {
+    const node = pending.pop()!;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (
+        binding === undefined ||
+        semanticResolutionBlocked(state, node, node.name) ||
+        commonJsWrapperBindingDeclaration(node, node.name, state) !==
+          undefined ||
+        binding.definitions.some(
+          ({ kind }) => kind === "parameter" || kind === "catch",
+        ) ||
+        binding.directOrigins.length !== 0 ||
+        binding.initializers.length === 0 ||
+        bindingHasUnmodeledMemberValues(binding, write, state) ||
+        opaqueCodeMayRebindBinding(binding, state, node)
+      )
+        return false;
+      if (bindings.has(binding.bindingId)) continue;
+      bindings.add(binding.bindingId);
+      for (const sources of [
+        binding.initializers,
+        binding.referenceInitializers,
+        semanticMemberWriteSources(binding),
+      ])
+        for (const source of sources) {
+          if (semanticReferenceIterationUnknown(source, state)) return false;
+          if (
+            !semanticReferenceSourcesInactive(source, state) &&
+            !enqueue(source.node)
+          )
+            return false;
+        }
+    } else if (
+      t.isMemberExpression(node) ||
+      t.isOptionalMemberExpression(node)
+    ) {
+      if (!enqueue(node.object)) return false;
+    } else if (t.isObjectExpression(node)) {
+      for (const property of node.properties) {
+        if (
+          !t.isObjectProperty(property) ||
+          semanticStaticPropertyKey(property.key, property.computed) ===
+            "__proto__"
+        )
+          return false;
+        if (!enqueue(property.value)) return false;
+      }
+    } else if (t.isArrayExpression(node)) {
+      for (const element of node.elements) {
+        if (t.isSpreadElement(element)) return false;
+        if (element !== null && !enqueue(element)) return false;
+      }
+    } else if (t.isConditionalExpression(node) || t.isLogicalExpression(node)) {
+      const [left, right] = t.isConditionalExpression(node)
+        ? [node.consequent, node.alternate]
+        : [node.left, node.right];
+      if (!enqueue(left) || !enqueue(right)) return false;
+    } else if (!readExactJavaScriptLiteral(node).found) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const writesModuleRequire = (
   state: JavaScriptSemanticAnalysisState,
-): readonly ModuleRequireWrite[] => {
+): readonly t.Node[] => {
   const cached = moduleRequireWrites.get(state);
   if (cached !== undefined) return cached;
   // Interop invocation resolution may ask for require provenance while this
   // index is being built. Publish a temporary empty result to break that cycle.
   moduleRequireWrites.set(state, []);
-  const writes: ModuleRequireWrite[] = [];
+  const writes: t.Node[] = [];
   const interop = createSemanticModuleInterop(state);
-  const isModuleObject = (node: t.Node): ModuleSourceMatch =>
-    hasCommonJsModuleSource(node, state, false, "module");
   const record = (node: t.Node, receiver: t.Node): void => {
-    const resolution = isModuleObject(receiver);
-    if (resolution !== "no-match") writes.push({ node, resolution });
+    const resolution = hasCommonJsModuleSource(
+      receiver,
+      state,
+      false,
+      "module",
+    );
+    if (
+      resolution === "possible" ||
+      (resolution === "incomplete" &&
+        !hasClosedLocalReceiverSources(receiver, node, state))
+    )
+      writes.push(node);
   };
   traverseJavaScriptValueAst(state.program, state.erasedSyntaxNodes, {
     enter: (node) => {
@@ -1813,6 +1921,9 @@ export const semanticRequireExportsIdentity = <Key>(
 ): { readonly specifier: string; readonly path: readonly (Key | string)[] } => {
   const name = specifier.replace(/^node:/u, "");
   if (name === "fs/promises") return { specifier: name, path };
+  // The events export and its EventEmitter alias expose the same constructor.
+  if (name === "events" && path[0] === "EventEmitter" && path.length > 1)
+    return { specifier: name, path: path.slice(1) };
   if (["path", "path/posix", "path/win32"].includes(name)) {
     let selected = name;
     let remaining = path;
@@ -1835,6 +1946,7 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "http",
   "https",
   "child_process",
+  "events",
   "timers",
   "process",
   "path",
@@ -1856,7 +1968,15 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   const specifier = origin.specifier.replace(/^node:/u, "");
   if (!MUTABLE_BUILTIN_DEFAULTS.has(specifier)) return undefined;
   if (path[0] === "default") return { specifier, path: path.slice(1) };
+  if (specifier === "events" && path[0] === "EventEmitter" && path.length > 1)
+    return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
+    return { specifier, path };
+  // Named and namespace exports still expose the same mutable Agent object.
+  if (
+    (specifier === "http" || specifier === "https") &&
+    path[0] === "globalAgent"
+  )
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"
     ? { specifier, path }

@@ -1,10 +1,17 @@
+import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
 import {
   joinCoverageStatus,
   type CoverageStatus,
 } from "../../domain/coverage.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
   MAX_NATIVE_INITIALIZER_ENTRIES,
@@ -18,30 +25,39 @@ import {
   elfRelativeRelocationType,
   readElfRelocationWritesSteps,
 } from "../../domain/native/elfPointerRelocations.js";
-import { readElfImage } from "../../domain/native/elfImage.js";
+import {
+  readElfImage,
+  readElfImageFromDirectory,
+} from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
-import { readElfDirectoryFromBuffer } from "../../domain/native/nativeSectionDirectory.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+} from "../../domain/native/nativeSectionDirectory.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
   elfInitializerSlotKey,
-  readPointerWord,
   relocationFromEntry,
   sectionRelocations,
   sectionSymbolKey,
   type ElfInitializerSymbol,
+  type ElfSymbolIndex,
   type SlotRelocation,
   type ElfInitializerSlot,
 } from "./ElfInitializerSymbols.js";
 import {
   finishInitializerReport,
+  preferInitializerSymbolName,
+  type InitializerSymbolName,
   type CollectedInitializer,
   type InitializerPage,
 } from "./initializerReport.js";
@@ -111,6 +127,7 @@ interface Source {
 }
 
 interface ElfScan {
+  readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
   readonly little: boolean;
@@ -150,28 +167,19 @@ const readDynamicTags = (
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const width = scan.bits === 64 ? 16 : 8;
-  const start = Number(segment.offset);
-  const size = Number(segment.size);
-  if (size > 16 * 1024 * 1024)
+  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed")
+      throw new BinaryFormatFailure("malformed", table.error.message);
     throw new BinaryResourceFailure(
       "structure",
-      16 * 1024 * 1024,
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      table.error.maximum,
+      table.error.message,
       "structure",
       "bytes",
     );
-  if (
-    size < 0 ||
-    size % width !== 0 ||
-    start < 0 ||
-    start > scan.bytes.length ||
-    size > scan.bytes.length - start
-  )
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PT_DYNAMIC is truncated or outside the file",
-    );
+  }
+  const { offset: start, size, width } = table.value;
   let terminated = false;
   for (let at = start; at + width <= start + size; at += width) {
     const parsed = readElfDynamicEntry(
@@ -733,7 +741,7 @@ const fromDynamicWrite = (
       importName: null,
       definedName: null,
     };
-  const relative = elfRelativeRelocationType(scan.machine);
+  const relative = elfRelativeRelocationType(scan.machine, scan.bits);
   if (write.value !== null && write.source.kind === relative)
     return {
       method: "relative_addend",
@@ -760,7 +768,7 @@ const fromDynamicWrite = (
     },
     symbols,
     encoding === "rel"
-      ? readPointerWord(scan.bytes, write.file_offset, scan.bits, scan.little)
+      ? readInitializerWord(scan.reader, write.file_offset, scan.bits)
       : null,
   );
 };
@@ -769,7 +777,7 @@ const rawRelocation = (
   scan: ElfScan,
   fileOffset: number | null,
 ): SlotRelocation => {
-  const value = readPointerWord(scan.bytes, fileOffset, scan.bits, scan.little);
+  const value = readInitializerWord(scan.reader, fileOffset, scan.bits);
   return value === null
     ? { method: "unresolved", value: null, importName: null, definedName: null }
     : { method: "raw", value, importName: null, definedName: null };
@@ -804,27 +812,25 @@ const resolveSlot = (
   return rawRelocation(scan, slot.fileOffset);
 };
 
-interface SymbolNames {
-  readonly defined: ReadonlyMap<bigint, string>;
-  readonly definedInSection: ReadonlyMap<string, string>;
-}
+type SymbolNames = Pick<ElfSymbolIndex, "defined" | "definedInSection">;
 
 const symbolOf = (
   scan: ElfScan,
   applied: SlotRelocation,
   names: SymbolNames,
-): string | null => {
+): InitializerSymbolName | null => {
   if (applied.method === "unresolved_import") return applied.importName;
-  if (applied.method === "symbol_addend" && applied.definedName !== null)
-    return applied.definedName;
-  if (applied.value === null) return null;
-  if (scan.relocatable)
-    return applied.sectionIndex === undefined
-      ? null
-      : (names.definedInSection.get(
+  const direct =
+    applied.method === "symbol_addend" ? applied.definedName : null;
+  if (typeof direct === "string" || applied.value === null) return direct;
+  const indexed = !scan.relocatable
+    ? names.defined.get(applied.value)
+    : applied.sectionIndex === undefined
+      ? undefined
+      : names.definedInSection.get(
           sectionSymbolKey(applied.sectionIndex, applied.value),
-        ) ?? null);
-  return names.defined.get(applied.value) ?? null;
+        );
+  return preferInitializerSymbolName(direct, indexed);
 };
 
 interface Target {
@@ -977,10 +983,20 @@ export const readElfInitializers = async (
   signal?: AbortSignal,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const image = readElfImage(bytes);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const operation = "inspect_native_initializers";
+  const directory =
+    signal === undefined
+      ? readElfDirectoryFromBuffer(bytes, operation)
+      : await readElfDirectoryFromBufferCooperative(
+          bytes,
+          () => yieldArtifactRead(signal),
+          operation,
+        );
+  assertArtifactReadActive(signal);
+  const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
     bytes,
+    reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,
     little: image.byte_order === "little",
     machine: image.elf.machine,
@@ -992,7 +1008,7 @@ export const readElfInitializers = async (
   if (scan.relocatable)
     note(
       scan,
-      "Relocatable object (ET_REL): slot and value addresses are offsets inside the named section, not load addresses.",
+      "Relocatable object (ET_REL): section-associated slot and value addresses are offsets inside that section, not load addresses. Absolute symbols do not name a section.",
       "complete",
     );
   const tags = readDynamicTags(

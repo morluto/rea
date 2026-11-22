@@ -16,6 +16,7 @@ import * as setupModule from "./cli/setupCommands.js";
 import * as coreAnalysisModule from "./cli/coreAnalysisCommands.js";
 import * as reverseEngineeringModule from "./cli/reverseEngineeringCommands.js";
 import * as cutterModule from "./cli/cutterCommands.js";
+import * as userConfigModule from "./cli/userConfigCommands.js";
 import * as utilityModule from "./cli/utilityCommands.js";
 import * as binaryDiagnosticsModule from "./cli/binaryDiagnosticsCommands.js";
 import * as wasmModule from "./cli/wasmCommands.js";
@@ -31,12 +32,15 @@ import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
 import * as pythonPycModule from "./cli/pythonPycCommands.js";
+import * as nugetNupkgModule from "./cli/nugetNupkgCommands.js";
 import * as erlangModule from "./cli/erlangCommands.js";
 import * as v8CodeCacheModule from "./cli/v8CodeCacheCommands.js";
+import * as mavenGradleMetadataModule from "./cli/mavenGradleMetadataCommands.js";
 import * as sqliteModule from "./cli/sqliteCommands.js";
 import * as artifactModule from "./cli/artifactCommands.js";
 import * as managedModule from "./cli/managedCommands.js";
 import * as firmwareModule from "./cli/firmwareCommands.js";
+import * as uefiModule from "./cli/uefiCommands.js";
 import * as androidModule from "./cli/androidCommands.js";
 import * as pcapModule from "./cli/pcapCommands.js";
 import * as flutterModule from "./cli/flutterCommands.js";
@@ -73,6 +77,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   reverseEngineering: reverseEngineeringModule,
   cutter: cutterModule,
   utility: utilityModule,
+  userConfig: userConfigModule,
   binaryDiagnostics: binaryDiagnosticsModule,
   wasm: wasmModule,
   apkSignature: apkSignatureModule,
@@ -87,12 +92,15 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   gpu: gpuModule,
   rust: rustModule,
   pythonPyc: pythonPycModule,
+  nugetNupkg: nugetNupkgModule,
   erlang: erlangModule,
   v8CodeCache: v8CodeCacheModule,
+  mavenGradleMetadata: mavenGradleMetadataModule,
   sqlite: sqliteModule,
   artifact: artifactModule,
   managed: managedModule,
   firmware: firmwareModule,
+  uefi: uefiModule,
   android: androidModule,
   pcap: pcapModule,
   flutter: flutterModule,
@@ -134,11 +142,13 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
+  savedDefaults?: ReadonlySet<string>,
 ): CliInstance =>
   createCliShell({
     selectedEnvironment,
     resultOutput,
     fridaInstrumentation,
+    savedDefaults,
     createAnalysis: createDirectAnalysis,
     registrations: CLI_REGISTRATION_ORDER.map((id) => ({
       registration: CLI_COMMAND_REGISTRATIONS[id],

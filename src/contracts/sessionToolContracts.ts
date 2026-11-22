@@ -224,7 +224,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "verify_reconstruction",
     evidenceEffects,
-    "Verify a finite typed behavioral and structural specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority—not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
+    "Verify a finite typed behavioral, structural, and visual specification against a canonical Evidence bundle. Pass means every declared claim has complete comparable authority—not global source equivalence; changed claims fail and missing, limited, or unresolved evidence stays unknown.",
     reconstructionVerificationInputSchema,
   ),
   session(
@@ -254,7 +254,7 @@ export const SESSION_TOOL_CONTRACTS = [
   session(
     "get_evidence_bundle",
     toolEffects(),
-    "Read retained Evidence and tracked questions without rerunning providers; detail links with linked_evidence_id finds direct referrers, even if the cited ID is missing here. Default complete returns an importable canonical bundle. detail summary lists record metadata; records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. links returns no payloads. Source filters and outgoing retained-closure traversal remain unchanged. link_status defaults to all with a linked ID, otherwise missing. Summary/records/links source filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Retention is distinct from source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
+    "Read retained Evidence and tracked questions without rerunning providers; detail links with linked_evidence_id finds direct referrers, even if the cited ID is missing here. Default complete returns an importable canonical bundle. detail summary lists record metadata; offset or limit pages matches in canonical Evidence ID order with page.next_offset, while omitting both returns every match. Summary matching-record and link counts cover all filtered records. detail records pages complete records with unchanged IDs and missing direct evidence_links, but is not an importable bundle. detail links inspects retained/missing links without payloads; traversal retained-closure follows retained links; link_status defaults to all with linked_evidence_id, otherwise missing. Summary/records/links source filters accept Evidence ID, operation, target SHA-256, analysis-profile digest or canonical procedure address. Metadata keeps retention distinct from truncated/unavailable source coverage. Use a discovered evidence_id with a compatible inspect_analysis_view to read selected facts.",
     getEvidenceBundleInputSchema,
   ),
   {

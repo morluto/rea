@@ -6,6 +6,7 @@ import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatchi
 import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../domain/analysisResourceLimits.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
@@ -961,7 +962,9 @@ it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized
   if (!refused.ok)
     expect(refused.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
+      reportedLimits: {
+        maximum_bytes: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+      },
       retryable: false,
     });
 });
@@ -1013,7 +1016,10 @@ it("enforces the caller-resolved representation allowance and names its setting"
   expect(refused.ok).toBe(false);
   if (!refused.ok)
     expect(refused.error).toMatchObject({
-      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+      limit: {
+        effective_value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+        source: "default",
+      },
     });
   const raised = await matchNativeFunctions(large, {
     representationAllowance: {

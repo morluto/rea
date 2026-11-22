@@ -510,8 +510,18 @@ it("refuses link selections outside link delivery and names a smaller page", asy
     ["summary", "linked_evidence_id", source.evidence_id, "detail: links"],
     ["records", "linked_evidence_id", source.evidence_id, "detail: links"],
     ["complete", "linked_evidence_id", source.evidence_id, "detail: links"],
-    ["summary", "offset", 1, "detail: records or detail: links"],
-    ["summary", "limit", 1, "detail: records or detail: links"],
+    [
+      "complete",
+      "offset",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
+    [
+      "complete",
+      "limit",
+      1,
+      "detail: summary or detail: records or detail: links",
+    ],
   ] as const)
     expect(
       parseMcpToolError(await reply({ detail, [field]: value })).error,

@@ -17,7 +17,7 @@ import type {
   AnalysisCapturedOutput,
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   AnalysisInputError,
@@ -335,11 +335,7 @@ const sqliteReplyCompletionFailure = (
     carriedReason(artifactFileCancellationCause(cause)),
     { capturedOutput },
   );
-  return analysisErrorWithCleanupFailure(
-    cancellation,
-    cleanup,
-    operation,
-  ).bindCleanupDependencies([cancellation, cleanup]);
+  return analysisErrorWithCleanupDependencies(cancellation, cleanup, operation);
 };
 
 /** A malformed reply or producer refusal stays primary over its later close. */
@@ -350,9 +346,5 @@ export const sqliteReplyFinalizationFailure = (
   finalization === undefined
     ? primary
     : finalization.cleanupIncomplete
-      ? analysisErrorWithCleanupFailure(
-          primary,
-          finalization,
-          operation,
-        ).bindCleanupDependencies([primary, finalization])
+      ? analysisErrorWithCleanupDependencies(primary, finalization, operation)
       : primary.retainSecondaryFailure(finalization);

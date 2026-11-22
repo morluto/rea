@@ -1,9 +1,8 @@
 import { z } from "zod";
 
-import type { ExecutableFormatHint } from "../domain/dosCom.js";
-import type { BinaryArchitecture } from "../domain/binaryTargetTypes.js";
-import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
-import type { Logger } from "pino";
+import { declaredTokenPattern } from "../domain/schemaConstraints.js";
+import { decimalTokenPattern } from "./decimalTokenPattern.js";
+
 import { OPEN_BINARY_TOOL_CONTRACT } from "../contracts/sessionToolContracts.js";
 import type { CliSessionTarget } from "./contractCliDescription.js";
 
@@ -18,9 +17,10 @@ type DecimalWrapper =
     };
 
 const decimalToken = (domain: z.ZodNumber) =>
-  z
-    .string()
-    .regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer")
+  declaredTokenPattern(
+    z.string().regex(DECIMAL_INTEGER_TOKEN, "Expected a decimal integer"),
+    new RegExp(decimalTokenPattern(domain), "u"),
+  )
     .pipe(z.coerce.number<string>())
     .pipe(domain);
 
@@ -28,7 +28,7 @@ const unwrapSchema = (field: { unwrap: () => unknown }): z.ZodType =>
   field.unwrap() as z.ZodType;
 
 /**
- * Incur advertises Zod's output view. Publish the input view so an argv token
+ * Command schemas advertise Zod's output view. Publish the input view so an argv token
  * grammar that transforms text survives `--schema` and other SDK conversions.
  */
 export const publishArgvInput = <Field extends z.ZodType>(
@@ -201,32 +201,4 @@ export const nativeTarget = (
       provider_id: { name: "provider", description: NATIVE_OPEN_HELP.provider },
     },
   },
-});
-
-/** Native CLI flags consumed when opening a target for one-shot analysis. */
-export interface NativeOpenCliFlags {
-  readonly snapshot?: string | undefined;
-  readonly provider?: AnalysisProviderSelector | undefined;
-  readonly "target-format"?: ExecutableFormatHint | undefined;
-  readonly architecture?: BinaryArchitecture | undefined;
-  readonly "entry-point"?: string | undefined;
-}
-
-/** Map native CLI flags onto the shared one-shot analysis options. */
-export const directAnalysisOptionsFromCli = (
-  logger: Logger,
-  options: NativeOpenCliFlags,
-) => ({
-  logger,
-  snapshotPath: options.snapshot,
-  ...(options["target-format"] === undefined
-    ? {}
-    : { formatHint: options["target-format"] }),
-  ...(options.architecture === undefined
-    ? {}
-    : { architecture: options.architecture }),
-  ...(options["entry-point"] === undefined
-    ? {}
-    : { entryPoint: options["entry-point"] }),
-  ...(options.provider === undefined ? {} : { providerId: options.provider }),
 });

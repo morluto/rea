@@ -3,7 +3,11 @@ import {
   type CapabilityServiceOptions,
 } from "../composition/capabilityServices.js";
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
-import { registerToolFamilies } from "../contracts/toolFamilyIds.js";
+import {
+  isToolFamilyAdvertised,
+  registerToolFamilies,
+} from "../contracts/toolFamilyIds.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import { SCOPED_NO_TARGET_RECOVERY } from "./recoveryInstructions.js";
 import { AnalysisSettings } from "../application/AnalysisSettings.js";
 import { parseMcpInputBudget } from "../config/mcpInputBudget.js";
@@ -33,12 +37,14 @@ import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { parseMcpInputSchemaProfile } from "../config/mcpInputSchemaProfile.js";
 import type { CompactInputSchemaPresentation } from "../contracts/compactInputSchema.js";
-import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
+import type {
+  BinarySessionPort,
+  ManagedBinarySessionPort,
+} from "../application/binary/BinarySessionPort.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import { silentLogger } from "../logger.js";
 import type { Logger } from "pino";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
-import { registerElectronTools } from "./registerElectronTools.js";
 import { AndroidAnalysisService } from "../application/android/AndroidAnalysisService.js";
 import { JebAnalysisService } from "../application/jeb/JebAnalysisService.js";
 import { PcapAnalysisService } from "../application/pcap/PcapAnalysisService.js";
@@ -71,6 +77,9 @@ export interface CreateServerOptions extends CapabilityServiceOptions {
   readonly providerEnvironment?: Readonly<NodeJS.ProcessEnv>;
   readonly logger?: Logger;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
+  readonly createManagedBinarySession?: () =>
+    | ManagedBinarySessionPort
+    | Promise<ManagedBinarySessionPort>;
   /**
    * The host the server's integrations run on: it decides environment-name
    * rules, host-restricted availability and execution checks. Defaults to the
@@ -97,9 +106,8 @@ const createMcpServer = (
     {
       capabilities: {},
       maxToolInputElements: configured.value,
-      instructions: serverInstructions(
-        session !== undefined,
-        advertisedToolFamilies,
+      instructions: serverInstructions(session !== undefined, (tool) =>
+        isToolFamilyAdvertised(advertisedToolFamilies, toolFamilyId(tool)),
       ),
     },
     session === undefined
@@ -183,6 +191,7 @@ export const createServer = (
     nativeExports,
     devicetree,
     elfNotes,
+    elfDebugLink,
     nativeInitializers,
     elfUnwindRanges,
     appleIps,
@@ -195,11 +204,16 @@ export const createServer = (
     windowsShortcut,
     electronFuses,
     releaseExposure,
+    nugetNupkg,
     pythonPyc,
+    mavenGradleMetadata,
+    dwarfUnits,
+    elfDependencies,
     webNetworkCapture,
     javascriptRecovery,
     artifactResources,
     reverseEngineering,
+    uefiAnalysis,
     firmwareAnalysis,
     gdbSessions,
     rizinDebugSessions,
@@ -321,11 +335,6 @@ export const createServer = (
     if (failures.length > 1)
       throw new AggregateError(failures, "REA server cleanup failed");
   };
-  const common = {
-    logger: toolLogger,
-    recordEvidence,
-    withAdmittedAnalysis: analysisAdmission,
-  };
   const contractTools = {
     logger: toolLogger,
     recordEvidence,
@@ -393,6 +402,7 @@ export const createServer = (
           nativeExports,
           devicetree,
           elfNotes,
+          elfDebugLink,
           nativeInitializers,
           elfUnwindRanges,
           appleIps,
@@ -405,6 +415,8 @@ export const createServer = (
           peImports,
           windowsShortcut,
           recordedCrash,
+          dwarfUnits,
+          elfDependencies,
         },
         contractTools,
       );
@@ -431,6 +443,7 @@ export const createServer = (
           goBinary,
           il2cppMetadata,
           rustBinary,
+          nugetNupkg,
           pythonPyc,
           erlangBeam,
           v8CodeCache,
@@ -439,6 +452,7 @@ export const createServer = (
           sqliteDatabase,
           packetCapture,
           signalRecording,
+          mavenGradleMetadata,
         },
         contractTools,
       );
@@ -450,7 +464,15 @@ export const createServer = (
           providerOperations: {
             contracts: MANAGED_TOOL_CONTRACTS,
             activeTarget,
-            analysisForAdmission: managedAnalysisForAdmission(activeTarget),
+            analysisForAdmission: managedAnalysisForAdmission(
+              activeTarget,
+              options.createManagedBinarySession ??
+                (session === undefined
+                  ? capabilities.createManagedBinarySession
+                  : () =>
+                      session.createManagedBinarySession?.() ??
+                      capabilities.createManagedBinarySession()),
+            ),
           },
         },
         contractTools,
@@ -464,6 +486,7 @@ export const createServer = (
     },
     firmware: () =>
       registerServiceTools(server, { firmwareAnalysis }, contractTools),
+    uefi: () => registerServiceTools(server, { uefiAnalysis }, contractTools),
     android: () =>
       registerServiceTools(
         server,
@@ -539,19 +562,28 @@ export const createServer = (
       );
     },
     electron: () =>
-      registerElectronTools(server, {
-        ...common,
-        artifactResources,
-        environment,
-        evidenceById,
-        electron: options.electronObservation,
-        electronActive: options.electronActiveObservation,
-        electronFuses,
-        observationLoadFailure:
-          options.optionalProviderLoadFailures?.electronObservation,
-        activeLoadFailure:
-          options.optionalProviderLoadFailures?.electronActiveObservation,
-      }),
+      registerServiceTools(
+        server,
+        {
+          electronFuses,
+          electronObservation: {
+            provider: options.electronObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.electronObservation,
+          },
+          electronScenario: {
+            provider: options.electronActiveObservation,
+            loadFailure:
+              options.optionalProviderLoadFailures?.electronActiveObservation,
+          },
+          javascriptApplication: {
+            resources: artifactResources,
+            environment,
+            settings: analysisSettings.read,
+          },
+        },
+        contractTools,
+      ),
     "javascript-runtime": () =>
       registerServiceTools(
         server,

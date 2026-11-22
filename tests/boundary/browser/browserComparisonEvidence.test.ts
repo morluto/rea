@@ -47,29 +47,55 @@ it("retains distinct offline comparison inputs even when their diff reports matc
   expect(ledger.record(second)).toEqual(ok("added"));
 });
 
-it("commits complete scenario comparison inputs beyond the diff projection", async () => {
-  const compare = async (duration: number) => {
-    const capture = { ...scenarioCaptureFixture(), duration_ms: duration };
+it("commits complete scenario inputs and withholds equality across different contexts", async () => {
+  const capture = scenarioCaptureFixture();
+  const browser = new CdpBrowserProvider();
+  const compare = async (after: typeof capture) => {
     const input = browserCaptureComparisonInputSchema.parse({
       before_scenario: capture,
-      after_scenario: capture,
+      after_scenario: after,
     });
-    const result = await compareWebCaptureEvidence(
-      new CdpBrowserProvider(),
-      input,
-    );
+    const result = await compareWebCaptureEvidence(browser, input);
     if (!result.ok) throw result.error;
     return result.value;
   };
-  const first = await compare(1);
-  const second = await compare(2);
+  const first = await compare(capture);
+  const second = await compare({
+    ...capture,
+    duration_ms: capture.duration_ms + 1,
+  });
   expect(first.normalized_result).toEqual(second.normalized_result);
   expect(first.evidence_id).not.toBe(second.evidence_id);
   expect(first).toMatchObject({
     confidence: "derived",
     authority: "analyst-inference",
     parameters: { comparison_kind: "browser_scenario" },
+    normalized_result: { overall_status: "unchanged" },
   });
+
+  for (const after of [
+    { ...capture, browser: { ...capture.browser, product: "Other browser" } },
+    {
+      ...capture,
+      browser: { ...capture.browser, version: "different-version" },
+    },
+    {
+      ...capture,
+      scenario: {
+        ...capture.scenario,
+        start_origin: "https://different.example.test",
+      },
+    },
+  ]) {
+    expect((await compare(after)).normalized_result).toMatchObject({
+      overall_status: "unknown",
+      alignment: {
+        status: "partial",
+        failures: [{ code: "capture_context_mismatch", step_id: null }],
+      },
+      artifact_diffs: { total: 0 },
+    });
+  }
 });
 
 it("commits complete screenshot comparison inputs and reports derived provenance", async () => {

@@ -1,4 +1,5 @@
 import type { FileHandle } from "node:fs/promises";
+import { scheduler } from "node:timers/promises";
 import {
   RegularFileOperationCancelled,
   type StableRegularFileDescriptor,
@@ -246,11 +247,22 @@ export const assertArtifactReadActive = (
 };
 
 /**
+ * Let a queued abort land, then report it. Synchronous multi-frame decoding
+ * cannot observe the signal until the caller yields.
+ */
+export const yieldArtifactRead = async (
+  signal: AbortSignal | undefined,
+): Promise<void> => {
+  await scheduler.yield();
+  assertArtifactReadActive(signal);
+};
+
+/**
  * Project a failure raised by a domain byte parser over artifact bytes onto the
  * reader's reasons: the caller's cancellation (`signal.reason`) becomes
- * `cancelled`, malformed or truncated structure `format`, and a decode budget
- * `limit` bounded by `limitBoundary`. Unsupported forms and every other cause
- * pass through unchanged.
+ * `cancelled`, parser failure kinds and limit facts survive, and
+ * `limitBoundary` describes what a decode budget constrains. Every other cause
+ * passes through unchanged.
  */
 export const artifactParseFailure = (
   cause: unknown,
@@ -263,16 +275,15 @@ export const artifactParseFailure = (
     });
   if (!(cause instanceof ParseFailureError)) return cause;
   const { failure } = cause;
-  if (failure.kind === "malformed" || failure.kind === "truncated")
-    return new ArtifactReaderFailure("format", cause.message, { cause });
   if (failure.kind === "limit") {
     const boundary = limitBoundary?.(failure.limit);
     return new ArtifactReaderFailure("limit", cause.message, {
       cause,
+      parserLimit: failure.limit,
       ...(boundary === undefined ? {} : { boundary }),
     });
   }
-  return cause;
+  return new ArtifactReaderFailure(failure.kind, cause.message, { cause });
 };
 
 /** Recognize only the originating caller's cancellation without discarding cleanup ownership. */
@@ -336,13 +347,15 @@ export const withArtifactRegularFile = async <Value>(
 /** Keep admission, operation outcome, final close and failed-owner transfer together. */
 export const withArtifactFileHandle = async <Value>(
   path: string,
-  file: FileHandle,
+  file: FileHandle | OwnedFileHandle,
   resources: ArtifactResourceScope | undefined,
   signal: AbortSignal | undefined,
   operation: (file: FileHandle) => Promise<Value>,
 ): Promise<Value> => {
-  const owner = new OwnedFileHandle(file);
-  const cleanupLease = new AnalysisCleanupLease(() => owner.close(), [path]);
+  const owner: OwnedFileHandle & {
+    readonly cleanupResources?: readonly string[];
+  } = file instanceof OwnedFileHandle ? file : new OwnedFileHandle(file);
+  const cleanupLease = AnalysisCleanupLease.forCloseOwner(owner, path);
   try {
     return await withOwnedFileHandle(
       path,

@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { expect, it } from "vitest";
 import { readClientConfigurationFiles } from "../../../src/application/ClientConfigurationFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it("attributes case-folded Windows overrides without disclosing values", async () => {
   const root = await createTestTempDirectory("rea-config-override-origin-");
@@ -20,7 +20,7 @@ it("attributes case-folded Windows overrides without disclosing values", async (
     undefined,
     "win32",
     {
-      rea_asar_max_header_bytes: "0",
+      writeOverrides: { rea_asar_max_header_bytes: "0" },
     },
   );
   expect(result).toMatchObject({
@@ -96,7 +96,7 @@ it.each([
       },
       undefined,
       process.platform,
-      overrides,
+      { writeOverrides: overrides },
     );
     if (result.ok) throw new Error("Expected rejected environment");
     expect(result.error.detail).toContain(reported);

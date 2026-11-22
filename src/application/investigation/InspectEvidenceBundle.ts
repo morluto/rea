@@ -15,8 +15,8 @@ type InspectionDetail = "complete" | "summary" | "records" | "links";
 
 /** Fields owned by particular deliveries, refused elsewhere rather than ignored. */
 const DELIVERY_FIELDS = [
-  ["offset", ["records", "links"]],
-  ["limit", ["records", "links"]],
+  ["offset", ["summary", "records", "links"]],
+  ["limit", ["summary", "records", "links"]],
   ["traversal", ["links"]],
   ["linked_evidence_id", ["links"]],
   ["link_status", ["links"]],
@@ -95,7 +95,10 @@ export const inspectEvidenceBundle = (
     );
   return ok(
     options.detail === "summary"
-      ? summarizeEvidenceBundle(bundle, options.filters)
+      ? summarizeEvidenceBundle(bundle, options.filters, {
+          offset: options.offset,
+          limit: options.limit,
+        })
       : bundle,
   );
 };

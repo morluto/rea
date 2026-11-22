@@ -18,7 +18,7 @@ import { setupCleanupError, SetupCleanupOwner } from "./SetupCleanupOwner.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { err, ok } from "../domain/result.js";
 import { SetupSkillInstallError } from "./SetupSkill.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 describe("setup workflow", () => {
   it("rejects Node 25 before applying setup actions", async () => {

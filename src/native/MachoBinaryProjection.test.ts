@@ -1,11 +1,15 @@
+import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
 import { projectMachoBinary } from "./MachoBinaryProjection.js";
 import type { MachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import { readMachoCommandNames } from "../domain/apple/machoCommandNames.js";
 import {
+  LC,
+  lazyLoadDylibInfoCommand,
   machoImage,
   readerOf,
   segmentCommand,
+  versionMinCommand,
 } from "../artifacts/apple/MachoImage.fixture.js";
 
 const multilineBinary: MachoCommandNames = {
@@ -365,6 +369,33 @@ it("retains legacy command metadata and derives simulator platform from CPU", ()
   });
 });
 
+it("preserves an oversized minimum-version command as raw evidence", async () => {
+  const oversized = Buffer.concat([
+    versionMinCommand(LC.VERSION_MIN_MACOSX),
+    Buffer.alloc(8),
+  ]);
+  oversized.writeUInt32LE(oversized.length, 4);
+  const image = machoImage({ commands: [oversized] });
+  const projected = projectMachoBinary(
+    await readMachoCommandNames(readerOf(image), image.length, 1024, 8),
+  );
+
+  expect(projected.builds).toEqual([]);
+  expect(projected.commands).toMatchObject([
+    {
+      kind: "LC_VERSION_MIN_MACOSX",
+      fields: {
+        command_offset: 32,
+        command_sha256: createHash("sha256").update(oversized).digest("hex"),
+      },
+    },
+  ]);
+  expect(projected.commands[0]?.fields).not.toHaveProperty("version");
+  expect(projected.buildLimitations).toContain(
+    "The LC_VERSION_MIN_MACOSX payload is not decoded.",
+  );
+});
+
 it("distinguishes exact fixed command extents from unmodeled trailing bytes", async () => {
   const command = (size: number) => {
     const bytes = Buffer.alloc(size);
@@ -389,6 +420,30 @@ it("distinguishes exact fixed command extents from unmodeled trailing bytes", as
   );
   expect(projection.commandLimitations).toEqual([
     expect.stringContaining("payload fields are not decoded"),
+  ]);
+});
+
+it("reports lazy dylib linkedit fields and retains a digest when the command has a tail", async () => {
+  const exact = lazyLoadDylibInfoCommand(0x340, 56);
+  const extended = Buffer.concat([exact, Buffer.alloc(8, 0xa5)]);
+  extended.writeUInt32LE(extended.length, 4);
+  const image = machoImage({ commands: [exact, extended] });
+  const result = projectMachoBinary(
+    await readMachoCommandNames(readerOf(image), image.length, 1024, 8),
+  );
+
+  expect(result.commands[0]?.fields).toMatchObject({
+    dataoff: 0x340,
+    datasize: 56,
+  });
+  expect(result.commands[0]?.fields).not.toHaveProperty("command_sha256");
+  expect(result.commands[1]?.fields).toMatchObject({
+    dataoff: 0x340,
+    datasize: 56,
+    command_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+  });
+  expect(result.dependencyLimitations).toEqual([
+    "The linkedit dependency payload is not decoded.",
   ]);
 });
 
@@ -449,7 +504,15 @@ it("reports undecoded lazy dependency payloads and unsafe entrypoint offsets", (
       flags: 0,
     },
     commands: [
-      { index: 0, command: 0x3a, offset: 0, size: 16, rawSha256: null },
+      {
+        index: 0,
+        command: 0x3a,
+        offset: 0,
+        size: 16,
+        fixedFields: { dataoff: 0x340, datasize: 56 },
+        fullyDecoded: true,
+        rawSha256: null,
+      },
       {
         index: 1,
         command: 0x80000028,

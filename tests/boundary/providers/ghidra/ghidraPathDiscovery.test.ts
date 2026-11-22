@@ -18,7 +18,7 @@ it.skipIf(process.platform === "win32")(
       await mkdir(join(directory, "support"), { recursive: true });
       await writeFile(
         join(directory, "Ghidra/application.properties"),
-        "application.version=12.1.4\n",
+        "application.version=12.2\n",
       );
       const launcher = join(directory, "ghidraRun");
       await writeFile(

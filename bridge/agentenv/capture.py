@@ -27,6 +27,11 @@ POLL_S = 0.2
 TAIL_BYTES = 4096
 
 
+def _poll_sleep(attempt: int, cap: float = POLL_S) -> float:
+    """Back off from 5 ms to `cap` so fast fake/local operations settle without fixed 200 ms stalls."""
+    return min(cap, 0.005 * (2 ** min(attempt, 6)))
+
+
 def _say(value: dict) -> int:
     print(json.dumps(value), flush=True)
     return 0
@@ -122,6 +127,7 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
     """Wait for the capture's event, or for it to exit, or for time to run out."""
     log = os.path.join(capture, "progress.log")
     deadline = time.monotonic() + timeout
+    attempt = 0
     while True:
         line = _event_line(log, offset, kinds, name)
         if line is not None:
@@ -131,7 +137,8 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return _ended(capture, code)
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
 
 
 def _within(path: str, folder: str) -> bool:
@@ -228,9 +235,58 @@ def _request(capture: str, line: str) -> bool:
         return False
     try:
         os.write(fd, (line + "\n").encode("utf-8"))
+    except OSError:
+        return False
     finally:
         os.close(fd)
     return True
+
+
+def _sleep_until(attempt: int, deadline: float) -> bool:
+    """Wait one poll step without crossing deadline. False when no time remains."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    time.sleep(min(_poll_sleep(attempt), remaining))
+    return True
+
+
+def _absent_marker(capture: str) -> str:
+    return os.path.join(capture, "absent")
+
+
+def _stop_claimed_absent(capture: str) -> bool:
+    return os.path.exists(_absent_marker(capture))
+
+
+def _wait_for_capture_handoff(capture: str, deadline: float) -> None:
+    """start() already owns this directory. Wait until its FIFO, exit file, or stop claim appears."""
+    attempt = 0
+    control = os.path.join(capture, "control")
+    while (
+        _exit_code(capture) is None
+        and not os.path.exists(control)
+        and not _stop_claimed_absent(capture)
+    ):
+        if not _sleep_until(attempt, deadline):
+            return
+        attempt += 1
+
+
+def _request_until(capture: str, line: str, deadline: float) -> bool:
+    """Retry until a reader accepts the line, the capture exits, or the deadline passes.
+
+    start() creates the control FIFO before it opens the reader. One failed
+    nonblocking write in that gap is not proof the capture will never read.
+    """
+    attempt = 0
+    while time.monotonic() < deadline and _exit_code(capture) is None:
+        if _request(capture, line):
+            return True
+        if not _sleep_until(attempt, deadline):
+            return False
+        attempt += 1
+    return False
 
 
 def mark(arguments: dict) -> int:
@@ -253,15 +309,34 @@ def mark(arguments: dict) -> int:
 
 def stop(arguments: dict) -> int:
     capture = os.path.abspath(arguments["capture"])
-    if _exit_code(capture) is None and not os.path.exists(os.path.join(capture, "control")):
-        # Never launched: claim the folder, so a start still on its way finds it used and launches nothing.
-        os.makedirs(capture, exist_ok=True)
-        return _say({"absent": True})
-    if _exit_code(capture) is None:
-        _request(capture, "stop")
+    control = os.path.join(capture, "control")
     deadline = time.monotonic() + arguments.get("timeout_s", 600)
-    while (code := _exit_code(capture)) is None and time.monotonic() < deadline:
-        time.sleep(POLL_S)
+    if _exit_code(capture) is None and not os.path.exists(control):
+        # Claim the folder exclusively. exist_ok would adopt a start() directory
+        # that does not have its FIFO yet and then report the capture absent.
+        parent = os.path.dirname(capture)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        try:
+            os.mkdir(capture, 0o700)
+        except FileExistsError:
+            if not _stop_claimed_absent(capture):
+                _wait_for_capture_handoff(capture, deadline)
+            if _stop_claimed_absent(capture):
+                return _say({"absent": True})
+        else:
+            # Publish the claim before the reply. A retry must see it and
+            # return absent instead of waiting for a FIFO start() will not create.
+            descriptor = os.open(_absent_marker(capture), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            os.close(descriptor)
+            return _say({"absent": True})
+    if _exit_code(capture) is None and os.path.exists(control):
+        _request_until(capture, "stop", deadline)
+    attempt = 0
+    while (code := _exit_code(capture)) is None:
+        if not _sleep_until(attempt, deadline):
+            break
+        attempt += 1
     log = os.path.join(capture, "progress.log")
     if code is None:
         return _say({"timed_out": True, "progress": _tail(log)})
@@ -449,18 +524,28 @@ def escalate():
 def stop_owned():
     """Finish the signal sequence for the leader and same-session children."""
     global leader_unsettled
+    wait_attempt = 0
     while child is not None and child.poll() is None:
         if escalate():
             if child.poll() is None or live_owned_members():
                 leader_unsettled = True
             return
-        time.sleep(0.2)
+        if stop_requested():
+            time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+            wait_attempt += 1
+        else:
+            try:
+                child.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                pass
+    wait_attempt = 0
     while stop_requested() and live_owned_members():
         if escalate():
             if live_owned_members():
                 leader_unsettled = True
             return
-        time.sleep(0.2)
+        time.sleep(min(0.2, 0.005 * (2 ** min(wait_attempt, 6))))
+        wait_attempt += 1
 
 def abandon_drain():
     """Wait out stderr, and keep stopping same-session children after it closes.
@@ -625,8 +710,10 @@ def run_poll(arguments: dict) -> int:
     if not _owns_run(job, arguments["token"]):
         return _say({"error": "the command job ownership is not confirmed"})
     deadline = time.monotonic() + arguments.get("timeout_s", 30)
+    attempt = 0
     while (result := _run_result(job)) is None and time.monotonic() < deadline:
-        time.sleep(POLL_S)
+        time.sleep(_poll_sleep(attempt))
+        attempt += 1
     if result is None:
         pending = {"pending": True, "timed_out": os.path.exists(os.path.join(job, "timed_out"))}
         progress = _tail(os.path.join(job, "supervisor.log"))

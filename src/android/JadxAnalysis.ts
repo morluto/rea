@@ -418,7 +418,6 @@ const inspectMethod = async (
       class_name: request.input.class_name,
       method_name: request.input.method_name,
       overload_index: index,
-      smali_fallback: true,
     }),
   );
   if (
@@ -437,11 +436,22 @@ const inspectMethod = async (
     class_name: summary.full_name,
     method: selected,
     overload_count: candidates.length,
-    representation: body.mode,
-    body_status: body.body.length === 0 ? "not_available" : "available",
-    fell_back: body.fell_back,
-    markers: body.markers,
-    source: normalizeJadxText(body.body),
+    ...(body.mode === "unavailable"
+      ? {
+          representation: null,
+          body_status: "not_available",
+          body_unavailable_reason: body.body_unavailable_reason,
+          fell_back: false,
+          markers: ["disassembly_failed"],
+          source: null,
+        }
+      : {
+          representation: body.mode,
+          body_status: body.body.length === 0 ? "not_available" : "available",
+          fell_back: body.fell_back,
+          markers: body.markers,
+          source: normalizeJadxText(body.body),
+        }),
     ...mappingOf(mapping, () => [
       classQuery(summary),
       ...methodQueries(summary).filter(
@@ -569,8 +579,6 @@ const traceReferences = async (
         ...(methodName === undefined
           ? {}
           : { method_name: methodName, overload_index: index }),
-        limit: 2_147_483_647,
-        resolve_line: false,
       },
     ),
   );

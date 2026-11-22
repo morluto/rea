@@ -1,6 +1,6 @@
 import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 
-import { Cli } from "incur";
+import type { CliInstance } from "./types.js";
 
 import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
@@ -28,7 +28,7 @@ import { cliProgressReporter } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
@@ -118,7 +118,7 @@ export const registerBrowserCommands = (
 };
 
 const registerBundleAnalysis = (
-  cli: ReturnType<typeof Cli.create>,
+  cli: CliInstance,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
 ): void => {
