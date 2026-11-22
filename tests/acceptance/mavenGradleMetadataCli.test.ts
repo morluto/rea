@@ -25,11 +25,18 @@ const bundleOutputSchema = contractNamed(
 ).outputSchema;
 
 cliTest(
-  "preserves qualified POM property keys beside their references through CLI, MCP and retained Evidence",
+  "distinguishes POM declaration namespaces and preserves qualified property keys through CLI and MCP",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-property-keys-");
     const path = join(root, "pom.xml");
-    const bytes = Buffer.from(qualifiedMavenPropertiesFixture);
+    const bytes = Buffer.from(
+      qualifiedMavenPropertiesFixture
+        .replace("<groupId>", "<a:groupId>foreign</a:groupId><groupId>")
+        .replace(
+          "<dependencies>",
+          "<dependencies><a:dependency><artifactId>foreign</artifactId></a:dependency>",
+        ),
+    );
     await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-maven-gradle-metadata", path, "--json"],
@@ -37,6 +44,8 @@ cliTest(
     expect(result.exitCode, result.stdout + result.stderr).toBe(0);
     const cliEvidence = outputSchema.parse(result.json);
     const report = cliEvidence.normalized_result;
+    expect(report.coordinates.group_id).toBe("example");
+    expect(report.dependencies).toHaveLength(1);
     expect(report.properties).toEqual([
       { name: "revision", value: "0", value_credentials_redacted: false },
       { name: "a:revision", value: "11", value_credentials_redacted: false },
@@ -89,10 +98,8 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-parent-gap-");
     const path = join(root, "pom.xml");
-    await writeFile(
-      path,
-      `<project><modelVersion>4.0.0</modelVersion><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent></project>`,
-    );
+    const source = `<project><modelVersion>4.0.0</modelVersion><parent><groupId>example</groupId><artifactId>parent</artifactId><version>1</version></parent></project>`;
+    await writeFile(path, source);
     const result = await cli.run({
       arguments: ["inspect-maven-gradle-metadata", path, "--json"],
     });
@@ -121,7 +128,17 @@ cliTest(
       },
     ];
     const cliEvidence = outputSchema.parse(result.json);
-    expect(cliEvidence.normalized_result.unresolved).toEqual(expected);
+    expect(cliEvidence.normalized_result).toMatchObject({
+      coordinates: {
+        group_id: null,
+        artifact_id: null,
+        version: null,
+        packaging: null,
+      },
+      artifact: { bytes: Buffer.byteLength(source) },
+      coverage: { examined_bytes: Buffer.byteLength(source) },
+      unresolved: expected,
+    });
     const { call } = await connectLocalToolsMcp();
     const response = await call("inspect_maven_gradle_metadata", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
@@ -224,11 +241,22 @@ cliTest(
 );
 
 cliTest(
-  "reports Maven coordinates and a BOM import through the public CLI",
+  "classifies a BOM import by its managed declaration through the public CLI",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-maven-cli-");
     const path = join(root, "pom.xml");
-    const bytes = Buffer.from(mavenPomFixture, "utf8");
+    const bytes = Buffer.from(
+      mavenPomFixture.replace(
+        "</dependencyManagement>\n  <dependencies>",
+        `</dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>example</groupId><artifactId>direct-pom</artifactId><version>1</version>
+      <type>pom</type><scope>import</scope>
+    </dependency>`,
+      ),
+      "utf8",
+    );
     await writeFile(path, bytes);
     const result = await cli.run({
       arguments: ["inspect-maven-gradle-metadata", path, "--json"],
@@ -241,7 +269,17 @@ cliTest(
     expect(report.coordinates.version).toBe("${revision}");
     expect(report.dependency_management[0]).toMatchObject({
       artifact_id: "spring-boot-dependencies",
+      origin: "dependencyManagement",
+      scope: "import",
+      type: "pom",
       bom_import: true,
+    });
+    expect(report.dependencies[0]).toMatchObject({
+      artifact_id: "direct-pom",
+      origin: "dependencies",
+      scope: "import",
+      type: "pom",
+      bom_import: false,
     });
     expect(report.coverage.status).toBe("complete");
     expect(report.artifact.sha256).toBe(

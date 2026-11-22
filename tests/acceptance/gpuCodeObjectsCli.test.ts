@@ -21,6 +21,7 @@ import {
   ccobFixture,
   ptxFixture,
   amdFixture,
+  amdDescriptorNoteFixture,
   amdNoteFixture,
   cubinFixture,
   hipFixture,
@@ -126,6 +127,52 @@ cliTest(
       compression: "lz4",
       sha256: createHash("sha256").update(ptx).digest("hex"),
     });
+  },
+);
+
+cliTest(
+  "reports the AMD metadata nesting allowance while retaining a preceding kernel",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amdgpu-metadata-depth-");
+    const path = join(root, "amdgpu");
+    // A one-entry map whose value is 32 nested single-element MessagePack arrays.
+    const metadata = Buffer.from([
+      0x81,
+      0xa1,
+      0x78,
+      ...Array<number>(32).fill(0x91),
+      0,
+    ]);
+    await writeFile(
+      path,
+      amdFixture(false, amdDescriptorNoteFixture(metadata)),
+    );
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const report = gpuCodeObjectsSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(report.objects[0]).toMatchObject({
+      inspection: "capacity",
+      limitations: expect.arrayContaining([
+        "AMDGPU metadata exceeds its 32-level nesting allowance",
+      ]),
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [expect.any(Object)],
+      },
+    });
+    expect(report.kernels.map(({ name }) => name)).toEqual(["add_one"]);
   },
 );
 

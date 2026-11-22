@@ -6,6 +6,8 @@ import {
   MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
 } from "../../domain/native/elfDependencies.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readElfDependencies } from "../../domain/desktop/elfDependencies.js";
+import { readElfHardening } from "../hardening/ElfHardening.js";
 import { elfDependencyFixture, elfHash } from "./ElfDependencies.fixture.js";
 import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
 
@@ -43,6 +45,57 @@ const parse = (
   );
 
 const defaultNeeded = ["libstdc++.so.6", "libm.so.6", "libc.so.6"];
+
+it.each([
+  { bits: 32, little: false },
+  { bits: 64, little: true },
+] as const)(
+  "reports a partial PT_DYNAMIC row in ELF$bits without discarding earlier dependencies",
+  async ({ bits, little }) => {
+    const width = bits === 64 ? 16 : 8;
+    for (const extra of [width, 1, 1 - width]) {
+      const bytes = elfDependencyFixture({
+        bits,
+        little,
+        stripped: true,
+        interpreter: null,
+        dynamicTailBytes: extra,
+      });
+      const report = parse(bytes);
+      expect(report.needed.map(({ name }) => name)).toEqual(defaultNeeded);
+      const desktop = await readElfDependencies(
+        async (offset, size) => bytes.subarray(offset, offset + size),
+        bytes.length,
+      );
+      if (extra === width) {
+        expect(report.coverage.status).toBe("complete");
+        expect(desktop).toMatchObject({
+          ok: true,
+          value: { needed: defaultNeeded },
+        });
+        expect(readElfHardening(bytes).format).toBe("elf");
+      } else {
+        expect(report.coverage.status).toBe("partial");
+        expect(report.issues).toContainEqual({
+          code: "malformed_entry",
+          // PT_DYNAMIC is the final payload of the stripped fixture.
+          location: `0x${(bytes.length - 1).toString(16)}`,
+          message: "ELF PT_DYNAMIC size is not a whole number of entries",
+        });
+        expect(desktop).toMatchObject({
+          ok: false,
+          error: {
+            kind: "unreadable",
+            reason: "ELF PT_DYNAMIC size is not a whole number of entries",
+          },
+        });
+        expect(() => readElfHardening(bytes)).toThrow(
+          "ELF PT_DYNAMIC size is not a whole number of entries",
+        );
+      }
+    }
+  },
+);
 
 const elf64ProgramHeaders = (original: Buffer) => {
   const phoff = Number(original.readBigUInt64LE(32));
@@ -1307,4 +1360,51 @@ it("reports the fixed GNU hash allowance before traversing an over-limit table",
       }),
     }),
   );
+});
+
+it.each([
+  [2, 32],
+  [18, 32],
+  [43, 64],
+] as const)(
+  "does not count SPARC register declarations as imports on machine %s",
+  (machine, bits) => {
+    // JNA's sunos-sparcv9 libjnidispatch.so declares %g2 and %g3 this way:
+    // undefined STT_SPARC_REGISTER (type 13) entries with empty names.
+    const report = parse(
+      elfDependencyFixture({
+        bits,
+        little: false,
+        machine,
+        imports: [
+          { name: "printf", version: 1 },
+          { name: "", type: 13, version: 0 },
+        ],
+      }),
+    );
+    expect(report.imports.map(({ name }) => name)).toEqual(["printf"]);
+    expect(report.coverage).toMatchObject({
+      status: "complete",
+      examined_imports: 1,
+    });
+    expect(report.issues).toEqual([]);
+  },
+);
+
+it("keeps processor-specific symbol type 13 as an import outside SPARC", () => {
+  const report = parse(
+    elfDependencyFixture({
+      bits: 64,
+      little: true,
+      imports: [
+        { name: "printf", version: 1 },
+        { name: "", type: 13, version: 0 },
+      ],
+    }),
+  );
+  expect(report.imports.map(({ name, type }) => [name, type])).toEqual([
+    ["printf", "function"],
+    [null, "other"],
+  ]);
+  expect(report.coverage.status).toBe("partial");
 });

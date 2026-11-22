@@ -168,17 +168,22 @@ processTest(
 processTest(
   "reports an HTTP option without its mode through the compiled CLI",
   async ({ processes }) => {
-    const result = await processes.run(process.execPath, [
-      fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url)),
-      "mcp",
-      "--port",
-      "8765",
-    ]);
-    expect(result).toMatchObject({
-      exitCode: 1,
-      stdout: "",
-      stderr: "--host and --port require --http\n",
-    });
+    for (const [flag, value] of [
+      ["--allowed-hosts", "localhost"],
+      ["--port", "8765"],
+    ] as const) {
+      const result = await processes.run(process.execPath, [
+        fileURLToPath(new URL("../../../scripts/rea.mjs", import.meta.url)),
+        "mcp",
+        flag,
+        value,
+      ]);
+      expect(result).toMatchObject({
+        exitCode: 1,
+        stdout: "",
+        stderr: `${flag} requires --http\n`,
+      });
+    }
   },
 );
 

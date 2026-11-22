@@ -9,6 +9,7 @@ import {
 
 const readers = (bytes: Buffer) => ({
   u32: (address: bigint) => bytes.readUInt32LE(Number(address)),
+  i32: (address: bigint) => bytes.readInt32LE(Number(address)),
   pointer: (address: bigint) => bytes.readBigUInt64LE(Number(address)),
   resolvePointer: (address: bigint) => ({
     kind: "raw" as const,
@@ -59,7 +60,6 @@ it("keeps an encoded null distinct from a nonzero relative offset to address zer
   bytes.writeBigUInt64LE(0x60n, 0x50);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -88,7 +88,6 @@ it("resolves zero offsets for nonnullable fields to their own field address", ()
   bytes.writeInt32LE(0, 0x20);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -115,7 +114,6 @@ it("accepts encoded zero only for nullable direct Swift fields", () => {
   const bytes = Buffer.alloc(0x80);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -138,7 +136,6 @@ it("masks only the verified direct type metadata tag and keeps other tags unsupp
   bytes.writeInt32LE(0x27, 0x30);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -183,7 +180,6 @@ it("treats a zero pointer loaded through a nullable indirect field as null", () 
   bytes.writeInt32LE(-0x23, 0x24); // odd-tagged displacement to cell address 0
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -201,7 +197,6 @@ it("keeps a fixup rebase to VM address zero as an address, not null", () => {
   bytes.writeInt32LE(-0x23, 0x24);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: {
       ...readers(bytes),
       resolvePointer: () => ({ kind: "rebase", target: 0n }),
@@ -230,7 +225,6 @@ it("preserves an indirect import binding instead of reading VM address zero", ()
   bytes.writeInt32LE(-0x23, 0x24);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: {
       ...readers(bytes),
       resolvePointer: () => ({
@@ -263,7 +257,6 @@ it("retains unsafe target addresses as partial decode facts", () => {
   bytes.writeInt32LE(0x100, 0x20);
   const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
   const relative = createSwiftRelativeReader({
-    bytes,
     readers: readers(bytes),
     budget: budget(),
     result,
@@ -293,7 +286,6 @@ it.each([
     bytes.writeInt32LE(0x25, 0x24);
     const result = objcSwiftMetadataSchema.parse({ db_save_result: null });
     const relative = createSwiftRelativeReader({
-      bytes,
       readers: {
         ...readers(bytes),
         resolvePointer: () => {

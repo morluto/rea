@@ -29,6 +29,7 @@ import {
   snapshotEnvironment,
 } from "../process/snapshotEnvironment.js";
 import { dshDocument } from "./DshCordisPatch.js";
+import { mergeRegistrationEnvironment } from "./UserConfigurationLocation.js";
 import type { McpToolTimeoutInputs } from "../config/mcpStartupPolicy.js";
 import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 
@@ -38,16 +39,19 @@ export interface ProviderRequestBudgetResolver {
     environment: Readonly<Record<string, string>>,
   ): Promise<Result<number | undefined, ConfigurationError>>;
   /**
-   * Environment settings this resolver may read. Unresolved expressions in
-   * these settings block budget derivation; expressions in other settings
-   * stay preserved. An omitted set keeps the fail-closed whole-environment
-   * gate: every unresolved expression blocks the budget.
+   * Settings needed for the provider and lookup selected by the literals.
+   * An unresolved expression blocks that lookup when it could change its
+   * inputs. An omitted declaration keeps the fail-closed whole-environment gate.
    */
-  readonly budgetSettings?: ReadonlySet<string>;
+  readonly budgetSettings?: (
+    analysisProvider: AnalysisProviderSelector,
+    environment: Readonly<Record<string, string>>,
+  ) => ReadonlySet<string>;
 }
 
 export interface ClientRegistrationEnvironmentDetails {
   readonly values: Readonly<Record<string, string>>;
+  readonly configHomeFallbackApplied?: true;
   readonly unresolvedSettings: ReadonlySet<string>;
   readonly timeoutInputs: McpToolTimeoutInputs | undefined;
 }
@@ -179,17 +183,20 @@ export const clientRegistrationEnvironmentDetails = (
     );
   // Validate known settings with the runtime's parser, but retain the original
   // string overrides, including unknown client-specific keys and no defaults.
-  const environment = mergeEnvironmentOverrides(
+  const merged = mergeRegistrationEnvironment(
     existing.data,
     overrides,
     platform,
   );
-  return validatedDetails(
-    environment,
+  const validated = validatedDetails(
+    merged.values,
     validation,
     platform,
-    expressionSettings(client?.name, environment),
+    expressionSettings(client?.name, merged.values),
   );
+  return validated.ok && merged.configHomeFallbackApplied === true
+    ? ok({ ...validated.value, configHomeFallbackApplied: true })
+    : validated;
 };
 
 /** Consume a resolved setting inside its reader without including its value in diagnostics. */
@@ -286,14 +293,26 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
   // The budget gate stays fail-closed: settings the resolver may read must be
   // literals, and an undeclared read set keeps every unresolved expression
   // blocking, because an unreadable budget cannot be treated as absent.
-  const budgetSettings = resolveProviderRequestBudget?.budgetSettings;
+  const { timeoutInputs, values } = details.value;
+  const environment =
+    resolveProviderRequestBudget === undefined
+      ? values
+      : snapshotEnvironment(values, platform);
+  const budgetSettings =
+    timeoutInputs === undefined
+      ? undefined
+      : resolveProviderRequestBudget?.budgetSettings?.(
+          timeoutInputs.analysisProvider,
+          environment,
+        );
   const unresolved = [...details.value.unresolvedSettings].filter(
     (setting) =>
-      (resolveProviderRequestBudget !== undefined &&
-        (budgetSettings === undefined || budgetSettings.has(setting))) ||
-      TIMEOUT_INPUT_SETTINGS.has(setting),
+      TIMEOUT_INPUT_SETTINGS.has(setting) ||
+      (timeoutInputs !== undefined &&
+        resolveProviderRequestBudget !== undefined &&
+        (budgetSettings === undefined || budgetSettings.has(setting))),
   );
-  if (details.value.timeoutInputs === undefined || unresolved.length > 0)
+  if (timeoutInputs === undefined || unresolved.length > 0)
     return err(
       new ConfigurationError(
         "Cannot derive a provider request budget from expression-backed settings",
@@ -306,12 +325,9 @@ export const clientRegistrationEnvironmentDetailsWithBudget = async (
         },
       ),
     );
-  const resolved = {
-    ...details.value,
-    timeoutInputs: details.value.timeoutInputs,
-  };
+  const resolved = { ...details.value, timeoutInputs };
   if (resolveProviderRequestBudget === undefined) return ok(resolved);
-  return validatedBudget(resolved, resolveProviderRequestBudget, platform);
+  return validatedBudget(resolved, resolveProviderRequestBudget, environment);
 };
 
 const validatedDetails = (
@@ -411,13 +427,13 @@ const environmentDetails = (
 const validatedBudget = async (
   details: ResolvedClientRegistrationEnvironmentDetails,
   resolveProviderRequestBudget: ProviderRequestBudgetResolver,
-  platform: NodeJS.Platform,
+  environment: Readonly<Record<string, string>>,
 ): Promise<
   Result<ResolvedClientRegistrationEnvironmentDetails, ConfigurationError>
 > => {
   const providerBudget = await resolveProviderRequestBudget(
     details.timeoutInputs.analysisProvider,
-    snapshotEnvironment(details.values, platform),
+    environment,
   );
   if (!providerBudget.ok) return providerBudget;
   return ok({

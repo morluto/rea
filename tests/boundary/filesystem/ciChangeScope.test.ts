@@ -242,6 +242,7 @@ it.each([
   ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
   ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
   ["scripts/verify-pcap.mjs", "packet_capture"],
+  [".github/actions/ubuntu-archive/action.yml", "signal_recording"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
@@ -421,6 +422,27 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
+it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
+  const { directory } = await fixture();
+  const module = "scripts/lib/uncovered.mjs";
+  const data = "tests/fixtures/independent.txt";
+  const test = "tests/boundary/filesystem/independent.test.ts";
+  await mkdir(dirname(join(directory, test)), { recursive: true });
+  await writeFile(join(directory, test), `readFileSync("${data}");\n`);
+  const base = await change(directory, [module, data]);
+  const head = await change(
+    directory,
+    [module, data],
+    "Updated fixture content\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `No test reaches shared script module: ${module}`,
+    },
+  });
+});
+
 it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
   const { directory } = await fixture();
   // The entrypoint's output file is not part of the change.
@@ -559,7 +581,7 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const staticOnly of [
     "scripts/lib/module-layers.baseline.json",
     "scripts/verify/architecture-guards.mjs",
-    "scripts/verify/baselines/raw-buffer-read.json",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
     "tsconfig.scripts.json",
   ]) {
     expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
@@ -793,7 +815,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -811,6 +833,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -818,6 +842,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -956,13 +1000,13 @@ it("retains native Inspector verification on every documented package host", asy
   );
   expect(windowsBuild).toBeGreaterThanOrEqual(0);
   expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
-  for (const verifier of [
-    "node scripts/verify/inspector/runtime-observation.mjs",
-    "node scripts/verify-windows-package.mjs",
-  ]) {
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
     const step = windowsSteps.findIndex(({ run }) => run === verifier);
     expect(step).toBeGreaterThan(windowsBuild);
-    expect(windowsSteps[step]?.if).toBeUndefined();
+    expect(windowsSteps[step]?.if).toBe(condition);
   }
 });
 
@@ -999,6 +1043,10 @@ it.each([
   ],
   // The darwin package baseline is the CI run of packaged Hopper commands
   // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
   [
     "tests/fixtures/fakeHopper.mjs",
     { code: true, runtime: true, package: true },
@@ -1245,6 +1293,41 @@ it.each([
     ".github/actions/ubuntu-archive/action.yml",
     { code: true, runtime: true, package: true, binary_layout: true },
   ],
+  [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
   [
@@ -1393,6 +1476,10 @@ it.each([
   ],
   [
     "src/application/DshCordisYaml.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
+    "src/desktop/AgentEnvBridgeSources.ts",
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
@@ -1753,6 +1840,22 @@ it.each([
     { workflows: true, code: false, package: false, website: false },
   ],
   [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
+  ],
+  [
     "src/domain/javascript/example.test.ts",
     { code: true, runtime: false, javascript_recovery: false, package: false },
   ],
@@ -1789,6 +1892,11 @@ it.each([
   [
     "docs/.vitepress/package.json",
     { code: true, docs: true, runtime: false, package: false },
+  ],
+  ["package-lock.json", { code: true, docs: true, runtime: true }],
+  [
+    "scripts/generate-third-party-inventory.mjs",
+    { code: true, docs: true, runtime: false },
   ],
   ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
@@ -2275,3 +2383,21 @@ it.each([
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

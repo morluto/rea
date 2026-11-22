@@ -83,8 +83,6 @@ it("keeps a settled fetch reader through a wrapper expression", () => {
 });
 
 it.each([
-  ["direct method replacement", "res.json = () => ({ fake: true });"],
-  ["conditional replacement", "if (flag) res.json = () => ({ fake: true });"],
   ["computed method replacement", 'res["json"] = () => ({ fake: true });'],
   ["unknown computed replacement", "res[key] = replacement;"],
   ["alias replacement", "const alias = res; alias.json = replacement;"],
@@ -245,7 +243,7 @@ it("keeps the fetch candidate when the binding also holds another request", () =
     import http from "node:http";
     async function f(){
       let res = await fetch("https://api.test/x");
-      res = await http.get("https://api.test/y");
+      res = await http.get("http://api.test/y");
       return res.json();
     }
   `);

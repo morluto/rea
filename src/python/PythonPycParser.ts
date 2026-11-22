@@ -11,12 +11,11 @@ import {
   type MarshalTuple,
 } from "../domain/python/marshalReader.js";
 import {
-  PYTHON_PYC_CHECK_SOURCE,
   PYTHON_PYC_CONST_PREVIEW_LIMIT,
-  PYTHON_PYC_HASH_BASED,
   PYTHON_PYC_HEADER_BYTES,
   PYTHON_PYC_INT_PREVIEW_BITS,
   PYTHON_PYC_SLICE_MAGIC,
+  interpretPythonPycHeaderFlags,
   pythonPycMarshalProfile,
   type PythonPycLimits,
   type PythonPyc,
@@ -256,12 +255,13 @@ export const parsePythonPyc = (
   // Every CPython 3.7+ header packs flags at 4, then the source hash (8..16)
   // or the source mtime (8) and size (12).
   const header = new BinaryReader(bytes, true, PYTHON_PYC_FORMAT);
+  const flags = header.u32(4);
+  const { hashBased, checkSource, inactiveCheckSource, hasUnknownFlags } =
+    interpretPythonPycHeaderFlags(flags);
   if (mapped === null || identity === null) {
     // A known identity without a pinned code layout is a different outcome from an
     // unrecognized magic: the header below is still qualified from the same packed
     // fields every 3.7+ pyc uses, so report it instead of a bare rejection.
-    const flags = header.u32(4);
-    const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
     const headerFacts = `16-byte header, flags 0x${flags.toString(16)}, ${
       hashBased ? "hash-based" : "timestamp-based"
     }`;
@@ -271,15 +271,13 @@ export const parsePythonPyc = (
         : `CPython ${identity.pythonVersion} header is recognized (magic ${magic}, ${headerFacts}), but no marshal code layout is pinned for that version, so its code objects cannot be decoded. Standalone marshal decoding is pinned for CPython 3.7–3.13 and the 3.14 and 3.15 magics 3627 and 3666.`,
     );
   }
-  const flags = header.u32(4);
-  const hashBased = (flags & PYTHON_PYC_HASH_BASED) !== 0;
   const headerFields = {
     magic,
     python_version: identity.pythonVersion,
     code_layout: mapped.code_layout,
     flags,
     hash_based: hashBased,
-    check_source: (flags & PYTHON_PYC_CHECK_SOURCE) !== 0,
+    check_source: checkSource,
     source_hash_hex: hashBased ? bytes.subarray(8, 16).toString("hex") : null,
     source_mtime: hashBased ? null : header.u32(8),
     source_size: hashBased ? null : header.u32(12),
@@ -301,8 +299,6 @@ export const parsePythonPyc = (
     return malformed("Top-level marshal object is not a code object.");
   reader.finishCodes();
   const codeObjects = flattenCode(root.value, work);
-  const unknownFlags =
-    flags & ~(PYTHON_PYC_HASH_BASED | PYTHON_PYC_CHECK_SOURCE);
   return {
     artifact: {
       path: artifact.path,
@@ -331,11 +327,16 @@ export const parsePythonPyc = (
             "Magic 3410 is shared by CPython revisions with different negative co_stacksize/co_flags constructor checks; these raw values are preserved, but this header cannot establish constructor acceptance.",
           ]
         : []),
-      ...(unknownFlags === 0
-        ? []
-        : [
+      ...(inactiveCheckSource
+        ? [
+            "The stored check_source bit is set but applies only to hash-based pycs. This pyc carries timestamp metadata.",
+          ]
+        : []),
+      ...(hasUnknownFlags
+        ? [
             `Header flags ${flags} include unrecognized bits; only hash-based and check-source bits are decoded.`,
-          ]),
+          ]
+        : []),
     ],
   };
 };

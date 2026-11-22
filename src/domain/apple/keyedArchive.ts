@@ -57,6 +57,8 @@ export const keyedArchiveResultSchema = bundleResourceBoundResultSchema(
     archive_path: z.string(),
     archive_sha256: z.string(),
     archive_format: z.enum(["binary-plist", "xml-plist"]),
+    /** The `$archiver` the archive declares, such as `NSKeyedArchiver` or `SCNKeyedArchiver`. */
+    archiver: z.string(),
     roots: jsonObjectSchema,
     objects: z.array(
       z.strictObject({
@@ -109,13 +111,35 @@ const uid = (
   return object === undefined ? undefined : plistUidValue(object);
 };
 
+/**
+ * The declared archiver of a keyed archive, or undefined for another plist.
+ * Foundation decodes a keyed archive whatever its $archiver names; SceneKit
+ * writes SCNKeyedArchiver. Another name is an archive only with an $objects
+ * table and $top roots, so an ordinary plist keeps the workflow that reads it.
+ */
+const keyedArchiver = (
+  archive: Record<string, JsonValue> | undefined,
+  wrappedScalars: WeakSet<object>,
+): string | undefined => {
+  const archiver = archive?.$archiver;
+  if (typeof archiver !== "string") return undefined;
+  // A UID projects as an object too, but it is not a $top roots dictionary.
+  const top = archive?.$top;
+  return archiver === "NSKeyedArchiver" ||
+    (Array.isArray(archive?.$objects) &&
+      record(top, wrappedScalars) !== undefined &&
+      uid(top, wrappedScalars) === undefined)
+    ? archiver
+    : undefined;
+};
+
 const archiverMismatch = (
   archive: Record<string, JsonValue> | undefined,
 ): string => {
   if (archive === undefined) return "its root is not a dictionary";
   if (!Object.hasOwn(archive, "$archiver")) return "it has no $archiver key";
   return typeof archive.$archiver === "string"
-    ? `its $archiver is ${JSON.stringify(archive.$archiver)}`
+    ? `its $archiver is ${JSON.stringify(archive.$archiver)} without an $objects table and $top roots`
     : "its $archiver is not a string";
 };
 
@@ -137,9 +161,10 @@ export const projectKeyedArchive = (
     wrappedScalars.add(scalar),
   );
   const archive = record(projected.value, wrappedScalars);
-  if (archive?.$archiver !== "NSKeyedArchiver")
+  const archiver = keyedArchiver(archive, wrappedScalars);
+  if (archive === undefined || archiver === undefined)
     throw new KeyedArchiveKindError(
-      `Selected property list is not an NSKeyedArchiver archive: ${archiverMismatch(archive)}`,
+      `Selected property list is not a keyed archive: ${archiverMismatch(archive)}`,
       "property-list",
     );
   if (!Array.isArray(archive.$objects))
@@ -306,6 +331,7 @@ export const projectKeyedArchive = (
     negativeZeroRealCount: projected.negativeZeroRealCount,
     unknownDateCount: projected.unknownDateCount,
     unknownScalarCount: projected.unknownScalarCount,
+    archiver,
     roots,
     objects: page,
     references: references.filter(

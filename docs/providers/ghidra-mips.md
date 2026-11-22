@@ -62,11 +62,12 @@ Program and section declarations must agree; duplicate, conflicting, truncated
 or out-of-file records are rejected. Stripped section tables and section-only
 records are supported. Extended table numbering is explicitly unsupported.
 GNU `SHT_GNU_ATTRIBUTES` sections are located by numeric section type; section
-names never control detection. REA reads at most 4096 payload bytes and parses
-format version `A`, the `gnu` vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and
-`Tag_GNU_MIPS_ABI_MSA` (8) only. Unknown vendors, scopes or tags, repeated
-declarations, malformed lengths, and out-of-file or oversized payloads remain
-refusals. A nonzero FP tag must match the separate ABI flags `fp_abi` record;
+names never control detection. REA validates the full declared file extent before
+applying its 4096-byte payload limit. It parses format version `A`, the `gnu`
+vendor's file-scope `Tag_GNU_MIPS_ABI_FP` (4) and `Tag_GNU_MIPS_ABI_MSA` (8)
+only. Unknown vendors, scopes or tags, repeated declarations, malformed lengths,
+and out-of-file or oversized payloads remain refusals. A nonzero FP tag must
+match the separate ABI flags `fp_abi` record;
 value 0 (`ANY`) declares no requirement. The [GNU Object Attributes v1
 format](https://sourceware.org/binutils/docs/as/Object-Attributes-v1.html) and
 [GNU MIPS tag definitions](https://sourceware.org/binutils/docs/as/GNU-Object-Attributes.html)
@@ -169,7 +170,9 @@ inspection must examine the complete dynamic relocation declarations. This
 profile verifies `R_MIPS_NONE`, symbol-index-zero and symbol-bearing
 `R_MIPS_REL32`, and the TLS loader slots `R_MIPS_TLS_DTPMOD32`,
 `R_MIPS_TLS_DTPREL32` and `R_MIPS_TLS_TPREL32`; other relocation types remain
-refused. Images without an ABI flags record remain refused, as in the executable
+refused. Android packed relocation and legacy Android RELR declarations leave
+shared-load coverage unavailable in the MIPS profiles. Images without an ABI
+flags record remain refused, as in the executable
 lane, and so do images ending in an Android prelink trailer, whose base Ghidra
 prefers over the program headers. The support lane is
 `elf32-dyn-o32-arch32r2-standard`; Ghidra selects the language from the

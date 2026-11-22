@@ -62,6 +62,8 @@ it.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE).each(["PERSIST", "TRUNCATE"])(
     }
     const journalPath = `${database.path}-journal`;
     const before = await readFile(journalPath);
+    if (mode === "TRUNCATE") expect(before).toHaveLength(0);
+    else expect(before.subarray(0, 28).equals(Buffer.alloc(28))).toBe(true);
     const beforeStat = await lstat(journalPath, { bigint: true });
     const snapshot = await capture();
     const result = inspectSqliteDatabaseSnapshot(snapshot.snapshotPath, {

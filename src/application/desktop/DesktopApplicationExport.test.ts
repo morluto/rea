@@ -35,6 +35,7 @@ import type {
   DesktopApplicationCapture,
 } from "../../domain/desktop/desktopCapture.js";
 import { renderBuildBundle } from "../../domain/desktop/appBuild.js";
+import { parseOneLineSources } from "../../domain/desktop/aptRepositories.js";
 import { readDownloadInstall } from "./DesktopExportInstall.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import {
@@ -1585,6 +1586,43 @@ describe("exportDesktopApplication of a program in another package", () => {
   });
 });
 
+it("exports APT's architecture-independent package after all explicit architectures were removed", async () => {
+  const [entry] = parseOneLineSources(
+    "deb [arch=arm64 arch-=arm64] https://downloads.typora.io/linux ./",
+    "vendor.list",
+  );
+  if (entry === undefined) throw new Error("APT source did not parse");
+  expect(entry.architectures).toEqual(["all"]);
+  const recorded = vendorCapture(VERIFIED_KEY);
+  const installed = recorded.application.package;
+  const repositories = installed.apt_repositories?.map((repository) => ({
+    ...repository,
+    architectures: [...entry.architectures],
+  }));
+  const exportFor = (architecture: string) =>
+    exportVendorCapture({
+      ...recorded,
+      application: {
+        ...recorded.application,
+        package: { ...installed, architecture, apt_repositories: repositories },
+      },
+    });
+
+  const admitted = await exportFor("all");
+  if (admitted.result instanceof Error) throw admitted.result;
+  expect(
+    await readFile(
+      join(admitted.directory, "envs/typora/typora_app.py"),
+      "utf8",
+    ),
+  ).toContain('AptSource(apt="https://downloads.typora.io/linux"');
+
+  const refused = await exportFor("arm64");
+  expect(refused.result).toMatchObject({ _tag: "AnalysisInputError" });
+  expect(JSON.stringify(refused.result)).toContain("it serves only all");
+  expect(await exists(refused.directory)).toBe(false);
+});
+
 describe("exportDesktopApplication from a vendor repository", () => {
   it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
     const { result, directory } = await exportVendorCapture(
@@ -1642,6 +1680,83 @@ describe("exportDesktopApplication from a vendor repository", () => {
       'packages=Packages(apt=["typora", "libgbm1", "libnss3"]),\n    sources=[AptSource(apt="https://downloads.typora.io/linux", suite="./", components=[], key="apt-keys/typora.gpg")],',
     );
   });
+
+  const withRepositoryUri = (uri: string, repoUri?: string) => {
+    const capture = vendorCapture(VERIFIED_KEY);
+    const installed = capture.application.package;
+    return {
+      ...capture,
+      application: {
+        ...capture.application,
+        package: {
+          ...installed,
+          apt_repositories: installed.apt_repositories?.map((repository) => ({
+            ...repository,
+            uri,
+            ...(repoUri === undefined ? {} : { repo_uri: repoUri }),
+          })),
+        },
+      },
+    };
+  };
+
+  it.each([
+    [
+      "https://vendor.invalid/a%2Cb",
+      "https://vendor.invalid/a,b/",
+      "https://vendor.invalid/a,b",
+    ],
+    [
+      "https://vendor.invalid/a%252Cb",
+      "https://vendor.invalid/a%2Cb/",
+      "https://vendor.invalid/a%2Cb",
+    ],
+  ])(
+    "declares the observed APT repository behind %s",
+    async (authored, observed, declared) => {
+      const local = withRepositoryUri(authored, observed);
+      const { result, directory } = await exportVendorCapture(local);
+      if (result instanceof Error) throw result;
+      const module = await readFile(
+        join(directory, "envs/typora/typora_app.py"),
+        "utf8",
+      );
+      expect(module).toContain(
+        `AptSource(apt="${declared}", suite="./", components=[], key="apt-keys/typora.gpg")`,
+      );
+      expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+        declared,
+      );
+    },
+  );
+
+  it.each([
+    [
+      "https://vendor.invalid/a%20b",
+      "https://vendor.invalid/a b/",
+      "cannot be represented as one AgentEnv deb822 URI token",
+    ],
+    [
+      "https://vendor.invalid/a%0ab",
+      "https://vendor.invalid/a",
+      "contains an escaped control byte",
+    ],
+    [
+      "https://vendor.invalid/a%2Cb",
+      undefined,
+      "the capture does not record apt's Repo-URI",
+    ],
+  ])(
+    "withholds an APT declaration that cannot preserve %s",
+    async (authored, observed, reason) => {
+      const { result, directory } = await exportVendorCapture(
+        withRepositoryUri(authored, observed),
+      );
+      expect(result).toBeInstanceOf(Error);
+      expect(JSON.stringify(result)).toContain(reason);
+      expect(await exists(directory)).toBe(false);
+    },
+  );
 
   it("refuses a vendor repository whose key the capture did not verify", async () => {
     const { result, directory } = await exportVendorCapture(

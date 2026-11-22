@@ -10,6 +10,43 @@ import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
+  "returns partial Evidence when managed table declarations conflict",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-cli-table-conflict-",
+    );
+    const path = join(root, "fixture.dll");
+    await writeFile(
+      path,
+      buildManagedPeFixture({ competingTableStream: "distinct" }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-managed-members", path, "--full-output", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      data: {
+        normalized_result: {
+          metadata: {
+            status: "partial",
+            version: "v4.0.30319",
+            table_row_counts: {},
+          },
+          methods: [],
+          method_rows: null,
+          coverage: {
+            state: "unavailable",
+            issues: [
+              { code: "unsupported-metadata", scope: "metadata.tables" },
+            ],
+          },
+        },
+      },
+    });
+  },
+);
+
+cliTest(
   "delivers a managed artifact summary beside its complete Evidence bundle",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-managed-cli-delivery-");

@@ -9,6 +9,10 @@ import {
   type McpClientRegistrationOutcome,
 } from "../application/McpClientRegistration.js";
 import {
+  currentClientRegistrationCommand,
+  defaultClientRegistrationBlocker,
+} from "../application/ClientRegistrationIdentity.js";
+import {
   resolveMcpRegistrationClients,
   type McpRegistrationClient,
 } from "../application/McpRegistrationCatalog.js";
@@ -41,7 +45,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   parseClientRegistrationCommand,
   type ClientRegistrationCommand,
-  type ClientRegistrationCommandIssue,
 } from "../domain/clientRegistrationCommand.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
@@ -100,10 +103,6 @@ const precedingFlags = [
 export const serveMcpRegistration = (
   global: CliGlobalArguments,
   environment: Readonly<NodeJS.ProcessEnv>,
-  defaultCommand: Result<
-    ClientRegistrationCommand,
-    ClientRegistrationCommandIssue
-  >,
   options: ServeOptions,
 ): Promise<void> | undefined => {
   const offset = global.command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
@@ -122,7 +121,7 @@ export const serveMcpRegistration = (
       return Promise.resolve();
     const request = readRegistrationRequest(
       global.command.slice(offset + 2),
-      defaultCommand,
+      environment,
     );
     if (!request.ok) {
       await presentation.validation(
@@ -259,10 +258,7 @@ const serveRegistrationDiscovery = async (
 
 const readRegistrationRequest = (
   arguments_: readonly string[],
-  defaultCommand: Result<
-    ClientRegistrationCommand,
-    ClientRegistrationCommandIssue
-  >,
+  environment: Readonly<NodeJS.ProcessEnv>,
 ): Result<RegistrationRequest, RegistrationInputIssue> => {
   const request = readMcpAddArguments(arguments_);
   if (!request.validation.ok) {
@@ -276,10 +272,22 @@ const readRegistrationRequest = (
       field: issue.kind === "missing_value" ? issue.field : "arguments",
     });
   }
-  const launcher =
-    request.commandText === undefined
-      ? defaultCommand
-      : parseClientRegistrationCommand(request.commandText);
+  let command: string | readonly string[];
+  if (request.commandText === undefined) {
+    const { platform } = HOST_PLATFORM;
+    command = currentClientRegistrationCommand({ platform, environment });
+    const blocker = defaultClientRegistrationBlocker(
+      command,
+      platform,
+      homeDirectoryFromEnvironment(environment, platform),
+      environment,
+    );
+    if (blocker !== undefined)
+      return err({ code: "invalid_value", field: "command", message: blocker });
+  } else {
+    command = request.commandText;
+  }
+  const launcher = parseClientRegistrationCommand(command);
   return launcher.ok
     ? ok({
         agents: request.agents,

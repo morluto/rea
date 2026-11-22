@@ -243,6 +243,61 @@ export const imageFileMappings = (
     ? container.mappings
     : [container.pe_header_mapping, ...container.mappings];
 
+/** Decode an unsigned 16-bit integer from a caller-validated `[offset, offset + 2)` span. */
+export const readUint16At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! | (bytes[offset + 1]! << 8)
+    : (bytes[offset]! << 8) | bytes[offset + 1]!;
+
+/** Decode a signed 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readInt32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)
+    : (bytes[offset]! << 24) |
+      (bytes[offset + 1]! << 16) |
+      (bytes[offset + 2]! << 8) |
+      bytes[offset + 3]!;
+
+/** Decode an unsigned 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readUint32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number => readInt32At(bytes, offset, little) >>> 0;
+
+/** Decode an unsigned 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readUint64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readUint32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
+
+/** Decode a signed 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readInt64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readInt32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
+
 /** Reader that checks every structural range before decoding numeric fields. */
 export class BinaryReader {
   constructor(
@@ -282,6 +337,16 @@ export class BinaryReader {
     return this.bytes.subarray(offset, offset + size);
   }
 
+  u8(offset: number): number {
+    this.#checkRange(offset, 1, "8-bit field");
+    return this.bytes.readUInt8(offset);
+  }
+
+  i8(offset: number): number {
+    this.#checkRange(offset, 1, "8-bit field");
+    return this.bytes.readInt8(offset);
+  }
+
   u16(offset: number): number {
     this.#checkRange(offset, 2, "16-bit field");
     return this.little
@@ -289,11 +354,46 @@ export class BinaryReader {
       : this.bytes.readUInt16BE(offset);
   }
 
+  i16(offset: number): number {
+    this.#checkRange(offset, 2, "16-bit field");
+    return this.little
+      ? this.bytes.readInt16LE(offset)
+      : this.bytes.readInt16BE(offset);
+  }
+
   u32(offset: number): number {
     this.#checkRange(offset, 4, "32-bit field");
     return this.little
       ? this.bytes.readUInt32LE(offset)
       : this.bytes.readUInt32BE(offset);
+  }
+
+  i32(offset: number): number {
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readInt32LE(offset)
+      : this.bytes.readInt32BE(offset);
+  }
+
+  i64(offset: number): bigint {
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readBigInt64LE(offset)
+      : this.bytes.readBigInt64BE(offset);
+  }
+
+  f32(offset: number): number {
+    this.#checkRange(offset, 4, "32-bit field");
+    return this.little
+      ? this.bytes.readFloatLE(offset)
+      : this.bytes.readFloatBE(offset);
+  }
+
+  f64(offset: number): number {
+    this.#checkRange(offset, 8, "64-bit field");
+    return this.little
+      ? this.bytes.readDoubleLE(offset)
+      : this.bytes.readDoubleBE(offset);
   }
 
   word(offset: number, bits: 32 | 64): bigint {
@@ -332,6 +432,7 @@ export class BinaryReader {
 
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
+    const range = this.fileRange(offset, size, label);
     if (size > 16n * 1024n * 1024n)
       throw new BinaryResourceFailure(
         "structure",
@@ -340,7 +441,7 @@ export class BinaryReader {
         "structure",
         "bytes",
       );
-    return this.fileRange(offset, size, label).offset;
+    return range.offset;
   }
 }
 
@@ -589,11 +690,11 @@ interface MappedStringAccess {
 /** Read a bounded NUL-terminated string while retaining mapping/alias semantics. */
 export const readMappedCString = (
   bytes: Buffer,
-  image: BinaryContainer,
+  mappings: readonly FileMapping[],
   address: bigint,
   maximumBytes: number,
+  zeroFills: readonly ZeroFillMapping[],
 ): Buffer => {
-  const mappings = imageFileMappings(image);
   return readMappedString(
     bytes,
     {
@@ -604,7 +705,7 @@ export const readMappedCString = (
             cursor < range.address + BigInt(range.size),
         ),
       offset: (cursor, size) =>
-        mappedFileOffset(mappings, cursor, size, image.zero_fills),
+        mappedFileOffset(mappings, cursor, size, zeroFills),
     },
     address,
     maximumBytes,

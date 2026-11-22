@@ -1,5 +1,5 @@
-import { expect, it } from "vitest";
-import { readElfSymbol } from "./elfSymbol.js";
+import { describe, expect, it } from "vitest";
+import { readElfSymbol, readElfSymbolAt } from "./elfSymbol.js";
 
 const formats = [
   { bits: 32, littleEndian: false },
@@ -65,3 +65,42 @@ it.each(formats)(
       });
   },
 );
+
+describe("readElfSymbolAt", () => {
+  it.each(formats)(
+    "decodes ELF$bits symbols at non-zero offsets without slicing (littleEndian=$littleEndian)",
+    ({ bits, littleEndian }) => {
+      const length = bits === 64 ? 24 : 16;
+      const bytes = new Uint8Array(length * 2 + 5);
+      const offset = 5 + length;
+      const view = new DataView(
+        bytes.buffer,
+        bytes.byteOffset + offset,
+        length,
+      );
+      view.setUint32(0, 0x12345678, littleEndian);
+      view.setUint8(bits === 64 ? 4 : 12, 0x2a);
+      view.setUint8(bits === 64 ? 5 : 13, 0x10);
+      view.setUint16(bits === 64 ? 6 : 14, 0x0003, littleEndian);
+      if (bits === 64) {
+        view.setBigUint64(8, 0x0102030405060708n, littleEndian);
+        view.setBigUint64(16, 0x1122334455667788n, littleEndian);
+      } else {
+        view.setUint32(4, 0x05060708, littleEndian);
+        view.setUint32(8, 0x55667788, littleEndian);
+      }
+      expect(readElfSymbolAt(bytes, offset, bits, littleEndian)).toEqual({
+        name_offset: 0x12345678,
+        binding: 2,
+        type: 10,
+        other: 0x10,
+        section_index: 3,
+        value: bits === 64 ? 0x0102030405060708n : 0x05060708n,
+        size: bits === 64 ? 0x1122334455667788n : 0x55667788n,
+      });
+      expect(readElfSymbolAt(bytes, -1, bits, littleEndian)).toBeNull();
+      expect(readElfSymbolAt(bytes, 1.5, bits, littleEndian)).toBeNull();
+      expect(readElfSymbolAt(bytes, offset + 1, bits, littleEndian)).toBeNull();
+    },
+  );
+});

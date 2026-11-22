@@ -90,7 +90,47 @@ coverage/issues and limitations. No assembly is loaded or executed.
 ECMA-335 permits empty metadata streams to be omitted. An absent `#Blob`
 stream therefore does not prevent module or assembly identity from being read
 when all blob indexes are zero; a nonzero reference to that missing heap is
-reported as a missing-stream issue.
+reported as a missing-stream issue. Repeated `#Blob` declarations for the same
+file range keep the blob facts and disclose the duplicate. Distinct ranges
+leave nonzero blob indices unresolved. The result keeps module identity, row
+counts, and other independent observations. A row whose current result requires
+a decoded blob is omitted with partial coverage. A separate blob-backed fact
+such as a method's local-variable signature remains unknown when other facts
+about that method are available. An out-of-root stream declaration is malformed.
+
+Repeated `#Strings` declarations for the same range keep the existing name
+facts and disclose the duplicate. Distinct ranges leave nonzero string
+indices unresolved. When there is exactly one Module row, its token, file
+offset, generation, raw name index, and independently readable GUIDs remain
+in `metadata.unresolved_module_name` if a malformed or ambiguous name lookup
+prevents reading its name. The usual `module` object is null in this case.
+Index zero still reads as an empty string when the Module row is unique.
+If there are competing string heaps and multiple Module rows, Module
+identity remains unknown even when a name index is zero. A known MVID can bound
+build-local token identity even when the Module name is unresolved. Unreadable
+names do not supply nominal member or type lookup keys. A nil or empty
+TypeDef, MethodDef, or Field name leaves member inventory and cross-build
+comparison coverage partial when the unreadable name could affect a match. A nil
+TypeDef namespace is valid and leaves the type name unqualified.
+
+Member inspection records readable row coordinates for unresolved names in
+`unresolved_definitions`. It reports the TypeDef or MethodDef token, file offset,
+and each failed Name or Namespace column with its original heap index. Method
+rows also retain the raw RVA and any known declaring TypeDef token. TypeDef
+coordinates cover the assembly-wide name scan. MethodDef coordinates cover the
+source method interval and any exact declaring-type selection. Use
+`inspect_analysis_view` with `kind: "managed-members"` and
+`collection: "unresolved_definitions"` to page retained coordinates. A missing
+collection in earlier Evidence means the inspection did not record it. When
+capacity recovery keeps only the type inventory, `method_names_examined` is false.
+
+If the metadata root declares both compressed (`#~`) and uncompressed (`#-`)
+tables, REA reports both declarations and leaves the row layout unresolved.
+The metadata version and PE/CLI evidence remain available. Member inventories,
+module identity, and native imports that depend on the table layout are
+unavailable. This applies even when the two declarations point to the same
+bytes, because the table kinds differ. A declaration outside the metadata
+root is still malformed.
 
 Use `normalized_result.parent_evidence_id` to page original rows:
 
@@ -433,8 +473,11 @@ length prefix against the width II.23.2 assigns. A difference is reported with
 its byte offset as a user-string issue while preserving the readable literal.
 Toolchain conventions can differ; this conformance observation does not
 establish runtime rejection. A missing `#US` stream is one stream-level issue;
-a malformed item is reported against its token. User strings carry their own
-coverage: any of these makes `user_strings.state` partial and lists the issue
+a malformed item is reported against its token. Repeated `#US` declarations
+with the same file range keep the literals and disclose the duplicate. Distinct
+ranges leave the literals unresolved and preserve the `ldstr` token anchors.
+A declaration outside the metadata root still makes the metadata malformed.
+User strings carry their own coverage: any of these makes `user_strings.state` partial and lists the issue
 in `user_strings.issues`, while the member `coverage` and `metadata.status` are
 unaffected, and readable literals remain. The state is also partial when an
 inspected method's CIL was not fully decoded (a malformed exception section
@@ -901,7 +944,7 @@ The current lane uses source-owned byte-built fixtures and malformed-input
 regressions, with optional operator-supplied applications and ILSpy verification.
 
 Run the deterministic lane with `npm run verify:managed`. See
-[testing](../../development/testing.md#real-toolchain-verification-lanes) for prerequisites and
+[testing](../../testing-lanes.md#real-toolchain-verification-lanes) for prerequisites and
 coverage. Generated outputs belong outside tracked fixture directories and must
 not remain after verification or packaging.
 

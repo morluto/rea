@@ -246,7 +246,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
         limitations: ["Original uncertainty"],
       },
     );
-  for (const parent of [evidence(), evidence(report, null)]) {
+  for (const stored of [evidence(), evidence(report, null)]) {
+    const parent = parseEvidence(JSON.parse(JSON.stringify(stored)));
+    expect(parent.evidence_id).toBe(stored.evidence_id);
     const summary = await inspectAnalysisView({
       source: { kind: "inline", evidence: parent },
       view: { kind: "summary" },
@@ -256,6 +258,7 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       summary.value.normalized_result,
     );
     expect(result.summary.libapp.snapshot_hash).toBeNull();
+    expect(result.summary.libapp).not.toHaveProperty("snapshot_profile");
     expect(result.summary.string_pool.package_uri_count_at_least).toBe(1000);
     expect(result.summary.string_pool.returned_counts.package_uris).toBe(1);
     expect(result.limitations).toEqual(parent.limitations);
@@ -276,6 +279,9 @@ it("preserves null snapshot facts and pool lower bounds after exhaustion, reject
       string_pool: { coverage: "partial", package_uri_count_at_least: 1000 },
       coverage: { total: 1, exhausted: true },
     });
+    expect(page.value.normalized_result).not.toHaveProperty(
+      "libapp.snapshot_profile",
+    );
   }
   expect(
     await inspectAnalysisView({

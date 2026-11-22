@@ -2,7 +2,6 @@ import { unknownTarget } from "../domain/targetIdentity.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
   AnalysisCapabilityUnavailableError,
   AnalysisInputError,
@@ -164,7 +163,6 @@ export class CutterBridgeService {
         json: input.json,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
-      const normalizedOutput = jsonValueSchema.parse(output.output);
       const evidence = createEvidence(
         unknownTarget("not-observed"),
         {
@@ -182,7 +180,7 @@ export class CutterBridgeService {
           },
           result: {
             command: input.command,
-            output: normalizedOutput,
+            output: output.output,
             execution_state: output.executionState,
             error: output.error,
             message: output.message,
@@ -192,13 +190,18 @@ export class CutterBridgeService {
             document_generation: output.documentGeneration,
             identity_status: output.identityStatus,
           },
-          rawResult: normalizedOutput,
+          rawResult: output.output,
           authority: "external-service",
           limitations: [
             "Cutter exposes no verified stable identity for the active unsaved document or tab.",
             "Document identity is partial: the bridge uses a plugin instance UUID and observed generation; a same-path tab switch or reload may not be distinguishable.",
             "Cutter command effects depend on the Rizin command and active plugins.",
             "The local IPC protocol is implemented by REA and is not an upstream Cutter API.",
+            ...(input.json
+              ? [
+                  "JSON integer literals outside JavaScript's safe integer range are retained as decimal strings.",
+                ]
+              : []),
             ...(output.executionState === "unknown"
               ? [
                   "Command completion or its output could not be confirmed; do not retry automatically because the command may have produced partial or persistent effects.",

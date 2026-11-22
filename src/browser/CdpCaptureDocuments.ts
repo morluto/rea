@@ -1,4 +1,3 @@
-import type { InspectWebPageInput } from "../domain/browserObservation.js";
 import { sanitizeBrowserUrl } from "../domain/browserObservation.js";
 import type { WebPageInspection } from "../domain/browserObservationSchemas.js";
 import type { CdpFrameTree, CdpResourceTree } from "./protocol/CdpFrameTree.js";
@@ -226,7 +225,6 @@ interface PendingDomMetadata {
 export function* captureDom(
   root: CdpCommandResult<"DOMSnapshot.captureSnapshot">,
   allowedOrigins: ReadonlySet<string>,
-  input: InspectWebPageInput,
   completeness?: CdpCaptureCompleteness,
 ): Generator<
   readonly DomSvgNodeQuery[],

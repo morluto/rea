@@ -86,7 +86,12 @@ export interface CliCommandEntry {
   readonly source: CliCommandSource;
 }
 
-const registries = new WeakMap<CliInstance, CliCommandEntry[]>();
+interface CliRegistry {
+  readonly entries: CliCommandEntry[];
+  readonly byName: Map<string, CliCommandEntry>;
+}
+
+const registries = new WeakMap<CliInstance, CliRegistry>();
 
 /**
  * Register one command: record it in REA's command table, in registration
@@ -104,28 +109,32 @@ export const registerCliCommand = <
     readonly source?: CliCommandSource;
   } = {},
 ): void => {
-  const entries = registries.get(cli) ?? [];
-  if (entries.some((entry) => entry.name === name))
+  let registry = registries.get(cli);
+  if (registry === undefined) {
+    registry = { entries: [], byName: new Map() };
+    registries.set(cli, registry);
+  }
+  if (registry.byName.has(name))
     throw new Error(`CLI command ${name} is registered twice`);
-  entries.push({
+  const entry: CliCommandEntry = {
     name,
     definition: definition as CliCommandEntry["definition"],
     operations: registration.operations ?? [],
     source: registration.source ?? { kind: "host" },
-  });
-  registries.set(cli, entries);
+  };
+  registry.entries.push(entry);
+  registry.byName.set(name, entry);
 };
 
 /** Commands registered on this CLI, in registration order. */
 export const cliCommands = (cli: CliInstance): readonly CliCommandEntry[] =>
-  registries.get(cli) ?? [];
+  registries.get(cli)?.entries ?? [];
 
 /** Resolve a command identity from the same records the dispatcher serves. */
 export const cliCommand = (
   cli: CliInstance,
   name: string,
-): CliCommandEntry | undefined =>
-  cliCommands(cli).find((entry) => entry.name === name);
+): CliCommandEntry | undefined => registries.get(cli)?.byName.get(name);
 
 /**
  * The operations one contract description runs: its own contract, the

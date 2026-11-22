@@ -7,8 +7,7 @@ import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import type { Element, Node } from "@xmldom/xmldom";
 
 import {
-  countXmlNodes,
-  parseXmlDocument,
+  parseXmlDocumentWithinNodeLimit,
   opensLikeXml,
 } from "../domain/xmlDocument.js";
 import {
@@ -33,6 +32,8 @@ const BASE_LIMITATIONS = [
   "Requested versions, ranges, and property spellings are recorded as written; interpolation and parent/BOM inheritance are not performed.",
 ] as const;
 
+const GRADLE_MODULE_METADATA_VERSION = "1.1";
+
 const isElement = (node: Node | null): node is Element =>
   node !== null && node.nodeType === 1;
 
@@ -47,8 +48,13 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, local: string): Element[] =>
-  childElements(element).filter((child) => child.localName === local);
+const childrenNamed = (element: Element, ...names: string[]): Element[] =>
+  childElements(element).filter(
+    (child) =>
+      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
+      child.localName !== null &&
+      names.includes(child.localName),
+  );
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
   const matches = childrenNamed(element, local);
@@ -71,10 +77,7 @@ const isMavenProjectRoot = (root: Node | null): root is Element => {
   if (root.namespaceURI === MAVEN_POM_NAMESPACE) return true;
   return (
     (root.namespaceURI === null || root.namespaceURI === "") &&
-    childElements(root).some(
-      (child) =>
-        child.localName === "modelVersion" || child.localName === "artifactId",
-    )
+    childrenNamed(root, "modelVersion", "artifactId").length > 0
   );
 };
 
@@ -93,8 +96,7 @@ const nonempty = (value: string | null | undefined): string | null => {
   return trimmed === "" ? null : trimmed;
 };
 
-const elementText = (element: Element | undefined): string | null => {
-  if (element === undefined) return null;
+const elementText = (element: Element): string => {
   const parts: string[] = [];
   for (
     let child = element.firstChild;
@@ -104,11 +106,20 @@ const elementText = (element: Element | undefined): string | null => {
     // Text (3) and CDATA section (4) nodes both carry character data.
     if (child.nodeType === 3 || child.nodeType === 4)
       parts.push(child.nodeValue ?? "");
-  return nonempty(parts.join(""));
+  return parts.join("");
 };
 
-const childText = (element: Element, local: string): string | null =>
-  elementText(soleNamed(element, local));
+const childText = (element: Element, local: string): string | null => {
+  const child = soleNamed(element, local);
+  if (child === undefined) return null;
+  const text = elementText(child);
+  // Maven's model reader applies Java String.trim() to these fields.
+  let start = 0;
+  let end = text.length;
+  while (start < end && text.charCodeAt(start) <= 0x20) start += 1;
+  while (end > start && text.charCodeAt(end - 1) <= 0x20) end -= 1;
+  return start === end ? null : text.slice(start, end);
+};
 
 const textOf = (value: unknown): string | null =>
   typeof value === "string" ? nonempty(value) : null;
@@ -135,6 +146,18 @@ const gradleArray = (value: unknown, field: string): readonly unknown[] => {
   throw malformedInput(
     MAVEN_GRADLE_METADATA_FORMAT,
     `Gradle module metadata ${field} is present but is not a JSON array.`,
+  );
+};
+
+const gradleObject = (
+  value: unknown,
+  field: string,
+): Record<string, unknown> | null => {
+  if (value === undefined) return null;
+  if (isRecord(value)) return value;
+  throw malformedInput(
+    MAVEN_GRADLE_METADATA_FORMAT,
+    `Gradle module metadata ${field} is present but is not a JSON object.`,
   );
 };
 
@@ -215,7 +238,8 @@ const parseMavenDependency = (
   const version = childText(element, "version");
   const type = childText(element, "type");
   const scope = childText(element, "scope");
-  const bom_import = type === "pom" && scope === "import";
+  const bom_import =
+    origin === "dependencyManagement" && type === "pom" && scope === "import";
   const exclusions = mavenExclusionElements(element).map((exclusion) => ({
     group_id: childText(exclusion, "groupId"),
     artifact_id: childText(exclusion, "artifactId"),
@@ -264,20 +288,17 @@ const parsePom = (
   artifact: { path: string; sha256: string; bytes: number },
 ): MavenGradleMetadata => {
   const limitations: string[] = [...BASE_LIMITATIONS];
-  // Count nodes as a stream first, so the tree is never built past its allowance.
-  const nodes = countXmlNodes(xml, MAVEN_GRADLE_METADATA_XML_NODES);
-  if (nodes > MAVEN_GRADLE_METADATA_XML_NODES)
+  // Maven applies XML 1.0 end-of-line handling to property and coordinate text.
+  const parsed = parseXmlDocumentWithinNodeLimit(xml, {
+    lineEndings: "normalize",
+    maximumNodes: MAVEN_GRADLE_METADATA_XML_NODES,
+  });
+  if (!parsed.ok && parsed.error.kind === "node-limit")
     throw metadataReportLimit(
       "xml_nodes",
-      MAVEN_GRADLE_METADATA_XML_NODES,
-      nodes,
+      parsed.error.maximum,
+      parsed.error.required,
     );
-  // Maven's XML reader applies XML 1.0 end-of-line handling, so a POM saved
-  // with CRLF yields the same property and coordinate text as one with LF.
-  const parsed = parseXmlDocument(xml, {
-    doctype: "reject",
-    lineEndings: "normalize",
-  });
   if (!parsed.ok)
     throw parsed.error.kind === "unsupported"
       ? unsupportedInput(
@@ -330,7 +351,7 @@ const parsePom = (
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
-          } = redactRecordedTransportUrl(elementText(property));
+          } = redactRecordedTransportUrl(nonempty(elementText(property)));
           // Maven property keys are the written qualified names, not XML
           // expanded names: different prefixes remain different keys.
           return { name: property.tagName, value, value_credentials_redacted };
@@ -474,21 +495,33 @@ const parseGradle = (
       "Gradle module metadata root must be a JSON object.",
     );
   const format_version = textOf(parsed.formatVersion);
-  const component = isRecord(parsed.component) ? parsed.component : null;
-  const variantsValue = parsed.variants;
-  if (
-    format_version === null ||
-    (component === null && !Array.isArray(variantsValue))
-  )
+  if (format_version === null)
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
-      "Selected JSON document is not Gradle module metadata (missing formatVersion and component or variants).",
+      "Selected JSON document is not Gradle module metadata (missing a string formatVersion).",
+    );
+  if (json.firstObjectMember !== "formatVersion")
+    throw malformedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Gradle module metadata formatVersion must be the first object member.",
+    );
+  const component = gradleObject(parsed.component, "component");
+  const variantsValue = parsed.variants;
+  const knownVersion = parsed.formatVersion === GRADLE_MODULE_METADATA_VERSION;
+  if (!knownVersion && component === null && !Array.isArray(variantsValue))
+    throw unsupportedInput(
+      MAVEN_GRADLE_METADATA_FORMAT,
+      "Unrecognized Gradle module metadata formatVersion without component or variants.",
     );
   const limitations: string[] = [
     ...BASE_LIMITATIONS,
     "Gradle variant attributes other than category and usage are not decoded.",
     "available-at coordinates are recorded as spelled; the named module file was not fetched.",
   ];
+  if (!knownVersion)
+    limitations.push(
+      `Recognized fields in this unfamiliar format version were interpreted using Gradle module metadata ${GRADLE_MODULE_METADATA_VERSION}. Version-specific declarations may be unreported.`,
+    );
   const unresolved = new MavenGradleUnresolvedCollector();
   const coordinates = {
     group_id: component === null ? null : textOf(component.group),
@@ -497,9 +530,8 @@ const parseGradle = (
     packaging: null,
   };
   unresolved.coordinates(coordinates, "project", null, false);
-  const createdBy = isRecord(parsed.createdBy) ? parsed.createdBy : null;
-  const createdGradle =
-    createdBy !== null && isRecord(createdBy.gradle) ? createdBy.gradle : null;
+  const createdBy = gradleObject(parsed.createdBy, "createdBy");
+  const createdGradle = gradleObject(createdBy?.gradle, "createdBy.gradle");
   // Count each expanded collection before any report record is built.
   admit(
     "variants",
@@ -530,20 +562,31 @@ const parseGradle = (
   const repeatedVariantNames = new Budget(
     MAVEN_GRADLE_METADATA_REPEATED_VARIANT_NAME_CHARS,
   );
-  for (const variant of variants) {
-    const name = textOf(variant.name);
-    const attributes = isRecord(variant.attributes) ? variant.attributes : {};
-    const category = textOf(attributes["org.gradle.category"]);
-    const usage = textOf(attributes["org.gradle.usage"]);
-    const platform =
-      category === "platform" || category === "enforced-platform";
-    const availableAt: unknown = variant["available-at"];
-    if (availableAt !== undefined && !isRecord(availableAt))
+  const variantNameIndices = new Map<string, number>();
+  for (const [index, variant] of variants.entries()) {
+    const declaredName = variant.name;
+    if (declaredName !== undefined && typeof declaredName !== "string")
       throw malformedInput(
         MAVEN_GRADLE_METADATA_FORMAT,
-        "Gradle module metadata available-at is present but is not a JSON object.",
+        `Gradle module metadata variant.name at index ${String(index)} is not a string.`,
       );
-    const available = availableAt === undefined ? null : availableAt;
+    const name =
+      declaredName === undefined || declaredName === "" ? null : declaredName;
+    if (name !== null) {
+      const previous = variantNameIndices.get(name);
+      if (previous !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Gradle module metadata declares a duplicate variant name at indices ${String(previous)} and ${String(index)}.`,
+        );
+      variantNameIndices.set(name, index);
+    }
+    const attributes = gradleObject(variant.attributes, "variant.attributes");
+    const category = textOf(attributes?.["org.gradle.category"]);
+    const usage = textOf(attributes?.["org.gradle.usage"]);
+    const platform =
+      category === "platform" || category === "enforced-platform";
+    const available = gradleObject(variant["available-at"], "available-at");
     const variantDependencies = gradleArray(
       variant.dependencies,
       "dependencies",
