@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
@@ -157,8 +157,48 @@ cliTest(
   },
 );
 
+const redactedMetadataUrl = "HTTPS://Example.invalid/a/../b?token=visible";
+const recordedGradleDeclarations = {
+  format: "gradle-module",
+  coordinates: { group_id: " g", artifact_id: "m ", version: " 1 " },
+  gradle: {
+    format_version: " 1.1 ",
+    created_by_gradle: "8.0 ",
+    variants: [
+      { name: "api", category: " platform ", usage: " api " },
+      {
+        name: "redirected",
+        available_at: {
+          group_id: " g",
+          artifact_id: "other ",
+          version: " 1 ",
+          url: `\u00a0\t${redactedMetadataUrl}\ufeff`,
+          url_credentials_redacted: true,
+        },
+      },
+    ],
+  },
+  dependencies: [
+    {
+      group_id: "g ",
+      artifact_id: " ranged",
+      version: " [1,2) ",
+      version_kind: "literal",
+      platform: false,
+      gradle_version: { requires: " [1,2) ", rejects: [" 2 "] },
+    },
+    {
+      artifact_id: "shorthand",
+      version: " 2.+ ",
+      version_kind: "literal",
+      platform: false,
+      gradle_version: { requires: " 2.+ " },
+    },
+  ],
+};
+
 cliTest(
-  "preserves metadata caller selections and transport URL provenance through CLI, MCP and retained records",
+  "preserves metadata selections and recorded declarations through CLI, MCP and retained Evidence",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-metadata-provenance-");
     const { call } = await connectLocalToolsMcp();
@@ -174,16 +214,32 @@ cliTest(
       [
         "demo.module",
         JSON.stringify({
-          formatVersion: "1.1",
-          component: { group: "g", module: "m", version: "1" },
+          formatVersion: " 1.1 ",
+          component: { group: " g", module: "m ", version: " 1 " },
+          createdBy: { gradle: { version: "8.0 " } },
           variants: [
             {
               name: "api",
+              attributes: {
+                "org.gradle.category": " platform ",
+                "org.gradle.usage": " api ",
+              },
+              dependencies: [
+                {
+                  group: "g ",
+                  module: " ranged",
+                  version: { requires: " [1,2) ", rejects: [" 2 "] },
+                },
+                { group: "g", module: "shorthand", version: " 2.+ " },
+              ],
+            },
+            {
+              name: "redirected",
               "available-at": {
-                url,
-                group: "g",
-                module: "other",
-                version: "1",
+                url: `\u00a0\t${url}\ufeff`,
+                group: " g",
+                module: "other ",
+                version: " 1 ",
               },
             },
           ],
@@ -192,7 +248,10 @@ cliTest(
     ] as const) {
       const path = join(root, file);
       await writeFile(path, source);
-      for (const maximum of [undefined, 1048576, 65536]) {
+      const budgets =
+        file === "pom.xml" ? [undefined] : [undefined, 1048576, 65536];
+      const observed: ReturnType<typeof outputSchema.parse>[] = [];
+      for (const maximum of budgets) {
         const input = {
           path,
           ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
@@ -220,22 +279,43 @@ cliTest(
           cliEvidence.normalized_result,
         );
         expect(JSON.stringify(evidence)).not.toContain("user:password");
-        expect(JSON.stringify(evidence)).toContain(
-          "HTTPS://Example.invalid/a/../b?token=visible",
-        );
-        const retained = await call("get_evidence_bundle", {
-          detail: "complete",
-        });
-        expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-        const bundle = parseEvidenceBundle(
-          bundleOutputSchema.parse(retained.structuredContent).result,
-        );
+        if (observed.length > 0)
+          expect(evidence.normalized_result).toEqual(
+            observed[0]?.normalized_result,
+          );
+        observed.push(evidence);
+        if (maximum !== budgets.at(-1)) continue;
+        const report = evidence.normalized_result;
+        if (file === "pom.xml") {
+          expect(report.format).toBe("maven-pom");
+          expect(report.properties).toContainEqual(
+            expect.objectContaining({
+              name: "download.url",
+              value: redactedMetadataUrl,
+              value_credentials_redacted: true,
+            }),
+          );
+        } else {
+          expect(report).toMatchObject(recordedGradleDeclarations);
+          expect(report.limitations).toContainEqual(
+            expect.stringContaining("unfamiliar format version"),
+          );
+        }
+      }
+      await unlink(path);
+      const retained = await call("get_evidence_bundle", {
+        detail: "complete",
+      });
+      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+      const bundle = parseEvidenceBundle(
+        bundleOutputSchema.parse(retained.structuredContent).result,
+      );
+      for (const evidence of observed)
         expect(
           bundle.records.find(
-            (record) => record.evidence_id === evidence.evidence_id,
+            ({ evidence_id }) => evidence_id === evidence.evidence_id,
           ),
         ).toEqual(evidence);
-      }
     }
   },
 );

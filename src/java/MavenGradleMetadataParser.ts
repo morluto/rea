@@ -121,8 +121,9 @@ const childText = (element: Element, local: string): string | null => {
   return start === end ? null : text.slice(start, end);
 };
 
-const textOf = (value: unknown): string | null =>
-  typeof value === "string" ? nonempty(value) : null;
+/** Keep Gradle JSON spelling for Evidence and exact comparisons. */
+const gradleText = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() !== "" ? value : null;
 
 const boolOf = (value: string | null): boolean | null => {
   if (value === null) return null;
@@ -177,10 +178,7 @@ const gradleVersionOf = (
   value: unknown,
 ): MavenGradleDependency["gradle_version"] => {
   if (typeof value === "string") {
-    const requires = nonempty(value);
-    return requires === null
-      ? { ...emptyGradleVersion }
-      : { ...emptyGradleVersion, requires };
+    return { ...emptyGradleVersion, requires: gradleText(value) };
   }
   if (value === undefined) return { ...emptyGradleVersion };
   if (!isRecord(value))
@@ -190,7 +188,8 @@ const gradleVersionOf = (
     );
   const versionText = (field: "requires" | "prefers" | "strictly") => {
     const entry = value[field];
-    if (entry === undefined || typeof entry === "string") return textOf(entry);
+    if (entry === undefined || typeof entry === "string")
+      return gradleText(entry);
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
       `Gradle module metadata version.${field} is present but is not a string.`,
@@ -198,7 +197,7 @@ const gradleVersionOf = (
   };
   const rejects = gradleArray(value.rejects, "version.rejects").map(
     (entry, index) => {
-      const text = textOf(entry);
+      const text = gradleText(entry);
       if (text !== null) return text;
       throw malformedInput(
         MAVEN_GRADLE_METADATA_FORMAT,
@@ -437,8 +436,8 @@ const parseGradleDependency = (
       `Gradle ${origin === "variant-dependencies" ? "dependency" : "dependency constraint"} ${String(index)} is not a JSON object.`,
     );
   const record = value;
-  const group_id = textOf(record.group);
-  const artifact_id = textOf(record.module);
+  const group_id = gradleText(record.group);
+  const artifact_id = gradleText(record.module);
   const gradle_version = gradleVersionOf(record.version);
   const version = requestedFromGradle(gradle_version);
   unresolved.coordinates(
@@ -460,8 +459,8 @@ const parseGradleDependency = (
     optional_spelling: null,
     classifier: null,
     exclusions: excludes.map((entry) => ({
-      group_id: textOf(entry.group),
-      artifact_id: textOf(entry.module),
+      group_id: gradleText(entry.group),
+      artifact_id: gradleText(entry.module),
     })),
     origin,
     variant,
@@ -494,7 +493,7 @@ const parseGradle = (
       MAVEN_GRADLE_METADATA_FORMAT,
       "Gradle module metadata root must be a JSON object.",
     );
-  const format_version = textOf(parsed.formatVersion);
+  const format_version = gradleText(parsed.formatVersion);
   if (format_version === null)
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
@@ -507,7 +506,7 @@ const parseGradle = (
     );
   const component = gradleObject(parsed.component, "component");
   const variantsValue = parsed.variants;
-  const knownVersion = parsed.formatVersion === GRADLE_MODULE_METADATA_VERSION;
+  const knownVersion = format_version === GRADLE_MODULE_METADATA_VERSION;
   if (!knownVersion && component === null && !Array.isArray(variantsValue))
     throw unsupportedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
@@ -524,9 +523,9 @@ const parseGradle = (
     );
   const unresolved = new MavenGradleUnresolvedCollector();
   const coordinates = {
-    group_id: component === null ? null : textOf(component.group),
-    artifact_id: component === null ? null : textOf(component.module),
-    version: component === null ? null : textOf(component.version),
+    group_id: component === null ? null : gradleText(component.group),
+    artifact_id: component === null ? null : gradleText(component.module),
+    version: component === null ? null : gradleText(component.version),
     packaging: null,
   };
   unresolved.coordinates(coordinates, "project", null, false);
@@ -582,8 +581,8 @@ const parseGradle = (
       variantNameIndices.set(name, index);
     }
     const attributes = gradleObject(variant.attributes, "variant.attributes");
-    const category = textOf(attributes?.["org.gradle.category"]);
-    const usage = textOf(attributes?.["org.gradle.usage"]);
+    const category = gradleText(attributes?.["org.gradle.category"]);
+    const usage = gradleText(attributes?.["org.gradle.usage"]);
     const platform =
       category === "platform" || category === "enforced-platform";
     const available = gradleObject(variant["available-at"], "available-at");
@@ -636,10 +635,10 @@ const parseGradle = (
         available === null
           ? null
           : {
-              group_id: textOf(available.group),
-              artifact_id: textOf(available.module),
-              version: textOf(available.version),
-              ...redactRecordedTransportUrl(textOf(available.url)),
+              group_id: gradleText(available.group),
+              artifact_id: gradleText(available.module),
+              version: gradleText(available.version),
+              ...redactRecordedTransportUrl(gradleText(available.url)),
             },
       dependency_count: variantDependencies.length,
       constraint_count: constraints.length,
@@ -660,7 +659,7 @@ const parseGradle = (
     gradle: {
       format_version,
       created_by_gradle:
-        createdGradle === null ? null : textOf(createdGradle.version),
+        createdGradle === null ? null : gradleText(createdGradle.version),
       variants: gradleVariants,
     },
     unresolved: unresolved.finish(),
