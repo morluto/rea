@@ -1509,7 +1509,7 @@ const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return !hasVisibleNonMapPrefix(
-      new TextDecoder(encoding ?? "utf-8").decode(prefix),
+      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
     );
   }
 };
@@ -2455,16 +2455,33 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
 const declaresTextEncoding = (bytes: Buffer): boolean =>
   byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
 
+const cachedTextDecoders = new Map<string, TextDecoder>();
+const getCachedTextDecoder = (
+  encoding: string,
+  fatal: boolean,
+): TextDecoder => {
+  const key = `${encoding}:${fatal ? "1" : "0"}`;
+  let decoder = cachedTextDecoders.get(key);
+  if (decoder === undefined) {
+    decoder = new TextDecoder(encoding, { fatal });
+    cachedTextDecoders.set(key, decoder);
+  }
+  return decoder;
+};
+
 /** Retain visible text after a decoding error without calling the read complete. */
 const decodeDeclaredText = (bytes: Buffer, encoding: string): MemberText => {
   try {
     return {
-      text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
+      text: getCachedTextDecoder(encoding, true).decode(bytes),
       complete: true,
     };
-  } catch (cause) {
+  } catch (cause: unknown) {
     if (!(cause instanceof TypeError)) throw cause;
-    return { text: new TextDecoder(encoding).decode(bytes), complete: false };
+    return {
+      text: getCachedTextDecoder(encoding, false).decode(bytes),
+      complete: false,
+    };
   }
 };
 

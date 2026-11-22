@@ -158,9 +158,33 @@ const architectureFor = (
   return decoded.architecture;
 };
 
+interface IndexedPeSections {
+  /** Non-empty sections sorted by ascending `virtualAddress`. */
+  readonly sorted: readonly PeSection[];
+  /** `prefixMaxEnd[i] = max_{j <= i}(sorted[j].virtualAddress + sorted[j].virtualSize)`. */
+  readonly prefixMaxEnd: readonly number[];
+}
+
+const buildIndexedPeSections = (
+  sections: readonly PeSection[],
+): IndexedPeSections => {
+  const sorted = sections
+    .filter((section) => section.virtualSize > 0)
+    .sort((left, right) => left.virtualAddress - right.virtualAddress);
+  const prefixMaxEnd = new Array<number>(sorted.length);
+  let maxEnd = 0;
+  for (let index = 0; index < sorted.length; index += 1) {
+    const section = sorted[index]!;
+    const end = section.virtualAddress + section.virtualSize;
+    if (end > maxEnd) maxEnd = end;
+    prefixMaxEnd[index] = maxEnd;
+  }
+  return { sorted, prefixMaxEnd };
+};
+
 /** Resolve one section identity for both exact reads and available-byte queries. */
 const resolveRva = (
-  mapping: RvaMapping,
+  mapping: RvaMapping & { readonly indexed?: IndexedPeSections },
 ): { readonly offset: number; readonly available: number } => {
   const { bytes, sections, rva, size, scope } = mapping;
   if (
@@ -177,24 +201,52 @@ const resolveRva = (
       `${scope} has an invalid RVA range`,
     );
   // VirtualSize owns RVA containment; raw size also includes alignment padding.
-  const mapped = sections.filter((section) => {
-    if (section.virtualSize === 0) return false;
+  const { sorted, prefixMaxEnd } =
+    mapping.indexed ?? buildIndexedPeSections(sections);
+  const n = sorted.length;
+  // First index whose prefixMaxEnd > rva; all earlier sections end at or before rva.
+  let lo = 0;
+  let hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (prefixMaxEnd[mid]! <= rva) lo = mid + 1;
+    else hi = mid;
+  }
+  const startIndex = lo;
+  // First index whose virtualAddress >= queryEnd; all later sections start at or after queryEnd.
+  const queryEnd = size === 0 ? rva + 1 : rva + size;
+  lo = startIndex;
+  hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid]!.virtualAddress < queryEnd) lo = mid + 1;
+    else hi = mid;
+  }
+  const endIndex = lo;
+  let mappedCount = 0;
+  let selected: PeSection | undefined;
+  for (let index = startIndex; index < endIndex; index += 1) {
+    const section = sorted[index]!;
     const end = section.virtualAddress + section.virtualSize;
-    return size === 0
-      ? rva >= section.virtualAddress && rva < end
-      : rva < end && rva + size > section.virtualAddress;
-  });
-  const selected = mapped.find((section) => {
-    const within = rva - section.virtualAddress;
-    return within >= 0 && size <= section.virtualSize - within;
-  });
+    const overlaps =
+      size === 0
+        ? rva >= section.virtualAddress && rva < end
+        : rva < end && rva + size > section.virtualAddress;
+    if (!overlaps) continue;
+    mappedCount += 1;
+    if (selected === undefined) {
+      const within = rva - section.virtualAddress;
+      if (within >= 0 && size <= section.virtualSize - within)
+        selected = section;
+    }
+  }
   if (selected === undefined)
     throw managedFailure(
       "invalid-directory",
       scope,
       `${scope} RVA is not covered by one PE section`,
     );
-  if (mapped.length > 1)
+  if (mappedCount > 1)
     throw managedFailure(
       "invalid-directory",
       scope,
@@ -216,17 +268,21 @@ const resolveRva = (
     0x1_0000_0000 - rva,
   );
   // A future overlap ends the uniquely mapped extent even if the current byte is unique.
-  for (const section of sections)
-    if (
-      section !== selected &&
-      section.virtualAddress > rva &&
-      section.virtualSize > 0
-    )
-      available = Math.min(available, section.virtualAddress - rva);
+  // First section with virtualAddress > rva in sorted order (cannot be `selected`, since selected.virtualAddress <= rva).
+  lo = 0;
+  hi = n;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid]!.virtualAddress <= rva) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo < n) available = Math.min(available, sorted[lo]!.virtualAddress - rva);
   return { offset, available };
 };
 
-const mapRva = (mapping: RvaMapping): number =>
+const mapRva = (
+  mapping: RvaMapping & { readonly indexed?: IndexedPeSections },
+): number =>
   mapping.rva === 0 && mapping.size === 0 ? 0 : resolveRva(mapping).offset;
 
 const readDirectory = (
@@ -509,6 +565,7 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     extentIssue === null
       ? readSections(bytes, sectionTableOffset, coff.sectionCount)
       : [];
+  const indexedSections = buildIndexedPeSections(sections);
   const cliDirectoryRead = readCliDirectory(bytes, coff, optional);
   const cliDirectoryState =
     extentIssue !== null && cliDirectoryRead.kind === "absent"
@@ -537,8 +594,15 @@ export const readManagedPeLayout = (bytes: Buffer): ManagedPeLayout => {
     cliDirectoryState,
     cliIssue,
     rvaToOffset: (rva, size, scope) =>
-      mapRva({ bytes, sections, rva, size, scope }),
+      mapRva({ bytes, sections, indexed: indexedSections, rva, size, scope }),
     rvaFileRange: (rva, scope) =>
-      resolveRva({ bytes, sections, rva, size: 1, scope }),
+      resolveRva({
+        bytes,
+        sections,
+        indexed: indexedSections,
+        rva,
+        size: 1,
+        scope,
+      }),
   };
 };
