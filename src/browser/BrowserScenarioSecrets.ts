@@ -163,19 +163,10 @@ const secretReplacements = (
   values: ReadonlyMap<string, string>,
   spellings: SecretSpellings,
   markerPatterns: readonly SecretPattern[],
-): readonly SecretReplacement[] => {
-  const markerById = new Map<string, string>();
-  const markerFor = (id: string): string => {
-    let marker = markerById.get(id);
-    if (marker === undefined) {
-      marker = redactionMarker(id, markerPatterns);
-      markerById.set(id, marker);
-    }
-    return marker;
-  };
-  return [...values]
+): readonly SecretReplacement[] =>
+  [...values]
     .flatMap(([id, secret]) => {
-      const marker = markerFor(id);
+      const marker = redactionMarker(id, markerPatterns);
       return secretPatterns(secret, spellings).map((pattern) => ({
         id,
         marker,
@@ -187,7 +178,6 @@ const secretReplacements = (
         right.text.length - left.text.length ||
         (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
     );
-};
 
 const normalizePercentEscapesBytes = (value: Buffer): Buffer => {
   if (value.indexOf(37) < 0) return value;
