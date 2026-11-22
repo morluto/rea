@@ -644,3 +644,17 @@ it("returns ordered matching indices across large batches in the supervised work
   expect(matched.value[1]).toBe(2);
   expect(matched.value.at(-1)).toBe(2498);
 });
+
+it("matches a 200k inventory inside a constrained 16 MiB worker heap without structured-clone OOM", async () => {
+  const values = Array.from({ length: 200_000 }, (_, i) =>
+    i === 123_456 ? "sym_needle_hit_value" : `sym_padding_entry_${String(i)}`,
+  );
+  const matched = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^sym_needle_",
+    caseSensitive: true,
+    values,
+    heapRequest: { heapMiB: 16, source: "setting" },
+  });
+  expect(matched).toEqual(ok([123_456]));
+});
