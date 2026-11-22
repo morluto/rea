@@ -13,7 +13,7 @@ from zipfile import BadZipFile, ZipFile
 
 from website import NOTES_FIXTURES, SITE_ORIGIN, authored_markdown, page_url, ranked_contributors, social_image_path, sync_pages
 from website_i18n import is_language_code
-from website_references import markdown_references, split_reference
+from website_references import markdown_references, parse_markdown, split_reference
 
 LEGACY_ORIGIN = "morluto.github.io"
 SITE_TEXT_URL = re.compile(
@@ -21,28 +21,39 @@ SITE_TEXT_URL = re.compile(
 )
 
 
+def heading_text(tokens):
+    """Yield visible heading text from parsed inline tokens."""
+    for token in tokens:
+        if token.type in ("text", "code_inline"):
+            yield token.content
+        elif token.type in ("softbreak", "hardbreak"):
+            yield " "
+        elif token.type == "image":
+            yield from heading_text(token.children or ())
+
+
 def markdown_ids(path):
     """Collect GitHub heading anchors and explicit HTML IDs in local Markdown."""
-    source = path.read_text(encoding="utf-8")
+    tokens = parse_markdown(path.read_text(encoding="utf-8"))
     parser = HtmlReferences()
-    parser.feed(source)
-    identifiers = set(parser.ids)
+    identifiers = set()
     counts = {}
-    fenced = False
-    for line in source.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-        if fenced:
+    for index, token in enumerate(tokens):
+        if token.type == "html_block":
+            parser.feed(token.content)
+        elif token.type == "inline":
+            for child in token.children or ():
+                if child.type == "html_inline":
+                    parser.feed(child.content)
+        if token.type != "heading_open":
             continue
-        heading = re.match(r"^ {0,3}#{1,6}\s+(.+?)(?:\s+#+)?\s*$", line)
-        if not heading:
-            continue
-        text = re.sub(r"<[^>]*>", "", heading[1]).lower()
+        text = "".join(heading_text(tokens[index + 1].children or ())).lower()
         slug = "".join(c for c in text if c in "-_ " or unicodedata.category(c)[0] in "LN").replace(" ", "-")
         count = counts.get(slug, 0)
         identifiers.add(f"{slug}-{count}" if count else slug)
         counts[slug] = count + 1
-    return identifiers
+    parser.close()
+    return identifiers | parser.ids
 
 
 def check_repository_links(root):
