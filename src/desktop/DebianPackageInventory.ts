@@ -20,10 +20,10 @@ import type {
 } from "../domain/desktop/desktopCapture.js";
 import {
   DPKG_STATUS_FORMAT,
+  literalDpkgOwnershipPath,
   ownershipCandidates,
   parseAptPolicyOrigins,
   parseAptPolicySources,
-  parseDpkgOwners,
   parseDpkgStatus,
 } from "../domain/desktop/linuxPackages.js";
 import {
@@ -31,6 +31,7 @@ import {
   resolveAptLocations,
   type AptRepositoryHost,
 } from "./AptRepositoryInventory.js";
+import { queryDpkgOwnership } from "./DpkgOwnershipQuery.js";
 import { queryUtf8Text, succeeded } from "./HostQuery.js";
 import {
   inspectLibraryPackages,
@@ -56,6 +57,7 @@ type Package = DesktopApplicationInventory["package"];
 /** The `o=` origin of every package file `apt-cache policy` lists; undefined when apt could not be asked. */
 const policyOrigins = async (
   context: InventoryContext,
+  statusFile: string | undefined,
 ): Promise<ReadonlyMap<string, string | null> | undefined> => {
   const policy = await queryUtf8Text(
     context.host.runQuery,
@@ -70,7 +72,7 @@ const policyOrigins = async (
     return new Map();
   }
   return policy.kind === "read"
-    ? parseAptPolicyOrigins(policy.text)
+    ? parseAptPolicyOrigins(policy.text, statusFile)
     : undefined;
 };
 
@@ -214,21 +216,26 @@ const dpkgOwner = async (
   { host, signal }: InventoryContext,
 ): Promise<Ownership> => {
   for (const path of ownershipCandidates(paths)) {
-    if (/[*?[\\]/u.test(path))
+    if (!literalDpkgOwnershipPath(path))
       return {
         kind: "unknown",
-        reason: `dpkg-query cannot safely query ${path} containing pattern characters`,
+        reason: `dpkg-query cannot safely query ${path} containing pattern characters or invalid path delimiters`,
       };
-    const outcome = await host.runQuery("dpkg-query", ["-S", path], signal);
-    if (outcome === "missing")
+    const outcome = await queryDpkgOwnership(host.runQuery, [path], signal);
+    if (outcome.kind === "missing")
       return { kind: "unknown", reason: "dpkg-query is not installed" };
-    // dpkg-query exits 1 when no package owns the path and 2 when it could not tell.
-    if (outcome === "failed" || outcome.exitCode > 1)
+    if (outcome.kind !== "read")
       return {
         kind: "unknown",
         reason: `dpkg-query could not say which package owns ${path}`,
       };
-    const [name] = parseDpkgOwners(outcome.stdout, path);
+    const owners = outcome.owners.get(path);
+    if (owners === undefined)
+      return {
+        kind: "unknown",
+        reason: `dpkg-query returned unreadable ownership records for ${path}`,
+      };
+    const [name] = owners;
     if (name !== undefined) return { kind: "owned", name };
   }
   return { kind: "unowned" };
@@ -325,7 +332,7 @@ export const debianPackage = async (
       ? [...parseAptPolicySources(policy.text, apt.status)]
       : [];
   // A local install's library packages are matched to the archive by origin too.
-  const origins = await policyOrigins(context);
+  const origins = await policyOrigins(context, apt.status);
   const installed = {
     kind: "deb" as const,
     name: parsed?.name ?? name,

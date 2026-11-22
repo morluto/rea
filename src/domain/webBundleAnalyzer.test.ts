@@ -98,7 +98,7 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
   expect(result.unknowns).toContainEqual({
     dimension: "endpoints",
     reason:
-      "A browser request's URL argument is not a string literal, so the endpoint it reaches is unknown.",
+      "A browser request's endpoint could not be resolved from its URL argument.",
     affected_script_keys: [scriptKey],
     call_sites: [
       {
@@ -111,6 +111,42 @@ it("reports a browser request whose URL is not a literal as an unknown endpoint 
       },
     ],
   });
+});
+
+it("recovers inline Request inputs only for proven fetch calls", () => {
+  const source = [
+    'fetch(new Request("/bare"));',
+    "window.fetch(new globalThis.Request(`/qualified`));",
+    'function local(Request) { fetch(new Request("/shadowed")); }',
+    "fetch(new Request(dynamic));",
+    'new WebSocket(new Request("wss://app.example.test/coerced"));',
+  ].join("\n");
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(
+    result.observations.endpoints.map(({ value, mechanism }) => ({
+      value,
+      mechanism,
+    })),
+  ).toEqual([
+    { value: "/bare", mechanism: "call:fetch" },
+    { value: "/qualified", mechanism: "call:window.fetch" },
+  ]);
+  expect(result.unknowns).toContainEqual(
+    expect.objectContaining({
+      dimension: "endpoints",
+      call_sites: [
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 3 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 4 }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ line: 5 }),
+        }),
+      ],
+    }),
+  );
 });
 
 it("reads an XMLHttpRequest URL from open's second argument on an inline receiver", () => {
@@ -609,66 +645,6 @@ describe("web bundle analyzer", () => {
   });
 });
 
-describe("web bundle source-map coverage", () => {
-  it("reports unavailable source maps as partial without dropping requested maps", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          script_key: `scr_${"1".repeat(64)}`,
-          declared_url: "https://app.example.test/app.js.map",
-          effective_url: null,
-          status: "fetch_failed",
-          artifact: null,
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: "Source-map fetch failed.",
-        },
-      ],
-    });
-
-    expect(analysis.completeness.status).toBe("partial");
-    expect(analysis.unknowns).toContainEqual({
-      dimension: "source_maps",
-      reason: expect.stringMatching(
-        /requested source maps.*unavailable or incomplete/i,
-      ),
-      affected_script_keys: [`scr_${"1".repeat(64)}`],
-    });
-  });
-
-  it("keeps map-less captured source complete when no maps were requested", () => {
-    const analysis = analyzeWebBundleFixture(inspection("export {};"), {
-      status: "not_requested",
-      requested: 0,
-      processed: 0,
-      items: [],
-    });
-
-    expect(analysis.completeness.status).toBe("complete");
-    expect(analysis.unknowns).toEqual([]);
-  });
-
-  it("rejects inconsistent source-map coverage counts", () => {
-    const result = analyzeWebBundleFixture(inspection("export {};"));
-    expect(
-      webBundleAnalysisSchema.safeParse({
-        ...result,
-        observations: {
-          ...result.observations,
-          source_maps: {
-            ...result.observations.source_maps,
-            requested: 1,
-          },
-        },
-      }).success,
-    ).toBe(false);
-  });
-});
-
 describe("web bundle static-analysis parity", () => {
   it("qualifies network spellings through nested dynamic receivers", () => {
     const result = analyzeWebBundleFixture(
@@ -1084,6 +1060,58 @@ describe("web bundle endpoint candidate classification", () => {
     expect(result.limitations).toContain(
       'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
     );
+  });
+});
+
+describe("web bundle method-first request candidates", () => {
+  it("reads the exact target after an HTTP method token in both analyzers", () => {
+    const source = `
+      Api.request("get", "/api/v1/profile");
+      Api.request("POST", "/api/v1/items", item);
+      client.request("Patch", \`/api/v1/items/1\`);
+      http.request("DELETE", "https://api.example.test/items/1");
+      request("options", "users");
+      Api.request("delete", \`/api/v1/items/\${id}\`);
+      http.request("POST", target);
+      rpc.request("initialize", "/session");
+      octokit.request("GET /repos/{owner}/{repo}");
+      request("https://example.test/health", "GET");
+    `;
+    const expectedCandidates = [
+      // An exact string after a standard method token, in any case.
+      "/api/v1/profile",
+      "/api/v1/items",
+      "/api/v1/items/1",
+      "https://api.example.test/items/1",
+      "users",
+      // A computed target leaves the method token as the candidate.
+      "delete",
+      "POST",
+      // Any other first argument is still the candidate.
+      "initialize",
+      "GET /repos/{owner}/{repo}",
+      "https://example.test/health",
+    ].sort();
+    const result = analyzeWebBundleFixture(inspection(source));
+    expect(result.observations.endpoints).toEqual([]);
+    expect(
+      result.inferences
+        .filter(({ kind }) => kind === "endpoint_candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    const staticEndpoints = analyzeJavaScriptStaticSource(source).endpoints;
+    expect(
+      staticEndpoints
+        .filter(({ interpretation }) => interpretation === "candidate")
+        .map(({ value }) => value)
+        .sort(),
+    ).toEqual(expectedCandidates);
+    expect(
+      staticEndpoints.filter(
+        ({ interpretation }) => interpretation === undefined,
+      ),
+    ).toEqual([]);
   });
 });
 

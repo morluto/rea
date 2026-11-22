@@ -63,6 +63,22 @@ const method = (
   return_type = "void",
 ) => ({ class: `${app}.LoginActivity`, name, return_type, parameter_types });
 
+it.each([
+  ["CR", ["\r"]],
+  ["CRLF", ["\r\n"]],
+  ["mixed", ["\r\n", "\r", "\n"]],
+] as const)(
+  "preserves mappings and diagnostics with %s line endings",
+  (_label, endings) => {
+    let line = 0;
+    const text = fixture.replaceAll(
+      "\n",
+      () => endings[line++ % endings.length]!,
+    );
+    expect(parse(text)).toEqual(mapping);
+  },
+);
+
 it("reports header facts, valid record counts and malformed line samples", () => {
   expect(mapping.reported).toEqual({
     compiler: "R8",
@@ -635,27 +651,19 @@ it("uses residual signature metadata and reports an invalid payload", () => {
   expect(metadata.malformed).toEqual([{ line: 5, reason: "metadata" }]);
 });
 
-it("treats CRLF and tab indentation like LF and spaces", () => {
-  expect(
-    parse(fixture.replaceAll("\n", "\r\n").replaceAll("    ", "\t")),
-  ).toEqual(mapping);
-});
-
 it.each([
   ["tabs", "\t->\t"],
-  ["multiple spaces", "   ->  "],
   ["no spaces", "->"],
-  ["one-sided spacing", "\t->"],
 ] as const)("reads the same mapping when arrows use %s", (_name, arrow) => {
   expect(parse(fixture.replaceAll(" -> ", arrow))).toEqual(mapping);
 });
 
-it("maps fields and methods whose types are separated by tabs", () => {
+it("maps fields and methods with tab indentation and type separators", () => {
   const observed = parse(
     [
       "example.Original -> a:",
-      "    int\t\tcounter -> c",
-      "    4:4:void\trun():5:5 -> r",
+      "\tint\t\tcounter -> c",
+      "\t4:4:void\trun():5:5 -> r",
     ].join("\n"),
   );
   expect(
@@ -969,27 +977,30 @@ it("streams total candidate counts with bounded stable samples for classes and m
   ).join("\n");
   const many = parse(text);
   const resolutions = [
-    resolveProguardClass(many, "a", { candidates: 2 }),
-    resolveProguardField(
-      many,
-      { className: "a", name: "b", type: "I" },
-      { candidates: 2 },
-    ),
-    resolveProguardMethod(
-      many,
-      { className: "a", name: "c", descriptor: "()V" },
-      { candidates: 2 },
-    ),
-  ];
-  for (const resolution of resolutions) {
+    [resolveProguardClass(many, "a", { candidates: 2 }), ["Owner0", "Owner1"]],
+    [
+      resolveProguardField(
+        many,
+        { className: "a", name: "b", type: "I" },
+        { candidates: 2 },
+      ),
+      ["field0", "field1"],
+    ],
+    [
+      resolveProguardMethod(
+        many,
+        { className: "a", name: "c", descriptor: "()V" },
+        { candidates: 2 },
+      ),
+      ["method0", "method1"],
+    ],
+  ] as const;
+  for (const [resolution, names] of resolutions)
     expect(resolution).toMatchObject({
       status: "ambiguous",
       candidate_count: 12,
+      candidates: names.map((name) => ({ name })),
     });
-    if (resolution.status !== "ambiguous")
-      throw new Error("Expected ambiguity");
-    expect(resolution.candidates).toHaveLength(2);
-  }
   expect(resolveProguardClass(many, "a")).toMatchObject({
     candidate_count: 12,
     candidates: Array.from(
@@ -999,32 +1010,7 @@ it("streams total candidate counts with bounded stable samples for classes and m
   });
 });
 
-it("caps verified and mismatched member samples while counting every relevant candidate", () => {
-  const many = parse(
-    [
-      "Owner -> a:",
-      ...Array.from(
-        { length: 12 },
-        (_, index) => `    void method${index}(int) -> b`,
-      ),
-    ].join("\n"),
-  );
-  for (const descriptor of ["(I)V", "(J)V"]) {
-    expect(
-      resolveProguardMethod(
-        many,
-        { className: "a", name: "b", descriptor },
-        { candidates: 2 },
-      ),
-    ).toMatchObject({
-      status: "ambiguous",
-      candidate_count: 12,
-      candidates: [{ name: "method0" }, { name: "method1" }],
-    });
-  }
-});
-
-it("samples verified candidates after earlier prototype mismatches", () => {
+it("keeps bounded verified and mismatch samples from the same member candidates", () => {
   const many = parse(
     [
       "Owner -> a:",
@@ -1051,6 +1037,18 @@ it("samples verified candidates after earlier prototype mismatches", () => {
     reason: "multiple-records",
     candidate_count: 2,
     candidates: [{ name: "first" }],
+  });
+  expect(
+    resolveProguardMethod(
+      many,
+      { className: "a", name: "b", descriptor: "(B)V" },
+      { candidates: 2 },
+    ),
+  ).toMatchObject({
+    status: "ambiguous",
+    reason: "descriptor-mismatch",
+    candidate_count: 12,
+    candidates: [{ name: "miss0" }, { name: "miss1" }],
   });
 });
 

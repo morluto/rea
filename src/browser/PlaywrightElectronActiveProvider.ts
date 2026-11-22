@@ -264,9 +264,26 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
       actions = actionOutcome.actions;
       if (actionOutcome.cleanupError !== undefined)
         throw actionOutcome.cleanupError;
-      const state = await readFinalApplicationState(
-        application,
-        options.signal,
+      const signal = options.signal;
+      const actionCancellation = actionOutcome.actionCancellation;
+      const cancelledInAction =
+        signal?.aborted === true &&
+        actionCancellation !== undefined &&
+        Object.is(actionCancellation.cause, signal.reason);
+      const state = await readFinalApplicationState(application, signal).catch(
+        (cause: unknown) => {
+          const failure = providerError(cause);
+          // A cancellation already recorded for an action precedes the
+          // best-effort final read, which can lose its Inspector transport.
+          if (
+            cancelledInAction &&
+            !failure.cleanupIncomplete &&
+            !(failure instanceof AnalysisCancelledError) &&
+            failure.userCategory !== "cancelled"
+          )
+            throw actionCancellation.retainSecondaryFailure(failure);
+          throw failure;
+        },
       );
       const finalCapture = projectElectronActiveCapture(paths, actions, state);
       retained = { stage: "final", state };

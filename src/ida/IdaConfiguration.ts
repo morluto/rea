@@ -50,10 +50,11 @@ const common = {
    * An attached registration names its upstream protocol. `"legacy"` (the
    * removed ida-pro-mcp 1.4 GUI proxy) is still recognized so that a stored
    * registration is refused with migration guidance rather than reported as an
-   * unknown value or read as another protocol. Headless mode has one protocol
-   * (the database supervisor).
+   * unknown value or read as another protocol. Headless mode uses the database
+   * supervisor when `protocol` is omitted, or `"hexrays"` for the official
+   * Hex-Rays IDA MCP.
    */
-  protocol: z.enum(["legacy", "native"]).optional(),
+  protocol: z.enum(["legacy", "native", "hexrays"]).optional(),
   timeoutMs: z
     .int()
     .min(MIN_IDA_REQUEST_TIMEOUT_MS)
@@ -96,12 +97,23 @@ const registrationSchema = z
       .strict(),
   ])
   .refine(
-    (config) => config.protocol === undefined || config.mode === "attached",
-    "An IDA MCP protocol requires attached mode; headless registrations omit protocol",
+    (config) =>
+      config.protocol === undefined ||
+      config.protocol === "hexrays" ||
+      config.mode === "attached",
+    'An IDA MCP protocol requires attached mode; a headless registration omits protocol or sets "hexrays"',
   )
   .refine(
     (config) => config.protocol !== undefined || config.mode !== "attached",
     'attached IDA registrations must set protocol to "native" (ida-free-mcp plugin)',
+  )
+  // Hex-Rays database leases belong to the MCP server process. Only a stdio
+  // registration gives REA a server, and therefore leases, of its own.
+  .refine(
+    (config) =>
+      config.protocol !== "hexrays" ||
+      (config.mode === "headless" && "command" in config),
+    "The Hex-Rays IDA MCP protocol requires a headless stdio registration",
   )
   // Resolve the upstream protocol once; consumers never infer it from mode.
   .transform((config, context) => {
@@ -138,6 +150,13 @@ export const IDA_COMPATIBILITY_PROFILES = {
     identity: "database-supervisor",
     diagnosticIdentity: "database-supervisor",
     diagnosticLabel: "headless",
+  },
+  hexrays: {
+    protocol: "hexrays",
+    mode: "headless",
+    identity: "hexrays-ida-mcp",
+    diagnosticIdentity: "hexrays",
+    diagnosticLabel: "Hex-Rays",
   },
   native: {
     protocol: "native",

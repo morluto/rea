@@ -1,11 +1,17 @@
 import type { FileMapping, ZeroFillMapping } from "../virtualFileMapping.js";
-import { readElfDynamicEntry } from "../elfDynamicEntry.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../elfDynamicEntry.js";
 import {
   decodeElfRelocationInfo,
+  ELF_ANDROID_PACKED_RELOCATION_TABLES,
+  ELF_ANDROID_PACKED_RELOCATION_TAGS,
+  ELF_RELR_DYNAMIC_TAGS,
   readElfRelocationEntry,
 } from "../elfRelocation.js";
 import { readLeb128, SLEB64 } from "../leb128.js";
-import { readElfSymbol } from "../elfSymbol.js";
+import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
 import {
   readElfHashSymbolCount,
   readElfGnuHashSymbolCount,
@@ -136,32 +142,24 @@ const DT_REL = 17n,
 const DT_PLTRELSZ = 2n,
   DT_PLTREL = 20n,
   DT_JMPREL = 23n;
-const DT_RELRSZ = 35n,
-  DT_RELR = 36n,
-  DT_RELRENT = 37n;
+const {
+  address: DT_RELR,
+  size: DT_RELRSZ,
+  entry: DT_RELRENT,
+} = ELF_RELR_DYNAMIC_TAGS.standard;
 const DT_SYMTAB = 6n,
   DT_SYMENT = 11n,
   DT_HASH = 4n,
   DT_GNU_HASH = 0x6ffffef5n;
-const DT_ANDROID_REL = 0x6000000fn,
-  DT_ANDROID_RELSZ = 0x60000010n,
-  DT_ANDROID_RELA = 0x60000011n,
-  DT_ANDROID_RELASZ = 0x60000012n;
-const PACKED_TAGS = [
-  DT_ANDROID_REL,
-  DT_ANDROID_RELSZ,
-  DT_ANDROID_RELA,
-  DT_ANDROID_RELASZ,
-];
 // Android's pre-standard RELR uses the same address/bitmap encoding. Resolve
 // its dynamic-tag aliases here so every consumer shares validation, duplicate
 // detection and relocation provenance with standard RELR.
-const RELR_TAG_ALIASES = new Map([
-  [0x6fffe000n, DT_RELR],
-  [0x6fffe001n, DT_RELRSZ],
-  [0x6fffe003n, DT_RELRENT],
+const RELR_TAG_ALIASES = new Map<bigint, bigint>([
+  [ELF_RELR_DYNAMIC_TAGS.android.address, DT_RELR],
+  [ELF_RELR_DYNAMIC_TAGS.android.size, DT_RELRSZ],
+  [ELF_RELR_DYNAMIC_TAGS.android.entry, DT_RELRENT],
 ]);
-const RELR_TAGS = new Set([DT_RELR, DT_RELRSZ, DT_RELRENT]);
+const RELR_TAGS = new Set<bigint>([DT_RELR, DT_RELRSZ, DT_RELRENT]);
 const UNIQUE_TAGS = new Set([
   DT_RELA,
   DT_RELASZ,
@@ -173,7 +171,7 @@ const UNIQUE_TAGS = new Set([
   DT_JMPREL,
   DT_PLTRELSZ,
   DT_PLTREL,
-  ...PACKED_TAGS,
+  ...ELF_ANDROID_PACKED_RELOCATION_TAGS,
 ]);
 // Ambiguous symbol declarations leave symbolic writes unknown without
 // rejecting independently decoded relative relocations.
@@ -498,25 +496,21 @@ function* dynamicTags(
   const declaration = input.dynamicSegments[0];
   if (declaration === undefined)
     return { values: new Map(), ambiguous: new Set() };
-  const width = input.bits / 4;
-  if (declaration.size > 16n * 1024n * 1024n)
+  const table = admitElfDynamicDirectory(bytes.length, declaration, input.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed") return malformed(table.error.message);
     throw new ElfPointerRelocationFailure(
       "native-index-capacity",
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
-      16 * 1024 * 1024,
+      table.error.message,
+      table.error.maximum,
       "bytes",
     );
-  if (
-    declaration.size % BigInt(width) !== 0n ||
-    declaration.offset > BigInt(bytes.length) ||
-    declaration.size > BigInt(bytes.length) - declaration.offset
-  )
-    malformed("PT_DYNAMIC is truncated or outside the file");
+  }
+  const { offset: start, size, width } = table.value;
   const tags = new Map<bigint, bigint>();
   const redeclared = new Set<bigint>();
   let relrFamily: "standard" | "android" | undefined;
-  const start = Number(declaration.offset),
-    end = start + Number(declaration.size);
+  const end = start + size;
   for (let at = start; at < end; at += width) {
     if ((at - start) % 65_536 === 0) yield;
     const parsed = readElfDynamicEntry(
@@ -602,6 +596,7 @@ export function* readElfRelocationWritesSteps(
     input,
   );
   const word = input.bits === 64 ? 8 : 4;
+  const reader = new BinaryReader(bytes, input.little, "elf");
   const index = createFileMappingIndex(input.mappings, input.zeroFills);
   const fileOffset = (address: bigint, width: number): number | null => {
     try {
@@ -612,16 +607,7 @@ export function* readElfRelocationWritesSteps(
       throw cause;
     }
   };
-  const rawWord = (offset: number): bigint =>
-    input.bits === 64
-      ? input.little
-        ? bytes.readBigUInt64LE(offset)
-        : bytes.readBigUInt64BE(offset)
-      : BigInt(
-          input.little
-            ? bytes.readUInt32LE(offset)
-            : bytes.readUInt32BE(offset),
-        );
+  const rawWord = (offset: number): bigint => reader.word(offset, input.bits);
   const target = (address: bigint, width: number): number | null => {
     const at = fileOffset(address, width);
     if (
@@ -661,7 +647,7 @@ export function* readElfRelocationWritesSteps(
       value === null ? fileOffset(address, width) : target(address, width),
     ...record,
   });
-  const symbolBytes = input.bits === 64 ? 24 : 16;
+  const symbolBytes = elfSymbolSize(input.bits);
   const symbolTable =
     tags.get(DT_SYMENT) === BigInt(symbolBytes)
       ? tags.get(DT_SYMTAB)
@@ -685,14 +671,13 @@ export function* readElfRelocationWritesSteps(
     );
     return parsed.ok ? parsed.value : undefined;
   };
-  const hashReader = new BinaryReader(bytes, input.little, "elf");
   const hashWords =
     (address: bigint): ElfHashWordReader =>
     (offset) => {
       try {
         // Hash walks skip bloom/bucket words; their whole prefix must be mapped.
         const at = index.offset(address, offset + 4) + offset;
-        return ok(hashReader.u32(at));
+        return ok(reader.u32(at));
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure) return err(cause.message);
         throw cause;
@@ -913,10 +898,11 @@ export function* readElfRelocationWritesSteps(
         `DT_${encoding.toUpperCase()}SZ has no DT_${encoding.toUpperCase()}`,
       );
   }
-  for (const [addressTag, sizeTag, encoding] of [
-    [DT_ANDROID_REL, DT_ANDROID_RELSZ, "rel"],
-    [DT_ANDROID_RELA, DT_ANDROID_RELASZ, "rela"],
-  ] as const) {
+  for (const [
+    addressTag,
+    sizeTag,
+    encoding,
+  ] of ELF_ANDROID_PACKED_RELOCATION_TABLES) {
     const address = tags.get(addressTag),
       size = tags.get(sizeTag);
     if (address === undefined) {
@@ -1020,14 +1006,7 @@ export function* readElfRelocationWritesSteps(
       return at === null
         ? undefined
         : {
-            value:
-              width === word
-                ? rawWord(at)
-                : BigInt(
-                    input.little
-                      ? bytes.readUInt32LE(at)
-                      : bytes.readUInt32BE(at),
-                  ),
+            value: reader.word(at, width === 4 ? 32 : input.bits),
             file_offset: at,
             relocation: null,
           };

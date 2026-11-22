@@ -42,7 +42,13 @@ For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
 `core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
 file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
 auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
-notes keep `core` null.
+notes keep `core` null. `NT_FILE` and `NT_AUXV` words follow the ELF class and
+byte order. Addresses and word values retain their unsigned hexadecimal form.
+
+For ELF32 `NT_PRPSINFO`, REA uses the declared Linux machine ABI to select the
+UID/GID width and requires the corresponding descriptor length. If either fact
+is insufficient to establish a layout, the note keeps its raw range and hash
+and leaves `core` null.
 
 An `NT_FILE` descriptor with nonzero bytes after its declared filenames
 retains its raw note evidence and leaves `core` null.
@@ -112,7 +118,8 @@ bytes and up to 64 KiB of projected metadata JSON per report. A repeated
 descriptor consumes projected bytes for each entry that includes it. Metadata
 that would exceed the Evidence JSON nesting allowance is also left undecoded.
 
-Zstandard section-name tables also use a 128 MiB decoder window limit.
+Zstandard section-name tables also use a 128 MiB decoder window limit and the
+shared [`zstd.max_frames` work limit](reference/limits-and-recovery.md#runtime-settings-through-mcp).
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

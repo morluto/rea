@@ -5,9 +5,11 @@ import { expect, it, vi } from "vitest";
 import { PrivateRuntimeRootUnavailableError } from "../../../src/domain/privateRuntimeRootUnavailableError.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import type { WebSourceMapReport } from "../../../src/domain/webSourceLocation.js";
 import { SourceMapDecoder } from "../../../src/javascript/sourceMaps/SourceMapDecoder.js";
 import type { SourceMapDecoderDependencies } from "../../../src/javascript/sourceMaps/SourceMapCommand.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
+import { assertProcessOwnershipInspectionActive } from "../../../src/process/ProcessInspectionCancellation.js";
 import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.js";
 import { waitForProviderProcessReady } from "../../fixtures/providerProcess.js";
 import {
@@ -69,7 +71,7 @@ it.each([
     const decoder = realDecoder({
       prepareOwnership: async (signal) => {
         controller.abort(reason);
-        signal?.throwIfAborted();
+        assertProcessOwnershipInspectionActive(signal);
       },
       createRuntime,
       launcher,
@@ -158,39 +160,47 @@ it.each([
 ])(
   "starts the $name codec deadline after ownership preparation",
   async ({ selected, expectedMs }) => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    const deadlineStates: (boolean | undefined)[] = [];
     let path: string | undefined;
+    const decoder = realDecoder({
+      prepareOwnership: async () => {
+        await vi.advanceTimersByTimeAsync(20_001);
+      },
+      createRuntime: async () => {
+        const root = await PrivateRuntimeRoot.create();
+        path = root.path;
+        return root;
+      },
+      launcher: async ({ signal }) => {
+        await vi.advanceTimersByTimeAsync(expectedMs - 1);
+        deadlineStates.push(signal?.aborted);
+        await vi.advanceTimersByTimeAsync(1);
+        deadlineStates.push(signal?.aborted);
+        assertProcessOwnershipInspectionActive(signal);
+        throw new Error(
+          "Expected the codec deadline to interrupt the launcher",
+        );
+      },
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     try {
-      const response = await realDecoder({
-        prepareOwnership: async () => {
-          await vi.advanceTimersByTimeAsync(20_001);
-        },
-        createRuntime: async () => {
-          const root = await PrivateRuntimeRoot.create();
-          path = root.path;
-          return root;
-        },
-        launcher: async ({ signal }) => {
-          await vi.advanceTimersByTimeAsync(expectedMs - 1);
-          expect(signal?.aborted).toBe(false);
-          await vi.advanceTimersByTimeAsync(1);
-          expect(signal?.aborted).toBe(true);
-          throw new Error("launcher settled after deadline");
-        },
-      }).trace({
+      const response = await decoder.trace({
         ...input,
         ...(selected === undefined ? {} : { decodeTimeoutMs: selected }),
       });
-      if (response.ok) throw new Error("expected decode deadline");
+      expect(deadlineStates).toEqual([false, true]);
+      if (response.ok) throw new Error("Expected decode deadline");
       expect(response.error).toMatchObject({
         _tag: "AnalysisTimeoutError",
-        userMessage: expect.stringContaining(String(expectedMs)),
+        timeoutMs: expectedMs,
+        userMessage: expect.stringContaining("decode_timeout_ms"),
+        secondaryFailures: [],
       });
-      expect(response.error.userMessage).toContain("decode_timeout_ms");
-      if (path === undefined) throw new Error("runtime not acquired");
+      if (path === undefined) throw new Error("Runtime not acquired");
       await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       vi.useRealTimers();
+      await decoder.close();
     }
   },
 );
@@ -384,13 +394,14 @@ it.each([false, true])(
 
 it.each([
   {
-    failure: "external section",
+    failure: "external section with an embedded fallback",
     text: JSON.stringify({
       version: 3,
       sections: [
         {
           offset: { line: 0, column: 0 },
           url: "https://app.test/external.map",
+          map: JSON.parse(fixture.sourceMap.text) as unknown,
         },
       ],
     }),
@@ -398,6 +409,30 @@ it.each([
       _tag: "AnalysisCapabilityUnavailableError",
       reason: "unsupported_source_map_profile",
       userMessage: expect.stringContaining("https://app.test/external.map"),
+    },
+  },
+  {
+    failure: "malformed section URL with an embedded fallback",
+    text: JSON.stringify({
+      version: 3,
+      sections: [
+        {
+          offset: { line: 0, column: 0 },
+          url: 12,
+          map: JSON.parse(fixture.sourceMap.text) as unknown,
+        },
+      ],
+    }),
+    error: {
+      _tag: "AnalysisInputError",
+      issues: [
+        {
+          reason: "invalid_format",
+          message: expect.stringMatching(
+            /section URL.*must be a string.*\[0\]/iu,
+          ),
+        },
+      ],
     },
   },
   {
@@ -561,63 +596,63 @@ it("returns all point matches when they fit and reports output exhaustion otherw
   });
   expect(limited.error.partialObservation).toBeUndefined();
 });
-it("rejects a malformed actual subprocess reply", async () => {
-  const response = await realDecoder({
-    launcher: (options) =>
-      spawnOwnedProviderProcess({
-        ...options,
-        arguments: ["-e", 'process.stdout.write("not JSON")'],
-      }),
-  }).trace(input);
-  if (response.ok) throw new Error("expected malformed reply");
-  expect(response.error._tag).toBe("AnalysisOutputError");
-  expect(response.error.partialObservation).toBeUndefined();
-});
-it("rejects a codec report from a runtime other than the launching one", async () => {
+it("admits a codec reply only from the selected runtime and memory envelope", async () => {
   const actual = await realDecoder().trace(input);
   if (!actual.ok) throw actual.error;
-  const replay = (report: unknown) =>
+  const reply = (text: string) =>
     realDecoder({
       launcher: (options) =>
         spawnOwnedProviderProcess({
           ...options,
-          arguments: [
-            "-e",
-            `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report }))})`,
-          ],
+          arguments: ["-e", `process.stdout.write(${JSON.stringify(text)})`],
         }),
     }).trace(input);
-  const unchanged = await replay(actual.value);
+  const { runtime } = actual.value;
+  const replay = (runtime: WebSourceMapReport["runtime"]) =>
+    reply(
+      JSON.stringify({
+        state: "success",
+        report: { ...actual.value, runtime },
+      }),
+    );
+  const unchanged = await replay(runtime);
   if (!unchanged.ok) throw unchanged.error;
   expect(unchanged.value).toEqual(actual.value);
-  const response = await replay({
-    ...actual.value,
-    runtime:
-      actual.value.runtime.id === "bun"
-        ? { id: "node-v8", version: "v24.18.0", v8_heap_limit_bytes: 1 }
-        : {
-            id: "bun",
-            version: "1.4.2",
-            node_compatibility_version: "24.18.0",
-            v8_heap_limit_bytes: null,
-            process_memory_limit_bytes: null,
-          },
-  });
-  if (response.ok) throw new Error("expected runtime mismatch");
-  expect(response.error._tag).toBe("AnalysisOutputError");
-  expect(response.error.partialObservation).toBeUndefined();
-  if (actual.value.runtime.id !== "bun") return;
-  // A Bun codec must report exactly the process limit its launcher enforced.
-  const limit = await replay({
-    ...actual.value,
-    runtime: {
-      ...actual.value.runtime,
-      process_memory_limit_bytes:
-        expectedProcessMemoryLimitBytes === null ? 4096 : null,
-    },
-  });
-  if (limit.ok) throw new Error("expected process limit mismatch");
-  expect(limit.error.message).toContain("process memory limit");
+
+  const wrongRuntime =
+    runtime.id === "bun"
+      ? { id: "node-v8" as const, version: "v24.18.0", v8_heap_limit_bytes: 1 }
+      : {
+          id: "bun" as const,
+          version: "1.4.2",
+          node_compatibility_version: "24.18.0",
+          v8_heap_limit_bytes: null,
+          process_memory_limit_bytes: null,
+        };
+  const wrongBudget =
+    runtime.id === "bun"
+      ? {
+          ...runtime,
+          process_memory_limit_bytes:
+            expectedProcessMemoryLimitBytes === null ? 4096 : null,
+        }
+      : { ...runtime, v8_heap_limit_bytes: (192 + 64) * 1024 * 1024 + 1 };
+  for (const [outcome, detail] of [
+    [await reply("not JSON"), "Malformed codec JSON reply"],
+    [await replay(wrongRuntime), "not the runtime that launched it"],
+    [
+      await replay(wrongBudget),
+      runtime.id === "bun" ? "process memory limit" : "V8 heap limit",
+    ],
+  ] as const)
+    expect(outcome).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisOutputError",
+        reason: expect.stringContaining(detail),
+        partialObservation: undefined,
+      },
+    });
 });
 it.each([true, false])(
   "classifies a codec exit by the job memory notification (reached: %s)",

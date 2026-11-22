@@ -70,13 +70,6 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
   let data: WasmSectionRange | null = null;
   let cursor = 8;
   for (let sections = 0; cursor < bytes.length; sections += 1) {
-    if (sections === MAX_WASM_SECTIONS)
-      throw decodeLimit(
-        WASM_FORMAT,
-        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
-        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
-        { offset: cursor },
-      );
     const id = bytes[cursor]!;
     const size = readU32(bytes, cursor + 1, bytes.length, {
       label: "section size",
@@ -88,6 +81,14 @@ export const readRustWasmSections = (bytes: Buffer): RustWasmSections => {
         WASM_FORMAT,
         "WebAssembly section extends past the end of the file",
         { offset: cursor, field: "section" },
+      );
+    // Admit one complete frame before charging any section payload work.
+    if (sections === MAX_WASM_SECTIONS)
+      throw decodeLimit(
+        WASM_FORMAT,
+        `WebAssembly module declares more than ${MAX_WASM_SECTIONS} sections`,
+        { name: "max_wasm_sections", maximum: MAX_WASM_SECTIONS },
+        { offset: cursor },
       );
     if (id === CUSTOM_SECTION) {
       const custom = customSection(bytes, size.end, end);

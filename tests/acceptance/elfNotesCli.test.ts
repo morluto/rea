@@ -162,18 +162,20 @@ cliTest(
   "reports compressed note storage as unsupported without mutation",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-elf-notes-storage-cli-");
-    const path = join(root, "debug-notes.o");
-    const bytes = compressedElfNoteSectionFixture();
-    await writeFile(path, bytes);
-    const result = await cli.run({
-      arguments: ["inspect-elf-notes", path, "--json"],
-    });
-    expect(result.exitCode).toBe(1);
-    expect(result.json).toMatchObject({
-      code: "unsupported_target",
-      message: expect.stringMatching(/compressed.*note/iu),
-    });
-    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    for (const ownership of ["section", "both"] as const) {
+      const path = join(root, `${ownership}.o`);
+      const bytes = compressedElfNoteSectionFixture(64, true, ownership);
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-elf-notes", path, "--json"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "unsupported_target",
+        message: expect.stringMatching(/compressed.*note/iu),
+      });
+      expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    }
   },
 );
 

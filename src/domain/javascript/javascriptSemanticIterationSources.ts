@@ -236,7 +236,17 @@ const visit = (
   }
   if (t.isArrayPattern(pattern)) {
     if (source !== undefined && source.restStartIndex === undefined)
-      add(sources, source, mutation, guards);
+      sources.push({
+        kind: "iteration",
+        node: source.node,
+        projection: source.projection,
+        mutation,
+        ...(t.isVariableDeclarator(mutation) ||
+        t.isAssignmentExpression(mutation)
+          ? { arrayPattern: pattern }
+          : {}),
+        ...guards,
+      });
     const selectedGuards = {
       ...guards,
       iterationSources: [

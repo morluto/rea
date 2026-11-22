@@ -340,6 +340,10 @@ export const settleProcessCaptureJournal = async (
   }
 };
 
+/** POSIX PTY capture limitation when same-group children remain running at target exit. */
+export const POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION =
+  "The target runs as the capture PTY session leader; still-running children in its foreground process group receive terminal SIGHUP when it exits unless they leave the group or ignore SIGHUP.";
+
 export const buildCaptureResult = (
   options: CaptureResultOptions,
 ): PendingProcessCapture => {
@@ -392,6 +396,9 @@ export const buildCaptureResult = (
           ]
         : []),
       "Process trees are sampled and may omit short-lived descendants.",
+      ...(options.manifest.platform !== "win32"
+        ? [POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION]
+        : []),
       ...(options.samplingPartial
         ? ["Process-tree sampling ended with an incomplete observation."]
         : []),
@@ -924,7 +931,7 @@ export const awaitTerminalExit = async ({
             PROCESS_FINALIZATION_DELIVERY_GRACE_MS,
             {
               delivery: "unverified" as const,
-              reason: `delivery did not settle within ${String(PROCESS_FINALIZATION_DELIVERY_GRACE_MS)} ms`,
+              reason: `delivery did not settle within REA's fixed ${String(PROCESS_FINALIZATION_DELIVERY_GRACE_MS)} ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it`,
             },
             {
               ref: false,

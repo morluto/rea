@@ -1,4 +1,5 @@
 import type { PointerFixups } from "../domain/apple/appleMachoFixups.js";
+import { BinaryReader } from "../domain/binaryContainer.js";
 import type { MachoLayout } from "../domain/apple/appleMachoSelection.js";
 import type { MachoImportBinding } from "../domain/native/objcSwiftMetadata.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -86,7 +87,13 @@ export const inspectObjcClassImportBindings = (input: {
 
     try {
       const offset = layout.offset(parsedAddress, 8);
-      const raw = bytes.readBigUInt64LE(offset);
+      // The loader already resolved this address to an 8-byte slot; the shared reader
+      // repeats the range check and names the format if the slice is short.
+      const raw = new BinaryReader(
+        bytes,
+        true,
+        "macho-chained-fixup-bindings",
+      ).word(offset, 64);
       const decoded = fixups.decode(parsedAddress, raw);
       if (decoded.kind === "unsupported") {
         reasons.add(`${requestedAddress}: ${decoded.reason}`);

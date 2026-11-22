@@ -17,6 +17,7 @@ import {
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
+  yieldArtifactRead,
   ArtifactResourceScope,
   ArtifactReaderFailure,
 } from "../resources/index.js";
@@ -40,7 +41,11 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import {
+  readGoBinaryImage,
+  readGoBinaryImageCooperative,
+  type GoBinaryImage,
+} from "./GoBinaryImage.js";
 import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
 import {
   BinaryResourceFailure,
@@ -333,11 +338,19 @@ export class GoBinaryProvider implements GoBinaryPort {
           snapshot.bytes,
           input.architecture,
         );
-        const image = readGoBinaryImage(selected.bytes, {
+        const imageOptions = {
           includeStringLiterals: input.include_string_literals === true,
           budgets,
           checkActive: () => assertArtifactReadActive(options?.signal),
-        });
+        };
+        const image =
+          options?.signal === undefined
+            ? readGoBinaryImage(selected.bytes, imageOptions)
+            : await readGoBinaryImageCooperative(
+                selected.bytes,
+                imageOptions,
+                () => yieldArtifactRead(options.signal),
+              );
         const {
           section_names_limitation: _sectionNamesLimitation,
           macho_chained_fixups: _machoChainedFixups,

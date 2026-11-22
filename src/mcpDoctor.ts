@@ -92,25 +92,40 @@ interface McpDoctorCheck {
   readonly detail: string;
 }
 
+const observedMcpServer = (client: Client) => {
+  const identity = client.getServerVersion();
+  return {
+    name: identity?.name ?? null,
+    version: identity?.version ?? null,
+    protocol_version: client.getNegotiatedProtocolVersion() ?? null,
+  };
+};
+
+const failedMcpDoctorReport = (
+  checks: readonly McpDoctorCheck[],
+  server: ReturnType<typeof observedMcpServer> | null = null,
+) => ({
+  healthy: false as const,
+  adapter: "production-stdio" as const,
+  server,
+  inventory: null,
+  identity: null,
+  request_flow: { tool: "binary_session" as const, ok: false as const },
+  checks,
+});
+
 /** Diagnose the actual production stdio adapter with one startup-bounded SDK session. */
 export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
   const parsedBudgets = parseMcpStartupBudgets(options.environment);
   if (!parsedBudgets.ok)
     return {
-      healthy: false as const,
-      adapter: "production-stdio" as const,
-      server: null,
-      inventory: null,
-      identity: null,
-      request_flow: {
-        tool: "binary_session" as const,
-        ok: false as const,
-      },
-      checks: parsedBudgets.error.settings.map((issue) => ({
-        name: issue.setting,
-        ok: false as const,
-        detail: issue.constraint,
-      })),
+      ...failedMcpDoctorReport(
+        parsedBudgets.error.settings.map((issue) => ({
+          name: issue.setting,
+          ok: false,
+          detail: issue.constraint,
+        })),
+      ),
       diagnostics: {
         stderr: "",
         stderr_bytes: 0,
@@ -134,10 +149,14 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       command: options.command,
       arguments: [...options.args],
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-      // The caller's environment is the child's complete base. The launcher
-      // would otherwise merge the ambient process environment, including the
-      // target selection the doctor removes.
-      hostEnvironment: targetFreeEnvironment(options.environment),
+      // The caller supplies the complete base. Use the process owner's
+      // platform-aware overlay to remove target selection before launching.
+      hostEnvironment: options.environment,
+      env: {
+        HOPPER_TARGET_PATH: undefined,
+        HOPPER_TARGET_KIND: undefined,
+        HOPPER_LOADER_ARGS_JSON: undefined,
+      },
       // A server can start its own providers in separate process groups.
       sweepTokenOwnedProcesses: true,
     },
@@ -159,21 +178,9 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       budget,
     );
   } catch (cause: unknown) {
-    result = {
-      healthy: false,
-      adapter: "production-stdio" as const,
-      server: null,
-      inventory: null,
-      identity: null,
-      request_flow: { tool: "binary_session", ok: false },
-      checks: [
-        {
-          name: "transport",
-          ok: false,
-          detail: doctorTransportDetail(cause, budget, controller.signal),
-        },
-      ],
-    };
+    result = failedMcpDoctorReport([
+      doctorTransportCheck(cause, budget, controller.signal),
+    ]);
   } finally {
     clearTimeout(timer);
     // The owned transport is the only cleanup owner; Client.close would only
@@ -203,20 +210,9 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
   return { ...result, diagnostics: stderr.value() };
 };
 
-type ProductionMcpDoctorResult =
-  | Awaited<ReturnType<typeof inspectProductionMcpSession>>
-  | {
-      readonly healthy: false;
-      readonly adapter: "production-stdio";
-      readonly server: null;
-      readonly inventory: null;
-      readonly identity: null;
-      readonly request_flow: {
-        readonly tool: "binary_session";
-        readonly ok: false;
-      };
-      readonly checks: readonly McpDoctorCheck[];
-    };
+type ProductionMcpDoctorResult = Awaited<
+  ReturnType<typeof inspectProductionMcpSession>
+>;
 
 /** The doctor's bounded stdio session, owning the process family it starts. */
 class DoctorStdioTransport extends OwnedMcpStdioTransport {
@@ -259,15 +255,30 @@ const inspectProductionMcpSession = async (
   expectation: McpDoctorCatalogExpectation,
   budget: McpPhaseBudget,
 ) => {
+  const server = observedMcpServer(client);
+  const initialization = {
+    name: "initialize",
+    ok:
+      server.name === PRODUCT_IDENTITY.mcpServerKey &&
+      server.version === PRODUCT_IDENTITY.packageVersion &&
+      server.protocol_version !== null,
+    detail: `${server.name ?? "unknown"}@${server.version ?? "unknown"}; protocol=${server.protocol_version ?? "unknown"}`,
+  };
   const request = requestOptions(deadline, signal);
   // The SDK logs to stdout when listPrompts is called without the advertised
   // capability, which corrupts the doctor's structured output. An absent
   // capability is an empty prompt inventory for this diagnostic.
-  const promptsRequest = listPromptsWhenAdvertised(client, request);
-  const [tools, prompts] = await Promise.all([
+  const catalogs = await Promise.all([
     client.listTools(undefined, request),
-    promptsRequest,
-  ]);
+    listPromptsWhenAdvertised(client, request),
+  ]).then(ok, (cause: unknown) => err(cause));
+  if (!catalogs.ok)
+    return failedMcpDoctorReport(
+      [initialization, doctorTransportCheck(catalogs.error, budget, signal)],
+      server,
+    );
+
+  const [tools, prompts] = catalogs.value;
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
   // The reply is checked against the canonical output contract, not the
   // listing: the default output profile omits output schemas and `compact`
@@ -311,17 +322,8 @@ const inspectProductionMcpSession = async (
     requestFlow.ok ? requestFlow.value.structuredContent : undefined,
   );
   const { catalog } = expectation;
-  const serverVersion = client.getServerVersion();
-  const protocolVersion = client.getNegotiatedProtocolVersion();
   const checks: McpDoctorCheck[] = [
-    {
-      name: "initialize",
-      ok:
-        serverVersion?.name === PRODUCT_IDENTITY.mcpServerKey &&
-        serverVersion.version === PRODUCT_IDENTITY.packageVersion &&
-        protocolVersion !== undefined,
-      detail: `${serverVersion?.name ?? "unknown"}@${serverVersion?.version ?? "unknown"}; protocol=${protocolVersion ?? "unknown"}`,
-    },
+    initialization,
     ...Object.entries(inventory).map(([name, comparison]) =>
       inventoryCheck(name, comparison),
     ),
@@ -346,11 +348,7 @@ const inspectProductionMcpSession = async (
   return {
     healthy: checks.every(({ ok }) => ok),
     adapter: "production-stdio" as const,
-    server: {
-      name: serverVersion?.name ?? null,
-      version: serverVersion?.version ?? null,
-      protocol_version: protocolVersion ?? null,
-    },
+    server,
     inventory,
     identity: {
       expected_package_version: PRODUCT_IDENTITY.packageVersion,
@@ -559,23 +557,6 @@ const requestOptions = (deadline: number, signal: AbortSignal) => ({
   timeout: Math.max(1, Math.ceil(deadline - performance.now())),
 });
 
-const targetFreeEnvironment = (
-  environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> => {
-  const result = Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-  for (const name of [
-    "HOPPER_TARGET_PATH",
-    "HOPPER_TARGET_KIND",
-    "HOPPER_LOADER_ARGS_JSON",
-  ])
-    delete result[name];
-  return result;
-};
-
 let cachedVerifiedCatalog: RecordedMcpCatalog | null | undefined;
 
 const readVerifiedRecordedMcpCatalog = (): RecordedMcpCatalog | undefined => {
@@ -726,3 +707,13 @@ const doctorTransportDetail = (
     (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
   return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
+
+const doctorTransportCheck = (
+  cause: unknown,
+  budget: McpPhaseBudget,
+  signal: AbortSignal,
+): McpDoctorCheck => ({
+  name: "transport",
+  ok: false,
+  detail: doctorTransportDetail(cause, budget, signal),
+});

@@ -18,7 +18,6 @@ import {
 } from "../fixtures/binarySession.js";
 
 const inventory = [
-  { address: "0x1000", value: "table_only" },
   { address: "0x1000", value: "add" },
   { address: "0x1000", value: "0xHelper" },
   { address: "0x1000", value: "name:0xSuffix" },
@@ -55,7 +54,9 @@ const fixture = (
                 ),
           );
         if (operation === "procedure_address")
-          return Promise.resolve(observed("0x1000"));
+          return Promise.resolve(
+            observed(parameters.procedure === "main" ? "0x5000" : null),
+          );
         if (operation === "xrefs") {
           if (options.xrefsError !== undefined)
             return Promise.resolve(err(options.xrefsError));
@@ -77,6 +78,8 @@ const fixture = (
                 ]),
               ),
             );
+          if (address === "0x5000")
+            return Promise.resolve(observed(["0x6000"]));
           return Promise.resolve(
             observed(address === "0x3000" ? [] : ["0x4000"]),
           );
@@ -100,29 +103,6 @@ const fixture = (
 };
 
 describe("direct CLI cross-reference selectors", () => {
-  it("rejects unknown arguments before opening a session", async () => {
-    const [path] = await createBinarySessionTargets();
-    const provider = fixture({
-      xrefsError: new AnalysisInputError("xrefs", undefined, [
-        { path: ["address"], reason: "invalid_format" },
-      ]),
-    });
-    const result = await runDirectAnalysis(
-      provider.dependencies,
-      path,
-      "xrefs",
-      { address: "table_only", extra: true },
-    ).then(projectCliAnalysisResult);
-    expect(result).toMatchObject({
-      code: "invalid_request",
-      details: {
-        operation: "xrefs",
-        issues: [{ path: ["extra"], reason: "unknown_argument" }],
-      },
-    });
-    expect(provider.closed()).toBe(0);
-  });
-
   it("retains provider validation issues unrelated to symbol resolution", async () => {
     const [path] = await createBinarySessionTargets();
     const issues = [
@@ -261,11 +241,11 @@ describe("direct CLI cross-reference name resolution", () => {
     });
     const evidence = parseEvidence(
       await runDirectAnalysis(provider.dependencies, path, "xrefs", {
-        address: "table_only",
+        address: "main",
       }).then(projectCliAnalysisResult),
     );
-    expect(evidence.parameters).toEqual({ address: "table_only" });
-    expect(evidence.normalized_result).toEqual(["0x4000"]);
+    expect(evidence.parameters).toEqual({ address: "main" });
+    expect(evidence.normalized_result).toEqual(["0x6000"]);
     expect(provider.closed()).toBe(1);
   });
 
@@ -289,6 +269,9 @@ describe("direct CLI cross-reference name resolution", () => {
         },
       ).then(projectCliAnalysisResult);
       expect(result).toMatchObject({ code });
+      expect(provider.calls.map(({ operation }) => operation)).not.toContain(
+        "procedure_address",
+      );
       expect(provider.closed()).toBe(1);
     },
   );

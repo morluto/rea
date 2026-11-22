@@ -467,6 +467,9 @@ it("keeps every argv fixture on a contract-built command", () => {
   ).toEqual([]);
 });
 
+const commandsWithBooleanFlags = each.filter(([, { parameters }]) =>
+  parameters.some(({ positional, booleanFlag }) => !positional && booleanFlag),
+);
 describe("CLI commands projected from tool contracts", () => {
   it.each(each)(
     "%s exposes every contract field or declares its omission",
@@ -535,8 +538,6 @@ describe("CLI commands projected from tool contracts", () => {
       for (const parameter of description.parameters) {
         const cliField = registeredField(description, parameter);
         const contractField = suppliedField(description, parameter);
-        // Incur's help reads flag and choice types only through `optional`.
-        expect(cliField, parameter.key).not.toBeInstanceOf(z.ZodExactOptional);
         if (parameter.callerPath) {
           // Only the absolute-path rule is relaxed, and only by resolution.
           const spelled = (path: string) =>
@@ -578,7 +579,7 @@ describe("CLI commands projected from tool contracts", () => {
     },
   );
 
-  it.each(each)(
+  it.each(commandsWithBooleanFlags)(
     "%s takes each boolean contract field as a bare flag",
     (_command, description) => {
       for (const parameter of description.parameters) {

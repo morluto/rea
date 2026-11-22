@@ -19,7 +19,7 @@ const ampSettings = (home: string) =>
   join(home, ".config", "amp", "settings.json");
 
 cliTest(
-  "packaged Amp refresh preserves policy and creates recovery only for changed launchers",
+  "packaged Amp validates launcher text and preserves policy across refreshes",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-amp-registration-");
     const home = join(root, "home");
@@ -49,6 +49,17 @@ cliTest(
     );
     await mkdir(join(home, ".config", "amp"), { recursive: true });
     await writeFile(settingsPath, original);
+    const invalid = await run(["--command", 'fixture-server "unfinished']);
+    expect(invalid.exitCode, invalid.stdout).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: "command" })],
+    });
+    expect(await readFile(settingsPath, "utf8")).toBe(original);
+    expect(await readdir(join(home, ".config", "amp"))).toEqual([
+      "settings.json",
+    ]);
+
     const first = await run([]);
     expect(first.exitCode, first.stderr).toBe(0);
     const firstReport = mcpRegistrationReportSchema.parse(first.json);
@@ -87,7 +98,12 @@ cliTest(
       "settings.json",
       "settings.json.rea.backup",
     ]);
-    const changed = await run(["--command", '"fixture replacement" "" --mcp']);
+    const command = String.raw`C:\Program Files\server.exe`;
+    const argument = String.raw`C:\data\file`;
+    const changed = await run([
+      "--command",
+      `'${command}' '${argument}' "" --mcp`,
+    ]);
     expect(changed.exitCode, changed.stderr).toBe(0);
     const changedReceipt = mcpRegistrationReportSchema.parse(changed.json)
       .clients[0];
@@ -104,8 +120,8 @@ cliTest(
     expect(
       JSON.parse(await readFile(settingsPath, "utf8"))["amp.mcpServers"].rea,
     ).toMatchObject({
-      command: "fixture replacement",
-      args: ["", "--mcp"],
+      command,
+      args: [argument, "", "--mcp"],
       env: { KEEP_ME: "1" },
       disabled: false,
     });

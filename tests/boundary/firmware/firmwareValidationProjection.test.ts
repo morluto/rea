@@ -49,8 +49,9 @@ describe("firmware request validation projection", () => {
             },
           ],
         },
-        remediation: {
-          action: expect.stringContaining("Correct the listed fields"),
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "extract_firmware",
         },
       });
       expect(execute).not.toHaveBeenCalled();

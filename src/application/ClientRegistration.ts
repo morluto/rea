@@ -4,6 +4,7 @@ import {
   gooseEnvironmentField,
 } from "./ClientRegistrationSource.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -16,8 +17,11 @@ import {
 } from "../config/mcpStartupPolicy.js";
 import {
   clientConfigurationRecordSchema,
+  clientServerForcedEnabled,
+  clientServerListedDisabled,
   clientRegistrationEntry,
   clientRegistrationLauncherEntry,
+  type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
 import type { SetupClient } from "./SupportedClients.js";
@@ -74,6 +78,38 @@ const registrationSchema = launcherSchema.extend({
 });
 
 export type ClientRegistration = z.output<typeof registrationSchema>;
+const registrationActivationSchema = registrationSchema
+  .pick({ disabled: true, enabled: true })
+  .passthrough();
+
+// Codex, Kimi Code and Pi use enabled. Devin uses disabled. Grok reads its
+// disable list. OpenCode's effective document already uses the selected dialect.
+const ignoresDisabledKey = new Set(["codex", "kimi", "pi"]);
+const ignoresEnabledKey = new Set(["devin"]);
+
+/** Interpret activation on the effective, validated registration. */
+export const clientRegistrationActivation = (
+  registration: z.output<typeof registrationActivationSchema>,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): "enabled" | "disabled" => {
+  // Shared storage also serves ZCode. Its flag binds every reader of the row.
+  const sharedDisabled =
+    (parsed.dialect === "zcode" ||
+      parsed.dialect === "zcode_fallback" ||
+      client.sharedRegistration === true) &&
+    registration.enable === false;
+  return (client.format !== "grok" &&
+    !ignoresDisabledKey.has(client.name) &&
+    registration.disabled === true) ||
+    (registration.enabled === false &&
+      !ignoresEnabledKey.has(client.name) &&
+      !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
+    sharedDisabled ||
+    clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
+    ? "disabled"
+    : "enabled";
+};
 
 // https://developers.openai.com/codex/config-reference/#mcp_servers
 const codexApprovalModeSchema = z.enum(["auto", "prompt", "writes", "approve"]);
@@ -110,6 +146,18 @@ const registrationError = (error: z.ZodError): ConfigurationError =>
       constraint: issue.message,
     })),
   });
+
+/** Read activation from an effective row regardless of its transport. */
+export const parseClientRegistrationActivation = (
+  value: unknown,
+  client: SetupClient,
+  document: ClientConfigurationDocument,
+): Result<"enabled" | "disabled", ConfigurationError> => {
+  const parsed = registrationActivationSchema.safeParse(value);
+  return parsed.success
+    ? ok(clientRegistrationActivation(parsed.data, client, document))
+    : err(registrationError(parsed.error));
+};
 
 /** Launcher identity remains usable when unrelated readiness settings are invalid. */
 export const parseClientRegistrationLauncher = (
@@ -452,6 +500,8 @@ export const refreshClientRegistration = (
   environment: Readonly<Record<string, string>>,
   previous: unknown,
   timeoutInputs: McpToolTimeoutInputs,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv> = process.env,
+  platform: NodeJS.Platform = HOST_PLATFORM.platform,
 ): Result<Record<string, unknown>, ConfigurationError> => {
   const target = { dialect, profile: client.registrationProfile };
   const facts = clientRegistrationSourceFacts(target, command, previous);
@@ -465,7 +515,12 @@ export const refreshClientRegistration = (
     : undefined;
   const launcher =
     priorCommand !== undefined &&
-    equivalentClientRegistrationCommands(priorCommand, command)
+    equivalentClientRegistrationCommands(
+      priorCommand,
+      command,
+      launcherEnvironment,
+      platform,
+    )
       ? priorCommand
       : command;
   const defaults = clientRegistrationEntry(dialect, launcher, environment);
