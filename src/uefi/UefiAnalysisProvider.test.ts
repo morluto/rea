@@ -6062,3 +6062,163 @@ it("honors late cancellation during directory reader finalization and retains pu
     await provider.close();
   }
 });
+
+it("rejects malformed manifest payload digests, marks coverage partial, and ignores row metadata", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-malformed-sha-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "InvalidDigestName",
+          payload_file: "driver.efi",
+          payload_sha256: "deadbeef",
+          phase: "PEI",
+          guid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest payload_sha256 for driver.efi is malformed"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]!.name).toBe("driver");
+    expect(result.modules[0]!.phase).toBe("MISC");
+    expect(result.modules[0]!.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("incorporates oversized manifest into corpus image_sha256 rather than collapsing to empty hash", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-oversized-manifest-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const largeManifest = Buffer.alloc(17 * 1024 * 1024, 0x20);
+  await writeFile(join(inDir, "firmware_manifest.json"), largeManifest);
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("exceeds size limit (16777216 bytes)"),
+      ),
+    ).toBe(true);
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("splits nested POSIX path on slashes and classifies phase from parent segments", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-posix-nested-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  const peiDir = join(inDir, "vendor", "PEI");
+  await mkdir(peiDir, { recursive: true });
+  await writeFile(join(peiDir, "mod.efi"), createMinimalPeBuffer());
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          filter_phase: "pei",
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.total_modules_decompiled).toBe(1);
+    expect(result.modules[0]?.phase).toBe("PEI");
+    expect(result.modules[0]?.name).toBe("mod");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("marks coverage partial when available Ghidra command execution fails", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-ghidra-crash-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "mod.efi"), createMinimalPeBuffer());
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = await createTestTempDirectory("rea-ghidra-mock-crash-");
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (command) => {
+      if (command.includes("analyzeHeadless")) {
+        throw new Error("Simulated Ghidra decompiler internal crash");
+      }
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(result.modules[0]?.c_generator).toBe("scaffold");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Ghidra C decompilation for `mod` failed"),
+      ),
+    ).toBe(true);
+  } finally {
+    spy.mockRestore();
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    await provider.close();
+  }
+});

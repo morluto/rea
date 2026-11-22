@@ -1955,6 +1955,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     }
                   }
                 } else {
+                  isCoveragePartial = true;
                   const reason =
                     exporterOutcome?.error ??
                     "decompilation script produced no output";
@@ -2013,21 +2014,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   if (!effectiveLimitations.includes(limitMsg)) {
                     effectiveLimitations.push(limitMsg);
                   }
-                } else if (
-                  recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS
-                ) {
-                  effectiveLimitations.push(
-                    `Ghidra C decompilation for ${safeLimitationModName} failed: ${errDetail}`,
-                  );
-                  recordedGhidraFailures++;
-                } else if (
-                  !effectiveLimitations.includes(
-                    "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                  )
-                ) {
-                  effectiveLimitations.push(
-                    "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
-                  );
+                } else {
+                  isCoveragePartial = true;
+                  if (recordedGhidraFailures < MAX_GHIDRA_FAILURE_DIAGNOSTICS) {
+                    effectiveLimitations.push(
+                      `Ghidra C decompilation for ${safeLimitationModName} failed: ${errDetail}`,
+                    );
+                    recordedGhidraFailures++;
+                  } else if (
+                    !effectiveLimitations.includes(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Additional Ghidra decompilation failure diagnostics omitted after reaching diagnostics budget.",
+                    );
+                  }
                 }
               }
             }
@@ -2655,9 +2657,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const declared = manifestEntry.declaredSize ?? 0;
         const MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
         if (declared > MANIFEST_MAX_BYTES) {
+          isCoveragePartial = true;
           limitations.push(
             `Manifest firmware_manifest.json exceeds size limit (${MANIFEST_MAX_BYTES} bytes); ignoring manifest.`,
           );
+          omittedCandidates.push({
+            identityRelPath: "firmware_manifest.json",
+            reason: `manifest_size_limit:${declared}`,
+          });
         } else {
           try {
             const stream = await reader.open(manifestEntry, signal);
@@ -2667,6 +2674,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               const b = chunk as Buffer;
               total += b.length;
               if (total > MANIFEST_MAX_BYTES) {
+                isCoveragePartial = true;
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json",
+                  reason: `manifest_size_limit:${total}`,
+                });
                 if (
                   "destroy" in stream &&
                   typeof stream.destroy === "function"
@@ -2785,19 +2797,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 }
 
                 let validPayloadSha256: string | undefined = undefined;
-                const declaredSha =
-                  typeof m.payload_sha256 === "string"
-                    ? m.payload_sha256
-                    : typeof m.payloadSha256 === "string"
-                      ? m.payloadSha256
-                      : typeof m.sha256 === "string"
-                        ? m.sha256
-                        : undefined;
-                if (
-                  declaredSha !== undefined &&
-                  /^[0-9a-f]{64}$/i.test(declaredSha)
-                ) {
-                  validPayloadSha256 = declaredSha.toLowerCase();
+                const rawSha = m.payload_sha256 ?? m.payloadSha256 ?? m.sha256;
+                if (rawSha !== undefined && rawSha !== null) {
+                  if (
+                    typeof rawSha === "string" &&
+                    /^[0-9a-f]{64}$/i.test(rawSha.trim())
+                  ) {
+                    validPayloadSha256 = rawSha.trim().toLowerCase();
+                  } else {
+                    isCoveragePartial = true;
+                    if (limitations.length < 50) {
+                      limitations.push(
+                        `Manifest payload_sha256 for ${ellipsisExcerpt(String(m.payload_file ?? exactNorm), 128)} is malformed; manifest row metadata ignored.`,
+                      );
+                    }
+                    continue;
+                  }
                 }
 
                 const manifestEntryRecord: ManifestModuleEntry = {
@@ -2834,9 +2849,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               }
             }
           } catch (manifestErr) {
+            isCoveragePartial = true;
             limitations.push(
               `Failed to parse firmware_manifest.json: ${errorMessage(manifestErr)}`,
             );
+            if (
+              !omittedCandidates.some(
+                (o) => o.identityRelPath === "firmware_manifest.json",
+              )
+            ) {
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json",
+                reason: "manifest_parse_failure",
+              });
+            }
           }
         }
       }
@@ -3008,7 +3034,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             ? []
             : (isWindows
                 ? directoryPath.split(/[/\\]+/)
-                : directoryPath.split(/\/+/)
+                : directoryPath.split("/")
               )
                 .map((s) => s.toLowerCase())
                 .filter((s) => s.length > 0);
