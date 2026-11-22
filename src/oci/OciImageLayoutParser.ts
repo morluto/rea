@@ -1590,12 +1590,13 @@ const inventoryOciImageLayout = async (
     if (drainingManifests) return;
     drainingManifests = true;
     try {
-      for (
-        let next = manifestQueue.shift();
-        next !== undefined;
-        next = manifestQueue.shift()
-      )
+      // Advance a cursor rather than shift(): shifting relocates the rest of
+      // the queue on every step, which is quadratic for wide layouts.
+      for (let cursor = 0; cursor < manifestQueue.length; cursor += 1) {
+        const next = manifestQueue[cursor];
+        if (next === undefined) break;
         await walkOneManifest(next.digest, next.mediaType, next.depth);
+      }
     } finally {
       manifestQueue.length = 0;
       drainingManifests = false;
@@ -1609,11 +1610,11 @@ const inventoryOciImageLayout = async (
   const rootDigest = `sha256:${indexDocument.sha256}`;
   queuedIndexes.add(traversalKey(rootDigest));
   await walkIndex(rootDigest, topMediaType, indexDocument, 0);
-  for (
-    let next = indexQueue.shift();
-    next !== undefined;
-    next = indexQueue.shift()
-  ) {
+  // Cursor, not shift(): many index references would otherwise make draining
+  // the breadth-first queue quadratic.
+  for (let cursor = 0; cursor < indexQueue.length; cursor += 1) {
+    const next = indexQueue[cursor];
+    if (next === undefined) break;
     const nested = await readReferencedJson(
       next.digest,
       `index ${next.digest}`,
