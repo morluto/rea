@@ -26,6 +26,7 @@
   "src/application/native/NativeMatchingAdmission.ts": 1,
   "src/application/ntfs/NtfsJournalService.ts": 2,
   "src/application/reverse/ReverseEngineeringService.ts": 1,
+  "src/application/warcArchive/WarcArchiveService.ts": 1,
   "src/application/wasm/WasmArtifactService.ts": 1,
   "src/artifacts/DesktopApplicationReader.ts": 1,
   "src/artifacts/ReleaseExposureReader.ts": 2,
