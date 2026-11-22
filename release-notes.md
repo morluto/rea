@@ -194,6 +194,7 @@
 
 ### Performance Improvements
 
+* **adapters:** eliminate hot-path overhead across WASM, EVM, Frida, web modules, and HAR ([#13356](https://github.com/morluto/rea/issues/13356)) ([26465e8](https://github.com/morluto/rea/commit/26465e8ae63045372f28383b1dcc4856e9b41644))
 * **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
 * **artifacts/android:** reuse ASAR snapshot descriptors and index JADX bridge lookups ([#13361](https://github.com/morluto/rea/issues/13361)) ([4d7a971](https://github.com/morluto/rea/commit/4d7a9710fe19af7e70693ea56c1e5d3a0268baa1))
 * **browser:** precompile redaction markers, eliminate quadratic secret scans, and scope HAR validation ([#13267](https://github.com/morluto/rea/issues/13267)) ([2afc34e](https://github.com/morluto/rea/commit/2afc34ec6eb2aee43c87a60eee9636db38d22c37))
@@ -215,6 +216,7 @@
 * **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **ida:** push literal patterns down to find_regex on all protocols and drop catch-all non-ASCII wildcard ([#13291](https://github.com/morluto/rea/issues/13291)) ([dff9b47](https://github.com/morluto/rea/commit/dff9b479ed3228a27bc49037c03ea970123f5a43))
 * **il2cpp:** fix 8x yields and hoist opcode checks before BigInt math in executable scans ([#13272](https://github.com/morluto/rea/issues/13272)) ([7269165](https://github.com/morluto/rea/commit/726916532371dfc65643aa1a9d6723b6edc833ed))
+* **io:** stream SQLite snapshots, chunk stable artifact reads, and bound procfs and staging-budget I/O ([#13360](https://github.com/morluto/rea/issues/13360)) ([58af29e](https://github.com/morluto/rea/commit/58af29e6b0ad56aaff1c6f714d9c5dfc9690315f))
 * **javascript:** eliminate double preload AST pass and index feature/semantic/IPC/sourcemap lookups ([fde2c87](https://github.com/morluto/rea/commit/fde2c87b86bea29c4b536685c19581e6d61834ef))
 * **javascript:** group renderer scripts without repeated copies ([#13328](https://github.com/morluto/rea/issues/13328)) ([0437d74](https://github.com/morluto/rea/commit/0437d74bd021e4ed48e41fb01527e861dfb8cc54))
 * **javascript:** index artifact package directory lookups ([#13327](https://github.com/morluto/rea/issues/13327)) ([4b86932](https://github.com/morluto/rea/commit/4b86932527819cfa33fc234c0cdcb4919e1653f7))
@@ -231,6 +233,7 @@
 * **native:** eliminate quadratic lookups, comparator Zod/stringify churn, and redundant clones across native workflows ([#13306](https://github.com/morluto/rea/issues/13306)) ([6cc7de3](https://github.com/morluto/rea/commit/6cc7de3005e42457fc05240d0e8b6d364f7843f7))
 * **native:** maintain owner index for ObjC dispatch implementations instead of O(C*M) filtering ([#13269](https://github.com/morluto/rea/issues/13269)) ([b38a496](https://github.com/morluto/rea/commit/b38a49656aa314cc3a84afaa1a11d6c4324a29d6))
 * **native:** pre-screen IL2CPP slots and reuse ObjC/PE indices ([#13314](https://github.com/morluto/rea/issues/13314)) ([ac4f655](https://github.com/morluto/rea/commit/ac4f65585846fc8542234ce1366b8a251336a790))
+* **pcap/pwntools:** eliminate redundant parsing, linear scans, and quadratic allocations ([#13359](https://github.com/morluto/rea/issues/13359)) ([18f5b7b](https://github.com/morluto/rea/commit/18f5b7b4db6b24789084ebb1c81ad552893bc48a))
 * **process:** wake OwnedCommand on output close, lazily materialize diagnostic snapshots, and bound tail copies ([#13261](https://github.com/morluto/rea/issues/13261)) ([b795aee](https://github.com/morluto/rea/commit/b795aee553fbfa992e5f5cf115cb2481625ca632))
 * **release-exposure:** reuse verified packaged PE bytes ([#13385](https://github.com/morluto/rea/issues/13385)) ([55a320b](https://github.com/morluto/rea/commit/55a320be8706152baf844c22916cd81393eff23b))
 * **schemas:** eliminate generator/clone overhead in schema compaction and compact union projections ([#13313](https://github.com/morluto/rea/issues/13313)) ([87243c0](https://github.com/morluto/rea/commit/87243c0c0e1d5ff9e99daf85d93c046c49e2ef11))
@@ -398,6 +401,7 @@
 * **debugger:** consolidate startup descriptor ownership checks ([#13028](https://github.com/morluto/rea/issues/13028)) ([fb873fe](https://github.com/morluto/rea/commit/fb873feaeb928c692ee074784846a9f41c1d3b79))
 * **deno:** consolidate physical ELF note ownership checks ([#13414](https://github.com/morluto/rea/issues/13414)) ([59ac8e5](https://github.com/morluto/rea/commit/59ac8e5a836e11adb6879f10519ff0da9aa5b8e8))
 * **deno:** consolidate remote paths and region limits ([#13410](https://github.com/morluto/rea/issues/13410)) ([466c552](https://github.com/morluto/rea/commit/466c552d16a3a83bd4216b4531e3f7f189cb766e))
+* **desktop:** consolidate archive task and reader coverage ([#13419](https://github.com/morluto/rea/issues/13419)) ([ec56d1b](https://github.com/morluto/rea/commit/ec56d1b020702dce16fda4b3da512da694fb1c33))
 * **desktop:** keep TryExec regression independent of ID masking group ([b3dfd53](https://github.com/morluto/rea/commit/b3dfd5305dc254e177d16ce1675a672857b0b391))
 * **desktop:** verify cancellation before releasing the guest ([#12812](https://github.com/morluto/rea/issues/12812)) ([c94f275](https://github.com/morluto/rea/commit/c94f275667e8d9402d34bcddb61abe0393302685))
 * **docs:** isolate README drift cases and remove duplicate checks ([ce52580](https://github.com/morluto/rea/commit/ce5258043c47483d2c8db9a3c0b8f369542bed73))
