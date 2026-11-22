@@ -106,6 +106,7 @@
 * **uninstall:** keep emptied DSH inserts from applying overrides ([#13036](https://github.com/morluto/rea/issues/13036)) ([76da8fd](https://github.com/morluto/rea/commit/76da8fd8baa9ffe61be1d772a3cc1d0ac65dbf8b))
 * **v8:** admit the six-word code cache header of V8 8.8 through 11.7 ([cc19240](https://github.com/morluto/rea/commit/cc19240ca963a263f8c33a061782385e76344e0f))
 * **verification:** bind DeepSeek skill evidence to its installed directory ([#13238](https://github.com/morluto/rea/issues/13238)) ([e3ce2b5](https://github.com/morluto/rea/commit/e3ce2b53d4225eed98977727534f97c0e0e06433))
+* **verification:** distinguish MCP probe refusals from local deadlines ([#13246](https://github.com/morluto/rea/issues/13246)) ([eacbd25](https://github.com/morluto/rea/commit/eacbd2522a4ab17310a1708179fdf118ba76f2cd))
 * **verification:** read back Qwen skill output before analysis ([#13240](https://github.com/morluto/rea/issues/13240)) ([63ff46e](https://github.com/morluto/rea/commit/63ff46e9ee3c1ea678c33891032c0e70eec67987))
 * **verification:** require Gemini native answer and skill provenance ([#13241](https://github.com/morluto/rea/issues/13241)) ([34c69f6](https://github.com/morluto/rea/commit/34c69f606dd5032089de091adaefd6f179afb059))
 * **verify:** cancel owned DeepSeek Harness commands ([#13035](https://github.com/morluto/rea/issues/13035)) ([42a34f8](https://github.com/morluto/rea/commit/42a34f8a7fea243b1f8e9b3574c814b1d52438b9))
