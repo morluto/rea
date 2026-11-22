@@ -205,16 +205,28 @@ it("refuses a relative Kilo configuration path instead of guessing its folder", 
   }
 });
 
-it("keeps an incomplete Windows Kilo UNC file unresolved", () => {
+it("keeps incomplete Windows paths unresolved for Kilo's file and roots", () => {
   const path = "\\\\kilo-config";
-  const row = supportedClients("C:\\Users\\x", "win32", {
-    KILO_CONFIG: path,
-  }).find(({ name }) => name === "kilo");
-  expect(row).toMatchObject({
-    configPath: path,
-    configPathError: expect.stringContaining("has no drive"),
-  });
-  expect(row).not.toHaveProperty("markerPath");
+  const home = "C:\\Users\\x";
+  for (const [label, selectedHome, env] of [
+    ["KILO_CONFIG", home, { KILO_CONFIG: path }],
+    ["XDG_CONFIG_HOME", home, { XDG_CONFIG_HOME: path }],
+    ["home", path, {}],
+    [
+      "home below an explicit XDG root",
+      path,
+      { XDG_CONFIG_HOME: "D:\\config" },
+    ],
+  ] as const) {
+    const row = supportedClients(selectedHome, "win32", env).find(
+      ({ name }) => name === "kilo",
+    );
+    expect(row, label).toMatchObject({
+      configPath: path,
+      configPathError: expect.stringContaining("has no drive"),
+    });
+    expect(row, label).not.toHaveProperty("markerPath");
+  }
 });
 
 it("lets doctor and uninstall act on the Kilo layer rea mcp add wrote", async () => {
