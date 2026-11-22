@@ -4,10 +4,12 @@ import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mav
 import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
+import { PeOverlayProvider } from "../../src/native/pe/PeOverlayProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
 import { ReleaseExposureReader } from "../../src/artifacts/ReleaseExposureReader.js";
 import { BinaryHardeningProvider } from "../../src/native/hardening/BinaryHardeningProvider.js";
 import { inspectPeLoadConfigInputSchema } from "../../src/domain/native/peLoadConfig.js";
+import { inspectPeOverlayInputSchema } from "../../src/domain/native/peOverlay.js";
 import { inspectBinaryHardeningInputSchema } from "../../src/domain/native/binaryHardening.js";
 import { open, writeFile, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -1217,6 +1219,7 @@ const stableArtifactProviders = [
   ["kernel build config", () => new KernelBuildConfigProvider()],
   ["PE certificates", () => new PeCertificatesProvider()],
   ["PE load configuration", () => new PeLoadConfigProvider()],
+  ["PE overlay", () => new PeOverlayProvider()],
   ["release exposure", () => new ReleaseExposureReader()],
   ["binary hardening", () => new BinaryHardeningProvider()],
   ["PE imports", () => new PeImportsProvider()],
@@ -1306,6 +1309,11 @@ const inspectFileFailure = (
   if (provider instanceof PeLoadConfigProvider)
     return provider.inspect(
       inspectPeLoadConfigInputSchema.parse({ path }),
+      options,
+    );
+  if (provider instanceof PeOverlayProvider)
+    return provider.inspect(
+      inspectPeOverlayInputSchema.parse({ path }),
       options,
     );
   if (provider instanceof BinaryHardeningProvider)

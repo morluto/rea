@@ -50,6 +50,7 @@ import {
   PE_CERTIFICATES_PROVIDER,
   PE_IMPORTS_PROVIDER,
   PE_LOAD_CONFIG_PROVIDER,
+  PE_OVERLAY_PROVIDER,
   PE_RESOURCES_PROVIDER,
   RELEASE_EXPOSURE_PROVIDER,
   WEB_SCRIPT_EXPORT_PROVIDER,
@@ -483,6 +484,9 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(PE_LOAD_CONFIG_PROVIDER, ["inspect_pe_load_config"]),
     ],
+  },
+  peOverlay: {
+    providers: [providerBinding(PE_OVERLAY_PROVIDER, ["inspect_pe_overlay"])],
   },
   binaryHardening: {
     providers: [

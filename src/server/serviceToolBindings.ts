@@ -50,6 +50,7 @@ import type { NativeInitializersService } from "../application/binaryDiagnostics
 import type { PeCertificatesService } from "../application/binaryDiagnostics/PeCertificatesService.js";
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
+import type { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
@@ -541,6 +542,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeLoadConfigService>,
+  peOverlay: ((service) => ({
+    inspect_pe_overlay: {
+      admission: "sdk",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<PeOverlayService>,
   releaseExposure: ((service) => ({
     audit_release_exposure: {
       admission: "sdk",

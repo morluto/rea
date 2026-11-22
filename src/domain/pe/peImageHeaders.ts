@@ -60,6 +60,8 @@ interface PeImageHeaders {
   readonly directoryOffset: number;
   readonly dataDirectories: readonly PeDataDirectory[];
   readonly headerSize: number;
+  readonly sectionAlignment: number;
+  readonly fileAlignment: number;
   readonly sectionTable: Buffer;
 }
 
@@ -91,12 +93,12 @@ function* peImageHeaderReads(
   if (observed.state === "absent" && evidence.dos.ok)
     throw new BinaryFormatFailure(
       "unsupported",
-      "DOS MZ images do not contain PE resource or certificate tables",
+      "Expected a PE image but found DOS MZ.",
     );
   if (observed.state === "declared" && observed.signature !== "PE")
     throw new BinaryFormatFailure(
       "unsupported",
-      `${observed.signature} images do not contain PE resource or certificate tables`,
+      `Expected a PE image but found ${observed.signature}.`,
     );
   if (frame.kind !== "pe")
     return peFailure(
@@ -122,6 +124,8 @@ function* peImageHeaderReads(
     format,
     directoryOffset,
     dataDirectories,
+    sectionAlignment,
+    fileAlignment,
   } = parsed.value;
   const { sectionTableOffset, sectionTableBytes, sizeOfHeadersState } =
     observePeHeaderExtent({
@@ -146,6 +150,8 @@ function* peImageHeaderReads(
     directoryOffset,
     dataDirectories,
     headerSize,
+    sectionAlignment,
+    fileAlignment,
     sectionTable,
   };
 }

@@ -1,6 +1,8 @@
 import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
+import { PeOverlayService } from "../application/binaryDiagnostics/PeOverlayService.js";
+import { PeOverlayProvider } from "../native/pe/PeOverlayProvider.js";
 import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import { BinaryHardeningProvider } from "../native/hardening/BinaryHardeningProvider.js";
 import { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
@@ -118,6 +120,10 @@ export const createByteEntropyService = (
 
 export const createPeLoadConfigService = (): PeLoadConfigService =>
   new PeLoadConfigService(new PeLoadConfigProvider());
+
+/** Portable PE overlay inspection with no engine or signature verification. */
+export const createPeOverlayService = (): PeOverlayService =>
+  new PeOverlayService(new PeOverlayProvider());
 
 /** Portable ELF, PE, and Mach-O hardening inspection with no engine or toolchain. */
 export const createBinaryHardeningService = (): BinaryHardeningService =>

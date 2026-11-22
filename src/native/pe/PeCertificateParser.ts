@@ -15,6 +15,10 @@ import {
   readAsn1,
 } from "./PeCertificateAsn1.js";
 import { readPeImageHeaders } from "../../domain/pe/peImageHeaders.js";
+import {
+  admitPeSecurityDirectory,
+  PE_SECURITY_DIRECTORY_DEFECTS,
+} from "../../domain/pe/peSecurityDirectory.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 const fail = (message: string): never => {
@@ -28,19 +32,6 @@ const readCertificateImageHeaders = (bytes: Buffer) => {
   } catch (cause) {
     throw artifactParseFailure(cause, undefined);
   }
-};
-
-const requireRange = (bytes: Buffer, offset: number, length: number): void => {
-  if (
-    !Number.isSafeInteger(offset) ||
-    !Number.isSafeInteger(length) ||
-    offset < 0 ||
-    length < 0 ||
-    offset > bytes.length - length
-  )
-    fail(
-      `PE certificate range ${String(offset)} + ${String(length)} leaves the artifact.`,
-    );
 };
 
 const align8 = (value: number): number => Math.ceil(value / 8) * 8;
@@ -70,10 +61,8 @@ export const parsePeCertificates = (
   const { machine, format, dataDirectories, headerSize, optionalHeaderOffset } =
     readCertificateImageHeaders(bytes);
   const security = dataDirectories[4];
-  if (
-    security === undefined ||
-    (security.address === 0 && security.size === 0)
-  ) {
+  const admitted = admitPeSecurityDirectory(security, headerSize, bytes.length);
+  if (admitted.status === "absent" || security === undefined) {
     return {
       artifact,
       format,
@@ -84,14 +73,12 @@ export const parsePeCertificates = (
       limitations: [...ABSENT_LIMITATIONS],
     };
   }
-  const tableOffset = security.address;
-  const tableSize = security.size;
+  if (admitted.status === "malformed")
+    fail(
+      `${PE_SECURITY_DIRECTORY_DEFECTS[admitted.defect]} Declared range: offset ${String(admitted.offset)}, size ${String(admitted.size)}.`,
+    );
+  const { offset: tableOffset, size: tableSize } = admitted;
   const directoryAt = optionalHeaderOffset + security.offset;
-  if (tableSize === 0 || tableOffset < headerSize)
-    fail("PE certificate table offset overlaps headers or has zero size.");
-  if (tableOffset % 8 !== 0)
-    fail("PE certificate table offset must be aligned to eight bytes.");
-  requireRange(bytes, tableOffset, tableSize);
   const table = bytes.subarray(tableOffset, tableOffset + tableSize);
   const entries: PeCertificates["entries"] = [];
   let at = 0;

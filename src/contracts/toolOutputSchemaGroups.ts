@@ -24,6 +24,7 @@ import {
 } from "../domain/analysisView/analysisViewResult.js";
 import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
+import { peOverlaySchema } from "../domain/native/peOverlay.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
@@ -411,6 +412,11 @@ export const byteEntropyOutputSchema = analysisDetailOutputSchemaOf(
   byteEntropySchema,
   byteEntropySummaryViewResultSchema,
 );
+
+/** Overlay Evidence for the dedicated PE overlay contract. */
+export const binaryDiagnosticsOutputSchemas = {
+  inspect_pe_overlay: evidenceResultOf(peOverlaySchema),
+} as const satisfies Readonly<Record<string, z.ZodObject>>;
 
 /** Exact Evidence schemas for provider-neutral native inspection. */
 export const nativeOutputSchemas = {

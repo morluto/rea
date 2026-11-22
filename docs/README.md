@@ -46,6 +46,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 - [PE Authenticode certificate tables](pe-certificates.md)
 - [PE import and delay-load tables](pe-imports.md)
 - [PE TLS callbacks and load configuration](pe-load-config.md)
+- [PE overlay](pe-overlay.md)
 - [Match native functions across builds](native-function-matching.md)
 - [Rust binary dependency metadata](rust-binaries.md)
 - [Static CUDA and HIP code objects](gpu-code-objects.md)

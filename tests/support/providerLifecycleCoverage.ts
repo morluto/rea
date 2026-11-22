@@ -1527,6 +1527,15 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     ),
     typedFailures("tests/boundary/filesystem/peLoadConfig.test.ts"),
   ),
+  "rea-pe-overlay": inProcess(
+    covered(
+      test(
+        "tests/boundary/filesystem/peOverlay.test.ts",
+        "retains completed PE acquisition through %s",
+      ),
+    ),
+    typedFailures("tests/boundary/filesystem/peOverlay.test.ts"),
+  ),
   "rea-pe-resources": inProcess(
     covered(
       test(

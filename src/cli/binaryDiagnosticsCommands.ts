@@ -12,6 +12,7 @@ import {
   createKernelModuleService,
   createKernelBuildConfigService,
   createPeLoadConfigService,
+  createPeOverlayService,
   createBinaryHardeningService,
   createPeResourcesService,
   createPeCertificatesService,
@@ -207,6 +208,19 @@ export const registerBinaryDiagnosticsCommands = (
       fields: { path: { description: "Local PE32/PE32+ image" } },
     },
     inspectWithService(createPeLoadConfigService, "rea-pe-load-config"),
+  );
+  registerContractCommand(
+    cli,
+    logger,
+    contract("inspect_pe_overlay"),
+    {
+      description:
+        "Report bytes appended after a PE image, including a certificate-table split",
+      positionals: ["path"],
+      callerPaths: ["path"],
+      fields: { path: { description: "Local PE32/PE32+ image" } },
+    },
+    inspectWithService(createPeOverlayService, "rea-pe-overlay"),
   );
   registerContractCommand(
     cli,

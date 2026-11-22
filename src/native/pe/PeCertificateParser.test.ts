@@ -144,6 +144,16 @@ it.each([false, true])(
   },
 );
 
+it("names the declared range when the certificate table leaves the file", () => {
+  const bytes = peCertificateFixture();
+  const directoryAt = 0x98 + 96 + 4 * 8;
+  const size = bytes.readUInt32LE(directoryAt + 4);
+  bytes.writeUInt32LE(size + 8, directoryAt + 4);
+  expect(() => parse(bytes)).toThrow(
+    `PE certificate table range leaves the artifact. Declared range: offset 512, size ${String(size + 8)}.`,
+  );
+});
+
 it("accepts only zero eight-byte alignment padding included in dwLength", () => {
   for (const plus of [false, true]) {
     const bytes = peCertificateFixture(plus, undefined, undefined, true);
