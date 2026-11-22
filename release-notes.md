@@ -280,6 +280,7 @@
 * **setup:** index YAML alias bindings in document order ([#13295](https://github.com/morluto/rea/issues/13295)) ([560e2ef](https://github.com/morluto/rea/commit/560e2ef267229e2a133879a1d3d663c1e88d5bbb))
 * **sqlite:** reuse stateless TextDecoder codecs and skip redundant truncation scan on short pages ([#13274](https://github.com/morluto/rea/issues/13274)) ([264c398](https://github.com/morluto/rea/commit/264c398c0d3299bb4de5a58e23e7f92637a08cdf))
 * **uefi:** pool framed LZMA worker and fuse single-pass publication ([#13338](https://github.com/morluto/rea/issues/13338)) ([6a20a88](https://github.com/morluto/rea/commit/6a20a88e8149ffe2cd03cd5c1da195defbae652f))
+* **wasm:** parallelize WABT tool admission, stat-verify unchanged binaries, and halve snapshot re-hashing ([#13470](https://github.com/morluto/rea/issues/13470)) ([99c42dd](https://github.com/morluto/rea/commit/99c42ddc46bb725626bee9e579f936df00d0344d))
 * **wasm:** stream digest-only inspection reads ([#13440](https://github.com/morluto/rea/issues/13440)) ([093af33](https://github.com/morluto/rea/commit/093af33e5c1d7e3812d7ee80d4fa629445be3c47))
 * **web:** normalize each browser redaction marker once ([#13172](https://github.com/morluto/rea/issues/13172)) ([6818b01](https://github.com/morluto/rea/commit/6818b01d5aacfdcc119054fec8d985d7b9ccfb5f))
 * **web:** stop repeated accessibility reads after method refusal ([#13191](https://github.com/morluto/rea/issues/13191)) ([3130adb](https://github.com/morluto/rea/commit/3130adbb1bcc69d08eca38337d0baf1391a66961))
