@@ -834,7 +834,12 @@ describe("RISC-V load preparation admission", () => {
   });
 
   it("refuses a PIE whose sections need the reservation preparation", () => {
-    const pie = esp({ type: 3, hasInterpreter: true });
+    // The ELF64 double-float lane admits PIE, so its overlap decides.
+    const pie = target({
+      type: 3,
+      hasInterpreter: true,
+      sectionOverlap: espOverlap,
+    });
     expect(ghidraRiscvLoadPreparation(pie)).toBeUndefined();
     expect(ghidraRiscvUnsupportedReason(pie)).toContain(
       "fixed-address ET_EXEC images only",

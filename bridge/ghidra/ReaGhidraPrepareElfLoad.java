@@ -78,8 +78,10 @@ public final class ReaGhidraPrepareElfLoad extends HeadlessScript {
                 code = block;
                 codeCandidates++;
             }
-            if (!block.isInitialized() && !block.isExecute() && blockSpace == space &&
-                block.getSize() == reservationSize) {
+            // Ghidra 12.2 gives a section the permissions of the first PT_LOAD that contains its
+            // address, so a reservation sharing the code's addresses can be executable: only its
+            // missing bytes tell it from the code. The displaced reservation is never executable.
+            if (!block.isInitialized() && blockSpace == space && block.getSize() == reservationSize) {
                 reservation = block;
             }
         }
