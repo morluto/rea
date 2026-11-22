@@ -386,6 +386,7 @@
 * **go:** consolidate retained metadata views ([#12875](https://github.com/morluto/rea/issues/12875)) ([aa84c59](https://github.com/morluto/rea/commit/aa84c59d8b8eed8822295a4c029bd0c282b91c52))
 * **go:** shrink cumulative header search fixtures ([#12800](https://github.com/morluto/rea/issues/12800)) ([fce3470](https://github.com/morluto/rea/commit/fce34706dd0e8175a9121a20e8b67e96f3f79984))
 * **guards:** verify CLI prose exemptions independently ([#12828](https://github.com/morluto/rea/issues/12828)) ([9af5501](https://github.com/morluto/rea/commit/9af55017cf508a49b9cb49d18000380edb670ea3))
+* **guidance:** consolidate search and locator contracts ([#13312](https://github.com/morluto/rea/issues/13312)) ([ae4e0c8](https://github.com/morluto/rea/commit/ae4e0c83dd327076501d2f8fdb801e1bde4ae09d))
 * **har:** consolidate producer and evidence coverage ([#13202](https://github.com/morluto/rea/issues/13202)) ([1c982b8](https://github.com/morluto/rea/commit/1c982b82fea64a1562d2dc1a863e4ec76dccee9d))
 * **hopper:** consolidate host and launcher selection coverage ([#12934](https://github.com/morluto/rea/issues/12934)) ([6d895a9](https://github.com/morluto/rea/commit/6d895a9e8b7615e441fc0230382ae3af798ffb1f))
 * **hopper:** consolidate launcher failure and provenance checks ([#12877](https://github.com/morluto/rea/issues/12877)) ([d3c29cd](https://github.com/morluto/rea/commit/d3c29cddb68a60e5cc2794bda4337f0bb762f15e))
