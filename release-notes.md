@@ -162,6 +162,7 @@
 
 ### Performance Improvements
 
+* **analysis-view:** retain frozen snapshots across parent readers and index view lookups ([#13315](https://github.com/morluto/rea/issues/13315)) ([1854918](https://github.com/morluto/rea/commit/185491879816fccd925ec2f75cd1ed2146423845))
 * **browser:** wake the bundle worker on observed events ([#13225](https://github.com/morluto/rea/issues/13225)) ([60e0998](https://github.com/morluto/rea/commit/60e099848d3a78860cf8982b28ce88e3a469d52f))
 * **cli:** parse valid strict client settings once ([#13271](https://github.com/morluto/rea/issues/13271)) ([82cd526](https://github.com/morluto/rea/commit/82cd526a8115445e04c5edd3c8c5054ee4a17f4e))
 * **desktop:** bound retained text lines while counting full files ([#10207](https://github.com/morluto/rea/issues/10207)) ([71a7e0d](https://github.com/morluto/rea/commit/71a7e0d9ff20cfd79b90ff94d57b6380eb5fec4f))
