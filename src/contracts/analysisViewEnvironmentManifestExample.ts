@@ -4,7 +4,7 @@ export const ENVIRONMENT_MANIFEST_EXAMPLE = {
     source: {
       kind: "retained-evidence",
       evidence_id:
-        "ev_3f40227d7f1cad9a068f750f06191eac1a348f4eb04b57afba758b12800adffb",
+        "ev_343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     },
     view: {
       kind: "environment-manifest",
@@ -14,12 +14,12 @@ export const ENVIRONMENT_MANIFEST_EXAMPLE = {
   },
   output: {
     parent_evidence_id:
-      "ev_3f40227d7f1cad9a068f750f06191eac1a348f4eb04b57afba758b12800adffb",
+      "ev_343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     parent_operation: "inspect_web_network_capture",
     parent_digest:
-      "3f40227d7f1cad9a068f750f06191eac1a348f4eb04b57afba758b12800adffb",
+      "343f8108d74292f6335a5175fbf478248faff0d7c4a65e2dd90d0df0386c6da9",
     view_digest:
-      "1796278f74478e3f932ddb79f6871dee5c6ef8b58ceee1653c471e69b7e971b3",
+      "13a5c3c764555f047ba13f30e18ebc724a2a2c46177f70817599846d459d1332",
     artifact: {
       path: "/fixtures/environment-manifest.har",
       sha256:
