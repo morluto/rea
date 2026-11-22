@@ -26,7 +26,7 @@ export type PackageFormat = Extract<
   | "pyinstaller"
 >;
 
-export const PACKAGE_FORMATS = [
+const PACKAGE_FORMATS = [
   "asar",
   "bun-standalone",
   "deno-standalone",
@@ -80,7 +80,7 @@ export const isJavaScriptSourceMapName = (logical: string): boolean =>
 export const isSourceMap = (logical: string, kind: string): boolean =>
   kind === "source-map" || logical.toLowerCase().endsWith(".map");
 
-export const isDeclaredText = (kind: string): boolean =>
+const isDeclaredText = (kind: string): boolean =>
   kind === "javascript" ||
   kind === "source-map" ||
   kind === "plist" ||

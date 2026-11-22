@@ -50,12 +50,10 @@ import {
   asPackageFormat,
   EXTRACTABLE,
   hasCompanionName,
-  isDeclaredText,
   isJavaScriptSourceMapName,
   isSourceMap,
   isText,
   NATIVE,
-  PACKAGE_FORMATS,
   peHeaderState,
   sniffNativeFormat,
   targetKind,
@@ -89,24 +87,13 @@ import type {
   ArtifactInventoryResult,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
-import {
-  classifyFatContainerEvidence,
-  readFatContainerHeader,
-  readMachoHeaderPrefixFacts,
-} from "../domain/apple/machoContainer.js";
-import {
-  inspectPeCodeViewFromBuffer,
-  parsePeRecordStructure,
-} from "../domain/binaryTarget.js";
+import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type {
   ArtifactAdmissionLimit,
   ArtifactIntegrityCheck,
 } from "../domain/artifactOperationError.js";
-import {
-  mzWindowsHeaderLayoutLimitation,
-  observeMzWindowsHeader,
-} from "../domain/dosMz.js";
+import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
