@@ -412,6 +412,7 @@
 * **elf:** consolidate debug-link candidate coverage ([#12851](https://github.com/morluto/rea/issues/12851)) ([3dacda3](https://github.com/morluto/rea/commit/3dacda36f200cb0dbdfde85f3f5589566e718552))
 * **environment:** check replay accounting with real retention budgets ([#13405](https://github.com/morluto/rea/issues/13405)) ([1461e52](https://github.com/morluto/rea/commit/1461e52f2bd12627d9809599d10b7be8006fac70))
 * **environment:** consolidate learned route matching checks ([#12809](https://github.com/morluto/rea/issues/12809)) ([9bca53f](https://github.com/morluto/rea/commit/9bca53f96ec9701c3afe49c9eb8a88f01d1150c3))
+* **environment:** consolidate replay overwrite and adoption checks ([#13406](https://github.com/morluto/rea/issues/13406)) ([29efae3](https://github.com/morluto/rea/commit/29efae350eb9fc0d63648c832993f7bff689ec48))
 * **environment:** consolidate replay timing and write evidence checks ([#13403](https://github.com/morluto/rea/issues/13403)) ([94088c9](https://github.com/morluto/rea/commit/94088c9677b75b998431cff3d889222707c5e66c))
 * **environment:** remove duplicate collection path checks ([9bca53f](https://github.com/morluto/rea/commit/9bca53f96ec9701c3afe49c9eb8a88f01d1150c3))
 * **erlang:** consolidate BEAM atom layout coverage ([98c3fad](https://github.com/morluto/rea/commit/98c3fad24d95fd8cb1f87f0c8336a2776af09bb4))
