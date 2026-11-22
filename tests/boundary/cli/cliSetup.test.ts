@@ -715,7 +715,6 @@ describe("interactive setup client hints", () => {
   );
 });
 
-
 describe("interactive setup completion", () => {
   it.each([
     { npmCommand: "", userAgent: "", launcher: "rea" },
