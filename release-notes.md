@@ -345,6 +345,7 @@
 * **evidence:** avoid recursive matching at the recorded array depth limit ([#12819](https://github.com/morluto/rea/issues/12819)) ([edf33a4](https://github.com/morluto/rea/commit/edf33a448b4f0a1fc3e757d37ff5365ff63a8942))
 * **evidence:** consolidate bundle comparison proof at the MCP boundary ([#12813](https://github.com/morluto/rea/issues/12813)) ([adb8e2e](https://github.com/morluto/rea/commit/adb8e2ea35877ccccfa68678289a7a4997c04c14))
 * **evidence:** consolidate composed workflow provenance checks ([#12975](https://github.com/morluto/rea/issues/12975)) ([0e70522](https://github.com/morluto/rea/commit/0e70522b6d796cabe3d10da4a110e99107e72fb9))
+* **evidence:** consolidate input admission and schema examples ([#13322](https://github.com/morluto/rea/issues/13322)) ([2718131](https://github.com/morluto/rea/commit/27181314cbd37809a2090f7c8a9de3251152c70f))
 * **evidence:** consolidate investigation record coverage ([#12978](https://github.com/morluto/rea/issues/12978)) ([d184c20](https://github.com/morluto/rea/commit/d184c208f312826dd85acea804c01af3e58a10f6))
 * **evidence:** consolidate native routing and identity refusal checks ([bf77776](https://github.com/morluto/rea/commit/bf77776873b6fa5b8a72d39f8a701fed4de6de46))
 * **evidence:** consolidate native routing and identity refusals ([#13054](https://github.com/morluto/rea/issues/13054)) ([bf77776](https://github.com/morluto/rea/commit/bf77776873b6fa5b8a72d39f8a701fed4de6de46))
