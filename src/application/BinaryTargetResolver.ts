@@ -129,9 +129,8 @@ import {
   classifyFatContainerIdentity,
   readFatContainerHeader,
   readFatJvmIdentityLimitIssue,
-  readMachoHeaderPrefixFacts,
+  readFatSliceHeaders,
   type FatSliceHeaderEvidence,
-  type MachoHeaderPrefixFacts,
 } from "../domain/apple/machoContainer.js";
 import {
   hasJvmClassHeader,
@@ -1388,24 +1387,9 @@ const readFatSliceHeaderEvidence = async (
   }
   if (header.state !== "parsed") return undefined;
 
-  const sliceHeadersByOffset = new Map<number, MachoHeaderPrefixFacts>();
-  for (let index = 0; index < header.slices.length; index += 1) {
-    const slice = header.slices[index];
-    if (slice === undefined) continue;
-    if (header.rangeIssues[index] !== null) continue;
-    const observedLength = Math.min(12, slice.size);
-    const thinHeader = await readHandleRange(
-      handle,
-      slice.offset,
-      observedLength,
-      signal,
-    );
-    sliceHeadersByOffset.set(
-      slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader),
-    );
-  }
-  return { header, sliceHeadersByOffset };
+  return readFatSliceHeaders(header, (offset, length) =>
+    readHandleRange(handle, offset, length, signal),
+  );
 };
 
 const readPeMetadata = async (
