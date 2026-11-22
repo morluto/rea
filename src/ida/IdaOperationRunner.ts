@@ -12,6 +12,7 @@ import {
   analysisSearchQuerySchema,
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import {
   matchRegexValues,
   launchRegexMatchingLimitation,
@@ -596,10 +597,16 @@ export class IdaOperationRunner {
         query === undefined && parameters.address !== undefined
           ? idaAddressSchema.parse(parameters.address)
           : undefined;
+      const candidateLiteral =
+        query === undefined
+          ? undefined
+          : query.mode === "literal"
+            ? query.pattern
+            : extractRequiredRegexLiteral(query.pattern, query.case_sensitive);
       const candidatePattern =
-        query?.mode === "literal"
-          ? idaLiteralSearchPattern(query.pattern, query.case_sensitive)
-          : undefined;
+        candidateLiteral === undefined || query === undefined
+          ? undefined
+          : idaLiteralSearchPattern(candidateLiteral, query.case_sensitive);
       const items = await this.strings(candidatePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
