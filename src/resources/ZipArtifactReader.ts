@@ -1,6 +1,7 @@
 import { OwnerCancellation } from "../domain/analysisErrorCore.js";
 import { assertArtifactReadActive } from "./ArtifactFileOperation.js";
 import {
+  ArtifactEntryContentUnavailable,
   ArtifactReaderFailure,
   copyArtifactEntry,
   sameArtifactEntry,
@@ -635,6 +636,19 @@ export const typedZipFailure = (
 ): unknown => {
   if (!(cause instanceof Error) || cause instanceof ArtifactReaderFailure)
     return cause;
+  // zip.js refuses a member's method before reading its data, so only that
+  // member's content is unreadable. The central directory still lists every
+  // entry, so entry coverage is unchanged, as for an encrypted member; the
+  // occurrence limitation carries the content gap.
+  if (
+    compressionMethod !== undefined &&
+    cause.message === ERR_UNSUPPORTED_COMPRESSION
+  )
+    return new ArtifactEntryContentUnavailable(
+      `ZIP archive uses an unsupported feature: ${cause.message} (method ${String(compressionMethod)})`,
+      `ZIP member compression method ${String(compressionMethod)} is unsupported; no content hash or child artifact was produced.`,
+      { cause },
+    );
   // Only method 93 uses Node's native Zstandard decoder. Do not classify
   // cancellation or an unrelated codec/runtime error as malformed ZIP data.
   const code = "code" in cause ? cause.code : undefined;

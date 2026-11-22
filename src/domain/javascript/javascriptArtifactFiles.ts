@@ -103,6 +103,8 @@ export interface JavaScriptUnanalyzedArtifactLookup {
   readonly coverage: ArtifactInventoryCoverage;
   get(path: string): JavaScriptUnanalyzedArtifactFile | undefined;
   hasDirectory(path: string, containerSha256: string | undefined): boolean;
+  /** Indexed observed file paths, including analyzed files, strictly below a directory. */
+  filePathsBelow?(path: string): Iterable<string> | undefined;
 }
 
 /** One filesystem-backed ASAR nested beneath a directory input. */

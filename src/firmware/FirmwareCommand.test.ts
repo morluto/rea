@@ -11,11 +11,6 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
-import {
-  firmwareLimitRecovery,
-  firmwareProcessLimitRecovery,
-  firmwareSignalLimitError,
-} from "./FirmwareFailures.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
 import {
   resolveFirmwareCommand,
@@ -399,12 +394,11 @@ test("projects the fixed CPU limit and captured output when firmware stops on SI
         truncated: false,
       },
     },
-    remediation: {
-      action: firmwareLimitRecovery(
-        `cpuSeconds is ${String(FIRMWARE_LIMITS.cpuSeconds)}`,
-      ),
-    },
   });
+  const action = projectAnalysisError(failure).remediation.action;
+  expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+  expect(action).toContain("no runtime override");
+  expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
 });
 
 const sixteenMiB = 16 * 1024 * 1024;
@@ -457,17 +451,13 @@ test.each([
         },
       },
     });
-    // Compare with the recovery owner instead of its wording; the two branches
-    // must differ for the comparison to pin the selected one.
-    const recovery = (fileSizeAdjustable: boolean) =>
-      firmwareSignalLimitError(
-        "extract_firmware",
-        "SIGXFSZ",
-        limit,
-        fileSizeAdjustable,
-      )?.remediationAction;
-    expect(recovery(true)).not.toBe(recovery(false));
-    expect(failure).toHaveProperty("remediationAction", recovery(adjustable));
+    const action = projectAnalysisError(failure).remediation.action;
+    expect(action).toContain(`${limit} bytes`);
+    expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+    expect(action.includes("Increase max_output_bytes")).toBe(adjustable);
+    expect(action).toContain(
+      adjustable ? "one byte above max_output_bytes" : "no runtime override",
+    );
   },
 );
 
@@ -636,15 +626,16 @@ test.each([
       });
       const projected = projectAnalysisError(failure);
       expect(projected.code).toBe("execution_failure");
-      expect(projected.remediation.action).toContain(
-        firmwareProcessLimitRecovery(FIRMWARE_LIMITS.reportBytes + 1, false),
+      const action = projected.remediation.action;
+      expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+      expect(action).toContain(
+        `address-space allowance is ${FIRMWARE_LIMITS.addressSpaceBytes} bytes`,
       );
-      expect(projected.remediation.action).toContain(
-        String(FIRMWARE_LIMITS.addressSpaceBytes),
+      expect(action).toContain(
+        `file-size allowance is ${FIRMWARE_LIMITS.reportBytes + 1} bytes`,
       );
-      expect(projected.remediation.action).toContain(
-        String(FIRMWARE_LIMITS.cpuSeconds),
-      );
+      expect(action).toContain("no runtime override");
+      expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
     }
   },
 );

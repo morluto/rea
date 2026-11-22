@@ -181,8 +181,8 @@ const keyedArchiveKindRemediation = (
   if (kind === "nib-archive")
     return "Decode compiled NIBArchive files with decode_interface_builder on the app bundle.";
   return platform === "darwin"
-    ? "Inspect an ordinary property list with inspect_plist; inspect_keyed_archive decodes NSKeyedArchiver archives only."
-    : "Select an NSKeyedArchiver archive; inspect_keyed_archive decodes only those. inspect_plist, which reads ordinary property lists, requires a macOS host.";
+    ? "Inspect an ordinary property list with inspect_plist; inspect_keyed_archive decodes keyed archives only."
+    : "Select a keyed archive; inspect_keyed_archive decodes only those. inspect_plist, which reads ordinary property lists, requires a macOS host.";
 };
 
 interface BundleKeyedArchiveInput {

@@ -154,7 +154,7 @@ export const ARTIFACT_TOOL_CONTRACTS = [
   artifact(
     "inspect_keyed_archive",
     evidenceEffects,
-    "Inspect one Foundation NSKeyedArchiver plist in the active app bundle as original object-table nodes, class descriptors, named roots, and UID edges. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
+    "Inspect one Foundation keyed archive plist in the active app bundle, written by NSKeyedArchiver or a subclass archiver such as SceneKit's SCNKeyedArchiver, as original object-table nodes, class descriptors, named roots, and UID edges; the result names the declared archiver. Preserves shared and cyclic references without instantiating classes. The path is relative to the bundle; root selection and object pagination preserve original identities.",
     keyedArchiveInputSchema,
   ),
   artifact(

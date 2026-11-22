@@ -165,35 +165,6 @@ const selectTypes = (
 };
 
 /**
- * Literals sit beside the member inventory with their own coverage, so a
- * capacity failure while decoding them keeps the member facts and reports the
- * literals as not examined to completion.
- */
-const withoutUserStrings = (
-  inspection: ManagedMemberInspection,
-  failure: ManagedRepresentationFailure,
-): ManagedMemberInspection =>
-  // Without the literals the members can still exceed capacity; that report
-  // already explains the shared limit.
-  inspection.coverage.issues.some(
-    ({ code, scope }) =>
-      code === failure.issue.code && scope === failure.issue.scope,
-  )
-    ? inspection
-    : managedMemberInspectionSchema.parse({
-        ...inspection,
-        user_strings: {
-          state: "partial",
-          literals: [],
-          issues: [{ ...failure.issue, scope: "metadata.#US" }],
-        },
-        limitations: [
-          ...inspection.limitations,
-          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
-        ],
-      });
-
-/**
  * Inspect metadata members and method bodies without loading target code.
  * Selected type names restrict full decoding to members of those exact types.
  * A caller that never reads literals, such as member comparison, can skip
@@ -231,9 +202,6 @@ export const inspectManagedMembersBytes = (
     return unavailable(target, bytes, typeNames, { issue: pe.cliIssue });
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
-  // Set once the member facts are decoded and the literals start spending the
-  // shared budget; a capacity failure after that point is retried without them.
-  let decodingUserStrings = false;
   try {
     const { layout, memberLists } = readMemberLayout(
       bytes,
@@ -456,15 +424,6 @@ export const inspectManagedMembersBytes = (
         ),
       },
     }));
-    // #US literals sit beside the member inventory and carry their own
-    // coverage, so their issues never make member facts partial.
-    decodingUserStrings = readUserStrings;
-    const userStrings = readUserStrings
-      ? parseUserStrings(bytes, layout, {
-          ...methods,
-          unreadableSelectedTypes: unreadableNames,
-        })
-      : null;
     const targets = edgeTargets(
       bytes,
       layout,
@@ -485,75 +444,97 @@ export const inspectManagedMembersBytes = (
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );
-    const related = edges(
-      methods.methods,
-      targets.members,
-      managedDecodeBudget(layout),
-    );
+    const budget = managedDecodeBudget(layout);
+    const related = edges(methods.methods, targets.members, budget);
     const coverageIssues = uniqueManagedParseIssues(issues);
-    return managedMemberInspectionSchema.parse(
-      admitManagedProjection(
-        {
-          ...envelope,
-          metadata: {
-            ...envelope.metadata,
-            status: issues.length === 0 ? "complete" : "partial",
-          },
-          assembly: inventory.assembly,
-          types,
-          signature_resolution: "type-names-v2",
-          nesting_read: parsedTypes.nesting.complete,
-          exported_types: exportedTypes.exportedTypes,
-          fields: fields.fields,
-          methods: resolvedMethods,
-          member_refs: memberRefs.refs,
-          call_edges: related.callEdges,
-          field_accesses: related.fieldAccesses,
-          user_strings: userStrings,
-          selection,
-          method_rows: methodRows,
-          unresolved_definitions: {
-            rows: parsedTypes.unresolvedDefinitions.concat(
-              methods.unresolvedDefinitions,
-            ),
-            method_names_examined: true,
-          },
-          coverage: {
-            state:
-              issues.length === 0 && !incompleteMembers
-                ? "complete"
-                : "partial",
-            issues: coverageIssues,
-          },
-          limitations: [
-            ...typeIdentityLimitations,
-            "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
-            "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
-            "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
-            "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
-            "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
-            "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
-            ...selectionLimitations,
-          ],
+    // Admit the member projection before reading #US literals so an overflow
+    // in #US preserves the already-decoded members without re-decoding them.
+    const baseInspection = admitManagedProjection(
+      {
+        ...envelope,
+        metadata: {
+          ...envelope.metadata,
+          status: issues.length === 0 ? "complete" : "partial",
         },
-        managedDecodeBudget(layout),
-      ),
+        assembly: inventory.assembly,
+        types,
+        signature_resolution: "type-names-v2",
+        nesting_read: parsedTypes.nesting.complete,
+        exported_types: exportedTypes.exportedTypes,
+        fields: fields.fields,
+        methods: resolvedMethods,
+        member_refs: memberRefs.refs,
+        call_edges: related.callEdges,
+        field_accesses: related.fieldAccesses,
+        user_strings: null,
+        selection,
+        method_rows: methodRows,
+        unresolved_definitions: {
+          rows: parsedTypes.unresolvedDefinitions.concat(
+            methods.unresolvedDefinitions,
+          ),
+          method_names_examined: true,
+        },
+        coverage: {
+          state:
+            issues.length === 0 && !incompleteMembers ? "complete" : "partial",
+          issues: coverageIssues,
+        },
+        limitations: [
+          ...typeIdentityLimitations,
+          "Metadata tokens are build-local coordinates and are only meaningful with the reported artifact SHA-256 and MVID.",
+          "CIL instruction anchors are decoded from file-backed method bodies only; no target assembly is loaded or executed.",
+          "Field constants are file-backed Constant-table declarations, not runtime field values. Parameter and property defaults and enum-name mappings are not decoded.",
+          "Exported types are reported from ExportedType rows as declared; forwarded types are not resolved in their implementing assemblies.",
+          "User strings are the #US literals loaded by ldstr in the inspected method bodies, with their own coverage; instruction anchors and normalized CIL digests keep their build-local tokens.",
+          "Member signatures decode ECMA-335 primitive, class, valuetype, generic instantiation, generic variable, pointer, byref, single-dimension and general array, function pointer including VARARG sentinels, custom modifier, and typed reference forms; type operands keep their encoded TypeDefOrRefOrSpec values and append readable TypeDef/TypeRef names when resolved.",
+          ...selectionLimitations,
+        ],
+      },
+      budget,
     );
+    if (!readUserStrings)
+      return managedMemberInspectionSchema.parse(baseInspection);
+    let userStrings: ManagedMemberInspection["user_strings"];
+    try {
+      // #US literals sit beside the member inventory and carry their own
+      // coverage, so their issues never make member facts partial.
+      userStrings = admitManagedProjection(
+        parseUserStrings(bytes, layout, {
+          ...methods,
+          unreadableSelectedTypes: unreadableNames,
+        }),
+        budget,
+      );
+    } catch (cause: unknown) {
+      if (!(cause instanceof ManagedRepresentationFailure)) throw cause;
+      // Keep admitted member facts and report the #US overflow separately.
+      if (
+        coverageIssues.some(
+          ({ code, scope }) =>
+            code === cause.issue.code && scope === cause.issue.scope,
+        )
+      )
+        return managedMemberInspectionSchema.parse(baseInspection);
+      return managedMemberInspectionSchema.parse({
+        ...baseInspection,
+        user_strings: {
+          state: "partial",
+          literals: [],
+          issues: [{ ...cause.issue, scope: "metadata.#US" }],
+        },
+        limitations: [
+          ...baseInspection.limitations,
+          "User string decoding exceeded max_metadata_representation_bytes after the member facts were decoded; the members are kept and the #US literals are not examined. Select fewer type_names or raise max_metadata_representation_bytes to read them.",
+        ],
+      });
+    }
+    return managedMemberInspectionSchema.parse({
+      ...baseInspection,
+      user_strings: userStrings,
+    });
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
-      if (decodingUserStrings && cause instanceof ManagedRepresentationFailure)
-        return withoutUserStrings(
-          inspectManagedMembersBytes(bytes, target, {
-            ...(typeNames === undefined ? {} : { typeNames }),
-            methodOffset,
-            methodLimit,
-            userStrings: false,
-            ...(maxRepresentationBytes === undefined
-              ? {}
-              : { maxRepresentationBytes }),
-          }),
-          cause,
-        );
       if (
         recover !== undefined &&
         cause instanceof ManagedRepresentationFailure
