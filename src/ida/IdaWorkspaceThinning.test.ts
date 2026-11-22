@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { open, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -258,18 +259,23 @@ describe("IDA workspace admission identity", () => {
     expect((await client.close()).ok).toBe(true);
   });
 
-  it("verifies unchanged private inputs via stat and falls back to digest on metadata or content change", async () => {
+  it("verifies unchanged private inputs via stat and refreshes stat after a metadata-only fallback", async () => {
     const { root, target } = await createIdaTarget("arm64");
     roots.push(root);
     const workspace = await IdaWorkspace.allocate(target);
     roots.push(workspace.directory);
     expect(await workspace.verifyInputUnchanged()).toBe(false);
     await workspace.copyInput();
+    const readStream = vi.spyOn(fs, "createReadStream");
     expect(await workspace.verifyInputUnchanged()).toBe(true);
-    // Touching timestamps forces the fallback full-file digest, which still passes on identical bytes.
+    expect(readStream).toHaveBeenCalledTimes(0);
+    // Touching timestamps forces one fallback digest and refreshes the cached stat.
     const bumped = new Date(Date.now() + 5_000);
     await utimes(workspace.inputPath, bumped, bumped);
     expect(await workspace.verifyInputUnchanged()).toBe(true);
+    expect(readStream).toHaveBeenCalledTimes(1);
+    expect(await workspace.verifyInputUnchanged()).toBe(true);
+    expect(readStream).toHaveBeenCalledTimes(1);
     // Modifying the private input bytes is detected and refused.
     const original = await readFile(workspace.inputPath);
     const tampered = Buffer.from(original);
@@ -277,6 +283,7 @@ describe("IDA workspace admission identity", () => {
       (tampered[tampered.length - 1]! ^ 0xff) & 0xff;
     await writeFile(workspace.inputPath, tampered);
     expect(await workspace.verifyInputUnchanged()).toBe(false);
+    expect(readStream).toHaveBeenCalledTimes(2);
     await workspace.remove();
   });
 });
