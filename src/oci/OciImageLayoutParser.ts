@@ -879,6 +879,7 @@ const inventoryOciImageLayout = async (
   }
   if (omitted.length > 0)
     traversal.current = {
+      ...traversal.current,
       status: "unknown",
       limitations: [
         ...traversal.current.limitations,
@@ -1340,7 +1341,18 @@ const inventoryOciImageLayout = async (
       parsed === undefined
         ? unverifiedBlobPath(descriptor.digest)
         : ociBlobPath(parsed);
-    if (path === undefined) return;
+    if (path === undefined) {
+      // A malformed subject reference cannot be resolved, so the walk can no
+      // longer prove which blobs nothing references.
+      referenceGraphTruncated = true;
+      recordFinding(
+        findings,
+        "malformed_blob_json",
+        `${owner} ${ownerDigest} subject digest ${JSON.stringify(descriptor.digest)} is not a valid OCI digest; the subject is not modeled.`,
+        ownerDigest,
+      );
+      return;
+    }
     const lookup = lookupBlob(path);
     // An unexamined subject may exist and name further blobs, so the walk
     // can no longer prove which blobs nothing references.
@@ -2098,7 +2110,8 @@ const inventoryOciImageLayout = async (
     findings,
     coverage: {
       status: coverageStatus,
-      entries_examined: entries.length,
+      entries_examined:
+        traversal.current.examinedEntries ?? entries.length,
       blobs_hashed: blobsHashed,
       json_bytes_read: jsonBytesRead,
     },

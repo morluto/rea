@@ -1164,6 +1164,57 @@ it("walks local subjects as references and hashes them", async () => {
   expect(report.coverage.status).toBe("complete");
 });
 
+it("reports a subject whose digest is not a valid OCI digest", async () => {
+  const root = await createTestTempDirectory("rea-oci-bad-subject-");
+  await writeOciImageLayoutFixture(root);
+  const badSubject = {
+    mediaType: "application/vnd.oci.image.manifest.v1+json",
+    digest: "not-a-digest",
+    size: 1,
+  };
+  const manifest = await putLayerManifest(root, "bad-subject-layer", {
+    subject: badSubject,
+  });
+  const nested = await putIndex(
+    root,
+    [
+      {
+        mediaType: "application/vnd.oci.image.manifest.v1+json",
+        digest: manifest.digest,
+        size: Buffer.byteLength(manifest.json),
+      },
+    ],
+    badSubject,
+  );
+  const indexPath = join(root, "index.json");
+  const index = JSON.parse(await readFile(indexPath, "utf8")) as {
+    manifests: Record<string, unknown>[];
+  };
+  index.manifests.push({
+    mediaType: "application/vnd.oci.image.index.v1+json",
+    digest: nested.digest,
+    size: Buffer.byteLength(nested.json),
+  });
+  await writeFile(indexPath, `${JSON.stringify(index)}\n`);
+  const report = await inspectLayout(root);
+  for (const owner of [manifest.digest, nested.digest])
+    expect(report.findings).toContainEqual(
+      expect.objectContaining({
+        kind: "malformed_blob_json",
+        message: expect.stringContaining(
+          `${owner} subject digest "not-a-digest" is not a valid OCI digest`,
+        ),
+      }),
+    );
+  expect(report.images.map((image) => image.digest)).toContain(
+    manifest.digest,
+  );
+  expect(
+    report.blobs.find((entry) => entry.digest === manifest.layer)?.referenced,
+  ).toBe(true);
+  expect(report.coverage.status).not.toBe("complete");
+});
+
 it("walks a chain of manifest subjects iteratively in owner-first order", async () => {
   const root = await createTestTempDirectory("rea-oci-subject-chain-");
   await mkdir(root, { recursive: true });
@@ -2016,6 +2067,47 @@ it("keeps the directory reader's unknown coverage and its limitation", async () 
     );
     expect(report.coverage.status).toBe("unknown");
     expect(report.limitations).toContain(skipped);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("counts entries the directory reader examined but omitted", async () => {
+  const root = await createTestTempDirectory("rea-oci-examined-entries-");
+  await writeOciImageLayoutFixture(root);
+  let yielded = 0;
+  class SkippingReader extends DirectoryArtifactReader {
+    override async *entries(
+      ...args: Parameters<DirectoryArtifactReader["entries"]>
+    ): ReturnType<DirectoryArtifactReader["entries"]> {
+      const [signal, selection] = args;
+      const options =
+        typeof selection === "function"
+          ? { descendInto: selection }
+          : selection;
+      for await (const entry of super.entries(signal, {
+        ...options,
+        onCoverage: () => undefined,
+      })) {
+        yielded += 1;
+        yield entry;
+      }
+      options?.onCoverage?.({
+        status: "unknown",
+        limitations: ["Skipped 1 entry name that is not valid UTF-8."],
+        examinedEntries: yielded + 1,
+      });
+    }
+  }
+  const reader = new SkippingReader(root);
+  try {
+    const report = ociImageLayoutSchema.parse(
+      await parseOciImageLayout(
+        reader,
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      ),
+    );
+    expect(report.coverage.entries_examined).toBe(yielded + 1);
   } finally {
     await reader.close();
   }
