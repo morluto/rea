@@ -192,18 +192,16 @@ const indexCudaMetadata = async (
       map.set(row.info, values);
     }
     if (global) {
-      for (const record of readCudaInfo(
-        await sectionBytes(source, row, budget),
-        directory.little,
-        budget,
-      )) {
+      const infoBytes = await sectionBytes(source, row, budget);
+      const infoReader = new BinaryReader(infoBytes, directory.little, "elf");
+      for (const record of readCudaInfo(infoBytes, directory.little, budget)) {
         if (record.format !== 4 || record.attribute !== 0x2f) continue;
         if (record.data.length !== 8)
           rejectGpu("CUDA register count record has an unsupported extent");
-        const r = new BinaryReader(record.data, directory.little, "elf"),
-          key = `${row.link}:${r.u32(0)}`;
+        const base = record.offset + 4,
+          key = `${row.link}:${infoReader.u32(base)}`;
         const values = registerFacts.get(key) ?? new Map<number, GpuLocation>();
-        const value = r.u32(4);
+        const value = infoReader.u32(base + 4);
         if (!values.has(value)) {
           const location = site(source, row, record.offset, record.length);
           budget.retain({ symbol: key, value, location });
