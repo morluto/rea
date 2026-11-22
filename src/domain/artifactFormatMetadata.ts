@@ -969,6 +969,18 @@ export type UbiImageMetadata = z.infer<typeof ubiImageMetadataSchema>;
 export const ubiVolumeMetadataSchema = z.strictObject({
   kind: z.literal("ubi-volume"),
   ...ubiVolumeFacts,
+  /**
+   * Where each chosen LEB's data sits in the image, in LEB order, so saved
+   * Evidence can cite the PEB bytes behind the volume. Empty when refused.
+   */
+  source_ranges: z.array(
+    z.strictObject({
+      lnum: uint32,
+      peb: uint32,
+      offset,
+      length: uint32,
+    }),
+  ),
 });
 export type UbiVolumeMetadata = z.infer<typeof ubiVolumeMetadataSchema>;
 

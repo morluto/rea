@@ -132,6 +132,26 @@ it("inventories the volume table and reassembled volumes", async () => {
     data_bytes: UBI_FIXTURE_KERNEL.length,
     extractable: true,
   });
+  const image = snapshot.occurrences.find((row) => row.logical_path === ".")
+    ?.format_metadata as { peb_size: number; data_offset: number };
+  const kernelMetadata = members[0]?.format_metadata as
+    | {
+        source_ranges: {
+          lnum: number;
+          peb: number;
+          offset: number;
+          length: number;
+        }[];
+      }
+    | undefined;
+  const kernelRanges = kernelMetadata?.source_ranges ?? [];
+  expect(kernelRanges.map((range) => range.lnum)).toEqual([0, 1]);
+  for (const range of kernelRanges) {
+    expect(range.offset).toBe(range.peb * image.peb_size + image.data_offset);
+  }
+  expect(kernelRanges.reduce((sum, range) => sum + range.length, 0)).toBe(
+    UBI_FIXTURE_KERNEL.length,
+  );
 });
 
 it("extracts each volume from its logical eraseblocks in order", async () => {

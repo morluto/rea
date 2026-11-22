@@ -448,7 +448,16 @@ const entryFor = (volume: UbiVolume): UbiEntry => ({
   unpacked: false,
   limitations: [...volume.limitations],
   adapterKey: `ubi-image:volume:${String(volume.id)}`,
-  formatMetadata: { kind: "ubi-volume", ...volumeFacts(volume) },
+  formatMetadata: {
+    kind: "ubi-volume",
+    ...volumeFacts(volume),
+    source_ranges: volume.ranges.map(({ lnum, peb, offset, length }) => ({
+      lnum,
+      peb,
+      offset,
+      length,
+    })),
+  },
   sourcePath: volume.path,
   volume,
 });
