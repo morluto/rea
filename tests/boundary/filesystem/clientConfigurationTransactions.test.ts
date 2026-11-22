@@ -3,6 +3,8 @@ import {
   copyFile,
   lstat,
   mkdir,
+  open,
+  type FileHandle,
   readFile,
   realpath,
   rm,
@@ -13,7 +15,7 @@ import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parse as parseToml } from "smol-toml";
 
 import {
@@ -113,41 +115,41 @@ const uninstallFileSystem: UninstallFileSystem = {
   remove: (path) => rm(path, { recursive: true }),
 };
 
-describe("uninstall backups after edits made since setup", () => {
-  const editedSinceSetup = async (prefix: string) => {
-    const root = await createTestTempDirectory(prefix);
-    const configPath = join(root, ".cursor", "mcp.json");
-    await mkdir(dirname(configPath), { recursive: true });
-    const client = {
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      format: "json",
-      configPath,
-    } as const;
-    const beforeSetup = '{"keep":"before setup"}\n';
-    await writeFile(configPath, beforeSetup);
-    expect(
-      await configureClientConfiguration(client, {}, ["rea", "mcp"]),
-    ).toMatchObject({ status: "configured" });
-    const configured = JSON.parse(await readFile(configPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
-    const beforeUninstall = `${JSON.stringify({ ...configured, keep: "edited after setup" }, null, 2)}\n`;
-    await writeFile(configPath, beforeUninstall);
-    const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
-      .update(beforeUninstall, "utf8")
-      .digest("hex")}.recovery`;
-    return {
-      root,
-      configPath,
-      client,
-      beforeSetup,
-      beforeUninstall,
-      recoveryPath,
-    };
+const editedSinceSetup = async (prefix: string) => {
+  const root = await createTestTempDirectory(prefix);
+  const configPath = join(root, ".cursor", "mcp.json");
+  await mkdir(dirname(configPath), { recursive: true });
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
+  const beforeSetup = '{"keep":"before setup"}\n';
+  await writeFile(configPath, beforeSetup);
+  expect(
+    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toMatchObject({ status: "configured" });
+  const configured = JSON.parse(await readFile(configPath, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const beforeUninstall = `${JSON.stringify({ ...configured, keep: "edited after setup" }, null, 2)}\n`;
+  await writeFile(configPath, beforeUninstall);
+  const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
+    .update(beforeUninstall, "utf8")
+    .digest("hex")}.recovery`;
+  return {
+    root,
+    configPath,
+    client,
+    beforeSetup,
+    beforeUninstall,
+    recoveryPath,
   };
+};
 
+describe("uninstall backups after edits made since setup", () => {
   it("preserves the pre-uninstall bytes when removal succeeds", async () => {
     const {
       root,
@@ -175,6 +177,11 @@ describe("uninstall backups after edits made since setup", () => {
     async (stage, guidance) => {
       const { root, configPath, beforeSetup, beforeUninstall, recoveryPath } =
         await editedSinceSetup("rea-uninstall-current-backup-failure-");
+      const editedDuringRecovery = beforeUninstall.replace(
+        "edited after setup",
+        "edited by a client",
+      );
+      let edited = false;
       const fault = new Error("test-only publication fault");
       const fail = async () => {
         throw fault;
@@ -189,7 +196,33 @@ describe("uninstall backups after edits made since setup", () => {
             original,
           );
           publication.assertCurrent = fail;
-          if (stage === "recovery") publication.restore = fail;
+          if (stage === "recovery") {
+            const restore = publication.restore.bind(publication);
+            publication.restore = async (input) => {
+              const sample = await open(configPath);
+              const prototype = Object.getPrototypeOf(sample) as Pick<
+                FileHandle,
+                "truncate"
+              >;
+              await sample.close();
+              const truncate = prototype.truncate;
+              const call = vi
+                .spyOn(prototype, "truncate")
+                .mockImplementationOnce(async function (
+                  this: FileHandle,
+                  ...args
+                ) {
+                  await truncate.apply(this, args);
+                  await writeFile(configPath, editedDuringRecovery);
+                  edited = true;
+                });
+              try {
+                await restore(input);
+              } finally {
+                call.mockRestore();
+              }
+            };
+          }
           return publication;
         },
       };
@@ -203,15 +236,15 @@ describe("uninstall backups after edits made since setup", () => {
         status: "failed",
         configuration_path: configPath,
       });
+      if (stage === "recovery") {
+        expect(edited).toBe(true);
+        expect(editedDuringRecovery).not.toBe(beforeUninstall);
+        expect(editedDuringRecovery.length).toBe(beforeUninstall.length);
+        expect(await readFile(configPath, "utf8")).toBe(editedDuringRecovery);
+      } else expect(await readFile(configPath, "utf8")).toBe(beforeUninstall);
       expect(failed?.detail).toContain(recoveryPath);
       expect(failed?.detail).toContain(guidance);
       expect(failed?.detail).not.toContain(fault.message);
-      if (stage === "recovery")
-        expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
-          keep: "edited after setup",
-          mcpServers: {},
-        });
-      else expect(await readFile(configPath, "utf8")).toBe(beforeUninstall);
       expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(
         beforeSetup,
       );
