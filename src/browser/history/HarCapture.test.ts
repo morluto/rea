@@ -1072,6 +1072,17 @@ it.each([
   },
 );
 
+it("accepts zero integer lexemes with negative exponents", () => {
+  const text = JSON.stringify(historicalHar()).replace(
+    '"bodySize":99',
+    '"bodySize":0.0e-5',
+  );
+  const decoded = decodeHarCapture(text, []);
+  expect(decoded.records[0]?.reported).toMatchObject({
+    request: { bodySize: 0 },
+  });
+});
+
 it("reuses the compiled HAR validator across failing and valid calls without error leakage", () => {
   const validate = createHarValidator();
   const bad = historicalHar();

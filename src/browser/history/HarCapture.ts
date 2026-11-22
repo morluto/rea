@@ -16,6 +16,7 @@ import {
 import { createHarValidator } from "./HarSchema.js";
 import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { trimTrailing } from "../../kernel/trimEdges.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -357,8 +358,8 @@ const integerLexeme = (literal: string): boolean => {
   if (match === null) return false;
   const [, whole = "", fraction = "", exponent = "0"] = match;
   const digits = `${whole}${fraction}`;
-  const significant = digits.replace(/0+$/, "");
-  if (/^0*$/.test(significant)) return true;
+  const significant = trimTrailing(digits, (character) => character === "0");
+  if (significant.length === 0) return true;
   const trailingZeros = digits.length - significant.length;
   return Number(exponent) - fraction.length + trailingZeros >= 0;
 };
