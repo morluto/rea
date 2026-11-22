@@ -73,6 +73,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
 import ghidra.program.model.address.AddressIterator;
 import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.address.AddressSpace;
 import ghidra.program.model.address.AddressRange;
 import ghidra.program.model.address.AddressRangeIterator;
@@ -3208,20 +3209,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
         JumpTable[] recoveredJumpTables = highFunction.getJumpTables();
         if (recoveredJumpTables.length > 0) {
-            Map<Address, List<ClangCaseToken>> caseTokensByTarget = new HashMap<>();
-            ClangNode markup = decompilation.getCCodeMarkup();
-            if (markup != null) {
-                List<ClangNode> caseTokens = new ArrayList<>();
-                collectCaseTokens(markup, caseTokens);
-                for (ClangNode node : caseTokens) {
-                    if (!(node instanceof ClangCaseToken token)) continue;
-                    PcodeOp operation = token.getPcodeOp();
-                    if (operation == null || operation.getParent() == null) continue;
-                    caseTokensByTarget
-                        .computeIfAbsent(operation.getParent().getStart(), ignored -> new ArrayList<>())
-                        .add(token);
-                }
-            }
+            Map<Address, List<ClangCaseToken>> caseTokensByTarget =
+                indexCaseTokens(decompilation.getCCodeMarkup());
             for (int index = 0; index < recoveredJumpTables.length; index += 1) {
                 jumpTables.add(inferredJumpTable(recoveredJumpTables[index], caseTokensByTarget));
             }
@@ -3229,21 +3218,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static void collectCaseTokens(ClangNode root, List<ClangNode> caseTokens) {
+    private Map<Address, List<ClangCaseToken>> indexCaseTokens(ClangNode root)
+        throws Exception {
+        Map<Address, List<ClangCaseToken>> casesByTarget = new HashMap<>();
+        if (root == null) return casesByTarget;
         ArrayDeque<ClangNode> stack = new ArrayDeque<>();
         stack.push(root);
         while (!stack.isEmpty()) {
+            monitor.checkCancelled();
             ClangNode node = stack.pop();
-            if (node instanceof ClangCaseToken) {
-                caseTokens.add(node);
+            if (node instanceof ClangCaseToken token) {
+                PcodeOp operation = token.getPcodeOp();
+                if (operation != null && operation.getParent() != null) {
+                    casesByTarget
+                        .computeIfAbsent(operation.getParent().getStart(), ignored -> new ArrayList<>())
+                        .add(token);
+                }
             }
             for (int index = node.numChildren() - 1; index >= 0; index -= 1) {
                 ClangNode child = node.Child(index);
-                if (child != null) {
-                    stack.push(child);
-                }
+                if (child != null) stack.push(child);
             }
         }
+        return casesByTarget;
     }
 
     private JsonArray prototypeConflicts(
@@ -5447,7 +5444,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Register first = instruction.getRegister(0);
             Register second = instruction.getRegister(1);
             if (first != null && second != null && first.getBitLength() == 64 && second.getBitLength() == 64) {
-                return List.of(new Register[] {first, second});
+                return List.<Register[]>of(new Register[] {first, second});
             }
             return List.of();
         }
