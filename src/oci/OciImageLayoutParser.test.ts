@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   mkdir,
   readFile,
@@ -1740,6 +1741,41 @@ it("keeps the oci-layout snapshot when imageLayoutVersion is missing", async () 
     await provider.close();
   }
 });
+
+it.each([
+  ["invalid UTF-8", Buffer.from([0x7b, 0xff, 0x7d]), "is not valid UTF-8"],
+  ["invalid JSON", Buffer.from("{not json"), "is not valid JSON"],
+  [
+    "a duplicate member",
+    Buffer.from('{"imageLayoutVersion":"1.0.0","imageLayoutVersion":"1.0.0"}'),
+    "repeats object member",
+  ],
+])(
+  "keeps the oci-layout snapshot when oci-layout holds %s",
+  async (_case, content, message) => {
+    const root = await createTestTempDirectory("rea-oci-malformed-layout-");
+    await writeOciImageLayoutFixture(root);
+    await writeFile(join(root, "oci-layout"), content);
+    const provider = new OciImageLayoutProvider();
+    try {
+      const result = await provider.inspect(
+        inspectOciImageLayoutInputSchema.parse({ path: root }),
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      const primary = primaryAnalysisError(result.error);
+      expect(JSON.stringify(primary)).toContain(message);
+      expect(primary.partialObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+        sha256: createHash("sha256").update(content).digest("hex"),
+        bytes: content.length,
+      });
+    } finally {
+      await provider.close();
+    }
+  },
+);
 
 it("keeps the directory reader's unknown coverage and its limitation", async () => {
   const root = await createTestTempDirectory("rea-oci-traversal-coverage-");

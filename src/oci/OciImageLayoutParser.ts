@@ -243,13 +243,26 @@ const describeMemberName = (name: string): string =>
     ? JSON.stringify(name)
     : `(a ${String(name.length)}-character name)`;
 
-const readJsonDocument = async (
+interface JsonFileBytes {
+  readonly content: Buffer;
+  readonly sha256: string;
+  readonly bytes: number;
+}
+
+/**
+ * Read and hash one JSON file through the reader, then hand its bytes to
+ * `finish` inside the read. With an identity `finish`, the returned hash has
+ * passed the reader's own checks, so a caller can keep it even when the bytes
+ * later fail to decode.
+ */
+const readJsonFile = async <Value>(
   reader: DirectoryArtifactReader,
   entry: DirectoryArtifactEntry,
   maximum: number,
   signal: AbortSignal | undefined,
   label: string,
-): Promise<JsonDocument> => {
+  finish: (file: JsonFileBytes) => Value,
+): Promise<Value> => {
   if (entry.kind !== "file")
     throw malformedInput(
       OCI_IMAGE_LAYOUT_FORMAT,
@@ -273,35 +286,12 @@ const readJsonDocument = async (
           hash.update(chunk);
           chunks.push(chunk);
         }
-        const bytes = Buffer.concat(chunks);
-        let text: string;
-        try {
-          text = decodeStrictUtf8(bytes, "strip-signature");
-        } catch (cause: unknown) {
-          throw malformedInput(
-            OCI_IMAGE_LAYOUT_FORMAT,
-            `${label} is not valid UTF-8.`,
-            { cause },
-          );
-        }
-        const parsed = parseJsonWithDuplicatePolicy(text, "reject");
-        if (!parsed.ok) {
-          if (parsed.duplicate !== undefined)
-            throw malformedInput(
-              OCI_IMAGE_LAYOUT_FORMAT,
-              `${label} repeats object member ${describeMemberName(parsed.duplicate.name)}.`,
-            );
-          throw malformedInput(
-            OCI_IMAGE_LAYOUT_FORMAT,
-            `${label} is not valid JSON.`,
-            { cause: parsed.cause },
-          );
-        }
-        return {
-          value: parsed.value,
+        const content = Buffer.concat(chunks);
+        return finish({
+          content,
           sha256: hash.digest("hex"),
-          bytes: bytes.length,
-        };
+          bytes: content.length,
+        });
       },
       signal,
     );
@@ -320,6 +310,48 @@ const readJsonDocument = async (
     throw cause;
   }
 };
+
+/** Decode bytes `readJsonFile` admitted as strict UTF-8 JSON. */
+const decodeJsonDocument = (
+  file: JsonFileBytes,
+  label: string,
+): JsonDocument => {
+  let text: string;
+  try {
+    text = decodeStrictUtf8(file.content, "strip-signature");
+  } catch (cause: unknown) {
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `${label} is not valid UTF-8.`,
+      { cause },
+    );
+  }
+  const parsed = parseJsonWithDuplicatePolicy(text, "reject");
+  if (!parsed.ok) {
+    if (parsed.duplicate !== undefined)
+      throw malformedInput(
+        OCI_IMAGE_LAYOUT_FORMAT,
+        `${label} repeats object member ${describeMemberName(parsed.duplicate.name)}.`,
+      );
+    throw malformedInput(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `${label} is not valid JSON.`,
+      { cause: parsed.cause },
+    );
+  }
+  return { value: parsed.value, sha256: file.sha256, bytes: file.bytes };
+};
+
+const readJsonDocument = async (
+  reader: DirectoryArtifactReader,
+  entry: DirectoryArtifactEntry,
+  maximum: number,
+  signal: AbortSignal | undefined,
+  label: string,
+): Promise<JsonDocument> =>
+  readJsonFile(reader, entry, maximum, signal, label, (file) =>
+    decodeJsonDocument(file, label),
+  );
 
 interface ReferencedBlob {
   digest: string;
@@ -856,20 +888,24 @@ const inventoryOciImageLayout = async (
       OCI_IMAGE_LAYOUT_FORMAT,
       "oci-layout is a symlink and was not followed.",
     );
-  const layoutDocument = await readJsonDocument(
+  const layoutFile = await readJsonFile(
     reader,
     layoutEntry,
     input.max_json_bytes,
     signal,
     "oci-layout",
+    (file) => file,
   );
+  // The completed hash is kept before decoding, so a malformed oci-layout
+  // refusal still carries the file identity the reader admitted.
   const layoutObservation: FileSnapshotPartialObservation = {
     kind: "file-snapshot-hash",
     path: "oci-layout",
-    sha256: layoutDocument.sha256,
-    bytes: layoutDocument.bytes,
+    sha256: layoutFile.sha256,
+    bytes: layoutFile.bytes,
   };
   observed.layout = layoutObservation;
+  const layoutDocument = decodeJsonDocument(layoutFile, "oci-layout");
   const layoutVersion = isRecord(layoutDocument.value)
     ? nonempty(layoutDocument.value.imageLayoutVersion)
     : null;
