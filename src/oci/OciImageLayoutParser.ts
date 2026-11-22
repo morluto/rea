@@ -29,6 +29,7 @@ import { isRecord } from "../kernel/isRecord.js";
 import {
   abortIfNeeded,
   ArtifactReaderFailure,
+  artifactFileCompletion,
   digestReadableToCompletion,
   DirectoryArtifactTraversalLimit,
   readArtifactFileChunks,
@@ -311,6 +312,12 @@ const readJsonFile = async <Value>(
     throw cause;
   }
 };
+
+const isJsonFileBytes = (value: unknown): value is JsonFileBytes =>
+  isRecord(value) &&
+  Buffer.isBuffer(value.content) &&
+  typeof value.sha256 === "string" &&
+  typeof value.bytes === "number";
 
 /** Decode bytes `readJsonFile` admitted as strict UTF-8 JSON. */
 const decodeJsonDocument = (
@@ -911,14 +918,30 @@ const inventoryOciImageLayout = async (
       OCI_IMAGE_LAYOUT_FORMAT,
       "oci-layout is a symlink and was not followed.",
     );
-  const layoutFile = await readJsonFile(
-    reader,
-    layoutEntry,
-    input.max_json_bytes,
-    signal,
-    "oci-layout",
-    (file) => file,
-  );
+  let layoutFile: JsonFileBytes;
+  try {
+    layoutFile = await readJsonFile(
+      reader,
+      layoutEntry,
+      input.max_json_bytes,
+      signal,
+      "oci-layout",
+      (file) => file,
+    );
+  } catch (cause: unknown) {
+    // A read can complete and still fail when its descriptor close fails or
+    // is cancelled. The reader keeps the completed bytes on that failure, so
+    // their hash is recorded before the failure itself is rethrown.
+    const completed = artifactFileCompletion(cause)?.value;
+    if (isJsonFileBytes(completed))
+      observed.layout = {
+        kind: "file-snapshot-hash",
+        path: "oci-layout",
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      };
+    throw cause;
+  }
   // The completed hash is kept before decoding, so a malformed oci-layout
   // refusal still carries the file identity the reader admitted.
   const layoutObservation: FileSnapshotPartialObservation = {

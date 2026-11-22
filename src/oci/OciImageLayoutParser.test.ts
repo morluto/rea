@@ -22,9 +22,13 @@ import { ParseFailureError } from "../domain/parseFailure.js";
 import { primaryAnalysisError } from "../domain/analysisErrorBase.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
+  AnalysisCleanupLease,
+  ArtifactFileCancelled,
+  ArtifactFileCleanupFailure,
   ArtifactReaderFailure,
   DirectoryArtifactReader,
 } from "../resources/index.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
   putOciBlob,
@@ -1974,6 +1978,70 @@ it("keeps a reader failure on a referenced blob instead of a JSON finding", asyn
     inspectFile.mockRestore();
   }
 });
+
+it.each([
+  {
+    name: "its descriptor close fails",
+    finalize: (path: string, value: unknown) =>
+      new ArtifactFileCleanupFailure(
+        new RegularFileCleanupFailure({
+          path,
+          owner: { close: async () => undefined } as never,
+          outcome: { kind: "completed", value },
+          cleanupCause: new Error("controlled close failure"),
+        }),
+        new AnalysisCleanupLease(async () => undefined, [path]),
+      ),
+  },
+  {
+    name: "cancellation arrives during its close",
+    finalize: (_path: string, value: unknown) =>
+      new ArtifactFileCancelled({
+        reason: new Error("controlled cancellation"),
+        outcome: { kind: "completed", value },
+      }),
+  },
+])(
+  "keeps the completed oci-layout snapshot when $name",
+  async ({ finalize }) => {
+    const root = await createTestTempDirectory("rea-oci-layout-finalize-");
+    await writeOciImageLayoutFixture(root);
+    const layoutBytes = await readFile(join(root, "oci-layout"));
+    let failure: ArtifactReaderFailure | undefined;
+    class FinalizingReader extends DirectoryArtifactReader {
+      override async inspectFile<Value>(
+        entry: Parameters<DirectoryArtifactReader["inspectFile"]>[0],
+        inspect: (file: FileHandle) => Promise<Value>,
+        signal?: AbortSignal,
+      ): Promise<Value> {
+        const value = await super.inspectFile(entry, inspect, signal);
+        if (entry.path !== "oci-layout") return value;
+        failure = finalize(entry.adapterKey, value);
+        throw failure;
+      }
+    }
+    const reader = new FinalizingReader(root);
+    try {
+      await expect(
+        parseOciImageLayout(
+          reader,
+          inspectOciImageLayoutInputSchema.parse({ path: root }),
+        ),
+      ).rejects.toSatisfy((cause: unknown) => {
+        expect(cause).toBe(failure);
+        expect(failure?.partialObservation).toEqual({
+          kind: "file-snapshot-hash",
+          path: "oci-layout",
+          sha256: createHash("sha256").update(layoutBytes).digest("hex"),
+          bytes: layoutBytes.length,
+        });
+        return true;
+      });
+    } finally {
+      await reader.close();
+    }
+  },
+);
 
 it("preserves a reader integrity failure that wraps a blob JSON parse failure", async () => {
   const root = await createTestTempDirectory("rea-oci-blob-integrity-");
