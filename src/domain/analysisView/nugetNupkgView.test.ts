@@ -22,29 +22,25 @@ const report = {
   dependency_groups: [
     {
       target_framework: "net8.0",
-      dependencies: [
-        {
-          id: "Newtonsoft.Json",
-          version: "13.0.1",
-          include: null,
-          exclude: null,
-          development_dependency: null,
-        },
-      ],
+      dependencies: ["Newtonsoft.Json", "Demo.Support"].map((id) => ({
+        id,
+        version: "13.0.1",
+        include: null,
+        exclude: null,
+        development_dependency: null,
+      })),
     },
   ],
-  contents: [
-    {
-      name: "./Demo.Package.nuspec",
-      path: "Demo.Package.nuspec",
-      uncompressed_size: 12,
-      compressed_size: 12,
-      role: "nuspec",
-      encrypted: false,
-    },
-  ],
+  contents: ["Demo.Package.nuspec", "README.md", "build.props"].map((path) => ({
+    name: path,
+    path,
+    uncompressed_size: 12,
+    compressed_size: 12,
+    role: path.endsWith(".nuspec") ? "nuspec" : "unknown",
+    encrypted: false,
+  })),
   nuspec: { path: "Demo.Package.nuspec", bytes: 12, source: "root-nuspec" },
-  coverage: { status: "complete", entries: 1, examined_nuspec_bytes: 12 },
+  coverage: { status: "unknown", entries: 3, examined_nuspec_bytes: 12 },
   limitations: ["Package condition"],
 };
 
@@ -60,7 +56,7 @@ const parent = (): AnalysisViewParent => {
       operation: "inspect_nuget_nupkg",
       parameters: {},
       result: report,
-      limitations: ["Parent condition"],
+      limitations: ["Parent condition", "Selection condition"],
     },
   );
   return {
@@ -73,9 +69,10 @@ const parent = (): AnalysisViewParent => {
   };
 };
 
-it("summarizes NuGet package Evidence with identity and counts", () => {
+it("keeps source coverage and both limitation owners in the retained summary", () => {
+  const input = parent();
   const result = projectAnalysisView(
-    parent(),
+    input,
     analysisViewRequestSchema.parse({ kind: "summary" }),
   );
   if (!result.ok) throw result.error;
@@ -83,11 +80,19 @@ it("summarizes NuGet package Evidence with identity and counts", () => {
   expect(view.summary).toMatchObject({
     identity: { id: "Demo.Package", version: "1.2.3" },
     dependency_group_count: 1,
-    dependency_count: 1,
-    content_count: 1,
+    dependency_count: 2,
+    content_count: 3,
     limitation_count: 1,
+    coverage: { status: "unknown", entries: 3, examined_nuspec_bytes: 12 },
   });
-  expect(view.limitations).toEqual(
-    expect.arrayContaining(["Parent condition", "Package condition"]),
-  );
+  expect(view).toMatchObject({
+    parent_evidence_id: input.evidenceId,
+    parent_digest: input.evidenceId.slice(3),
+    coverage: { status: "complete-within-view", examined: 3, total: 3 },
+  });
+  expect(view.limitations).toEqual([
+    "Package condition",
+    "Parent condition",
+    "Selection condition",
+  ]);
 });

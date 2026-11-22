@@ -1,14 +1,16 @@
 import { nugetNupkgSchema } from "../../src/domain/nuget/nupkg.js";
-import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
+import { ANALYSIS_VIEW_TOOL_CONTRACTS } from "../../src/contracts/analysisViewToolContracts.js";
 import { NUGET_NUPKG_TOOL_CONTRACTS } from "../../src/contracts/nuget/nupkgToolContracts.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { nugetNupkgSummaryViewResultSchema } from "../../src/domain/analysisView/analysisViewResult.js";
 import { parseEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { contractNamed } from "../../src/cli/contractCliDescription.js";
 import {
   nugetNupkgFixture,
-  NUPKG_NAME_ENCODING_CASES,
   nugetNupkgNameEncodingFixture,
 } from "../../src/nuget/NugetNupkg.fixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
@@ -19,6 +21,10 @@ const nupkgContract = contractNamed(
   NUGET_NUPKG_TOOL_CONTRACTS,
   "inspect_nuget_nupkg",
 );
+const analysisViewContract = contractNamed(
+  ANALYSIS_VIEW_TOOL_CONTRACTS,
+  "inspect_analysis_view",
+);
 const completeNupkgEvidenceSchema = nupkgContract.outputSchema.safeExtend({
   normalized_result: nugetNupkgSchema,
 });
@@ -27,104 +33,101 @@ cliTest(
   "preserves ZIP filename bytes and encoding uncertainty through CLI, MCP and retained views",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-nupkg-name-provenance-");
-    const { call } = await connectLocalToolsMcp();
-    for (const input of NUPKG_NAME_ENCODING_CASES) {
-      const path = join(root, `${input.encoding}.nupkg`);
-      await writeFile(path, await nugetNupkgNameEncodingFixture(input));
-      const output = await cli.run({
-        arguments: ["inspect-nuget-nupkg", path, "--json"],
-      });
-      expect(output.exitCode, output.stderr).toBe(0);
-      const cliEvidence = completeNupkgEvidenceSchema.parse(output.json);
-      const response = await call("inspect_nuget_nupkg", { path });
-      expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      const evidence = completeNupkgEvidenceSchema.parse(
-        response.structuredContent,
-      );
-      expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
-      expect(evidence.normalized_result.contents).toContainEqual(
-        expect.objectContaining({
-          name: input.name,
-          path: input.name,
-          role: "lib",
-        }),
-      );
-      const warnings = evidence.normalized_result.limitations.filter((value) =>
-        value.includes("CP437"),
-      );
-      if (input.uncertain) {
-        expect(warnings).toEqual([
-          expect.stringContaining(
-            `CP437 fallback; source encoding unverified; raw hex: ${input.rawName.toString("hex")}`,
-          ),
-        ]);
-        expect(warnings[0]).toContain(JSON.stringify(input.name));
-        expect(evidence.limitations).toContain(warnings[0]);
-      } else expect(warnings).toEqual([]);
-      const view = await call("inspect_analysis_view", {
-        source: {
-          kind: "retained-evidence",
-          evidence_id: evidence.evidence_id,
-        },
-        view: { kind: "summary" },
-      });
-      expect(view.isError, JSON.stringify(view)).not.toBe(true);
-      if (input.uncertain)
-        expect(JSON.stringify(view.structuredContent)).toContain(
-          input.rawName.toString("hex"),
-        );
-      else
-        expect(JSON.stringify(view.structuredContent)).not.toContain("CP437");
-      const retained = await call("get_evidence_bundle", {
-        detail: "complete",
-      });
-      expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
-      const bundle = parseEvidenceBundle(
-        toolContract("get_evidence_bundle").outputSchema.parse(
-          retained.structuredContent,
-        ).result,
-      );
-      expect(
-        bundle.records.find(
-          (record) => record.evidence_id === evidence.evidence_id,
-        ),
-      ).toEqual(evidence);
-    }
-  },
-);
-
-cliTest(
-  "reports NuGet package identity and dependencies through the public CLI",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-nupkg-cli-");
-    const path = join(root, "Demo.Package.1.2.3.nupkg");
-    await writeFile(path, await nugetNupkgFixture());
-    const result = await cli.run({
+    const path = join(root, "mixed-names.nupkg");
+    const bytes = await nugetNupkgNameEncodingFixture();
+    await writeFile(path, bytes);
+    const artifact = {
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+    const output = await cli.run({
       arguments: ["inspect-nuget-nupkg", path, "--json"],
     });
-    expect(result.exitCode, result.stderr).toBe(0);
-    const evidence = completeNupkgEvidenceSchema.parse(result.json);
-    expect(evidence).toMatchObject({
+    expect(output.exitCode, output.stderr).toBe(0);
+    const cliEvidence = completeNupkgEvidenceSchema.parse(output.json);
+    expect(cliEvidence).toMatchObject({
       confidence: "observed",
       subject: { local_path: path, identity: { format: "file" } },
+      normalized_result: {
+        artifact: { ...artifact, bytes: bytes.length },
+        identity: {
+          id: "Demo.Package",
+          version: "1.2.3",
+          authors: "Alice, Bob",
+          description: "A tiny fixture package.",
+        },
+        dependency_groups: [
+          {
+            target_framework: "net8.0",
+            dependencies: [{ id: "Newtonsoft.Json", version: "13.0.1" }],
+          },
+          {
+            target_framework: "netstandard2.0",
+            dependencies: [
+              { id: "Newtonsoft.Json", version: "[12.0.3,13.0.0)" },
+            ],
+          },
+        ],
+        coverage: { status: "complete", entries: 5 },
+      },
     });
-    expect(evidence.normalized_result.identity).toEqual({
-      id: "Demo.Package",
-      version: "1.2.3",
-      authors: "Alice, Bob",
-      description: "A tiny fixture package.",
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_nuget_nupkg", { path });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    const evidence = completeNupkgEvidenceSchema.parse(
+      response.structuredContent,
+    );
+    expect(evidence.normalized_result).toEqual(cliEvidence.normalized_result);
+    expect(
+      evidence.normalized_result.contents.filter(({ role }) => role === "lib"),
+    ).toEqual(
+      ["é.dll", "demo.dll", "π.dll", "café.dll"].map((file) =>
+        expect.objectContaining({
+          name: `lib/net8.0/${file}`,
+          path: `lib/net8.0/${file}`,
+        }),
+      ),
+    );
+    const warnings = evidence.normalized_result.limitations.filter((message) =>
+      message.includes("CP437"),
+    );
+    expect(warnings).toEqual([
+      expect.stringMatching(
+        /ZIP member "lib\/net8\.0\/é\.dll".*CP437 fallback; source encoding unverified; raw hex: 6c69622f6e6574382e302f822e646c6c/u,
+      ),
+    ]);
+    const [warning] = warnings;
+    expect(evidence.limitations).toContain(warning);
+
+    await unlink(path);
+    const view = await call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+      view: { kind: "summary" },
     });
-    expect(evidence.normalized_result.dependency_groups).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ target_framework: "net8.0" }),
-      ]),
+    expect(view.isError, JSON.stringify(view)).not.toBe(true);
+    const summary = nugetNupkgSummaryViewResultSchema.parse(
+      analysisViewContract.outputSchema.parse(view.structuredContent)
+        .normalized_result,
+    );
+    expect(summary).toMatchObject({
+      parent_evidence_id: evidence.evidence_id,
+      artifact,
+    });
+    expect(
+      summary.limitations.filter((message) => message.includes("CP437")),
+    ).toEqual([warning]);
+    const retained = await call("get_evidence_bundle", { detail: "complete" });
+    expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
+    const bundle = parseEvidenceBundle(
+      toolContract("get_evidence_bundle").outputSchema.parse(
+        retained.structuredContent,
+      ).result,
     );
     expect(
-      evidence.normalized_result.contents.some(
-        (entry) => entry.role === "lib" && entry.name === "lib/net8.0/Demo.dll",
+      bundle.records.find(
+        ({ evidence_id }) => evidence_id === evidence.evidence_id,
       ),
-    ).toBe(true);
-    expect(evidence.normalized_result.coverage.status).toBe("complete");
+    ).toEqual(evidence);
   },
 );
 
@@ -261,6 +264,8 @@ cliTest(
       expect(evidence.normalized_result.limitations.join(" ")).toContain(
         "//feed.invalid/missing.nuspec?token=visible",
       );
+      if (maximum !== 8192) continue;
+      await unlink(path);
       const view = await call("inspect_analysis_view", {
         source: {
           kind: "retained-evidence",
