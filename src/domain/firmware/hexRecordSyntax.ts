@@ -62,11 +62,24 @@ const HEX_VALUES = ((): Int8Array => {
   return table;
 })();
 
+const INTEL_HEX_TYPE_NAMES: readonly string[] = [
+  "00",
+  "01",
+  "02",
+  "03",
+  "04",
+  "05",
+];
+
 export const hex = (value: number, digits: number): string =>
   value.toString(16).padStart(digits, "0");
 
-export const readBigEndian = (bytes: Uint8Array): number =>
-  bytes.reduce((value, byte) => value * 256 + byte, 0);
+export const readBigEndian = (bytes: Uint8Array): number => {
+  let value = 0;
+  for (let index = 0; index < bytes.length; index += 1)
+    value = value * 256 + bytes[index]!;
+  return value;
+};
 
 export const maxLineChars = (encoding: HexRecordEncoding): number =>
   encoding === "intel-hex" ? INTEL_HEX_MAX_LINE_CHARS : SREC_MAX_LINE_CHARS;
@@ -100,8 +113,11 @@ const decodeHexDigits = (
   return ok(bytes);
 };
 
-const byteSum = (bytes: Uint8Array): number =>
-  bytes.reduce((sum, byte) => sum + byte, 0);
+const byteSum = (bytes: Uint8Array, end = bytes.length): number => {
+  let sum = 0;
+  for (let index = 0; index < end; index += 1) sum += bytes[index]!;
+  return sum;
+};
 
 const startCharacterFailure = (line: Uint8Array, expected: string): string =>
   `invalid character 0x${hex(line[0] ?? 0, 2)} at column 1; a record starts with '${expected}'`;
@@ -117,13 +133,13 @@ const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
     );
   const count = bytes[0] ?? 0;
   const typeCode = bytes[3] ?? 0;
-  const type = hex(typeCode, 2);
+  const type = INTEL_HEX_TYPE_NAMES[typeCode] ?? hex(typeCode, 2);
   if (bytes.length !== count + 5)
     return err(
       `record type ${type} byte count 0x${hex(count, 2)} declares ${String(count)} data bytes, but the line holds ${String(bytes.length - 5)}`,
     );
   const declared = bytes[bytes.length - 1] ?? 0;
-  const computed = -byteSum(bytes.subarray(0, -1)) & 0xff;
+  const computed = -byteSum(bytes, bytes.length - 1) & 0xff;
   if (declared !== computed)
     return err(
       `record type ${type} checksum 0x${hex(declared, 2)} does not match computed 0x${hex(computed, 2)}`,

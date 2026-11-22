@@ -23,8 +23,10 @@ const NTFS_MFT_MIN_RECORD_BYTES = 42;
 
 const hasMftFileRecordSignature = (prefix: Uint8Array): boolean =>
   prefix.length >= MFT_FILE_RECORD_MAGIC_BYTES &&
-  text(prefix.subarray(0, MFT_FILE_RECORD_MAGIC_BYTES)) ===
-    MFT_FILE_RECORD_MAGIC;
+  prefix[0] === 0x46 &&
+  prefix[1] === 0x49 &&
+  prefix[2] === 0x4c &&
+  prefix[3] === 0x45;
 
 /** A record's declared size is a power of two from 512 upward; 1024 is NTFS's default. */
 const MFT_DEFAULT_RECORD_BYTES = 1024;

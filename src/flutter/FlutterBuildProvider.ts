@@ -17,7 +17,6 @@ import { analysisErrorWithCancellation } from "../domain/analysisErrorCancellati
 import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, open as openFile, rm, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as yieldToEventLoop } from "node:timers/promises";
@@ -125,37 +124,6 @@ const FLUTTER_ALLOWANCES = {
     { limit: MAX_SNAPSHOT_HASH_CANDIDATES, unit: "candidates" },
   ),
 } as const;
-
-/**
- * Stream a local file digest without retaining large files in memory.
- * Aborts between chunks so a cancellation cannot run a digest to completion.
- */
-const sha256File = async (
-  operation: string,
-  path: string,
-  signal: AbortSignal | undefined,
-): Promise<string> => {
-  assertArtifactReadActive(signal);
-  const hash = createHash("sha256");
-  const owner = new AbortController();
-  const marker = {};
-  const abort = () => owner.abort(marker);
-  signal?.addEventListener("abort", abort, { once: true });
-  try {
-    const stream = createReadStream(path, { signal: owner.signal });
-    for await (const chunk of stream) {
-      if (signal?.aborted === true) throw cancelledBy(operation, signal);
-      hash.update(chunk as Buffer);
-    }
-    return hash.digest("hex");
-  } catch (cause) {
-    if (isAbortWithReason(cause, marker))
-      throw cancelledBy(operation, carriedReason(signal?.reason));
-    throw cause;
-  } finally {
-    signal?.removeEventListener("abort", abort);
-  }
-};
 
 /** One owned snapshot root: a read-only copy of the admitted input. */
 interface OwnedSnapshot {
@@ -519,6 +487,7 @@ export class FlutterBuildProvider {
         new OwnedFileHandle(await openFile(snapshotPath, "wx")),
       );
       const chunk = Buffer.alloc(64 * 1024);
+      const digest = createHash("sha256");
       let copiedBytes = 0;
       while (copiedBytes <= Number(before.size)) {
         assertArtifactReadActive(signal);
@@ -539,7 +508,9 @@ export class FlutterBuildProvider {
             path,
             "Selected file grew during snapshotting",
           );
-        await output.handle.writeFile(chunk.subarray(0, bytesRead));
+        const slice = chunk.subarray(0, bytesRead);
+        digest.update(slice);
+        await output.handle.writeFile(slice);
       }
       await this.releaseResource(root, output);
       const [after, currentPath] = await Promise.all([
@@ -571,9 +542,12 @@ export class FlutterBuildProvider {
         );
       await this.releaseResource(root, source);
       await chmod(snapshotPath, 0o400);
-      const info = await stat(snapshotPath);
-      const sha256 = await sha256File(operation, snapshotPath, signal);
-      return { root, path: snapshotPath, bytes: info.size, sha256 };
+      return {
+        root,
+        path: snapshotPath,
+        bytes: copiedBytes,
+        sha256: digest.digest("hex"),
+      };
     } catch (cause) {
       const primary = mapOwnedIoFailure(operation, cause, root);
       const released = await this.discardRoot(root);
@@ -1394,7 +1368,6 @@ const projectStringPool = async (
   const tokenBudget =
     Math.min(poolPolicy.token_limit, section?.length ?? 0) * COLLECTION_SLACK;
   if (section !== null) {
-    let run = "";
     const consider = (text: string): void => {
       if (text.length < 5) return;
       runCount += 1;
@@ -1420,29 +1393,43 @@ const projectStringPool = async (
       }
     };
     let overflowed = false;
+    let runStart = -1;
+    let runLength = 0;
+    const flushRun = (): void => {
+      if (runStart >= 0) {
+        if (!overflowed && runLength >= 5)
+          consider(section.toString("latin1", runStart, runStart + runLength));
+        runStart = -1;
+        runLength = 0;
+      }
+      overflowed = false;
+    };
     for (let start = 0; start < section.length; start += 64 * 1024) {
       await yieldToEventLoop();
       assertArtifactReadActive(signal);
-      for (const byte of section.subarray(start, start + 64 * 1024)) {
+      const end = Math.min(section.length, start + 64 * 1024);
+      for (let index = start; index < end; index += 1) {
+        const byte = section[index]!;
         if (byte >= 0x20 && byte < 0x7f) {
           // A single unbounded run (an adversarial NUL-free section) never
           // materializes: growth stops at the cap and the entire run is
           // discarded at its delimiter, since a truncated prefix would be
           // fabricated evidence rather than an observation.
-          if (run.length < poolPolicy.run_bytes)
-            run += String.fromCharCode(byte);
-          else {
+          if (runStart < 0) {
+            runStart = index;
+            runLength = 1;
+          } else if (runLength < poolPolicy.run_bytes) {
+            runLength += 1;
+          } else {
             overflowed = true;
             limitsReached.add("run_bytes");
           }
         } else {
-          if (!overflowed) consider(run);
-          overflowed = false;
-          run = "";
+          flushRun();
         }
       }
     }
-    if (!overflowed) consider(run);
+    flushRun();
   }
   assertArtifactReadActive(signal);
   return {
