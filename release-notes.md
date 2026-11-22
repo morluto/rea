@@ -101,6 +101,7 @@
 * **electron:** resolve exact local IPC channel values ([#13005](https://github.com/morluto/rea/issues/13005)) ([e66a27c](https://github.com/morluto/rea/commit/e66a27c2f2bb294a0506e6d2d6cf9d2f0125b9e2))
 * **elf:** clear the ARM Thumb bit before naming unwind ranges ([#9692](https://github.com/morluto/rea/issues/9692)) ([ce3506e](https://github.com/morluto/rea/commit/ce3506e298e1a42d111a08613821ce8868f411cd))
 * **elf:** do not count SPARC register declarations as imports ([d955cd0](https://github.com/morluto/rea/commit/d955cd0d60558a3f884b057e9aa6653b7652134d))
+* **elf:** report proven version and dynamic symbol facts ([#13441](https://github.com/morluto/rea/issues/13441)) ([c7f89cd](https://github.com/morluto/rea/commit/c7f89cd8b5b11025b72672af3c010e33e40496f3))
 * **elf:** retain authenticated debug-link evidence on interruption ([#13437](https://github.com/morluto/rea/issues/13437)) ([7fc333f](https://github.com/morluto/rea/commit/7fc333ffa0cf6546716120152c2cbf5f54cd0457))
 * **entropy:** keep the whole-file census in a counter that cannot wrap ([a3acfcf](https://github.com/morluto/rea/commit/a3acfcf003a1213c751a46051630f06023766d1f))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
