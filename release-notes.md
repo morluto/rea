@@ -389,6 +389,7 @@
 * **cutter:** use shared verifier deadlines ([#12943](https://github.com/morluto/rea/issues/12943)) ([bb48a7b](https://github.com/morluto/rea/commit/bb48a7b3f8af177d6849c1dfd496b76220a2a561))
 * **debugger:** consolidate runtime setting recovery coverage ([#13042](https://github.com/morluto/rea/issues/13042)) ([67f8094](https://github.com/morluto/rea/commit/67f8094efaa220b354f032d607b56f3126950bf2))
 * **debugger:** consolidate startup descriptor ownership checks ([#13028](https://github.com/morluto/rea/issues/13028)) ([fb873fe](https://github.com/morluto/rea/commit/fb873feaeb928c692ee074784846a9f41c1d3b79))
+* **deno:** consolidate physical ELF note ownership checks ([#13414](https://github.com/morluto/rea/issues/13414)) ([59ac8e5](https://github.com/morluto/rea/commit/59ac8e5a836e11adb6879f10519ff0da9aa5b8e8))
 * **deno:** consolidate remote paths and region limits ([#13410](https://github.com/morluto/rea/issues/13410)) ([466c552](https://github.com/morluto/rea/commit/466c552d16a3a83bd4216b4531e3f7f189cb766e))
 * **desktop:** keep TryExec regression independent of ID masking group ([b3dfd53](https://github.com/morluto/rea/commit/b3dfd5305dc254e177d16ce1675a672857b0b391))
 * **desktop:** verify cancellation before releasing the guest ([#12812](https://github.com/morluto/rea/issues/12812)) ([c94f275](https://github.com/morluto/rea/commit/c94f275667e8d9402d34bcddb61abe0393302685))
