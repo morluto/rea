@@ -3,9 +3,6 @@
 For a first environment, start with the
 [quickstart](agent-environments-quickstart.md): record an app or use a saved
 session, build and run the environment, and add tasks and reward checks.
-The [implementation index](specs/agent-environments/README.md) links
-the contributing PRs and their verification records. This page is the detailed
-command and behavior reference.
 
 Use `rea environment-build` to turn one recorded capture into an agent
 environment bundle in one offline step: a folder `agent-env run` builds and
@@ -107,7 +104,10 @@ refusal names its stage: `environment-build` for the build's own checks,
 `inspect_web_network_capture` and `inspect_analysis_view` for inspection and
 projection, `environment-export` for the bundle. SIGINT cancels the build
 (`cancelled`); before the bundle stage nothing is written, and a cancellation
-during the write names the bundle it wrote. Stage progress is logged to stderr
+after publication preserves the bundle receipt. Before publication, a failed
+write attempts to remove partial output and reports cleanup failures. See
+[bundle publication and recovery](getting-started/cli.md#export-an-environment-bundle).
+Stage progress is logged to stderr
 at info level; the report is the only output on stdout:
 
 ```json
@@ -202,16 +202,25 @@ scanned by event (`event 4 response /token` names
 `normalized_result.events.items[4]`): every retained request and response
 content event, including a response whose request began before the browser was
 attached and a transaction no record represents, and each transaction URL's
-query once. Bodies larger than 4 MiB of UTF-8 text are not
-scanned; `credential-scan-incomplete` counts them and lists up to 20 record or
-event pointers, including base64 bodies whose decoded scan was cut. An empty name
+query once. The scan reads at most 524288 values in all: a body's values are
+bounded from its text before it is parsed, and a header list or query string
+is charged by its length before it is read, so a body larger than 4 MiB of
+UTF-8 text, or any body, header list or query string that would take the scan
+past its budget, is not scanned. A retained HAR base64 body must match its
+declared source text and representation before replay or state extraction;
+HAR's admitted ASCII whitespace differences do not change source identity. A
+mismatched or missing retained source is not promoted and is counted as
+unscanned, while its original Evidence is retained.
+`credential-scan-incomplete` counts these unavailable sources and the bodies,
+header lists and query strings the scan did not read, and lists up to 20 record
+or event pointers, including base64 bodies whose decoded scan was cut. An empty name
 warning does not establish that these bodies were checked. A browser scenario's
 saved values (`save` and `save_response`) named like credentials but not marked
 `secret: true` are recorded unredacted; `credential-named-saved-values` lists up
 to 20 of them by parameter pointer. Names do not establish sensitivity,
-so the build never refuses on them. Capture
+so the build never refuses on them.
 
-Evidence also records the capture file's absolute path (`subject.local_path`,
+Capture Evidence also records the capture file's absolute path (`subject.local_path`,
 `parameters.capture_path`, `locations`, `artifact.path`), and the bundle
 carries it: build from a neutral folder when that path should not ship.
 
@@ -332,9 +341,12 @@ scenario is written and cannot use a value an earlier response returned, so an
 id must be known before the run: one the caller chooses, such as a `uid` in the
 create body, or one an earlier scenario created. When the server assigns ids,
 read the list after each create (the create's response or the list shows the
-new entity), and record updates and deletes in a second scenario that reads
-the first one's objects by id before editing them, or make them through the
-UI. The environment coverage view names each
+new entity). A second scenario can record updates and deletes using those
+known ids, but produces a separate environment: recordings are not combined.
+That scenario must include its own before/after reads and every action the
+environment should support; it does not inherit the first scenario's create
+evidence. To capture create and subsequent edits together, make them through
+the UI in one scenario. The environment coverage view names each
 write it withholds and what to record next. A scenario with write requests
 changes the application's data: record against an instance whose data may
 change.
@@ -1178,7 +1190,9 @@ chooses its own), and a request with no recorded
 answer is made, since it may have changed the application, but not compared: each probe lists them under `unobserved` with the reason, and the summary counts them. A live
 body the probe did not record compares by status only and is counted as `unobserved_bodies`, unless the answer never
 carries one (204, 205, 304, `HEAD`). A browser probe captured without `capture.network.response_body` is refused, as
-is one that makes POST, PUT or PATCH calls without `capture.network.request_body`.
+is one that makes POST, PUT or PATCH calls, or calls a served tool with a body argument (including a state-backed
+bulk DELETE), without `capture.network.request_body`. A DELETE whose served tool has no body argument does not
+require that selection.
 
 Agreement covers only the calls the probes make, after the mapping the answers allow. Clocks compared by format
 and fields normalized under explicit generation rules can still differ in content, and an equal answer after a write shows the state matched for that
@@ -1187,7 +1201,7 @@ read, not that the write had no other effect.
 ## Compatibility verification
 
 `npm run verify:agentenv:environment` is the hosted `real-agentenv` lane
-described in [testing](development/testing.md#exported-environment-bundles). It projects
+described in [exported bundle verification](testing-lanes.md#exported-environment-bundles). It projects
 the Grafana-shaped source-owned capture through the built CLI, packs the
 checkout, exports a bundle with `--package-tarball`, runs it with the pinned
 `agentenv-framework` release on the runner's Docker and requires the smoke task

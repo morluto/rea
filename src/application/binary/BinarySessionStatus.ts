@@ -3,7 +3,7 @@ import type { InvestigationStatistics } from "../../domain/investigationLifecycl
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
 import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
-import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { ResolvedAppBundleResourceRoot } from "../../domain/apple/bundleResourceRoot.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import { jsonObjectSchema, type JsonValue } from "../../domain/jsonValue.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
@@ -12,7 +12,7 @@ import type {
   ProviderIdentity,
   ProviderRequestActivitySnapshot,
   ProviderRuntimeLineageSnapshot,
-} from "../AnalysisProvider.js";
+} from "../../ports/AnalysisProvider.js";
 import {
   PROVIDER_EFFECT_NAMES,
   providerCapabilitySet,
@@ -27,6 +27,7 @@ import type {
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
+import type { ProviderSelectionRejection } from "../../domain/providerSelectionError.js";
 
 interface BinarySessionStatusInput {
   readonly investigation: InvestigationStatistics;
@@ -49,6 +50,34 @@ interface BinarySessionStatusInput {
   readonly signal?: AbortSignal;
   readonly refreshCandidates?: boolean;
 }
+
+/**
+ * One route capability as the session currently reports it: target
+ * applicability and observed runtime unavailability override the declaration.
+ */
+export const currentRouteCapability = (
+  descriptor: CapabilityDescriptor,
+  target: BinaryTarget | undefined,
+  runtimeUnavailability: ReadonlyMap<string, { readonly reason: string }>,
+) => {
+  const targetRefusal =
+    target === undefined
+      ? undefined
+      : descriptor.targetApplicability === undefined
+        ? artifactTargetRefusal(descriptor.operation, target)
+        : targetApplicabilityRefusal(descriptor.targetApplicability, target);
+  if (targetRefusal !== undefined && descriptor.available)
+    return {
+      ...descriptor,
+      available: false as const,
+      availabilityCode: targetRefusal.code,
+      reason: targetRefusal.reason,
+    };
+  const unavailable = runtimeUnavailability.get(descriptor.operation);
+  return unavailable === undefined
+    ? descriptor
+    : runtimeUnavailable(descriptor, unavailable.reason);
+};
 
 /** Project internal provider routing state into the caller-visible session status. */
 export const binarySessionStatus = async ({
@@ -78,28 +107,9 @@ export const binarySessionStatus = async ({
     .sort((left, right) =>
       compareUnicodeCodePoints(left.operation, right.operation),
     )
-    .map((descriptor) => {
-      const targetRefusal =
-        target === undefined
-          ? undefined
-          : descriptor.targetApplicability === undefined
-            ? artifactTargetRefusal(descriptor.operation, target)
-            : targetApplicabilityRefusal(
-                descriptor.targetApplicability,
-                target,
-              );
-      if (targetRefusal !== undefined && descriptor.available)
-        return {
-          ...descriptor,
-          available: false as const,
-          availabilityCode: targetRefusal.code,
-          reason: targetRefusal.reason,
-        };
-      const unavailable = runtimeUnavailability.get(descriptor.operation);
-      return unavailable === undefined
-        ? descriptor
-        : runtimeUnavailable(descriptor, unavailable.reason);
-    });
+    .map((descriptor) =>
+      currentRouteCapability(descriptor, target, runtimeUnavailability),
+    );
   const capabilities = providerCapabilitySets(routeCapabilities);
   const analysisProviderBinding =
     bundleResourceRoot !== undefined
@@ -134,12 +144,16 @@ export const binarySessionStatus = async ({
                 availability: providerStateSummary(candidate.availability),
                 target_support: providerStateSummary(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(rejectionSummary),
               }
             : {
                 provider: providerSummary(candidate.provider),
                 availability: structuredClone(candidate.availability),
                 target_support: structuredClone(candidate.targetSupport),
                 selected: candidate.selected,
+                selection_source: candidate.selectionSource,
+                rejections: candidate.rejections.map(selectionRejection),
                 capabilities: providerCapabilitySets(
                   candidate.capabilities
                     .slice()
@@ -323,6 +337,36 @@ const providerSummary = ({
   readonly version: string | null;
 }) => ({ id, name, version });
 
+/** Carry every rejection fact at complete detail; clones keep the caller's copy immutable. */
+const selectionRejection = ({
+  providerId,
+  origin,
+  code,
+  reason,
+  remediation,
+  diagnostics,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+  ...(remediation === undefined ? {} : { remediation }),
+  diagnostics: structuredClone(diagnostics),
+});
+
+/** Rejection codes and reasons stay at summary detail; repair and diagnostics do not. */
+const rejectionSummary = ({
+  providerId,
+  origin,
+  code,
+  reason,
+}: ProviderSelectionRejection) => ({
+  provider_id: providerId,
+  origin,
+  code,
+  reason,
+});
+
 const processLineageStatus = (
   snapshots: readonly ProviderRuntimeLineageSnapshot[],
 ) =>
@@ -440,6 +484,7 @@ export const providerCapabilitySets = (
         limitations,
         descriptor.nativeValueFlow ?? null,
         descriptor.independentDecompile ?? null,
+        descriptor.callDestinationDecompile ?? null,
         status.available,
         status.reason,
         status.availability_code,
@@ -458,6 +503,11 @@ export const providerCapabilitySets = (
           ...(descriptor.independentDecompile === undefined
             ? {}
             : { independent_decompile: descriptor.independentDecompile }),
+          ...(descriptor.callDestinationDecompile === undefined
+            ? {}
+            : {
+                call_destination_decompile: descriptor.callDestinationDecompile,
+              }),
           ...status,
         });
       else group.operations.push(descriptor.operation);

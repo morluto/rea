@@ -76,9 +76,8 @@ it("preserves unsupported subject architectures and does not duplicate metadata"
   const result = await service.inspect({ path: report.artifact.path });
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
-    architecture: null,
     local_path: report.artifact.path,
-    digest: { sha256: report.artifact.sha256 },
+    identity: { architecture: null, sha256: report.artifact.sha256 },
   });
   expect(result.value.normalized_result).toEqual(report);
   expect(result.value.raw_result).toBeNull();
@@ -290,7 +289,7 @@ it("validates string_literals input options and output invariants", async () => 
     {
       path: report.artifact.path,
       include_string_literals: true,
-      max_string_literals: 10_001,
+      max_string_literals: Number.MAX_SAFE_INTEGER + 1,
     },
   ]) {
     const refused = await service.inspect(invalidInput);
@@ -298,6 +297,18 @@ it("validates string_literals input options and output invariants", async () => 
     if (!refused.ok) expect(refused.error).toBeInstanceOf(AnalysisInputError);
   }
   expect(calls).toBe(0);
+  const admitted = await service.inspect({
+    path: report.artifact.path,
+    include_string_literals: true,
+    max_string_literals: 10_001,
+  });
+  if (!admitted.ok) throw admitted.error;
+  expect(admitted.value.parameters).toEqual({
+    path: report.artifact.path,
+    include_string_literals: true,
+    max_string_literals: 10_001,
+  });
+  expect(calls).toBe(1);
 
   const baseLiterals: NonNullable<GoBinary["string_literals"]> = {
     evidence_kind: "inferred",

@@ -121,6 +121,10 @@ const addIpcRecord = (
   });
 };
 
+const ipcChannelBasis = (finding: ElectronIpcRecord["finding"]) =>
+  finding.resolution_basis ??
+  (finding.channel !== null ? finding.channel_basis : undefined);
+
 const addChannelNode = (
   context: JavaScriptArtifactGraphContext,
   record: ElectronIpcRecord,
@@ -150,7 +154,7 @@ const addChannelNode = (
   return context.accumulator.addNode({
     kind: "ipc-channel",
     identity:
-      finding.resolution_basis === "wrapper-substitution" ||
+      ipcChannelBasis(finding) !== undefined ||
       finding.loader_authority === "candidate"
         ? artifactLocalIdentity(
             file.sha256,
@@ -184,69 +188,68 @@ const addChannelNode = (
             ? {}
             : { invocation_location: finding.invocation_location }),
         },
-        evidence:
-          finding.resolution_basis !== "wrapper-substitution"
-            ? electronFindingEvidence(
-                {
-                  sha256: file.sha256,
-                  path: file.path,
-                  range: finding.location,
-                  operation: "observe-ipc-channel-expression",
-                  coverage,
-                  limitations: [
-                    ...(finding.receiver === undefined
-                      ? []
-                      : [
-                          "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
-                        ]),
-                    ...(finding.channel !== null
-                      ? []
-                      : [
-                          "The channel expression is dynamic; its runtime value and pairings remain unknown.",
-                        ]),
-                  ],
-                },
-                finding.loader_authority,
-              )
-            : staticInferenceEvidence({
-                sha256: file.sha256,
-                path: file.path,
-                range: finding.location,
-                operation: "observe-ipc-channel-expression",
-                coverage,
-                ...(finding.loader_authority === "candidate"
-                  ? { confidence: "low" as const }
-                  : {}),
-                limitations: [
-                  ...(finding.loader_authority === "candidate"
-                    ? [ELECTRON_CANDIDATE_LIMITATION]
-                    : []),
-                  ...(finding.receiver === undefined
-                    ? []
-                    : [
-                        "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
-                      ]),
-                  ...(finding.resolution_basis !== "wrapper-substitution"
-                    ? []
-                    : [
-                        "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified.",
-                      ]),
-                  ...(finding.channel !== null
-                    ? []
-                    : [
-                        "The channel expression is dynamic; its runtime value and pairings remain unknown.",
-                      ]),
-                ],
-              }),
+        evidence: ipcChannelEvidence(file, finding, coverage),
       },
     ],
   });
+};
+
+const ipcChannelEvidence = (
+  file: ElectronIpcRecord["file"],
+  finding: ElectronIpcRecord["finding"],
+  coverage: JavaScriptArtifactGraphCoverage,
+) => {
+  const basis = ipcChannelBasis(finding);
+  const input = {
+    sha256: file.sha256,
+    path: file.path,
+    range: finding.location,
+    operation: "observe-ipc-channel-expression",
+    coverage,
+    limitations: [
+      ...(finding.receiver === undefined
+        ? []
+        : [
+            "The receiver is a source-level allocation, not a runtime frame identity; registration and dispatch remain unverified.",
+          ]),
+      ...(finding.channel === null
+        ? [
+            "The channel expression is dynamic; its runtime value and pairings remain unknown.",
+          ]
+        : []),
+    ],
+  };
+  return basis === undefined
+    ? electronFindingEvidence(input, finding.loader_authority)
+    : staticInferenceEvidence({
+        ...input,
+        ...(finding.loader_authority === "candidate"
+          ? { confidence: "low" as const }
+          : {}),
+        limitations: [
+          ...input.limitations,
+          ...(finding.loader_authority === "candidate"
+            ? [ELECTRON_CANDIDATE_LIMITATION]
+            : []),
+          basis === "wrapper-substitution"
+            ? "The channel is inferred through lexical wrapper substitution; runtime registration and dispatch remain unverified."
+            : "The channel is inferred from an exact static value at this call site; runtime registration and dispatch remain unverified.",
+        ],
+      });
 };
 
 const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
   const { context, record, source, channel, coverage } = input;
   const { finding, file } = record;
   const handlerRange = finding.handler_location ?? finding.location;
+  const basis = ipcChannelBasis(finding);
+  const handlerEvidence = {
+    sha256: file.sha256,
+    path: file.path,
+    range: handlerRange,
+    operation: "observe-ipc-handler",
+    coverage,
+  };
   const handlerKey = `${finding.side}:${finding.operation}:${finding.channel ?? finding.channel_expression}:${javascriptSourceRangeKey(handlerRange)}`;
   const identityKey =
     finding.receiver === undefined
@@ -287,29 +290,23 @@ const addHandlerNode = (input: IpcHandlerInput): ApplicationNode => {
             : { invocation_location: finding.invocation_location }),
         },
         evidence:
-          finding.resolution_basis !== "wrapper-substitution"
-            ? electronFindingEvidence(
-                {
-                  sha256: file.sha256,
-                  path: file.path,
-                  range: handlerRange,
-                  operation: "observe-ipc-handler",
-                  coverage,
-                },
-                finding.loader_authority,
-              )
+          basis === undefined
+            ? electronFindingEvidence(handlerEvidence, finding.loader_authority)
             : staticInferenceEvidence({
-                sha256: file.sha256,
-                path: file.path,
-                range: handlerRange,
-                operation: "observe-ipc-handler",
-                coverage,
+                ...handlerEvidence,
                 ...(finding.loader_authority === "candidate"
-                  ? {
-                      confidence: "low" as const,
-                      limitations: [ELECTRON_CANDIDATE_LIMITATION],
-                    }
+                  ? { confidence: "low" as const }
                   : {}),
+                limitations: [
+                  ...(finding.loader_authority === "candidate"
+                    ? [ELECTRON_CANDIDATE_LIMITATION]
+                    : []),
+                  ...(basis === "static-value"
+                    ? [
+                        "The handler's channel is inferred from the registration's exact static value.",
+                      ]
+                    : []),
+                ],
               }),
       },
     ],

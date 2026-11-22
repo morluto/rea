@@ -1,3 +1,4 @@
+import { isPossibleCachedDataCompilation } from "../../domain/javascript/electronDynamicCodeFacts.js";
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   electronIncompleteSourceCount,
@@ -91,7 +92,16 @@ function* buildJavaScriptArtifactGraphInputSteps(
   void,
   { readonly graph: unknown; readonly electronSummary: ElectronBoundarySummary }
 > {
-  const accumulator = new JavaScriptArtifactGraphAccumulator();
+  const loaderConditions = new Map<
+    string,
+    { sha256: string; condition: string }
+  >();
+  for (const { file, javascript } of analysis.files) {
+    const condition = javascript?.loaderCondition;
+    if (condition !== undefined)
+      loaderConditions.set(file.path, { sha256: file.sha256, condition });
+  }
+  const accumulator = new JavaScriptArtifactGraphAccumulator(loaderConditions);
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
     analysis.packages
@@ -179,6 +189,8 @@ function* buildJavaScriptArtifactGraphInputSteps(
         unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
       hasDirectory: (path, container) =>
         fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+      filePathsBelow: (path) =>
+        fileSet.unanalyzed_files?.filePathsBelow?.(path),
     },
     fileNodes: new Map(),
     assetNodes: new Map(),
@@ -316,7 +328,9 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
     const limits = [
       ...new Map(
         [
-          ...semanticResourceLimitCoverage(resourceLimits),
+          ...semanticResourceBounds(context).flatMap(({ limit, precision }) =>
+            semanticResourceLimitCoverage([limit], precision),
+          ),
           ...executionLimits,
           ...(inlineScriptsTruncated
             ? [HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT]
@@ -339,17 +353,24 @@ const graphCoverage = (context: JavaScriptArtifactGraphContext) => {
   return completeApplicationCoverage();
 };
 
+const semanticResourceBounds = (context: JavaScriptArtifactGraphContext) => [
+  ...new Map(
+    context.analysis.files.flatMap(({ semantic }) =>
+      semantic === null
+        ? []
+        : semanticCoverageResourceLimits(semantic.ir.coverage).map((limit) => {
+            const fact = { limit, precision: semantic.ir.coverage.precision };
+            return [JSON.stringify(fact), fact] as const;
+          }),
+    ),
+  ).values(),
+];
+
 const semanticResourceLimits = (
   context: JavaScriptArtifactGraphContext,
 ): JavaScriptSemanticResourceLimit[] =>
   [
-    ...new Set(
-      context.analysis.files.flatMap(({ semantic }) =>
-        semantic === null
-          ? []
-          : semanticCoverageResourceLimits(semantic.ir.coverage),
-      ),
-    ),
+    ...new Set(semanticResourceBounds(context).map(({ limit }) => limit)),
   ].sort();
 
 const graphLimitations = (
@@ -425,13 +446,24 @@ const graphLimitations = (
           "Sender, frame, URL, and origin checks are observations only; REA does not claim that they enforce a complete authorization policy.",
         ]
       : []),
-    ...semanticResourceLimits(context).map(semanticResourceLimitReason),
+    ...semanticResourceBounds(context).map(({ limit, precision }) =>
+      semanticResourceLimitReason(limit, precision),
+    ),
     ...(context.analysis.files.some(
       ({ javascript }) =>
         (javascript?.electron.native_addon_bindings.length ?? 0) > 0,
     )
       ? [
           "Native member names are requested by JavaScript syntax and are not verified binary exports in this workflow.",
+        ]
+      : []),
+    ...(context.analysis.files.some(({ javascript }) =>
+      (javascript?.electron.dynamic_code ?? []).some(
+        isPossibleCachedDataCompilation,
+      ),
+    )
+      ? [
+          "A node:vm compilation may receive cachedData; static syntax does not establish cache acceptance or execution, and possible cached logic remains unknown rather than absent.",
         ]
       : []),
     ...(coverage === "complete"

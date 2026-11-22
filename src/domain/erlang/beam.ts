@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -117,9 +118,13 @@ export const erlangBeamSchema = z.strictObject({
     .nullable(),
   module: z.string().nullable(),
   coverage: z.strictObject({
-    status: z.literal("complete"),
+    // "partial" when bytes trail the declared FOR1 form or a decoded table.
+    status: knownCoverageStatusSchema,
     examined_chunks: uint,
     atoms: uint,
+    // Optional so Evidence retained by builds predating this field reparses
+    // as unknown rather than a fabricated zero; every new parse emits the count.
+    trailing_bytes: uint.optional(),
   }),
   limitations: z.array(z.string()),
 });

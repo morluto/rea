@@ -214,8 +214,9 @@ candidates. A boundary nested inside another expression or compound assignment
 does not establish a direct result binding.
 The query declares backward provenance, forward influence, callers, or
 ownership and can restrict admitted relation kinds. REA returns every matching
-seed and the complete reachable subgraph; callers do not choose node, relation,
-depth, function, module, seed-match, or page budgets.
+seed and its complete reachable subgraph within the admitted graph. Callers
+do not choose node, relation, depth, function, module, seed-match, or page
+budgets. Extraction limits and unknowns can still leave coverage partial.
 
 The extractor covers lexical definitions and reads, literal seeds, static
 property slots, object reads/writes/spreads/destructuring, closure captures,
@@ -226,6 +227,12 @@ registrations/removals and dispatch, Node timers and cancellation handles, async
 `node:child_process` creation and ownership, configuration sources and direct
 defaults, request construction and response consumers, parse/coercion/
 validation boundaries, and built-in resource acquisition/release.
+For `fs/promises.open`, a binding receiving the Promise is distinct from one
+receiving the awaited FileHandle. Awaiting the Promise later does not replace
+the original binding, but `h = await h` can replace it with the FileHandle.
+Receiver writes can therefore retain a candidate release and its ownership
+ambiguity; a still-known Promise has no direct FileHandle release. Acquisitions
+remain retained, and unknown loader authority keeps its existing candidate tag.
 Reassignments connect retained right-hand reads to the binding or property
 write. Compound assignments also retain the previous-value input; logical
 assignments keep conditional inputs as candidates. These edges describe
@@ -235,6 +242,18 @@ assignment. Computed method keys belong to the enclosing callable; parameter
 defaults and method bodies belong to the method. Uncertain later property reads
 remain opt-in through `include_ambiguous_dynamic_edges`.
 
+Destructuring retains dependencies from the source slots proved at the time
+of the read. A later write does not replace an earlier proved dependency.
+After a nested pattern is proved to receive a nullish value and throw, later
+bindings in that pattern retain candidate paths with no proven initializer.
+If the selected slot is known to be undefined, the proof includes the nested
+pattern's default initializer.
+A numeric key in an object pattern selects a named property directly.
+Nested array patterns can preserve dependencies for later bindings when
+element selection is known and iterator closing cannot invoke a return hook.
+Holes, accessors, and unknown iteration keep the affected dependencies
+uncertain.
+
 Binary, logical, unary, template, conditional, and sequence expressions retain
 `influences` edges from supported immediate inputs to the result, then to a
 direct declaration, assignment, call argument, or return. These are static
@@ -242,7 +261,8 @@ dependencies, not aliases or proof that the expression executed; conditional
 operands and logical-assignment writes carry `conditional: true`. Unsupported
 operand dependencies, unmodeled receiving containers, dynamic call results,
 and sequence side effects remain unknown. An applicable
-unknown makes the trace status `partial` even when a seed was found. Literal
+unknown makes the trace status `partial` when no applicable ambiguity takes
+precedence, even when a seed was found. Literal
 operator operands, direct call arguments and directly returned scalar literals
 can also be seeds. Older graphs that only recorded a call-site literal remain
 searchable. The offered per-file node capacity also bounds the producer's
@@ -312,7 +332,9 @@ behavioral absence.
 Semantic relations use static-inference authority. `resolved` means the static
 target identity was unique within admitted analysis; it does not mean the path
 executed. Candidate edges are excluded by default, require explicit opt-in, and
-keep the result ambiguous. Runtime Evidence can later corroborate an exact
+keep the result ambiguous. An exact edge may still be present when other
+possible dependencies make the overall trace ambiguous. Runtime Evidence can
+later corroborate an exact
 mapped candidate, but structural reachability, semantic influence, runtime
 observation, and causal proof remain separate claims.
 
@@ -435,6 +457,12 @@ never forces a mapping. Unicode-equivalent spellings are candidate evidence
 only because distinct filesystem paths can preserve those spellings as separate
 files; multiple canonical-equivalent candidates remain unknown.
 
+Source-map declarations and embedded source digests remain available when the
+declared reference cannot produce a matching path. For example, a relative
+reference that leaves the inventoried artifact or a pathname that decodes to a
+NUL byte has an unresolved path. The raw declaration still identifies the
+source-map observation.
+
 Each historical source file is classified as `unchanged`, `modified`,
 `removed`, `split`, `merged`, `duplicated`, or `unknown`. Multiple equally
 scored path mappings form a static split inference. Multiple current file
@@ -509,9 +537,10 @@ properties. Dynamic child writes such as `copy[key].value = 2` remain conservati
 about which original slot was selected. Object rest
 excludes consumed keys, array rest excludes the consumed prefix for known
 arrays, and later explicit data properties and methods replace earlier object
-spread references. A known array prefix does not expose values from a following
-spread. Accessors, custom or uncertain iteration, unknown computed keys, and
-unknown spread lengths retain conservative uncertainty.
+spread references. A bounded dense inline array spread can supply exact slots
+and keep the positions of later elements known. Accessors, sparse or unknown
+spread sources, custom or uncertain iteration, and unknown computed keys keep
+the affected reads uncertain.
 Getter-local aliases of `this`, including direct destructuring and assignments,
 retain their receiver when a returned shared reference is written. These writes
 invalidate the earlier literal instead of claiming the getter executed or the
@@ -533,8 +562,8 @@ Writes through an object getter's returned receiver retain that uncertainty
 when the object is an array element, nested inside mixed object/array
 containers, or assigned to a previously declared identifier. Saving the getter
 result in an alias does not make its old field values immutable. Known array
-indices include holes; an element after a spread has only a minimum possible
-index. For these returned-reference writes, unrelated properties and known
+indices include holes. After a spread with unknown length, a later element
+has only a minimum possible index. For these returned-reference writes, unrelated properties and known
 array prefixes remain precise. Accessor applicability uses the shared object
 reference owner for literal definition order, own-property shadowing, known
 array elements and explicit literal prototypes. Getter invocation effects

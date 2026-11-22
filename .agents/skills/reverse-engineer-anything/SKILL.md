@@ -2,7 +2,7 @@
 name: reverse-engineer-anything
 description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "61"
+  version: "63"
 ---
 
 # REA
@@ -17,9 +17,9 @@ readiness or provider commands.
 
 Installing this skill supplies instructions; it does not register the REA MCP
 server, install analysis engines, or add tools to an already-running agent.
-The exception is a Claude Code or Codex plugin install: the plugin bundles
-this skill and registers its own `rea` server, outside the state that
-`rea setup` and `rea doctor` manage.
+The exception is a Claude Code, Codex, or Cursor Marketplace plugin install:
+the plugin bundles this skill and registers its own `rea` server, outside the
+state that `rea setup` and `rea doctor` manage.
 
 If REA tools are available and their registration is not known to be stale,
 proceed directly to the target. Do not run diagnostics or setup before every
@@ -84,7 +84,13 @@ active-target native or archive workflows; target-free tools take their own
 explicit path or endpoint and do not need it.
 
 - ASAR or extracted JavaScript/Electron tree:
-  `analyze_javascript_application`.
+  `analyze_javascript_application`. To find a few files in a packaged
+  `app.asar`, open it with `open_binary`, start with `inspect_artifact`
+  using `detail: "summary"`, then analyze the selected files with
+  `source_paths`. When you intend to retain digest contradictions from
+  re-signed unpacked companions, pass `integrity_policy: "record-and-continue"`
+  starting with `inspect_artifact`. See the
+  [JavaScript applications reference](references/javascript-applications.md).
 - Archive/package member inventory (ZIP/APK/IPA/MSIX/AppX, DMG, or a PyInstaller
   executable): `open_binary` with the supplied local path; use `inspect_artifact`
   when its graph and findings help answer the question. A PyInstaller CArchive
@@ -97,6 +103,12 @@ explicit path or endpoint and do not need it.
 - Bun `--compile` executable: `open_binary`, then `inspect_artifact`; the Bun
   module graph is the application layer. Extract stored modules and analyze the
   JavaScript. See [Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).
+- Deno `deno compile` executable: `open_binary`, then `inspect_artifact`; the
+  embedded virtual filesystem is the application layer. Extract stored files and
+  analyze compatible JavaScript. Environment-file values and CA certificate bytes
+  are retained in local Evidence with their counts and byte lengths. The npm
+  snapshot length is reported and not decoded, and the executable is not run. See
+  [Deno compile executables](https://github.com/morluto/rea/blob/main/docs/deno-standalone.md).
 - Apple app plist, Interface Builder, asset catalog, or keyed archive resources:
   `open_bundle_resources`, then the selected resource tool. This does not
   require `CFBundleExecutable` or a deep provider. Resource sessions have no
@@ -105,10 +117,11 @@ explicit path or endpoint and do not need it.
   `inspect_android_package`, then focused Android tools when advertised.
   Archive member inventory still uses the archive route above.
 - Managed PE/CLI assembly: `inspect_managed_artifact`.
-- Firmware image: `inspect_firmware_regions` when advertised. Use
-  `extract_firmware` when extraction is requested, with a caller-selected new
-  absolute output directory. These tools use caller-supplied Binwalk/Unblob on
-  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
+- UEFI firmware volumes and NVAR stores: use bundled `inspect_artifact`.
+  For external firmware scanning or extraction on Linux, use
+  `inspect_firmware_regions` or `extract_firmware` with caller-supplied
+  Binwalk or Unblob. Extraction needs a caller-selected new absolute output
+  directory. See the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
@@ -162,6 +175,7 @@ explicit path or endpoint and do not need it.
   Facts retain all-recorded-events-before-selection scope. Other qlog layouts
   and PCAP correlation are unsupported.
 - User-owned Electron runtime already open: `list_electron_targets`. Before an electron-main Inspector attempt, check packaged fuses with `inspect_electron_fuses`; disabled `EnableNodeCliInspectArguments` means the app ignores `--inspect`.
+- Shipped application exposure for a local `.app`, install directory, ASAR, or executable: `audit_release_exposure` / `rea audit-release-exposure`. Each check has a stable id, a status, and fixed remediation. Unknown and unassessed checks stay in the report. This does not establish that an application is secure. Credential-marker hits report the rule id and location only. See [release exposure](https://github.com/morluto/rea/blob/main/docs/release-exposure.md).
 - Packet-field discovery: `inspect_packet_fields` searches installed protocols
   and field names/types before choosing fields for `inspect_packet_capture`.
   Query/page the relevant records; registrations do not establish observed traffic.
@@ -205,8 +219,10 @@ explicit path or endpoint and do not need it.
   See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).
 - Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
   `raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
-  30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
-  address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
+  30000 ms, range 1..2147483647, next call). Select byte, address-space and CPU
+  allowances separately through `producer_limits`; tighter inherited OS limits
+  remain enforced, and the 256 MiB worker heap is independent. Preserve
+  carrier/decoded digests and treat selectors,
   argument strings and mutability as inferred candidates; this performs no chain
   lookup or target execution. For the complete inferred interface without hex or
   duplicate stdout, discover support and select `detail: "summary"`; complete
@@ -247,11 +263,12 @@ explicit path or endpoint and do not need it.
   other versions are unsupported. Optional matching `binary_path` enables static native addresses and type references; query `method_addresses` with indices or addresses/states, preserving every shared-body method and both artifact identities. Without a linked binary native counts remain unknown. Byte-pattern fallback is inferred; no runtime behavior or same-build pairing is proved. See the
   [IL2CPP metadata guide](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 - Embedded cargo-auditable Rust dependency metadata: `inspect_rust_binary`
-  with the explicit local ELF, PE, or thin Mach-O file. This built-in
-  target-free inspection requires no Rust installation or disassembler. Preserve
-  package order, dependency indices, and the section file range. A missing
-  `.dep-v0` section is null metadata, not proof the binary has no dependencies.
-  A rustc commit hash is an inference from a read-only `/rustc/<40-hex>/` path.
+  with the explicit local ELF, PE, thin Mach-O, or WebAssembly core-module
+  file. This built-in target-free inspection requires no Rust installation or
+  disassembler. Preserve package order, dependency indices, and the section file
+  range. A missing `.dep-v0` section is null metadata, not proof the binary has
+  no dependencies. A rustc commit hash is an inference from a
+  `/rustc/<40-hex>/` path in read-only data or a WebAssembly data section.
   For selected crates, use `view: {collection: "packages", names: [...],
   fields: ["name", "version", "source"]}` on the first call; explicitly include
   `dependencies` for direct index references. Use `detail: "summary"` for counts
@@ -260,6 +277,14 @@ explicit path or endpoint and do not need it.
   delivery requires `--evidence_output`.
   See the
   [Rust binary guide](https://github.com/morluto/rea/blob/main/docs/rust-binaries.md).
+- Maven POM or Gradle module metadata: `inspect_maven_gradle_metadata` with
+  the explicit local `pom.xml` or `.module` file. This built-in target-free
+  inspection requires no Maven or Gradle. Preserve coordinates as spelled,
+  dependency and dependencyManagement rows, BOM imports, Gradle variants and
+  rich versions, and unresolved property or parent references. Interpolation,
+  inheritance, tree resolution, and repository access are not performed. See
+  the
+  [Maven POM and Gradle module metadata guide](https://github.com/morluto/rea/blob/main/docs/maven-gradle-metadata.md).
 - PE Authenticode certificate table: `inspect_pe_certificates` with the explicit
   local PE32/PE32+ file. This built-in target-free inspection requires no
   Windows SDK. Preserve WIN_CERTIFICATE ranges, types, payload SHA-256, and
@@ -276,6 +301,14 @@ explicit path or endpoint and do not need it.
   proof the image never imported APIs through another table. Bound snapshots
   and loaded IAT contents remain unobserved. See the
   [PE import guide](https://github.com/morluto/rea/blob/main/docs/pe-imports.md).
+- Windows Shell Link shortcuts: `inspect_windows_shortcut` with the explicit
+  local `.lnk` file. This built-in target-free inspection requires no Windows
+  SDK or COM. Preserve header flags and FILETIMEs, IDList items, LinkInfo
+  volume and network names, StringData arguments and icon location, ExtraData
+  signatures, and Tracker droid facts labelled derived. Unknown IDList items
+  and ExtraData signatures stay raw with SHA-256. The target path is not
+  resolved or executed. See the
+  [Windows shortcut guide](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
 - PE TLS callbacks and load configuration: `inspect_pe_load_config` with the
   explicit local PE32/PE32+ file. This built-in target-free inspection requires
   no Windows SDK. Preserve callback VAs as strings with their RVA, file offset
@@ -299,13 +332,70 @@ explicit path or endpoint and do not need it.
   build-id or ABI-tag fields. A missing table is observed absence of those
   declarations, not proof the image never carried notes. See the
   [ELF notes guide](https://github.com/morluto/rea/blob/main/docs/elf-notes.md).
+- DWARF compile units: `inspect_dwarf_units` with the explicit local ELF,
+  Mach-O, or PE file, or the DWARF file inside a `.dSYM` bundle. This built-in
+  target-free inspection requires no disassembler. It reads DWARF 2 through 5
+  unit headers and the unit DIE: name, compilation directory, producer,
+  language, and `dwo_name`, including compressed ELF sections. Page with
+  `offset` and `limit`. Partial coverage means a later unit could not be
+  framed or a declared `.debug_info` was not read. Absent `.debug_info`
+  applies to this file only. Per-unit gaps stay in `issues`. Child DIEs, types,
+  line tables, and location expressions are not read. Universal Mach-O
+  requires `architecture`. See the
+  [DWARF compile units guide](https://github.com/morluto/rea/blob/main/docs/guides/native/dwarf-units.md).
+
+- Separate ELF debug files: `inspect_elf_debug_link` with the explicit local
+  ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler and does not search for debug files. Preserve the
+  `.gnu_debuglink` name and CRC32, `.gnu_debugaltlink` build-id, GNU build-id,
+  and lookup path strings. Those paths are not opened. Pass `candidate_path`
+  only for one file you already selected; the verdict is matches,
+  does_not_match, or cannot_verify. A missing section is observed absence only
+  when section names are complete. The `.gnu_debugdata` xz payload is not
+  decoded. See the
+  [ELF debug files guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-debug-link.md).
+
+- ELF load-time dynamic dependencies: `inspect_elf_dependencies` with the
+  explicit local ELF32/ELF64 `ET_EXEC` or `ET_DYN` file. This built-in
+  target-free inspection requires no disassembler or dynamic loader. Preserve
+  ordered `DT_NEEDED` names (duplicates included), `DT_SONAME`, `DT_RPATH` /
+  `DT_RUNPATH` as written including `$ORIGIN` / `$LIB` / `$PLATFORM` tokens,
+  decoded `DT_FLAGS` / `DT_FLAGS_1`, `PT_INTERP`, GNU version requirements and
+  definitions, derived per-namespace maxima, and undefined `.dynsym` imports
+  joined to `library@version` when known. A missing `PT_DYNAMIC` is an observed
+  empty inventory, not proof another overlay carried dynamic metadata.
+  Relocatable objects use `inspect_kernel_module`; core dumps use
+  `inspect_recorded_crash`. For large inventories prefer `detail: "summary"`
+  plus `inspect_analysis_view` kind `elf-dependencies`. CLI summary requires
+  `--evidence_output`. See the
+  [ELF dependencies guide](https://github.com/morluto/rea/blob/main/docs/elf-dependencies.md).
+
+- Code that runs before `main` or at exit in ELF or Mach-O:
+  `inspect_native_initializers` with the explicit local file (and
+  `architecture` for a universal Mach-O). This built-in inspection requires no
+  disassembler. Preserve slot and target addresses, the `resolution` of each
+  entry, and its limitations. An `unresolved` slot is not a zero pointer, and a
+  missing table is not proof that no constructor exists. See the
+  [initializer guide](https://github.com/morluto/rea/blob/main/docs/guides/native/native-initializers.md).
+
+- ELF unwind function ranges: `inspect_elf_unwind_ranges` with the explicit
+  local ELF32/ELF64 file. This built-in target-free inspection requires no
+  disassembler. Preserve FDE start, end, size, containing section, exact
+  symbol name, CIE index, LSDA, and personality. Page with `offset` and
+  `limit`. A missing `.eh_frame` is observed absence of that declaration,
+  not proof the image has no functions. `.debug_frame` is reported present
+  or absent and is not decoded. CFA instructions are counted and not
+  evaluated. See the
+  [ELF unwind ranges guide](https://github.com/morluto/rea/blob/main/docs/guides/native/elf-unwind-ranges.md).
 - Apple `.ips` crash reports: `inspect_apple_ips` with the explicit local
   file. This built-in target-free inspection requires no Xcode, atos, or
   pwntools. Preserve first-line metadata, `bug_type` as a string, process and
   exception facts, lossless integer registers, usedImages UUIDs, and
   documented classification matches. Only `bug_type` `"309"` yields a crash
   body; other types, including `"288"` stackshots, return no crash result.
-  Opened Mach-O and dSYM UUID joins remain unobserved. See the
+  Select an optional `join_path` for UUID-and-architecture matching to one
+  local Mach-O or dSYM; preserve slice identity and unjoined reasons. Joined
+  static addresses do not resolve function names or dSYM symbols. See the
   [Apple IPS guide](https://github.com/morluto/rea/blob/main/docs/apple-ips.md).
 - Linux kernel module metadata: `inspect_kernel_module` with the explicit local
   ELF32/ELF64 relocatable file. This built-in target-free inspection requires
@@ -317,7 +407,17 @@ explicit path or endpoint and do not need it.
   zstd containers are unsupported; decompress into a separate file with an
   external codec utility, then inspect the decompressed `ET_REL` image. See the
   [kernel module guide](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
-- CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
+- Linux kernel version and build config (`CONFIG_*` options such as
+  `CONFIG_SECURITY_SELINUX`): `inspect_kernel_build_config` with the explicit
+  local `vmlinux`, raw `Image`, x86 `bzImage`, or `configs.ko`. This built-in
+  target-free inspection requires no Linux host or `extract-ikconfig`. Preserve
+  the banner version, config SHA-256, option count, and value kinds; use `name`
+  for one option. An `IKCFG_ST` string is a config only with a valid gzip member
+  and `IKCFG_ED`. An absent config may mean the kernel was built without
+  `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
+  then inspect the result. See the
+  [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/guides/native/kernel-build-config.md).
+- CPython 3.7–3.15 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,
   PEP 552 hash or mtime/size, nested names, and bytecode SHA-256. Bytecode is
@@ -332,6 +432,14 @@ explicit path or endpoint and do not need it.
   Evidence. CLI summary requires `--evidence_output`. Missing table counts stay
   null; decoded empty tables count zero. Bytecode is not executed. See the
   [Erlang BEAM guide](https://github.com/morluto/rea/blob/main/docs/erlang-beam.md).
+- NuGet `.nupkg` package identity, dependency groups and ZIP inventory:
+  `inspect_nuget_nupkg` with the explicit local file. This built-in
+  target-free inspection does not restore the package, execute it, or contact a
+  feed. Preserve identity fields as present, dependency version ranges as
+  spelled, and path-derived member roles. Missing, ambiguous, or malformed
+  `.nuspec` members still return the inventory with limitations. Encrypted
+  members are listed and not extracted. See the
+  [NuGet packages guide](https://github.com/morluto/rea/blob/main/docs/guides/managed/nuget-nupkg.md).
 
 - Explicit local SQLite database snapshot: `inspect_sqlite_database`. Inspect
   with Node.js 24.x >=24.15 or 26+ providing native SQLite limits. Read schema
@@ -358,20 +466,28 @@ explicit path or endpoint and do not need it.
   with an explicit path; portable, no active target or engine.
 - Native executable, library, or analysis database: `open_binary`, then
   use focused analysis tools directly; call `binary_overview` when metadata or
-  inventory context is useful and available from the selected provider.
+  inventory context is useful and available from the selected provider. If
+  automatic selection returns `capability_unavailable` with
+  `selection_reason: "ambiguous"`, several providers are usable for the
+  selected target. Choose one of the reported candidates and retry with its
+  `provider_id`. Without an active target, `binary_session({})` shows host
+  availability and leaves target support unknown.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
-input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
-The legacy attached profile binds the already-open GUI input by SHA-256 and
+input binary and `provider_id: "ida"`. Only the Hex-Rays (`hexrays`) profile
+also admits an existing `.idb` or `.i64`: pass the database path to start from
+its saved annotations instead of a fresh auto-analysis. REA analyzes a private
+copy and never writes the selected database.
+The native attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
-owned private database without saving. Installation and registration reuse
-[mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); see the
+owned private database without saving; it reuses
+[mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp). See the
 [IDA provider guide](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md).
-For migration to the separate native IDA MCP plugin, follow the guide's
-[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration).
-Replace the upstream registration explicitly; modern mrexodia tools are not the
-native profile. Native attachment preserves the database but does not provide
-direct callers; check session availability and the guide's verification limits.
+A registration naming the removed ida-pro-mcp 1.4 `"legacy"` protocol is
+refused; follow the guide's
+[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration)
+instead of editing the protocol value. No IDA profile provides direct callers;
+check session availability and the guide's verification limits.
 Proceed directly to `analyze_function`, pseudocode, or function/string searches
 after opening; IDA does not supply `binary_overview`. Consult session availability
 when composing broader workflows. Modern direct callers and unsupported dossier

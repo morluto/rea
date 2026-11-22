@@ -1,3 +1,4 @@
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { isJavaScriptModuleUnit } from "../javascript/javascriptModuleUnits.js";
 import {
   AnalysisInputError,
@@ -54,9 +55,7 @@ const jsIncompatible = (detail: string): AnalysisError =>
   ]);
 
 /** Every exact module path or original source-map reference retained by a node. */
-export const javascriptModulePaths = (
-  node: ApplicationNode,
-): readonly string[] => {
+const javascriptModulePaths = (node: ApplicationNode): readonly string[] => {
   if (node.identity.strategy === "canonical-path") return [node.identity.path];
   if (node.identity.strategy === "source-map-original")
     return [node.identity.original_source];
@@ -96,20 +95,80 @@ function* moduleEntries(
   }
 }
 
-/** Scan retained order once; materialize only the requested matching page. */
-const modulePage = (
-  nodes: readonly ApplicationNode[],
-  view: {
-    readonly offset: number;
-    readonly limit: number;
-    readonly where?: z.output<
-      typeof javascriptModuleReferencesRequestSchema
-    >["where"];
-  },
-): { entries: ModuleEntry[]; total: number } => {
+interface ModuleIndex {
+  readonly moduleEntries: readonly ModuleEntry[];
+  readonly byNodeId: ReadonlyMap<string, ModuleEntry | null>;
+  readonly nodesByPath: ReadonlyMap<string | null, readonly ModuleEntry[]>;
+  readonly nodesByKind: ReadonlyMap<
+    JavaScriptModuleReference["kind"],
+    readonly ModuleEntry[]
+  >;
+}
+
+const moduleIndexes = new WeakMap<
+  JavaScriptApplicationAnalysisResult,
+  ModuleIndex
+>();
+
+const buildModuleIndex = (nodes: readonly ApplicationNode[]): ModuleIndex => {
+  const entries: ModuleEntry[] = [];
+  const byNodeId = new Map<string, ModuleEntry | null>();
+  const nodesByPath = new Map<string | null, ModuleEntry[]>();
+  const nodesByKind = new Map<
+    JavaScriptModuleReference["kind"],
+    ModuleEntry[]
+  >();
+  for (const entry of moduleEntries(nodes)) {
+    entries.push(entry);
+    byNodeId.set(
+      entry.node.node_id,
+      byNodeId.has(entry.node.node_id) ? null : entry,
+    );
+    if (entry.paths.length === 0) {
+      const existing = nodesByPath.get(null);
+      if (existing === undefined) nodesByPath.set(null, [entry]);
+      else existing.push(entry);
+    } else {
+      for (const path of entry.paths) {
+        const existing = nodesByPath.get(path);
+        if (existing === undefined) nodesByPath.set(path, [entry]);
+        else existing.push(entry);
+      }
+    }
+    const kindList = nodesByKind.get(entry.node.kind);
+    if (kindList === undefined) nodesByKind.set(entry.node.kind, [entry]);
+    else kindList.push(entry);
+  }
+  return { moduleEntries: entries, byNodeId, nodesByPath, nodesByKind };
+};
+
+const getModuleIndex = (
+  analysis: JavaScriptApplicationAnalysisResult,
+): ModuleIndex | undefined => {
+  if (!isImmutableJsonSnapshot(analysis)) return undefined;
+  let index = moduleIndexes.get(analysis);
+  if (index === undefined) {
+    index = buildModuleIndex(analysis.graph.nodes);
+    moduleIndexes.set(analysis, index);
+  }
+  return index;
+};
+
+type ModulePageRequest = {
+  readonly offset: number;
+  readonly limit: number;
+  readonly where?: z.output<
+    typeof javascriptModuleReferencesRequestSchema
+  >["where"];
+};
+
+const paginateModuleEntries = (
+  iterable: Iterable<ModuleEntry>,
+  view: ModulePageRequest,
+): { entries: readonly ModuleEntry[]; total: number } => {
   const entries: ModuleEntry[] = [];
   let total = 0;
-  for (const entry of moduleEntries(nodes)) {
+  for (const entry of iterable) {
     if (view.where?.kind !== undefined && entry.node.kind !== view.where.kind)
       continue;
     const selectedPath = view.where?.path;
@@ -120,15 +179,54 @@ const modulePage = (
         : !entry.paths.includes(selectedPath))
     )
       continue;
-    const selectedEntry =
-      selectedPath !== undefined && selectedPath !== null
-        ? { ...entry, path: selectedPath }
-        : entry;
     if (total >= view.offset && entries.length < view.limit)
-      entries.push(selectedEntry);
+      entries.push(
+        selectedPath !== undefined && selectedPath !== null
+          ? { ...entry, path: selectedPath }
+          : entry,
+      );
     total += 1;
   }
   return { entries, total };
+};
+
+/** Scan retained order once (or slice pre-built immutable index in O(page)). */
+const modulePage = (
+  analysis: JavaScriptApplicationAnalysisResult,
+  view: ModulePageRequest,
+): { entries: readonly ModuleEntry[]; total: number } => {
+  const index = getModuleIndex(analysis);
+  if (index === undefined)
+    return paginateModuleEntries(moduleEntries(analysis.graph.nodes), view);
+  const selectedKind = view.where?.kind;
+  const selectedPath = view.where?.path;
+  if (selectedPath !== undefined && selectedKind === undefined) {
+    const candidates = index.nodesByPath.get(selectedPath) ?? [];
+    const slice = candidates.slice(view.offset, view.offset + view.limit);
+    return {
+      entries:
+        selectedPath === null
+          ? slice
+          : slice.map((entry) => ({ ...entry, path: selectedPath })),
+      total: candidates.length,
+    };
+  }
+  if (selectedPath === undefined && selectedKind !== undefined) {
+    const candidates = index.nodesByKind.get(selectedKind) ?? [];
+    return {
+      entries: candidates.slice(view.offset, view.offset + view.limit),
+      total: candidates.length,
+    };
+  }
+  if (selectedPath === undefined && selectedKind === undefined)
+    return {
+      entries: index.moduleEntries.slice(view.offset, view.offset + view.limit),
+      total: index.moduleEntries.length,
+    };
+  return paginateModuleEntries(
+    index.nodesByPath.get(selectedPath!) ?? [],
+    view,
+  );
 };
 
 const exportNames = (node: ApplicationNode): readonly string[] => {
@@ -183,15 +281,7 @@ const moduleItem = (node: ApplicationNode, path: string | null): JsonValue => ({
   hashes: [...nodeHashes(node)],
   exports: [...exportNames(node)],
   source_ranges: [...sourceRanges(node)],
-  observations: node.observations.map((observation) => ({
-    observation_id: observation.observation_id,
-    label: observation.label,
-    properties: observation.properties,
-    evidence: {
-      ...observation.evidence,
-      location: observation.evidence.location,
-    },
-  })),
+  observations: node.observations,
 });
 
 const moduleReference = ({
@@ -278,18 +368,34 @@ const parentFields = (
   };
 };
 
+const findSingleNodeById = (
+  nodes: readonly ApplicationNode[],
+  nodeId: string,
+): ModuleEntry | undefined => {
+  let matched:
+    | (ApplicationNode & { readonly kind: JavaScriptModuleReference["kind"] })
+    | undefined;
+  for (const node of nodes) {
+    if (!isJavaScriptModuleUnit(node) || node.node_id !== nodeId) continue;
+    if (matched !== undefined) return undefined;
+    matched = node;
+  }
+  if (matched === undefined) return undefined;
+  const paths = javascriptModulePaths(matched);
+  return { node: matched, path: paths[0] ?? null, paths };
+};
+
 const selectModule = (
-  modules: readonly ModuleEntry[],
+  analysis: JavaScriptApplicationAnalysisResult,
   selector: ItemAnalysisView["selector"],
 ): Result<ModuleEntry, AnalysisError> => {
+  const index = getModuleIndex(analysis);
   if ("node_id" in selector) {
-    const matches = modules.filter(
-      ({ node }) => node.node_id === selector.node_id,
-    );
-    if (matches.length === 1) {
-      const selected = matches[0];
-      if (selected !== undefined) return ok(selected);
-    }
+    const selected =
+      index !== undefined
+        ? index.byNodeId.get(selector.node_id)
+        : findSingleNodeById(analysis.graph.nodes, selector.node_id);
+    if (selected !== undefined && selected !== null) return ok(selected);
     return err(
       inputError([
         {
@@ -301,11 +407,14 @@ const selectModule = (
     );
   }
   if ("path" in selector) {
-    const matches = modules.filter((entry) =>
-      selector.path === null
-        ? entry.path === null
-        : entry.paths.includes(selector.path),
-    );
+    const matches =
+      index !== undefined
+        ? (index.nodesByPath.get(selector.path) ?? [])
+        : [...moduleEntries(analysis.graph.nodes)].filter((entry) =>
+            selector.path === null
+              ? entry.path === null
+              : entry.paths.includes(selector.path),
+          );
     if (matches.length === 1) {
       const selected = matches[0];
       if (selected !== undefined)
@@ -369,7 +478,11 @@ export const projectJavaScriptApplicationView = (
     sourceCoverage,
   );
   if (view.kind === "javascript-facts") {
-    const { rows, total } = projectJavaScriptFacts(analysis.graph.nodes, view);
+    const { rows, total } = projectJavaScriptFacts(
+      analysis.graph.nodes,
+      view,
+      isImmutableJsonSnapshot(analysis) ? analysis : undefined,
+    );
     return ok({
       ...shared,
       kind: "javascript-facts" as const,
@@ -380,7 +493,7 @@ export const projectJavaScriptApplicationView = (
     });
   }
   if (view.kind === "javascript") {
-    const { entries, total } = modulePage(analysis.graph.nodes, view);
+    const { entries, total } = modulePage(analysis, view);
     const rows = entries.map(moduleReference);
     return ok({
       ...shared,
@@ -394,10 +507,16 @@ export const projectJavaScriptApplicationView = (
   if (view.kind === "summary") {
     // Summary coverage counts modules. Graph nodes that are not modules stay
     // in summary.coverage.application rather than inflating this total.
-    const moduleCount = analysis.graph.nodes.reduce(
-      (count, node) => count + Number(isJavaScriptModuleUnit(node)),
-      0,
-    );
+    const cachedIndex = isImmutableJsonSnapshot(analysis)
+      ? moduleIndexes.get(analysis)
+      : undefined;
+    const moduleCount =
+      cachedIndex !== undefined
+        ? cachedIndex.moduleEntries.length
+        : analysis.graph.nodes.reduce(
+            (count, node) => count + Number(isJavaScriptModuleUnit(node)),
+            0,
+          );
     return ok({
       kind: "summary" as const,
       view,
@@ -429,7 +548,7 @@ export const projectJavaScriptApplicationView = (
         }),
         limitation_count: limitationCount,
       },
-      coverage: completeCoverage(moduleCount, moduleCount),
+      coverage: completeCoverage(moduleCount),
       ...shared,
     });
   }
@@ -440,14 +559,13 @@ export const projectJavaScriptApplicationView = (
           "Section and symbol collections apply to inspect_binary_layout Evidence.",
         ),
       );
-    const modules = [...moduleEntries(analysis.graph.nodes)];
-    const selected = selectModule(modules, view.selector);
+    const selected = selectModule(analysis, view.selector);
     if (!selected.ok) return selected;
     return ok({
       kind: "item" as const,
       view,
       item: moduleItem(selected.value.node, selected.value.path),
-      coverage: completeCoverage(1, modules.length),
+      coverage: completeCoverage(1),
       ...shared,
     });
   }
@@ -457,7 +575,7 @@ export const projectJavaScriptApplicationView = (
         "Section and symbol collections apply to inspect_binary_layout Evidence.",
       ),
     );
-  const { entries, total } = modulePage(analysis.graph.nodes, view);
+  const { entries, total } = modulePage(analysis, view);
   const items = entries.map(({ node, path }) => ({
     node_id: node.node_id,
     kind: node.kind,

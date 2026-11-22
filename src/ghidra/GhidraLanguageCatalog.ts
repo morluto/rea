@@ -3,8 +3,14 @@ import { join } from "node:path";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { withArtifactRegularFile } from "../artifacts/ArtifactFileOperation.js";
+import {
+  ArtifactFileFailureGroup,
+  ArtifactReaderFailure,
+  type ArtifactResourceScope,
+  artifactPrimaryCleanupLeases,
+  assertArtifactReadActive,
+  withArtifactRegularFile,
+} from "../resources/index.js";
 import type { GhidraLanguageOverride } from "../config/ghidraLanguageOverride.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
@@ -20,6 +26,7 @@ export interface GhidraLanguageDefinition {
 const MAX_LDEFS_BYTES = 4 * 1024 * 1024;
 // Processor modules ship under Processors; installed extensions may add more.
 const LANGUAGE_ROOTS = ["Ghidra/Processors", "Ghidra/Extensions"] as const;
+const CATALOG_CONCURRENCY = 8;
 
 /** Parse the `<language>` elements of one `.ldefs` document. */
 export const parseGhidraLanguageDefinitions = (
@@ -97,6 +104,108 @@ const readLanguageDefinitionFile = (
     "follow",
   );
 
+const mergeCatalogFailures = (
+  failures: readonly { readonly index: number; readonly cause: unknown }[],
+): unknown => {
+  const ordered = [...failures].sort((left, right) => left.index - right.index);
+  const primary = ordered[0]!.cause;
+  const siblingCleanups = ordered
+    .slice(1)
+    .flatMap(({ cause }) =>
+      cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+        ? [cause]
+        : [],
+    );
+  if (siblingCleanups.length === 0) return primary;
+  const primaryLeases = artifactPrimaryCleanupLeases(primary);
+  const siblingLeases = siblingCleanups.map(artifactPrimaryCleanupLeases);
+  const cleanupLeases =
+    primaryLeases === undefined || siblingLeases.includes(undefined)
+      ? undefined
+      : [
+          ...new Set([
+            ...primaryLeases,
+            ...siblingLeases.flatMap((leases) => leases ?? []),
+          ]),
+        ];
+  return new ArtifactFileFailureGroup(
+    primary,
+    {
+      reason: siblingCleanups.map(({ cleanup }) => cleanup!.reason).join("; "),
+      resources: [
+        ...new Set(
+          siblingCleanups.flatMap(({ cleanup }) => cleanup!.resources),
+        ),
+      ],
+    },
+    cleanupLeases,
+  );
+};
+
+const runBoundedWorkers = async (
+  count: number,
+  concurrency: number,
+  work: (index: number) => Promise<void>,
+): Promise<void> => {
+  if (count === 0) return;
+  let nextIndex = 0;
+  let stopped = false;
+  const failures: Array<{ readonly index: number; readonly cause: unknown }> =
+    [];
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, count) }, async () => {
+      while (!stopped) {
+        const index = nextIndex++;
+        if (index >= count) return;
+        try {
+          await work(index);
+        } catch (cause: unknown) {
+          stopped = true;
+          failures.push({ index, cause });
+          return;
+        }
+      }
+    }),
+  );
+  if (failures.length > 0) throw mergeCatalogFailures(failures);
+};
+
+const discoverLanguageDefinitionFiles = async (
+  directories: readonly string[],
+  signal: AbortSignal | undefined,
+): Promise<string[]> => {
+  const slots: string[][] = Array.from(
+    { length: directories.length },
+    () => [],
+  );
+  await runBoundedWorkers(
+    directories.length,
+    CATALOG_CONCURRENCY,
+    async (index) => {
+      assertArtifactReadActive(signal);
+      const directory = directories[index]!;
+      let entries: string[];
+      try {
+        entries = await readdir(directory);
+      } catch (cause: unknown) {
+        // A module may contain no language directory; inability to read one is not absence.
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+        )
+          return;
+        throw cause;
+      }
+      const ldefs: string[] = [];
+      for (const entry of entries.sort())
+        if (entry.endsWith(".ldefs")) ldefs.push(join(directory, entry));
+      slots[index] = ldefs;
+    },
+  );
+  return slots.flat();
+};
+
 /**
  * Read every language definition shipped by one Ghidra installation. Admission
  * first retries cleanup the scope retains, so an unconfirmed close blocks reads
@@ -108,33 +217,23 @@ export const readGhidraLanguageCatalog = (
   signal?: AbortSignal,
 ): Promise<readonly GhidraLanguageDefinition[]> =>
   resources.run(async () => {
-    const definitions: GhidraLanguageDefinition[] = [];
-    for (const directory of await languageDirectories(installDir)) {
-      let entries: string[];
-      try {
-        entries = await readdir(directory);
-      } catch (cause: unknown) {
-        // A module may contain no language directory; inability to read one is not absence.
-        if (
-          cause instanceof Error &&
-          "code" in cause &&
-          (cause.code === "ENOENT" || cause.code === "ENOTDIR")
-        )
-          continue;
-        throw cause;
-      }
-      for (const entry of entries.sort()) {
-        if (!entry.endsWith(".ldefs")) continue;
-        definitions.push(
-          ...(await readLanguageDefinitionFile(
-            join(directory, entry),
-            resources,
-            signal,
-          )),
+    const directories = await languageDirectories(installDir);
+    const files = await discoverLanguageDefinitionFiles(directories, signal);
+    const results: Array<readonly GhidraLanguageDefinition[]> = new Array(
+      files.length,
+    );
+    await runBoundedWorkers(
+      files.length,
+      CATALOG_CONCURRENCY,
+      async (index) => {
+        results[index] = await readLanguageDefinitionFile(
+          files[index]!,
+          resources,
+          signal,
         );
-      }
-    }
-    return definitions;
+      },
+    );
+    return results.flat();
   });
 
 /**

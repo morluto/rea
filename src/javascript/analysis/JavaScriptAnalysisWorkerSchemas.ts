@@ -1,4 +1,8 @@
 import {
+  resolveJavaScriptSemanticPrecision,
+  javaScriptSemanticPrecisionSchema,
+} from "../../domain/javascript/javascriptSemanticPrecision.js";
+import {
   javaScriptSemanticUnknownOmissionsSchema,
   javaScriptSemanticNodeSchema,
   javaScriptSemanticRelationSchema,
@@ -7,6 +11,7 @@ import {
   javaScriptSemanticEvidenceContextSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../../domain/coverage.js";
 import { digestSchema } from "../../domain/digests.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import { javaScriptRouteSourceFactsSchema } from "../../domain/javascript/javascriptRouteFacts.js";
@@ -89,6 +94,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       ...shape,
       channel: z.string(),
       channel_expression: z.null(),
+      channel_basis: z.literal("static-value").exactOptional(),
     }),
     z.strictObject({
       ...electronFindingContext,
@@ -304,6 +310,36 @@ const electron = z
         dynamic_member_access: z.boolean().optional(),
       }),
     ),
+    dynamic_code: z
+      .array(
+        z
+          .strictObject({
+            ...findingContext,
+            api: z.enum(["vm.Script", "vm.compileFunction"]),
+            cached_data_status: z.enum(["declared", "absent", "unknown"]),
+            cached_data: z.union([
+              z.strictObject({
+                source_path: z.string(),
+                source_path_base: z
+                  .enum(["source-directory", "literal-path"])
+                  .optional(),
+                source_resolution_context: z.enum([
+                  "filesystem-expression",
+                  "module-specifier",
+                ]),
+                source_expression: z.null(),
+              }),
+              z.strictObject({
+                source_path: z.null(),
+                source_resolution_context: z.null(),
+                source_expression: z.string(),
+              }),
+            ]),
+            source_text: staticValue,
+          })
+          .transform(withRuntime),
+      )
+      .optional(),
     protocols: z.array(
       z
         .strictObject({
@@ -322,10 +358,11 @@ const electron = z
         .transform(withRuntime),
     ),
   })
-  .transform(({ call_paths, app_path_changes, ...rest }) => ({
+  .transform(({ call_paths, app_path_changes, dynamic_code, ...rest }) => ({
     ...rest,
     ...(app_path_changes === undefined ? {} : { app_path_changes }),
     ...(call_paths === undefined ? {} : { call_paths }),
+    ...(dynamic_code === undefined ? {} : { dynamic_code }),
   }));
 const referenceShape = {
   ...findingContext,
@@ -349,8 +386,8 @@ const referenceShape = {
 /** Exact producer facts recoverable before a later semantic worker failure. */
 export const javaScriptWorkerStaticAnalysisSchema = z
   .strictObject({
-    parse_status: z.enum(["complete", "partial", "failed"]),
-    analysis_coverage: javaScriptStaticCoverageSchema.exactOptional(),
+    parse_status: z.enum([...knownCoverageStatusSchema.options, "failed"]),
+    analysis_coverage: javaScriptStaticCoverageSchema,
     routes: javaScriptRouteSourceFactsSchema.exactOptional(),
     parse_error_count: count,
     visited_ast_nodes: count,
@@ -441,6 +478,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
     ),
     vendors: strings,
     electron,
+    loaderCondition: z.string().min(1).exactOptional(),
     limitations: strings,
   })
   .transform((analysis) => ({
@@ -578,18 +616,27 @@ const coverage = z
       status: z.literal("complete"),
       omittedCount: z.literal(0),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("partial"),
       omittedCount: z.union([z.literal(0), z.null()]),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
     z.strictObject({
       status: z.literal("failed"),
       omittedCount: z.null(),
       resourceLimits: z.array(javaScriptSemanticResourceLimitSchema).optional(),
+      precision: javaScriptSemanticPrecisionSchema
+        .transform((value) => resolveJavaScriptSemanticPrecision(value))
+        .exactOptional(),
       widenedReturnedReferences: z.array(range).optional(),
     }),
   ])
@@ -690,7 +737,7 @@ const callable = z.strictObject({
   ),
   returnCoverage: z.strictObject({
     retainedCount: count,
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     omittedCount: z.union([z.literal(0), z.null()]),
   }),
 });

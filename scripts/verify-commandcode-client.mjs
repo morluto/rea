@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,7 @@ import {
 } from "./verify/clients/javascript-fixture.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createOpenAiModelFixture } from "./verify/clients/model-fixture.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 assert(
   process.platform !== "win32",
@@ -39,7 +40,10 @@ assert(
   "Usage: verify-commandcode-client.mjs [chat|call]",
 );
 const verifier = createVerifierRun();
-const lab = await mkdtemp(join(account, "rea-commandcode-client-"));
+const { path: lab } = await VerifierFixture.keepArtifacts({
+  prefix: "rea-commandcode-client-",
+  parent: account,
+});
 const workspace = join(lab, "workspace");
 const target = join(workspace, "fixture α测试");
 const profile = join(account, ".commandcode");

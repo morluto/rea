@@ -1,78 +1,109 @@
 import type { InspectSignalDecodersInput } from "../domain/signals/signalDecoders.js";
 import { literalSubstringPredicate } from "../domain/analysisSearch.js";
+import { decodeLimit } from "../domain/parseFailure.js";
 
-export class DecoderDiscoveryBudgetError extends Error {}
+/** The ParseFailure format of the `sigrok-cli` decoder catalog. */
+export const DECODER_CATALOG_FORMAT = "sigrok-decoder-catalog";
+const DECODER_CATALOG_LINES = 65536;
 
 const copyText = (value: string): string =>
   Buffer.from(value, "utf16le").toString("utf16le");
+
+/** Keep the budget refusal ahead of grammar checking. The final empty line counts here. */
+const assertDiscoveryLineBudget = (text: string): void => {
+  let separators = 0;
+  let end = text.indexOf("\n");
+  while (end >= 0) {
+    if (++separators >= DECODER_CATALOG_LINES)
+      throw decodeLimit(
+        DECODER_CATALOG_FORMAT,
+        "Decoder discovery exceeds the 65,536-line representation budget",
+        { name: "line_budget", maximum: DECODER_CATALOG_LINES },
+      );
+    end = text.indexOf("\n", end + 1);
+  }
+};
+
+function* discoveryLines(text: string): Generator<string, void> {
+  let start = 0;
+  while (start < text.length) {
+    const newline = text.indexOf("\n", start);
+    if (newline < 0) {
+      yield text.slice(start);
+      return;
+    }
+    const end = text.charCodeAt(newline - 1) === 13 ? newline - 1 : newline;
+    yield text.slice(start, end);
+    start = newline + 1;
+  }
+}
 
 /** Parse only the 0.7.2 catalog grammar; help remains literal producer text. */
 export const parseDecoderDiscovery = (
   text: string,
   input: InspectSignalDecodersInput,
 ) => {
-  // Bound record-object expansion before splitting the already byte-bounded output.
-  // 65,536 records leaves an 8 MiB budget at 128 bytes of bookkeeping per record.
-  let separators = 0;
-  for (const character of text)
-    if (character === "\n" && ++separators >= 65536)
-      throw new DecoderDiscoveryBudgetError(
-        "Decoder discovery exceeds the 65,536-line representation budget",
-      );
-  const lines = text.split(/\r?\n/u);
-  if (lines.at(-1) === "") lines.pop();
+  assertDiscoveryLineBudget(text);
   const matches = literalSubstringPredicate(input.query, false);
   const decoders: { id: string; name: string }[] = [];
   const help: { line_number: number; text: string }[] = [];
-  if (input.decoder === null) {
-    const start = lines.indexOf("Supported protocol decoders:");
-    if (start < 0) throw new Error("sigrok decoder catalog heading is missing");
+  let examined = 0;
+  let matching = 0;
+  // Copy selected strings so a page does not retain the complete producer output.
+  const select = (): boolean => {
+    const index = matching++ - input.offset;
+    return index >= 0 && (input.limit === null || index < input.limit);
+  };
+  const lines = discoveryLines(text);
+  const catalog = input.decoder === null;
+  if (catalog) {
+    const heading = findCatalogHeading(lines);
+    if (!heading) throw new Error("sigrok decoder catalog heading is missing");
     const seen = new Set<string>();
-    for (const line of lines.slice(start + 1)) {
-      if (line === "") continue;
-      const match = /^ {2}([a-zA-Z0-9_+-]+) +(.+)$/u.exec(line);
-      if (
-        match?.[1] === undefined ||
-        match[2] === undefined ||
-        seen.has(match[1])
-      )
+    for (let next = lines.next(); !next.done; next = lines.next()) {
+      if (next.value === "") continue;
+      const match = /^ {2}([a-zA-Z0-9_+-]+) +(.+)$/u.exec(next.value);
+      const id = match?.[1];
+      const name = match?.[2];
+      if (id === undefined || name === undefined || seen.has(id))
         throw new Error("Malformed or duplicate sigrok decoder catalog record");
-      seen.add(match[1]);
-      decoders.push({ id: match[1], name: match[2] });
+      seen.add(id);
+      examined += 1;
+      if ((matches(id) || matches(name)) && select())
+        decoders.push({ id: copyText(id), name: copyText(name) });
     }
-    if (decoders.length === 0)
+    if (examined === 0)
       throw new Error("sigrok returned an empty decoder catalog");
   } else {
-    if (lines[0] !== `ID: ${input.decoder}`)
+    const heading = lines.next();
+    if (heading.done || heading.value !== `ID: ${input.decoder}`)
       throw new Error("Decoder help does not identify the selected decoder");
-    lines.forEach((line, i) => help.push({ line_number: i + 1, text: line }));
+    for (
+      let next: IteratorResult<string, void> = heading;
+      !next.done;
+      next = lines.next()
+    ) {
+      examined += 1;
+      if (matches(next.value) && select())
+        help.push({ line_number: examined, text: copyText(next.value) });
+    }
   }
-  const catalog = input.decoder === null;
-  const matching = catalog
-    ? decoders.filter(({ id, name }) => matches(id) || matches(name))
-    : help.filter(({ text: line }) => matches(line));
-  const start = Math.min(input.offset, matching.length);
-  const count = Math.min(
-    input.limit ?? matching.length,
-    matching.length - start,
-  );
-  // Keep retained pages independent of the complete producer-output allocation.
-  const page = matching
-    .slice(start, start + count)
-    .map((record) =>
-      "id" in record
-        ? { id: copyText(record.id), name: copyText(record.name) }
-        : { line_number: record.line_number, text: copyText(record.text) },
-    );
+  const returned = decoders.length + help.length;
   return {
-    decoders: catalog ? page : [],
-    help_lines: catalog ? [] : page,
+    decoders,
+    help_lines: help,
     output_window: {
       unit: catalog ? "decoders" : "help-lines",
-      examined: catalog ? decoders.length : help.length,
-      matching: matching.length,
-      returned: page.length,
-      has_more: start + count < matching.length,
+      examined,
+      matching,
+      returned,
+      has_more: matching - input.offset > returned,
     },
   };
+};
+
+const findCatalogHeading = (lines: Iterator<string, void>): boolean => {
+  for (let next = lines.next(); !next.done; next = lines.next())
+    if (next.value === "Supported protocol decoders:") return true;
+  return false;
 };

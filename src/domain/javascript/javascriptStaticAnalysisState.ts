@@ -1,7 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
-import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 
@@ -22,6 +22,7 @@ import type {
   ElectronNativeAddonBindingFinding,
   ElectronSenderValidationFinding,
   ElectronProtocolFinding,
+  ElectronDynamicCodeFinding,
   ElectronUtilityProcessFinding,
   ElectronWindowConstructor,
 } from "./electronStaticAnalysisTypes.js";
@@ -58,7 +59,7 @@ export interface JavaScriptAnalysisAccumulator {
   )[];
   readonly appPathChanges: LocatedJavaScriptFinding<ElectronAppPathChangeFinding>[];
   electronCallPaths?: readonly ElectronCallPath[];
-  electronCallPathLimitReached?: boolean;
+  electronCallPathLimits?: Set<"wrapper_visits" | "wrapper_depth">;
   readonly references: LocatedJavaScriptFinding<JavaScriptStaticReference>[];
   readonly endpoints: LocatedJavaScriptFinding<JavaScriptStaticEndpoint>[];
   /** Target and receiver identities awaiting the shared mutation index. */
@@ -87,6 +88,7 @@ export interface JavaScriptAnalysisAccumulator {
   }[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
+  readonly pendingIpcChannels: Map<number, t.Node>;
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
@@ -95,6 +97,8 @@ export interface JavaScriptAnalysisAccumulator {
     | t.AssignmentExpression
   )[];
   readonly protocols: LocatedJavaScriptFinding<ElectronProtocolFinding>[];
+  readonly dynamicCode: LocatedJavaScriptFinding<ElectronDynamicCodeFinding>[];
+  readonly pendingDynamicCode: (t.NewExpression | t.CallExpression)[];
   readonly moduleRangeIndex: JavaScriptModuleRangeIndex;
   /** Binding identities proven as third-parameter loaders of recovered factories. */
   readonly factoryRequireBindingIds: Set<string>;
@@ -130,7 +134,10 @@ export interface JavaScriptFindingContext {
   readonly expressionShapes: JavaScriptExpressionShapeResolver;
   readonly source: string;
   readonly accumulator: JavaScriptAnalysisAccumulator;
-  readonly vitePreloadDependencyTable: readonly (string | undefined)[] | null;
+  readonly vitePreloadDependencyTable: {
+    readonly helper: t.Node;
+    readonly dependencies: readonly (string | undefined)[];
+  } | null;
   readonly openReceiverFacts?: ReadonlyMap<number, JavaScriptOpenReceiverFact>;
   /** Proven Electron export path segments by root offset. */
   readonly electronBindings?: ReadonlyMap<number, readonly string[]>;
@@ -196,11 +203,14 @@ export const createJavaScriptAnalysisAccumulator = (
   pendingBrowserWindows: [],
   contextBridgeApis: [],
   ipc: [],
+  pendingIpcChannels: new Map(),
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],
   pendingNativeAddonBindings: [],
   protocols: [],
+  dynamicCode: [],
+  pendingDynamicCode: [],
   moduleRangeIndex: new JavaScriptModuleRangeIndex(sourceLength),
   factoryRequireBindingIds: new Set(),
   seen: new Set(),

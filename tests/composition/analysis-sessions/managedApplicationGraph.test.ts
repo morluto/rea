@@ -1,4 +1,6 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
+import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 
 import { projectManagedApplicationGraphEvidence } from "../../../src/application/managed/ManagedApplicationGraphService.js";
 import {
@@ -21,6 +23,11 @@ import {
   buildManagedPeFixture,
   managedPeFixtureTarget,
 } from "../../../src/dotnet/ManagedPe.fixture.js";
+
+import {
+  managedStringsAmbiguity,
+  STRING_AMBIGUITY_MVID,
+} from "../../fixtures/managedStringsAmbiguity.js";
 
 /** Tiny-format CIL method body. */
 const tinyIl = (il: readonly number[]): Buffer =>
@@ -49,6 +56,25 @@ const memberGraph = (
   const graph = parseJavaScriptApplicationGraph(result.graph);
   return { members, memberEvidence, result, graph };
 };
+
+it("keeps an unnamed Module node bound to its independently observed MVID", () => {
+  const { bytes } = managedStringsAmbiguity("forward");
+  const { graph } = memberGraph(bytes);
+  expect(
+    graph.nodes.find(({ kind }) => kind === "managed-module"),
+  ).toMatchObject({
+    observations: [
+      {
+        label: null,
+        properties: {
+          name: null,
+          mvid: STRING_AMBIGUITY_MVID,
+          token: "0x00000001",
+        },
+      },
+    ],
+  });
+});
 
 const createManagedInteropEvidence = () => {
   const bytes = buildManagedPeFixture({
@@ -100,32 +126,33 @@ describe("managed application graph MethodDef scope", () => {
     const full = memberGraph(bytes);
     expect(full.members.method_rows).toEqual({ offset: 0, count: 3, total: 3 });
     expect(full.result.coverage.status).toBe("complete-within-inputs");
-    for (const options of [
-      { methodLimit: 0 },
-      { methodOffset: 1, methodLimit: 1 },
-      { methodOffset: 3 },
-    ]) {
+    for (const [offset, count, options] of [
+      [0, 0, { methodLimit: 0 }],
+      [1, 1, { methodOffset: 1, methodLimit: 1 }],
+      [3, 0, { methodOffset: 3 }],
+    ] as const) {
       const page = memberGraph(bytes, options);
       expect(page.members.coverage.state).toBe("complete");
-      expect(page.result.summary.methods).toBe(page.members.method_rows!.count);
+      expect(page.members.method_rows).toEqual({ offset, count, total: 3 });
+      expect(page.result.summary.methods).toBe(count);
       expect(page.result.coverage.status).toBe("partial");
       expect(page.result.limitations).toContain(
-        `Managed member Evidence examined MethodDef rows at offset ${page.members.method_rows!.offset} with count ${page.members.method_rows!.count} of 3 total rows; methods outside that interval and their relations are omitted, not absent.`,
+        `Managed member Evidence examined MethodDef rows at offset ${offset} with count ${count} of 3 total rows; methods outside that interval and their relations are omitted, not absent.`,
       );
     }
   });
 
-  it("keeps unrecorded legacy MethodDef scope unknown", () => {
+  it("keeps an unrecorded MethodDef scope unknown in historical member Evidence", () => {
     const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const binary = managedPeFixtureTarget(bytes);
-    const members = inspectManagedMembersBytes(bytes, binary);
-    const { method_rows: _methodRows, ...legacy } = members;
+    const { unresolved_definitions: _projection, ...historical } =
+      inspectManagedMembersBytes(bytes, binary);
     const evidence = createEvidence(binary, MANAGED_STATIC_PROVIDER, {
       operation: "inspect_managed_members",
       parameters: {},
-      result: legacy,
+      result: { ...historical, method_rows: null },
       rawResult: null,
-      limitations: members.limitations,
+      limitations: historical.limitations,
     });
     const projection = projectManagedApplicationGraphEvidence({
       managed_members: evidence,
@@ -141,6 +168,38 @@ describe("managed application graph MethodDef scope", () => {
         /MethodDef row scope.*methods.*relations.*unknown/iu,
       ),
     );
+  });
+});
+
+describe("managed application graph cancellation", () => {
+  it("stops resolving retained managed sources when the caller cancels mid-request", () => {
+    const members = MANAGED_APPLICATION_GRAPH_EXAMPLE.managed_members;
+    const controller = new AbortController();
+    const reason = { request: "cancel managed graph projection" };
+    const looked: string[] = [];
+    const result = projectManagedApplicationGraphEvidence(
+      {
+        managed_members: {
+          kind: "retained-evidence",
+          evidence_id: members.evidence_id,
+        },
+        // Never read: cancellation is observed before this lookup.
+        managed_native_boundaries: {
+          kind: "retained-evidence",
+          evidence_id: `ev_${"b".repeat(64)}`,
+        },
+      },
+      (id) => {
+        looked.push(id);
+        controller.abort(reason);
+        return id === members.evidence_id ? members : undefined;
+      },
+      { signal: controller.signal },
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(looked).toEqual([members.evidence_id]);
   });
 });
 
@@ -318,7 +377,7 @@ it("preserves only a managed graph's matching subject in feature traces", () => 
     ...query,
   });
   if (!foreignTrace.ok) throw foreignTrace.error;
-  expect(foreignTrace.value.evidence.subject).toBeNull();
+  expect(foreignTrace.value.evidence.subject.identity.kind).toBe("unknown");
   const contradictory = createEvidence(
     { path: "/other.exe", sha256: "f".repeat(64), format: "pe" },
     parsed.provider,
@@ -350,6 +409,29 @@ it("preserves only a managed graph's matching subject in feature traces", () => 
       ]),
     },
   });
+});
+
+it("names the graph after a later file subject when the artifact subject is unknown", () => {
+  const { artifactEvidence, memberEvidence } = createManagedInteropEvidence();
+  const unboundArtifact = createEvidence(
+    unknownTarget("not-observed"),
+    artifactEvidence.provider,
+    {
+      operation: artifactEvidence.operation,
+      parameters: artifactEvidence.parameters,
+      result: artifactEvidence.normalized_result,
+      rawResult: null,
+      limitations: artifactEvidence.limitations,
+    },
+  );
+  const projected = projectManagedApplicationGraphEvidence({
+    managed_artifact: unboundArtifact,
+    managed_members: memberEvidence,
+  });
+  if (!projected.ok) throw projected.error;
+  expect(parseEvidence(projected.value).subject).toEqual(
+    memberEvidence.subject,
+  );
 });
 
 describe("managed application graph request", () => {
@@ -468,36 +550,16 @@ describe("managed application graph identity facts", () => {
   });
 
   it("projects a module whose metadata name is empty without a label", () => {
-    const bytes = buildManagedPeFixture({ ilBody: Buffer.from([0x06, 0x2a]) });
+    const bytes = buildManagedPeFixture({ ilBody: tinyIl([0x2a]) });
     const control = inspectManagedMembersBytes(
       bytes,
-      managedPeFixtureTarget(bytes, "/fixture/EmptyModuleName.dll"),
+      managedPeFixtureTarget(bytes),
     );
     if (control.module === null) throw new Error("Expected a Module row");
     // Point the Module row's Name at the string heap's empty entry.
     bytes.writeUInt16LE(0, control.module.row_offset + 2);
-    const binary = managedPeFixtureTarget(
-      bytes,
-      "/fixture/EmptyModuleName.dll",
-    );
-    const members = inspectManagedMembersBytes(bytes, binary);
+    const { members, graph } = memberGraph(bytes);
     expect(members.module?.name).toBe("");
-    const projected = projectManagedApplicationGraphEvidence({
-      managed_members: createEvidence(binary, MANAGED_STATIC_PROVIDER, {
-        operation: "inspect_managed_members",
-        parameters: {},
-        result: members,
-        rawResult: null,
-        limitations: members.limitations,
-        locations: [{ kind: "artifact-path", path: binary.path }],
-      }),
-    });
-    if (!projected.ok) throw projected.error;
-    const graph = parseJavaScriptApplicationGraph(
-      managedApplicationGraphResultSchema.parse(
-        parseEvidence(projected.value).normalized_result,
-      ).graph,
-    );
     expect(
       graph.nodes.find(({ kind }) => kind === "managed-module")
         ?.observations[0],
@@ -523,25 +585,29 @@ it("normalizes MVID casing for node identity while preserving observed values", 
   const uppercaseMvid = members.module.mvid?.toUpperCase();
   if (uppercaseMvid === undefined || uppercaseMvid === null)
     throw new Error("Expected fixture module MVID");
-  const uppercaseMembers = createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
-    operation: "inspect_managed_members",
-    parameters: {},
-    result: {
-      ...members,
-      module: {
-        ...members.module,
-        mvid: uppercaseMvid,
-        enc_id: null,
-        enc_base_id: null,
+  const uppercaseMembers = createEvidence(
+    unknownTarget("not-observed"),
+    MANAGED_STATIC_PROVIDER,
+    {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...members,
+        module: {
+          ...members.module,
+          mvid: uppercaseMvid,
+          enc_id: null,
+          enc_base_id: null,
+        },
+        identity_scope: {
+          ...members.identity_scope,
+          requires_mvid: uppercaseMvid,
+        },
       },
-      identity_scope: {
-        ...members.identity_scope,
-        requires_mvid: uppercaseMvid,
-      },
+      rawResult: null,
+      limitations: members.limitations,
     },
-    rawResult: null,
-    limitations: members.limitations,
-  });
+  );
   const baseline = projectManagedApplicationGraphEvidence({
     managed_members: memberEvidence,
     managed_native_boundaries: boundaryEvidence,
@@ -586,7 +652,7 @@ describe("managed application graph module identity consistency", () => {
     );
     const conflictingMvid = "ffffffff-ffff-ffff-ffff-ffffffffffff";
     const conflictingBoundaries = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_native_boundaries",
@@ -626,7 +692,7 @@ describe("managed application graph module identity consistency", () => {
     if (members.module === null)
       throw new Error("Expected fixture module identity");
     const conflictingMembers = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -664,7 +730,7 @@ describe("managed application graph token scope", () => {
     );
     const wrongMvidValue = "ffffffff-ffff-ffff-ffff-ffffffffffff";
     const wrongMvidEvidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -681,7 +747,7 @@ describe("managed application graph token scope", () => {
       },
     );
     const wrongArtifactEvidence = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -739,7 +805,7 @@ describe("managed application graph token scope", () => {
         ? { ...members.identity_scope, requires_mvid: null }
         : members.identity_scope;
     const inconsistentMembers = createEvidence(
-      undefined,
+      unknownTarget("not-observed"),
       MANAGED_STATIC_PROVIDER,
       {
         operation: "inspect_managed_members",
@@ -771,25 +837,29 @@ describe("unknown managed application graph token scope", () => {
     const boundaries = managedNativeBoundaryInspectionSchema.parse(
       parseEvidence(boundaryEvidence).normalized_result,
     );
-    const unknownMembers = createEvidence(undefined, MANAGED_STATIC_PROVIDER, {
-      operation: "inspect_managed_members",
-      parameters: {},
-      result: {
-        ...members,
-        module:
-          members.module === null
-            ? null
-            : {
-                ...members.module,
-                mvid: null,
-                enc_id: null,
-                enc_base_id: null,
-              },
-        identity_scope: { ...members.identity_scope, requires_mvid: null },
+    const unknownMembers = createEvidence(
+      unknownTarget("not-observed"),
+      MANAGED_STATIC_PROVIDER,
+      {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: {
+          ...members,
+          module:
+            members.module === null
+              ? null
+              : {
+                  ...members.module,
+                  mvid: null,
+                  enc_id: null,
+                  enc_base_id: null,
+                },
+          identity_scope: { ...members.identity_scope, requires_mvid: null },
+        },
+        rawResult: null,
+        limitations: members.limitations,
       },
-      rawResult: null,
-      limitations: members.limitations,
-    });
+    );
 
     const projected = projectManagedApplicationGraphEvidence({
       managed_members: unknownMembers,
@@ -882,6 +952,85 @@ describe("managed application graph coverage", () => {
       omitted_count: null,
       limits: [],
     });
+    const complete = memberGraph(
+      buildManagedPeFixture({ ilBody: tinyIl([0x2a]) }),
+    );
+    for (const [graph, status, evidenceId] of [
+      [parserPartialResult.graph, "partial", parserPartialEvidence.evidence_id],
+      [complete.graph, "complete", complete.memberEvidence.evidence_id],
+    ] as const) {
+      const expected = {
+        status,
+        truncated: false,
+        omitted_count: status === "partial" ? null : 0,
+        limits: [],
+      };
+      for (const kind of [
+        "managed-type",
+        "managed-method",
+        "managed-field",
+      ] as const) {
+        const nodes = graph.nodes.filter((node) => node.kind === kind);
+        expect(nodes.length).toBeGreaterThan(0);
+        for (const node of nodes) {
+          expect(node.observations.length).toBeGreaterThan(0);
+          for (const observation of node.observations) {
+            expect(observation.evidence.coverage).toEqual(expected);
+            expect(observation.evidence.evidence_ids).toContain(evidenceId);
+          }
+        }
+        const ids = new Set(nodes.map(({ node_id }) => node_id));
+        const contains = graph.edges.filter(
+          (edge) =>
+            edge.relation === "contains" && ids.has(edge.target_node_id),
+        );
+        expect(contains).toHaveLength(nodes.length);
+        for (const edge of contains) {
+          expect(edge.evidence.coverage).toEqual(expected);
+          expect(edge.evidence.evidence_ids).toContain(evidenceId);
+        }
+      }
+    }
+  });
+
+  it("reports an unavailable source as unknown, not partial", () => {
+    const bytes = buildManagedPeFixture();
+    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
+    const members = inspectManagedMembersBytes(bytes, binary);
+    const evidence = (state: "partial" | "unavailable") =>
+      createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+        operation: "inspect_managed_members",
+        parameters: {},
+        result: { ...members, coverage: { state, issues: [] } },
+        rawResult: null,
+        limitations: members.limitations,
+      });
+    const project = (state: "partial" | "unavailable") => {
+      const projection = projectManagedApplicationGraphEvidence({
+        managed_members: evidence(state),
+      });
+      if (!projection.ok) throw new Error("projection failed");
+      return managedApplicationGraphResultSchema.parse(
+        parseEvidence(projection.value).normalized_result,
+      );
+    };
+
+    const unavailable = project("unavailable");
+    expect(unavailable.coverage).toEqual({ status: "unknown" });
+    expect(unavailable.graph.coverage).toEqual({
+      status: "unknown",
+      truncated: false,
+      omitted_count: null,
+      limits: [],
+    });
+    expect(unavailable.limitations).toContainEqual(
+      expect.stringMatching(/managed Evidence record is unavailable/iu),
+    );
+    expect(unavailable.limitations).not.toContainEqual(
+      expect.stringMatching(/partial coverage/iu),
+    );
+    // A known gap alone stays partial.
+    expect(project("partial").coverage).toEqual({ status: "partial" });
   });
 });
 
@@ -924,23 +1073,6 @@ describe("managed application graph type selection", () => {
     expect(result.limitations).not.toContainEqual(
       expect.stringMatching(/managed Evidence.*partial coverage/iu),
     );
-  });
-
-  it("accepts member Evidence recorded before type selection existed", () => {
-    // Only in-module relations, so nothing else makes the graph partial.
-    const bytes = buildManagedPeFixture({
-      ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),
-    });
-    const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedInterop.exe");
-    const { selection: _selection, ...legacy } = inspectManagedMembersBytes(
-      bytes,
-      binary,
-    );
-
-    expect(managedMemberInspectionSchema.parse(legacy).selection).toBeNull();
-    expect(project(legacy, bytes).coverage).toMatchObject({
-      status: "complete-within-inputs",
-    });
   });
 });
 
@@ -1052,19 +1184,12 @@ describe("managed call and field-access relations", () => {
         /inspected module.*omitted: 2 member-reference, 2 function-pointer.*3 recursive self-call/iu,
       ),
     );
-  });
 
-  it("reads graph Evidence projected before relation counters existed", () => {
-    const { result } = memberGraph(relationsFixture());
-    const {
-      calls: _calls,
-      field_accesses: _fieldAccesses,
-      ...summary
-    } = result.summary;
-
+    const { calls: _calls, ...summary } = result.summary;
     expect(
-      managedApplicationGraphResultSchema.parse({ ...result, summary }).summary,
-    ).toMatchObject({ calls: null, field_accesses: null });
+      managedApplicationGraphResultSchema.safeParse({ ...result, summary })
+        .error?.issues[0]?.path,
+    ).toEqual(["summary", "calls"]);
   });
 
   it("counts relations whose endpoints a type selection omitted", () => {

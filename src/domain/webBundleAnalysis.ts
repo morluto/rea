@@ -1,11 +1,21 @@
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  deadlineParameterLimit,
+} from "./analysisResourceLimits.js";
+import type { AnalysisControlLimit } from "./analysisSettings.js";
+import { analysisResultLimitSchema } from "./analysisSettingDefinitions.js";
+import { javaScriptSemanticPrecisionSchema } from "./javascript/javascriptSemanticPrecision.js";
+import { javaScriptRefusedPhaseSchema } from "./javascript/javascriptSemanticWorkAllowance.js";
+import { fetchedSourceMapLimitsSchema } from "./sourceMapLimits.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema, coverageStatusSchema } from "./coverage.js";
 import { browserExclusionSchema } from "./browserCompleteness.js";
 import { webPageInspectionSchema } from "./browserObservationSchemas.js";
 import { javaScriptRouteInventorySchema } from "./javascript/javascriptRouteInventory.js";
 
 import {
-  MAX_BROWSER_DEADLINE_MS,
   browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
   browserDeadlineRetry,
   noRuntimeOverrideSentence,
   optionalBrowserDeadlineMs,
@@ -33,14 +43,24 @@ export const DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS = 30_000;
 
 const webBundleHeapDescription = `Heap phase: maximum V8 old-space for the isolated inert-script analyzer, in MiB (default ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}, range ${String(MIN_WEB_BUNDLE_HEAP_MB)}..${String(MAX_WEB_BUNDLE_HEAP_MB)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)} and applies on the next call. This is not a total process RSS limit, not analysis_timeout_ms, and not total_analysis_timeout_ms. Bun ignores V8 flags; Windows Bun uses an owned process commit limit plus a 512 MiB runtime reserve, while other Bun hosts have no enforced memory limit. Raising max_heap_mb does not raise the fixed worker protocol or result byte budgets.`;
 
-const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
+const webBundleScriptTimeoutDescription = `Per-script deadline phase: maximum startup, analysis and result transfer time for one captured script, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)}. deadlineExpired for one script is not total_analysis_timeout_ms. A per-script value above the effective total is rejected. Timed-out scripts are explicit unknowns and other scripts may still be analyzed. Applies on the next call.`;
 
-const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_BROWSER_DEADLINE_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
+const webBundleTotalTimeoutDescription = `Total analysis deadline phase: maximum time for all captured-script analysis, in milliseconds (default ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}, range 1..${String(MAX_NODE_TIMER_DELAY_MS)}). Omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch. A per-script timeout above this total is rejected. Unstarted scripts remain explicit unknowns. Applies on the next call.`;
 
 /** Capture-and-analyze input with optional source-map fetching. */
 export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
   .safeExtend({
     fetch_source_maps: z.boolean().default(false),
+    semantic_precision: javaScriptSemanticPrecisionSchema
+      .exactOptional()
+      .describe(
+        "Per-script semantic evaluator budgets; omitted fields preserve defaults. Independent of worker memory, deadlines and reply budgets.",
+      ),
+    source_map_limits: fetchedSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Source-map fetch/representation and decoder admission for this call. Omitted fields keep existing defaults; no restart required.",
+      ),
     max_heap_mb: z
       .number()
       .int()
@@ -55,10 +75,17 @@ export const analyzeWebBundleInputSchema = inspectWebPageWithSourceInputSchema
       webBundleTotalTimeoutDescription,
     ),
     source_map_fetch_timeout_ms: optionalBrowserDeadlineMs(
-      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. A fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Does not raise the fixed 64 MiB response budget or the source-map decode deadline. The response budget has no runtime override.`,
+      `Source-map fetch deadline in milliseconds (default ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)}). Omitted means ${String(DEFAULT_SOURCE_MAP_FETCH_TIMEOUT_MS)} and applies on the next fetch. After response cleanup completes, a fetch overrun is an item limitation (fetch_failed), not a thrown analysis timeout. Pending or failed response cleanup is reported as an error with its retained owner. Response/representation and decoder budgets are independent source_map_limits fields.`,
     ),
   })
   .superRefine((input, context) => {
+    if (input.source_map_limits !== undefined && !input.fetch_source_maps)
+      context.addIssue({
+        code: "custom",
+        path: ["source_map_limits"],
+        message:
+          "source_map_limits requires fetch_source_maps: true; inspection does not fetch maps unless explicitly selected.",
+      });
     const perScript =
       input.analysis_timeout_ms ?? DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS;
     const total =
@@ -78,17 +105,27 @@ export type AnalyzeWebBundleInput = z.infer<typeof analyzeWebBundleInputSchema>;
 /** Per-script deadlineExpired text. It is not the total analysis deadline. */
 export const webBundleScriptTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms per-script deadline (deadlineExpired) for analysis_timeout_ms. This is not total_analysis_timeout_ms and not the MCP client deadline.`,
-  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS, "--analysis-timeout-ms")} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
+  limit: deadlineParameterLimit(
+    "analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_SCRIPT_TIMEOUT_MS)} Keep it less than or equal to total_analysis_timeout_ms (omitted means ${String(DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)}); a per-script timeout above the total is rejected. ${browserDeadlineRetry} analysis_timeout_ms does not raise max_heap_mb, total_analysis_timeout_ms, or the fixed worker protocol and result byte budgets.`,
 });
 
 /** Total captured-script deadlineExpired text. */
 export const webBundleTotalTimeoutRecovery = (
   timeoutMs: number,
-): { readonly userMessage: string; readonly remediationAction: string } => ({
+): BrowserDeadlineRecovery => ({
   userMessage: `analyze_web_bundle reached its ${String(timeoutMs)} ms total captured-script analysis deadline (deadlineExpired) for total_analysis_timeout_ms. This is not the per-script analysis_timeout_ms, not capture, and not source-map fetch.`,
-  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS, "--total-analysis-timeout-ms")} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
+  limit: deadlineParameterLimit(
+    "total_analysis_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("total_analysis_timeout_ms", timeoutMs, DEFAULT_WEB_BUNDLE_TOTAL_TIMEOUT_MS)} A per-script analysis_timeout_ms above the total is rejected. ${browserDeadlineRetry} total_analysis_timeout_ms does not raise analysis_timeout_ms, max_heap_mb, source_map_fetch_timeout_ms, or the fixed worker byte budgets.`,
 });
 
 /**
@@ -136,7 +173,7 @@ const webBundleHeapRange = (): string =>
 
 const webBundleHeapIncrease = (heapMb: number): string =>
   heapMb < MAX_WEB_BUNDLE_HEAP_MB
-    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}), or use --max-heap-mb on the CLI.`
+    ? `Increase max_heap_mb above ${String(heapMb)} (integer MiB from ${String(MIN_WEB_BUNDLE_HEAP_MB)} to ${String(MAX_WEB_BUNDLE_HEAP_MB)}; omitted means ${String(DEFAULT_WEB_BUNDLE_HEAP_MB)}).`
     : `max_heap_mb is already at the maximum ${String(MAX_WEB_BUNDLE_HEAP_MB)} MiB; do not increase it further.`;
 
 const webBundleHeapDoesNotRaise =
@@ -158,6 +195,26 @@ export const webBundleHeapExhaustedReason = (
         : `Owned web analyzer ran out of memory before its ${String(exhaustion.processMemoryLimitBytes)}-byte process commit limit was reported as reached. That configured limit is max_heap_mb ${String(exhaustion.heapMb)} MiB plus a 512 MiB Bun runtime reserve (${range}). Bun ignores the V8 old-space flag, so this exit is not V8 old-space exhaustion.`;
   }
 };
+
+/**
+ * The per-call control of an exhaustion that a larger `max_heap_mb` raises,
+ * or undefined when that allowance did not stop the analyzer.
+ */
+export const webBundleHeapLimit = (
+  exhaustion: WebBundleMemoryExhaustion,
+): AnalysisControlLimit | undefined =>
+  exhaustion.kind === "bun-allocation"
+    ? undefined
+    : {
+        control_kind: "parameter",
+        parameter: "max_heap_mb",
+        effective_value: exhaustion.heapMb,
+        unit: "MiB",
+        minimum: MIN_WEB_BUNDLE_HEAP_MB,
+        maximum: MAX_WEB_BUNDLE_HEAP_MB,
+        default_value: DEFAULT_WEB_BUNDLE_HEAP_MB,
+        applies_at: "next_call",
+      };
 
 export const webBundleHeapExhaustedRemediation = (
   exhaustion: WebBundleMemoryExhaustion,
@@ -233,6 +290,13 @@ const sourceLocationSchema = z.object({
   column: z.int().min(0).nullable(),
 });
 
+/** One source call whose endpoint is unknown, and the API it calls. */
+export const webBundleCallSiteSchema = z.object({
+  mechanism: z.string(),
+  location: sourceLocationSchema,
+});
+export type WebBundleCallSite = z.infer<typeof webBundleCallSiteSchema>;
+
 const basisSchema = z.object({
   script_key: z.string(),
   artifact_sha256: z.string().regex(/^[a-f0-9]{64}$/u),
@@ -245,25 +309,29 @@ const findingSchema = z.object({
   value: z.string(),
   mechanism: z.string(),
   location: sourceLocationSchema,
+  /** Present only when the same finding was merged across scripts. */
+  occurrences: z.int().min(1).exactOptional(),
+  /** Script keys that contained the finding, in first-occurrence order. */
+  script_keys: z.array(z.string()).exactOptional(),
 });
 
 const originalSourceSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   source: z.string().nullable(),
   artifact: webTextArtifactSchema.nullable(),
 });
 const originalModuleEdgeSchema = z.object({
-  // Historical observations omit this link to original_sources declarations.
-  declaration_index: z.int().min(0).optional(),
+  /** The original_sources declaration this edge was read from. */
+  declaration_index: z.int().min(0),
   from_source: z.string(),
   kind: z.enum(["static_import", "dynamic_import", "require"]),
   specifier: z.string(),
   resolved_source: z.string().nullable(),
 });
 const sourceMapMappingSchema = z.object({
-  source_index: z.int().min(0).optional(),
-  declaration_index: z.int().min(0).optional(),
+  source_index: z.int().min(0),
+  declaration_index: z.int().min(0),
   generated_line: z.int().min(1),
   generated_column: z.int().min(0),
   source: z.string().nullable(),
@@ -274,8 +342,8 @@ const sourceMapMappingSchema = z.object({
 const sourceMapContextShape = {
   script_key: z.string(),
   declared_url: z.string(),
-  // Older saved observations omit this field; current fetches emit string/null.
-  effective_url: z.string().nullable().optional(),
+  // Null when no response was observed within the approved origins.
+  effective_url: z.string().nullable(),
 };
 const parsedSourceMapShape = {
   artifact: webTextArtifactSchema,
@@ -305,10 +373,22 @@ const sourceMapSchema = z.union([
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,
-    status: z.enum(["fetch_failed", "invalid"]),
+    status: z.literal("fetch_failed"),
     artifact: z.null(),
-    /** Older observations omit this; completed bytes need it only when text is absent. */
+    /** Present only when the complete response body was read. */
     response_identity: responseIdentitySchema.exactOptional(),
+    original_sources: emptyArraySchema,
+    original_module_edges: emptyArraySchema,
+    mappings: emptyArraySchema,
+    limitation: z.string(),
+  }),
+  z.object({
+    ...sourceMapContextShape,
+    ...parsedSourceMapShape,
+    // A map is judged invalid only after its complete body was read.
+    status: z.literal("invalid"),
+    artifact: z.null(),
+    response_identity: responseIdentitySchema,
     original_sources: emptyArraySchema,
     original_module_edges: emptyArraySchema,
     mappings: emptyArraySchema,
@@ -417,9 +497,8 @@ export const webBundleAnalysisSchema = z.object({
   route_inventory: javaScriptRouteInventorySchema.exactOptional(),
   capture: z.object({
     target_url: z.string(),
-    // Older saved observations omit this field; current analyses retain the
-    // validated HTTP(S) target origin or null when no browser origin exists.
-    target_origin: recordedBrowserOriginSchema.nullable().optional(),
+    // The validated HTTP(S) target origin, or null when no browser origin exists.
+    target_origin: recordedBrowserOriginSchema.nullable(),
     scripts_observed: z.int().min(0),
     scripts_analyzed: z.int().min(0),
     source_artifacts: z.array(webTextArtifactSummarySchema),
@@ -461,10 +540,9 @@ export const webBundleAnalysisSchema = z.object({
             "Statically known own property names from the declared schema projection; a partial list may omit unresolved members.",
           ),
         schema_property_names_coverage: z
-          .enum(["complete", "partial", "unknown", "not_present"])
-          .optional()
+          .enum([...coverageStatusSchema.options, "not_present"])
           .describe(
-            "Coverage of the schema property-name projection. Missing means unknown for historical observations. Not a schema-validity result.",
+            "Coverage of the schema property-name projection. Not a schema-validity result.",
           ),
         trust: z.literal("page-declared-untrusted"),
         location: sourceLocationSchema,
@@ -490,10 +568,21 @@ export const webBundleAnalysisSchema = z.object({
       dimension: z.string(),
       reason: z.string(),
       affected_script_keys: z.array(z.string()),
+      /** The source calls this unknown is about, when it is about calls. */
+      call_sites: z.array(webBundleCallSiteSchema).exactOptional(),
+      /** The setting or request parameter that bounded these scripts, and how to change it. */
+      limit: analysisResultLimitSchema.exactOptional(),
+      remediation: z.string().exactOptional(),
+      /**
+       * The phase a work allowance refused for these scripts. Their parse
+       * status and text inferences remain; findings that read the phase's
+       * facts were not examined.
+       */
+      refused_phase: javaScriptRefusedPhaseSchema.exactOptional(),
     }),
   ),
   completeness: z.object({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     parsed_scripts: z.int().min(0),
     parse_failures: z.int().min(0),
     visited_ast_nodes: z.int().min(0),

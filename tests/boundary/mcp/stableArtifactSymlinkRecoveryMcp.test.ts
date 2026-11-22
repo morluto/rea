@@ -26,6 +26,10 @@ mcpTest.skipIf(process.platform === "win32")(
       for (const name of [
         "inspect_rust_binary",
         "inspect_elf_notes",
+        "inspect_native_initializers",
+        "inspect_binary_hardening",
+        "inspect_native_exports",
+        "inspect_apk_signature",
         "inspect_devicetree",
         "inspect_sqlite_database",
       ]) {

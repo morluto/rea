@@ -4,9 +4,9 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
 
 const AGENTENV_VERSION = "0.9.1431";
 const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
@@ -39,7 +39,7 @@ const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const checkout = resolve(dirname(entrypoint), "..");
 const run = createVerifierRun();
-const runtime = await PrivateRuntimeRoot.create({
+const runtime = await VerifierFixture.open({
   prefix: "rea-agentenv-verifier-",
 });
 const environment = Object.fromEntries(
@@ -51,7 +51,10 @@ const receipt = {};
 let knownContainers;
 let commands;
 try {
-  commands = await createPackageVerifierCommands({ workspace: runtime });
+  // The package command owner releases the fixture after its commands close.
+  commands = await createPackageVerifierCommands({
+    workspace: { path: runtime.path, close: () => runtime.release() },
+  });
   const version = await commands.exec(agentEnv, ["--version"], {
     env: environment,
     timeout: 10_000,
@@ -236,7 +239,7 @@ try {
       failures.push(cause);
     }
   try {
-    if (commands === undefined) await runtime.close();
+    if (commands === undefined) await runtime.release();
     else await commands.close();
   } catch (cause) {
     failures.push(cause);

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile, writeFile } from "node:fs/promises";
-import { expect, it as nativeTest, onTestFinished } from "vitest";
+import { describe, expect, it as nativeTest, onTestFinished, vi } from "vitest";
 import {
   createSqliteApplicationCollationFixture,
   createSqliteLongNameFixture,
@@ -681,6 +681,319 @@ it("samples above 1000 rows and safe integer limits within the byte budget", asy
   }
 });
 
+it("pages a rowid table in rowid order without repeating or dropping rows", async () => {
+  const path = await createDatabase(`CREATE TABLE items(value TEXT);
+    INSERT INTO items(value) VALUES ('a'), ('b'), ('c'), ('d'), ('e');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  expect(second.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 2,
+    returned_rows: 2,
+    truncated: true,
+    next_row_offset: 4,
+  });
+  const last = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "items",
+    row_limit: 2,
+    row_offset: second.rows?.next_row_offset ?? 0,
+  });
+  expect(last.rows).toMatchObject({
+    row_offset: 4,
+    returned_rows: 1,
+    truncated: false,
+    next_row_offset: null,
+  });
+  // Reading every page once must reproduce the table exactly: asserting only
+  // counts and offsets would pass even if a page repeated the first rows.
+  expect(
+    [first, second, last].flatMap((page) =>
+      (page.rows?.values ?? []).map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
+    ),
+  ).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
+});
+
+it.each(["UTF-16le", "UTF-16be"] as const)(
+  "orders a %s WITHOUT ROWID table by its decoded primary key",
+  async (encoding) => {
+    const path = await createDatabase(
+      `PRAGMA encoding='${encoding}'; CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID; INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`,
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "keyed",
+      row_limit: 20,
+    });
+    expect(result.rows).toMatchObject({ order: "primary_key" });
+    expect(
+      result.rows?.values.map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
+    ).toEqual([
+      ["1", "a"],
+      ["2", "b"],
+    ]);
+  },
+);
+
+it("orders by a free rowid spelling when a virtual generated column shadows one", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE generated(name TEXT, rowid TEXT GENERATED ALWAYS AS (name || '!') VIRTUAL);
+    INSERT INTO generated(name) VALUES ('b'), ('a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "generated",
+    columns: ["name"],
+    row_limit: 20,
+  });
+  // Rowid order is insertion order, which the generated expression reverses.
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["b"], ["a"]]);
+});
+
+it("does not decode an unselected malformed primary-key name on a rowid table", async () => {
+  // `key` is the declared primary key, but a rowid table orders by an alias, so
+  // its name never reaches ORDER BY. A selection that omits it must stay
+  // readable even when the stored name is not valid UTF-8.
+  const path = await createApplicationDatabase(
+    `CREATE TABLE wide("key" INTEGER PRIMARY KEY, label TEXT);
+     INSERT INTO wide("key", label) VALUES (1, 'a'), (2, 'b');`,
+    (bytes) => {
+      const marker = Buffer.from('"key"');
+      const offset = bytes.indexOf(marker);
+      if (offset < 0 || bytes.indexOf(marker, offset + 1) !== -1)
+        throw new Error("Expected unique authored key marker");
+      bytes[offset + 1] = 0xff;
+    },
+  );
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "wide",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"], ["b"]]);
+});
+
+it("orders a WITHOUT ROWID table by its primary key, including DESC direction and collation", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE ordered(k INTEGER, label TEXT COLLATE NOCASE, PRIMARY KEY(k DESC, label)) WITHOUT ROWID;
+    CREATE INDEX ordered_label ON ordered(label);
+    INSERT INTO ordered VALUES (1, 'b'), (3, 'a'), (2, 'c'), (3, 'd');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "ordered",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key", truncated: false });
+  // k DESC, then label in its declared NOCASE order for equal keys.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["3", "a"],
+    ["3", "d"],
+    ["2", "c"],
+    ["1", "b"],
+  ]);
+});
+
+it("keeps repeated primary-key terms in the order the index states them", async () => {
+  // PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC) is a valid composite
+  // key; collapsing the two terms to one column would advertise a unique order
+  // the key does not establish and read the offset window out of order.
+  const path = await createDatabase(`
+    CREATE TABLE repeated(a TEXT, PRIMARY KEY(a COLLATE BINARY, a COLLATE NOCASE DESC)) WITHOUT ROWID;
+    INSERT INTO repeated VALUES ('A'), ('a'), ('B');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "repeated",
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "primary_key" });
+  // BINARY order over the whole key: A (65), B (66), then a (97). Dropping the
+  // first term would sort by NOCASE DESC instead and put B first.
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["A"], ["B"], ["a"]]);
+});
+
+it("orders by the first rowid spelling the table leaves unshadowed", async () => {
+  // Declaring `rowid` makes that spelling resolve to the stored column, so
+  // ORDER BY rowid would sort by a non-unique value instead of the row id.
+  const path =
+    await createDatabase(`CREATE TABLE shadowed(rowid TEXT, value TEXT);
+    INSERT INTO shadowed(rowid, value) VALUES ('z', 'first'), ('a', 'second'), ('z', 'third');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  expect(
+    first.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["z", "first"],
+    ["a", "second"],
+  ]);
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  // The page continues in insertion order rather than re-sorting by the text
+  // column that shadows `rowid`.
+  expect(
+    second.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["z", "third"]]);
+});
+
+it("does not publish a next offset the row-offset rule would refuse", async () => {
+  const path = await createDatabase(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
+    order: "unspecified",
+    truncated: true,
+    next_row_offset: null,
+  });
+});
+
+it("pages by a declared rowid alias when all standard names are shadowed", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE keyed("item id" INTEGER PRIMARY KEY, "RoWiD" TEXT,
+      "_rowid_" TEXT, "OID" TEXT, label TEXT);
+    INSERT INTO keyed("item id", label) VALUES (20, 'later'), (4, 'first');
+  `);
+  const input = {
+    path,
+    table: "keyed",
+    schema_scope: "inventory" as const,
+    columns: ["label"],
+    row_limit: 1,
+  };
+  const first = inspectSqliteDatabaseSnapshot(path, input);
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    columns: ["label"],
+    values: [[{ type: "text", value: "first" }]],
+    truncated: true,
+    next_row_offset: 1,
+  });
+  const next = inspectSqliteDatabaseSnapshot(path, {
+    ...input,
+    row_offset: 1,
+  });
+  expect(next.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 1,
+    values: [[{ type: "text", value: "later" }]],
+    truncated: false,
+    next_row_offset: null,
+  });
+});
+
+it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID;
+    INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "keyed",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
+    order: "primary_key",
+    columns: ["label"],
+    truncated: true,
+    next_row_offset: 1,
+  });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"]]);
+});
+
+it.each(["", ", key INTEGER PRIMARY KEY DESC", ", key INT PRIMARY KEY"])(
+  "refuses a row offset for shadowed built-in names without a declared rowid alias (%s)",
+  async (keyDeclaration) => {
+    const path = await createDatabase(
+      `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT${keyDeclaration});
+       INSERT INTO shadowed(rowid, _rowid_, oid) VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+    );
+    expect(
+      inspectSqliteDatabaseSnapshot(path, { path, table: "shadowed" }).rows,
+    ).toMatchObject({
+      order: "unspecified",
+      row_offset: 0,
+      next_row_offset: null,
+    });
+    expect(() =>
+      inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "shadowed",
+        row_offset: 1,
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        reason: "row-offset",
+        message: expect.stringContaining("row_offset"),
+      }),
+    );
+  },
+);
+
 nativeTest.skipIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "rejects a runtime without native limits before querying the snapshot",
   async () => {
@@ -771,3 +1084,268 @@ it.each(["inventory", "selected_table", "database"] as const)(
     expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );
+
+describe("SQLite short-page truncation and reusable TextDecoder codecs", () => {
+  it("skips redundant truncation probes on short pages while classifying exact-fit pages accurately", async () => {
+    const path = await createDatabase(`
+      CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT);
+      INSERT INTO items (label) VALUES ('first'), ('second'), ('third');
+    `);
+    const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare");
+    const probeQueries = (): string[] =>
+      prepareSpy.mock.calls
+        .map(([sql]) => sql)
+        .filter((sql) => /^SELECT 1 FROM .* LIMIT 1 OFFSET \?$/.test(sql));
+
+    try {
+      prepareSpy.mockClear();
+      const shortPage = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 10,
+      });
+      expect(shortPage.rows).toMatchObject({
+        row_offset: 0,
+        row_limit: 10,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(shortPage.rows?.values).toHaveLength(3);
+      expect(probeQueries()).toHaveLength(0);
+
+      prepareSpy.mockClear();
+      const exactNonTruncated = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 3,
+      });
+      expect(exactNonTruncated.rows).toMatchObject({
+        row_limit: 3,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(exactNonTruncated.rows?.values).toHaveLength(3);
+      expect(probeQueries()).toHaveLength(1);
+
+      prepareSpy.mockClear();
+      const exactTruncated = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_limit: 2,
+      });
+      expect(exactTruncated.rows).toMatchObject({
+        row_limit: 2,
+        truncated: true,
+        next_row_offset: 2,
+      });
+      expect(exactTruncated.rows?.values).toHaveLength(2);
+      expect(probeQueries()).toHaveLength(1);
+
+      prepareSpy.mockClear();
+      const offsetShortPage = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        row_offset: 2,
+        row_limit: 5,
+      });
+      expect(offsetShortPage.rows).toMatchObject({
+        row_offset: 2,
+        row_limit: 5,
+        truncated: false,
+        next_row_offset: null,
+      });
+      expect(offsetShortPage.rows?.values).toHaveLength(1);
+      expect(probeQueries()).toHaveLength(0);
+    } finally {
+      prepareSpy.mockRestore();
+    }
+  });
+
+  it.each([
+    {
+      encoding: "UTF-8",
+      markerBytes: Buffer.from("schema-marker", "utf8"),
+      corruptBytes: [0xff],
+    },
+    {
+      encoding: "UTF-16le",
+      markerBytes: Buffer.from("schema-marker", "utf16le"),
+      corruptBytes: [0x00, 0xd8],
+    },
+    {
+      encoding: "UTF-16be",
+      markerBytes: Buffer.from("schema-marker", "utf16le").swap16(),
+      corruptBytes: [0xd8, 0x00],
+    },
+  ] as const)(
+    "resets shared %s fatal and lenient decoders cleanly after malformed schema errors",
+    async ({ encoding, markerBytes, corruptBytes }) => {
+      const badPath = await createDatabase(
+        `PRAGMA encoding='${encoding}'; CREATE TABLE records(value TEXT /*schema-marker*/);`,
+      );
+      const raw = await readFile(badPath);
+      const index = raw.indexOf(markerBytes);
+      expect(index).toBeGreaterThanOrEqual(0);
+      corruptBytes.forEach((byte, offset) => {
+        raw[index + offset] = byte;
+      });
+      await writeFile(badPath, raw);
+
+      expect(() =>
+        inspectSqliteDatabaseSnapshot(badPath, {
+          path: badPath,
+          schema_scope: "database",
+        }),
+      ).toThrowError(
+        expect.objectContaining({
+          reason: "format",
+          message: expect.stringContaining(`malformed ${encoding} text`),
+        }),
+      );
+
+      const goodPath = await createDatabase(`
+        PRAGMA encoding='${encoding}';
+        CREATE TABLE "t_é𝄞" (label TEXT);
+        INSERT INTO "t_é𝄞" VALUES ('\uFEFFalpha'), ('bravo𝄞');
+      `);
+      for (let pass = 0; pass < 2; pass++) {
+        const result = inspectSqliteDatabaseSnapshot(goodPath, {
+          path: goodPath,
+          table: "t_é𝄞",
+          schema_scope: "database",
+        });
+        expect(result.database_encoding).toBe(encoding);
+        expect(result.schema.tables).toMatchObject([{ name: "t_é𝄞" }]);
+        expect(
+          result.rows?.values.map((row) =>
+            row.map((entry) => ("value" in entry ? entry.value : entry.type)),
+          ),
+        ).toEqual([["\uFEFFalpha"], ["bravo𝄞"]]);
+      }
+    },
+  );
+});
+
+const encodeTextBytes = (
+  value: string,
+  encoding: "UTF-8" | "UTF-16le" | "UTF-16be",
+): Buffer => {
+  const bytes = Buffer.from(value, encoding === "UTF-8" ? "utf8" : "utf16le");
+  if (encoding === "UTF-16be") bytes.swap16();
+  return bytes;
+};
+
+describe("SQLite lenient text decoder isolation across cells", () => {
+  it.each([
+    {
+      encoding: "UTF-8",
+      incompleteHex: "61f09f",
+      secondMalformedHex: "ff00c0af62e282",
+      secondMalformedValue: "\uFFFD\0\uFFFD\uFFFDb\uFFFD",
+    },
+    {
+      encoding: "UTF-16le",
+      incompleteHex: "610000d8",
+      secondMalformedHex: "410042",
+      secondMalformedValue: "A\uFFFD",
+    },
+    {
+      encoding: "UTF-16be",
+      incompleteHex: "0061d800",
+      secondMalformedHex: "004100",
+      secondMalformedValue: "A\uFFFD",
+    },
+  ] as const)(
+    "flushes malformed %s cells before decoding subsequent BOM-prefixed cells",
+    async ({
+      encoding,
+      incompleteHex,
+      secondMalformedHex,
+      secondMalformedValue,
+    }) => {
+      const follow1 = "\uFEFFalphaé𝄞";
+      const follow2 = "\uFEFFbravo𝄞";
+      const path = await createDatabase(
+        `PRAGMA encoding='${encoding}'; CREATE TABLE items(id INTEGER PRIMARY KEY, first TEXT, pad INTEGER, second TEXT);`,
+      );
+      const writer = new DatabaseSync(path);
+      try {
+        writer
+          .prepare(
+            `INSERT INTO items VALUES (1, CAST(X'${incompleteHex}' AS TEXT), 0, ?)`,
+          )
+          .run(follow1);
+        if (encoding === "UTF-8") {
+          writer
+            .prepare(
+              `INSERT INTO items VALUES (2, CAST(X'${secondMalformedHex}' AS TEXT), 0, ?)`,
+            )
+            .run(follow2);
+        } else {
+          writer
+            .prepare("INSERT INTO items VALUES (2, 'AB', 258, ?)")
+            .run(follow2);
+        }
+      } finally {
+        writer.close();
+      }
+      if (encoding !== "UTF-8") {
+        const raw = await readFile(path);
+        const ab = encodeTextBytes("AB", encoding);
+        const follow2Bytes = encodeTextBytes(follow2, encoding);
+        const serialType = 13 + 2 * follow2Bytes.length;
+        const needle = Buffer.concat([
+          Buffer.from([0x05, 0x00, 0x15, 0x02, serialType]),
+          ab,
+          Buffer.from([0x01, 0x02]),
+          follow2Bytes,
+        ]);
+        const index = raw.indexOf(needle);
+        expect(index).toBeGreaterThanOrEqual(0);
+        expect(raw.indexOf(needle, index + 1)).toBe(-1);
+        // Shrink `first` from 4 bytes ('AB') to 3 odd bytes while expanding
+        // `pad` from a 2-byte to a 3-byte integer so the record size holds.
+        raw[index + 2] = 0x13;
+        raw[index + 3] = 0x03;
+        await writeFile(path, raw);
+      }
+
+      const result = inspectSqliteDatabaseSnapshot(path, {
+        path,
+        table: "items",
+        columns: ["first", "second"],
+      });
+      expect(result.database_encoding).toBe(encoding);
+      expect(result.rows?.values).toEqual([
+        [
+          {
+            type: "text",
+            value: "a\uFFFD",
+            bytes_hex: incompleteHex,
+            encoding,
+          },
+          {
+            type: "text",
+            value: follow1,
+            bytes_hex: encodeTextBytes(follow1, encoding).toString("hex"),
+            encoding,
+          },
+        ],
+        [
+          {
+            type: "text",
+            value: secondMalformedValue,
+            bytes_hex: secondMalformedHex,
+            encoding,
+          },
+          {
+            type: "text",
+            value: follow2,
+            bytes_hex: encodeTextBytes(follow2, encoding).toString("hex"),
+            encoding,
+          },
+        ],
+      ]);
+    },
+  );
+});

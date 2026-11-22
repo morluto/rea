@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { GpuInventory } from "./GpuInventory.js";
 import { GpuBufferSource } from "./GpuSource.js";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../resources/ArtifactFileOperation.js";
 import {
   ccobFixture,
   cubinFixture,
@@ -150,3 +150,15 @@ it.each(["zlib", "zstd"] as const)(
     expect(observedReadBytes).toBeLessThan(2 * bytes.length);
   },
 );
+
+it("classifies an over-limit kernel symbol name as capacity", async () => {
+  const bytes = cubinFixture({ name: "x".repeat(65_536) });
+  const inventory = new GpuInventory({ path: "/fixture", analysis: "kernels" });
+  await inventory.inspect(new GpuBufferSource(bytes, "fixture"));
+  expect(inventory.objects[0]).toMatchObject({
+    inspection: "capacity",
+    limitations: expect.arrayContaining([
+      expect.stringContaining("65536-byte read allowance"),
+    ]),
+  });
+});

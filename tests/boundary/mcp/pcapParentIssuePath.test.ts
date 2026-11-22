@@ -1,3 +1,4 @@
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
@@ -5,6 +6,7 @@ import { createEvidence } from "../../../src/domain/evidence.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it("locates malformed pcap parent fields beneath the analysis-view source", async () => {
   const target = { path: "example.pcap", sha256: "a".repeat(64), bytes: 24 };
@@ -13,9 +15,15 @@ it("locates malformed pcap parent fields beneath the analysis-view source", asyn
       tshark_command: "tshark",
       tshark_source: "path",
       tshark_version: "4.6.6",
+      tshark_resolved_path: null,
+      tshark_sha256: null,
+      tshark_identity_status: "unresolved",
       capinfos_command: "capinfos",
       capinfos_source: "path",
       capinfos_version: "4.6.6",
+      capinfos_resolved_path: null,
+      capinfos_sha256: null,
+      capinfos_identity_status: "unresolved",
     },
     target,
     file_type: "pcap",
@@ -46,8 +54,8 @@ it("locates malformed pcap parent fields beneath the analysis-view source", asyn
     createEvidence(
       { ...target, format: "file" },
       {
-        id: "historical-pcap",
-        name: "Historical packet capture",
+        id: "retained-pcap",
+        name: "Retained packet capture",
         version: "1",
       },
       {
@@ -62,8 +70,11 @@ it("locates malformed pcap parent fields beneath the analysis-view source", asyn
     throw new Error("provider must not run");
   });
   const server = createServer({ kind: "session", session });
-  const client = new Client({ name: "pcap-parent-path-repro", version: "1" });
-  try {
+  const client = new Client(
+    { name: "pcap-parent-path-repro", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  await withVerifierCleanup(async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -111,9 +122,12 @@ it("locates malformed pcap parent fields beneath the analysis-view source", asyn
       });
     }
     await client.ping();
-  } finally {
-    await client.close();
-    await server.close();
-    await session.close();
-  }
+  }, [
+    () => client.close(),
+    () => server.close(),
+    async () => {
+      const closed = await session.close();
+      if (!closed.ok) throw closed.error;
+    },
+  ]);
 });

@@ -117,7 +117,6 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(first), Buffer.from(bytes))).toBe(0);
     expect(Buffer.compare(await readFile(second), Buffer.from(bytes))).toBe(0);
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -174,7 +173,6 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(target), bytes)).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(
@@ -308,7 +306,6 @@ cliTest.skipIf(process.platform !== "darwin")(
     expect(Buffer.compare(await readFile(target), Buffer.from(bytes))).toBe(0);
     await client.ping();
   },
-  30000,
 );
 
 cliTest.skipIf(process.platform !== "darwin")(

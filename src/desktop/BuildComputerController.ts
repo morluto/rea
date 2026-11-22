@@ -1,22 +1,85 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AgentEnvComputer } from "./AgentEnvComputer.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import {
+  guestFileAnswerBytes,
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+} from "./AgentEnvComputer.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
+import type {
+  BuildControllerAnswer,
+  ControlledComputer,
+} from "../ports/BuildComputerControl.js";
+import { AGENTENV_BRIDGE_SOURCES } from "./AgentEnvBridgeSources.js";
 
-const CONTROLLER = fileURLToPath(
-  new URL("../../bridge/agentenv/capture.py", import.meta.url),
-);
+const CONTROLLER = fileURLToPath(AGENTENV_BRIDGE_SOURCES.capture);
 /** The most file bytes one `data/get` brings back, so a large bundle arrives in several answers. */
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
+/** Default time allowed for one REA command in the build computer. */
+export const BUILD_REA_TIMEOUT_S = 1800;
+
+/** Read a structured build-computer file without exposing parser excerpts. */
+export const parseBuildComputerJson = (
+  bytes: Uint8Array,
+  subject: string,
+): unknown => {
+  try {
+    return JSON.parse(decodeStrictUtf8(bytes, "preserve")) as unknown;
+  } catch {
+    // A parser excerpt can expose part of a value that exact redaction misses.
+    throw new Error(`The build computer's ${subject} is not valid UTF-8 JSON.`);
+  }
+};
+
+/**
+ * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
+ * One argument past this fails with E2BIG before the process starts.
+ */
+const LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
+/**
+ * A usual Linux `ARG_MAX`, leaving room for the environment the kernel counts
+ * with the arguments. A larger vector fails with E2BIG before the process starts.
+ */
+export const LINUX_ARGUMENT_VECTOR_BYTES = 2 * 1024 * 1024 - 256 * 1024;
+
+const argumentVectorBytes = (argv: readonly string[]): number =>
+  argv.reduce((sum, argument) => sum + Buffer.byteLength(argument) + 1, 0);
 
 let source: Promise<string> | undefined;
 
-/** The computer routes REA's build controller uses. */
-export type ControlledComputer = Pick<AgentEnvComputer, "exec" | "homeFiles">;
+const isLowSurrogate = (text: string, index: number): boolean => {
+  const code = text.charCodeAt(index);
+  return code >= 0xdc00 && code <= 0xdfff;
+};
+
+/** Pieces of `text` that each fit in one Linux argument and join back to it. */
+const controllerArgumentPieces = (text: string): readonly string[] => {
+  const pieces: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let low = start + 1;
+    let high = text.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      const bytes = Buffer.byteLength(text.slice(start, mid));
+      if (bytes <= LINUX_SINGLE_ARGUMENT_BYTES) low = mid;
+      else high = mid - 1;
+    }
+    let end = low;
+    if (end < text.length && isLowSurrogate(text, end)) end -= 1;
+    if (end <= start) end = Math.min(text.length, start + 1);
+    pieces.push(text.slice(start, end));
+    start = end;
+  }
+  return pieces;
+};
 
 /**
  * Run one command of REA's build controller in the computer, as its user and
@@ -25,21 +88,56 @@ export type ControlledComputer = Pick<AgentEnvComputer, "exec" | "homeFiles">;
  */
 export const runBuildController = async (
   computer: ControlledComputer,
-  command: "start" | "mark" | "stop" | "run" | "list",
+  command:
+    | "start"
+    | "mark"
+    | "stop"
+    | "run"
+    | "list"
+    | "run-begin"
+    | "run-poll"
+    | "run-cancel",
   argumentsJson: Readonly<Record<string, JsonValue>>,
   options: { readonly timeoutS: number; readonly signal?: AbortSignal },
 ): Promise<Readonly<Record<string, unknown>>> => {
   const { timeoutS, signal } = options;
   source ??= readFile(CONTROLLER, "utf8");
+  const script = await source;
+  const scriptBytes = Buffer.byteLength(script);
+  if (scriptBytes > LINUX_SINGLE_ARGUMENT_BYTES)
+    throw new AnalysisResourceConstraintError(
+      "build controller",
+      "transport",
+      "The controller source exceeds Linux's per-argument limit.",
+      { actual_bytes: scriptBytes, max_bytes: LINUX_SINGLE_ARGUMENT_BYTES },
+      {
+        remediationAction:
+          "Use a REA runtime whose controller fits the Linux argument limit.",
+        retryable: false,
+      },
+    );
+  const argv = [
+    "python3",
+    "-I",
+    "-c",
+    script,
+    command,
+    ...controllerArgumentPieces(JSON.stringify(argumentsJson)),
+  ];
+  const vectorBytes = argumentVectorBytes(argv);
+  if (vectorBytes > LINUX_ARGUMENT_VECTOR_BYTES)
+    throw new AnalysisResourceConstraintError(
+      "build controller",
+      "transport",
+      "The command arguments exceed Linux's transport limit (E2BIG).",
+      { actual_bytes: vectorBytes, max_bytes: LINUX_ARGUMENT_VECTOR_BYTES },
+      {
+        remediationAction: "Reduce the size of the request, then retry.",
+        retryable: false,
+      },
+    );
   const result = await computer.exec(
-    [
-      "python3",
-      "-I",
-      "-c",
-      await source,
-      command,
-      JSON.stringify(argumentsJson),
-    ],
+    argv,
     // The controller's own waits end first, so it can answer.
     timeoutS + 60,
     signal,
@@ -58,10 +156,16 @@ export const runBuildController = async (
   );
 };
 
-/** What REA's build controller answers a command with. The wire format stays here. */
-export const answerSchema = z.looseObject({
+/** What REA's build controller answers a command with. The wire format stays here; the port names its fields. */
+export const answerSchema: z.ZodType<BuildControllerAnswer> = z.looseObject({
   error: z.string().optional(),
+  /** Why the controller refused a request before acting on it, such as a state path outside the home. */
+  refused: z.string().optional(),
   absent: z.boolean().optional(),
+  started: z.boolean().optional(),
+  pending: z.boolean().optional(),
+  finished: z.boolean().optional(),
+  cancelled: z.boolean().optional(),
   line: z.string().optional(),
   exited: z.int().optional(),
   timed_out: z.boolean().optional(),
@@ -71,11 +175,12 @@ export const answerSchema = z.looseObject({
   output_bytes: z.int().nonnegative().optional(),
   stdout_bytes: z.int().nonnegative().optional(),
   stderr: z.string().optional(),
+  /** False when the supervisor published a result but the process group is not confirmed gone. */
+  settled: z.boolean().optional(),
   apt: z
     .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
     .optional(),
 });
-export type Answer = z.infer<typeof answerSchema>;
 
 /** One controller command, its answer parsed. */
 export const controller = async (
@@ -83,7 +188,7 @@ export const controller = async (
   command: "start" | "mark" | "stop",
   argumentsJson: Readonly<Record<string, JsonValue>>,
   options: { readonly timeoutS: number; readonly signal: AbortSignal },
-): Promise<Answer> =>
+): Promise<BuildControllerAnswer> =>
   answerSchema.parse(
     await runBuildController(computer, command, argumentsJson, options),
   );
@@ -117,9 +222,12 @@ export const runRea = async (
         argv: [...argv],
         stdout: options.stdout,
         files: { ...options.files },
-        timeout_s: options.timeoutS ?? 1800,
+        timeout_s: options.timeoutS ?? BUILD_REA_TIMEOUT_S,
       },
-      { timeoutS: options.timeoutS ?? 1800, signal: options.signal },
+      {
+        timeoutS: options.timeoutS ?? BUILD_REA_TIMEOUT_S,
+        signal: options.signal,
+      },
     ),
   );
   if (answer.exit_code === undefined || answer.stdout_bytes === undefined)
@@ -177,23 +285,49 @@ const listFolder = async (
     output,
   );
   if (content === undefined) throw new Error(`The computer has no ${output}.`);
-  return listingSchema.parse(JSON.parse(content.toString("utf8")));
+  return listingSchema.parse(parseBuildComputerJson(content, "file listing"));
 };
 
-/** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES`. */
-const batched = (files: z.infer<typeof listingSchema>["files"]) => {
-  const batches: { files: typeof files; bytes: number }[] = [];
+/** One listed file and the answer budget a batch must fit. */
+interface ListedBatchFile {
+  readonly path: string;
+  readonly size: number;
+}
+
+/**
+ * Files fetched together. A batch stops before its raw bytes pass
+ * `rawBytes` or its base64 answer, including each file's envelope, passes
+ * `answerBytes`.
+ */
+const batchListedFiles = <File extends ListedBatchFile>(
+  files: readonly File[],
+  limits: { readonly rawBytes: number; readonly answerBytes: number },
+): { files: File[]; bytes: number }[] => {
+  const batches: { files: File[]; bytes: number }[] = [];
   for (const file of files) {
     const last = batches.at(-1);
-    if (last === undefined || last.bytes + file.size > FETCH_BATCH_BYTES)
+    const nextBytes = (last?.bytes ?? 0) + file.size;
+    const nextCount = (last?.files.length ?? 0) + 1;
+    const fits =
+      last !== undefined &&
+      nextBytes <= limits.rawBytes &&
+      guestFileAnswerBytes(nextBytes, nextCount) <= limits.answerBytes;
+    if (last === undefined || !fits)
       batches.push({ files: [file], bytes: file.size });
     else {
       last.files.push(file);
-      last.bytes += file.size;
+      last.bytes = nextBytes;
     }
   }
   return batches;
 };
+
+/** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES` that also fit the host answer budget. */
+const batched = (files: z.infer<typeof listingSchema>["files"]) =>
+  batchListedFiles(files, {
+    rawBytes: FETCH_BATCH_BYTES,
+    answerBytes: guestFileAnswerWorkingBytes(guestFileAnswerCeiling()),
+  });
 
 /**
  * Bring every regular file under a home folder of the computer back to REA:
@@ -223,10 +357,7 @@ export const fetchHomeFolder = async (
     );
     for (const file of batch) {
       const content = files.get(file.path);
-      const sha256 =
-        content === undefined
-          ? undefined
-          : createHash("sha256").update(content).digest("hex");
+      const sha256 = content === undefined ? undefined : sha256Hex(content);
       if (
         !file.path.startsWith(`${folder}/`) ||
         content?.length !== file.size ||

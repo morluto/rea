@@ -7,9 +7,11 @@ manages them and never installs platform tools. Every operation composes a
 fixed adb argument vector — caller values occupy positional arguments only
 and are quoted when adb forwards them to the device shell.
 
-The adb client may start its local server on first device query; that is adb
-client behavior, recorded in the tool result when observed.
-`inspect_adb_client` probes only the binary and never contacts the server.
+Before a device operation, REA runs `adb start-server`, which starts the local
+adb server only when none is running. The server is a shared service that
+other tools on the host use: REA may start it but never stops it, and a device
+command's cleanup does not reach it. `inspect_adb_client` probes only the
+binary and never contacts the server.
 
 ## Supply tools
 
@@ -30,16 +32,19 @@ rather than attempting an installation. A path that cannot resolve to a file
 selected path the host refuses to execute, such as a directory or a file
 without execute permission (`EACCES`) or one the host does not permit
 (`EPERM`), and any other spawn error report `capability_unavailable` naming
-that path. Exhausted host capacity (`EAGAIN`, `EMFILE`, `ENFILE` or `ENOMEM`)
-is not a configuration failure. `inspect_adb_client`, and any device
-operation whose adb cannot start at its version probe or at a later adb
-command, report a retryable `capacity` resource constraint rather than a
-capability refusal or an adb protocol failure; the `binary_session` inventory
-reports the provider as `runtime_unavailable`. Both say the host could not
-start adb and ask for a retry after freeing processes or descriptors, without
-blaming `REA_ADB_PATH`. When adb never started, the refusal diagnostics record
-the spawn error as `filesystem_error` with `path_source`, never as an
-`exit_code`.
+that path; their diagnostics record the spawn error as `filesystem_error`
+with `path_source`, never as an `exit_code`. Exhausted host capacity
+(`EAGAIN`, `EMFILE`, `ENFILE` or `ENOMEM`) and an oversized launch (`E2BIG`)
+are not configuration failures. `inspect_adb_client`, the `binary_session`
+inventory, and any device operation whose adb cannot start at its version
+probe or at a later adb command, return a `resource_constraint` error rather
+than a capability refusal, an availability status or an adb protocol failure.
+Host capacity is retryable after freeing processes or descriptors; `E2BIG`
+is not retryable unchanged. Neither blames `REA_ADB_PATH`. The diagnostics
+record the spawn error as `system_code` with the launch `boundary`, and an
+`E2BIG` also records `oversized_launch_input`: `environment` for the version
+probe, whose arguments are fixed, or `request_and_environment` for a device
+command.
 The `binary_session` inventory uses the same bounded client-version probe; it
 does not query devices, start the adb server, or establish that a requested
 serial is reachable. Device state is checked by each device operation.
@@ -113,13 +118,13 @@ existing analysis families directly, for example
 | `push_adb_file`         | **mutates device** | One local file to a device path (e.g. pushing tools into `/data/local/tmp`); checks for existing targets and refuses them without explicit overwrite (the check is not atomic); compares digests when device `sha256sum` is available |
 | `install_adb_package`   | **mutates device** | Local APK via `adb install [-r]`; preserves its Success/Failure verdict, records `replace_requested`, and leaves actual replacement `null` because prior package state is not observed                                                |
 | `uninstall_adb_package` | **mutates device** | Requests package removal for user 0 via `adb shell pm uninstall --user 0`, without data retention                                                                                                                                     |
-| `start_adb_app`         | **mutates device** | Resolves the package's launcher activity (`cmd package resolve-activity --brief`) and starts it (`am start -n`)                                                                                                                       |
-| `start_adb_activity`    | **mutates device** | Starts an intent (`am start -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                    |
+| `start_adb_app`         | **mutates device** | Resolves the package's launcher activity (`cmd package resolve-activity --brief`) and starts it (`am start -W -n`)                                                                                                                    |
+| `start_adb_activity`    | **mutates device** | Starts an intent (`am start -W -a` with optional URI, component, and up to 16 typed extras); preserves the activity manager's verdict                                                                                                 |
 | `stop_adb_app`          | **mutates device** | Force-stops every process of a package, ending a dynamic-analysis run                                                                                                                                                                 |
 
-Screen capture validates the PNG signature, IHDR framing, dimensions, and IHDR
-checksum before publishing. It does not validate encoding fields or decode and
-validate image contents; that limitation is retained in Evidence.
+Screen capture validates the PNG signature, IHDR framing and checksum, dimensions,
+and encoding fields before publishing. Evidence records that pixel data remains
+undecoded.
 
 When `push_adb_file` receives an existing directory, adb places the local file
 inside it under the local basename; Evidence reports that effective file path
@@ -161,7 +166,9 @@ and during shutdown.
   `numeric_issues`: the first ten issues with command, field, reason and original
   `raw_line`, plus the exact `total`. Reasons are `invalid_format` or
   `unsafe_integer`. Any issue makes package coverage partial; existing section
-  omissions can also make it partial. `version_code` remains exact source text.
+  omissions can also make it partial. `version_code` retains the first valid
+  signed decimal token exactly, including values beyond the safe-integer range;
+  malformed version declarations also appear in `numeric_issues`.
 - **Display nulls preserve uncertainty.** `inspect_adb_display` admits positive
   safe integers. Absent or malformed optional values are null; `numeric_issues`
   distinguishes malformed declarations from absence. It keeps the first ten
@@ -268,7 +275,10 @@ and during shutdown.
   cleanup before later work and during shutdown. Cleanup refuses a replacement
   directory. Terminal shutdown stops admission and drains active operations.
 - The provider holds no long-lived processes; every invocation is one
-  bounded adb run. The adb server belongs to the caller.
+  bounded adb run in its own process group. Cancellation or a deadline asks
+  adb to stop with SIGTERM, then cleanup stops what remains of that run,
+  including descendants it left behind. The adb server belongs to the host:
+  REA may start it with `adb start-server` and never stops it.
 
 ## Related capability and follow-up lanes
 

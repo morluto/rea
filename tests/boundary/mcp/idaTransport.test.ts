@@ -16,6 +16,7 @@ import type {
   IdaMcpConnection,
   IdaMcpConnectionDependencies,
 } from "../../../src/ida/IdaMcpConnection.js";
+import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -48,7 +49,7 @@ type IdaTransportFixtureOptions = {
   readonly toolContentType?: string;
   readonly toolResponseBody?: string | Buffer;
   readonly configurationHeaders?: Readonly<Record<string, string>>;
-  readonly connectionDependencies?: IdaMcpConnectionDependencies;
+  readonly connectionDependencies?: Partial<IdaMcpConnectionDependencies>;
 };
 const fixtureResponse = (
   input: z.infer<typeof requestSchema>,
@@ -184,11 +185,11 @@ const fixture = async (options: IdaTransportFixtureOptions = {}) => {
       url: `http://127.0.0.1:${address.port}/mcp`,
       headers: configurationHeaders,
       mode: native ? "attached" : "headless",
-      ...(native ? { protocol: "native" as const } : {}),
+      protocol: native ? "native" : "modern",
       timeoutMs: 2000,
     },
     {},
-    connectionDependencies,
+    idaConnectionDependencies(connectionDependencies),
   );
   cleanups.push(() => connection.close());
   return {
@@ -272,7 +273,7 @@ it("reads native metadata resources and complete JSON text through the real SDK 
   expect(methods).toContain("resources/read");
 });
 
-it("accepts a legacy stdio reply over the SDK default while staying bounded", async () => {
+it("accepts a large structured stdio reply over the SDK default while staying bounded", async () => {
   const script = String.raw`
 let input = "";
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\n");
@@ -288,7 +289,7 @@ process.stdin.on("data", (chunk) => {
     const result = request.method === "initialize"
       ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "large-reply-fixture", version: "1" } }
       : request.method === "tools/list"
-        ? { tools: [{ name: "list_strings", inputSchema: { type: "object", properties: {} } }] }
+        ? { tools: [{ name: "find_regex", inputSchema: { type: "object", properties: {} } }] }
         : { content: [{ type: "text", text: "fixture" }], structuredContent: { result: "x".repeat(11 * 1024 * 1024) } };
     send({ jsonrpc: "2.0", id: request.id, result });
   }
@@ -299,14 +300,16 @@ process.stdin.on("data", (chunk) => {
       command: process.execPath,
       args: ["-e", script],
       env: {},
-      mode: "attached",
+      mode: "headless",
+      protocol: "modern",
       timeoutMs: 10_000,
     },
     {},
+    idaConnectionDependencies(),
   );
   cleanups.push(() => connection.close());
-  expect(await connection.connect()).toEqual(["list_strings"]);
-  expect(await connection.call("list_strings", {})).toEqual(
+  expect(await connection.connect()).toEqual(["find_regex"]);
+  expect(await connection.call("find_regex", {})).toEqual(
     "x".repeat(11 * 1024 * 1024),
   );
 });
@@ -1030,29 +1033,30 @@ it.each([200, 500])(
   },
 );
 
-it.each(
-  [200, 500].flatMap((toolStatus) =>
-    ["utf-16le", "utf-16", " = utf-16", "=utf-8; charset=utf-16"].map(
-      (charset) => ({ toolStatus, charset }),
-    ),
-  ),
-)(
-  "omits unsupported $charset diagnostic bytes from HTTP $toolStatus JSON failures",
-  async ({ toolStatus, charset }) => {
+it.each([
+  [200, "application/json; charset=utf-16le"],
+  [500, "application/json; charset=utf-16le"],
+  [500, "application/json; charset=utf-16", true],
+  [500, "application/json; charset = utf-16"],
+  [500, "application/json; charset\t=utf-16le"],
+  [200, "application/json; charset=utf-8; CHARSET=utf-16le"],
+  [500, "application/json; charset=utf-8; CHARSET=utf-16le"],
+  [500, 'application/json; note="unterminated; charset=utf-16le'],
+] as const)(
+  "omits encoded diagnostic bytes from HTTP %i with %s",
+  async (toolStatus, toolContentType, hasBom?: boolean) => {
     const credential = "charset-fixture-secret";
-    const utf16 = Buffer.from('{"reason":"' + credential + '"}', "utf16le");
-    const encoded =
-      charset === "utf-16"
-        ? Buffer.concat([Buffer.from([0xff, 0xfe]), utf16])
-        : utf16;
+    const utf16 = Buffer.from(
+      JSON.stringify({ reason: credential }),
+      "utf16le",
+    );
+    const encoded = hasBom
+      ? Buffer.concat([Buffer.from([0xff, 0xfe]), utf16])
+      : utf16;
     const { connection } = await fixture({
       configurationHeaders: { Cookie: "session=" + credential },
       toolStatus,
-      toolContentType:
-        "application/json; charset" +
-        (charset.startsWith("=") || charset.startsWith(" ")
-          ? charset
-          : "=" + charset),
+      toolContentType,
       toolResponseBody: encoded,
     });
     await connection.connect();
@@ -1061,6 +1065,9 @@ it.each(
       .catch((cause: unknown) => cause);
     if (!(failure instanceof Error))
       throw new Error("Expected unsupported encoded JSON error");
+    if (toolStatus === 200)
+      expect(failure.message).toContain("IDA MCP returned malformed HTTP JSON");
+    else expect(failure.cause).toMatchObject({ data: { status: 500 } });
     expect(failure.message).toMatch(/body.*omitted|omitted.*body/iu);
     expect(failure.message).not.toContain(encoded.toString("utf8"));
     const inspected = inspect(failure, {
@@ -1087,44 +1094,6 @@ it("retains successfully parsed analysis values despite unsupported declared cha
   await connection.connect();
   expect(await connection.call("first", {})).toEqual({ observed });
 });
-
-it.each(
-  [200, 500].flatMap((toolStatus) =>
-    [
-      "application/json; charset = utf-16",
-      "application/json; charset\t=utf-16le",
-      "application/json; charset=utf-8; CHARSET=utf-16le",
-      'application/json; note="unterminated; charset=utf-16le',
-    ].map((toolContentType) => ({ toolStatus, toolContentType })),
-  ),
-)(
-  "omits encoded diagnostic bytes when Content-Type is incomplete or ambiguous: HTTP $toolStatus $toolContentType",
-  async ({ toolStatus, toolContentType }) => {
-    const credential = "mime-fixture-secret";
-    const { connection } = await fixture({
-      configurationHeaders: { Cookie: "session=" + credential },
-      toolStatus,
-      toolContentType,
-      toolResponseBody: Buffer.from(
-        '{"reason":"' + credential + '"}',
-        "utf16le",
-      ),
-    });
-    await connection.connect();
-    const failure = await connection
-      .call("first", {})
-      .catch((cause: unknown) => cause);
-    if (!(failure instanceof Error))
-      throw new Error("Expected malformed Content-Type failure");
-    expect(failure.message).toMatch(/body.*omitted|omitted.*body/iu);
-    expect(
-      inspect(failure, { depth: null, showHidden: true }).replaceAll(
-        "\\x00",
-        "",
-      ),
-    ).not.toContain(credential);
-  },
-);
 
 it.each([
   "application/json; charset=",

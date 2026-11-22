@@ -119,7 +119,7 @@ The direct observations are:
 - `Debugger.scriptFailedToParse`, retained only as a bounded invalid-script
   count in `scripts.parse_failed_total`. A well-formed parse-failure
   event is distinct from malformed protocol data and does not make loaded
-  script coverage unavailable. Older Evidence may omit this count;
+  script coverage unavailable;
 - `Runtime.executionContextCreated`,
   `Runtime.executionContextDestroyed`, and
   `Runtime.executionContextsCleared`, establishing context lifecycle within
@@ -141,7 +141,7 @@ variants of one file remain separate observations. Older Evidence may omit
 
 ## Node and Electron roles
 
-The caller declares one role: `node`, `electron-main`, `electron-preload`, or
+The caller may declare one role: `node`, `electron-main`, `electron-preload`, or
 `electron-renderer`. Node and Electron-main declarations require a protocol
 target of type `node`; preload and renderer declarations require `page`.
 Inspector does not authenticate the operating-system PID or distinguish an

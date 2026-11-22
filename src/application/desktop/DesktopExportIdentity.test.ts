@@ -232,7 +232,7 @@ describe("exportDesktopApplication of a capture that names its host", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["note"] },
+      tasks: [{ failing_on_seed: ["note"] }],
     });
   });
 
@@ -299,7 +299,7 @@ describe("exportDesktopApplication where names, syntax or an unparsed value spel
 
       if (result instanceof Error) throw result;
       expect(result.normalized_result).toMatchObject({
-        task: { failing_on_seed: ["check-1"] },
+        tasks: [{ failing_on_seed: ["check-1"] }],
       });
     },
   );

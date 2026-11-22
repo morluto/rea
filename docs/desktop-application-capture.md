@@ -35,17 +35,49 @@ rea capture-desktop-application --executable gnucash --argument /home/ada/books.
 
 Desktop entries are looked up in `$XDG_DATA_HOME/applications` and then each
 `$XDG_DATA_DIRS` directory; an entry installed as a symbolic link, as flatpak
-and Nix do, is followed to its file. The entry's `Exec` line is expanded with no files;
+and Nix do, is followed to its file. An XDG base folder variable counts only
+when its value is an absolute path, as the XDG Base Directory Specification
+requires, so a relative value leaves the home default in use instead of
+naming a folder under the working directory. The entry's `Exec` line is
+expanded with no files;
 `--argument` values are appended in its place, and the application runs in the
-entry's `Path` or the home directory. When the line starts with
-`env NAME=value`, the program is found on the `PATH` those assignments set,
+entry's `Path`, defaulting to the home directory when `Path` is empty or
+omitted. An `env -C` or `env --chdir` prefix
+selects the directory for executable lookup and relative arguments. Capture
+retains the original argv and launch directory, with the resolved application
+directory recorded as `application_working_directory`. Export maps that
+directory into the seed before replay. When the line starts with
+`env NAME=value` or `env -- NAME=value`, the program is found on the `PATH` those assignments set,
 with an empty or relative entry read from the folder the application runs
-in, and their XDG folders name the state directories. Otherwise the program is
+in. Explicit XDG folders take precedence for state discovery. For a direct
+application outside a managed sandbox, an absolute `HOME` assignment selects
+the default XDG roots and app-named dotfiles. Desktop entry lookup continues
+to use the host home. Otherwise the program is
 looked up on the host's `PATH` in the order the launch searches it, and one
 found only through a relative or empty entry is refused, since the exported
 computer would not have that entry. An `--executable` runs from
 the current directory, as it would from a shell, and a relative path to it is
 resolved there.
+
+An `env -i`, `env --ignore-environment` or `env -` prefix drops the
+inherited environment. Use `env -u NAME` or `env --unset=NAME` to remove
+individual variables. Assignments in the command are applied afterward.
+The short options can be combined, as in `env -iC /path/to/work app`.
+Inventory uses the resulting XDG roots and the Linux system search path
+when the prefix leaves `PATH` unset. For a direct launch that removes
+the inherited `HOME`, REA uses an absolute replacement if provided.
+Otherwise it reports that the application's default home paths are
+unknown and still discovers state in explicitly set absolute XDG roots.
+Use `--state-path` to include other known paths. During capture, REA
+passes its run token after the prefix's assignments so it can still
+identify the app's processes after the launcher exits.
+
+A nested desktop file uses a dashed ID: `vendor/app.desktop` has ID
+`vendor-app`. REA checks path spellings that can encode that ID within each
+XDG root before trying the next root. Unrelated directories do not affect
+selection. If an applicable path cannot be examined or the bounded search
+cannot establish absence, capture reports an incomplete desktop-entry search
+rather than selecting a different application from a later root.
 
 Desktop-entry string values retain literal trailing spaces. For example,
 `Path=/tmp/workspace ` and `Path=/tmp/workspace\s` name the same directory
@@ -60,6 +92,9 @@ environment, and reads commands from stdin, one per line. The application gets
 REA's environment without the `AGENTENV_*` variables an agent environment sets,
 such as its control token: an app the exported computer launches never has
 them, and an app captured inside a computer must not hold a credential to it.
+It also gets `LIBC_FATAL_STDERR_=1`, so glibc writes a fatal error, such as
+an abort's reason, to the app's stderr rather than its terminal, and an app
+that exits at launch reports it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -94,12 +129,20 @@ Progress lines on stderr are JSON, `{"rea_progress": {"phase":
 "desktop_capture", "message": ...}}`. Those a driver waits on also carry an
 `event`: `{"kind": "window_open"}` once the window opens; `{"kind":
 "checkpoint", "name", "trigger", "at_ms", "entries", "changes",
-"retained_files", "retained_bytes"}` once a checkpoint has been taken, the
-baseline, `stop` and `exit` included, with the paths walked, the paths
-changed since the checkpoint before and the files retained; and `{"kind":
-"checkpoint_refused", "name", "reason"}` for a requested name it refused. A
-driver that sends `checkpoint <name>` waits for the event naming it rather
-than for a fixed time.
+"retained_files", "retained_bytes", "changed_files", "more_changed_files"}`
+once a checkpoint has been taken, the baseline, `stop` and `exit` included,
+with the paths walked, the paths changed since the checkpoint before, the
+files retained, and up to ten of the files (not folders) that changed,
+home-relative: those under a `--state-path` or absolute `--argument` first,
+then those the application held open, then those in its state directories,
+then the rest, and last caches (a folder whose name ends in `cache`, such as
+`~/.cache`) and WebKit or Chromium storage, each by path, with a count of the
+rest. An application can rewrite dozens of cache files on a save, and KDE's
+holds its service cache open, so the saved document would otherwise fall past
+the ten;
+and `{"kind": "checkpoint_refused", "name", "reason"}` for a requested name it
+refused. A driver that sends `checkpoint <name>` waits for the event naming it
+rather than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -111,12 +154,17 @@ remain. Interrupting the command (Ctrl-C) ends the session the same way
 without a further checkpoint; the capture is still written with end reason
 `cancelled`, and the command exits with status 130. Interrupted before the
 application is launched, the command writes no capture and removes the
-content it had retained.
+content it had retained. If cancellation arrives during publication or final
+cleanup, the already-written capture can instead retain its earlier end
+reason. Inspect `capture.json` and the error's `details.partial_observation`
+for the retained capture Evidence. Cleanup failures also report resources
+that could not be released.
 
 If the capture fails for any other reason before `capture.json` is written,
 the application is closed the same way and the content already retained is
 removed from the capture folder. The error names any process or file that
-could not be removed.
+could not be removed. An already-failed capture retains its original failure
+and reports cancellation during cleanup separately.
 
 A person types these lines in the terminal. An agent can drive the
 application with a tool such as `xdotool` and write the lines to a FIFO that
@@ -163,8 +211,9 @@ package that installed it. A Debian package records its name, version,
 architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
-source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart. apt's lists folder,
+source list means apt reports no source for the installed version.
+`package_lists_present` reports whether the lists are present. It is `null`
+when REA cannot read the lists directory. apt's lists folder,
 and the trusted keys below, are where `apt-config` resolves
 `Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
 `Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
@@ -192,9 +241,9 @@ does not bring it. A program link that dpkg does not own counts as owned when
 dpkg owns the file it resolves to, as an alternatives link does. An
 `--executable` launch, or an entry no package owns, such as
 one in `~/.local/share/applications`, records the executable's package. When
-`dpkg-query` does not finish or exits with an error for the executable or the
-entry, the package is `unknown` and the limitations say which path, since a
-failed lookup is not proof that no package owns it. The sources, vendor
+`dpkg-query` fails for the executable or entry, or the selected path contains
+characters `dpkg-query -S` would interpret as a pattern, package ownership is
+`unknown` and the limitations name the path. The sources, vendor
 repositories and `--package-file` match below are the recorded package's; the
 library walk still reads the executable.
 
@@ -221,7 +270,9 @@ writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
 no other for it: REA reads the field's continuation lines as deb822 writes
 them, a `.` line standing for an empty one, from the key block's `BEGIN` line
 to its last `END` line, and records the key's path as the entry's sources
-file. A key counts when gpgv reports a valid signature by it and no bad,
+file. A fingerprint restriction in `Signed-By` leaves `signing_key` null.
+The reason names the restriction that REA could not verify. A key counts
+when gpgv reports a valid signature by it and no bad,
 expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
 a release also signed by a key the host lacks makes gpgv fail. Each candidate
 is copied, an armored key decoded to a binary keyring, into a private
@@ -248,11 +299,58 @@ at all for an archive package, whose export does not use it. REA reads
 DT_NEEDED from the resolved executable and from each library it finds, and
 looks each soname up as ld.so does: in the RPATH of the needing image and of
 each image up its chain of loaders to the executable when the needing image
-has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded and paths
-normalized), and then in the `ldconfig -p` cache entries for the executable's
-machine. It asks `dpkg-query -S` for each library's package. Libraries in the
-executable's own folder belong to the application: they are walked but not
-listed, and neither is the application's own package. One batched
+has no RUNPATH, then in its RUNPATH (with `$ORIGIN` expanded), and then in the
+`ldconfig -p` cache entries for the executable's
+machine. Dynamic library names and search paths preserve their original UTF-8
+filesystem bytes, including a leading BOM. ELF strings that cannot be
+represented exactly as UTF-8 paths leave the walk incomplete with a reason.
+`$ORIGIN` and `${ORIGIN}` in DT_NEEDED itself are expanded relative
+to the object declaring that dependency before full-path lookup and request
+deduplication; the same spelling in two libraries can name two different files.
+DT_NEEDED names containing `$LIB` or `$PLATFORM` (including braced forms)
+remain unresolved because this walk does not establish the loader's
+substitution. They are not looked up as literal file paths.
+Lookup paths retain directory symlinks and subsequent `..` components until the
+filesystem resolves them. The selected leaf name and its physical target are
+queried for package ownership, keeping the original alias-qualified lookup
+filename separate from canonical identity and trying its owner first. Distinct
+ownership spellings participate in request identity even when they select the
+same leaf. All observed owners of that leaf are retained; an unowned query
+spelling does not create a warning when another spelling identifies its owner.
+Distinct required links are retained even when they reach one physical object;
+that object's dependencies are walked once through its first load path, which
+supplies its own `$ORIGIN`. Link targets retain every ownership-qualified
+spelling even when another route reaches the same physical link. Within one
+inventory, repeated exact absolute lookup spellings reuse successful path
+observations; unresolved probes remain retryable and later inventories observe
+the filesystem afresh. Cancellation is checked between lookup metadata reads
+and link-target traversals. An in-flight operating-system request is awaited.
+Hard I/O failures keep their original error; expected refusals check cancellation
+before becoming unresolved. Intermediate file and directory symlink entries
+needed to reach a library are retained separately from the physical object.
+This includes directory links reached through file-link targets and links to
+objects inside the application's folder. The exact
+usr-merge links supplied by the Ubuntu 24.04 computer base (`/bin`, `/sbin`,
+`/lib`, and amd64 `/lib64` to their `/usr` counterparts) need no extra package;
+packages merely registering those shared directories are not inferred as
+library dependencies. Other link targets retain their own ownership. External
+intermediate links need their own package owner. For the selected leaf, the
+physical target is an ownership fallback when the leaf has no known owner.
+A library is app-contained only when its required leaf and physical target are
+inside the application's folder and its required lookup aliases are captured
+there as well.
+A combination with another dollar expression that REA does not expand remains
+unresolved with a reason, rather than selecting a literal token-named file.
+Each candidate's ELF machine, class and byte order must match the
+needing image before it is selected or its dependencies are walked. A foreign
+search-path candidate is skipped in favor of later directories or the cache; a
+cache architecture flag alone does not establish compatibility. If a candidate's
+identity cannot be read, that lookup stays unresolved, without selecting its
+package or guessing that a later candidate would load. A compatible identity
+remains available if a later header or dependency-table check fails; its package
+is retained with an incompleteness reason. REA asks `dpkg-query -S` for the
+packages supplying external libraries and their required links. The inventory
+lists each unowned path once and omits the application's own package. One batched
 `apt-cache policy` then keeps only the packages the Ubuntu 24.04 archive or a
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as
@@ -268,8 +366,8 @@ found nowhere are listed in
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
 `apt-cache` is missing, `dpkg-query -S` could not tell which package owns a
 library (it exits 2 rather than 1, which only says no package owns the paths
-it did not name), a library could not be read or names more than 512
-libraries, or the walk stopped after 512 libraries. A failed owner query does
+it did not name), a library could not be read or exceeds the selected dependency
+inventory budget, or the walk reached that budget. A failed owner query does
 not list the libraries it covered in `unpackaged_libraries`, since a lookup
 that could not finish is not proof that no package owns them. Completed batches
 retain their package and unowned-library facts. Paths containing package-query
@@ -304,22 +402,34 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. A folder in those places whose name is one of these in another letter
+start, which stays unknown rather than absent when the check could not reach
+it, such as a folder whose permissions deny the user. A folder in those places
+whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
-the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
+folder the application creates during the capture beside one of them, with
+the same name in another letter case or with a version added (`-3.1` or
+`3`), as TreeLine's `~/.treeline-3.1`, is its state too. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
-file during the capture. A `flatpak run` launch is named after its application
+file during the capture. So does KDE's settings file in the config folder,
+`<name>rc` such as Tellico's `~/.config/tellicorc`, for each such name of three
+or more characters, whether or not it exists yet. A `flatpak run` launch is named after its application
 id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
 process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
-belongs to the application; when the first application window appeared; the
+belongs to the application. Titles and class names decode xprop's quoted
+delimiters, newline and tab escapes, and three-digit octal byte escapes.
+The UTF-8 title keeps its characters when `xprop` prints their bytes as octal.
+If that title is unreadable, capture uses the legacy title when available.
+The session also records when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
-later; files the application's processes held open under the walked roots; the first
-8 KiB of the launched process's stderr; and whether cleanup was verified. Each
+later; files the application's processes held open under the walked roots; the last
+8 KiB of the launched process's stderr, where a failing app's last words are,
+with `stderr_truncated` when earlier output was dropped; and whether cleanup was verified. Each
 process records whether the capture started it: the launched process, a
 process carrying the capture's run token, or a descendant of one, even when
 its environment cannot be read, as for a zombie or a sandboxed renderer.
@@ -345,7 +455,9 @@ directory, which are named in the limitations instead; a selected path that is
 not a directory brings the `-wal` and `-journal` paths beside it, so a database
 selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
-is a symlink), the paths every walk left out (the output folder and
+is a symlink), the selected paths (each `--state-path` and content-root
+`--argument` as named, absolute, beside the physical path walked, so a
+symlinked settings folder keeps what its name means), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
@@ -374,7 +486,11 @@ unreadable SQLite sidecar from an absent one. Captures made before this field
 was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
-`--state-path`.
+`--state-path`, or `state_paths` on a build computer's `start_build_capture`,
+and a limitation names them, spelled from `~/` under the home. A lock file
+the application held open, such as Poedit's `~/poedit.lock` or Lucene's
+`write.lock`, makes no folder such a directory, since it holds nothing to
+retain.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.
@@ -391,3 +507,20 @@ evidence for attribution, not proof.
 
 Clicks and keystrokes are not recorded. Window titles are sampled every half
 second, so short-lived titles can be missed.
+
+Dependency inventory headroom is selected for each capture with
+`--library-policy '{"libraries":1024,"string_bytes":8192}'`. Unset fields retain
+their defaults: `libraries: 512` bounds both the closure walk and distinct
+DT_NEEDED offsets in each ELF image; `search_path_entries: 16` bounds distinct
+DT_RUNPATH and DT_RPATH offsets per kind; `string_bytes: 4096` includes the NUL
+terminator of each decoded string; `table_bytes: 1048576` bounds each program
+header or dynamic table. Values must be positive safe integers. A budget refusal
+names the field that needs headroom; partial package facts and unresolved
+coverage remain visible. A table whose declared range extends past the file
+is reported as truncated before the table budget is applied. The policy applies
+during this capture's admission, without restarting REA, and explicit selections
+are retained in Evidence. Raising content retention or a worker heap does not
+raise these inventory budgets.
+Choosing a new capture still launches the selected application; changing these
+read budgets does not add execution authority or recover an earlier capture's
+omitted inventory.

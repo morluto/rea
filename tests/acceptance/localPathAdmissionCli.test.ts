@@ -6,7 +6,7 @@ import { expect } from "vitest";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { pythonPycFixture } from "../../src/python/PythonPyc.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 const fileCommands = [
   "inspect-sqlite-database",
@@ -16,7 +16,13 @@ const fileCommands = [
   "decode-signal-recording",
   "inspect-model-artifact",
   "inspect-elf-notes",
+  "inspect-dwarf-units",
+  "inspect-elf-debug-link",
+  "inspect-native-initializers",
+  "inspect-elf-unwind-ranges",
   "inspect-kernel-module",
+  "inspect-elf-dependencies",
+  "inspect-kernel-build-config",
   "inspect-byte-entropy",
   "inspect-pe-resources",
   "inspect-pe-certificates",
@@ -48,7 +54,7 @@ cliTest(
       },
     ];
     for (const selection of selections) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [...selection.arguments, "--json"],
         cwd,
       });
@@ -72,6 +78,10 @@ cliTest(
   async ({ cli }) => {
     const cwd = await createTestTempDirectory("rea-empty-auxiliary-path-");
     const selections = [
+      {
+        arguments: ["inspect-elf-debug-link", "unread", "--candidate-path", ""],
+        field: "candidatePath",
+      },
       {
         arguments: ["inspect-il2cpp-metadata", "unread", "--binary", ""],
         field: "binary",
@@ -158,7 +168,7 @@ cliTest(
       },
     ];
     for (const selection of selections) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [...selection.arguments, "--json"],
         cwd,
       });
@@ -180,7 +190,7 @@ cliTest(
     const bytes = pythonPycFixture();
     const path = join(cwd, "selected.pyc");
     await writeFile(path, bytes);
-    const result = await runFileCli(cli, {
+    const result = await cli.run({
       arguments: ["inspect-python-pyc", "./selected.pyc", "--json"],
       cwd,
     });
@@ -189,7 +199,7 @@ cliTest(
       operation: "inspect_python_pyc",
       subject: {
         local_path: path,
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       },
     });
   },

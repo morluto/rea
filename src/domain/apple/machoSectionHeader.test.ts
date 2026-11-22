@@ -33,7 +33,13 @@ it.each(formats)(
       view.setUint32(36, Number(size), littleEndian);
     }
     view.setUint32(wide ? 48 : 40, 0xffffffff, littleEndian);
+    view.setUint32(wide ? 52 : 44, 0x10203040, littleEndian);
+    view.setUint32(wide ? 56 : 48, 0x12345678, littleEndian);
+    view.setUint32(wide ? 60 : 52, 0x9abcdef0, littleEndian);
     view.setUint32(wide ? 64 : 56, 0x89abcdef, littleEndian);
+    view.setUint32(wide ? 68 : 60, 0x10293847, littleEndian);
+    view.setUint32(wide ? 72 : 64, 0xfedcb012, littleEndian);
+    if (wide) view.setUint32(76, 0, littleEndian);
     const expectedSegmentName = Buffer.from(bytes.subarray(16, 32));
     const before = Buffer.from(backing);
     const parsed = readMachoSectionHeader(
@@ -51,7 +57,13 @@ it.each(formats)(
       address,
       size,
       offset: 0xffffffff,
+      alignmentExponent: 0x10203040,
+      relocationOffset: 0x12345678,
+      relocationCount: 0x9abcdef0,
       flags: 0x89abcdef,
+      reserved1: 0x10293847,
+      reserved2: 0xfedcb012,
+      ...(wide ? { reserved3: 0 } : {}),
     });
   },
 );

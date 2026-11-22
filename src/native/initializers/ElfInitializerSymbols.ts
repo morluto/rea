@@ -1,0 +1,738 @@
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { readInitializerWord } from "./initializerWord.js";
+import { setImmediate as immediate } from "node:timers/promises";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import {
+  ELF_RELOCATION_TRUNCATED_MESSAGE,
+  readElfRelocationEntryAt,
+} from "../../domain/elfRelocation.js";
+import {
+  ELF_SYMBOL_TRUNCATED_MESSAGE,
+  elfSymbolSize,
+  readElfSymbolAt,
+} from "../../domain/elfSymbol.js";
+import {
+  ELF_SHN_XINDEX,
+  ElfSymbolSectionIndexTables,
+  readElfSymbolSectionReference,
+  type ElfSymbolSection,
+} from "../../domain/elfSymbolSectionIndex.js";
+import {
+  elfStringTableText,
+  observeElfStringTableEntry,
+} from "../../domain/elfStringTable.js";
+import { MAX_NATIVE_INITIALIZER_NAME_BYTES } from "../../domain/native/nativeInitializers.js";
+import type { NativeInitializerResolution } from "../../domain/native/nativeInitializers.js";
+import {
+  elfAbsoluteRelocationType,
+  elfCopyRelocationType,
+  elfRelativeRelocationType,
+  elfRelocationWidthLookup,
+} from "../../domain/native/elfPointerRelocations.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
+import type { InitializerNotes } from "./initializerNotes.js";
+import {
+  withheldInitializerSymbolName,
+  type InitializerSymbolName,
+} from "./initializerReport.js";
+
+/** One symbol-table row; an unknown section is not an undefined import. */
+export interface ElfInitializerSymbol {
+  readonly name: InitializerSymbolName | null;
+  readonly value: bigint;
+  readonly section: ElfSymbolSection | null;
+  readonly type: number;
+  /** `st_size`: the bytes a COPY relocation against this symbol writes. */
+  readonly size: bigint;
+}
+
+/** Defined exact-address names plus per-section symbol arrays. */
+export interface ElfSymbolIndex {
+  readonly defined: ReadonlyMap<bigint, InitializerSymbolName>;
+  /** Relocatable objects: names keyed by `section:value`, since every section starts at 0. */
+  readonly definedInSection: ReadonlyMap<string, InitializerSymbolName>;
+  readonly tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>;
+  /** A table was truncated by a budget or could not be read. */
+  readonly incomplete: boolean;
+}
+
+/** A relocation applied to one slot. `definedName` is the reloc symbol. */
+export interface SlotRelocation {
+  readonly method: NativeInitializerResolution;
+  readonly value: bigint | null;
+  readonly importName: InitializerSymbolName | null;
+  readonly definedName: InitializerSymbolName | null;
+  /** Section index of the relocation symbol, used for relocatable objects. */
+  readonly sectionIndex?: number;
+}
+
+const STT_FUNC = 2;
+const STT_SECTION = 3;
+const STT_FILE = 4;
+/** `st_value` is an offset in thread-local storage. */
+const STT_TLS = 6;
+/** `st_value` is a resolver; the loader writes whatever the resolver returns. */
+const STT_GNU_IFUNC = 10;
+
+/** Key for a symbol defined at `value` inside section `section`. */
+export const sectionSymbolKey = (section: number, value: bigint): string =>
+  `${String(section)}:${value.toString(16)}`;
+
+/** Symbols decoded across every SHT_SYMTAB and SHT_DYNSYM table together. */
+const SYMBOL_SCAN = 65536;
+/** REL/RELA records decoded across every relocation section together. */
+const SECTION_RELOCATION_RECORD_SCAN = 1_048_576;
+
+interface ImageFacts {
+  readonly bits: 32 | 64;
+  readonly little: boolean;
+  readonly machine: number;
+  readonly bytes: Buffer;
+}
+
+const wordOf = (bits: 32 | 64): number => bits / 8;
+
+/**
+ * Name at `offset`. Offset 0 is the empty name. A missing string table or an
+ * offset outside it is an unreadable name, which `missing` keeps visible.
+ */
+const stringAt = (
+  table: Buffer | null,
+  offset: number,
+  notes: InitializerNotes,
+): {
+  readonly name: InitializerSymbolName | null;
+  readonly missing: boolean;
+} => {
+  if (offset === 0) return { name: null, missing: false };
+  if (table === null) {
+    notes.tally("unreadable-symbol-name");
+    return { name: null, missing: true };
+  }
+  const observed = observeElfStringTableEntry(
+    table,
+    offset,
+    MAX_NATIVE_INITIALIZER_NAME_BYTES + 1,
+  );
+  if (observed.state === "truncated") {
+    // The table's last NUL establishes a terminator beyond the name window.
+    if (table.at(-1) === 0) {
+      notes.tally("long-symbol-name");
+      return { name: withheldInitializerSymbolName, missing: false };
+    }
+    notes.tally("unverified-symbol-terminator");
+    return { name: null, missing: true };
+  }
+  if (observed.state === "outside") {
+    notes.tally("unreadable-symbol-name");
+    return { name: null, missing: true };
+  }
+  const text = elfStringTableText(observed);
+  if (
+    text === null ||
+    text.length === 0 ||
+    text.length > MAX_NATIVE_INITIALIZER_NAME_BYTES
+  )
+    return { name: null, missing: false };
+  return { name: text, missing: false };
+};
+
+const stringTableBytes = (
+  bytes: Buffer,
+  section: NativeSection | undefined,
+): Buffer | null => {
+  if (
+    section === undefined ||
+    section.type !== 3 ||
+    !section.file_backed ||
+    section.compressed
+  )
+    return null;
+  const offset = Number(section.offset);
+  const size = Number(section.size);
+  if (offset < 0 || size < 0 || offset > bytes.length - size) return null;
+  return bytes.subarray(offset, offset + size);
+};
+
+const readTable = (
+  facts: ImageFacts,
+  sections: readonly NativeSection[],
+  section: NativeSection,
+  budget: number,
+  notes: InitializerNotes,
+  extendedTables: ElfSymbolSectionIndexTables<NativeSection>,
+): {
+  readonly symbols: ElfInitializerSymbol[];
+  readonly truncated: boolean;
+  readonly incomplete: boolean;
+} => {
+  const width = elfSymbolSize(facts.bits);
+  const strings = stringTableBytes(facts.bytes, sections[section.link]);
+  const compressedStrings = sections[section.link]?.compressed === true;
+  if (compressedStrings)
+    notes.add(
+      "A symbol string table is compressed; its names were not decoded.",
+    );
+  else if (strings === null)
+    notes.add(
+      "A symbol table does not link a readable SHT_STRTAB section; its names were not decoded.",
+    );
+  const start = Number(section.offset);
+  const declared = section.size / BigInt(width);
+  const count = Number(declared < BigInt(budget) ? declared : BigInt(budget));
+  const truncated = declared > BigInt(budget);
+  if (truncated)
+    notes.add(
+      `Symbol table scanning stopped at ${String(SYMBOL_SCAN)} symbols across all symbol tables. Later names may be missing.`,
+    );
+  const symbols: ElfInitializerSymbol[] = [];
+  let nameMissing = false;
+  let sectionMissing = false;
+  let extendedBytes: Buffer | null | undefined;
+  for (let index = 0; index < count; index += 1) {
+    const at = start + index * width;
+    const parsed = readElfSymbolAt(facts.bytes, at, facts.bits, facts.little);
+    if (parsed === null) {
+      notes.add(ELF_SYMBOL_TRUNCATED_MESSAGE);
+      break;
+    }
+    const named = stringAt(strings, parsed.name_offset, notes);
+    nameMissing ||= named.missing;
+    const rawSection = parsed.section_index;
+    if (rawSection === ELF_SHN_XINDEX) {
+      if (extendedBytes === undefined) {
+        const companion = extendedTables.tableFor(section.index, declared);
+        if (companion.ok) {
+          const { offset, size } = companion.value;
+          extendedBytes = facts.bytes.subarray(
+            Number(offset),
+            Number(offset + size),
+          );
+        } else {
+          notes.add(
+            `ELF ${companion.error.message}; affected symbol sections are unknown.`,
+          );
+          extendedBytes = null;
+        }
+      }
+    }
+    const resolved = readElfSymbolSectionReference(
+      rawSection,
+      index,
+      sections.length,
+      facts.little,
+      extendedBytes ?? undefined,
+    );
+    if (!resolved.ok)
+      notes.add(
+        `ELF ${resolved.error.message}; affected symbol sections are unknown.`,
+      );
+    sectionMissing ||= !resolved.ok;
+    symbols.push({
+      name: named.name,
+      value: parsed.value,
+      section: resolved.ok ? resolved.value : null,
+      type: parsed.type,
+      size: parsed.size,
+    });
+  }
+  return {
+    symbols,
+    truncated,
+    incomplete: nameMissing || sectionMissing || strings === null,
+  };
+};
+
+/** Load SHT_SYMTAB and SHT_DYNSYM once. Defined STT_FUNC names win ties. */
+export const loadElfSymbolIndex = (
+  facts: ImageFacts,
+  sections: readonly NativeSection[],
+  notes: InitializerNotes,
+): ElfSymbolIndex => {
+  const tables = new Map<number, readonly ElfInitializerSymbol[]>();
+  const extendedTables = new ElfSymbolSectionIndexTables(sections);
+  type RankedName = {
+    readonly name: InitializerSymbolName;
+    readonly func: boolean;
+  };
+  const ranked = new Map<bigint, RankedName>();
+  const inSection = new Map<string, RankedName>();
+  let truncated = false;
+  const rank = <K>(
+    map: Map<K, RankedName>,
+    key: K,
+    name: InitializerSymbolName,
+    func: boolean,
+  ): void => {
+    const previous = map.get(key);
+    if (
+      previous === undefined ||
+      (typeof name === "string" &&
+        (previous.name === withheldInitializerSymbolName ||
+          (!previous.func && func)))
+    )
+      map.set(key, { name, func });
+  };
+  const consider = (symbol: ElfInitializerSymbol): void => {
+    if (
+      symbol.section === null ||
+      symbol.name === null ||
+      (symbol.section.kind !== "section" && symbol.section.kind !== "absolute")
+    )
+      return;
+    if (
+      symbol.type === STT_SECTION ||
+      symbol.type === STT_FILE ||
+      symbol.type === STT_TLS
+    )
+      return;
+    const func = symbol.type === STT_FUNC;
+    rank(ranked, symbol.value, symbol.name, func);
+    if (symbol.section.kind === "section")
+      rank(
+        inSection,
+        sectionSymbolKey(symbol.section.index, symbol.value),
+        symbol.name,
+        func,
+      );
+  };
+  let budget = SYMBOL_SCAN;
+  let unreadable = false;
+  sections.forEach((section, index) => {
+    if (truncated) return;
+    if (section.type !== 2 && section.type !== 11) return;
+    if (section.compressed) {
+      notes.add("A symbol table is compressed; its symbols were not decoded.");
+      unreadable = true;
+      return;
+    }
+    const width = BigInt(elfSymbolSize(facts.bits));
+    if (section.entry_size !== 0n && section.entry_size !== width) {
+      notes.add(
+        "A symbol table has an unexpected entry size; its symbols were not decoded.",
+      );
+      unreadable = true;
+      return;
+    }
+    if (!section.file_backed || section.size % width !== 0n) {
+      notes.add(
+        "A symbol table is not stored in the file or its size is not a whole number of entries, so its names were not read.",
+      );
+      unreadable = true;
+      return;
+    }
+    const table = readTable(
+      facts,
+      sections,
+      section,
+      budget,
+      notes,
+      extendedTables,
+    );
+    budget -= table.symbols.length;
+    tables.set(index, table.symbols);
+    truncated ||= table.truncated;
+    unreadable ||= table.incomplete;
+    for (const symbol of table.symbols) consider(symbol);
+  });
+  return {
+    defined: new Map([...ranked].map(([address, row]) => [address, row.name])),
+    definedInSection: new Map(
+      [...inSection].map(([key, row]) => [key, row.name]),
+    ),
+    tables,
+    incomplete: truncated || unreadable,
+  };
+};
+
+const unresolved = (): SlotRelocation => ({
+  method: "unresolved",
+  value: null,
+  importName: null,
+  definedName: null,
+});
+
+const addendOf = (
+  entry: { readonly addend?: bigint },
+  inplace: bigint | null,
+): bigint | null => (typeof entry.addend === "bigint" ? entry.addend : inplace);
+
+/** Apply one REL or RELA record using its own symbol table. */
+export const relocationFromEntry = (
+  facts: ImageFacts,
+  entry: {
+    readonly type: number;
+    readonly symbolIndex: number;
+    readonly addend?: bigint;
+  },
+  symbols: readonly ElfInitializerSymbol[] | undefined,
+  inplace: bigint | null,
+): SlotRelocation => {
+  const relative = elfRelativeRelocationType(facts.machine, facts.bits);
+  const absolute = elfAbsoluteRelocationType(facts.machine, facts.bits);
+  if (entry.type === relative && entry.symbolIndex === 0) {
+    const addend = addendOf(entry, inplace);
+    if (addend === null) return unresolved();
+    return {
+      method: "relative_addend",
+      value: BigInt.asUintN(facts.bits, addend),
+      importName: null,
+      definedName: null,
+    };
+  }
+  if (entry.symbolIndex === 0 || symbols === undefined) return unresolved();
+  const symbol = symbols[entry.symbolIndex];
+  if (symbol === undefined || symbol.section === null) return unresolved();
+  if (symbol.section.kind === "undefined")
+    return {
+      method: "unresolved_import",
+      value: null,
+      importName: symbol.name,
+      definedName: null,
+    };
+  if (
+    (symbol.section.kind !== "section" && symbol.section.kind !== "absolute") ||
+    entry.type !== absolute ||
+    symbol.type === STT_TLS ||
+    symbol.type === STT_GNU_IFUNC
+  )
+    return unresolved();
+  const addend = addendOf(entry, inplace);
+  if (addend === null) return unresolved();
+  return {
+    method: "symbol_addend",
+    value: BigInt.asUintN(facts.bits, symbol.value + addend),
+    importName: null,
+    definedName:
+      symbol.type === STT_SECTION || symbol.type === STT_FILE || addend !== 0n
+        ? null
+        : symbol.name,
+    ...(symbol.section.kind === "section"
+      ? { sectionIndex: symbol.section.index }
+      : {}),
+  };
+};
+
+/** A slot's relocation identity is its virtual address, or its section and address in ET_REL. */
+export interface ElfInitializerSlot {
+  readonly va: bigint;
+  readonly sectionIndex: number | null;
+}
+
+/** One coordinate rule shared by relocation production and slot lookup. */
+export const elfInitializerSlotKey = (
+  slot: ElfInitializerSlot,
+  relocatable: boolean,
+): string =>
+  relocatable
+    ? sectionSymbolKey(slot.sectionIndex ?? -1, slot.va)
+    : slot.va.toString(16);
+
+interface SectionRelocInput extends ImageFacts {
+  readonly sections: readonly NativeSection[];
+  /** ET_REL: `r_offset` is relative to the section named by `sh_info`. */
+  readonly relocatable: boolean;
+  /** Slots not covered by dynamic relocations; source offsets do not establish write ownership. */
+  readonly wanted: readonly ElfInitializerSlot[];
+  readonly tables: ReadonlyMap<number, readonly ElfInitializerSymbol[]>;
+  readonly notes: InitializerNotes;
+  /** File offset of `width` bytes at a linked-image address. */
+  readonly fileOffset: (address: bigint, width: number) => number | null;
+  readonly signal?: AbortSignal | undefined;
+}
+
+const encodingOf = (type: number): "rel" | "rela" | null =>
+  type === 4 ? "rela" : type === 9 ? "rel" : null;
+
+/** File offset of the `width` bytes one record writes, or null when they are not file-backed. */
+const recordTarget = (
+  input: SectionRelocInput,
+  target: NativeSection | undefined,
+  offset: bigint,
+  width: number,
+): number | null => {
+  if (!input.relocatable) return input.fileOffset(offset, width);
+  if (target === undefined || !target.file_backed) return null;
+  if (offset < 0n || offset + BigInt(width) > target.size) return null;
+  return Number(target.offset + offset);
+};
+
+/** Index of the first wanted slot whose word could overlap a write starting at `at`. */
+const firstOverlap = (
+  wanted: readonly ElfInitializerSlot[],
+  at: bigint,
+  word: number,
+): number => {
+  let low = 0;
+  let high = wanted.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    if ((wanted[mid]?.va ?? at) <= at - BigInt(word)) low = mid + 1;
+    else high = mid;
+  }
+  return low;
+};
+
+/**
+ * Bytes a linked image's COPY record writes: its symbol's `st_size`. Undefined
+ * when that symbol was not read, so the write's extent is not established.
+ */
+const copySize = (
+  symbols: readonly ElfInitializerSymbol[] | undefined,
+  symbolIndex: number,
+): bigint | undefined =>
+  symbolIndex === 0 ? undefined : symbols?.[symbolIndex]?.size;
+
+/** Section relocations found for wanted slots, and whether every applicable record was read. */
+export interface SectionRelocationScan {
+  readonly found: ReadonlyMap<string, SlotRelocation>;
+  /** Slots a narrower, offset or repeated record overlaps; their value is unknown. */
+  readonly clobbered: ReadonlySet<string>;
+  /**
+   * False when a relocation section was skipped, ended early or lies past the
+   * record budget, so an unmatched slot may still have an unread relocation.
+   */
+  readonly complete: boolean;
+}
+
+const SHF_ALLOC = 2n;
+
+/** Relocation sections this reader applies: every one in ET_REL, SHF_ALLOC ones otherwise. */
+const applicable = (
+  input: SectionRelocInput,
+  section: NativeSection,
+): "rel" | "rela" | null => {
+  const encoding = encodingOf(section.type);
+  if (encoding === null) return null;
+  if (!input.relocatable && (section.flags & SHF_ALLOC) === 0n) return null;
+  return encoding;
+};
+
+/**
+ * Section REL/RELA records for slots that dynamic tables do not cover, keyed by
+ * slot identity. In a linked image, a relocation section without SHF_ALLOC
+ * is a link-time record the static linker already applied (for example from
+ * `--emit-relocs`), so the slot already holds its result and is not reapplied.
+ */
+export const sectionRelocations = async (
+  input: SectionRelocInput,
+): Promise<SectionRelocationScan> => {
+  const found = new Map<string, SlotRelocation>();
+  const clobbered = new Set<string>();
+  if (input.wanted.length === 0) return { found, clobbered, complete: true };
+  // Linked writes use virtual addresses; ET_REL writes additionally belong to
+  // sh_info's section, even when two sections reuse the same file bytes.
+  const bySection = new Map<number | null, Map<bigint, ElfInitializerSlot>>();
+  for (const slot of input.wanted) {
+    const key = input.relocatable ? slot.sectionIndex : null;
+    const slots = bySection.get(key) ?? new Map<bigint, ElfInitializerSlot>();
+    slots.set(slot.va, slot);
+    bySection.set(key, slots);
+  }
+  const sorted = new Map(
+    [...bySection].map(([section, slots]) => [
+      section,
+      [...slots.values()].sort((left, right) =>
+        left.va < right.va ? -1 : left.va > right.va ? 1 : 0,
+      ),
+    ]),
+  );
+  const wantedBy = (section: NativeSection): readonly ElfInitializerSlot[] =>
+    sorted.get(input.relocatable ? section.info : null) ?? [];
+  const targetSection = (section: NativeSection): NativeSection | undefined => {
+    if (!input.relocatable || section.info === 0) return undefined;
+    const target = input.sections[section.info];
+    return target?.type === 0 ? undefined : target;
+  };
+  const word = wordOf(input.bits);
+  const wordBigInt = BigInt(word);
+  const reader = new BinaryReader(input.bytes, input.little, "elf");
+  let complete = true;
+  const skip = (section: NativeSection): void => {
+    if (
+      (input.relocatable && targetSection(section) === undefined) ||
+      wantedBy(section).length > 0
+    )
+      complete = false;
+  };
+  // One budget across every header, so many headers over one range cannot multiply the work.
+  let budget = SECTION_RELOCATION_RECORD_SCAN;
+  const relative = elfRelativeRelocationType(input.machine, input.bits);
+  const copy = elfCopyRelocationType(input.machine, input.bits);
+  const relocationWidths = elfRelocationWidthLookup(input.machine, input.bits);
+  // Slot visits grow with each COPY span, so the spans together are limited to
+  // the file size, as in the dynamic walk.
+  let copyAllowance = input.bytes.length;
+  /**
+   * Bytes a linked image's COPY record writes, taken from its symbol. Null when
+   * that size is not established: the word assumed instead is no proof of what
+   * else the record reaches, so its table counts as not fully read.
+   */
+  const copySpan = (
+    section: NativeSection,
+    symbols: readonly ElfInitializerSymbol[] | undefined,
+    symbolIndex: number,
+  ): number | null => {
+    const size = copySize(symbols, symbolIndex);
+    if (size !== undefined && size <= BigInt(copyAllowance)) {
+      copyAllowance -= Number(size);
+      return Number(size);
+    }
+    input.notes.add(
+      size === undefined
+        ? "A section COPY relocation's write size is not established; slots without a relocation are unresolved."
+        : "Section COPY relocation sizes exceed the file byte count allowance; slots without a relocation are unresolved.",
+    );
+    skip(section);
+    return null;
+  };
+  for (const [position, section] of input.sections.entries()) {
+    const encoding = applicable(input, section);
+    if (encoding === null) continue;
+    if (!section.file_backed || section.compressed) {
+      if (section.compressed)
+        input.notes.add(
+          "A relocation section is compressed; its records were not decoded.",
+        );
+      skip(section);
+      continue;
+    }
+    const width = encoding === "rela" ? word * 3 : word * 2;
+    const entsize =
+      section.entry_size === 0n ? BigInt(width) : section.entry_size;
+    if (entsize !== BigInt(width) || section.size % entsize !== 0n) {
+      input.notes.tally("relocation-entry-size");
+      skip(section);
+      continue;
+    }
+    const symbols = input.tables.get(section.link);
+    const target = targetSection(section);
+    const wanted = wantedBy(section);
+    const minWantedVa = wanted[0]?.va;
+    const maxWantedEnd =
+      wanted.length === 0
+        ? undefined
+        : wanted[wanted.length - 1]!.va + wordBigInt;
+    if (input.relocatable && target === undefined) {
+      input.notes.add(
+        "A relocation section names a target section that does not exist, so its records were not applied.",
+      );
+      skip(section);
+      continue;
+    }
+    const start = Number(section.offset);
+    const declared = section.size / entsize;
+    const count = Number(declared < BigInt(budget) ? declared : BigInt(budget));
+    budget -= count;
+    const stopped = declared > BigInt(count);
+    if (stopped)
+      input.notes.add(
+        `Section relocation scanning stopped at ${String(SECTION_RELOCATION_RECORD_SCAN)} records across all relocation sections. Later records were not applied.`,
+      );
+    for (let index = 0; index < count; index += 1) {
+      if (index % 4096 === 0) {
+        await immediate();
+        assertArtifactReadActive(input.signal);
+      }
+      const at = start + index * width;
+      const parsed = readElfRelocationEntryAt(
+        input.bytes,
+        at,
+        input.bits,
+        input.little,
+        encoding,
+      );
+      if (parsed === null) {
+        input.notes.add(ELF_RELOCATION_TRUNCATED_MESSAGE);
+        skip(section);
+        break;
+      }
+      const copied =
+        !input.relocatable && parsed.type === copy
+          ? copySpan(section, symbols, parsed.symbolIndex)
+          : null;
+      // Bytes the record is known to write: a sized COPY's symbol, one word
+      // for RELATIVE, or the fixed width of another decoded kind.
+      const extent =
+        copied ??
+        (parsed.type === relative
+          ? word
+          : parsed.type === 0
+            ? 0
+            : relocationWidths?.get(parsed.type));
+      // An unknown type is assumed to write a whole word, so it still marks what it may touch.
+      const span = extent ?? word;
+      if (span === 0) continue;
+      const spanBigInt = span === word ? wordBigInt : BigInt(span);
+      const written = parsed.offset + (target?.address ?? 0n);
+      if (recordTarget(input, target, parsed.offset, 1) === null) {
+        // A linked image's write to memory without file bytes, such as COPY
+        // into .bss, cannot change a slot outside its known extent.
+        const reached = wanted[firstOverlap(wanted, written, word)];
+        if (
+          input.relocatable ||
+          extent === undefined ||
+          (reached !== undefined && reached.va < written + spanBigInt)
+        )
+          skip(section);
+        continue;
+      }
+      const writtenFileOffset = recordTarget(
+        input,
+        target,
+        parsed.offset,
+        span,
+      );
+      const fullWrite = writtenFileOffset !== null;
+      if (!fullWrite) {
+        complete = false;
+        input.notes.add(
+          "A section relocation extends beyond its target mapping; affected slots are unresolved.",
+        );
+      }
+      if (
+        minWantedVa === undefined ||
+        maxWantedEnd === undefined ||
+        written >= maxWantedEnd ||
+        written + spanBigInt <= minWantedVa
+      )
+        continue;
+      for (
+        let next = firstOverlap(wanted, written, word);
+        next < wanted.length;
+        next += 1
+      ) {
+        const slot = wanted[next];
+        if (slot === undefined || slot.va >= written + spanBigInt) break;
+        const key = elfInitializerSlotKey(slot, input.relocatable);
+        if (clobbered.has(key)) continue;
+        if (
+          fullWrite &&
+          slot.va === written &&
+          span === word &&
+          !found.has(key)
+        ) {
+          const inplace =
+            encoding === "rel"
+              ? readInitializerWord(reader, writtenFileOffset, input.bits)
+              : null;
+          found.set(key, relocationFromEntry(input, parsed, symbols, inplace));
+          continue;
+        }
+        found.delete(key);
+        clobbered.add(key);
+      }
+    }
+    if (stopped) {
+      // The rest of this section and every later one were not read.
+      for (const later of input.sections.slice(position))
+        if (applicable(input, later) !== null) skip(later);
+      break;
+    }
+  }
+  if (clobbered.size > 0)
+    input.notes.add(
+      `${String(clobbered.size)} initializer slot(s) are partly overwritten or relocated more than once by section relocations and are listed as unresolved.`,
+    );
+  return { found, clobbered, complete };
+};

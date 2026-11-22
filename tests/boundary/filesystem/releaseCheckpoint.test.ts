@@ -51,9 +51,8 @@ async function metadata(
   notes: string,
   versioning?: string,
 ) {
-  await mkdir(join(directory, "docs"), { recursive: true });
   await mkdir(join(directory, "src"), { recursive: true });
-  for (const path of pluginManifestPaths)
+  for (const path of [...pluginManifestPaths, ".cursor-plugin/plugin.json"])
     await mkdir(join(directory, dirname(path)), { recursive: true });
   const files = {
     ".claude-plugin/plugin.json": pluginManifest(version),
@@ -62,12 +61,21 @@ async function metadata(
       mcpServers: "./.codex-plugin/mcp.json",
     },
     ".codex-plugin/mcp.json": codexServerConfig(version),
+    ".cursor-plugin/plugin.json": { version },
+    "mcp.json": {
+      mcpServers: {
+        rea: {
+          command: "npx",
+          args: ["-y", `rea-agents@${version}`, "mcp"],
+        },
+      },
+    },
     "package.json": { name: "rea-agents", version },
     "package-lock.json": { version, packages: { "": { version } } },
     ".release-please-manifest.json": { ".": version },
     "server.json": {
       version,
-      packages: [{ identifier: "rea-agents", version }],
+      packages: [{ registryType: "npm", identifier: "rea-agents", version }],
     },
     "release-please-config.json": {
       ...(versioning === undefined ? {} : { versioning }),
@@ -210,8 +218,11 @@ async function candidate(
   f: Fixture,
   version: string,
   notes = "### ⚠ BREAKING CHANGES\n\n* MCP callers must use absolute paths; CLI paths remain compatible. See #948.",
+  overrides: Readonly<Record<string, string>> = {},
 ) {
   await metadata(f.directory, version, notes, f.versioning);
+  for (const [path, content] of Object.entries(overrides))
+    await writeFile(join(f.directory, path), content);
   await git(f.directory, ["add", "."]);
   await git(
     f.directory,
@@ -247,6 +258,8 @@ function verify(
 const reportSchema = z.object({
   expectedVersion: z.string(),
   baselineVersion: z.string(),
+  baselineSha: z.string(),
+  sourceSha: z.string(),
   applicationSha: z.string(),
   commits: z.array(
     z.object({
@@ -290,24 +303,34 @@ it("retains an unreleased breaking commit hidden by the side-branch chronologica
   });
 });
 
-it("rejects a wrong bot version before publication", async () => {
-  const f = await fixture();
-  await candidate(f, "5.1.0");
-  await expect(verify(f)).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(
-      "declares 5.1.0; release branch requires 6.0.0",
-    ),
-  });
-});
-
-it("rejects a requested minor that omits the breaking ancestry", async () => {
-  const f = await fixture();
-  await expect(verify(f, "5.1.0", "prepare", "source")).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining("contains unreleased breaking markers"),
-  });
-});
+it.each([
+  { marker: "title", subject: "fix(contracts)!: require absolute paths" },
+  {
+    marker: "merge title",
+    subject: "fix(contracts)!: require absolute paths",
+    mergePullRequest: true,
+  },
+  {
+    marker: "footer",
+    subject: "fix(contracts): change path inputs (#948)",
+    footer: "BREAKING CHANGE: relative MCP paths are rejected",
+  },
+])(
+  "rejects a requested minor with a breaking $marker",
+  async ({ subject, footer, mergePullRequest }) => {
+    const f = await fixture(subject, footer, {
+      mergePullRequest: mergePullRequest ?? false,
+    });
+    await expect(verify(f, "5.1.0", "prepare", "source")).rejects.toMatchObject(
+      {
+        code: 1,
+        stderr: expect.stringContaining(
+          `contains unreleased breaking markers since 5.0.0: ${f.changedSha}`,
+        ),
+      },
+    );
+  },
+);
 
 it.each([
   { subject: "fix(contracts)!: require absolute paths (#948)", footer: "" },
@@ -321,25 +344,19 @@ it.each([
     const f = await fixture(subject, footer, {
       versioning: "always-bump-minor",
     });
-    await expect(
-      verify(f, "5.1.0", "prepare", "source"),
-    ).resolves.toMatchObject({
-      stderr: "",
-    });
-    const candidateSha = await candidate(f, "5.1.0");
     const report = reportSchema.parse(
-      JSON.parse((await verify(f, "5.1.0")).stdout),
+      JSON.parse((await verify(f, "5.1.0", "prepare", "source")).stdout),
     );
-    expect(report.expectedVersion).toBe("5.1.0");
-    expect(report.missingNotes).toEqual([]);
+    expect(report).toMatchObject({
+      expectedVersion: "5.1.0",
+      sourceSha: f.sourceSha,
+      missingNotes: [],
+    });
     expect(report.commits).toContainEqual({
       sha: f.changedSha,
       subject,
       breaking: true,
     });
-    await expect(
-      verify({ ...f, sourceSha: candidateSha }, "5.1.0", "publish", "source"),
-    ).resolves.toMatchObject({ stderr: "" });
   },
 );
 
@@ -408,45 +425,53 @@ it.each([
       });
       return;
     }
-    const original = JSON.parse((await result).stdout);
-    const report = reportSchema.parse(original);
-    expect(report).toMatchObject({
-      expectedVersion: "5.1.0",
-      baselineVersion: "5.0.0",
-      applicationSha: f.sourceSha,
-    });
-    await writeFile(join(f.directory, "later-work.txt"), "Later main change\n");
-    await git(f.directory, ["add", "."]);
-    await git(f.directory, ["commit", "-m", "fix: unrelated later work"]);
-    // A moved checkout does not change the selected reviewed merge.
-    expect(
-      JSON.parse(
-        (await verify({ ...f, sourceSha }, "main", "publish", "source")).stdout,
-      ),
-    ).toEqual(original);
-    await expect(
-      verify(
-        { ...f, sourceSha: await git(f.directory, ["rev-parse", "HEAD"]) },
-        "main",
-        "publish",
-        "source",
-      ),
-    ).rejects.toMatchObject({
-      code: 1,
-      stderr: expect.stringContaining("must advance published baseline"),
-    });
+    expect(reportSchema.parse(JSON.parse((await result).stdout))).toMatchObject(
+      {
+        expectedVersion: "5.1.0",
+        baselineVersion: "5.0.0",
+        applicationSha: f.sourceSha,
+      },
+    );
   },
 );
 
-it("rejects a minor when a GitHub merge commit carries its bang marker in the PR title", async () => {
-  const f = await fixture("fix(contracts)!: require absolute paths", "", {
-    mergePullRequest: true,
-  });
-  await expect(verify(f, "5.1.0", "prepare", "source")).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining("contains unreleased breaking markers"),
-  });
-});
+it.each([
+  { spacing: "adjacent", separator: "\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: true },
+  { spacing: "separated", separator: "\n\n", includeRestart: false },
+])(
+  "validates $spacing list migration with restart step $includeRestart",
+  async ({ separator, includeRestart }) => {
+    const steps =
+      "- Set `--new-path` to an absolute path.\n- Restart the client.";
+    const f = await fixture(
+      "fix(contracts)!: change path inputs",
+      "BREAKING CHANGE: Migrate configuration:" +
+        separator +
+        steps +
+        "\n\nReviewed-by: Fixture Reviewer",
+    );
+    const notes = includeRestart ? steps : steps.split("\n")[0];
+    await candidate(
+      f,
+      "6.0.0",
+      "### ⚠ BREAKING CHANGES\n\nMigrate configuration:\n\n" + notes,
+    );
+    const result = verify(f);
+    if (includeRestart) {
+      await expect(result).resolves.toMatchObject({
+        stdout: expect.stringContaining('"expectedVersion": "6.0.0"'),
+      });
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
 
 it.each([
   {
@@ -480,7 +505,7 @@ it.each([
 it("does not treat an ordinary body example as a merge title or breaking declaration", async () => {
   const f = await fixture(
     "fix: improve diagnostics",
-    "Example subject:\n\nfix(contracts)!: example only",
+    "Example subject:\n\nfix(contracts)!: example only\n\n~~~text\nBREAKING CHANGE: example only\n~~~",
   );
   await candidate(f, "5.0.1", `### Bug Fixes\n\n${f.changedSha}`);
   await expect(verify(f, "5.0.1")).resolves.toMatchObject({ stderr: "" });
@@ -501,15 +526,265 @@ it("cannot satisfy migration references with notes retained from an older releas
   });
 });
 
-it("recognizes a BREAKING CHANGE footer without a bang in the subject", async () => {
-  const f = await fixture(
-    "fix(contracts): change path inputs (#948)",
-    "BREAKING CHANGE: relative MCP paths are rejected",
+it("allows release examples with a release heading before genuine migration notes", async () => {
+  const f = await fixture();
+  await candidate(
+    f,
+    "6.0.0",
+    "- ~~~markdown\n  ## [5.0.0]\n  ~~~\n\n### ⚠ BREAKING CHANGES\n\nSee #948.",
   );
-  await expect(verify(f, "5.1.0", "prepare", "source")).rejects.toMatchObject({
+  await expect(verify(f)).resolves.toMatchObject({ stderr: "" });
+});
+
+it.each([
+  {
+    form: "a fenced example",
+    notes:
+      "### Features\n\n~~~markdown\n### ⚠ BREAKING CHANGES\n\nSee #948.\n~~~",
+  },
+  {
+    form: "a wrapped inline code example",
+    notes: "### ⚠ BREAKING CHANGES\n\n- Syntax: `See #948\n  for details.`",
+  },
+])("requires genuine migration notes outside $form", async ({ notes }) => {
+  const f = await fixture();
+  await candidate(f, "6.0.0", notes);
+  await expect(verify(f)).rejects.toMatchObject({
     code: 1,
-    stderr: expect.stringContaining("contains unreleased breaking markers"),
+    stderr: expect.stringContaining(
+      "migration notes omit unreleased breaking changes",
+    ),
   });
+});
+
+it.each([
+  {
+    form: "the entire footer quoted as wrapped code",
+    footer: "Use absolute MCP paths. Relative paths are rejected.",
+    notes: "Example: `Use absolute MCP paths.\n  Relative paths are rejected.`",
+    accepted: false,
+  },
+  {
+    form: "a migration instruction with the exact inline options",
+    footer: "Replace `--old-path` with `--mcp-path`.",
+    notes: "**Replace** `--old-path` with\n  `--mcp-path`.",
+    accepted: true,
+  },
+  {
+    form: "the same instruction with a different inline option",
+    footer: "Replace `--old-path` with `--mcp-path`.",
+    notes: "**Replace** `--old-path` with\n  `--mcp-paths`.",
+    accepted: false,
+  },
+  {
+    form: "a different value inside an inline command",
+    footer:
+      'Run `rea capture --name "two  spaces"` before collecting Evidence.',
+    notes: 'Run `rea capture --name "two spaces"` before collecting Evidence.',
+    accepted: false,
+  },
+  {
+    form: "a migration link with the same destination and formatted label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [**the replacement**](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "plain migration prose with a hyperlink added in the notes",
+    footer: "Download the replacement.",
+    notes: "Download [the replacement](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a migration link with a different destination",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download [the replacement](https://example.com/v1).",
+    accepted: false,
+  },
+  {
+    form: "a migration link reduced to its label",
+    footer: "Download [the replacement](https://example.com/v2).",
+    notes: "Download the replacement.",
+    accepted: false,
+  },
+  {
+    form: "the same destination linked from different words",
+    footer: "Download [the replacement](https://example.com/v2) now.",
+    notes: "Download [the replacement now](https://example.com/v2).",
+    accepted: false,
+  },
+  {
+    form: "a required Markdown link alongside an added link with the same destination",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v2) and restart [the client](https://example.com/v2).",
+    accepted: true,
+  },
+  {
+    form: "a required Markdown link whose destination appears on an added link instead",
+    footer:
+      "Download [the replacement](https://example.com/v2) and restart the client.",
+    notes:
+      "Download [the replacement](https://example.com/v1) and restart [the client](https://example.com/v2).",
+    accepted: false,
+  },
+  {
+    form: "the same inline HTML link",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    accepted: true,
+  },
+  {
+    form: "an inline HTML link with a changed destination",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: 'Download <a href="https://example.com/v1">the replacement</a>.',
+    accepted: false,
+  },
+  {
+    form: "an inline HTML link reduced to its label",
+    footer: 'Download <a href="https://example.com/v2">the replacement</a>.',
+    notes: "Download the replacement.",
+    accepted: false,
+  },
+])(
+  "validates migration wording from $form",
+  async ({ footer, notes, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: change path inputs",
+      `BREAKING CHANGE: ${footer}`,
+    );
+    await candidate(f, "6.0.0", `### ⚠ BREAKING CHANGES\n\n- ${notes}`);
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+const migrationCommand = 'mv "old config.json" "new config.json"';
+const fencedMigrationCommand = `~~~sh\n${migrationCommand}\n~~~`;
+
+it.each([
+  { form: "missing command", command: "", accepted: false },
+  {
+    form: "different command",
+    command: fencedMigrationCommand.replace("new config", "other config"),
+    accepted: false,
+  },
+  { form: "inline code", command: `\`${migrationCommand}\``, accepted: false },
+  {
+    form: "exact fenced command",
+    command: fencedMigrationCommand,
+    accepted: true,
+  },
+  {
+    form: "exact indented command",
+    command: `    ${migrationCommand}`,
+    accepted: true,
+  },
+])(
+  "requires a literal migration block: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: rename the configuration file",
+      `BREAKING CHANGE: Rename the configuration file.\n\n${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nRename the configuration file.\n\n${command}`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+const htmlMigrationBlock = "<pre>\nHeader: exact value\n</pre>";
+
+it.each([
+  { form: "preserved", block: htmlMigrationBlock, accepted: true },
+  { form: "omitted", block: "", accepted: false },
+])("keeps raw HTML migration blocks: $form", async ({ block, accepted }) => {
+  const f = await fixture(
+    "fix(contracts)!: migrate configuration",
+    `BREAKING CHANGE: Write the new configuration.\n\n${htmlMigrationBlock}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n${block}`,
+  );
+  const result = verify(f);
+  if (accepted) {
+    await expect(result).resolves.toHaveProperty("stdout");
+  } else {
+    await expect(result).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        "migration notes omit unreleased breaking changes",
+      ),
+    });
+  }
+});
+
+it.each([
+  { form: "preserved", command: "Header: exact value", accepted: true },
+  { form: "changed", command: "Header: another value", accepted: false },
+])(
+  "keeps trailer-shaped text in code blocks: $form",
+  async ({ command, accepted }) => {
+    const f = await fixture(
+      "fix(contracts)!: migrate configuration",
+      "BREAKING CHANGE: Write the new configuration.\n\n~~~text\nHeader: exact value\n~~~\n\nReviewed-by: Fixture Reviewer",
+    );
+    await candidate(
+      f,
+      "6.0.0",
+      `### ⚠ BREAKING CHANGES\n\nWrite the new configuration.\n\n~~~text\n${command}\n~~~`,
+    );
+    const result = verify(f);
+    if (accepted) {
+      await expect(result).resolves.toHaveProperty("stdout");
+    } else {
+      await expect(result).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining(
+          "migration notes omit unreleased breaking changes",
+        ),
+      });
+    }
+  },
+);
+
+it("accepts a code-only migration when its fence starts on the footer line", async () => {
+  const f = await fixture(
+    "fix(contracts): rename configuration",
+    `BREAKING CHANGE: ${fencedMigrationCommand}\n\nReviewed-by: Fixture Reviewer`,
+  );
+  await candidate(
+    f,
+    "6.0.0",
+    `### ⚠ BREAKING CHANGES\n\n${fencedMigrationCommand}`,
+  );
+  const report = reportSchema.parse(JSON.parse((await verify(f)).stdout));
+  expect(report.commits).toMatchObject([{ sha: f.changedSha, breaking: true }]);
 });
 
 it.each([
@@ -523,8 +798,11 @@ it.each([
     const report = reportSchema.parse(
       JSON.parse((await verify(f, version)).stdout),
     );
-    expect(report.expectedVersion).toBe(version);
-    expect(report.commits.every((entry) => !entry.breaking)).toBe(true);
+    expect(report).toMatchObject({
+      expectedVersion: version,
+      commits: [{ sha: f.changedSha, subject, breaking: false }],
+      missingNotes: [],
+    });
   },
 );
 
@@ -545,7 +823,7 @@ it.each(["6.01.0", "6.0", "not-a-version", "6.0.0+build"])(
         { directory, sourceSha: "1".repeat(40) },
         version,
         "prepare",
-        "source",
+        version === "not-a-version" ? "candidate" : "source",
       ),
     ).rejects.toMatchObject({
       code: 1,
@@ -554,70 +832,94 @@ it.each(["6.01.0", "6.0", "not-a-version", "6.0.0+build"])(
   },
 );
 
-it("validates candidate options before inspecting the working directory", async () => {
-  const directory = await createTestTempDirectory(
-    "rea-release-invalid-candidate-",
-  );
-  await git(directory, ["init", "--initial-branch=main"]);
-  await expect(
-    verify({ directory, sourceSha: "1".repeat(40) }, "not-a-version"),
-  ).rejects.toMatchObject({
+it.each([
+  {
+    path: "package.json",
+    content: JSON.stringify({ name: "rea-agents", version: "5.1.0" }),
+    location: "package.json",
+  },
+  {
+    path: "package-lock.json",
+    content: JSON.stringify({
+      version: "6.0.0",
+      packages: { "": { version: "5.1.0" } },
+    }),
+    location: "package-lock.json packages.root",
+  },
+  {
+    path: "server.json",
+    content: JSON.stringify({
+      version: "6.0.0",
+      packages: [
+        { registryType: "npm", identifier: "rea-agents", version: "5.1.0" },
+      ],
+    }),
+    location: "server.json rea-agents package",
+  },
+  {
+    path: "src/generatedPackageMetadata.ts",
+    content: 'export const METADATA = {\n  version: "5.1.0",\n};\n',
+    location: "src/generatedPackageMetadata.ts",
+  },
+])(
+  "rejects inconsistent version metadata in $location",
+  async ({ path, content, location }) => {
+    const f = await fixture();
+    const sha = await candidate(f, "6.0.0", undefined, { [path]: content });
+    await expect(verify(f)).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(
+        `${location}@${sha} declares 5.1.0; release branch requires 6.0.0`,
+      ),
+    });
+  },
+);
+
+it.each([
+  {
+    label: "non-npm",
+    packages: [
+      { registryType: "oci", identifier: "rea-agents", version: "6.0.0" },
+    ],
+  },
+  {
+    label: "ambiguous",
+    packages: [
+      { registryType: "npm", identifier: "rea-agents", version: "6.0.0" },
+      { registryType: "npm", identifier: "rea-agents", version: "5.1.0" },
+    ],
+  },
+])("refuses invalid MCP package entries: $label", async ({ packages }) => {
+  const f = await fixture();
+  const sha = await candidate(f, "6.0.0", undefined, {
+    "server.json": JSON.stringify({ version: "6.0.0", packages }),
+  });
+  await expect(verify(f)).rejects.toMatchObject({
     code: 1,
-    stderr: expect.stringContaining("must contain an exact SemVer"),
+    stderr: expect.stringContaining(`server.json@${sha} is malformed`),
   });
 });
 
 it.each([
-  "package-lock.json",
-  "server.json",
-  "src/generatedPackageMetadata.ts",
-])("rejects inconsistent version metadata in %s", async (path) => {
+  {
+    path: ".claude-plugin/plugin.json",
+    manifest: pluginManifest("5.1.0", "6.0.0"),
+  },
+  {
+    path: ".codex-plugin/plugin.json",
+    manifest: { version: "5.1.0", mcpServers: "./.codex-plugin/mcp.json" },
+  },
+  { path: ".cursor-plugin/plugin.json", manifest: { version: "5.1.0" } },
+])("rejects a stale manifest version in $path", async ({ path, manifest }) => {
   const f = await fixture();
-  await candidate(f, "6.0.0");
-  await writeFile(
-    join(f.directory, path),
-    path.endsWith(".ts")
-      ? 'export const METADATA = {\n  version: "5.1.0",\n};\n'
-      : JSON.stringify(
-          path === "package-lock.json"
-            ? { version: "6.0.0", packages: { "": { version: "5.1.0" } } }
-            : path === "server.json"
-              ? {
-                  version: "6.0.0",
-                  packages: [{ identifier: "rea-agents", version: "5.1.0" }],
-                }
-              : { package: { version: "5.1.0" } },
-        ),
-  );
-  await git(f.directory, ["add", "."]);
-  await git(f.directory, ["commit", "-m", "chore: inconsistent metadata"]);
+  const sha = await candidate(f, "6.0.0", undefined, {
+    [path]: JSON.stringify(manifest),
+  });
   await expect(verify(f)).rejects.toMatchObject({
     code: 1,
     stderr: expect.stringContaining(
-      "declares 5.1.0; release branch requires 6.0.0",
+      `${path}@${sha} declares 5.1.0; release branch requires 6.0.0`,
     ),
-  });
-});
-
-it.each(
-  pluginManifestPaths.map((path) => ({
-    path,
-    stale: "version",
-    manifest:
-      path === ".codex-plugin/plugin.json"
-        ? { version: "5.1.0", mcpServers: "./.codex-plugin/mcp.json" }
-        : pluginManifest("5.1.0"),
-    failure: "declares 5.1.0; release branch requires 6.0.0",
-  })),
-)("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
-  const f = await fixture();
-  await candidate(f, "6.0.0");
-  await writeFile(join(f.directory, path), JSON.stringify(manifest));
-  await git(f.directory, ["add", "."]);
-  await git(f.directory, ["commit", "-m", "chore: stale plugin manifest"]);
-  await expect(verify(f)).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(failure),
   });
 });
 
@@ -625,35 +927,84 @@ it.each([
   {
     path: ".claude-plugin/plugin.json",
     manifest: pluginManifest("6.0.0", "5.1.0"),
+    failure: "launches version 5.1.0; release branch requires 6.0.0",
   },
   {
     path: ".codex-plugin/mcp.json",
     manifest: codexServerConfig("6.0.0", "5.1.0"),
+    failure: "launches version 5.1.0; release branch requires 6.0.0",
   },
-])("reads the release pin from $path", async ({ path, manifest }) => {
-  const f = await fixture();
-  await candidate(f, "6.0.0");
-  await writeFile(join(f.directory, path), JSON.stringify(manifest));
-  await git(f.directory, ["add", "."]);
-  await git(f.directory, ["commit", "-m", "chore: stale plugin launch"]);
-  await expect(verify(f)).rejects.toMatchObject({
-    code: 1,
-    stderr: expect.stringContaining(
-      `launches version 5.1.0; release branch requires 6.0.0`,
-    ),
-  });
-});
+  {
+    path: "mcp.json",
+    manifest: {
+      mcpServers: {
+        rea: { command: "npx", args: ["-y", "rea-agents@5.1.0", "mcp"] },
+      },
+    },
+    failure:
+      "launches rea-agents@5.1.0; release branch requires rea-agents@6.0.0",
+  },
+])(
+  "rejects a stale release pin in $path",
+  async ({ path, manifest, failure }) => {
+    const f = await fixture();
+    const sha = await candidate(f, "6.0.0", undefined, {
+      [path]: JSON.stringify(manifest),
+    });
+    const location =
+      path === ".codex-plugin/mcp.json" ? ".codex-plugin/plugin.json" : path;
+    await expect(verify(f)).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining(`${location}@${sha} ${failure}`),
+    });
+  },
+);
 
-it("checks a publish merge using its pre-release first parent baseline", async () => {
-  const f = await fixture();
-  const sourceSha = await candidate(f, "6.0.0");
-  const report = reportSchema.parse(
-    JSON.parse(
-      (await verify({ ...f, sourceSha }, "6.0.0", "publish", "source")).stdout,
-    ),
+it("uses the first parent of the frozen publish merge even after HEAD advances", async () => {
+  const f = await fixture(undefined, "", { versioning: "always-bump-minor" });
+  await git(f.directory, ["switch", "-c", "release/5.1.0"]);
+  const candidateSha = await candidate(f, "5.1.0");
+  await git(f.directory, ["switch", "main"]);
+  await git(f.directory, [
+    "merge",
+    "--no-ff",
+    "release/5.1.0",
+    "-m",
+    "chore: merge proposed release",
+  ]);
+  const sourceSha = await git(f.directory, ["rev-parse", "HEAD"]);
+  expect(await git(f.directory, ["rev-parse", `${sourceSha}^2`])).toBe(
+    candidateSha,
   );
-  expect(report.applicationSha).toBe(f.sourceSha);
-  expect(report.baselineVersion).toBe("5.0.0");
+  const release = { ...f, sourceSha };
+  const original = JSON.parse(
+    (await verify(release, "5.1.0", "publish", "source")).stdout,
+  );
+  expect(reportSchema.parse(original)).toMatchObject({
+    sourceSha,
+    applicationSha: f.sourceSha,
+    baselineSha: f.releasedSha,
+    baselineVersion: "5.0.0",
+    expectedVersion: "5.1.0",
+    missingNotes: [],
+  });
+  await writeFile(join(f.directory, "server.json"), '{"version":"0.0.0"}');
+  await git(f.directory, ["add", "server.json"]);
+  await git(f.directory, ["commit", "-m", "fix: unrelated later work"]);
+  expect(
+    JSON.parse((await verify(release, "main", "publish", "source")).stdout),
+  ).toEqual(original);
+  await expect(
+    verify(
+      { ...f, sourceSha: await git(f.directory, ["rev-parse", "HEAD"]) },
+      "main",
+      "publish",
+      "source",
+    ),
+  ).rejects.toMatchObject({
+    code: 1,
+    stderr: expect.stringContaining("must advance published baseline"),
+  });
 });
 
 it("reports other omitted entries for review without inventing a breaking change", async () => {

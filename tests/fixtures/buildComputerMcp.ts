@@ -1,3 +1,6 @@
+import type { BuildComputerDefaults } from "../../src/desktop/BuildComputerEnvironment.js";
+import type { ComputerStartTiming } from "../../src/desktop/AgentEnvComputer.js";
+import { closeVerifierResources } from "../../scripts/lib/verifier-cleanup.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,17 +8,21 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, onTestFinished } from "vitest";
 
+import type { BuildSettle } from "../../src/application/desktop/DesktopBuildSettle.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import type { SettleTiming } from "../../src/domain/desktop/appSettle.js";
 import { createServer } from "../../src/server/createServer.js";
 import { createTestBinarySession } from "./binarySession.js";
 import {
   fakeAgentEnvRunner,
+  isolatedBuildDefaults,
   startFakeComputer,
   type FakeAgentEnvRunner,
   type FakeComputer,
   type FakeComputerOptions,
 } from "./fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "./temporaryDirectory.js";
+import { createMcpSchemaValidation } from "./mcpSchemaValidation.js";
 
 /** The host's environment without the settings the opt-in real test exports, which would reach past the fakes. */
 const hostEnvironment = Object.fromEntries(
@@ -29,9 +36,19 @@ const hostEnvironment = Object.fromEntries(
   ),
 );
 
-/** An MCP client of a REA server whose build computers reach the fakes through `environment`. */
+/** A check grades its first read, for tests whose app changes nothing while it is checked. */
+const FIRST_READ: SettleTiming = {
+  intervalMs: 0,
+  windowMs: 0,
+  boundMs: 0,
+};
+
+/** An MCP client of a REA server whose build computers reach the fakes through `environment`, read apps with `settle` and start on `startTiming`. */
 export const connectBuildServer = async (
   environment: Readonly<Record<string, string>>,
+  settle: BuildSettle = FIRST_READ,
+  defaults?: BuildComputerDefaults,
+  startTiming?: ComputerStartTiming,
 ): Promise<Client> => {
   const session = createTestBinarySession(() => {
     throw new Error("build computers must not start a deep provider");
@@ -41,16 +58,28 @@ export const connectBuildServer = async (
     {
       environment: {
         ...hostEnvironment,
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
         ...environment,
       },
+      desktopBuildSettle: settle,
+      desktopBuildDefaults: defaults ?? (await isolatedBuildDefaults()),
+      ...(startTiming === undefined
+        ? {}
+        : { desktopBuildStartTiming: startTiming }),
     },
   );
-  const client = new Client({ name: "build-computer-mcp", version: "1" });
+  const client = new Client(
+    { name: "build-computer-mcp", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await session.close();
+    await closeVerifierResources([
+      () => client.close(),
+      () => server.close(),
+      async () => {
+        const closed = await session.close();
+        if (!closed.ok) throw closed.error;
+      },
+    ]);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();

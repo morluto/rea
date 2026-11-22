@@ -48,4 +48,21 @@ describe("build computer action log", () => {
     expect(log.entries).toHaveLength(LOGGED_ACTIONS);
     expect(log.entries.every((entry) => entry.action === "wait")).toBe(true);
   });
+
+  it("keeps a secret's handle and never a known secret's value in any argument", () => {
+    // A made-up value, as a secret the server has typed.
+    const value = "e-Plum7-Kite-Throwaway-42";
+    const log = new BuildComputerActionLog((text) =>
+      text.replaceAll(value, "<secret:master>"),
+    );
+    log.begin("type_secret", "computer_type", { secret: "master" });
+    log.begin("type", "computer_type", { text: `pw ${value}\n` });
+    log.begin("key", "computer_key", { keys: [value] });
+    expect(log.entries.map((entry) => entry.arguments)).toEqual([
+      { secret: "master" },
+      { text: "pw <secret:master>\n" },
+      { keys: ["<secret:master>"] },
+    ]);
+    expect(JSON.stringify(log.entries)).not.toContain(value);
+  });
 });

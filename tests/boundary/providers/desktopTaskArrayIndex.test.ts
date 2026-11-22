@@ -26,7 +26,7 @@ ${PYTHON_TASK_EVALUATOR}
 results = []
 for case in json.load(sys.stdin):
     items, pointer = case["items"], case["pointer"]
-    located = _locate(items, pointer)
+    located = _locate(items, pointer, "json")
     check = {"id": "absent", "kind": "value_absent", "file": "state.json", "pointer": pointer}
     verdict = evaluate([check], {"state.json": {"format": "json", "view": items, "truncated": False}})[0]
     results.append([located[0], located[1], verdict["result"]])
@@ -41,7 +41,7 @@ print(json.dumps(results))
   );
   expect(results).toEqual(
     cases.map(({ items, pointer }) => {
-      const located = locatePointer(items, pointer);
+      const located = locatePointer(items, pointer, "json");
       return [
         located.kind,
         located.kind === "value" ? located.value : null,
@@ -49,4 +49,22 @@ print(json.dumps(results))
       ];
     }),
   );
+});
+
+it("evaluates root-array member counts in the exported Python verifier", async () => {
+  const folder = await createTestTempDirectory("task-root-count-");
+  const script = join(folder, "fixture.py");
+  await writeFile(
+    script,
+    `import json, re, math
+${PYTHON_TASK_EVALUATOR}
+check = {"id": "count", "kind": "member_count", "file": "state.json", "pointer": "", "equals": 3}
+print(json.dumps([evaluate([check], {"state.json": {"format": "json", "view": values, "truncated": False}})[0]["result"] for values in [[1, 2], [1, 2, 3]]]))
+`,
+  );
+  expect(
+    JSON.parse(
+      execFileSync("python3", ["-I", "-B", script], { encoding: "utf8" }),
+    ),
+  ).toEqual([false, true]);
 });

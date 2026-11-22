@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createHistoricalSourceSummary } from "../../../src/domain/referenceSourceSummary.js";
 import fs from "node:fs";
 import {
@@ -21,15 +22,12 @@ import { prepareReferenceSourceImport } from "../../../src/application/Reference
 import {
   readRegularFileText,
   RegularFileReadFailure,
-} from "../../../src/application/RegularFileRead.js";
+} from "../../../src/process/RegularFileRead.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
-import {
-  parseReferenceSourceEntries,
-  projectReferenceSourceEntryFailure,
-} from "../../../src/application/ReferenceSourceImportEntries.js";
+import { parseReferenceSourceEntries } from "../../../src/application/ReferenceSourceImportEntries.js";
 import type { ReferenceSourceRead } from "../../../src/reference/ReferenceSourceReaderTypes.js";
 import { createHistoricalSourceManifest } from "../../../src/domain/referenceSourceGraph.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
 
@@ -116,13 +114,24 @@ describe("reference source import projections", () => {
       ["file", "cancelled"],
       ["unknown", "unsupported"],
     ] as const) {
-      const message = projectReferenceSourceEntryFailure({
-        status: "failed",
-        path: "safe/path",
-        kind,
-        code,
-        message: "Observed entry failure at /owned/fixture/path",
-      });
+      const parsed = parseReferenceSourceEntries(
+        {
+          root: "/owned/fixture",
+          entries: [
+            {
+              status: "failed",
+              path: "safe/path",
+              kind,
+              code,
+              message: "Observed entry failure at /owned/fixture/path",
+            },
+          ],
+          bytesRead: 0,
+          limitations: [],
+        },
+        [],
+      );
+      const message = parsed.entries[0]?.limitations[0];
       expect(message).toContain(
         "Observed entry failure at /owned/fixture/path",
       );
@@ -743,6 +752,7 @@ describe("reference source import behavior", () => {
           kind: "file",
           size,
           content_state: "hashed",
+          sha256: createHash("sha256").update("a".repeat(size)).digest("hex"),
         }),
       );
     }

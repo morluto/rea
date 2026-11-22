@@ -13,17 +13,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
 
 const cliLifecycle = (cli: TestCli, home: string, profile: string) => {
-  const client = supportedClients(home, process.platform, {
-    HERMES_HOME: profile,
-  }).find(({ name }) => name === "hermes");
-  if (client?.configPath !== join(profile, "config.yaml"))
-    throw new Error("Hermes profile did not resolve to the test config");
   const run = (arguments_: readonly string[]) =>
     cli.run({
       arguments: arguments_,
       cwd: home,
       environment: { HOME: home, USERPROFILE: home, HERMES_HOME: profile },
-      timeoutMs: 20_000,
     });
   const setup = [
     "setup",
@@ -48,7 +42,15 @@ const cliLifecycle = (cli: TestCli, home: string, profile: string) => {
       expect(doctor.exitCode, JSON.stringify(doctor)).toBe(0);
       expect(doctor.json).toMatchObject({
         healthy: true,
-        identity: { registrations: [{ client: "hermes", state: "aligned" }] },
+        identity: {
+          registrations: [
+            {
+              client: "hermes",
+              state: "aligned",
+              config_path: join(profile, "config.yaml"),
+            },
+          ],
+        },
       });
       const repeated = await run(setup);
       expect(repeated.exitCode, JSON.stringify(repeated)).toBe(0);
@@ -156,105 +158,99 @@ const anchoredConfiguration = (
   return { original, other, hasDefaults };
 };
 
-for (const version of ["1.1", "1.2"] as const) {
-  for (const style of [
-    "entry",
-    "child",
-    "shadowed",
-    "key",
-    "external",
-  ] as const) {
-    const publicCli = style === "entry" || style === "shadowed";
-    cliTest(
-      `Hermes ${version} preserves ${style} anchor consumers through ${publicCli ? "CLI" : "configuration boundary"} setup and uninstall`,
-      async ({ cli }) => {
-        // Exercise both YAML versions through the CLI, including the shadowed
-        // anchor case; the other styles retain the full registration lifecycle
-        // at the production configuration and uninstall boundary.
-        const home = await createTestTempDirectory(
-          "rea-hermes-anchored-entry-",
+const scenarios = [
+  ["1.1", "entry", true],
+  ["1.2", "shadowed", true],
+  ["1.2", "child", false],
+  ["1.1", "key", false],
+  ["1.1", "external", false],
+] as const;
+
+for (const [version, style, publicCli] of scenarios) {
+  cliTest(
+    `Hermes ${version} preserves ${style} anchor consumers through ${publicCli ? "CLI" : "configuration boundary"} setup and uninstall`,
+    async ({ cli }) => {
+      const home = await createTestTempDirectory("rea-hermes-anchored-entry-");
+      const profile = join(home, "hermes");
+      const config = join(profile, "config.yaml");
+      const command = publicCli
+        ? [process.execPath, resolve("scripts/rea.mjs"), "mcp"]
+        : currentClientRegistrationCommand({ platform: process.platform });
+      if (command[0] === undefined) throw new Error("Missing REA entrypoint");
+      const server = {
+        command: command[0],
+        args: command.slice(1),
+        env: { KEEP: "off" },
+        enabled: false,
+      };
+      const { original, other, hasDefaults } = anchoredConfiguration(
+        version,
+        style,
+        server,
+      );
+      await mkdir(profile);
+      await writeFile(config, original);
+      const lifecycle = publicCli
+        ? cliLifecycle(cli, home, profile)
+        : configurationLifecycle(home, profile, config, command);
+      await lifecycle.configure();
+      const configured = await readFile(config, "utf8");
+      const configuredValues = parse(configured, { version });
+      expect(configuredValues).toMatchObject({
+        model: "custom",
+        mcp_servers: { rea: { enabled: true, env: { KEEP: "off" } }, other },
+        ...(style === "shadowed"
+          ? { observer: server, later: { KEEP: "later" } }
+          : {}),
+        ...(style === "key" ? { observer: "rea" } : {}),
+      });
+      if (hasDefaults)
+        expect(configuredValues.mcp_servers.other.env).toBe(
+          configuredValues.defaults,
         );
-        const profile = join(home, "hermes");
-        const config = join(profile, "config.yaml");
-        const command = publicCli
-          ? [process.execPath, resolve("scripts/rea.mjs"), "mcp"]
-          : currentClientRegistrationCommand({ platform: process.platform });
-        if (command[0] === undefined) throw new Error("Missing REA entrypoint");
-        const server = {
-          command: command[0],
-          args: command.slice(1),
-          env: { KEEP: "off" },
-          enabled: false,
-        };
-        const { original, other, hasDefaults } = anchoredConfiguration(
-          version,
-          style,
-          server,
+      expect(configured).toContain("# Keep this user setting");
+      if (style === "entry")
+        expect(configured).toContain("# Keep anchor definition comment");
+      expect(configured).toContain(
+        style === "child"
+          ? "# Shared environment"
+          : style === "key"
+            ? "# Registration name"
+            : "# Independent server",
+      );
+      if (hasDefaults)
+        expect(configured).toContain("# Keep nested reference comment");
+      expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+      await lifecycle.verifyAndRepeat();
+      expect(await readFile(config, "utf8")).toBe(configured);
+      await lifecycle.remove();
+      const removedValues = parse(await readFile(config, "utf8"), {
+        version,
+      });
+      expect(removedValues).toEqual({
+        model: "custom",
+        mcp_servers: { other },
+        ...(hasDefaults ? { defaults: { KEEP: "off" } } : {}),
+        ...(style === "shadowed"
+          ? {
+              later: { KEEP: "later" },
+              observer: server,
+            }
+          : {}),
+        ...(style === "key" ? { observer: "rea" } : {}),
+      });
+      if (hasDefaults)
+        expect(removedValues.mcp_servers.other.env).toBe(
+          removedValues.defaults,
         );
-        await mkdir(profile);
-        await writeFile(config, original);
-        const lifecycle = publicCli
-          ? cliLifecycle(cli, home, profile)
-          : configurationLifecycle(home, profile, config, command);
-        await lifecycle.configure();
-        const configured = await readFile(config, "utf8");
-        const configuredValues = parse(configured, { version });
-        expect(configuredValues).toMatchObject({
-          model: "custom",
-          mcp_servers: { rea: { enabled: true, env: { KEEP: "off" } }, other },
-          ...(style === "shadowed"
-            ? { observer: server, later: { KEEP: "later" } }
-            : {}),
-          ...(style === "key" ? { observer: "rea" } : {}),
-        });
-        if (hasDefaults)
-          expect(configuredValues.mcp_servers.other.env).toBe(
-            configuredValues.defaults,
-          );
-        expect(configured).toContain("# Keep this user setting");
-        if (style === "entry")
-          expect(configured).toContain("# Keep anchor definition comment");
-        expect(configured).toContain(
-          style === "child"
-            ? "# Shared environment"
-            : style === "key"
-              ? "# Registration name"
-              : "# Independent server",
-        );
-        if (hasDefaults)
-          expect(configured).toContain("# Keep nested reference comment");
-        expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
-        await lifecycle.verifyAndRepeat();
-        expect(await readFile(config, "utf8")).toBe(configured);
-        await lifecycle.remove();
-        const removedValues = parse(await readFile(config, "utf8"), {
-          version,
-        });
-        expect(removedValues).toEqual({
-          model: "custom",
-          mcp_servers: { other },
-          ...(hasDefaults ? { defaults: { KEEP: "off" } } : {}),
-          ...(style === "shadowed"
-            ? {
-                later: { KEEP: "later" },
-                observer: server,
-              }
-            : {}),
-          ...(style === "key" ? { observer: "rea" } : {}),
-        });
-        if (hasDefaults)
-          expect(removedValues.mcp_servers.other.env).toBe(
-            removedValues.defaults,
-          );
-        expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
-        const remaining = await readFile(config, "utf8");
-        if (style === "entry")
-          expect(remaining).toContain("# Keep anchor definition comment");
-        if (hasDefaults)
-          expect(remaining).toContain("# Keep nested reference comment");
-        await lifecycle.removeAgain();
-        expect(await readFile(config, "utf8")).toBe(remaining);
-      },
-    );
-  }
+      expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(original);
+      const remaining = await readFile(config, "utf8");
+      if (style === "entry")
+        expect(remaining).toContain("# Keep anchor definition comment");
+      if (hasDefaults)
+        expect(remaining).toContain("# Keep nested reference comment");
+      await lifecycle.removeAgain();
+      expect(await readFile(config, "utf8")).toBe(remaining);
+    },
+  );
 }

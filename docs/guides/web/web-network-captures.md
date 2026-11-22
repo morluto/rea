@@ -63,6 +63,9 @@ redaction, and its live status clears only after a confirmed retry.
 
 ## Formats and upstream profiles
 
+Unsupported format and decoder errors identify the reported requirement and
+include its source location when the decoder supplies one.
+
 HAR uses `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
@@ -90,13 +93,13 @@ may be absent, `-1`, or nonnegative. `cache` must be an object, while its option
 Invalid values fail with their source JSON pointer before record selection or
 sensitivity projection. Measurements are not invented or repaired. Decoder
 provenance names these corrections as `har-schema-corrections@1`.
-The observed mitmproxy 12.2.3 `SaveHar` profile can emit `postData.text: null`
+The observed mitmproxy 12.2.3/12.3.1 `SaveHar` profile can emit `postData.text: null`
 for a missing request body. REA preserves that reported null, omitting the
 optional field only from its validation copy for this exact producer profile;
 it does not invent an empty string or body bytes.
-The observed Playwright 1.58.2 profile can report a bracketed IPv6
+The observed Playwright 1.58.2 and 1.64.1 profiles can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
-[Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/har/harTracer.ts).
+[Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.64.1/packages/playwright-core/src/server/har/harTracer.ts).
 Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
 AppleWebKit version in Chromium's user agent) report the same bracketed form:
 [its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
@@ -105,8 +108,15 @@ REA preserves the original spelling in reported Evidence and removes brackets
 only from its validation copy, only for these declared producers and a valid
 IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
+The same Chromium DevTools writer reports `serverIPAddress` as `""` when a
+request has no remote address, such as a refused connection, an aborted request
+or an internal redirect: it copies `NetworkRequest.remoteAddress()`, which
+starts empty. REA retains that empty value in reported Evidence, omits the
+optional field only from its validation copy for this declared producer, and
+adds a record limitation that the server address is unknown. Other producers'
+empty addresses remain validation failures.
 
-Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
+Native mitmproxy decoding requires a caller-supplied **mitmdump 12.3.1 on
 Linux**. Set its absolute executable path:
 
 ```sh
@@ -118,8 +128,8 @@ directory, `--no-server`, and the unchanged upstream `mitmproxy.io.tnetstring`
 decoder. It does not run `FlowReader` migrations or convert native states to
 HAR. Raw IDs, state versions, flow types, backup states and unknown extensions
 are preserved without synthesizing connections, timestamps or content. The
-tested upstream source is tag `v12.2.3`, commit
-`6c09d56e4c29a92f5ad01b03199977584b8ea14f`; other native tool versions return
+tested upstream source is tag `v12.3.1`, commit
+`51c1d6b2d8d3367a773411eb7a3eeccec82b3ea7`; other native tool versions return
 an explicit unsupported-profile diagnostic. Non-Linux native decoding is not
 supported by this adapter.
 
@@ -163,9 +173,9 @@ conflicting repeated reserved parameters remain invalid. Repeated headers with
 implicit binary encoding and `encoding=binary` agree without rewriting either
 header. Invalid declarations remain visible even with explicit framing, and
 declared gRPC bodies still receive credential checks before a MIME refusal.
-An excluded HAR `mimeType` remains unknown for automatic interpretation even
-when a visible Content-Type header exists. That header can still identify the
-transport for credential checks; explicit wire framing remains independent.
+HAR `mimeType` controls automatic interpretation and remains unknown when
+excluded. Each visible Content-Type declaration still informs credential checks,
+including when it disagrees with the HAR MIME field or another header.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
@@ -236,10 +246,11 @@ when MIME metadata is unavailable. CLI exposes `--protobuf-body-pointer` and
 base64 layer also checks explicit exclusions; newly recognized trailer
 credentials exclude the entire affected binary sidecar and its reported
 encoding, preserving a redaction coordinate instead of a credential digest.
-Credential inspection covers every selected body before descriptor reads or
-field expansion. Later capacity or schema failures can therefore retain the
-sanitized source even with explicit sensitivity options. If that source pass
-is interrupted, unchecked bodies are not published as partial Evidence.
+Credential checks use visible transport declarations for format-owned bodies in
+selected records before descriptor reads or field expansion. The `body_pointers`
+filter applies to wire interpretation. Later capacity or schema failures can
+retain the sanitized source even with explicit sensitivity options. An interrupted
+source pass withholds unchecked bodies from partial Evidence.
 Framing overrides apply only to format-owned body coordinates and preserve
 exclusions for the transport declared in MIME metadata.
 Explicitly excluded or conflicting MIME metadata is not treated as absent:
@@ -357,7 +368,11 @@ entire property and its sidecars; a `scope: "property-name"` redaction points
 to its actual parent. No substitute property name or child pointer is invented.
 Omitted subtrees are still validated, including canonical HAR base64. Explicitly sensitive artifact
 paths are empty in Evidence and omitted from locations, while the original
-SHA-256 and size remain available unless the digest itself is explicitly excluded. Failure messages, diagnostics and cleanup
+SHA-256 and size remain available unless the digest itself is explicitly excluded.
+CLI [caller-selected paths](../../reference/mcp-contracts.md#caller-selected-paths)
+are excluded independently: a sensitive capture spelling can be omitted while a
+safe `descriptor_set_path` remains, and a safe relative spelling can remain even
+when its resolved parent path is sensitive. Failure messages, diagnostics and cleanup
 resources follow the same explicit declarations without changing error types;
 sensitive issue pointers identify a real ancestor instead of a fabricated
 coordinate. Header/cookie authentication values and known
@@ -372,6 +387,24 @@ Generated free-text limitations follow the same literal declarations, including
 global, per-record and Evidence explanations added during projection. Contract
 field names, typed discriminators and exact decoder identities keep their
 canonical meanings; declarations do not rename formats or providers.
+
+A HAR capture's header names, query parameter names and JSON or form body
+member names that look like credentials (whole name segments such as `token`,
+`secret`, `password`, `api_key`, `authorization` or `session`) and hold a
+retained value are counted in a limitation that lists up to 20 of them by
+record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
+of text, says how many are not listed, and never names a value; the
+[environment build](../../agent-environments.md) runs the same scan as its
+`credential-named-members` warning. Values already excluded, such as the
+standard authentication headers or declared sensitive values, are not counted.
+The scan reads at most 524288 values in all across the selected records: a
+body's values are bounded from its text before it is parsed, and a header
+list, query string or form-parameter list is charged by its length before it
+is read, so a body larger than 4 MiB of UTF-8 text, or any of these that would
+take the scan past its budget, is not scanned, and a second limitation counts
+them by record and side. Names do not establish sensitivity, so nothing is excluded on
+them; declare the values as sensitive to exclude them. Other capture formats
+are not scanned.
 
 Historical evidence does not prove runtime attribution, execution or deployment
 authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
@@ -402,6 +435,20 @@ retained. Empty query pairs are ignored. Original URLs stay in parent Evidence;
 name decoding does not normalize the recorded paths used for grouping.
 The inventory describes observed names, without inferring required parameters,
 value types or a complete API schema. Sensitive-parent refusals still apply.
+
+Select `include_request_header_names: true` in the view to include the header,
+cookie and set-cookie names recorded for each group. The default and explicit
+`false` omit the `request_header_names` field. Selected groups carry
+`request_headers`, `cookie_names` and `set_cookie_names`, each an array of
+`{name, record_ordinals}` entries sorted by Unicode code point and listed once
+per record. `request_headers` holds the `request.headers` names verbatim, so
+`Accept` and `accept` stay distinct, while credential header names such as
+`Authorization` and `Cookie` appear as names only. `cookie_names` holds the
+`request.cookies` names and `set_cookie_names` the `response.cookies` names.
+No header, cookie or set-cookie value, prefix, digest or substring is copied,
+including from headers whose value was redacted at capture time. A name's
+presence does not establish authentication, session semantics, a required
+header or a complete header schema.
 
 | Rule       | Exact segment format                                 | Placeholder  |
 | ---------- | ---------------------------------------------------- | ------------ |
@@ -1110,44 +1157,21 @@ for the hint per reason.
 
 ## Resource and lifecycle boundaries
 
-Complete evidence has a 32 MiB input, 96 MiB decoder reply and 64-level nesting
-budget. Those budgets have no runtime override. `capture_timeout_ms` does not
-raise them. Exceeding a budget returns no partial success.
-Oversized selected captures return an input error identifying `capture_path`
-and the byte budget; owned reply/output failures remain output or provider errors.
-An explicit complete-reply refusal names the 100663296-byte allowance and its
-lack of a runtime override. Record selection, paging, delivery mode and worker
-memory do not increase that allowance; a smaller producer export is a narrower
-observation, and the refusal leaves no completed capture Evidence to retrieve.
-Cancellation during reply-file finalization retains validated completed capture
-facts as partial observations. Malformed or unvalidated replies are not promoted.
-HAR, SAZ and qlog run in an owned Node old-generation heap with one V8 worker.
-`REA_CAPTURE_DECODER_OLD_GENERATION_MIB` is a decimal integer of mebibytes from
-8 to 16384. Unset uses 192, the previous constant. Invalid values fail
-configuration and name the setting; they do not fall back to 192. The setting
-seeds the launch value. In MCP, set `capture.decoder_old_generation_mib`
-through `update_analysis_settings` for decoders belonging to newly accepted
-operations, without restarting REA. Changing the launch environment still
-requires a new process. A memory failure names the effective mebibytes, known
-source, default, floor, and maximum. The decoder
-passes that value as `--max-old-space-size` and removes inherited
-`NODE_OPTIONS`, so additional host memory and `NODE_OPTIONS` do not raise the
-heap. The 8 MiB semi-space stays fixed; a smaller old generation aborts Node
-during startup instead of enforcing a limit. Mitmproxy decoding applies
-Linux limits of 768 MiB address space, 30 seconds CPU and 96 MiB file output;
-both commands use `capture_timeout_ms` (default 30000) and independently supervised
-process cleanup. Owned decoder diagnostics retain at most 1 MiB across stdout
-and stderr; the collector drops overflow as it arrives, reports the limit
-failure and verifies cleanup. Heap limits alone do not establish aggregate RSS limits.
-SAZ and qlog refuse decoding when neither a Node heap limit nor a Windows Job Object bound can be enforced. Existing HAR availability is preserved.
-When REA runs on Bun, the HAR/SAZ/qlog decoder runs on Bun, which ignores these V8 heap
-flags; its limitations and resource failures then omit the V8 heap sizes. On
-Windows, the decoder's owned Job Object instead limits its committed memory to
-the effective `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` value plus a 512 MiB
-reserve for Bun itself. The default 192 MiB setting therefore yields 704 MiB.
-The limitations state that limit, and reaching it returns `resource_constraint`
-with `process_memory_limit_bytes`, whatever exit status Bun reports. Other Bun
-hosts enforce no decoder heap limit, so raising the setting does not bound them.
+Complete evidence defaults to a 32 MiB input, 96 MiB decoder reply and
+64-level nesting allowance. Set `max_input_bytes`, `max_reply_bytes` or
+`max_nesting_depth` on the next `inspect_web_network_capture` call to change
+that operation's policy; CLI equivalents are `--max-input-bytes`,
+`--max-reply-bytes` and `--max-nesting-depth`. No REA restart is required.
+Byte allowances are positive safe integers; nesting is bounded by REA's
+advertised maximum of 996 levels, derived by reserving four enclosing
+reply/Evidence levels within the 1,000-level JSON representation. Input admission also covers expanded SAZ
+members and protobuf descriptor/body reads. Reply admission covers the complete
+child reply and protobuf interpretation work. These choices do not raise the
+separately owned worker heap, CPU limits or client deadline/receive buffer.
+Record selection takes place after complete decoding, so it cannot bypass
+whole-capture admission. A refusal names the exhausted control; increase that
+control and retry the same unchanged capture after cleanup. No completed capture
+Evidence exists for a refused decode.
 
 Observed decoder memory exhaustion returns `resource_constraint`, with the
 selected capture, applicable limits and retained process diagnostics. Raising
@@ -1155,7 +1179,7 @@ host memory or `NODE_OPTIONS` does not raise the old-generation heap. Update
 `capture.decoder_old_generation_mib` through MCP, or set
 `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` before starting a new REA process.
 Retry after owned cleanup completes; the update does not release resources.
-See the [settings design](../../design/limits-and-recovery.md#failure-and-retry).
+See the [analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry).
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do

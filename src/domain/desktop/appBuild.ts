@@ -1,8 +1,13 @@
-import { createHash } from "node:crypto";
+import {
+  BUILD_COMPUTER_SETTINGS,
+  BUNDLE_SETTING_VARIABLE,
+} from "./buildComputerSettings.js";
+import { buildSecretHandleSchema } from "./buildSecrets.js";
 
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { excludedValues } from "../schemaConstraints.js";
 import {
   appModuleFile,
   aptSources,
@@ -13,10 +18,24 @@ import {
   renderEnvToml,
   renderInstallScript,
   renderSmokeTask,
-  shellQuote,
 } from "./appExport.js";
+import { shellQuote } from "./shellQuote.js";
+import {
+  COMPUTER_ARCHITECTURES,
+  DOWNLOAD_INSTALL_SCRIPT,
+  downloadedFile,
+  downloadFields,
+  downloadInstallFiles,
+  downloadUrlSchema,
+  sha256Schema,
+  tarballFields,
+  type DownloadInstall,
+} from "./appDownloadInstall.js";
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
+import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { PYTHON_BUILD_ARCHIVE } from "./appBuildArchive.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
 export const BUILD_NODE_VERSION = "24.22.1";
@@ -33,44 +52,44 @@ const NODE_TARBALLS = [
     sha256: "dbabf7a1cbf947e6059ffad2c27b80041db97dea1e553b62afdee7f13fca336e",
   },
 ] as const;
-const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 /** The package of `gtk-launch`, which opens the app from its desktop entry. */
 const LAUNCHER_PACKAGE = "libgtk-3-bin";
+/** The package of `dconf`, which the capture reads the app's dconf settings with. */
+const DCONF_PACKAGE = "dconf-cli";
 const REA_INSTALL_SCRIPT = "install-rea.sh";
 /** Where the build layer keeps a `.deb` the app came from, for the capture's `--package-file`. */
 export const BUILD_PACKAGE_FILE = "/opt/rea/package.deb";
 const ELECTRON_LAUNCH_SCRIPT = "prepare-electron-launch.sh";
 const REA_PAYLOAD = "rea-payload.tar";
 
-/** A URL agentenv downloads from: http or https in lowercase, without a user name or password. */
-const downloadUrlSchema = z
-  .url({ protocol: /^https?$/u })
-  .regex(/^https?:\/\//u)
-  .refine(
-    (url) => {
-      const parsed = new URL(url);
-      return parsed.username === "" && parsed.password === "";
-    },
-    { message: "The URL must not hold a user name or password." },
-  );
 const aptPackageSchema = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9+.-]+$/u)
+  .regex(DEBIAN_PACKAGE_NAME)
   .describe("A Debian package name.");
-const sha256Schema = z.string().regex(/^[0-9a-f]{64}$/u);
+/** How many packages an archive install may name beside the app. */
+const MAX_EXTRA_PACKAGES = 16;
+
+const extraPackagesSchema = z
+  .array(aptPackageSchema)
+  .max(MAX_EXTRA_PACKAGES)
+  .default([])
+  .describe(
+    "Archive packages installed beside the app, and by its export, such as a runtime piece it needs that its package does not install.",
+  );
 
 /** Where the computer installs the app from, chosen before anything is captured. */
 export const buildInstallSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("archive"),
     package: aptPackageSchema,
+    extra_packages: extraPackagesSchema,
   }),
   z.strictObject({
     kind: z.literal("apt_repository"),
     package: aptPackageSchema,
     uri: downloadUrlSchema,
-    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u),
-    components: z.array(z.string().regex(/^[A-Za-z0-9._-]+$/u)).default([]),
+    suite: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._\x2f\x2d]*$/u),
+    components: z.array(z.string().regex(/^[A-Za-z0-9._\x2d]+$/u)).default([]),
     key_file: absoluteLocalPathStringSchema.describe(
       "The repository's signing key on this host, armored or binary.",
     ),
@@ -87,6 +106,16 @@ export const buildInstallSchema = z.discriminatedUnion("kind", [
         "Packages apt installs first; dpkg installs the file offline, so its dependencies must be listed.",
       ),
   }),
+  z.strictObject({
+    kind: z.literal("appimage"),
+    ...downloadFields,
+    extra_packages: extraPackagesSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("tarball"),
+    ...tarballFields,
+    extra_packages: extraPackagesSchema,
+  }),
 ]);
 
 /** A request for a build computer, or an existing bundle folder to keep up as it is. */
@@ -95,7 +124,7 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     kind: z.literal("request"),
     desktop_entry: z
       .string()
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._\x2d]*$/u)
       .max(255)
       .describe(
         "The desktop entry id the package installs, such as org.xfce.mousepad; the menu opens it with gtk-launch.",
@@ -119,10 +148,45 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     path: absoluteLocalPathStringSchema.describe(
       "An agentenv bundle folder whose tasks/smoke.json deploys one computer, such as an exported one.",
     ),
+    settings: z
+      .record(
+        excludedValues(
+          z.string().regex(BUNDLE_SETTING_VARIABLE),
+          BUILD_COMPUTER_SETTINGS,
+          "Build host control names are reserved.",
+        ),
+        buildSecretHandleSchema,
+      )
+      .optional()
+      .describe(
+        "Each environment variable a withheld file's setting reads, as the export's withheld_files names it, mapped to the handle of the secret holding its value; REA supplies the value to the deploy and no result shows it. Build host control names are reserved.",
+      ),
   }),
 ]);
 export type BuildSource = z.output<typeof buildSourceSchema>;
 export type BuildRequest = Extract<BuildSource, { kind: "request" }>;
+
+/** The packages a request names beside the app, which its export installs beside it too: an archive or download install's extra packages, or a package file's dependencies; none for a bundle. */
+export const extraPackagesOf = (source: BuildSource): readonly string[] => {
+  if (source.kind === "bundle") return [];
+  const { install } = source;
+  if (install.kind === "package_file") return install.dependencies;
+  return install.kind === "apt_repository" ? [] : install.extra_packages;
+};
+
+/** The download a request installs the app from, with the desktop entry that launches it; none for an apt install. */
+export const downloadInstallOf = (
+  request: BuildRequest,
+): DownloadInstall | undefined => {
+  const { install } = request;
+  if (install.kind !== "appimage" && install.kind !== "tarball")
+    return undefined;
+  const { extra_packages: _extra, ...download } = install;
+  return {
+    ...download,
+    desktop_entry: request.desktop_entry.replace(/\.desktop$/u, ""),
+  };
+};
 
 /** Where the build layer gets REA from: a tar archive with one top folder holding `scripts/rea.mjs`. */
 export type ReaPayload =
@@ -139,7 +203,7 @@ export interface BuildBundleFile {
   readonly content: string | Uint8Array | { readonly copyFrom: string };
 }
 
-const download = (
+const downloadDeclaration = (
   url: string,
   sha256: string,
   to: string,
@@ -163,23 +227,32 @@ mkdir -p /opt/rea/payload${
     : `
 cp ${packageFile} ${BUILD_PACKAGE_FILE}`
 }
-python3 - <<'PY'
+launcher=$(python3 - <<'PY'
 import glob
+from pathlib import Path
 import tarfile
 
-for name, into in [(path, "/opt/rea") for path in glob.glob("node-*.tar.xz")] + [("${REA_PAYLOAD}", "/opt/rea/payload")]:
+${PYTHON_BUILD_ARCHIVE}
+payload = Path("/opt/rea/payload")
+with tarfile.open("${REA_PAYLOAD}") as archive:
+    archive.extractall(payload, filter="tar")
+    entry, _, problem = inspect_rea_archive(archive)
+    if problem is not None:
+        raise SystemExit(problem)
+launcher = payload / entry
+if not launcher.is_file() or not launcher.resolve().is_relative_to(payload.resolve()):
+    raise SystemExit("The selected scripts/rea.mjs did not extract as a regular file.")
+
+for name in glob.glob("node-*.tar.xz"):
     with tarfile.open(name) as archive:
-        archive.extractall(into, filter="tar")
+        archive.extractall("/opt/rea", filter="tar")
+print(launcher)
 PY
-set -- /opt/rea/payload/*/scripts/rea.mjs
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
-    echo "The REA archive must hold one top folder with scripts/rea.mjs." >&2
-    exit 1
-fi
+)
 ln -sf /opt/rea/node-v${BUILD_NODE_VERSION}-linux-*/bin/node /usr/local/bin/node
 # The archive's top folder is caller-chosen and may contain spaces. The launcher
 # runs a fixed path so the shell does not split that folder before Node opens it.
-ln -sfn "$1" /opt/rea/rea.mjs
+ln -sfn "$launcher" /opt/rea/rea.mjs
 printf '#!/bin/sh\\nexec /usr/local/bin/node /opt/rea/rea.mjs "$@"\\n' > /usr/local/bin/rea
 chmod 755 /usr/local/bin/rea
 rm -f node-*.tar.xz ${REA_PAYLOAD}
@@ -193,10 +266,11 @@ const buildInstall = (
   aptKey: Uint8Array | undefined,
 ) => {
   const { install } = request;
+  const download = downloadInstallOf(request);
   const architectures =
-    install.kind === "package_file"
-      ? [install.architecture]
-      : [...COMPUTER_ARCHITECTURES];
+    install.kind === "archive" || install.kind === "apt_repository"
+      ? [...COMPUTER_ARCHITECTURES]
+      : [install.architecture];
   if (install.kind === "apt_repository" && aptKey === undefined)
     throw new TypeError("An apt repository needs its key file's bytes.");
   const key =
@@ -208,7 +282,7 @@ const buildInstall = (
             suite: install.suite,
             components: install.components,
             keyFile: `apt-keys/${name}.${isArmoredKey(aptKey) ? "asc" : "gpg"}`,
-            keySha256: createHash("sha256").update(aptKey).digest("hex"),
+            keySha256: sha256Hex(aptKey),
           },
         }
       : undefined;
@@ -226,7 +300,7 @@ const buildInstall = (
   const downloads = [
     ...NODE_TARBALLS.filter(({ arch }) => architectures.includes(arch)).map(
       ({ arch, platform, sha256 }) =>
-        download(
+        downloadDeclaration(
           `https://nodejs.org/dist/v${BUILD_NODE_VERSION}/node-v${BUILD_NODE_VERSION}-${platform}.tar.xz`,
           sha256,
           `node-${arch}.tar.xz`,
@@ -236,32 +310,48 @@ const buildInstall = (
     ...(packageFile === null
       ? []
       : [
-          download(
+          downloadDeclaration(
             packageFile.url,
             packageFile.sha256,
             packageFile.path,
             packageFile.architecture,
           ),
         ]),
+    ...(download === undefined
+      ? []
+      : [
+          downloadDeclaration(
+            download.url,
+            download.sha256,
+            downloadedFile(download),
+            download.architecture,
+          ),
+        ]),
     ...(payload.kind === "download"
-      ? [download(payload.url, payload.sha256, REA_PAYLOAD)]
+      ? [downloadDeclaration(payload.url, payload.sha256, REA_PAYLOAD)]
       : []),
   ];
   return {
     architectures,
     packages: [
-      ...(install.kind === "package_file"
-        ? install.dependencies
-        : [install.package]),
-      LAUNCHER_PACKAGE,
+      ...new Set([
+        ...(install.kind === "archive" || install.kind === "apt_repository"
+          ? [install.package]
+          : []),
+        ...extraPackagesOf(request),
+        LAUNCHER_PACKAGE,
+        DCONF_PACKAGE,
+      ]),
     ],
     key,
     packageFile,
+    download,
     downloads,
-    // REA's layer runs first, so it can keep the .deb the install removes.
+    // REA's layer runs first, so it can keep the .deb the install removes; the Electron rewrite edits the entry the install wrote.
     scripts: [
       REA_INSTALL_SCRIPT,
       ...(packageFile === null ? [] : [INSTALL_SCRIPT]),
+      ...(download === undefined ? [] : [DOWNLOAD_INSTALL_SCRIPT]),
       ...(request.electron === true ? [ELECTRON_LAUNCH_SCRIPT] : []),
     ],
   };
@@ -291,12 +381,14 @@ if [ -z "$desktop" ]; then
   echo "No installed desktop entry $entry.desktop was found, so its command cannot be adjusted for Electron." >&2
   exit 1
 fi
-set -- /opt/rea/payload/*/dist/domain/desktop/appExportInstall.js
-if [ "$#" -ne 1 ] || [ ! -f "$1" ]; then
+launcher=$(readlink /opt/rea/rea.mjs)
+policy="\${launcher%/scripts/rea.mjs}/dist/domain/desktop/appExportInstall.js"
+if [ ! -f "$policy" ]; then
   echo "The REA archive must include dist/domain/desktop/appExportInstall.js so an Electron app can use REA's launch policy." >&2
   exit 1
 fi
-/usr/local/bin/node --input-type=module - "$1" "$desktop" <<'JS'
+/usr/local/bin/node --input-type=module - "$policy" "$desktop" <<'JS'
+import { isUtf8 } from "node:buffer";
 import { readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
@@ -306,7 +398,12 @@ if (typeof policy.adjustInstalledDesktopText !== "function") {
   process.exit(1);
 }
 const desktop = process.argv[3];
-const adjusted = policy.adjustInstalledDesktopText(readFileSync(desktop, "utf8"), true);
+const bytes = readFileSync(desktop);
+if (!isUtf8(bytes)) {
+  console.error(\`The desktop entry \${desktop} is not valid UTF-8 and could not be adjusted for Electron.\`);
+  process.exit(1);
+}
+const adjusted = policy.adjustInstalledDesktopText(bytes.toString("utf8"), true);
 if (!adjusted.ok) {
   console.error(\`The desktop entry \${desktop} could not be adjusted for Electron: \${adjusted.error}.\`);
   process.exit(1);
@@ -389,6 +486,11 @@ export const renderBuildBundle = (
       ...(install.packageFile === null
         ? []
         : [file(INSTALL_SCRIPT, renderInstallScript(install.packageFile))]),
+      ...(install.download === undefined
+        ? []
+        : downloadInstallFiles(install.download).map(({ path, content }) =>
+            file(path, content),
+          )),
       ...(install.key === undefined
         ? []
         : [file(install.key.source.keyFile, install.key.bytes)]),

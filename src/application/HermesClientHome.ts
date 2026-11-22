@@ -5,14 +5,16 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
 
 /** An unresolved Hermes profile must not be configured as the default home. */
 export class HermesClientPathError extends Error {
   constructor(
     readonly path: string,
     message: string,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
     this.name = "HermesClientPathError";
   }
 }
@@ -145,23 +147,33 @@ const RESERVED_PROFILES = new Set(["hermes", "test", "tmp", "root", "sudo"]);
 const liveProfile = (path: string): boolean => {
   try {
     if (!statSync(path).isDirectory()) return false;
-    try {
-      statSync(appendCallerPath(dirname(path), `.deleted/${basename(path)}`));
-      return false;
-    } catch {
-      /* No tombstone. */
-    }
-    return PROFILE_MARKERS.some((marker) => {
-      try {
-        const status = lstatSync(appendCallerPath(path, marker));
-        return status.isFile() || status.isSymbolicLink();
-      } catch {
-        return false;
-      }
-    });
   } catch {
     return false;
   }
+
+  const tombstone = appendCallerPath(
+    dirname(path),
+    `.deleted/${basename(path)}`,
+  );
+  try {
+    if (statSync(tombstone, { throwIfNoEntry: false }) !== undefined)
+      return false;
+  } catch (cause: unknown) {
+    throw new HermesClientPathError(
+      tombstone,
+      `Cannot check whether the saved Hermes profile was deleted. Restore access to ${tombstone} before configuring Hermes.`,
+      { cause },
+    );
+  }
+
+  return PROFILE_MARKERS.some((marker) => {
+    try {
+      const status = lstatSync(appendCallerPath(path, marker));
+      return status.isFile() || status.isSymbolicLink();
+    } catch {
+      return false;
+    }
+  });
 };
 
 /** Match Hermes CLI sticky-profile selection while retaining the configured path spelling. */
@@ -178,9 +190,10 @@ export const resolveHermesClientHome = (
   let name: string;
   try {
     // Python uses utf-8-sig and ignores unreadable / invalid-UTF8 active_profile files.
-    name = new TextDecoder("utf-8", { fatal: true })
-      .decode(readFileSync(appendCallerPath(stickyRoot, "active_profile")))
-      .trim();
+    name = decodeStrictUtf8(
+      readFileSync(appendCallerPath(stickyRoot, "active_profile")),
+      "strip-signature",
+    ).trim();
   } catch {
     return root;
   }

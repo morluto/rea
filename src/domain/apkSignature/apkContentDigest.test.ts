@@ -102,17 +102,21 @@ describe("computeApkContentDigest", () => {
   });
 
   it("ignores the signing block's own contents", () => {
-    expect(digestOf(withBlock([1, 2, 3, 4]), ENTRIES.length)).toEqual(
-      digestOf(withBlock([5, 6, 7, 8]), ENTRIES.length),
-    );
+    const first = digestOf(withBlock([1, 2, 3, 4]), ENTRIES.length);
+    const second = digestOf(withBlock([5, 6, 7, 8]), ENTRIES.length);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first).toEqual(second);
   });
 
   it("changes when a ZIP entry byte changes", () => {
     const tampered = withBlock();
     tampered[1234] = (tampered[1234] ?? 0) ^ 0xff;
-    expect(digestOf(tampered, ENTRIES.length)).not.toEqual(
-      digestOf(withBlock(), ENTRIES.length),
-    );
+    const changed = digestOf(tampered, ENTRIES.length);
+    const original = digestOf(withBlock(), ENTRIES.length);
+    expect(changed).not.toBeNull();
+    expect(original).not.toBeNull();
+    expect(changed).not.toEqual(original);
   });
 
   it("matches for a Node Buffer at a non-zero byteOffset and never mutates its input", () => {

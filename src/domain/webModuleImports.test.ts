@@ -54,13 +54,34 @@ describe("native module syntax observations", () => {
     ]);
     expect(collectWebModuleImports(source, "main.ts").imports).toEqual([]);
   });
-  it("uses UTF-16 source locations after astral characters", () => {
-    const source = 'const emoji = "😀";\nimport "./x.js";';
-    const item = collectWebModuleImports(source, "main.js").imports[0];
-    expect(item?.start).toEqual({
-      offset: source.indexOf('"./x.js"'),
-      line: 2,
-      column: 7,
+  it("retains exact import identity and ranges through erased syntax", () => {
+    const imports = [
+      ['"./dep.js" as const', "./dep.js"],
+      ['"./dep.js" satisfies string', "./dep.js"],
+      ['"./dep.js"!', "./dep.js"],
+      ["`./dep.js` as const", "./dep.js"],
+      ["`./${name}.js` as const", null],
+    ] as const;
+    const source = imports
+      .map(([expression]) => `import(${expression});`)
+      .join("\n");
+    expect(collectWebModuleImports(source, "main.ts")).toEqual({
+      state: "parsed",
+      diagnostics: [],
+      imports: imports.map(([expression, specifier], index) => {
+        const offset = source.indexOf(expression);
+        return {
+          kind: "dynamic-import",
+          specifier,
+          expression,
+          start: { offset, line: index + 1, column: 7 },
+          end: {
+            offset: offset + expression.length,
+            line: index + 1,
+            column: 7 + expression.length,
+          },
+        };
+      }),
     });
   });
   it("reports unparseable input without asserting an empty complete graph", () => {
@@ -138,35 +159,35 @@ const script = (
     },
   });
 describe("captured module candidates", () => {
-  it("keeps query versions separate and response fragment matching weaker", () => {
+  it("retains exact capture versions and separates query and weaker fragment matches", () => {
+    const url = "https://app.test/a.js?v=1";
     const scripts = [
-      script("https://app.test/a.js?v=1#one", "page-script"),
-      script("https://app.test/a.js?v=1#two", "page-script"),
-      script("https://app.test/a.js?v=1", "scenario-response"),
-      script("https://app.test/a.js?v=2", "scenario-response"),
-    ];
-    expect(
-      matchCapturedModules("https://app.test/a.js?v=1#one", scripts).map(
-        (item) => [item.script_index, item.match],
-      ),
-    ).toEqual([
-      [0, "exact-reported-url"],
-      [2, "response-url-without-fragment"],
-    ]);
-  });
-  it("preserves every captured version at the same URL and never picks one", () => {
-    const url = "https://app.test/a.js";
-    const candidates = matchCapturedModules(url, [
+      script(`${url}#one`, "page-script"),
+      script(`${url}#two`, "page-script"),
       script(url, "scenario-response"),
       script(url, "scenario-response", "b".repeat(64)),
+      script("https://app.test/a.js?v=2", "scenario-response"),
+    ];
+    expect(matchCapturedModules(url, scripts)).toEqual([
+      { script_index: 2, match: "exact-reported-url", script: scripts[2] },
+      { script_index: 3, match: "exact-reported-url", script: scripts[3] },
     ]);
-    expect(candidates).toHaveLength(2);
-    expect(
-      matchCapturedModules(
-        "https://app.test/lazy.js",
-        candidates.map((item) => item.script),
-      ),
-    ).toEqual([]);
+    expect(matchCapturedModules(`${url}#one`, scripts)).toEqual([
+      { script_index: 0, match: "exact-reported-url", script: scripts[0] },
+      {
+        script_index: 2,
+        match: "response-url-without-fragment",
+        script: scripts[2],
+      },
+      {
+        script_index: 3,
+        match: "response-url-without-fragment",
+        script: scripts[3],
+      },
+    ]);
+    expect(matchCapturedModules("https://app.test/lazy.js", scripts)).toEqual(
+      [],
+    );
   });
   it("retains exact non-URL identities without matching response fragments", () => {
     const scripts = [
@@ -185,3 +206,32 @@ describe("captured module candidates", () => {
     ]);
   });
 });
+
+it.each(["main.mjs", "main.js", "view.jsx"])(
+  "retains original expression offsets for a BOM-prefixed hashbang in %s",
+  (path) => {
+    const source =
+      '\uFEFF#!/usr/bin/env node\r\nconst face = "😀"; import "./dep.mjs"; import(`./${part}.mjs`);';
+    const result = collectWebModuleImports(source, path);
+    expect(result.state).toBe("parsed");
+    expect(result.diagnostics).toEqual(
+      path === "main.js"
+        ? [expect.stringContaining("package loader mode is unknown")]
+        : [],
+    );
+    expect(result.imports.map(({ expression }) => expression)).toEqual([
+      '"./dep.mjs"',
+      "`./${part}.mjs`",
+    ]);
+    for (const item of result.imports) {
+      expect(item.start.offset).toBe(source.indexOf(item.expression));
+      expect(source.slice(item.start.offset, item.end.offset)).toBe(
+        item.expression,
+      );
+      expect(item.start.line).toBe(2);
+      expect(item.start.column).toBe(
+        source.split("\r\n")[1]!.indexOf(item.expression),
+      );
+    }
+  },
+);
