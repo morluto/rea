@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 import { setImmediate as immediate } from "node:timers/promises";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
@@ -41,28 +41,21 @@ it("keeps the read file's identity when parsing fails", async () => {
   }
 });
 
-const inspectWith = async (
-  bytes: Buffer,
-  budgets: Record<string, number> = {},
-) => {
+const inspectFixture = async (bytes: Buffer) => {
   const root = await createTestTempDirectory("rea-elf-dependencies-limit-");
   const path = join(root, "program");
   await writeFile(path, bytes);
   const provider = new ElfDependenciesProvider();
-  try {
-    return await provider.inspect(
+  onTestFinished(() => provider.close());
+  return (budgets: Record<string, number> = {}) =>
+    provider.inspect(
       inspectElfDependenciesInputSchema.parse({ path, ...budgets }),
     );
-  } finally {
-    await provider.close();
-  }
 };
 
-const countLimitOf = async (
-  bytes: Buffer,
-  budgets: Record<string, number> = {},
+const countLimitOf = (
+  result: Awaited<ReturnType<ElfDependenciesProvider["inspect"]>>,
 ) => {
-  const result = await inspectWith(bytes, budgets);
   if (result.ok) throw new Error("Expected a limit failure");
   expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   const error = result.error as AnalysisResourceConstraintError;
@@ -78,26 +71,24 @@ it.each([
 ] as const)(
   "reports which budget failed and recovers when %s is raised",
   async (parameter, ceiling) => {
-    const image = elfDependencyFixture();
-    expect(await countLimitOf(image, { [parameter]: 2 })).toMatchObject({
+    const inspect = await inspectFixture(elfDependencyFixture());
+    expect(countLimitOf(await inspect({ [parameter]: 2 }))).toMatchObject({
       boundary: parameter,
       maximum: 2,
       required: 3,
     });
-    const raised = await inspectWith(image, { [parameter]: ceiling });
+    const raised = await inspect({ [parameter]: ceiling });
     if (!raised.ok) throw raised.error;
     expect(raised.value.coverage.status).toBe("complete");
   },
 );
 
 it("reports a fixed dynamic-symbol ceiling that a raised budget cannot clear", async () => {
-  const imports = Array.from({ length: 262145 }, (_, index) => ({
-    name: `s${String(index)}`,
-  }));
-  const image = elfDependencyFixture({ imports });
+  const imports = Array.from({ length: 262145 }, () => ({ name: "symbol" }));
+  const inspect = await inspectFixture(elfDependencyFixture({ imports }));
   const ceiling = { boundary: "dynamic_symbols", maximum: 262144 };
-  expect(await countLimitOf(image)).toMatchObject(ceiling);
-  expect(await countLimitOf(image, { max_imports: 262144 })).toMatchObject(
+  expect(countLimitOf(await inspect())).toMatchObject(ceiling);
+  expect(countLimitOf(await inspect({ max_imports: 262144 }))).toMatchObject(
     ceiling,
   );
 });

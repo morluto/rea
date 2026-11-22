@@ -589,22 +589,24 @@ const sysvSymbolCountAt = (
 };
 
 /**
- * Reads hash-table words at virtual addresses, each mapped through PT_LOAD on
- * its own, so a table that spans adjacent consistently mapped segments stays
- * readable to its last word. One mapping index serves every word, so a
- * file-controlled bucket count cannot multiply a scan of every PT_LOAD.
+ * Resolve hash-table words through one PT_LOAD index. A read can require
+ * the mapped prefix as well as the word, including adjacent consistently
+ * mapped segments.
  */
 const mappedHashWords = (
   reader: BinaryReader,
   mappings: ElfLoadMappings,
   address: bigint,
+  coverage: "word" | "prefix" = "word",
 ): ElfHashWordReader => {
   const index = createFileMappingIndex(mappings.fileBacked, mappings.zeroFills);
   return (offset) => {
     if (offset < 0) return err("precedes its table");
+    const start = coverage === "prefix" ? 0 : offset;
+    const relative = offset - start;
     let at: number;
     try {
-      at = index.offset(address + BigInt(offset), 4);
+      at = index.offset(address + BigInt(start), relative + 4) + relative;
     } catch (cause) {
       if (cause instanceof BinaryMappingFailure)
         return err("is not mapped by PT_LOAD");
@@ -614,17 +616,6 @@ const mappedHashWords = (
       ? ok(reader.u32(at))
       : err("is not mapped by PT_LOAD");
   };
-};
-
-const sysvSymbolCount = (
-  reader: BinaryReader,
-  mappings: ElfLoadMappings,
-  address: bigint,
-): number | null => {
-  const count = readElfHashSymbolCount(
-    mappedHashWords(reader, mappings, address),
-  );
-  return count.ok ? count.value : null;
 };
 
 // With every bucket empty the table hashes nothing, and its first-symbol
@@ -1316,14 +1307,32 @@ const locateSymbolCount = function* (
   entrySize: number,
   issues: ElfDependencyIssue[],
 ): Generator<void, number | null, void> {
-  // A section running past the file end says nothing about its symbol count.
+  const hashAddress = tags.get(DT_HASH);
+  const dynamicCount = (coverage: "word" | "prefix" = "word") => {
+    if (hashAddress === undefined) return null;
+    const count = readElfHashSymbolCount(
+      mappedHashWords(reader, mappings, hashAddress, coverage),
+    );
+    return count.ok ? count.value : null;
+  };
   if (
     dynsym !== undefined &&
     entrySize > 0 &&
     dynsym.size % entrySize === 0 &&
     sectionInsideFile(dynsym, reader.bytes.length)
-  )
-    return dynsym.size / entrySize;
+  ) {
+    const sectionCount = dynsym.size / entrySize;
+    // Displacing a usable section requires the full mapped DT_HASH span.
+    const declaredCount = dynamicCount("prefix");
+    if (declaredCount === null) return sectionCount;
+    if (sectionCount > declaredCount)
+      issues.push({
+        code: "malformed_entry",
+        location: hex(dynsym.offset),
+        message: `.dynsym section declares ${String(sectionCount)} symbols, past the DT_HASH dynamic symbol count of ${String(declaredCount)}; trailing entries were not read`,
+      });
+    return declaredCount;
+  }
   const hashInFile =
     hash !== undefined && sectionInsideFile(hash, reader.bytes.length);
   if (hash !== undefined && !hashInFile)
@@ -1332,13 +1341,12 @@ const locateSymbolCount = function* (
       location: hex(hash.offset),
       message: ".hash section header declares bytes past the end of the file",
     });
-  const sysv =
+  const sectionHash =
     hash !== undefined && hashInFile && hash.size >= 8
       ? sysvSymbolCountAt(reader, hash.offset, hash.offset + hash.size)
-      : tags.has(DT_HASH)
-        ? sysvSymbolCount(reader, mappings, tags.get(DT_HASH)!)
-        : null;
-  if (sysv !== null) return sysv;
+      : null;
+  const count = sectionHash ?? dynamicCount();
+  if (count !== null) return count;
   const gnuWords =
     gnuHash !== undefined && gnuHash.size >= 16
       ? hashWords(reader, gnuHash.offset, gnuHash.offset + gnuHash.size)
@@ -1481,8 +1489,8 @@ const parseVerneed = (
           flags: { weak: (flags & VER_FLG_WEAK) !== 0 },
           index,
         });
-        if (name !== null || file !== null)
-          pending.push([index, { name, file }]);
+        // A structurally observed index participates even without either string.
+        pending.push([index, { name, file }]);
         auxiliary = followVersionLink(
           "GNU version requirement auxiliary",
           auxiliary,
@@ -1494,8 +1502,7 @@ const parseVerneed = (
       files.push({ file, versions });
       // Join imports only against records whose whole file entry was read.
       for (const [index, entry] of pending) {
-        if (versionNames.has(index) || conflicts.has(index))
-          conflicts.add(index);
+        if (versionNames.has(index)) conflicts.add(index);
         else versionNames.set(index, entry);
       }
       offset = followVersionLink(
@@ -1764,7 +1771,7 @@ const parseImports = (
           hidden,
           name: resolved?.name ?? null,
           file: resolved?.file ?? null,
-          status: resolved?.name ? "resolved" : "unknown",
+          status: resolved?.name && resolved.file ? "resolved" : "unknown",
         };
         if (resolved === undefined)
           issues.push({
