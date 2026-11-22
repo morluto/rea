@@ -246,3 +246,44 @@ it.each([
     ]);
   },
 );
+
+it("preserves parseKunaInventory fast-path acceptance and Zod error fallback", () => {
+  expect(
+    parseKunaInventory(
+      JSON.stringify({
+        functions: [
+          {
+            name: "zero_padded",
+            address_hex: "0x0010",
+            aliases: ["a0", "a1"],
+            size: 0,
+            extra: true,
+          },
+        ],
+      }),
+    ),
+  ).toEqual({
+    ok: true,
+    value: [
+      {
+        name: "zero_padded",
+        address: "0x0010",
+        aliases: ["a0", "a1"],
+        size: 0,
+      },
+    ],
+  });
+  for (const invalid of [
+    { functions: [{ name: "x", address_hex: "0xABC", aliases: [], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [7], size: 0 }] },
+    { functions: [{ name: "x", address_hex: "0x10", aliases: [], size: -1 }] },
+    { functions: "not-an-array" },
+  ]) {
+    expect(parseKunaInventory(JSON.stringify(invalid))).toMatchObject({
+      ok: false,
+      error: expect.stringContaining(
+        "the function inventory does not match Kuna's document:",
+      ),
+    });
+  }
+});
