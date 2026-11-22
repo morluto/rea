@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
+import { createManagedFieldConstantReader } from "./ManagedFieldConstants.js";
+import { managedDecodeBudget } from "../domain/managed/managedDecodeBudget.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { MANAGED_CODED_INDEXES } from "../domain/managed/managedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  readManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { decodeMetadataCodedIndex } from "../domain/managed/managedMetadataHeaps.js";
 
 const inspectConstant = (typeCode: number, hex: string) => {
@@ -237,3 +243,105 @@ it.each([
     );
   },
 );
+
+const i4Value = (n: number): Buffer => {
+  const buf = Buffer.alloc(4);
+  buf.writeInt32LE(n, 0);
+  return buf;
+};
+
+describe("binary-search Constant lookup under type selection", () => {
+  const layoutOf = (bytes: Buffer) => {
+    const pe = readManagedPeLayout(bytes);
+    if (pe.cli === null) throw new Error("Expected CLI metadata");
+    return readManagedMetadataLayout(
+      bytes,
+      pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "cli.metadata"),
+      pe.cli.metadata.size,
+    );
+  };
+
+  it("handles boundary hits, duplicates, and misses without reserving unrelated Constant rows", () => {
+    const bytes = buildManagedPeFixture({
+      fields: Array.from({ length: 6 }, (_, index) => ({
+        name: `F${String(index + 1)}`,
+        flags: 0x8056,
+      })),
+      // Sorted HasConstant coded keys: Field 2 (8), Param 2 (9), Field 4 (16 x2), Field 5 (20).
+      constants: [
+        { typeCode: 0x08, parentRaw: 2 << 2, value: i4Value(20) },
+        { typeCode: 0x08, parentRaw: (2 << 2) | 1, value: i4Value(999) },
+        { typeCode: 0x08, parentRaw: 4 << 2, value: i4Value(40) },
+        { typeCode: 0x08, parentRaw: 4 << 2, value: i4Value(41) },
+        { typeCode: 0x08, parentRaw: 5 << 2, value: i4Value(50) },
+      ],
+    });
+    const layout = layoutOf(bytes);
+    const budget = managedDecodeBudget(layout);
+    const reserveRow = vi.spyOn(budget, "reserveRow");
+    const issues: Parameters<typeof createManagedFieldConstantReader>[2] = [];
+    const read = createManagedFieldConstantReader(bytes, layout, issues, {
+      selected: true,
+    });
+
+    // Misses: below min (Field 1 -> 4), gap (Field 3 -> 12), above max (Field 6 -> 24).
+    expect(read(1, 0x0056)).toBeNull();
+    expect(read(3, 0x0056)).toBeNull();
+    expect(read(6, 0x0056)).toBeNull();
+    expect(reserveRow).not.toHaveBeenCalled();
+
+    // First hit (Field 2) and last hit (Field 5): only those matching Constant rows are reserved.
+    expect(read(2, 0x8056)).toMatchObject({ state: "decoded", value: 20 });
+    expect(read(5, 0x8056)).toMatchObject({ state: "decoded", value: 50 });
+    expect(reserveRow.mock.calls.map(([table, row]) => [table, row])).toEqual([
+      [11, 1],
+      [11, 5],
+    ]);
+
+    // Duplicate Constant rows for middle Field 4: both are collected cleanly.
+    const dup = read(4, 0x8056);
+    expect(dup).toMatchObject({ state: "unavailable", value: null });
+    expect(dup?.declarations).toHaveLength(2);
+    expect(issues).toEqual([
+      expect.objectContaining({ scope: "metadata.Constant:0x04000004" }),
+    ]);
+  });
+
+  it("handles an empty Constant table under selected lookup", () => {
+    const bytes = buildManagedPeFixture({
+      fields: [{ name: "F1", flags: 0x0056 }],
+      constants: [],
+    });
+    const layout = layoutOf(bytes);
+    const read = createManagedFieldConstantReader(bytes, layout, [], {
+      selected: true,
+    });
+    expect(read(1, 0x0056)).toBeNull();
+  });
+
+  it("falls back cleanly to linear indexing when Constant rows are non-monotonic", () => {
+    const bytes = buildManagedPeFixture({
+      fields: [
+        { name: "F1", flags: 0x8056 },
+        { name: "F2", flags: 0x8056 },
+        { name: "F3", flags: 0x8056 },
+      ],
+      // Decreasing Parent keys: Field 3 (12), Field 1 (4), Field 2 (8).
+      constants: [
+        { typeCode: 0x08, parentRaw: 3 << 2, value: i4Value(300) },
+        { typeCode: 0x08, parentRaw: 1 << 2, value: i4Value(100) },
+        { typeCode: 0x08, parentRaw: 2 << 2, value: i4Value(200) },
+      ],
+    });
+    const layout = layoutOf(bytes);
+    const issues: Parameters<typeof createManagedFieldConstantReader>[2] = [];
+    const read = createManagedFieldConstantReader(bytes, layout, issues, {
+      selected: true,
+    });
+
+    expect(read(1, 0x8056)).toMatchObject({ state: "decoded", value: 100 });
+    expect(read(2, 0x8056)).toMatchObject({ state: "decoded", value: 200 });
+    expect(read(3, 0x8056)).toMatchObject({ state: "decoded", value: 300 });
+    expect(issues).toEqual([]);
+  });
+});

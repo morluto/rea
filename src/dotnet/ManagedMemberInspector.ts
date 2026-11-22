@@ -231,9 +231,6 @@ export const inspectManagedMembersBytes = (
     return unavailable(target, bytes, typeNames, { issue: pe.cliIssue });
   const issues: ManagedParseIssue[] = [];
   let recover: ReturnType<typeof prepareManagedMemberRecovery> | undefined;
-  // Set once the member facts are decoded and the literals start spending the
-  // shared budget; a capacity failure after that point is retried without them.
-  let decodingUserStrings = false;
   try {
     const { layout, memberLists } = readMemberLayout(
       bytes,
@@ -456,15 +453,6 @@ export const inspectManagedMembersBytes = (
         ),
       },
     }));
-    // #US literals sit beside the member inventory and carry their own
-    // coverage, so their issues never make member facts partial.
-    decodingUserStrings = readUserStrings;
-    const userStrings = readUserStrings
-      ? parseUserStrings(bytes, layout, {
-          ...methods,
-          unreadableSelectedTypes: unreadableNames,
-        })
-      : null;
     const targets = edgeTargets(
       bytes,
       layout,
@@ -485,13 +473,12 @@ export const inspectManagedMembersBytes = (
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );
-    const related = edges(
-      methods.methods,
-      targets.members,
-      managedDecodeBudget(layout),
-    );
+    const budget = managedDecodeBudget(layout);
+    const related = edges(methods.methods, targets.members, budget);
     const coverageIssues = uniqueManagedParseIssues(issues);
-    return managedMemberInspectionSchema.parse(
+    // Admit the member projection before reading #US literals so an overflow
+    // in #US preserves the already-decoded members without re-decoding them.
+    const baseInspection = managedMemberInspectionSchema.parse(
       admitManagedProjection(
         {
           ...envelope,
@@ -509,7 +496,7 @@ export const inspectManagedMembersBytes = (
           member_refs: memberRefs.refs,
           call_edges: related.callEdges,
           field_accesses: related.fieldAccesses,
-          user_strings: userStrings,
+          user_strings: null,
           selection,
           method_rows: methodRows,
           unresolved_definitions: {
@@ -536,24 +523,32 @@ export const inspectManagedMembersBytes = (
             ...selectionLimitations,
           ],
         },
-        managedDecodeBudget(layout),
+        budget,
       ),
     );
+    if (!readUserStrings) return baseInspection;
+    let userStrings: ManagedMemberInspection["user_strings"];
+    try {
+      // #US literals sit beside the member inventory and carry their own
+      // coverage, so their issues never make member facts partial.
+      userStrings = admitManagedProjection(
+        parseUserStrings(bytes, layout, {
+          ...methods,
+          unreadableSelectedTypes: unreadableNames,
+        }),
+        budget,
+      );
+    } catch (cause: unknown) {
+      if (cause instanceof ManagedRepresentationFailure)
+        return withoutUserStrings(baseInspection, cause);
+      throw cause;
+    }
+    return managedMemberInspectionSchema.parse({
+      ...baseInspection,
+      user_strings: userStrings,
+    });
   } catch (cause: unknown) {
     if (cause instanceof ManagedReaderFailure) {
-      if (decodingUserStrings && cause instanceof ManagedRepresentationFailure)
-        return withoutUserStrings(
-          inspectManagedMembersBytes(bytes, target, {
-            ...(typeNames === undefined ? {} : { typeNames }),
-            methodOffset,
-            methodLimit,
-            userStrings: false,
-            ...(maxRepresentationBytes === undefined
-              ? {}
-              : { maxRepresentationBytes }),
-          }),
-          cause,
-        );
       if (
         recover !== undefined &&
         cause instanceof ManagedRepresentationFailure
