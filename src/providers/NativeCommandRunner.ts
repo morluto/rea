@@ -5,6 +5,7 @@ import { processInspectionFailure } from "./OwnedCommandCleanup.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
@@ -165,6 +166,14 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ProviderCleanupError
   >();
   #cleanupAttempt: Promise<readonly NativeCommandCleanupFailure[]> | undefined;
+  readonly #usesDefaultResolver: boolean;
+  readonly #resolvedToolCache = new Map<
+    string,
+    {
+      readonly resolved: ResolvedTool;
+      readonly stamp: ExecutableStatStamp;
+    }
+  >();
   constructor(
     environment: Readonly<NodeJS.ProcessEnv>,
     private readonly resolveTool: NativeToolResolver = (
@@ -175,6 +184,9 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
     private readonly launcher?: NativeCommandLauncher,
   ) {
+    this.#usesDefaultResolver =
+      arguments.length < 2 ||
+      (arguments[1] === undefined && launcher === undefined);
     this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
@@ -188,6 +200,43 @@ export class XcrunCommandRunner implements NativeCommandRunner {
         err(new NativeCommandFailure(tool, "unavailable")),
       );
     return this.#runAfterCleanup(tool, arguments_, options);
+  }
+
+  async #resolveToolCached(
+    tool: string,
+    signal: AbortSignal | undefined,
+    timeoutMs: number | undefined,
+  ): Promise<Result<ResolvedTool, NativeCommandFailure>> {
+    if (
+      this.#usesDefaultResolver &&
+      this.launcher === undefined &&
+      signal?.aborted !== true
+    ) {
+      const cached = this.#resolvedToolCache.get(tool);
+      if (cached !== undefined) {
+        const current = await statExecutable(cached.resolved.resolvedPath);
+        if (current !== undefined && sameExecutableStamp(current, cached.stamp))
+          return ok(cached.resolved);
+        this.#resolvedToolCache.delete(tool);
+      }
+    }
+    const resolved = await this.resolveTool(
+      tool,
+      signal,
+      this.launcher,
+      timeoutMs,
+    );
+    if (
+      resolved.ok &&
+      this.#usesDefaultResolver &&
+      this.launcher === undefined &&
+      signal?.aborted !== true
+    ) {
+      const stamp = await statExecutable(resolved.value.resolvedPath);
+      if (stamp !== undefined)
+        this.#resolvedToolCache.set(tool, { resolved: resolved.value, stamp });
+    }
+    return resolved;
   }
 
   /** Retry every retained owner; a failed retry prevents another command launch. */
@@ -208,10 +257,9 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     const pendingFailures = await this.retryCleanup();
     if (pendingFailures.length > 0)
       return err(commandCleanupFailure(tool, pendingFailures));
-    const resolved = await this.resolveTool(
+    const resolved = await this.#resolveToolCached(
       tool,
       options.signal,
-      this.launcher,
       options.timeoutMs,
     );
     if (!resolved.ok) {
@@ -364,6 +412,42 @@ const ALLOWED_TOOLS = new Set([
   "swift-demangle",
   "vtool",
 ]);
+
+interface ExecutableStatStamp {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+const statExecutable = async (
+  filePath: string,
+): Promise<ExecutableStatStamp | undefined> => {
+  try {
+    const info = await stat(filePath, { bigint: true });
+    if (!info.isFile()) return undefined;
+    return {
+      dev: info.dev,
+      ino: info.ino,
+      size: info.size,
+      mtimeNs: info.mtimeNs,
+      ctimeNs: info.ctimeNs,
+    };
+  } catch {
+    return undefined;
+  }
+};
+
+const sameExecutableStamp = (
+  left: ExecutableStatStamp,
+  right: ExecutableStatStamp,
+): boolean =>
+  left.dev === right.dev &&
+  left.ino === right.ino &&
+  left.size === right.size &&
+  left.mtimeNs === right.mtimeNs &&
+  left.ctimeNs === right.ctimeNs;
 
 /** Locate an Xcode tool through `xcrun --find` and sample its executable digest. */
 export const resolveXcrunTool = async (
