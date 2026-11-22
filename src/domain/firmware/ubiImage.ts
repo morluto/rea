@@ -68,6 +68,8 @@ export const UBI_IMAGE_LIMITATIONS = {
     "A volume whose VID headers declare a volume type or data_pad other than its volume table record is inventoried but not reassembled.",
   interruptedCopy:
     "A newer wear-leveling copy of a logical eraseblock failed its data CRC, so the older copy was used.",
+  unverifiedCopy:
+    "A volume whose logical eraseblock is left with only wear-leveling copies that failed their data CRC is inventoried but not reassembled.",
   updateMarker:
     "The volume table marks an interrupted update for this volume; its reassembled bytes may be incomplete.",
 } as const;
@@ -76,7 +78,8 @@ export const UBI_IMAGE_LIMITATIONS = {
 export type UbiVolumeExtractRefusal =
   | "missing_lebs"
   | "invalid_static_size"
-  | "vid_record_mismatch";
+  | "vid_record_mismatch"
+  | "unverified_copy";
 
 export const ubiVolumeExtractRefusalLimitation = (
   refusal: UbiVolumeExtractRefusal,
@@ -85,6 +88,7 @@ export const ubiVolumeExtractRefusalLimitation = (
     missing_lebs: UBI_IMAGE_LIMITATIONS.missingLebs,
     invalid_static_size: UBI_IMAGE_LIMITATIONS.invalidStaticSize,
     vid_record_mismatch: UBI_IMAGE_LIMITATIONS.vidRecordMismatch,
+    unverified_copy: UBI_IMAGE_LIMITATIONS.unverifiedCopy,
   })[refusal];
 
 /** How parsing a UBI image failed, in the shared byte-format failure algebra. */
@@ -873,6 +877,11 @@ export interface UbiImage {
 interface WinningLeb {
   readonly peb: number;
   readonly vid: UbiVidHeader;
+  /**
+   * The LEB had competing copies and the winner is a wear-leveling copy whose
+   * data CRC failed, so no copy of it passed verification.
+   */
+  readonly unverified: boolean;
 }
 
 /**
@@ -909,7 +918,8 @@ export const ubiCopyDataMatches = (
  * Per volume and LEB number, the winning copy, and stale copies. As in Linux
  * UBI, the higher sqnum wins unless its copy_flag is set and its PEB is not in
  * `verifiedCopies`: an interrupted copy loses to the older one. Equal sqnums
- * are refused earlier by `checkUbiPebs`.
+ * are refused earlier by `checkUbiPebs`. When the surviving copy is itself a
+ * failed wear-leveling copy, the LEB is marked unverified.
  */
 const winningLebs = (
   pebs: readonly UbiPeb[],
@@ -928,7 +938,7 @@ const winningLebs = (
     const volume = lebs.get(vid.volId) ?? new Map<number, WinningLeb>();
     lebs.set(vid.volId, volume);
     const current = volume.get(vid.lnum);
-    const candidate = { peb: index, vid };
+    const candidate = { peb: index, vid, unverified: false };
     if (current === undefined) {
       volume.set(vid.lnum, candidate);
       return;
@@ -938,10 +948,15 @@ const winningLebs = (
       vid.sqnum > current.vid.sqnum
         ? [candidate, current]
         : [current, candidate];
-    if (newer.vid.copyFlag !== 0 && !verifiedCopies.has(newer.peb)) {
-      interrupted += 1;
-      volume.set(vid.lnum, older);
-    } else volume.set(vid.lnum, newer);
+    const winner =
+      newer.vid.copyFlag !== 0 && !verifiedCopies.has(newer.peb)
+        ? older
+        : newer;
+    if (winner === older) interrupted += 1;
+    volume.set(vid.lnum, {
+      ...winner,
+      unverified: winner.vid.copyFlag !== 0 && !verifiedCopies.has(winner.peb),
+    });
   });
   return { lebs, stale, interrupted };
 };
@@ -996,7 +1011,9 @@ const assembleVolume = (
       leb.vid.volType !== vidType || leb.vid.dataPad !== record.dataPad,
   )
     ? "vid_record_mismatch"
-    : null;
+    : inRange.some(([, leb]) => leb.unverified)
+      ? "unverified_copy"
+      : null;
   let contentLebs: number;
   if (record.type === "static") {
     const lastLnum = (usedEbs ?? 0) - 1;

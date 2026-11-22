@@ -613,6 +613,51 @@ describe("interrupted wear-leveling copies", () => {
     expect(parsed.interruptedCopyCount).toBe(1);
     expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.interruptedCopy);
   });
+
+  const bothCopies = (olderCrc?: number) =>
+    ubiImage([
+      ...ubiLayoutPebs(RECORDS),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x30, "OLDCOPY"),
+        sqnum: 2n,
+        copyFlag: true,
+        ...(olderCrc === undefined ? {} : { dataCrc: olderCrc }),
+      },
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x31, "NEWCOPY"),
+        sqnum: 3n,
+        copyFlag: true,
+        dataCrc: 0,
+      },
+    ]);
+
+  it("falls back to an older wear-leveling copy whose data CRC verifies", () => {
+    const bytes = bothCopies();
+    expect(reassemble(bytes, "rootfs").subarray(0, 7).toString("latin1")).toBe(
+      "OLDCOPY",
+    );
+    expect(image(bytes).volumes[0]?.extractRefusal).toBeNull();
+  });
+
+  it("refuses the volume when both competing copies fail their data CRC", () => {
+    const parsed = image(bothCopies(0));
+    expect(parsed.interruptedCopyCount).toBe(1);
+    expect(parsed.volumes[0]).toMatchObject({
+      name: "rootfs",
+      mappedLebCount: 1,
+      staleLebCopyCount: 1,
+      dataBytes: null,
+      ranges: [],
+      extractRefusal: "unverified_copy",
+    });
+    expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.unverifiedCopy);
+  });
 });
 
 it("refuses a static volume whose nonfinal LEB is short", () => {
