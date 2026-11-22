@@ -16,7 +16,6 @@ import type {
 } from "../firmware/regionDecoder.js";
 
 /** An NTFS FILE record begins with this signature. */
-const MFT_FILE_RECORD_MAGIC = "FILE";
 const MFT_FILE_RECORD_MAGIC_BYTES = 4;
 /** The shortest header worth reading: a FILE record header ends at `nextAttributeId`. */
 const NTFS_MFT_MIN_RECORD_BYTES = 42;
@@ -171,9 +170,6 @@ export interface MftMetadata {
   readonly file_name_incomplete_record_count: number;
   readonly attribute_incomplete_record_count: number;
 }
-
-const text = (ascii: Uint8Array): string =>
-  Buffer.from(ascii).toString("latin1");
 
 const failure = (
   message: string,
