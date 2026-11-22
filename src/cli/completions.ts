@@ -148,7 +148,7 @@ export const createCliCompletions = (
     const bashLine = environment._COMPLETE_BASH_LINE;
     const bashFragment = environment._COMPLETE_BASH_FRAGMENT;
     const bash =
-      shell === "bash" && bashLine?.includes("=") && bashFragment !== undefined
+      shell === "bash" && bashLine && bashFragment !== undefined
         ? bashCompletionInput(words, index, bashLine, bashFragment)
         : undefined;
     // Consume global option values before scope resolution. A value named

@@ -46,7 +46,10 @@ export interface CompletionCandidate {
   readonly noSpace?: true | undefined;
 }
 
-/** Reassemble adjacent Bash word breaks belonging to a long inline option. */
+// Bash can place operators next to words without a space.
+const BASH_OPERATOR = /^[&();<>|]/u;
+
+/** Reassemble Bash completion fragments at their boundaries in the raw line. */
 export const bashCompletionInput = (
   words: readonly string[],
   index: number,
@@ -55,33 +58,42 @@ export const bashCompletionInput = (
 ) => {
   const assembled: string[] = [];
   let end = 0;
-  let inValue = false;
+  let replacementPrefix = "";
   for (let position = 0; position <= index; position += 1) {
     const atCursor = position === index;
-    const word = atCursor ? line.slice(end).trimStart() : words[position]!;
+    const word = atCursor
+      ? line.slice(end).replace(/^[ \t\n]+/u, "")
+      : words[position]!;
     const start = atCursor
       ? line.length - word.length
       : line.indexOf(word, end);
     if (start < end) return undefined;
     const previous = assembled.at(-1);
-    inValue =
+    // At a word break, the Readline fragment can still precede COMP_CWORD.
+    const cursorBeforeWordBreak = atCursor && word === "" && fragment !== "";
+    if (
       start === end &&
-      (inValue ||
-        (word.startsWith("=") && previous?.startsWith("--") === true));
-    if (inValue && previous !== undefined)
-      assembled[assembled.length - 1] = previous + word;
-    else assembled.push(word);
+      !cursorBeforeWordBreak &&
+      previous !== undefined &&
+      !BASH_OPERATOR.test(words[position - 1]!) &&
+      !BASH_OPERATOR.test(word)
+    ) {
+      const joined = previous + word;
+      assembled[assembled.length - 1] = joined;
+      // Readline keeps the portion of the shell word outside its fragment.
+      if (atCursor && joined.endsWith(fragment))
+        replacementPrefix = joined.slice(0, joined.length - fragment.length);
+    } else {
+      // For an unsplit word, Bash includes any text beyond the cursor.
+      assembled.push(atCursor ? (words[position] ?? word) : word);
+    }
     end = start + word.length;
   }
   const current = assembled.pop() ?? "";
   return {
     before: assembled.slice(1),
     current,
-    // Readline leaves the option and '=' in the buffer when it replaces a fragment.
-    replacementPrefix:
-      inValue && current.endsWith(fragment)
-        ? current.slice(0, current.length - fragment.length)
-        : "",
+    replacementPrefix,
   };
 };
 

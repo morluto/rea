@@ -56,6 +56,17 @@ const complete = (words: string[], index = words.length - 1) => {
         .map((value) => (value.endsWith("\x01") ? value.slice(0, -1) : value));
 };
 
+const completeBash = (
+  line: string,
+  fragment: string,
+  words: readonly string[],
+  index = words.length,
+) =>
+  completionOutput("bash", ["rea", ...words], index, {
+    _COMPLETE_BASH_LINE: `rea ${line}`,
+    _COMPLETE_BASH_FRAGMENT: fragment,
+  });
+
 it("resolves enabled builtin scopes in the same tree as registered commands", () => {
   expect(complete(["rea", "mcp", "d"])).toEqual(["doctor"]);
   expect(complete(["rea", "mcp"], 2)).toEqual(["add", "doctor"]);
@@ -166,13 +177,8 @@ it("completes whole-word inline values with their option spelling", () => {
 });
 
 it("preserves command scope and the replacement fragment in Bash inline words", () => {
-  const bash = (line: string, fragment: string, words: string[]) =>
-    completionOutput("bash", ["rea", ...words], words.length, {
-      _COMPLETE_BASH_LINE: `rea ${line}`,
-      _COMPLETE_BASH_FRAGMENT: fragment,
-    });
   expect(
-    bash("--filter-output=mcp instructions --target-format=r", "r", [
+    completeBash("--filter-output=mcp instructions --target-format=r", "r", [
       "--filter-output",
       "=",
       "mcp",
@@ -183,7 +189,7 @@ it("preserves command scope and the replacement fragment in Bash inline words", 
     ]),
   ).toBe("raw-binary");
   expect(
-    bash("--filter-output=instructions mcp doctor --format=c", "c", [
+    completeBash("--filter-output=instructions mcp doctor --format=c", "c", [
       "--filter-output",
       "=",
       "instructions",
@@ -195,7 +201,7 @@ it("preserves command scope and the replacement fragment in Bash inline words", 
     ]),
   ).toBe("");
   expect(
-    bash("instructions --filter-output=--format=y", "y", [
+    completeBash("instructions --filter-output=--format=y", "y", [
       "instructions",
       "--filter-output",
       "=",
@@ -205,14 +211,14 @@ it("preserves command scope and the replacement fragment in Bash inline words", 
     ]),
   ).toBe("");
   expect(
-    bash("instructions --target-format=", "", [
+    completeBash("instructions --target-format=", "", [
       "instructions",
       "--target-format",
       "=",
     ]),
   ).toBe("dos-com\vraw-binary");
   expect(
-    bash("instructions --target-format = r", "r", [
+    completeBash("instructions --target-format = r", "r", [
       "instructions",
       "--target-format",
       "=",
@@ -220,12 +226,93 @@ it("preserves command scope and the replacement fragment in Bash inline words", 
     ]),
   ).toBe("");
   expect(
-    bash("instructions --target-format=r", "--target-format=r", [
-      "instructions",
-      "word missing from the raw completion line",
-      "--target-format=r",
+    completeBash(
+      "--filter-output /tmp/word instructions --target-format=r",
+      "r",
+      [
+        "--filter-output",
+        "C:/Temp/word",
+        "instructions",
+        "--target-format",
+        "=",
+        "r",
+      ],
+    ),
+  ).toBe("");
+  expect(
+    completeBash("providers \u00a0--he", "\u00a0--he", [
+      "providers",
+      "\u00a0--he",
     ]),
-  ).toBe("--target-format=raw-binary");
+  ).toBe("");
+});
+
+it.each([
+  [
+    "providers --filter-output foo=--format=j",
+    "j",
+    ["providers", "--filter-output", "foo", "=", "--format", "=", "j"],
+    "",
+  ],
+  [
+    "--filter-output foo:providers mcp doctor --format c",
+    "c",
+    [
+      "--filter-output",
+      "foo",
+      ":",
+      "providers",
+      "mcp",
+      "doctor",
+      "--format",
+      "c",
+    ],
+    "",
+  ],
+  [
+    "providers --format=j",
+    "j",
+    ["providers", "--format", "=", "j"],
+    "json\vjsonl",
+  ],
+  ["providers --format j", "j", ["providers", "--format", "j"], "json\vjsonl"],
+  [
+    "instructions>/dev/null --target-format=r",
+    "r",
+    ["instructions", ">", "/dev/null", "--target-format", "=", "r"],
+    "raw-binary",
+  ],
+] as const)(
+  "preserves Bash word boundaries in %s",
+  (line, fragment, words, expected) => {
+    expect(completeBash(line, fragment, words)).toBe(expected);
+  },
+);
+
+it("keeps text beyond the cursor in a spaced Bash filter value", () => {
+  const line = "providers --filter-output --he";
+  expect(
+    completeBash(line, "--he", ["providers", "--filter-output", "--hello"]),
+  ).toBe("");
+  expect(
+    completeBash(
+      line,
+      "--he",
+      ["providers", "--filter-output", "--he", ":", "llo"],
+      4,
+    ),
+  ).toBe("");
+});
+
+it("offers Bash enum values when the cursor is just after the equals sign", () => {
+  expect(
+    completeBash("providers --format=", "", [
+      "providers",
+      "--format",
+      "=",
+      "y",
+    ]),
+  ).toBe("toon\vjson\vyaml\vmd\vjsonl\vcsv\vtsv");
 });
 
 it("serves the Bash script through both public generation routes", async () => {
