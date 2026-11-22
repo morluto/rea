@@ -1,3 +1,4 @@
+import { releaseExposureFailure } from "./releaseExposure/releaseExposureFailures.js";
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
@@ -25,17 +26,13 @@ import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   readStableArtifact,
   projectArtifactCloseFailure,
-  projectStableArtifactFailure,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
   openRootArtifact,
   releaseRootArtifact,
-  asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import {
@@ -43,7 +40,6 @@ import {
   decodeMemberText,
   declaresTextEncoding,
   getCachedTextDecoder,
-  hasNonUtf8Nul,
   type MemberText,
 } from "./releaseExposure/memberTextDecoding.js";
 import {
@@ -61,27 +57,19 @@ import {
   type PeHeaderState,
 } from "./releaseExposure/memberClassification.js";
 import { nodeShebang } from "./releaseExposure/nodeShebang.js";
-import {
-  InternalInvariantError,
-  invariantViolation,
-} from "../domain/internalInvariant.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
-import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   ArtifactInventoryResult,
@@ -89,14 +77,10 @@ import type {
 } from "../domain/artifactGraph.js";
 import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type {
-  ArtifactAdmissionLimit,
-  ArtifactIntegrityCheck,
-} from "../domain/artifactOperationError.js";
+import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
 import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -125,7 +109,6 @@ import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import {
-  isSelectedRegularFileError,
   RegularFileChangedError,
   sameRegularFileState,
   type StableRegularFileDescriptor,
@@ -145,7 +128,6 @@ import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferen
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "audit_release_exposure";
 const SIBLING_LIST_LIMIT = 4096;
@@ -3492,140 +3474,3 @@ const pushSample = (samples: string[], value: string): void => {
 const pushLimitation = (state: ScanState, message: string): void => {
   if (!state.limitations.retains(message)) state.limitations.push(message);
 };
-
-const fileSizeRecovery = (maxFileBytes: number) =>
-  maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
-        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
-        unit: "bytes",
-      })
-    : {
-        retryable: false as const,
-        remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
-      };
-
-/**
- * The header admission is its own bound, not the selected-file ceiling, so
- * max_file_bytes cannot repair it. The recovery names the shared setting the
- * composition threaded into this reader.
- */
-const asarHeaderAdmissionFailure = (
-  cause: ArtifactReaderFailure,
-  admission: ArtifactAdmissionLimit,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    admission.requiredBytes === undefined
-      ? `An ASAR header/index exceeds ${String(admission.maximumBytes)} bytes.`
-      : `An ASAR header/index of ${String(admission.requiredBytes)} bytes exceeds ${String(admission.maximumBytes)} bytes.`,
-    {
-      asar_max_header_bytes: admission.maximumBytes,
-      ...(admission.requiredBytes === undefined
-        ? {}
-        : { required_header_bytes: admission.requiredBytes }),
-    },
-    {
-      cause,
-      retryable: false,
-      remediationAction: asarHeaderAdmissionRecovery(admission),
-      limit: {
-        ...analysisSettingLimit(
-          "asar.max_header_bytes",
-          admission.maximumBytes,
-          admission.source,
-        ),
-        ...(admission.requiredBytes === undefined
-          ? {}
-          : { required_value: admission.requiredBytes }),
-      },
-    },
-  );
-
-const releaseExposureLimitFailure = (
-  cause: ArtifactReaderFailure,
-  maxFileBytes: number,
-): AnalysisResourceConstraintError =>
-  cause.admission === undefined
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: maxFileBytes },
-        { cause, ...fileSizeRecovery(maxFileBytes) },
-      )
-    : asarHeaderAdmissionFailure(cause, cause.admission);
-
-const releaseExposureFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return readerIntegrityFailure(OPERATION, path, cause);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return releaseExposureLimitFailure(cause, maxFileBytes);
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
-const releaseExposureFailure = (
-  cause: unknown,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError =>
-  projectStableArtifactFailure(
-    cause,
-    releaseExposureFailurePrimary(
-      artifactFilePrimaryFacts(cause),
-      path,
-      maxFileBytes,
-    ),
-    path,
-    RELEASE_EXPOSURE_PROVIDER.id,
-    OPERATION,
-  );
