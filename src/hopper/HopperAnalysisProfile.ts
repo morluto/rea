@@ -4,7 +4,7 @@ import {
   ArtifactResourceRetryFailure,
 } from "../resources/index.js";
 import {
-  hashStableFile,
+  observeStableFile,
   stableFileHashCause,
   type StableFileHashOptions,
 } from "../filesystem/StableFileHash.js";
@@ -15,11 +15,11 @@ import {
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 
-import type { BigIntStats } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
   assertRegularFileActive,
   sameRegularFileState,
+  type RegularFileState,
 } from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
@@ -344,7 +344,7 @@ const readMachoMagic = (
 
 const verifiedLauncherDigests = new Map<
   string,
-  { readonly state: BigIntStats; readonly sha256: string }
+  { readonly state: RegularFileState; readonly sha256: string }
 >();
 
 const sha256File = async (
@@ -352,35 +352,26 @@ const sha256File = async (
   resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
 ): Promise<Result<string, AnalysisError>> => {
-  const beforeStat = await stat(path, { bigint: true }).catch(() => undefined);
   const cached = verifiedLauncherDigests.get(path);
-  if (
-    signal?.aborted !== true &&
-    beforeStat !== undefined &&
-    beforeStat.isFile() &&
-    cached !== undefined &&
-    sameRegularFileState(cached.state, beforeStat)
-  )
-    return ok(cached.sha256);
+  if (cached !== undefined) {
+    const current = await stat(path).catch(() => undefined);
+    if (
+      signal?.aborted !== true &&
+      current !== undefined &&
+      sameRegularFileState(cached.state, current)
+    )
+      return ok(cached.sha256);
+  }
   const hashed = await readHopperProfileFile(
     { path, kind: "launcher" },
     resources,
     signal,
-    async (options) => (await hashStableFile(path, options)).sha256,
+    (options) => observeStableFile(path, options),
   );
-  if (hashed.ok && beforeStat !== undefined && beforeStat.isFile()) {
-    const afterStat = await stat(path, { bigint: true }).catch(() => undefined);
-    if (
-      afterStat !== undefined &&
-      sameRegularFileState(beforeStat, afterStat)
-    ) {
-      verifiedLauncherDigests.set(path, {
-        state: afterStat,
-        sha256: hashed.value,
-      });
-    }
-  }
-  return hashed;
+  if (!hashed.ok) return hashed;
+  const { state, sha256 } = hashed.value;
+  verifiedLauncherDigests.set(path, { state, sha256 });
+  return ok(sha256);
 };
 
 /** Both profile reads retain the exact descriptor through final close and retry. */

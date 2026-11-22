@@ -27,6 +27,7 @@ import { DEFAULT_MANAGED_SNAPSHOT_BYTES } from "../domain/managed/managedInspect
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   RegularFileChangedError,
+  assertStableRegularFileIdentity,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
@@ -37,7 +38,7 @@ interface ManagedSourceObservation {
   readonly byteLength: number;
   readonly sha256: string;
   readonly bytes?: Buffer;
-  readonly state?: BigIntStats;
+  readonly state: BigIntStats;
 }
 
 interface ManagedSnapshot extends ManagedSourceObservation {
@@ -121,7 +122,7 @@ export const readManagedSnapshot = async (
       const bytes = await readBoundedFileBytes(handle, maxBytes, { signal });
       if (bytes === undefined)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      signal?.throwIfAborted();
+      await assertManagedFileState(handle, path, state, options);
       return {
         byteLength: bytes.length,
         sha256: sha256Hex(bytes),
@@ -146,15 +147,18 @@ export const hashManagedSource = async (
       const signal = options.signal;
       if (metadata.size > maxBytes)
         throw managedSnapshotCapacityError(operation, maxBytes);
-      if (options.cached !== undefined) {
-        const currentState = await handle.stat({ bigint: true });
-        signal?.throwIfAborted();
-        if (sameRegularFileState(options.cached.state, currentState))
-          return {
-            byteLength: options.cached.byteLength,
-            sha256: options.cached.sha256,
-            state: currentState,
-          };
+      const state = await handle.stat({ bigint: true });
+      signal?.throwIfAborted();
+      if (
+        options.cached !== undefined &&
+        sameRegularFileState(options.cached.state, state)
+      ) {
+        await assertManagedFileState(handle, path, state, options);
+        return {
+          byteLength: options.cached.byteLength,
+          sha256: options.cached.sha256,
+          state,
+        };
       }
       const digest = createHash("sha256");
       let byteLength = 0;
@@ -174,11 +178,23 @@ export const hashManagedSource = async (
         byteLength += bytesRead;
         digest.update(chunk.subarray(0, bytesRead));
       }
-      return { byteLength, sha256: digest.digest("hex") };
+      await assertManagedFileState(handle, path, state, options);
+      return { byteLength, sha256: digest.digest("hex"), state };
     },
     options,
   );
 };
+
+const assertManagedFileState = (
+  handle: FileHandle,
+  path: string,
+  state: BigIntStats,
+  options: ManagedSnapshotReadOptions,
+): Promise<void> =>
+  assertStableRegularFileIdentity(handle, path, state, {
+    symlinks: options.symlinks ?? "follow",
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  });
 
 const snapshotBudget = (options: ManagedSnapshotReadOptions): number => {
   const maxBytes = options.maxBytes ?? DEFAULT_MANAGED_SNAPSHOT_BYTES;

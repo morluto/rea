@@ -157,7 +157,7 @@ class ManagedStaticClient implements AnalysisClient {
       if (bytes === undefined)
         throw invariantViolation("Managed snapshot bytes are unavailable");
       this.#snapshotBytes = bytes;
-      if (observed.state !== undefined) this.#snapshotState = observed.state;
+      this.#snapshotState = observed.state;
       const result = inspectManagedOperation(
         operation,
         input.data,

@@ -1,4 +1,4 @@
-import { open, writeFile, type FileHandle } from "node:fs/promises";
+import { open, utimes, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
@@ -30,6 +30,7 @@ it.each([
     const client = new ManagedStaticProvider().createClient(parsed.value);
     const initial = await client.execute("inspect_managed_artifact", {});
     if (!initial.ok) throw initial.error;
+    await utimes(path, new Date(0), new Date(0));
 
     const admitted = await open(path, "r");
     const prototype = Object.getPrototypeOf(admitted) as FileHandle;
@@ -142,6 +143,7 @@ it("preserves an independent read failure when cancellation races with it", asyn
   const client = new ManagedStaticProvider().createClient(parsed.value);
   const initial = await client.execute("inspect_managed_artifact", {});
   if (!initial.ok) throw initial.error;
+  await utimes(path, new Date(0), new Date(0));
   const admitted = await open(path, "r");
   const prototype = Object.getPrototypeOf(admitted) as FileHandle;
   await admitted.close();
