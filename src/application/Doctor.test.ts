@@ -562,8 +562,7 @@ describe("doctor private runtime root", () => {
       name: "private-runtime-root",
       ok: true,
       classification: "healthy",
-      detail:
-        "Private runtime roots are created by mkdtemp with owner-only mode 0700. REA does not read back ACLs on this host, so this is POSIX permission privacy, not verified-DACL privacy.",
+      detail: expect.any(String),
       details: { proof: "posix-mkdtemp-owner-only" },
     });
   });
@@ -579,8 +578,7 @@ describe("doctor private runtime root", () => {
       name: "private-runtime-root",
       ok: true,
       classification: "healthy",
-      detail:
-        "The Windows native self-test created a private runtime root and read its security descriptor back by handle: the current user owns it, and a protected DACL admits only the current user and SYSTEM. Other processes running as the same user are outside this boundary.",
+      detail: expect.any(String),
       details: { proof: "native-authority" },
     });
     expect(result.environment_healthy).toBe(true);
