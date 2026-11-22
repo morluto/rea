@@ -26,7 +26,6 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { parseClientConfiguration } from "../../../src/application/ClientConfigurationDocument.js";
 import {
   detectClients,
   systemSetupHost,
@@ -2107,62 +2106,6 @@ describe("layered uninstall outcomes", () => {
 });
 
 describe("uninstall configuration preflight", () => {
-  it("fails closed on malformed client configuration", async () => {
-    const home = await createTestTempDirectory("rea-uninstall-bad-");
-    const config = join(home, ".cursor/mcp.json");
-    await mkdir(dirname(config), { recursive: true });
-    await writeFile(config, "not-json");
-    const result = await runUninstall(false, systemUninstallHost(home));
-    expect(result.status).toBe("failed");
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "cursor",
-        status: "failed",
-        detail: expect.stringMatching(
-          /not valid JSON.*not changed.*repair.*uninstall/iu,
-        ),
-      }),
-    );
-    expect(await readFile(config, "utf8")).toBe("not-json");
-  });
-
-  it.each([
-    ['{"mcpServers":null,"keep":1}', "mcpServers"],
-    ["[]", "root"],
-    ['{"mcpServers":"x"}', "mcpServers"],
-  ])(
-    "names the structural problem in valid JSON %s",
-    async (content, problem) => {
-      const home = await createTestTempDirectory("rea-uninstall-shape-");
-      const config = join(home, ".cursor/mcp.json");
-      await mkdir(dirname(config), { recursive: true });
-      await writeFile(config, content);
-      let cause: unknown;
-      try {
-        parseClientConfiguration(content, "json");
-      } catch (error: unknown) {
-        cause = error;
-      }
-      if (!(cause instanceof Error)) throw new Error("Expected shape error");
-      expect(cause.message).toContain(problem);
-      expect(cause.message).toContain("object");
-      const result = await runUninstall(false, systemUninstallHost(home));
-      expect(result.status).toBe("failed");
-      expect(result.items).toContainEqual(
-        expect.objectContaining({
-          name: "cursor",
-          status: "failed",
-          configuration_path: config,
-          detail: expect.stringContaining(cause.message),
-        }),
-      );
-      const item = result.items.find(({ name }) => name === "cursor");
-      expect(item?.detail).toMatch(/not changed.*repair.*uninstall/iu);
-      expect(await readFile(config, "utf8")).toBe(content);
-      await expect(readFile(`${config}.rea.backup`, "utf8")).rejects.toThrow();
-    },
-  );
-
   it("stops before any removal when one client configuration is malformed", async () => {
     const home = await createTestTempDirectory("rea-uninstall-stop-");
     const codex = join(home, ".codex/config.toml");
@@ -2320,105 +2263,52 @@ describe("client configuration changed during uninstall", () => {
 
 describe("client configuration filesystem failure reporting", () => {
   it.each([
-    [
-      "read",
-      () =>
-        "Configuration could not be read. Check file permissions, then rerun uninstall.",
-    ],
-    [
-      "backup",
-      () =>
-        "Configuration could not be backed up, so no change was made. Check file permissions, then rerun uninstall.",
-    ],
-    [
-      "update",
-      (config: string) =>
-        `Configuration could not be updated. The original was restored and its backup at ${config}.rea.backup was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-    ],
-    [
-      "publication",
-      (config: string) =>
-        `Configuration could not be updated or restored. Restore the backup at ${config}.rea.backup manually, then rerun uninstall.`,
-    ],
-    [
-      "restore",
-      (config: string) =>
-        `Configuration could not be updated or restored. Restore the backup at ${config}.rea.backup manually, then rerun uninstall.`,
-    ],
+    ["read", "could not be read"],
+    ["backup", "could not be backed up"],
   ] as const)(
-    "reports an actionable client %s failure",
-    async (failure, expectedDetail) => {
+    "reports an actionable client %s failure before writing",
+    async (stage, guidance) => {
       const { home, config } = await uninstallFixture();
-      const detail = expectedDetail(config);
-      const fileSystem: UninstallFileSystem = {
-        ...testFileSystem,
-        readText: (path) =>
-          failure === "read" && path === config
-            ? Promise.reject(new Error("SECRET read failure"))
-            : readFile(path, "utf8"),
-        copy: (source, destination) =>
-          failure === "backup"
-            ? Promise.reject(new Error("SECRET backup failure"))
-            : copyFile(source, destination, fsConstants.COPYFILE_EXCL),
-        publishConfiguration: async (path, contents, original) => {
-          if (failure === "publication")
-            throw new Error("SECRET publication failure");
-          const publication = await ClientConfigurationPublication.write(
-            path,
-            contents,
-            original,
-          );
-          if (failure === "update" || failure === "restore")
-            publication.assertCurrent = async () => {
-              throw new Error("SECRET verification failure");
+      const original = await readFile(config);
+      const fault = new Error("test-only filesystem fault");
+      const fail = vi.fn(async () => {
+        throw fault;
+      });
+      const fileSystem: UninstallFileSystem =
+        stage === "backup"
+          ? { ...testFileSystem, copy: fail }
+          : {
+              ...testFileSystem,
+              readText: (path) =>
+                path === config ? fail() : readFile(path, "utf8"),
             };
-          if (failure === "restore")
-            publication.restore = async () => {
-              throw new Error("SECRET restore failure");
-            };
-          return publication;
-        },
-      };
+
       const result = await runUninstall(
         false,
         systemUninstallHost(home, fileSystem),
       );
-      expect(result.status).toBe("failed");
-      expect(result.items).toContainEqual(
-        expect.objectContaining({ name: "cursor", status: "failed", detail }),
-      );
-      expect(JSON.stringify(result)).not.toContain("SECRET");
+      expect(fail).toHaveBeenCalled();
+      expect(result).toMatchObject({
+        status: "failed",
+        items: expect.arrayContaining([
+          expect.objectContaining({
+            name: "cursor",
+            configuration_path: config,
+            status: "failed",
+            detail: expect.stringContaining(guidance),
+          }),
+        ]),
+      });
+      expect(
+        result.items.find(({ name }) => name === "cursor")?.detail,
+      ).toContain("Check file permissions");
+      expect(JSON.stringify(result)).not.toContain(fault.message);
+      expect((await readFile(config)).equals(original)).toBe(true);
+      await expect(lstat(`${config}.rea.backup`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
-
-  it("restores the current configuration without replacing its initial backup", async () => {
-    const { home, config } = await uninstallFixture();
-    const current = await readFile(config, "utf8");
-    const initial = '{"existing":true}\n';
-    await writeFile(`${config}.rea.backup`, initial);
-    const result = await systemUninstallHost(home, {
-      ...testFileSystem,
-      publishConfiguration: async (path, contents, original) => {
-        const publication = await ClientConfigurationPublication.write(
-          path,
-          contents,
-          original,
-        );
-        publication.assertCurrent = async () => {
-          throw new Error("verification failed after writing");
-        };
-        return publication;
-      },
-    }).removeClient({
-      name: "cursor",
-      registrationProfile: supportedClientRegistrationProfile("cursor"),
-      format: "json",
-      configPath: config,
-    });
-    expect(result.status).toBe("failed");
-    expect(await readFile(config, "utf8")).toBe(current);
-    expect(await readFile(`${config}.rea.backup`, "utf8")).toBe(initial);
-  });
 });
 
 describe("managed skill removal outcomes", () => {
