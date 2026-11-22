@@ -1254,6 +1254,8 @@ const snapshotOutputBuffer = (
 
 class ProcessOutputCapture {
   #chunks: Buffer[] = [];
+  #head = 0;
+  #headOffset = 0;
   // Copy-on-write: shared with pending lazy snapshots until the next mutation or reset.
   #sharedChunks = false;
   // not-an-allowance: retained length of a tail buffer that drops its front past the limit instead of refusing input.
@@ -1265,9 +1267,19 @@ class ProcessOutputCapture {
     return this.#bytes;
   }
 
+  #activeChunks(): Buffer[] {
+    if (this.#head === 0 && this.#headOffset === 0) return this.#chunks;
+    const active = this.#chunks.slice(this.#head);
+    if (active.length > 0 && this.#headOffset > 0)
+      active[0] = active[0]!.subarray(this.#headOffset);
+    return active;
+  }
+
   #mutableChunks(): Buffer[] {
     if (this.#sharedChunks) {
-      this.#chunks = this.#chunks.slice();
+      this.#chunks = this.#activeChunks();
+      this.#head = 0;
+      this.#headOffset = 0;
       this.#sharedChunks = false;
     }
     return this.#chunks;
@@ -1280,6 +1292,8 @@ class ProcessOutputCapture {
     } else {
       this.#chunks.length = 0;
     }
+    this.#head = 0;
+    this.#headOffset = 0;
     this.#bytes = 0;
     this.#start = 0;
   }
@@ -1306,32 +1320,52 @@ class ProcessOutputCapture {
   /** Drop the first `count` retained bytes and, after a cut, the rest of a character it split. */
   #dropFront(count: number, cut: boolean): void {
     let remaining = Math.max(0, count);
-    for (
-      let first = this.#chunks[0];
-      first !== undefined;
-      first = this.#chunks[0]
-    ) {
-      let drop = Math.min(remaining, first.byteLength);
+    while (this.#head < this.#chunks.length) {
+      const first = this.#chunks[this.#head]!;
+      const available = first.byteLength - this.#headOffset;
+      let drop = Math.min(remaining, available);
       // UTF-8 continuation bytes are 0b10xxxxxx.
       while (
         cut &&
-        drop < first.byteLength &&
-        ((first[drop] ?? 0) & 0xc0) === 0x80
+        drop < available &&
+        ((first[this.#headOffset + drop] ?? 0) & 0xc0) === 0x80
       )
         drop += 1;
-      if (drop === first.byteLength) this.#mutableChunks().shift();
-      else if (drop > 0)
-        this.#mutableChunks()[0] = Buffer.from(first.subarray(drop));
       this.#bytes -= drop;
       this.#start += drop;
       remaining -= Math.min(remaining, drop);
-      if (drop < first.byteLength) return;
+      if (drop === available) {
+        this.#head += 1;
+        this.#headOffset = 0;
+      } else {
+        if (drop > 0) this.#headOffset += drop;
+        break;
+      }
+    }
+    if (this.#head === this.#chunks.length) {
+      if (this.#sharedChunks) {
+        this.#chunks = [];
+        this.#sharedChunks = false;
+      } else {
+        this.#chunks.length = 0;
+      }
+      this.#head = 0;
+      this.#headOffset = 0;
+    } else if (this.#head >= 64 && this.#head * 2 >= this.#chunks.length) {
+      this.#chunks = this.#chunks.slice(this.#head);
+      this.#head = 0;
+      this.#sharedChunks = false;
     }
   }
 
   snapshotRaw(observedBytes: number): RawOutputCapture {
-    if (this.#chunks.length === 0)
+    if (this.#head >= this.#chunks.length)
       return { chunks: EMPTY_CHUNKS, bytes: 0, observedBytes };
+    if (this.#head > 0 || this.#headOffset > 0) {
+      this.#chunks = this.#activeChunks();
+      this.#head = 0;
+      this.#headOffset = 0;
+    }
     this.#sharedChunks = true;
     return {
       chunks: this.#chunks,
@@ -1341,7 +1375,11 @@ class ProcessOutputCapture {
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
-    return materializeCapturedOutput(this.#chunks, this.#bytes, observedBytes);
+    return materializeCapturedOutput(
+      this.#activeChunks(),
+      this.#bytes,
+      observedBytes,
+    );
   }
 
   snapshotRange(
@@ -1354,7 +1392,12 @@ class ProcessOutputCapture {
     const availableStart = Math.min(Math.max(start, this.#start), availableEnd);
     const chunks: Buffer[] = [];
     let offset = this.#start;
-    for (const chunk of this.#chunks) {
+    for (let index = this.#head; index < this.#chunks.length; index += 1) {
+      const raw = this.#chunks[index]!;
+      const chunk =
+        index === this.#head && this.#headOffset > 0
+          ? raw.subarray(this.#headOffset)
+          : raw;
       const chunkEnd = offset + chunk.byteLength;
       const from = Math.max(availableStart, offset);
       const to = Math.min(availableEnd, chunkEnd);
