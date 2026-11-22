@@ -11,7 +11,11 @@ chunk it was found in, its byte offset inside that 64 KiB chunk, the
 `EventRecordID` its header states, the `SystemTime` its header states, and the
 byte extent the record declares. Each chunk reports its position in the file
 as `chunk_number`, the event numbers and timestamps of its first and last
-record, and whether its header checksum matched.
+record, and whether its header checksum matched. When the inventory stops
+inside a chunk — the `max_records` allowance runs out, or a damaged record
+ends the walk — the records after that point were never examined, so the
+chunk's `last_event_record_id` and `last_timestamp_ms` are `null` rather than
+the last record that was listed.
 
 The channel, provider, event ID, level, `EventData` values and user identifiers
 live inside the embedded event XML, which this version does not decode: they

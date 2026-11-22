@@ -97,6 +97,8 @@ interface ChunkInventory {
   readonly checksum: "matched" | "mismatched";
   /** True when the record allowance stopped this chunk early. */
   readonly stopped: boolean;
+  /** True when a damaged record ended the walk before the chunk's last one. */
+  readonly damaged: boolean;
 }
 
 /**
@@ -116,6 +118,7 @@ const readChunk = (
   let firstTs: number | null = null;
   let lastTs: number | null = null;
   let events = 0;
+  let damaged = false;
   const startOrdinal = state.events.length;
   // 0x30 is the chunk's free-space offset: bytes from there to the end are
   // unused. A wrapped log discards records without zeroing them, so stale
@@ -160,6 +163,7 @@ const readChunk = (
         "truncated-record",
         `Unexpected bytes at byte ${cursor} before the chunk's free space.`,
       );
+      damaged = true;
       break;
     }
     const size = reader(chunk).u32(cursor + 4);
@@ -175,6 +179,7 @@ const readChunk = (
         "truncated-record",
         `Record at byte ${cursor} declares ${size} bytes, inconsistent with the declared last-record or free-space offset.`,
       );
+      damaged = true;
       break;
     }
     if (state.events.length >= state.maxRecords) {
@@ -193,11 +198,15 @@ const readChunk = (
         bytes: chunk.length,
         events,
         first_event_record_id: first,
-        last_event_record_id: last,
+        // The stop happened before this chunk's last record, so its ending
+        // facts are unknown. Reporting the last record listed so far would
+        // claim the chunk ends there.
+        last_event_record_id: null,
         first_timestamp_ms: firstTs,
-        last_timestamp_ms: lastTs,
+        last_timestamp_ms: null,
         checksum: chunkChecksumMatches(chunk) ? "matched" : "mismatched",
         stopped: true,
+        damaged: false,
       };
     }
     const recordId = readCount(chunk, cursor + 8);
@@ -237,6 +246,7 @@ const readChunk = (
     last_timestamp_ms: lastTs,
     checksum: chunkChecksumMatches(chunk) ? "matched" : "mismatched",
     stopped: false,
+    damaged,
   };
 };
 
@@ -385,14 +395,21 @@ export const parseEvtxArchive = (
         "chunk-checksum-mismatch",
         `Chunk at position ${index} stores a header checksum that does not match its bytes.`,
       );
+    // A damaged record ends the walk where the list is malformed, so the
+    // records after it were never examined. Their chunk's ending facts are
+    // unknown, and publishing the last good record there would claim the chunk
+    // ends on it.
+    const endingUnknown = inventory.stopped || inventory.damaged;
     chunks.push({
       chunk_number: inventory.chunk_number,
       ordinal: inventory.ordinal,
       bytes: inventory.bytes,
       first_event_record_id: inventory.first_event_record_id,
-      last_event_record_id: inventory.last_event_record_id,
+      last_event_record_id: endingUnknown
+        ? null
+        : inventory.last_event_record_id,
       first_timestamp_ms: inventory.first_timestamp_ms,
-      last_timestamp_ms: inventory.last_timestamp_ms,
+      last_timestamp_ms: endingUnknown ? null : inventory.last_timestamp_ms,
       events: inventory.events,
       checksum: inventory.checksum,
     });

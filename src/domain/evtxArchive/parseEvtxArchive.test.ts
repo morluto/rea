@@ -310,6 +310,36 @@ describe("parseEvtxArchive chunk boundaries", () => {
     expect(archive.source_coverage.status).toBe("partial");
   });
 
+  it("leaves a limit-stopped chunk's ending facts unknown", () => {
+    // The allowance stopped between records 1 and 2, so the chunk ends on
+    // record 2 or later — never on the last record that was listed.
+    const archive = parsed(
+      evtx([chunk(0, [withTimestamp(record(1), 1_700_000_000_000), record(2)])]),
+      { maxRecords: 1 },
+    );
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([1]);
+    expect(archive.chunks[0]?.first_event_record_id).toBe(1);
+    expect(archive.chunks[0]?.first_timestamp_ms).toBe(1_700_000_000_000);
+    expect(archive.chunks[0]?.last_event_record_id).toBeNull();
+    expect(archive.chunks[0]?.last_timestamp_ms).toBeNull();
+  });
+
+  it("leaves a damage-stopped chunk's ending facts unknown", () => {
+    // A zero-byte size on record 2 ends the walk there; the chunk still ends on
+    // it, so neither ending field describes the listed record 1.
+    const intact = chunk(0, [withTimestamp(record(1), 1_700_000_000_000), record(2)]);
+    const damaged = Buffer.from(intact);
+    damaged.writeUInt32LE(0, CHUNK_HEADER_BYTES + record(1).length + 4);
+    const archive = parsed(evtx([damaged]));
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([1]);
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "truncated-record",
+    );
+    expect(archive.chunks[0]?.first_event_record_id).toBe(1);
+    expect(archive.chunks[0]?.last_event_record_id).toBeNull();
+    expect(archive.chunks[0]?.last_timestamp_ms).toBeNull();
+  });
+
   it("accepts an empty log as an empty inventory", () => {
     const archive = parsed(evtx([chunk(0, [])]));
     expect(archive.events).toEqual([]);
