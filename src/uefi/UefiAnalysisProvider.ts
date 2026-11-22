@@ -1412,7 +1412,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         number,
         { cPath: string; outcomePath: string }
       >();
-      const preloadedModuleBytes = new Map<number, Buffer>();
 
       let ghidraBatchFailed = false;
       if (
@@ -1528,9 +1527,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                     `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
                   );
                 }
-                if (b !== undefined) {
-                  preloadedModuleBytes.set(1, b);
-                }
               }
               await writeFile(singleEfiPath, b ?? Buffer.alloc(0));
               ghidraArgs = [
@@ -1544,6 +1540,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 scriptPath,
                 singleOutC,
                 String(MAX_DECOMPILE_MODULE_BYTES),
+                String(MAX_DECOMPILE_TOTAL_BYTES),
                 "-deleteProject",
               ];
               ghidraBatchOutcomeMap.set(1, {
@@ -1555,6 +1552,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 mkdir(ghidraBatchInputDir, { recursive: true }),
                 mkdir(ghidraBatchOutputDir, { recursive: true }),
               ]);
+              let totalBatchStagedInputBytes = 0;
               for (let i = 0; i < modulesToProcess.length; i++) {
                 const seq = i + 1;
                 const m = modulesToProcess[i]!;
@@ -1574,12 +1572,27 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                       `Source module ${m.sourceRelPath ?? m.sourcePath} was modified concurrently during analysis (expected sha256 ${m.expectedSha256}, observed ${freshSha256}).`,
                     );
                   }
-                  if (b !== undefined) {
-                    preloadedModuleBytes.set(seq, b);
-                  }
                 }
+                const contentBytes = b ?? Buffer.alloc(0);
+                if (
+                  totalBatchStagedInputBytes + contentBytes.length >
+                  MAX_RAW_PAYLOAD_TOTAL_BYTES
+                ) {
+                  isCoveragePartial = true;
+                  if (
+                    !effectiveLimitations.includes(
+                      "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget.",
+                    )
+                  ) {
+                    effectiveLimitations.push(
+                      "Batch decompilation input staging truncated after reaching 128 MiB aggregate staging budget.",
+                    );
+                  }
+                  continue;
+                }
+                totalBatchStagedInputBytes += contentBytes.length;
                 const efiFile = join(ghidraBatchInputDir, `mod_${seq}.efi`);
-                await writeFile(efiFile, b ?? Buffer.alloc(0));
+                await writeFile(efiFile, contentBytes);
                 const outC = join(ghidraBatchOutputDir, `mod_${seq}.efi.c`);
                 ghidraBatchOutcomeMap.set(seq, {
                   cPath: outC,
@@ -1597,6 +1610,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 scriptPath,
                 ghidraBatchOutputDir,
                 String(MAX_DECOMPILE_MODULE_BYTES),
+                String(MAX_DECOMPILE_TOTAL_BYTES),
                 "-deleteProject",
               ];
             }
@@ -1742,24 +1756,31 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         }
 
         moduleSeq++;
-        let modBytes = preloadedModuleBytes.get(moduleSeq) ?? mod.bytes;
-        if (modBytes === undefined && (mod.entry || mod.sourcePath)) {
-          let freshBytes: Buffer;
-          if (reader !== undefined && mod.entry !== undefined) {
-            freshBytes = await buffer(await reader.open(mod.entry, signal));
-          } else {
-            freshBytes = await readFile(mod.sourcePath!);
+        let modBytes = mod.bytes;
+        if (modBytes === undefined) {
+          const stagedEfi = isMultiModuleBatch
+            ? join(ghidraBatchInputDir, `mod_${moduleSeq}.efi`)
+            : join(tempRoot.path, "mod_1.efi");
+          if (existsSync(stagedEfi)) {
+            modBytes = await readFile(stagedEfi);
+          } else if (mod.entry || mod.sourcePath) {
+            let freshBytes: Buffer;
+            if (reader !== undefined && mod.entry !== undefined) {
+              freshBytes = await buffer(await reader.open(mod.entry, signal));
+            } else {
+              freshBytes = await readFile(mod.sourcePath!);
+            }
+            const freshSha256 = sha256Hex(freshBytes);
+            if (
+              mod.expectedSha256 !== undefined &&
+              freshSha256 !== mod.expectedSha256
+            ) {
+              throw new Error(
+                `Source module ${mod.sourceRelPath ?? mod.sourcePath} was modified concurrently during analysis (expected sha256 ${mod.expectedSha256}, observed ${freshSha256}).`,
+              );
+            }
+            modBytes = freshBytes;
           }
-          const freshSha256 = sha256Hex(freshBytes);
-          if (
-            mod.expectedSha256 !== undefined &&
-            freshSha256 !== mod.expectedSha256
-          ) {
-            throw new Error(
-              `Source module ${mod.sourceRelPath ?? mod.sourcePath} was modified concurrently during analysis (expected sha256 ${mod.expectedSha256}, observed ${freshSha256}).`,
-            );
-          }
-          modBytes = freshBytes;
         }
         if (modBytes === undefined) {
           modBytes = Buffer.alloc(0);
@@ -1895,6 +1916,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const scratchBasename = `mod_${moduleSeq}.efi`;
         const tempEfiPath = join(tempRoot.path, scratchBasename);
         let ghidraOutC: string | undefined;
+        let outcomeFile: string | undefined;
 
         await writeFile(tempEfiPath, modBytes);
         try {
@@ -2086,8 +2108,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           let cGenerator: "ghidra" | "scaffold" = "scaffold";
 
           const ghidraTarget = ghidraBatchOutcomeMap.get(moduleSeq);
-          const ghidraOutC = ghidraTarget?.cPath;
-          const outcomeFile = ghidraTarget?.outcomePath;
+          ghidraOutC = ghidraTarget?.cPath;
+          outcomeFile = ghidraTarget?.outcomePath;
 
           if (ghidraTarget !== undefined) {
             let exporterOutcome: {
@@ -2295,6 +2317,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             if (ghidraOutC !== undefined) {
               await rm(ghidraOutC, { force: true });
             }
+            if (outcomeFile !== undefined) {
+              await rm(outcomeFile, { force: true });
+            }
+            if (isMultiModuleBatch) {
+              await rm(join(ghidraBatchInputDir, `mod_${moduleSeq}.efi`), {
+                force: true,
+              });
+            }
           } catch {
             // Ignore scratch unlink error
           }
@@ -2321,6 +2351,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
 
       const manifestData = {
         image_sha256: imageSha256,
+        coverage: isCoveragePartial ? "partial" : "complete",
+        source_coverage: coverage,
         total_modules_found: discoveredModules.length,
         total_modules_decompiled: stagedModules.length,
         phases: phaseCounts,
@@ -2924,6 +2956,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 reason: `declared_omissions:${omittedCount}`,
               });
             }
+            if (
+              parsed?.coverage === "partial" ||
+              parsed?.source_coverage === "partial"
+            ) {
+              isCoveragePartial = true;
+              if (limitations.length < 50) {
+                limitations.push(
+                  "Manifest firmware_manifest.json declares partial source coverage.",
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#source_coverage",
+                reason: "partial_source_coverage",
+              });
+            }
             if (Array.isArray(parsed?.modules)) {
               const MAX_MANIFEST_MODULES = 10_000;
               const moduleCount = parsed.modules.length;
@@ -3015,18 +3062,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                 }
 
+                const MAX_MANIFEST_PHASE_LENGTH = 32;
                 let validPhase: string | undefined = undefined;
                 if (typeof m.phase === "string") {
-                  const upperPhase = m.phase.toUpperCase();
-                  if (
-                    ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(
-                      upperPhase,
-                    )
-                  ) {
-                    validPhase = upperPhase;
+                  const trimmedPhase = m.phase.trim();
+                  if (trimmedPhase.length <= MAX_MANIFEST_PHASE_LENGTH) {
+                    const upperPhase = trimmedPhase.toUpperCase();
+                    if (
+                      ["SEC", "PEI", "DXE", "SMM", "APP", "MISC"].includes(
+                        upperPhase,
+                      )
+                    ) {
+                      validPhase = upperPhase;
+                    } else if (limitations.length < 50) {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has unrecognized phase "${formatMarkdownCodeSpan(ellipsisExcerpt(trimmedPhase, 32))}"; using path-derived fallback.`,
+                      );
+                    }
                   } else if (limitations.length < 50) {
                     limitations.push(
-                      `Manifest module at index ${mIdx} has unrecognized phase "${m.phase}"; using path-derived fallback.`,
+                      `Manifest module at index ${mIdx} has oversized phase (${trimmedPhase.length} chars); using path-derived fallback.`,
                     );
                   }
                 } else if (m.phase !== undefined && limitations.length < 50) {

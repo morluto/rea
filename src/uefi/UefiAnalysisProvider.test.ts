@@ -6838,3 +6838,157 @@ it("decompiles multiple modules using a single batched Ghidra execution and reta
     await provider.close();
   }
 });
+
+it("persists and consumes partial source coverage in directory manifests even when all discovered modules are decompiled", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-manifest-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      image_sha256:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      coverage: "partial",
+      source_coverage: "partial",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      limitations: ["Test limitation: unsupported region omitted"],
+      modules: [
+        {
+          occurrence: 1,
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares partial source coverage"),
+      ),
+    ).toBe(true);
+
+    const generatedManifest = JSON.parse(
+      await readFile(join(outDir, "firmware_manifest.json"), "utf8"),
+    );
+    expect(generatedManifest.coverage).toBe("partial");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds multi-megabyte invalid manifest phase diagnostics and truncates diagnostics cleanly", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-phase-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  const hugePhase = "UNKNOWN_PHASE_".repeat(1000); // 14,000 chars
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "Sample",
+          phase: hugePhase,
+          payload_file: "Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(
+      result.limitations.some(
+        (l) => l.includes("oversized phase") && !l.includes(hugePhase),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds Ghidra batch input materialization to 128 MiB aggregate staging budget", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-ghidra-batch-bound-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "mod1.efi"), peBuffer);
+  await writeFile(join(inDir, "mod2.efi"), peBuffer);
+
+  const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
+  const mockGhidraDir = join(directory, "mock_ghidra");
+  await mkdir(join(mockGhidraDir, "support"), { recursive: true });
+  await mkdir(join(mockGhidraDir, "Ghidra"), { recursive: true });
+  const mockHeadless = join(mockGhidraDir, "support", "analyzeHeadless");
+  await writeFile(mockHeadless, "#!/bin/sh\nexit 0\n");
+  await chmod(mockHeadless, 0o755);
+  await writeFile(
+    join(mockGhidraDir, "Ghidra", "application.properties"),
+    "application.version=11.0\n",
+  );
+  process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
+
+  let capturedArgs: string[] = [];
+  const spy = vi
+    .spyOn(ExecFileOutputModule, "execFileOutput")
+    .mockImplementation(async (_command, args) => {
+      capturedArgs = [...args];
+      return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
+    });
+
+  const provider = new UefiAnalysisProvider({
+    ghidraInstallationHost: ghidraProfileInstallationHost,
+  });
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(capturedArgs).toContain("UefiDecompBatch");
+    expect(capturedArgs).toContain(String(4 * 1024 * 1024));
+    expect(capturedArgs).toContain(String(64 * 1024 * 1024));
+    expect(result.modules).toHaveLength(2);
+  } finally {
+    if (originalGhidra !== undefined) {
+      process.env.GHIDRA_INSTALL_DIR = originalGhidra;
+    } else {
+      delete process.env.GHIDRA_INSTALL_DIR;
+    }
+    spy.mockRestore();
+    await provider.close();
+  }
+});
