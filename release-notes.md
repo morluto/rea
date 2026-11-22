@@ -39,6 +39,7 @@
 * **artifacts:** commit package listings only after traversal ([#13339](https://github.com/morluto/rea/issues/13339)) ([667fa3d](https://github.com/morluto/rea/commit/667fa3d6465cae61ea17162d2aa056e0c8086e64))
 * **artifacts:** keep a ZIP inventory when one member uses an unsupported compression method ([#13026](https://github.com/morluto/rea/issues/13026)) ([f548a62](https://github.com/morluto/rea/commit/f548a62a4f0c6f98f9624f529d6998305139117d))
 * **artifacts:** keep directory growth probes out of delivered bytes ([#13467](https://github.com/morluto/rea/issues/13467)) ([a3e7ed6](https://github.com/morluto/rea/commit/a3e7ed6d3b1a557be5b7e3ec2b535239525c3217))
+* **artifacts:** preserve DMG verification cancellation at the deadline ([#13616](https://github.com/morluto/rea/issues/13616)) ([f18de40](https://github.com/morluto/rea/commit/f18de40af62ab25948fa8c94e4ecaa61a52353aa))
 * **artifacts:** publish Node SEA metadata only after carrier validation ([#13411](https://github.com/morluto/rea/issues/13411)) ([120980c](https://github.com/morluto/rea/commit/120980cac0bc674584b8480187768cfd70972c08))
 * **artifacts:** report supported NES container layouts accurately ([#13499](https://github.com/morluto/rea/issues/13499)) ([321387c](https://github.com/morluto/rea/commit/321387c4319f5df167e488a827e38f3bed77eb36))
 * **artifacts:** share the examined-entry allowance across readers ([#13479](https://github.com/morluto/rea/issues/13479)) ([9560457](https://github.com/morluto/rea/commit/95604571965e9d1aec00a78665b4be64496eb094))
