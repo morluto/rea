@@ -963,16 +963,19 @@ const resolveBundlerChunkReference = (
   if (key === null) return null;
   const file = context.filesByPath.get(sourcePath);
   if (file === undefined) return null;
-  const registrations = context.analysis.files
-    .find(({ file: analyzedFile }) => analyzedFile.path === sourcePath)
-    ?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
-      reference.module_runtime === undefined
-        ? reference.module_key === null
-        : runtime === reference.module_runtime &&
-          modules.some(
-            ({ module_key: moduleKey }) => moduleKey === reference.module_key,
-          ),
-    );
+  const registrations = (
+    context.analyzedFilesByPath?.get(sourcePath) ??
+    context.analysis.files.find(
+      ({ file: analyzedFile }) => analyzedFile.path === sourcePath,
+    )
+  )?.javascript?.bundler_registrations.filter(({ runtime, modules }) =>
+    reference.module_runtime === undefined
+      ? reference.module_key === null
+      : runtime === reference.module_runtime &&
+        modules.some(
+          ({ module_key: moduleKey }) => moduleKey === reference.module_key,
+        ),
+  );
   if (registrations === undefined) return null;
   const candidates = registrations.flatMap(({ runtime }) => {
     const node = context.chunkNodes.get(

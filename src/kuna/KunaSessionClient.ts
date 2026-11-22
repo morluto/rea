@@ -43,6 +43,7 @@ import {
   matchedProcedureAliases,
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
+import { extractRequiredRegexLiteral } from "../domain/regexLiteralCandidate.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
@@ -1248,12 +1249,35 @@ export class KunaSessionClient implements AnalysisClient {
       if (query.mode === "regex") {
         // Each distinct spelling is matched once, however many entries share it.
         // byName already holds every unique primary name and alias in inventory order.
+        const requiredLiteral = extractRequiredRegexLiteral(
+          query.pattern,
+          query.case_sensitive,
+        );
+        const prefilter =
+          requiredLiteral === undefined
+            ? undefined
+            : analysisSearchPredicate({
+                pattern: requiredLiteral,
+                mode: "literal",
+                case_sensitive: query.case_sensitive,
+              });
         let names: readonly string[] = [];
         const matched = await this.#queryWork.match({
           operation,
           pattern: query.pattern,
           caseSensitive: query.case_sensitive,
-          values: () => (names = [...index.value.byName.keys()]),
+          values: () => {
+            if (prefilter === undefined) {
+              names = [...index.value.byName.keys()];
+            } else {
+              const filtered: string[] = [];
+              for (const name of index.value.byName.keys()) {
+                if (prefilter(name)) filtered.push(name);
+              }
+              names = filtered;
+            }
+            return names;
+          },
           signal: options.signal,
           ...regex,
         });

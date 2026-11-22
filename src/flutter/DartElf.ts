@@ -14,7 +14,12 @@ import {
 } from "../domain/elfHashSymbolCount.js";
 import { readElfSectionHeader } from "../domain/elfSectionHeader.js";
 import { readElfProgramHeader } from "../domain/elfProgramHeader.js";
-import { elfSymbolSize, readElfSymbol } from "../domain/elfSymbol.js";
+import {
+  elfSymbolExportBinding,
+  elfSymbolExportVisibility,
+  elfSymbolSize,
+  readElfSymbol,
+} from "../domain/elfSymbol.js";
 import { readElfRawTableDeclarations } from "../domain/elfRawTableDeclarations.js";
 import { validateElfSectionTableFields } from "../domain/elfDeclaredRanges.js";
 import { Buffer } from "node:buffer";
@@ -167,7 +172,7 @@ export interface ElfSymbolInventory {
   readonly failures: readonly ElfParseFailure[];
 }
 
-/** Decode the ELF tables once and resolve only the requested definitions. */
+/** Decode the ELF tables once and resolve only the requested exported definitions. */
 export const readElfSymbols = async (
   bytes: Buffer,
   symbolNames: readonly string[],
@@ -473,7 +478,13 @@ export const readElfSymbols = async (
       const name = elfStringTableText(
         observeElfStringTableEntry(strings, nameOffset, 257),
       );
-      if (name === null || !wanted.has(name)) continue;
+      if (
+        name === null ||
+        !wanted.has(name) ||
+        elfSymbolExportBinding(symbol.binding) === undefined ||
+        elfSymbolExportVisibility(symbol.other) === undefined
+      )
+        continue;
       if (
         symbol.value > BigInt(Number.MAX_SAFE_INTEGER) ||
         symbol.size > BigInt(Number.MAX_SAFE_INTEGER)
@@ -514,7 +525,7 @@ export const readElfSymbols = async (
             !symbols.has(name) && !ambiguous.has(name) && !unresolved.has(name),
         )
         .map((name) => ({
-          reason: `symbol ${name} is not in the dynamic symbol table`,
+          reason: `symbol ${name} has no exported dynamic definition`,
           missingSymbol: name,
         })),
     ],

@@ -2146,6 +2146,7 @@ export const semanticBindingHasPriorValueWrite = (
 ): boolean => {
   if (binding.definitions.some(({ kind }) => kind === "function")) return true;
   const writes = state.bindingWrites.get(binding.bindingId) ?? [];
+  const writeSet = new Set(writes);
   const read = semanticBindingAtRead(binding, site, state);
   const retained =
     read.status === "ordered"
@@ -2161,7 +2162,7 @@ export const semanticBindingHasPriorValueWrite = (
     ...binding.referenceInitializers,
   ]) {
     let owner: t.Node | undefined = source.node;
-    while (owner !== undefined && !writes.includes(owner))
+    while (owner !== undefined && !writeSet.has(owner))
       owner = state.parentsByNode.get(owner);
     if (owner !== undefined) {
       representedWrites.add(owner);

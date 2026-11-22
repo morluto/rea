@@ -190,12 +190,7 @@ export class SkillFilePublication {
       !sameRegularFileState(before, await this.owner.handle.stat())
     )
       throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
-    if (!(await fileHandleMatchesBytes(this.owner.handle, this.bytes)))
-      throw new SkillDestinationChangedError(this.path);
-    if (!sameRegularFileState(before, await this.owner.handle.stat()))
-      throw new SkillDestinationChangedError(this.path);
-    await this.#assertNamed(before);
+    await this.#assertReadback(before, this.bytes);
   }
 
   /** Restore through the owned descriptor; a changed name never grants write authority. */
@@ -230,14 +225,22 @@ export class SkillFilePublication {
     await this.owner.handle.truncate(original.bytes.length);
     await this.owner.handle.chmod(original.mode);
     await this.owner.handle.sync();
-    await this.#assertNamed(await this.owner.handle.stat());
-    if (!(await fileHandleMatchesBytes(this.owner.handle, original.bytes)))
-      throw new SkillDestinationChangedError(this.path);
+    await this.#assertReadback(await this.owner.handle.stat(), original.bytes);
     this.#restored = true;
   }
 
   close(): Promise<void> {
     return this.lease.release();
+  }
+
+  async #assertReadback(expected: Stats, bytes: Buffer): Promise<void> {
+    await this.#assertNamed(expected);
+    if (
+      !(await fileHandleMatchesBytes(this.owner.handle, bytes)) ||
+      !sameRegularFileState(expected, await this.owner.handle.stat())
+    )
+      throw new SkillDestinationChangedError(this.path);
+    await this.#assertNamed(expected);
   }
 
   async #assertNamed(expected: Stats): Promise<void> {

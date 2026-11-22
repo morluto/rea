@@ -2,10 +2,8 @@ import { expect, it } from "vitest";
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import { projectAnalysisView } from "../domain/analysisView/analysisView.js";
-import {
-  binaryLayoutSummaryViewResultSchema,
-  javascriptApplicationSummaryViewResultSchema,
-} from "../domain/analysisView/analysisViewResult.js";
+import { binaryLayoutSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/binaryLayoutSummarySchema.js";
+import { javascriptApplicationSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/javascriptApplicationSummarySchema.js";
 import { analysisViewRequestSchema } from "../domain/analysisView/analysisViewRequest.js";
 import {
   analysisViewCaptureEvidence,

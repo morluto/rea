@@ -41,45 +41,10 @@ const fixture = async ({ sharedParent = false } = {}) => {
   return { source, destination };
 };
 
-it("copies only the selected project beside the caller's project and its unrelated entries", async () => {
-  const { source, destination } = await fixture({ sharedParent: true });
-  const unrelated = join(source, "unrelated.gpr");
-  if (process.platform === "win32")
-    await writeFile(unrelated, "unrelated marker");
-  else await symlink("unrelated-missing-project", unrelated);
-
-  const commitment = await resolveGhidraProject(
-    { path: join(source, "selected.gpr"), programName: "target.elf" },
-    { path: "/tmp/target.elf" },
-    resources,
-  );
-  await copyExistingGhidraProject(source, destination, {
-    projectName: "selected",
-    expectedSha256: commitment.sha256,
-    resources,
-  });
-  expect((await readdir(destination)).sort()).toEqual([
-    "selected.gpr",
-    "selected.rep",
-  ]);
-  expect(await readFile(join(destination, "selected.gpr"), "utf8")).toBe(
-    "marker",
-  );
-  expect(
-    await readFile(join(destination, "selected.rep", "data"), "utf8"),
-  ).toBe("original program");
-  expect(await fingerprintGhidraProject(source, "selected", resources)).toBe(
-    commitment.sha256,
-  );
-  if (process.platform === "win32")
-    expect(await readFile(unrelated, "utf8")).toBe("unrelated marker");
-  else expect(await readlink(unrelated)).toBe("unrelated-missing-project");
-});
-
 it("rejects a copy whose last block differs from the committed project", async () => {
   const { source, destination } = await fixture();
   const data = join(source, "selected.rep", "data");
-  const contents = Buffer.alloc(64 * 1024 + 1, 0x61);
+  const contents = Buffer.alloc(256 * 1024 + 1, 0x61);
   await writeFile(data, contents);
   const original = await fingerprintGhidraProject(
     source,
@@ -277,24 +242,32 @@ it.skipIf(process.platform === "win32")(
   "keeps missing entries and symbolic links classified as invalid selections",
   async () => {
     const { source, destination } = await fixture();
+    const expectedSha256 = await fingerprintGhidraProject(
+      source,
+      "selected",
+      resources,
+    );
+    const selection = { projectName: "selected", expectedSha256, resources };
     await rm(join(source, "selected.gpr"));
     await expect(
-      copyExistingGhidraProject(source, destination, {
-        projectName: "selected",
-      }),
+      copyExistingGhidraProject(source, destination, selection),
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    expect(await readdir(destination)).toEqual([]);
     await writeFile(join(source, "other.gpr"), "marker");
     await symlink("other.gpr", join(source, "selected.gpr"));
     await expect(
-      copyExistingGhidraProject(source, destination, {
-        projectName: "selected",
-      }),
+      copyExistingGhidraProject(source, destination, selection),
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+    expect(await readdir(destination)).toEqual([]);
   },
 );
 
-it("copies multi-chunk and empty files in one pass matching fingerprint parity and file modes", async () => {
-  const { source, destination } = await fixture();
+it("copies only the committed project with exact multi-chunk, empty and private files", async () => {
+  const { source, destination } = await fixture({ sharedParent: true });
+  const unrelated = join(source, "unrelated.gpr");
+  if (process.platform === "win32")
+    await writeFile(unrelated, "unrelated marker");
+  else await symlink("unrelated-missing-project", unrelated);
   const large = Buffer.alloc(256 * 1024 + 17, 0x41);
   large[0] = 0x5a;
   large[256 * 1024] = 0x7e;
@@ -312,6 +285,19 @@ it("copies multi-chunk and empty files in one pass matching fingerprint parity a
     resources,
   });
 
+  expect((await readdir(destination)).sort()).toEqual([
+    "selected.gpr",
+    "selected.rep",
+  ]);
+  expect(await readFile(join(destination, "selected.gpr"), "utf8")).toBe(
+    "marker",
+  );
+  expect(
+    (await readFile(join(source, "selected.rep", "data"))).equals(large),
+  ).toBe(true);
+  if (process.platform === "win32")
+    expect(await readFile(unrelated, "utf8")).toBe("unrelated marker");
+  else expect(await readlink(unrelated)).toBe("unrelated-missing-project");
   expect(
     (await readFile(join(destination, "selected.rep", "data"))).equals(large),
   ).toBe(true);
@@ -332,17 +318,6 @@ it("copies multi-chunk and empty files in one pass matching fingerprint parity a
       0o700,
     );
   }
-});
-
-it("refuses expectedSha256 without a resource scope before copying any files", async () => {
-  const { source, destination } = await fixture();
-  await expect(
-    copyExistingGhidraProject(source, destination, {
-      projectName: "selected",
-      expectedSha256: "a".repeat(64),
-    }),
-  ).rejects.toMatchObject({ _tag: "ConfigurationError" });
-  expect(await readdir(destination)).toEqual([]);
 });
 
 it.each([null, "stop-copy"])(

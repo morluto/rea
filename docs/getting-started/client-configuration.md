@@ -935,6 +935,29 @@ relative additional entry depends on
 Goose's working directory, so REA refuses it. Goose reads its configuration at
 startup; restart it after setup.
 
+## Kilo Code
+
+For [Kilo Code](https://kilo.ai/docs/automate/mcp/using-in-kilo-code), setup
+and `rea mcp add` write `mcp.rea` into the last user-scope file Kilo loads.
+Kilo's config root is `$XDG_CONFIG_HOME/kilo` when `XDG_CONFIG_HOME` is set,
+otherwise `~/.config/kilo`, on every OS including Windows. Kilo reads that
+root's `config.json`, `kilo.json`, `kilo.jsonc`, `opencode.json` and
+`opencode.jsonc`, then the `KILO_CONFIG` file, then `~/.kilocode`, `~/.kilo` and
+`KILO_CONFIG_DIR`, each for `kilo.jsonc`, `kilo.json`, `opencode.jsonc` and
+`opencode.json`. When none of those files exists, setup creates `kilo.json` in
+the root (or in an empty `KILO_CONFIG_DIR`). A relative Kilo path depends on
+Kilo's working directory, so REA refuses it. The entry is
+`{ "type": "local", "command": [exe, ...args], "enabled": true }`, plus
+`environment` only when it is non-empty. `rea mcp add` preserves an existing
+`enabled: false`; `rea setup` sets `enabled: true`.
+`KILO_CONFIG_CONTENT` is Kilo's highest layer and is never edited (see
+[installation](installation.md)); project registration with `rea mcp add` is in
+the [CLI guide](cli.md). Kilo also reads its legacy extension MCP files
+(`mcpServers` in the VS Code extension's `mcp_settings.json`, and the project
+`.kilocode/mcp.json` and `.kilo/mcp.json`) at the lowest precedence, below any
+`kilo.json` layer. REA neither inspects nor removes them, so a `rea` entry added
+there by hand stays in effect after uninstall.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the

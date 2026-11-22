@@ -11,7 +11,7 @@ import { inspectLibraryPackages } from "./LibraryPackageInventory.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
-it("reports truncated ELF dependency tables without suggesting more capture headroom", async () => {
+it("reports why the selected executable could not supply library dependencies", async () => {
   const root = await createTestTempDirectory("rea-library-table-framing-");
   const executable = join(root, "app");
   const needed = Array.from(
@@ -37,13 +37,20 @@ it("reports truncated ELF dependency tables without suggesting more capture head
     "ELF dynamic table reached library-policy.table_bytes=112 bytes",
   );
   image.writeBigUInt64LE(BigInt(image.length), 64 + 56 + 8);
-  await writeFile(executable, image);
-  expect(await inspect()).toEqual({
-    library_packages: [],
-    missing_libraries: [],
-    unpackaged_libraries: [],
-    library_packages_reason: `the libraries of ${executable} were not read: ELF dynamic table is truncated`,
-  });
+  const script =
+    "#!/bin/sh\n# An authored shell launcher with room for an ELF header probe.\nexit 0\n";
+  for (const [bytes, reason] of [
+    [image, "ELF dynamic table is truncated"],
+    [script, "not an ELF image"],
+  ] as const) {
+    await writeFile(executable, bytes);
+    expect(await inspect()).toEqual({
+      library_packages: [],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+      library_packages_reason: `the libraries of ${executable} were not read: ${reason}`,
+    });
+  }
 });
 
 it.skipIf(process.platform === "win32").each(["/", "/.", "/.."])(
@@ -296,24 +303,6 @@ describe.skipIf(
     expect(libraries.library_packages).toContain("libc6");
     expect(libraries.missing_libraries).toEqual([]);
   });
-
-  it("explains a launcher script instead of reading it as ELF", async () => {
-    const libraries = await inspectLibraryPackages(
-      "/usr/bin/ldd",
-      "libc-bin",
-      runHostQuery,
-      undefined,
-    );
-
-    expect(libraries).toEqual({
-      library_packages: [],
-      missing_libraries: [],
-      unpackaged_libraries: [],
-      library_packages_reason: expect.stringMatching(
-        /\/usr\/bin\/ldd.*not read.*not an ELF image/iu,
-      ),
-    });
-  });
 });
 
 it.skipIf(process.platform === "win32")(
@@ -331,19 +320,23 @@ it.skipIf(process.platform === "win32")(
       writeFile(executable, elfImage({ needed: paths })),
       ...paths.map((path) => writeFile(path, elfImage({}))),
     ]);
-    let batches = 0;
+    const batches: string[][] = [];
     const result = await inspectLibraryPackages(
       executable,
       "app",
-      async (command) => {
+      async (command, args) => {
         if (command === "ldconfig") return { stdout: "", exitCode: 0 };
-        batches++;
-        if (batches === 1) return { stdout: `owner: ${paths[0]}`, exitCode: 1 };
+        const [option, ...queried] = args;
+        expect(command).toBe("dpkg-query");
+        expect(option).toBe("-S");
+        batches.push(queried);
+        if (batches.length === 1)
+          return { stdout: `owner: ${paths[0]}`, exitCode: 1 };
         return { stdout: "", exitCode: 2 };
       },
       undefined,
     );
-    expect(batches).toBe(2);
+    expect(batches).toEqual([paths.slice(0, 200), paths.slice(200)]);
     expect(result.library_packages).toEqual(["owner"]);
     expect(result.unpackaged_libraries).toContain(paths[1]);
     expect(result.unpackaged_libraries).not.toContain(paths[200]);
@@ -458,58 +451,63 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "recovers a 513-library closure with the caller-selected capture policy",
+  "recovers the next transitive library by raising the selected closure limit",
   async () => {
     const root = await createTestTempDirectory("rea-library-policy-");
     const bin = join(root, "bin");
     const lib = join(root, "lib");
     await Promise.all([mkdir(bin), mkdir(lib)]);
-    const paths = Array.from({ length: 513 }, (_, index) =>
-      join(lib, `lib${index}.so`),
-    );
     const executable = join(bin, "app");
+    const paths = [
+      join(lib, "first.so"),
+      join(lib, "middle.so"),
+      join(lib, "last.so"),
+    ] as const;
+    const [first, middle, last] = paths;
     await Promise.all([
-      writeFile(executable, elfImage({ needed: [paths[0] ?? ""] })),
-      ...paths.map((path, index) =>
-        writeFile(
-          path,
-          elfImage({
-            needed:
-              paths[index + 1] === undefined ? [] : [paths[index + 1] ?? ""],
-          }),
-        ),
-      ),
+      writeFile(executable, elfImage({ needed: [first] })),
+      writeFile(first, elfImage({ needed: [middle] })),
+      writeFile(middle, elfImage({ needed: [last] })),
+      writeFile(last, elfImage({})),
     ]);
-    const query = async (command: string, args: readonly string[]) => ({
-      stdout:
-        command === "ldconfig"
-          ? ""
-          : args
-              .slice(1)
-              .map((path) => `owner-${paths.indexOf(path)}: ${path}`)
-              .join("\n"),
-      exitCode: 0,
-    });
-    const limited = await inspectLibraryPackages(
-      executable,
-      "app",
-      query,
-      undefined,
-    );
-    expect(limited.library_packages).toHaveLength(512);
+
+    const ownershipQueries: string[][] = [];
+    const query = async (command: string, args: readonly string[]) => {
+      if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+      expect(command).toBe("dpkg-query");
+      const [option, ...queried] = args;
+      expect(option).toBe("-S");
+      ownershipQueries.push(queried);
+      return {
+        stdout: queried
+          .map(
+            (path) =>
+              `owner-${paths.findIndex((item) => item === path)}: ${path}`,
+          )
+          .join("\n"),
+        exitCode: 0,
+      };
+    };
+    const inspect = (libraries: number) =>
+      inspectLibraryPackages(
+        executable,
+        "app",
+        query,
+        undefined,
+        desktopLibraryPolicy({ libraries }),
+      );
+    const limited = await inspect(2);
+    expect(limited.library_packages).toEqual(["owner-0", "owner-1"]);
     expect(limited.library_packages_reason).toContain(
-      "library-policy.libraries=512",
+      "library-policy.libraries=2",
     );
     expect(limited.library_packages_reason).toContain("--library-policy");
-    const recovered = await inspectLibraryPackages(
-      executable,
-      "app",
-      query,
-      undefined,
-      desktopLibraryPolicy({ libraries: 513 }),
-    );
-    expect(recovered.library_packages).toHaveLength(513);
-    expect(recovered.library_packages).toContain("owner-512");
-    expect(recovered.library_packages_reason).toBeUndefined();
+    const recovered = await inspect(3);
+    expect(recovered).toEqual({
+      library_packages: ["owner-0", "owner-1", "owner-2"],
+      missing_libraries: [],
+      unpackaged_libraries: [],
+    });
+    expect(ownershipQueries).toEqual([[first, middle], paths]);
   },
 );

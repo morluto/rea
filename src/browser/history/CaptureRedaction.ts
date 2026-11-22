@@ -67,8 +67,10 @@ export class CaptureRedaction {
       }
     }
     if (
-      explicitValuesOccurIn(value, this.sensitiveValues) ||
-      explicitValuesOccurIn(result, this.sensitiveValues)
+      this.sensitiveValues.length > 0 &&
+      (explicitValuesOccurIn(value, this.sensitiveValues) ||
+        (result !== value &&
+          explicitValuesOccurIn(result, this.sensitiveValues)))
     ) {
       this.redactions.push({ pointer, reason: "explicit-sensitive-value" });
       return null;

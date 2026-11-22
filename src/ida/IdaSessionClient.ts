@@ -23,7 +23,11 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import type { IdaConfiguration } from "./IdaConfiguration.js";
 import { IdaToolRejection, type IdaMcpConnection } from "./IdaMcpConnection.js";
@@ -69,11 +73,7 @@ import {
   rejectedOpenDatabaseSchema,
   supervisorOpenTimeoutSeconds,
 } from "./IdaProtocolValues.js";
-import {
-  idaFileDigest,
-  IdaWorkspace,
-  sameIdaHostPath,
-} from "./IdaWorkspace.js";
+import { IdaWorkspace, sameIdaHostPath } from "./IdaWorkspace.js";
 import { parseIdaInput } from "./IdaInput.js";
 import { createEvidence } from "../domain/evidence.js";
 import {
@@ -933,14 +933,14 @@ export class IdaSessionClient implements AnalysisClient {
       upstream: this.connection.serverInfo(),
       metadata_before: metadataBefore,
       ...(metadataAfter === undefined ? {} : { metadata_after: metadataAfter }),
-      observations: jsonValueSchema.parse(runner.raw),
+      observations: ownedJsonValueSchema.parse(runner.raw),
       ...(this.#hexRaysOpenedBackend === undefined
         ? {}
         : { worker_backend: this.#hexRaysOpenedBackend }),
       ...(this.#healthObservations.length === 0
         ? {}
         : {
-            health_observations: jsonValueSchema.parse(
+            health_observations: ownedJsonValueSchema.parse(
               this.#healthObservations,
             ),
           }),
@@ -1009,8 +1009,7 @@ export class IdaSessionClient implements AnalysisClient {
             (metadata.input_sha256 != null &&
               metadata.input_sha256.toLowerCase() !==
                 this.#workspace.inputSha256) ||
-            (await idaFileDigest(this.#workspace.inputPath)) !==
-              this.#workspace.inputSha256
+            !(await this.#workspace.verifyInputUnchanged())
       )
         throw new IdaIdentityRefusal(
           "IDA headless input identity changed after target admission.",
