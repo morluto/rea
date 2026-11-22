@@ -506,11 +506,12 @@ const expectSavePolicy = (
 ) => {
   const condition = z.string().parse(expression);
   for (const [success, allowed, hit, code, expected] of [
-    [true, true, false, true, true],
-    [false, true, false, true, false],
-    [true, false, false, true, false],
-    [true, true, true, true, false],
-    [true, true, false, false, !requiresCode],
+    [true, true, "", true, true],
+    [true, true, "false", true, true],
+    [false, true, "false", true, false],
+    [true, false, "false", true, false],
+    [true, true, "true", true, false],
+    [true, true, "false", false, !requiresCode],
   ] as const) {
     expect(
       evaluatePolicy(condition, {
@@ -518,10 +519,10 @@ const expectSavePolicy = (
         needs: { changes: { outputs: { code: String(code) } } },
         steps: {
           "npm-cache": { outputs: { "can-save": String(allowed) } },
-          [restore]: { outputs: { "cache-hit": String(hit) } },
+          [restore]: { outputs: { "cache-hit": hit } },
         },
       }),
-      `${restore} save with success=${success}, allowed=${allowed}, hit=${hit}, code=${code}`,
+      `${restore} save with success=${success}, allowed=${allowed}, hit=${JSON.stringify(hit)}, code=${code}`,
     ).toBe(expected);
   }
 };
@@ -698,6 +699,10 @@ it("deletes superseded caches only from the trusted follow-up workflow", async (
   expect(retentionEnv.CACHE_KEEP_KEY).toBe(
     targetSourceKey(staticSteps, "static-cache"),
   );
+  const staticPrefix = z.string().min(1).parse(retentionEnv.CACHE_PREFIX);
+  expect(
+    publishedKey(staticSteps, "static-cache").startsWith(staticPrefix),
+  ).toBe(true);
   expect(retentionEnv.CACHE_DEEP_PREFIX).toBe(deepPrefix);
   expect(retentionEnv.CACHE_DEEP_KEEP_KEY).toBe(
     targetSourceKey(deepSteps, "static-cache"),
