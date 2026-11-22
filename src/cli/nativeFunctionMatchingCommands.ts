@@ -6,10 +6,8 @@ import { SESSION_TOOL_CONTRACTS } from "../contracts/sessionToolContracts.js";
 import { FUNCTION_COMPARISON_PROVIDER } from "../domain/comparisonEvidenceIdentity.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Evidence } from "../domain/evidence.js";
-import {
-  cliEvidenceDeliveryInputError,
-  publishCliAnalysisEvidence,
-} from "./analysisEvidenceDelivery.js";
+import { cliEvidenceDeliveryInputError } from "./analysisEvidenceDeliveryOptions.js";
+import { publishCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
 import { contractNamed } from "./contractCliDescription.js";
 import {
   admittedContractInput,

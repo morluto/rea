@@ -6,7 +6,7 @@ import { afterEach, beforeAll, expect, it, onTestFinished, vi } from "vitest";
 
 import { BinaryLayoutService } from "../../src/application/binaryDiagnostics/BinaryLayoutService.js";
 import { createCli } from "../../src/cli.js";
-import * as composition from "../../src/composition/binaryDiagnostics.js";
+import * as binaryLayoutComposition from "../../src/composition/binaryDiagnostics/binaryLayout.js";
 import { resolvedAnalysisError } from "../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { PwntoolsLayoutProvider } from "../../src/native/pwntools/PwntoolsLayoutProvider.js";
@@ -80,9 +80,10 @@ const runCli = async (
   provider: PwntoolsLayoutProvider,
   path: string,
 ): Promise<unknown> => {
-  vi.spyOn(composition, "createBinaryLayoutService").mockReturnValue(
-    new BinaryLayoutService(provider),
-  );
+  vi.spyOn(
+    binaryLayoutComposition,
+    "createBinaryLayoutService",
+  ).mockReturnValue(new BinaryLayoutService(provider));
   let stdout = "";
   await createCli({}).serve(["inspect-binary-layout", path, "--json"], {
     env: {},

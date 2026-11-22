@@ -56,7 +56,6 @@ import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -90,6 +89,8 @@ import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { runOwned } from "../providers/runOwned.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -121,6 +122,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
+  hasScheme,
   htmlUrlText,
   stripQueryAndFragment,
 } from "../domain/artifactPathSyntax.js";
@@ -449,94 +451,69 @@ const consumeInventory = async (
 ): Promise<ReleaseExposureScan> => {
   const containers = new Map<string, OpenContainer>();
   const progress: ScanProgress = {};
-  let result: ReleaseExposureScan | undefined;
-  let failure: unknown;
-  let failed = false;
-  try {
-    result = await scanOccurrences(input, containers, progress);
-  } catch (cause) {
-    failure = cause;
-    failed = true;
+  let completed: ReleaseExposureScan | undefined;
+  const finalized = await runOwned(
+    async () => {
+      try {
+        return ok(await scanOccurrences(input, containers, progress));
+      } catch (cause) {
+        return err(
+          releaseExposureFailure(cause, input.path, input.maxFileBytes),
+        );
+      }
+    },
+    {
+      providerId: RELEASE_EXPOSURE_PROVIDER.id,
+      operation: OPERATION,
+      signal: input.signal,
+      inspectPrimary: (result) => {
+        if (result.ok) completed = result.value;
+      },
+      close: async () => {
+        const [first, ...remaining] = [
+          ...input.siblingCleanup,
+          ...(await releaseContainers(containers, input.resources)),
+        ];
+        if (first !== undefined)
+          throw input.resources.cleanupFailure({ kind: "completed" }, [
+            first,
+            ...remaining,
+          ]);
+      },
+      diagnostics: (scan) => ({ scan: jsonValueSchema.parse(scan) }),
+    },
+  );
+  if (finalized.kind === "completed") return finalized.value;
+  const cleanupIncomplete = finalized.error.cleanupIncomplete;
+  if (cleanupIncomplete || finalized.kind === "cancelled") {
+    const observed = completed ?? progress.assemble?.();
+    if (observed !== undefined)
+      input.visitInterruptedScan?.({
+        ...prependLimitations(observed, [
+          cleanupIncomplete ? SCAN_INTERRUPTED : SCAN_CANCELLED,
+        ]),
+        coverage:
+          completed !== undefined && !cleanupIncomplete
+            ? observed.coverage
+            : "unknown",
+      });
   }
-  const [firstCleanup, ...remainingCleanup] = [
-    ...input.siblingCleanup,
-    ...(await releaseContainers(containers, input.resources)),
-  ];
-  // A cancelled scan keeps what it examined, as one stopped on cleanup does;
-  // the caller still receives the cancellation.
-  const cancelled = failed && wasCancelled(failure);
-  if (
-    firstCleanup !== undefined ||
-    (failed && leftCleanupUnfinished(failure)) ||
-    cancelled
-  )
-    reportInterruptedScan(
-      input,
-      result ?? progress.assemble?.(),
-      cancelled && firstCleanup === undefined && !leftCleanupUnfinished(failure)
-        ? SCAN_CANCELLED
-        : SCAN_INTERRUPTED,
-    );
-  if (firstCleanup !== undefined) {
-    const primary = failed
-      ? releaseExposureFailure(failure, input.path, input.maxFileBytes)
-      : new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-          cause: firstCleanup.cause,
-          diagnostics:
-            result === undefined
-              ? undefined
-              : { scan: jsonValueSchema.parse(result) },
-        });
-    throw projectStableArtifactFailure(
-      input.resources.cleanupFailure({ kind: "completed" }, [
-        firstCleanup,
-        ...remainingCleanup,
-      ]),
-      primary,
-      input.path,
-      RELEASE_EXPOSURE_PROVIDER.id,
+  if (finalized.kind === "completed-cleanup-retained")
+    throw analysisErrorWithCleanupDependencies(
+      new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
+        cause: finalized.error.cause,
+        diagnostics: finalized.error.diagnostics,
+      }),
+      finalized.error,
       OPERATION,
     );
-  }
-  if (failed) throw failure;
-  if (result === undefined)
-    throw invariantViolation("Release exposure scan produced no result.");
-  return result;
+  throw finalized.error;
 };
 
 /** What a failed scan can still assemble once it has somewhere to record facts. */
 interface ScanProgress {
   assemble?: () => ReleaseExposureScan;
 }
-
-const leftCleanupUnfinished = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  if (failure instanceof AnalysisError) return failure.cleanupIncomplete;
-  return (
-    failure instanceof ArtifactReaderFailure && failure.cleanup !== undefined
-  );
-};
-
-const wasCancelled = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  return (
-    failure instanceof AnalysisCancelledError ||
-    (failure instanceof ArtifactReaderFailure && failure.reason === "cancelled")
-  );
-};
-
-/** Completed findings survive the failure; what was not reached stays unknown. */
-const reportInterruptedScan = (
-  input: ConsumeInput,
-  scan: ReleaseExposureScan | undefined,
-  reason: string,
-): void => {
-  if (scan === undefined) return;
-  input.visitInterruptedScan?.({
-    ...prependLimitations(scan, [reason]),
-    coverage: "unknown",
-  });
-};
 
 /** Hand each package reader to the resource scope so a failed close keeps its path and can be retried. */
 const releaseContainers = async (
@@ -672,6 +649,7 @@ const scanOccurrences = async (
           packageKind,
           containers,
           state,
+          shaOf(occurrence, nodeSha),
         );
       continue;
     }
@@ -1531,7 +1509,7 @@ const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return !hasVisibleNonMapPrefix(
-      new TextDecoder(encoding ?? "utf-8").decode(prefix),
+      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
     );
   }
 };
@@ -2217,7 +2195,8 @@ const examineInlineMaps = (
  * examined as ordinary text was not assessed as a map, so coverage is unknown.
  * A `file:` URL names one absolute location rather than a path beside the
  * script, so even a `.map` target stays unassessed until that location is
- * reached. Any other scheme is remote.
+ * reached. Other schemes name external references. A native absolute path
+ * may contain a Windows drive colon.
  */
 const noteLocalMapReference = (
   state: ScanState,
@@ -2238,7 +2217,7 @@ const noteLocalMapReference = (
     }
     return;
   }
-  if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
+  if (!isAbsolute(path) && hasScheme(url)) return;
   if (path.length === 0) return;
   let decoded: string;
   try {
@@ -2476,16 +2455,33 @@ const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
 const declaresTextEncoding = (bytes: Buffer): boolean =>
   byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
 
+const cachedTextDecoders = new Map<string, TextDecoder>();
+const getCachedTextDecoder = (
+  encoding: string,
+  fatal: boolean,
+): TextDecoder => {
+  const key = `${encoding}:${fatal ? "1" : "0"}`;
+  let decoder = cachedTextDecoders.get(key);
+  if (decoder === undefined) {
+    decoder = new TextDecoder(encoding, { fatal });
+    cachedTextDecoders.set(key, decoder);
+  }
+  return decoder;
+};
+
 /** Retain visible text after a decoding error without calling the read complete. */
 const decodeDeclaredText = (bytes: Buffer, encoding: string): MemberText => {
   try {
     return {
-      text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
+      text: getCachedTextDecoder(encoding, true).decode(bytes),
       complete: true,
     };
-  } catch (cause) {
+  } catch (cause: unknown) {
     if (!(cause instanceof TypeError)) throw cause;
-    return { text: new TextDecoder(encoding).decode(bytes), complete: false };
+    return {
+      text: getCachedTextDecoder(encoding, false).decode(bytes),
+      complete: false,
+    };
   }
 };
 
@@ -2562,11 +2558,13 @@ const examinePackagedBinary = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
+  let probedImage: Extract<MemberRead, { kind: "bytes" }> | null = null;
   if (native !== null) {
     state.packagedNative += 1;
-    await probePackagedImage(state, member, native, context);
+    probedImage = await probePackagedImage(state, member, native, context);
   } else await examineProbedText(state, member, probe, context);
   if (native !== "pe") return true;
+  if (context.signal?.aborted) throw cancelledBy(OPERATION, context.signal);
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);
     return true;
@@ -2575,7 +2573,8 @@ const examinePackagedBinary = async (
   const image =
     probe.kind === "bytes"
       ? probe
-      : await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES);
+      : (probedImage ??
+        (await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)));
   if (image.kind === "bytes") readPdb(state, image.bytes, member.location);
   else notePeNotExamined(state, member.location);
   return image.kind !== "unread";
@@ -2670,7 +2669,10 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
       if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
       else if (
         state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
-        !state.pdbPathBytes.some(({ image_path }) => image_path === imagePath)
+        !state.pdbPathBytes.some(
+          ({ image_path, bytes_hex }) =>
+            image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
+        )
       )
         state.pdbPathBytes.push({
           image_path: imagePath,
@@ -2961,7 +2963,7 @@ const probePackagedImage = async (
   member: MemberView,
   nativeFormat: NativeFormat,
   context: ScanContext,
-): Promise<void> => {
+): Promise<Extract<MemberRead, { kind: "bytes" }> | null> => {
   const bytesReadBefore = state.memberBytesRead;
   const allowance = context.maxFileBytes - state.packagedProbeBytes;
   const image = allowance > 0 ? await member.read(allowance) : null;
@@ -2976,7 +2978,7 @@ const probePackagedImage = async (
       state,
       `Did not probe ${member.location} for an embedded package.`,
     );
-    return;
+    return null;
   }
   state.packagedProbeBytes += image.bytes.length;
   const probe = await embeddedPackageFormatOfBytes(
@@ -2989,6 +2991,10 @@ const probePackagedImage = async (
   if (probe.kind === "unreadable") noteUnexaminedPackage(state);
   else if (probe.kind === "package")
     noteNestedPackage(state, probe.format, member.location);
+  return nativeFormat === "pe" &&
+    image.bytes.length <= MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES
+    ? image
+    : null;
 };
 
 const scanEmbeddedPackage = async (
@@ -3040,6 +3046,7 @@ const scanUnexpandedContainer = async (
   format: PackageFormat,
   containers: Map<string, OpenContainer>,
   state: ScanState,
+  expectedSha256?: string,
 ): Promise<void> => {
   let listing: ContainerListing;
   try {
@@ -3048,9 +3055,10 @@ const scanUnexpandedContainer = async (
       occurrence.occurrence_id,
       filePath,
       format,
-      input.inventory?.nodes.find(
-        (node) => node.artifact_id === occurrence.artifact_id,
-      )?.sha256,
+      expectedSha256 ??
+        input.inventory?.nodes.find(
+          (node) => node.artifact_id === occurrence.artifact_id,
+        )?.sha256,
       state,
       input.signal,
     );
@@ -3548,14 +3556,8 @@ const listSiblings = async (
     resource: `directory beside the selected file: ${directory}`,
     handle: owner,
   });
-  if (!listed.ok && listed.error instanceof AnalysisError) {
-    if (attempt.kind === "failed")
-      throw resources.cleanupFailure({ kind: "failed", cause: listed.error }, [
-        attempt,
-      ]);
-    throw listed.error;
-  }
   if (attempt.kind === "failed") siblingCleanup.push(attempt);
+  if (!listed.ok && listed.error instanceof AnalysisError) throw listed.error;
   if (!listed.ok || listed.value) noteIncompleteSiblings(state);
   return entries;
 };

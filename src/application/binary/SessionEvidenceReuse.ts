@@ -3,6 +3,7 @@ import {
   type Evidence,
 } from "../../domain/evidence.js";
 import { basename } from "node:path";
+import { immutableJsonSnapshotMember } from "../../domain/immutableJson.js";
 import type { AnalysisExecution } from "../../ports/AnalysisProvider.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { equalJsonText } from "../../domain/jsonSerialization.js";
@@ -46,8 +47,12 @@ export const bindSessionEvidenceExecution = (
       : Object.freeze({ ...execution.subject });
   const result = Object.freeze({
     ...execution,
-    result: evidence.normalized_result,
-    rawResult: evidence.raw_result,
+    result:
+      immutableJsonSnapshotMember(evidence, "normalized_result") ??
+      evidence.normalized_result,
+    rawResult:
+      immutableJsonSnapshotMember(evidence, "raw_result") ??
+      evidence.raw_result,
     provider: evidence.provider,
     ...(evidence.analysis_profile === null
       ? {}

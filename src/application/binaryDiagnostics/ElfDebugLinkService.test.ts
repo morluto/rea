@@ -5,9 +5,12 @@ import { expect, it } from "vitest";
 import { ElfDebugLinkService } from "./ElfDebugLinkService.js";
 import { ELF_DEBUG_LINK_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
   deriveDebugFileLookupPaths,
-  ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
   ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
+  ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+  MAX_ELF_DEBUG_CANDIDATE_BYTES,
   ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
   ELF_DEBUG_LINK_LIMITATIONS,
   type ElfDebugLink,
@@ -132,89 +135,118 @@ it("rejects a report whose type name, lookup paths, or verification disagree", a
     }),
     coverage: { status: "complete", examined_sections: 1 },
   };
-  const cases: ElfDebugLink[] = [
-    { ...report, type_name: "executable" },
-    {
-      ...linked,
-      lookup_paths: linked.lookup_paths.map((entry) =>
-        entry.kind === "build_id" ? { ...entry, path: "/tmp/other" } : entry,
-      ),
+  const candidate = {
+    path: "/artifacts/prog.debug",
+    sha256: digest,
+    bytes: 32,
+    format: "elf64",
+    byte_order: "little",
+    debug_info: "present",
+    symtab: "present",
+  } as const;
+  const verification = {
+    status: "matches",
+    reason: null,
+    crc32: {
+      status: "match",
+      expected_hex: "12345678",
+      observed_hex: "12345678",
+      reason: null,
     },
-    {
-      ...linked,
-      candidate: {
-        path: "/artifacts/prog.debug",
-        sha256: digest,
-        bytes: 32,
-        format: "elf64",
-        byte_order: "little",
-        debug_info: "present",
-        symtab: "present",
-      },
-      verification: {
-        status: "matches",
-        reason: null,
-        crc32: {
-          status: "match",
-          expected_hex: "00000000",
-          observed_hex: "00000000",
-          reason: null,
-        },
-        build_id: {
-          status: "match",
-          binary_hex: "abcd",
-          candidate_hex: "abcd",
-          reason: null,
-        },
-      },
+    build_id: {
+      status: "match",
+      binary_hex: "abcd",
+      candidate_hex: "abcd",
+      reason: null,
     },
-  ];
-  for (const value of cases) {
-    const result = await serviceFor(value).inspect({
-      path: report.artifact.path,
-      ...(value.candidate === null
-        ? {}
-        : { candidate_path: value.candidate.path }),
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
-  }
-  const unexpectedCandidate = await serviceFor({
-    ...report,
-    candidate: {
-      path: "/artifacts/prog.debug",
-      sha256: digest,
-      bytes: 32,
-      format: null,
-      byte_order: null,
-      debug_info: "not_elf",
-      symtab: "not_elf",
-    },
-    verification: {
-      status: "cannot_verify",
-      reason: "no_comparable_identity",
-      crc32: {
-        status: "unavailable",
-        expected_hex: null,
-        observed_hex: "00000000",
-        reason: "debuglink_crc_absent",
-      },
-      build_id: {
-        status: "unavailable",
-        binary_hex: null,
-        candidate_hex: null,
-        reason: "binary_build_id_absent",
-      },
-    },
+  } as const;
+  const interruptedCandidate = {
+    ...candidate,
+    format: null,
+    byte_order: null,
+    debug_info: "unknown",
+    symtab: "unknown",
+  } as const;
+  const interrupted: ElfDebugLink = {
+    ...linked,
+    candidate: interruptedCandidate,
     limitations: [
-      ...ELF_DEBUG_LINK_LIMITATIONS,
-      "Neither the debuglink CRC32 nor the GNU build-id could be compared with the candidate.",
+      ...linked.limitations,
+      ELF_DEBUG_LINK_CANDIDATE_COMPARISON_INCOMPLETE_LIMITATION,
     ],
-  }).inspect({ path: report.artifact.path });
-  expect(unexpectedCandidate.ok).toBe(false);
+  };
+  const imageInput = { path: report.artifact.path };
+  const selectedInput = { ...imageInput, candidate_path: candidate.path };
+  const cases = [
+    { value: { ...report, type_name: "executable" }, input: imageInput },
+    {
+      value: {
+        ...linked,
+        lookup_paths: linked.lookup_paths.map((entry) =>
+          entry.kind === "build_id" ? { ...entry, path: "/tmp/other" } : entry,
+        ),
+      },
+      input: imageInput,
+    },
+    {
+      value: { ...linked, candidate, verification },
+      input: imageInput,
+    },
+    {
+      value: {
+        ...linked,
+        candidate,
+        verification: {
+          ...verification,
+          crc32: {
+            ...verification.crc32,
+            expected_hex: "00000000",
+            observed_hex: "00000000",
+          },
+        },
+      },
+      input: selectedInput,
+    },
+    { value: interrupted, input: selectedInput },
+  ] satisfies { value: ElfDebugLink; input: object }[];
+  for (const { value, input } of cases) {
+    const result = await serviceFor(value).inspect(input);
+    if (result.ok) throw new Error("Unexpected debug-link report admission");
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+  }
+  for (const invalid of [
+    {
+      ...interrupted,
+      candidate: { ...interruptedCandidate, path: "/artifacts/foreign.debug" },
+    },
+    {
+      ...interrupted,
+      candidate: {
+        ...interruptedCandidate,
+        bytes: MAX_ELF_DEBUG_CANDIDATE_BYTES + 1,
+      },
+    },
+    {
+      ...interrupted,
+      limitations: [
+        ...interrupted.limitations,
+        ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
+      ],
+    },
+  ]) {
+    const error = new AnalysisCancelledError("inspect_elf_debug_link", {
+      partialObservation: invalid,
+    });
+    const result = await new ElfDebugLinkService({
+      identity,
+      inspect: () => Promise.resolve(err(error)),
+    }).inspect(selectedInput);
+    if (result.ok) throw new Error("Expected candidate cancellation");
+    expect(result.error.partialObservation).toBe(invalid);
+  }
 });
 
-it("accepts an unreadable-candidate verdict only with its limitations", async () => {
+it("rejects an unreadable-candidate verdict without its limitation", async () => {
   const unreadable: ElfDebugLink = {
     ...report,
     candidate: null,
@@ -236,7 +268,6 @@ it("accepts an unreadable-candidate verdict only with its limitations", async ()
     },
     limitations: [
       ...ELF_DEBUG_LINK_LIMITATIONS,
-      ELF_DEBUG_LINK_CANDIDATE_UNREADABLE_LIMITATION,
       ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
     ],
   };
@@ -244,17 +275,10 @@ it("accepts an unreadable-candidate verdict only with its limitations", async ()
     path: report.artifact.path,
     candidate_path: "/artifacts/missing.debug",
   };
-  const accepted = await serviceFor(unreadable).inspect(input);
-  if (!accepted.ok) throw accepted.error;
-  expect(accepted.value.normalized_result).toEqual(unreadable);
-  const unlabelled = await serviceFor({
-    ...unreadable,
-    limitations: [
-      ...ELF_DEBUG_LINK_LIMITATIONS,
-      ELF_DEBUG_LINK_CANNOT_VERIFY_LIMITATION,
-    ],
-  }).inspect(input);
-  expect(unlabelled.ok).toBe(false);
+  const result = await serviceFor(unreadable).inspect(input);
+  if (result.ok)
+    throw new Error("Expected missing unreadable-candidate limitation to fail");
+  expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
 
 it("retains a completed observation if the caller cancels while the provider completes", async () => {
@@ -304,7 +328,10 @@ it("keeps omitted and explicitly selected defaults distinct in complete and part
     const observations = [];
     for (const parameters of [
       { path: report.artifact.path },
-      { path: report.artifact.path, max_entries: 32 },
+      {
+        path: report.artifact.path,
+        max_entries: DEFAULT_INSPECT_ELF_DEBUG_LINK_ENTRIES,
+      },
     ]) {
       const result = await service.inspect(parameters);
       const evidence = parseEvidence(
@@ -316,35 +343,6 @@ it("keeps omitted and explicitly selected defaults distinct in complete and part
     }
     expect(observations[0]!.evidence_id).not.toBe(observations[1]!.evidence_id);
   }
-});
-
-it("retains the selected candidate when cancellation leaves only the completed image report", async () => {
-  const partial = {
-    ...report,
-    limitations: [
-      ...report.limitations,
-      ELF_DEBUG_LINK_CANDIDATE_INCOMPLETE_LIMITATION,
-    ],
-  };
-  const error = new AnalysisCancelledError("inspect_elf_debug_link", {
-    partialObservation: partial,
-  });
-  const service = new ElfDebugLinkService({
-    identity,
-    inspect: () => Promise.resolve(err(error)),
-  });
-  const parameters = {
-    path: report.artifact.path,
-    candidate_path: "/artifacts/prog.debug",
-  };
-  const result = await service.inspect(parameters);
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected candidate cancellation");
-  expect(result.error).toBe(error);
-  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
-    parameters,
-    normalized_result: partial,
-  });
 });
 
 it("keeps caller Evidence after retained cleanup releases and reveals the primary failure", async () => {
@@ -376,6 +374,7 @@ it("keeps caller Evidence after retained cleanup releases and reveals the primar
   });
   const result = await service.inspect(parameters);
   if (result.ok) throw new Error("Expected retained cleanup failure");
+  expect(result.error).toBe(failure);
   const before = parseEvidence(result.error.partialObservation);
   expect(result.error.cleanupIncomplete).toBe(true);
   completion.cleanupReleased = true;
@@ -384,4 +383,5 @@ it("keeps caller Evidence after retained cleanup releases and reveals the primar
   const after = parseEvidence(resolved.partialObservation);
   expect(after).toEqual(before);
   expect(after.parameters).toEqual(parameters);
+  expect(after.normalized_result).toEqual(partial);
 });

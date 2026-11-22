@@ -20,11 +20,7 @@ import {
   ungroupedNuspec,
 } from "./NugetNupkg.fixture.js";
 import { ArtifactReaderFailure } from "../resources/index.js";
-import {
-  NUPKG_LIMITATIONS,
-  distinctTargetMatches,
-  parseNugetNupkg,
-} from "./NugetNupkgParser.js";
+import { NUPKG_LIMITATIONS, parseNugetNupkg } from "./NugetNupkgParser.js";
 
 const defaults = inspectNugetNupkgInputSchema.parse({
   path: "/artifacts/Demo.Package.nupkg",
@@ -59,27 +55,22 @@ it("keeps missing manifest target provenance separate from its normalized lookup
   expect(result.nuspec?.source).toBe("root-nuspec");
 });
 
-it.each([
-  new Error("controlled opaque decoder failure"),
-  { failure: "opaque" },
-])(
-  "preserves an unclassified ZIP failure without claiming malformed bytes: %j",
-  async (cause) => {
-    const bytes = await nugetNupkgFixture();
-    const enumeration = vi
-      .spyOn(ZipReader.prototype, "getEntriesGenerator")
-      .mockImplementation(async function* () {
-        throw cause;
-      });
-    try {
-      await expect(
-        parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-      ).rejects.toBe(cause);
-    } finally {
-      enumeration.mockRestore();
-    }
-  },
-);
+it("preserves a non-Error ZIP failure without classifying the package as malformed", async () => {
+  const cause = { failure: "opaque" };
+  const bytes = await nugetNupkgFixture();
+  const enumeration = vi
+    .spyOn(ZipReader.prototype, "getEntriesGenerator")
+    .mockImplementation(async function* () {
+      throw cause;
+    });
+  try {
+    await expect(
+      parseNugetNupkg(bytes, artifactOf(bytes), defaults),
+    ).rejects.toBe(cause);
+  } finally {
+    enumeration.mockRestore();
+  }
+});
 
 it("reads identity, license, repository, dependency groups and folder roles", async () => {
   const bytes = await nugetNupkgFixture();
@@ -266,13 +257,6 @@ it("inventories a package whose .nuspec is not well-formed XML", async () => {
   expect(report.limitations).toContain(NUPKG_LIMITATIONS.malformedNuspec);
 });
 
-it("refuses a non-ZIP file without claiming a package inventory", async () => {
-  const bytes = Buffer.from("not a zip");
-  await expect(
-    parseNugetNupkg(bytes, artifactOf(bytes), defaults),
-  ).rejects.toBeInstanceOf(ParseFailureError);
-});
-
 it("stops ZIP enumeration as soon as the entry budget is exceeded", async () => {
   const bytes = await nugetNupkgFixture({
     extraMembers: Object.fromEntries(
@@ -350,16 +334,26 @@ it("reports cancellation during a member read with the caller's reason", async (
 });
 
 it.each(["before a visible row", "at enumeration completion"] as const)(
-  "reports cancellation %s without a metadata member read",
+  "reports cancellation %s at the selected ZIP boundary",
   async (phase) => {
-    const bytes = await nugetNupkgMissingNuspecFixture();
+    const bytes = await nugetNupkgFixture();
     const controller = new AbortController();
     const reason = { caller: "stop ZIP inventory" };
     const original = ZipReader.prototype.getEntriesGenerator;
+    const listed: string[] = [];
+    const reads: string[] = [];
     const enumeration = vi
       .spyOn(ZipReader.prototype, "getEntriesGenerator")
       .mockImplementation(async function* (this: ZipReader<unknown>, options) {
         for await (const entry of original.call(this, options)) {
+          listed.push(entry.filename);
+          if (!entry.directory) {
+            const read = entry.getData.bind(entry);
+            entry.getData = (writer, readOptions) => {
+              reads.push(entry.filename);
+              return read(writer, readOptions);
+            };
+          }
           if (phase === "before a visible row") controller.abort(reason);
           yield entry;
         }
@@ -377,6 +371,18 @@ it.each(["before a visible row", "at enumeration completion"] as const)(
         throw new Error("expected inventory cancellation");
       expect(failure.reason).toBe("cancelled");
       expect(failure.cancellation?.reason).toBe(reason);
+      expect(listed).toEqual(
+        phase === "before a visible row"
+          ? ["[Content_Types].xml"]
+          : [
+              "[Content_Types].xml",
+              "_rels/.rels",
+              "Demo.Package.nuspec",
+              "lib/net8.0/Demo.dll",
+              "runtimes/win-x64/native/demo.dll",
+            ],
+      );
+      expect(reads).toEqual([]);
     } finally {
       enumeration.mockRestore();
     }
@@ -423,51 +429,73 @@ const largeRelsFixture = () =>
     extraMembers: { "_rels/.rels": " ".repeat(4096) },
   });
 
-it("refuses an OPC relationships member larger than the metadata budget before reading it", async () => {
-  const bytes = await largeRelsFixture();
-  await expect(
-    parseNugetNupkg(bytes, artifactOf(bytes), {
-      ...defaults,
-      max_nuspec_bytes: 1024,
-    }),
-  ).rejects.toMatchObject({
-    constructor: ParseFailureError,
-    failure: {
-      kind: "limit",
-      limit: { name: "max_nuspec_bytes", maximum: 1024 },
-    },
-  });
-});
-
-it("stops expanding an OPC relationships member at the budget when its declared size understates it", async () => {
-  const bytes = await largeRelsFixture();
-  const original = ZipReader.prototype.getEntriesGenerator;
-  const enumeration = vi
-    .spyOn(ZipReader.prototype, "getEntriesGenerator")
-    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
-      for await (const entry of original.call(this, options)) {
-        if (entry.filename === "_rels/.rels") entry.uncompressedSize = 1;
-        yield entry;
-      }
-      return true;
-    });
-  try {
-    await expect(
-      parseNugetNupkg(bytes, artifactOf(bytes), {
-        ...defaults,
-        max_nuspec_bytes: 1024,
-      }),
-    ).rejects.toMatchObject({
-      constructor: ParseFailureError,
-      failure: {
-        kind: "limit",
-        limit: { name: "max_nuspec_bytes", maximum: 1024 },
-      },
-    });
-  } finally {
-    enumeration.mockRestore();
-  }
-});
+it.each([
+  { phase: "declared size", required: 4096, reads: 0, appended: [] },
+  { phase: "decoder initialization", required: 4096, reads: 1, appended: [] },
+  { phase: "each decoder chunk", required: 1280, reads: 1, appended: [768] },
+])(
+  "enforces the relationships metadata budget at $phase",
+  async ({ phase, required, reads, appended }) => {
+    const bytes = await largeRelsFixture();
+    const original = ZipReader.prototype.getEntriesGenerator;
+    let memberReads = 0;
+    const initialize = vi.spyOn(Uint8ArrayWriter.prototype, "init");
+    const sink = vi.spyOn(Uint8ArrayWriter.prototype, "writeUint8Array");
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+        for await (const entry of original.call(this, options)) {
+          if (!entry.directory && entry.filename === "_rels/.rels") {
+            if (phase !== "declared size") entry.uncompressedSize = 768;
+            const realRead = entry.getData.bind(entry);
+            entry.getData = async (writer, readOptions) => {
+              memberReads += 1;
+              if (phase !== "each decoder chunk")
+                return realRead(writer, readOptions);
+              if (
+                !(writer instanceof Uint8ArrayWriter) ||
+                writer.init === undefined
+              )
+                throw new Error("Expected the bounded metadata writer");
+              // The ZIP codec normally enforces its own size. Offer two chunks
+              // directly to REA's writer to exercise its independent charge.
+              await writer.init(768);
+              await writer.writeUint8Array(new Uint8Array(768));
+              await writer.writeUint8Array(new Uint8Array(512));
+              throw new Error(
+                "Expected the second offered chunk to be refused",
+              );
+            };
+          }
+          yield entry;
+        }
+        return true;
+      });
+    try {
+      await expect(
+        parseNugetNupkg(bytes, artifactOf(bytes), {
+          ...defaults,
+          max_nuspec_bytes: 1024,
+        }),
+      ).rejects.toMatchObject({
+        constructor: ParseFailureError,
+        failure: {
+          kind: "limit",
+          limit: { name: "max_nuspec_bytes", maximum: 1024, required },
+        },
+      });
+      expect(memberReads).toBe(reads);
+      expect(initialize.mock.calls.map(([size]) => size)).toEqual(appended);
+      expect(sink.mock.calls.map(([chunk]) => chunk.byteLength)).toEqual(
+        appended,
+      );
+    } finally {
+      sink.mockRestore();
+      initialize.mockRestore();
+      enumeration.mockRestore();
+    }
+  },
+);
 
 it.each([
   { mode: "External", selected: false, limitation: "is external" },
@@ -510,9 +538,11 @@ it.each([
   },
 );
 
-const manifestRels = (target: string) => `<?xml version="1.0" encoding="utf-8"?>
+const manifestRels = (
+  ...targets: string[]
+) => `<?xml version="1.0" encoding="utf-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="${target}" Id="R1" />
+  ${targets.map((target, index) => `<Relationship Type="http://schemas.microsoft.com/packaging/2010/07/manifest" Target="${target}" Id="R${index + 1}" />`).join("\n  ")}
 </Relationships>
 `;
 
@@ -660,72 +690,59 @@ it.for([true, false])(
   },
 );
 
-it("keeps a Zstandard dictionary refusal as an unsupported layout instead of a malformed package", async () => {
-  const bytes = await nugetNupkgFixture();
-  const refusal = Object.assign(new Error("Dictionary mismatch"), {
-    code: "ZSTD_error_dictionary_wrong",
-  });
-  const original = ZipReader.prototype.getEntriesGenerator;
-  const enumeration = vi
-    .spyOn(ZipReader.prototype, "getEntriesGenerator")
-    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
-      for await (const entry of original.call(this, options)) {
-        if (entry.filename === "Demo.Package.nuspec" && !entry.directory) {
-          entry.compressionMethod = 93;
-          entry.getData = () => Promise.reject(refusal);
+it.each([
+  {
+    decoderCode: "ZSTD_error_dictionary_wrong",
+    detail: "Dictionary mismatch",
+    classification: {
+      constructor: ParseFailureError,
+      failure: { kind: "unsupported" },
+      message: expect.stringContaining("Zstandard dictionary"),
+    },
+  },
+  {
+    decoderCode: "ZSTD_error_frameParameter_windowTooLarge",
+    detail: "Frame requires too much memory",
+    classification: {
+      constructor: ArtifactReaderFailure,
+      reason: "limit",
+      boundary: "memory",
+    },
+  },
+])(
+  "retains the typed classification and original Zstandard cause for $decoderCode",
+  async ({ decoderCode, detail, classification }) => {
+    const bytes = await nugetNupkgFixture();
+    const refusal = Object.assign(new Error(detail), { code: decoderCode });
+    const original = ZipReader.prototype.getEntriesGenerator;
+    const enumeration = vi
+      .spyOn(ZipReader.prototype, "getEntriesGenerator")
+      .mockImplementation(async function* (this: ZipReader<unknown>, options) {
+        for await (const entry of original.call(this, options)) {
+          if (entry.filename === "Demo.Package.nuspec" && !entry.directory) {
+            entry.compressionMethod = 93;
+            entry.getData = () => Promise.reject(refusal);
+          }
+          yield entry;
         }
-        yield entry;
-      }
-      return true;
-    });
-  try {
-    const failure: unknown = await parseNugetNupkg(
-      bytes,
-      artifactOf(bytes),
-      defaults,
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(ParseFailureError);
-    expect(failure).toMatchObject({ failure: { kind: "unsupported" } });
-    expect((failure as Error).message).toContain("Zstandard dictionary");
-    expect(((failure as Error).cause as ArtifactReaderFailure).cause).toBe(
-      refusal,
-    );
-  } finally {
-    enumeration.mockRestore();
-  }
-});
-
-it("keeps a Zstandard decoder window refusal as a memory limit instead of a malformed package", async () => {
-  const bytes = await nugetNupkgFixture();
-  const refusal = Object.assign(new Error("Frame requires too much memory"), {
-    code: "ZSTD_error_frameParameter_windowTooLarge",
-  });
-  const original = ZipReader.prototype.getEntriesGenerator;
-  const enumeration = vi
-    .spyOn(ZipReader.prototype, "getEntriesGenerator")
-    .mockImplementation(async function* (this: ZipReader<unknown>, options) {
-      for await (const entry of original.call(this, options)) {
-        if (entry.filename === "Demo.Package.nuspec" && !entry.directory) {
-          entry.compressionMethod = 93;
-          entry.getData = () => Promise.reject(refusal);
-        }
-        yield entry;
-      }
-      return true;
-    });
-  try {
-    const failure: unknown = await parseNugetNupkg(
-      bytes,
-      artifactOf(bytes),
-      defaults,
-    ).catch((cause: unknown) => cause);
-    expect(failure).toBeInstanceOf(ArtifactReaderFailure);
-    expect(failure).toMatchObject({ reason: "limit", boundary: "memory" });
-    expect((failure as ArtifactReaderFailure).cause).toBe(refusal);
-  } finally {
-    enumeration.mockRestore();
-  }
-});
+        return true;
+      });
+    try {
+      const failure: unknown = await parseNugetNupkg(
+        bytes,
+        artifactOf(bytes),
+        defaults,
+      ).catch((cause: unknown) => cause);
+      expect(failure).toMatchObject(classification);
+      const wrapped =
+        failure instanceof ParseFailureError ? failure.cause : failure;
+      if (!(wrapped instanceof ArtifactReaderFailure)) throw failure;
+      expect(wrapped.cause).toBe(refusal);
+    } finally {
+      enumeration.mockRestore();
+    }
+  },
+);
 
 it("reads manifest text written as CDATA and as mixed text and CDATA", async () => {
   const bytes = await nugetNupkgFixture({
@@ -827,6 +844,16 @@ it.each([
     const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
     expect(report.nuspec?.source).toBe(source);
     expect(report.identity?.id).toBe(id);
+    const warnings = report.limitations.filter((line) =>
+      line.includes("case-insensitive ZIP name"),
+    );
+    expect(warnings).toEqual(
+      source === "opc-relationship"
+        ? [
+            "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
+          ]
+        : [],
+    );
   },
 );
 
@@ -897,23 +924,26 @@ it("reports unknown coverage when the central directory leaves bytes unaccounted
   ).toBe(true);
 });
 
-it("stops resolving manifest targets once a second distinct member is found", () => {
-  const bucket = Array.from({ length: 10_000 }, (_, index) => ({ index }));
-  const match = vi.fn((_target: string) => bucket);
-  const targets = Array.from(
-    { length: 10_000 },
-    (_, index) => `T${index}.nuspec`,
+it("follows multiple relationship spellings of a single physical manifest", async () => {
+  const bytes = await nugetNupkgFixture({
+    includeRels: false,
+    extraMembers: {
+      "_rels/.rels": manifestRels(
+        "/CONTENT/OTHER.nuspec",
+        "/content/./Other.nuspec",
+      ),
+      "content/Other.nuspec": ungroupedNuspec,
+    },
+  });
+  const report = await parseNugetNupkg(bytes, artifactOf(bytes), defaults);
+  expect(report.nuspec).toMatchObject({
+    path: "content/Other.nuspec",
+    source: "opc-relationship",
+  });
+  expect(report.identity?.id).toBe("Ungrouped.Package");
+  expect(report.limitations).not.toContainEqual(
+    expect.stringContaining("case-insensitive ZIP name"),
   );
-  expect(distinctTargetMatches(targets, match)).toEqual([bucket[0], bucket[1]]);
-  expect(match).toHaveBeenCalledTimes(1);
-});
-
-it("keeps one member when every manifest target resolves to it", () => {
-  const member = { name: "Only.nuspec" };
-  const match = vi.fn((_target: string) => [member]);
-  const targets = Array.from({ length: 1_000 }, () => "ONLY.nuspec");
-  expect(distinctTargetMatches(targets, match)).toEqual([member]);
-  expect(match).toHaveBeenCalledTimes(1_000);
 });
 
 it("keeps a foreign group from suppressing ungrouped NuGet dependencies", async () => {

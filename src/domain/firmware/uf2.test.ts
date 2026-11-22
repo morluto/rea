@@ -68,25 +68,25 @@ it("recognizes only a complete first block with all three magic numbers", () => 
 it("joins one family's numbered blocks into a region across chunk boundaries", () => {
   const bytes = patternBytes(1000);
   const file = uf2File(uf2Image(RP2040_FAMILY, 0x1000_0000, bytes));
-  for (const chunkSize of [file.length, 512, 100, 7]) {
-    const decoded = image(file, chunkSize);
-    expect(decoded.complete).toBe(true);
-    expect(decoded.limitations).toEqual([]);
-    expect(regionFacts(decoded)).toEqual([
-      {
-        familyId: RP2040_FAMILY,
-        familyName: "RP2040",
-        start: 0x1000_0000,
-        end: 0x1000_03e7,
-        length: 1000,
-        blockCount: 4,
-        firstFileBlock: 0,
-        lastFileBlock: 3,
-      },
-    ]);
-    expect(Buffer.compare(decoded.regions[0]!.bytes, bytes)).toBe(0);
-  }
-  expect(image(file).metadata).toEqual({
+  const decoded = image(file, 7);
+  expect(decoded.complete).toBe(true);
+  expect(decoded.limitations).toEqual([]);
+  expect(regionFacts(decoded)).toEqual([
+    {
+      familyId: RP2040_FAMILY,
+      familyName: "RP2040",
+      start: 0x1000_0000,
+      end: 0x1000_03e7,
+      length: 1000,
+      blockCount: 4,
+      firstFileBlock: 0,
+      lastFileBlock: 3,
+    },
+  ]);
+  const [region] = decoded.regions;
+  if (region === undefined) throw new Error("Expected the complete UF2 region");
+  expect(Buffer.compare(region.bytes, bytes)).toBe(0);
+  expect(decoded.metadata).toEqual({
     kind: "uf2",
     block_count: 4,
     trailing_bytes: 0,

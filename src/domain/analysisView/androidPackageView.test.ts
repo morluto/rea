@@ -5,9 +5,9 @@ import type { JsonValue } from "../jsonValue.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
-  androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
-} from "./analysisViewResult.js";
+  androidComponentsViewResultSchema,
+} from "./summarySchemas/androidSummarySchemas.js";
 import { analysisViewRequestSchema } from "./analysisViewRequest.js";
 
 const component = (name: string, extra: Record<string, JsonValue> = {}) => ({

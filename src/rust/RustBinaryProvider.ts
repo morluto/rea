@@ -159,14 +159,12 @@ export class RustBinaryProvider implements RustBinaryPort {
             ...selected.limitations,
           ],
         };
-        retainCompilerPathsWithinReport(
-          report,
-          limits.output_bytes,
-          rustcLimitation(image.rustc_commit, image.format),
-        );
         if (
-          Buffer.byteLength(JSON.stringify(report), "utf8") >
-          limits.output_bytes
+          !fitCompilerPathsWithinReport(
+            report,
+            limits.output_bytes,
+            rustcLimitation(image.rustc_commit, image.format),
+          )
         )
           throw outputLimit(input.path, limits.output_bytes);
         const parsed = rustBinarySchema.safeParse(report);
@@ -324,23 +322,19 @@ const rustcLimitation = (
  * directly because no compiler record may survive. Byte trimming is reported
  * only when it removes a path.
  */
-const retainCompilerPathsWithinReport = (
+const fitCompilerPathsWithinReport = (
   report: RustBinary,
   maxOutputBytes: number,
   compilerGuidance: readonly string[],
-): void => {
+): boolean => {
   const commit = report.rustc_commit;
-  const withGuidance = [...report.limitations, ...compilerGuidance];
-  if (
-    commit === null ||
-    Buffer.byteLength(
-      JSON.stringify({ ...report, limitations: withGuidance }),
-    ) <= maxOutputBytes
-  ) {
-    report.limitations = withGuidance;
-    return;
-  }
-  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return;
+  const originalLimitations = report.limitations;
+  report.limitations = [...originalLimitations, ...compilerGuidance];
+  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return true;
+  if (commit === null) return false;
+
+  report.limitations = originalLimitations;
+  if (Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes) return true;
   const limitation =
     "Compiler paths were omitted to preserve dependency facts within the complete-report byte allowance; compiler-path coverage is partial. Increase producer_limits.output_bytes on the next call; no restart is required. Increasing max_rustc_hashes alone does not raise this allowance.";
   const baseline = {
@@ -378,6 +372,7 @@ const retainCompilerPathsWithinReport = (
   } else
     report.rustc_commit = { ...empty, hashes: commit.hashes.slice(0, count) };
   report.limitations = baseline.limitations;
+  return Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes;
 };
 
 const failureForPrimary = (

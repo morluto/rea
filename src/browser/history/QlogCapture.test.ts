@@ -56,6 +56,10 @@ it("derives interval unions per trace/direction while retaining event source ord
     enumerable: true,
     value: { ordinary: true },
   });
+  Object.defineProperty(original.traces[0].events[0].data, "__proto__", {
+    enumerable: true,
+    value: { eventExtension: "kept" },
+  });
   original.extra = "https://example.test/path?token=ordinary";
   const { decoded, traces } = facts(JSON.stringify(original));
   expect(traces[0]?.streams[0]).toMatchObject({
@@ -87,6 +91,11 @@ it("derives interval unions per trace/direction while retaining event source ord
   expect(decoded.container.reported).toMatchObject({
     extra: original.extra,
     ["__proto__"]: { ordinary: true },
+  });
+  const container = decoded.container.reported;
+  expect(Object.hasOwn(Object(container), "__proto__")).toBe(true);
+  expect(decoded.records[0]?.reported).toMatchObject({
+    data: { ["__proto__"]: { eventExtension: "kept" } },
   });
   expect(Reflect.get(Object.prototype, "ordinary")).toBeUndefined();
 });
