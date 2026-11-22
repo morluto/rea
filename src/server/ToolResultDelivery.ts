@@ -422,46 +422,57 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    let candidateProjection = projected;
-    const remaining = [...unretainedEvidenceCandidates(candidateProjection)]
-      .map((candidate) => ({
-        candidate,
-        size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
-      }))
-      .sort((left, right) => right.size - left.size);
-    while (!encoded.ok && remaining.length > 0) {
-      const limit = encoded;
-      let next: AnalysisErrorProjection | undefined;
-      let nextIndex = -1;
-      for (let index = 0; index < remaining.length; index += 1) {
-        const { candidate } = remaining[index]!;
-        const compact = omitUnretainedEvidenceFromError(
-          candidateProjection,
-          limit,
-          candidate,
-        );
-        if (compact === undefined) continue;
-        if (next === undefined) {
-          next = compact;
-          nextIndex = index;
+    if (!encoded.ok) {
+      let candidateProjection = projected;
+      const rawCandidates = [
+        ...unretainedEvidenceCandidates(candidateProjection),
+      ];
+      const remaining =
+        rawCandidates.length <= 1
+          ? rawCandidates
+          : rawCandidates
+              .map((candidate) => ({
+                candidate,
+                size: errorTextWireBytes(
+                  candidate.value,
+                  this.resultBudgetBytes,
+                ),
+              }))
+              .sort((left, right) => right.size - left.size)
+              .map(({ candidate }) => candidate);
+      while (!encoded.ok && remaining.length > 0) {
+        const limit = encoded;
+        let next: AnalysisErrorProjection | undefined;
+        let nextIndex = -1;
+        for (const [index, candidate] of remaining.entries()) {
+          const compact = omitUnretainedEvidenceFromError(
+            candidateProjection,
+            limit,
+            candidate,
+          );
+          if (compact === undefined) continue;
+          if (next === undefined) {
+            next = compact;
+            nextIndex = index;
+          }
+          const content = { error: compact };
+          const compactEncoded = encodeToolResult(
+            content,
+            this.resultBudgetBytes,
+            "error-text",
+            targetContent,
+          );
+          if (compactEncoded.ok) {
+            structuredContent = content;
+            encoded = compactEncoded;
+            break;
+          }
         }
-        const content = { error: compact };
-        const compactEncoded = encodeToolResult(
-          content,
-          this.resultBudgetBytes,
-          "error-text",
-          targetContent,
-        );
-        if (compactEncoded.ok) {
-          structuredContent = content;
-          encoded = compactEncoded;
-          break;
-        }
+        if (encoded.ok) break;
+        if (next === undefined) break;
+        candidateProjection = next;
+        remaining.splice(nextIndex, 1);
       }
-      if (encoded.ok) break;
-      if (next === undefined) break;
-      candidateProjection = next;
-      remaining.splice(nextIndex, 1);
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.
