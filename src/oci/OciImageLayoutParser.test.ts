@@ -28,6 +28,7 @@ import {
   ArtifactReaderFailure,
   DirectoryArtifactReader,
 } from "../resources/index.js";
+import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import {
@@ -1821,6 +1822,38 @@ it("keeps the parse refusal and its layout snapshot when reader cleanup also fai
       kind: "file-snapshot-hash",
       path: "oci-layout",
     });
+  } finally {
+    close.mockRestore();
+    await provider.close();
+  }
+});
+
+it("keeps malformed index.json as the primary when its handle close fails", async () => {
+  const root = await createTestTempDirectory("rea-oci-handle-close-");
+  await writeOciImageLayoutFixture(root);
+  await writeFile(join(root, "index.json"), "{not json");
+  const nativeClose = OwnedFileHandle.prototype.close;
+  // oci-layout is read first; the second handle closed is index.json's.
+  let closes = 0;
+  const close = vi
+    .spyOn(OwnedFileHandle.prototype, "close")
+    .mockImplementation(function (this: OwnedFileHandle) {
+      if (++closes === 2)
+        return Promise.reject(new Error("controlled handle close failure"));
+      return nativeClose.call(this);
+    });
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: root }),
+    );
+    expect(closes).toBeGreaterThanOrEqual(2);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // The reader's close retries the handle, so only the primary is checked.
+    const primary = primaryAnalysisError(result.error);
+    expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
+    expect(JSON.stringify(primary)).toContain("is not valid JSON");
   } finally {
     close.mockRestore();
     await provider.close();

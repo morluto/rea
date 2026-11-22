@@ -2,6 +2,7 @@ import { OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY } from "./OciImageLayoutProviderIden
 import {
   ArtifactReaderFailure,
   ArtifactResourceScope,
+  bindArtifactFileCleanup,
   DirectoryArtifactReader,
   DirectoryArtifactRootFailure,
   projectArtifactCloseFailure,
@@ -25,6 +26,7 @@ import {
   type OciImageLayout,
 } from "../domain/oci/imageLayout.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { createOciImageLayoutEvidence } from "../domain/oci/imageLayoutEvidence.js";
 import { err, ok } from "../domain/result.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -143,6 +145,23 @@ const layoutFailureDialect = (
     if (cause instanceof ArtifactReaderFailure && cause.reason !== "cancelled")
       return translateArtifactFailure(OPERATION, cause);
     return undefined;
+  },
+  // A file read whose handle close failed reports its own parse outcome as
+  // primary, with the unresolved close bound to that read's exact lease.
+  readCleanup: (read, primary) => {
+    if (primary === undefined) {
+      const failure = translateArtifactFailure(OPERATION, read);
+      bindArtifactFileCleanup(read, failure);
+      return failure;
+    }
+    const cleanup = new ProviderCleanupError(
+      OCI_IMAGE_LAYOUT_PROVIDER_IDENTITY.id,
+      read.cleanup.resources,
+      { reason: read.cleanup.reason },
+      { operation: OPERATION, cause: read },
+    );
+    bindArtifactFileCleanup(read, cleanup);
+    return analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   },
   unclassified: (cause, details) => {
     const observation = layoutPartial(cause);
