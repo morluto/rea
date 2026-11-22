@@ -446,6 +446,7 @@ export const admitRawBinary = (input: {
       const reader = new BinaryReader(
         Buffer.from(words.buffer, words.byteOffset, words.byteLength),
         true,
+        "raw-binary",
       );
       const stackPointer = hexWord(reader.u32(0));
       const resetWord = reader.u32(4);
