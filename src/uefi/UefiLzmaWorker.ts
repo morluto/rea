@@ -15,6 +15,7 @@ import {
 import { UEFI_FIRMWARE_LIMITS } from "../domain/uefi/uefiLimits.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
+import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
   encodeLzmaFrame,
   LZMA_FRAME_HEADER_BYTES,
@@ -217,18 +218,14 @@ const serializeReply = (
 };
 
 class FramedByteReader {
-  #chunks: Buffer[] = [];
-  #chunkHead = 0;
-  #buffered = 0;
+  readonly #queue = new UefiLzmaByteQueue();
   #ended = false;
   #error: unknown;
   #waiter: (() => void) | undefined;
 
   constructor(stream: Readable) {
     stream.on("data", (chunk: Buffer) => {
-      if (chunk.length === 0) return;
-      this.#chunks.push(chunk);
-      this.#buffered += chunk.length;
+      if (!this.#queue.append(chunk)) return;
       const wake = this.#waiter;
       this.#waiter = undefined;
       wake?.();
@@ -252,57 +249,17 @@ class FramedByteReader {
     allowCleanEof = false,
   ): Promise<Buffer | null> {
     if (length === 0) return Buffer.alloc(0);
-    while (this.#buffered < length) {
+    while (this.#queue.available < length) {
       if (this.#error !== undefined) throw this.#error;
       if (this.#ended) {
-        if (allowCleanEof && this.#buffered === 0) return null;
+        if (allowCleanEof && this.#queue.available === 0) return null;
         throw new Error("Truncated LZMA worker frame.");
       }
       await new Promise<void>((resolve) => {
         this.#waiter = resolve;
       });
     }
-    const first = this.#chunks[this.#chunkHead]!;
-    if (first.length === length) {
-      this.#buffered -= length;
-      this.#chunkHead += 1;
-      if (this.#chunkHead >= this.#chunks.length) {
-        this.#chunks.length = 0;
-        this.#chunkHead = 0;
-      } else if (
-        this.#chunkHead >= 64 &&
-        this.#chunkHead * 2 >= this.#chunks.length
-      ) {
-        this.#chunks.splice(0, this.#chunkHead);
-        this.#chunkHead = 0;
-      }
-      return first;
-    }
-    const result = Buffer.allocUnsafe(length);
-    let copied = 0;
-    while (copied < length) {
-      const head = this.#chunks[this.#chunkHead]!;
-      const take = Math.min(head.length, length - copied);
-      head.copy(result, copied, 0, take);
-      copied += take;
-      this.#buffered -= take;
-      if (take === head.length) {
-        this.#chunkHead += 1;
-      } else {
-        this.#chunks[this.#chunkHead] = head.subarray(take);
-      }
-    }
-    if (this.#chunkHead >= this.#chunks.length) {
-      this.#chunks.length = 0;
-      this.#chunkHead = 0;
-    } else if (
-      this.#chunkHead >= 64 &&
-      this.#chunkHead * 2 >= this.#chunks.length
-    ) {
-      this.#chunks.splice(0, this.#chunkHead);
-      this.#chunkHead = 0;
-    }
-    return result;
+    return this.#queue.read(length);
   }
 }
 

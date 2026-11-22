@@ -38,6 +38,7 @@ import {
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { uefiFailureDialect } from "./UefiFailures.js";
 import type { UefiDecodeResult } from "./UefiImageScan.js";
+import { UefiLzmaByteQueue } from "./UefiLzmaByteQueue.js";
 import {
   encodeLzmaFrame,
   LZMA_FRAME_HEADER_BYTES,
@@ -71,9 +72,7 @@ const throwIfWorkerAborted = (
 };
 
 class ActiveWorkerReader {
-  #chunks: Buffer[] = [];
-  #chunkHead = 0;
-  #buffered = 0;
+  readonly #queue = new UefiLzmaByteQueue();
   #ended = false;
   #error: Error | undefined;
   #waiter: (() => void) | undefined;
@@ -88,9 +87,7 @@ class ActiveWorkerReader {
   }
 
   readonly #onData = (chunk: Buffer): void => {
-    if (chunk.length === 0) return;
-    this.#chunks.push(chunk);
-    this.#buffered += chunk.length;
+    if (!this.#queue.append(chunk)) return;
     this.#wake();
   };
 
@@ -119,7 +116,7 @@ class ActiveWorkerReader {
 
   async readExact(length: number, signal: AbortSignal): Promise<Buffer> {
     if (length === 0) return Buffer.alloc(0);
-    while (this.#buffered < length) {
+    while (this.#queue.available < length) {
       throwIfWorkerAborted(signal, this.supervisor.snapshot());
       if (this.#error !== undefined) {
         throw new OwnedCommandFailure(
@@ -157,47 +154,7 @@ class ActiveWorkerReader {
         };
       });
     }
-    const first = this.#chunks[this.#chunkHead]!;
-    if (first.length === length) {
-      this.#buffered -= length;
-      this.#chunkHead += 1;
-      if (this.#chunkHead >= this.#chunks.length) {
-        this.#chunks.length = 0;
-        this.#chunkHead = 0;
-      } else if (
-        this.#chunkHead >= 64 &&
-        this.#chunkHead * 2 >= this.#chunks.length
-      ) {
-        this.#chunks.splice(0, this.#chunkHead);
-        this.#chunkHead = 0;
-      }
-      return first;
-    }
-    const out = Buffer.allocUnsafe(length);
-    let copied = 0;
-    while (copied < length) {
-      const head = this.#chunks[this.#chunkHead]!;
-      const take = Math.min(head.length, length - copied);
-      head.copy(out, copied, 0, take);
-      copied += take;
-      this.#buffered -= take;
-      if (take === head.length) {
-        this.#chunkHead += 1;
-      } else {
-        this.#chunks[this.#chunkHead] = head.subarray(take);
-      }
-    }
-    if (this.#chunkHead >= this.#chunks.length) {
-      this.#chunks.length = 0;
-      this.#chunkHead = 0;
-    } else if (
-      this.#chunkHead >= 64 &&
-      this.#chunkHead * 2 >= this.#chunks.length
-    ) {
-      this.#chunks.splice(0, this.#chunkHead);
-      this.#chunkHead = 0;
-    }
-    return out;
+    return this.#queue.read(length);
   }
 }
 
