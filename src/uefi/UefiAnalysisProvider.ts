@@ -1,5 +1,5 @@
 import { nodeCodecResult } from "../kernel/nodeCodecResult.js";
-import { decodePeMachine } from "../domain/peMachine.js";
+import { decodePeMachine, peOptionalHeaderMagic } from "../domain/peMachine.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import type { UefiDecodeFormat } from "./FfsSections.js";
 import { sha256Hex } from "../kernel/sha256Hex.js";
@@ -183,6 +183,8 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
   try {
     const reader = new BinaryReader(bytes, true, "UEFI image header");
     let candidateMachine: number | undefined;
+    let isPe = false;
+    let optionalHeaderMagic: number | undefined;
 
     // 1. Check for TE header (Signature "VZ" = 0x56, 0x5A)
     if (bytes[0] === 0x56 && bytes[1] === 0x5a && bytes.length >= 4) {
@@ -198,7 +200,14 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
           bytes[eLfanew + 2] === 0x00 &&
           bytes[eLfanew + 3] === 0x00
         ) {
+          isPe = true;
           candidateMachine = reader.u16(eLfanew + 4);
+          if (eLfanew + 26 <= bytes.length) {
+            const sizeOfOpt = reader.u16(eLfanew + 20);
+            if (sizeOfOpt >= 2) {
+              optionalHeaderMagic = reader.u16(eLfanew + 24);
+            }
+          }
         }
       }
     }
@@ -210,18 +219,44 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
       bytes[2] === 0x00 &&
       bytes[3] === 0x00
     ) {
+      isPe = true;
       candidateMachine = reader.u16(4);
+      if (bytes.length >= 26) {
+        const sizeOfOpt = reader.u16(20);
+        if (sizeOfOpt >= 2) {
+          optionalHeaderMagic = reader.u16(24);
+        }
+      }
     }
 
     if (candidateMachine !== undefined) {
+      if (isPe && optionalHeaderMagic !== undefined) {
+        if (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b) {
+          return "unknown";
+        }
+      }
+
       const decoded = decodePeMachine(candidateMachine);
       if (decoded !== undefined && !decoded.nativeOsOverride) {
+        if (isPe && optionalHeaderMagic !== undefined) {
+          const expectedMagic = peOptionalHeaderMagic(decoded.architecture);
+          if (optionalHeaderMagic !== expectedMagic) {
+            return "unknown";
+          }
+        }
         return decoded.architecture === "x86_64" ||
           decoded.architecture === "arm64"
           ? "64"
           : "32";
       }
       if (candidateMachine === 0x5032 || candidateMachine === 0x6232) {
+        if (
+          isPe &&
+          optionalHeaderMagic !== undefined &&
+          optionalHeaderMagic !== 0x10b
+        ) {
+          return "unknown";
+        }
         return "32";
       }
       if (
@@ -229,6 +264,13 @@ export const detectPeTeMachineWidth = (bytes: Buffer): UefiMachineWidth => {
         candidateMachine === 0x5128 ||
         candidateMachine === 0x6264
       ) {
+        if (
+          isPe &&
+          optionalHeaderMagic !== undefined &&
+          optionalHeaderMagic !== 0x20b
+        ) {
+          return "unknown";
+        }
         return "64";
       }
       return "unknown";
@@ -2387,7 +2429,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               }
             : undefined;
 
-        let terminationError: AnalysisError =
+        const cancellationError: AnalysisError =
           signal.reason instanceof AnalysisTimeoutError
             ? new AnalysisTimeoutError(
                 "decompile_uefi_firmware",
@@ -2401,22 +2443,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 partialObservation,
               });
 
+        if (primaryError !== undefined) {
+          let composedPrimary = primaryError;
+          if (cleanupError !== undefined) {
+            composedPrimary = analysisErrorWithCleanupDependencies(
+              composedPrimary,
+              cleanupError,
+              "decompile_uefi_firmware",
+            );
+          }
+          if (cancellationError instanceof AnalysisCancelledError) {
+            throw analysisErrorWithCancellation(
+              composedPrimary,
+              cancellationError,
+            );
+          }
+          composedPrimary.retainSecondaryFailure(cancellationError);
+          throw composedPrimary;
+        }
+
         if (cleanupError !== undefined) {
-          terminationError = analysisErrorWithCleanupDependencies(
-            terminationError,
+          throw analysisErrorWithCleanupDependencies(
+            cancellationError,
             cleanupError,
             "decompile_uefi_firmware",
           );
         }
-
-        if (primaryError !== undefined) {
-          if (terminationError instanceof AnalysisCancelledError) {
-            throw analysisErrorWithCancellation(primaryError, terminationError);
-          }
-          primaryError.retainSecondaryFailure(terminationError);
-          throw primaryError;
-        }
-        throw terminationError;
+        throw cancellationError;
       }
 
       if (cleanupError !== undefined) {
@@ -2705,6 +2758,24 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             const manifestRaw = Buffer.concat(chunks);
             manifestSha256 = sha256Hex(manifestRaw);
             const parsed = JSON.parse(manifestRaw.toString("utf8"));
+            if (
+              typeof parsed?.total_modules_found === "number" &&
+              typeof parsed?.total_modules_decompiled === "number" &&
+              parsed.total_modules_found > parsed.total_modules_decompiled
+            ) {
+              isCoveragePartial = true;
+              const omittedCount =
+                parsed.total_modules_found - parsed.total_modules_decompiled;
+              if (limitations.length < 50) {
+                limitations.push(
+                  `Manifest firmware_manifest.json declares ${omittedCount} omitted module(s) (${parsed.total_modules_decompiled} of ${parsed.total_modules_found} decompiled).`,
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#omitted_modules",
+                reason: `declared_omissions:${omittedCount}`,
+              });
+            }
             if (Array.isArray(parsed?.modules)) {
               const MAX_MANIFEST_MODULES = 10_000;
               const moduleCount = parsed.modules.length;
@@ -2724,6 +2795,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 }
                 const m = parsed.modules[mIdx];
                 if (!m || typeof m !== "object") continue;
+                if (m.payload_file === null || m.payload_file === undefined) {
+                  isCoveragePartial = true;
+                  const label =
+                    typeof m.name === "string" &&
+                    m.name.length > 0 &&
+                    m.name.length <= 256
+                      ? m.name
+                      : `module_${mIdx}`;
+                  omittedCandidates.push({
+                    identityRelPath: `firmware_manifest.json#${label}`,
+                    reason: "null_payload",
+                  });
+                  continue;
+                }
                 if (
                   typeof m.payload_file !== "string" ||
                   m.payload_file.length === 0 ||
@@ -2763,9 +2848,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   validGuid = null;
                 }
 
+                const MAX_MANIFEST_NAME_LENGTH = 65_536;
                 let validName: string | undefined = undefined;
                 if (typeof m.name === "string" && m.name.length > 0) {
-                  validName = m.name;
+                  if (m.name.length <= MAX_MANIFEST_NAME_LENGTH) {
+                    validName = m.name;
+                  } else {
+                    isCoveragePartial = true;
+                    if (limitations.length < 50) {
+                      limitations.push(
+                        `Manifest module at index ${mIdx} has excessive name length (> ${MAX_MANIFEST_NAME_LENGTH} chars); using filename fallback.`,
+                      );
+                    }
+                  }
                 } else if (m.name !== undefined && limitations.length < 50) {
                   limitations.push(
                     `Manifest module at index ${mIdx} has non-string name; using filename fallback.`,
@@ -3356,7 +3451,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               }
             : undefined;
 
-        let terminationError: AnalysisError =
+        const cancellationError: AnalysisError =
           signal.reason instanceof AnalysisTimeoutError
             ? new AnalysisTimeoutError(
                 "decompile_uefi_firmware",
@@ -3370,22 +3465,33 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 partialObservation,
               });
 
+        if (primaryError !== undefined) {
+          let composedPrimary = primaryError;
+          if (cleanupError !== undefined) {
+            composedPrimary = analysisErrorWithCleanupDependencies(
+              composedPrimary,
+              cleanupError,
+              "decompile_uefi_firmware",
+            );
+          }
+          if (cancellationError instanceof AnalysisCancelledError) {
+            throw analysisErrorWithCancellation(
+              composedPrimary,
+              cancellationError,
+            );
+          }
+          composedPrimary.retainSecondaryFailure(cancellationError);
+          throw composedPrimary;
+        }
+
         if (cleanupError !== undefined) {
-          terminationError = analysisErrorWithCleanupDependencies(
-            terminationError,
+          throw analysisErrorWithCleanupDependencies(
+            cancellationError,
             cleanupError,
             "decompile_uefi_firmware",
           );
         }
-
-        if (primaryError !== undefined) {
-          if (terminationError instanceof AnalysisCancelledError) {
-            throw analysisErrorWithCancellation(primaryError, terminationError);
-          }
-          primaryError.retainSecondaryFailure(terminationError);
-          throw primaryError;
-        }
-        throw terminationError;
+        throw cancellationError;
       }
 
       if (cleanupError !== undefined) {

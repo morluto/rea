@@ -210,6 +210,7 @@ const createMinimalPeBuffer = (
   machine = 0x8664,
   numSections = 1,
   totalSize = 256,
+  optHeaderMagic?: number,
 ): Buffer => {
   const buf = Buffer.alloc(Math.max(totalSize, 256), 0);
   buf[0] = 0x4d;
@@ -218,6 +219,16 @@ const createMinimalPeBuffer = (
   buf.set(Buffer.from("PE\0\0"), 0x80);
   buf.writeUInt16LE(machine, 0x84);
   buf.writeUInt16LE(numSections, 0x86);
+  buf.writeUInt16LE(0xf0, 0x94);
+  const defaultMagic =
+    machine === 0x8664 ||
+    machine === 0xaa64 ||
+    machine === 0x5064 ||
+    machine === 0x5128 ||
+    machine === 0x6264
+      ? 0x20b
+      : 0x10b;
+  buf.writeUInt16LE(optHeaderMagic ?? defaultMagic, 0x98);
   return buf;
 };
 
@@ -6361,6 +6372,150 @@ it("hashes unknown directory-name coverage facts into dirHash instead of empty-d
     expect(res.limitations).toContain(
       "Directory contains 1 entry name(s) that are not valid UTF-8",
     );
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
+
+it("keeps PE machine width unknown when COFF machine conflicts with optional header magic", () => {
+  // Machine is 0x8664 (x86_64, expects 0x20b), but optional header magic is 0x10b (PE32)
+  const conflictingPe = createMinimalPeBuffer(0x8664, 1, 256, 0x10b);
+  expect(detectPeTeMachineWidth(conflictingPe)).toBe("unknown");
+
+  // Valid agreement returns "64"
+  const valid64Pe = createMinimalPeBuffer(0x8664, 1, 256, 0x20b);
+  expect(detectPeTeMachineWidth(valid64Pe)).toBe("64");
+
+  // TE images don't have optional header and retain machine-only handling
+  const teBuf = createMinimalTeBuffer(0x8664);
+  expect(detectPeTeMachineWidth(teBuf)).toBe("64");
+});
+
+it("preserves declared manifest omissions when re-reading partial output trees", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-omissions-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "mod1",
+          payload_file: "mod1.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("declares 1 omitted module(s)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("bounds manifest module names to 65,536 chars and falls back to filename with partial coverage", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-manifest-bound-name-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "target_driver.efi"), createMinimalPeBuffer());
+  const hugeName = "A".repeat(100_000);
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: hugeName,
+          payload_file: "target_driver.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("has excessive name length (> 65536 chars)"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]?.name).toBe("target_driver");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("composes primaryError with cleanupError before retaining cancellation in directory mode", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-uefi-cancel-cleanup-composed-",
+  );
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(
+    join(inDir, "corrupt.bin"),
+    Buffer.from("not-a-valid-module"),
+  );
+
+  const controller = new AbortController();
+  const provider = new UefiAnalysisProvider();
+  let intercepted = false;
+
+  const originalClose = DirectoryArtifactReader.prototype.close;
+  vi.spyOn(DirectoryArtifactReader.prototype, "close").mockImplementation(
+    async function (this: DirectoryArtifactReader) {
+      if (!intercepted) {
+        intercepted = true;
+        controller.abort("late cancellation during reader release");
+        throw new Error("Simulated directory reader cleanup failure");
+      }
+      return originalClose.call(this);
+    },
+  );
+
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+      { signal: controller.signal },
+    );
+
+    expect(executed.ok).toBe(false);
+    if (executed.ok) return;
+
+    expect(executed.error.cleanupIncomplete).toBe(true);
   } finally {
     vi.restoreAllMocks();
     await provider.close();
