@@ -958,45 +958,48 @@ describe("event-time snapshot capture before lazy materialization", () => {
     }
   });
 
-  it("isolates stored event snapshots from writes following resetOutput", () => {
-    const producer = createProducer();
-    let exitEvent:
-      | Extract<ProviderProcessDiagnostic, { type: "exit" }>
-      | undefined;
-    const supervisor = new ProviderProcessSupervisor(
-      { process: producer, ownsProcessLifetime: false },
-      {
-        onDiagnostic: (event) => {
-          if (event.type === "exit") exitEvent = event;
+  it.each([false, true])(
+    "isolates stored exit snapshots across reset after late output: %s",
+    (lateOutput) => {
+      const producer = createProducer();
+      let exitEvent:
+        | Extract<ProviderProcessDiagnostic, { type: "exit" }>
+        | undefined;
+      const supervisor = new ProviderProcessSupervisor(
+        { process: producer, ownsProcessLifetime: false },
+        {
+          onDiagnostic: (event) => {
+            if (event.type === "exit") exitEvent = event;
+          },
         },
-      },
-    );
-    try {
-      producer.stdout.write("before-exit");
-      producer.stderr.write("err-before");
-      producer.emit("exit", 0, null);
-      supervisor.resetOutput();
-      producer.stdout.write("after-reset");
-      producer.stderr.write("err-after");
+      );
+      try {
+        producer.stdout.write("before-exit");
+        producer.stderr.write("err-before");
+        producer.emit("exit", 0, null);
+        supervisor.resetOutput();
+        producer.stdout.write("after-reset");
+        producer.stderr.write("err-after");
 
-      expect(exitEvent?.snapshot).toEqual({
-        stdout: { text: "before-exit", bytes: 11, observedBytes: 11 },
-        stderr: { text: "err-before", bytes: 10, observedBytes: 10 },
-        exitCode: 0,
-        signal: null,
-      });
-      expect(supervisor.snapshot()).toEqual({
-        stdout: { text: "after-reset", bytes: 11, observedBytes: 11 },
-        stderr: { text: "err-after", bytes: 9, observedBytes: 9 },
-        exitCode: 0,
-        signal: null,
-      });
-    } finally {
-      supervisor.dispose();
-      producer.stdout.destroy();
-      producer.stderr.destroy();
-    }
-  });
+        expect(exitEvent?.snapshot).toEqual({
+          stdout: { text: "before-exit", bytes: 11, observedBytes: 11 },
+          stderr: { text: "err-before", bytes: 10, observedBytes: 10 },
+          exitCode: 0,
+          signal: null,
+        });
+        expect(supervisor.snapshot()).toEqual({
+          stdout: { text: "after-reset", bytes: 11, observedBytes: 11 },
+          stderr: { text: "err-after", bytes: 9, observedBytes: 9 },
+          exitCode: 0,
+          signal: null,
+        });
+      } finally {
+        supervisor.dispose();
+        producer.stdout.destroy();
+        producer.stderr.destroy();
+      }
+    },
+  );
 });
 
 describe("event-time snapshot capture with tail retention and runtime exhaustion", () => {

@@ -1,4 +1,4 @@
-import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContractEntry } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
@@ -7,16 +7,12 @@ import { idaAddressSchema } from "./IdaProtocolValues.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { errorMessage } from "../kernel/errorMessage.js";
 
-const TOOL_CONTRACTS_BY_NAME = new Map<string, (typeof TOOL_CONTRACTS)[number]>(
-  TOOL_CONTRACTS.map((contract) => [contract.name, contract] as const),
-);
-
 /** Apply the named public contract and IDA's explicit-address boundary before startup. */
 export const parseIdaInput = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ) => {
-  const contract = TOOL_CONTRACTS_BY_NAME.get(operation);
+  const contract = toolContractEntry(operation)?.contract;
   const parsed = contract?.inputSchema.safeParse(parameters);
   if (parsed?.success !== true)
     return err(

@@ -1221,6 +1221,7 @@ const diagnosticEventWithLazySnapshot = <
 };
 
 const EMPTY_CHUNKS: readonly Buffer[] = [];
+const DISCARDED_CHUNK = Buffer.alloc(0);
 const EMPTY_OUTPUT_BUFFER = Buffer.alloc(0);
 
 const materializeCapturedOutput = (
@@ -1277,9 +1278,7 @@ class ProcessOutputCapture {
 
   #mutableChunks(): Buffer[] {
     if (this.#sharedChunks) {
-      this.#chunks = this.#activeChunks();
-      this.#head = 0;
-      this.#headOffset = 0;
+      this.#chunks = this.#chunks.slice();
       this.#sharedChunks = false;
     }
     return this.#chunks;
@@ -1335,6 +1334,7 @@ class ProcessOutputCapture {
       this.#start += drop;
       remaining -= Math.min(remaining, drop);
       if (drop === available) {
+        this.#chunks[this.#head] = DISCARDED_CHUNK;
         this.#head += 1;
         this.#headOffset = 0;
       } else {

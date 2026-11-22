@@ -379,7 +379,7 @@ export const buildCapabilityInventory = (
       ...(availability.modes === undefined
         ? {}
         : { modes: [...availability.modes] }),
-      client_requirements: EMPTY_CLIENT_REQUIREMENTS,
+      client_requirements: emptyClientRequirements(),
       effects,
       annotations: {
         read_only: annotations.readOnlyHint,
@@ -415,15 +415,12 @@ export const buildCapabilityInventory = (
 type ClientRequirements = ToolAvailability["client_requirements"];
 
 // Current workflows do not require negotiated MCP client features.
-const EMPTY_CLIENT_REQUIREMENTS: ClientRequirements = Object.freeze({
+const emptyClientRequirements = (): ClientRequirements => ({
   required: [],
   optional: [],
   missing_required: [],
   missing_optional: [],
 });
-
-const emptyClientRequirements = (): ClientRequirements =>
-  EMPTY_CLIENT_REQUIREMENTS;
 
 /**
  * Group every operation's current availability inline. Complete detail also
