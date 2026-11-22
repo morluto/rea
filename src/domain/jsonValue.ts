@@ -85,8 +85,7 @@ export const jsonValueExceedsDepth = (
     if (inspect) {
       if (depth > limit) return true;
       if (Array.isArray(value)) {
-        if (value.length > 0)
-          frames.push({ kind: "array", value, index: 0 });
+        if (value.length > 0) frames.push({ kind: "array", value, index: 0 });
       } else if (isRecord(value)) {
         const keys = Object.keys(value);
         if (keys.length > 0)
