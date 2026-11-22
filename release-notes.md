@@ -122,6 +122,7 @@
 * **ghidra:** report incomplete language catalogs at the file size limit ([#13407](https://github.com/morluto/rea/issues/13407)) ([3d3e7db](https://github.com/morluto/rea/commit/3d3e7db5b53329fa0a43c35cb26b9bfade0ee045))
 * **ghidra:** say byte-search pages read match metadata live ([#10684](https://github.com/morluto/rea/issues/10684)) ([e7a0232](https://github.com/morluto/rea/commit/e7a023263bdd1221ab1fb1c2cafcf1b848152436))
 * **ghidra:** say how to build a missing macOS or Linux arm64 decompiler ([cc8716c](https://github.com/morluto/rea/commit/cc8716ce22e5d9a9a7c889e900c5e5cf196d91ef)), closes [#7018](https://github.com/morluto/rea/issues/7018)
+* **go:** report only admitted string candidate limits ([#13451](https://github.com/morluto/rea/issues/13451)) ([22042af](https://github.com/morluto/rea/commit/22042af848c2cfe4fbb1d6764771da570c421d4d))
 * **gpu:** decode UTF-8 CUBIN kernel symbol names ([#13101](https://github.com/morluto/rea/issues/13101)) ([23cf85e](https://github.com/morluto/rea/commit/23cf85ef24fbc598125d0d3a2cddb42eeb2337b5))
 * **guidance:** direct workflow errors to the scoped inventory ([#13321](https://github.com/morluto/rea/issues/13321)) ([11a75a5](https://github.com/morluto/rea/commit/11a75a5c19bee0bd030d4bbbab9bcf789a2d26a6))
 * **har:** keep Chromium DevTools captures that report an empty server address ([#13027](https://github.com/morluto/rea/issues/13027)) ([af0d69e](https://github.com/morluto/rea/commit/af0d69ee91e2ae8225b94257d8354382bd0b263b))
