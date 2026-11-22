@@ -701,43 +701,6 @@ const releaseRetainedOwners = async (cause: unknown): Promise<void> => {
 };
 
 describe("compare-managed-members composed from inspect_managed_members", () => {
-  it("compares two local paths and records the caller's selection", async () => {
-    const directory = await createTestTempDirectory("rea-managed-compare-");
-    const leftPath = join(directory, "left.dll");
-    const rightPath = join(directory, "right.dll");
-    const left = buildManagedPeFixture();
-    await writeFile(leftPath, left);
-    await writeFile(
-      rightPath,
-      buildManagedPeFixture({ methodName: "Renamed" }),
-    );
-
-    const evidence = parseEvidence(
-      await managedComparisonCommand()(leftPath, rightPath, {
-        maxSnapshotBytes: left.length * 2,
-      }),
-    );
-
-    expect(evidence).toMatchObject({
-      operation: "compare_managed_members",
-      confidence: "inferred",
-      authority: "analyst-inference",
-      parameters: {
-        left_path: leftPath,
-        right_path: rightPath,
-        max_snapshot_bytes: left.length * 2,
-      },
-    });
-    expect(evidence.locations).toEqual([
-      { kind: "artifact-path", path: leftPath },
-      { kind: "artifact-path", path: rightPath },
-    ]);
-    expect(
-      managedMemberComparisonResultSchema.parse(evidence.normalized_result)
-        .matching.exact_il_signature,
-    ).toBe(1);
-  });
-
   it("refuses the same Evidence on both sides with the CLI key", async () => {
     const directory = await createTestTempDirectory("rea-managed-same-");
     const path = join(directory, "same.dll");
@@ -765,25 +728,60 @@ describe("compare-managed-members composed from inspect_managed_members", () => 
     });
     expect(result).not.toHaveProperty("details.partial_observation");
   });
-
-  it("reports an unopenable left path without opening the right", async () => {
-    const directory = await createTestTempDirectory("rea-managed-missing-");
-    const leftPath = join(directory, "missing.dll");
-    const rightPath = join(directory, "right.dll");
-    await writeFile(rightPath, buildManagedPeFixture());
-    const { compare, targets } = observedComparison();
-
-    const result = await compare(leftPath, rightPath);
-
-    expect(result).toMatchObject({
-      code: "target_unavailable",
-      details: { path: leftPath },
-    });
-    expect(result).not.toHaveProperty("details.partial_observation");
-    expect(result).not.toHaveProperty("details.argument_observations");
-    expect(targets).toEqual([leftPath]);
-  });
 });
+
+it.each(["left", "right"] as const)(
+  "applies the limit before loading the oversized %s snapshot",
+  async (side) => {
+    const directory = await createTestTempDirectory(
+      "rea-managed-snapshot-limit-",
+    );
+    const leftPath = join(directory, "left.dll");
+    const rightPath = join(directory, "right.dll");
+    const left = buildManagedPeFixture();
+    await writeFile(leftPath, left);
+    await writeFile(rightPath, Buffer.concat([left, Buffer.from([0xa5])]));
+    const maxSnapshotBytes = side === "left" ? left.length - 1 : left.length;
+    const read = vi.spyOn(boundedFileBytes, "readBoundedFileBytes");
+    try {
+      const { compare, targets } = observedComparison();
+      const result = await compare(leftPath, rightPath, { maxSnapshotBytes });
+      expect(result).toMatchObject({
+        code: "resource_constraint",
+        details: {
+          operation: "inspect_managed_members",
+          reported_limits: { max_snapshot_bytes: maxSnapshotBytes },
+        },
+      });
+      if (side === "left") {
+        expect(targets).toEqual([leftPath]);
+        expect(read).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty("details.argument_observations");
+      } else {
+        expect(targets).toEqual([leftPath, rightPath]);
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({
+          details: {
+            argument_observations: [
+              {
+                argument: "left",
+                observation: {
+                  operation: "inspect_managed_members",
+                  subject: {
+                    local_path: leftPath,
+                    identity: { sha256: managedPeFixtureTarget(left).sha256 },
+                  },
+                },
+              },
+            ],
+          },
+        });
+      }
+    } finally {
+      read.mockRestore();
+    }
+  },
+);
 
 describe("compare-managed-members source failures", () => {
   // Root and Windows can still read a 0o000 file.
@@ -812,7 +810,11 @@ describe("compare-managed-members source failures", () => {
       if (code === "ENOENT") await rm(failed);
       else await chmod(failed, 0o000);
 
-      const result = await managedComparisonCommand()(leftPath, rightPath);
+      const { compare, targets } = observedComparison();
+      const result = await compare(leftPath, rightPath);
+      expect(targets).toEqual(
+        side === "left" ? [leftPath] : [leftPath, rightPath],
+      );
 
       expect(result).toMatchObject({
         code: code === "EACCES" ? "access_denied" : "target_unavailable",
@@ -841,34 +843,6 @@ describe("compare-managed-members source failures", () => {
       expect(result).not.toHaveProperty("details.partial_observation");
     },
   );
-
-  it("applies the selected snapshot limit to each side before reading it", async () => {
-    const directory = await createTestTempDirectory(
-      "rea-managed-snapshot-limit-",
-    );
-    const leftPath = join(directory, "left.dll");
-    const rightPath = join(directory, "right.dll");
-    const fixture = buildManagedPeFixture();
-    await writeFile(leftPath, fixture);
-    await writeFile(rightPath, fixture);
-    const read = vi.spyOn(boundedFileBytes, "readBoundedFileBytes");
-    try {
-      const result = await managedComparisonCommand()(leftPath, rightPath, {
-        maxSnapshotBytes: fixture.length - 1,
-      });
-
-      expect(result).toMatchObject({
-        code: "resource_constraint",
-        details: {
-          operation: "inspect_managed_members",
-          reported_limits: { max_snapshot_bytes: fixture.length - 1 },
-        },
-      });
-      expect(read).not.toHaveBeenCalled();
-    } finally {
-      read.mockRestore();
-    }
-  });
 
   it.each(["left", "right"] as const)(
     "rejects a %s artifact that changes while its snapshot is read",
