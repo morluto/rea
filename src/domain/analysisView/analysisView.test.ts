@@ -3,8 +3,12 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
+import { freezeJsonSnapshot } from "../immutableJson.js";
+import { byteEntropySchema } from "../native/byteEntropy.js";
+import * as jsApplicationAnalysis from "../javascript/javascriptApplicationAnalysis.js";
+import { projectJavaScriptFacts } from "./javascriptFactsView.js";
 import { functionDossierSchema } from "../native/functionDossier.js";
 import { ghidraFunctionDossier } from "../ghidraValues.fixture.js";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -27,7 +31,10 @@ import {
 } from "../javascript/javascriptSemanticGraph.js";
 import { sourceMapReference } from "../javascript/javascriptApplicationGraph.fixture.js";
 import { createArtifactInspection } from "../artifactInspection.js";
-import { inspectAnalysisViewInputSchema } from "./analysisViewRequest.js";
+import {
+  inspectAnalysisViewInputSchema,
+  type AnalysisViewRequest,
+} from "./analysisViewRequest.js";
 import { projectAnalysisView } from "./analysisView.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { analysisViewResultSchema } from "./analysisViewResult.js";
@@ -1848,4 +1855,267 @@ it("ranks only the longest byte entropy runs with stable offset ties", () => {
       },
     },
   });
+});
+
+const multiModuleJavaScriptAnalysis = () => {
+  const base = analysisViewJavaScriptAnalysis();
+  const baseObs = base.graph.nodes[0]!.observations[0]!;
+  const makeNode = (
+    kind: "javascript-asset" | "javascript-module",
+    path: string,
+    shaSuffix: string,
+    extraPaths: readonly string[] = [],
+  ) => {
+    const sha256 = shaSuffix.repeat(64);
+    const makeObs = (obsPath: string | null, tag: string) => ({
+      label: tag,
+      properties: { ...(obsPath === null ? {} : { path: obsPath }), tag },
+      evidence: {
+        ...baseObs.evidence,
+        ...(obsPath === null
+          ? {
+              state: "inferred" as const,
+              confidence: "medium" as const,
+              limitations: ["Inferred without source location"],
+            }
+          : {}),
+        artifact: {
+          available: true as const,
+          artifact_id: `art_${sha256}`,
+          sha256,
+        },
+        location:
+          obsPath === null
+            ? {
+                available: false as const,
+                reason: "not-applicable" as const,
+                detail: "Location omitted",
+              }
+            : {
+                available: true as const,
+                value: { kind: "artifact-path" as const, path: obsPath },
+              },
+      },
+    });
+    return createJavaScriptApplicationNode({
+      kind,
+      identity: {
+        strategy: "content-digest",
+        stability: "global-exact",
+        sha256,
+      },
+      observations: [
+        makeObs(path, `${tagPrefix(kind)}:${path}`),
+        ...extraPaths.map((extra) =>
+          makeObs(extra, `${tagPrefix(kind)}:${extra}`),
+        ),
+        makeObs(null, `${tagPrefix(kind)}:noloc`),
+      ],
+    });
+  };
+  const tagPrefix = (kind: "javascript-asset" | "javascript-module") =>
+    kind === "javascript-asset" ? "asset" : "mod";
+  const assetA = makeNode("javascript-asset", "a.js", "1", ["b.js"]);
+  const modB = makeNode("javascript-module", "b.js", "2");
+  const assetA2 = makeNode("javascript-asset", "a.js", "3");
+  const modC = makeNode("javascript-module", "c.js", "4");
+  const { graph_id: _gid, ...restGraph } = base.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...restGraph,
+    root_node_ids: [base.graph.nodes[0]!.node_id],
+    nodes: [base.graph.nodes[0]!, assetA, modB, assetA2, modC],
+    edges: [],
+  });
+  return {
+    analysis: analysisViewBindJavaScriptGraphs(base, graph),
+    ids: {
+      assetA: assetA.node_id,
+      modB: modB.node_id,
+      assetA2: assetA2.node_id,
+      modC: modC.node_id,
+    },
+  };
+};
+
+it("preserves exact parity and WeakMap reuse for indexed JavaScript module and fact views", () => {
+  const { analysis, ids } = multiModuleJavaScriptAnalysis();
+  const unsealed = javascriptParent(analysis);
+  const sealed: AnalysisViewParent = {
+    ...unsealed,
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(structuredClone(analysis)),
+  };
+  const parseSpy = vi.spyOn(
+    jsApplicationAnalysis,
+    "parseOwnedJavaScriptApplicationAnalysisSteps",
+  );
+  try {
+    const views: AnalysisViewRequest[] = [
+      { kind: "summary" },
+      { kind: "item", collection: "modules", selector: { node_id: ids.modB } },
+      { kind: "item", collection: "modules", selector: { node_id: "missing" } },
+      { kind: "item", collection: "modules", selector: { path: "c.js" } },
+      { kind: "item", collection: "modules", selector: { path: "a.js" } },
+      { kind: "item", collection: "modules", selector: { path: "none.js" } },
+      { kind: "page", collection: "modules", offset: 1, limit: 2 },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: {},
+        offset: 1,
+        limit: 2,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { path: "b.js" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { kind: "javascript-module" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript",
+        collection: "modules",
+        projection: "references",
+        where: { kind: "javascript-asset", path: "b.js" },
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript-facts",
+        where: {},
+        property_keys: ["tag", "path"],
+        include_available_property_keys: true,
+        offset: 1,
+        limit: 5,
+      },
+      {
+        kind: "javascript-facts",
+        where: { kinds: ["javascript-asset"], paths: ["a.js"] },
+        property_keys: ["tag"],
+        include_available_property_keys: false,
+        offset: 0,
+        limit: 10,
+      },
+      {
+        kind: "javascript-facts",
+        where: {
+          kinds: ["javascript-module", "javascript-asset"],
+          paths: ["b.js", "a.js"],
+        },
+        property_keys: ["tag"],
+        include_available_property_keys: false,
+        offset: 1,
+        limit: 4,
+      },
+      {
+        kind: "javascript-facts",
+        where: { kinds: [] },
+        property_keys: [],
+        include_available_property_keys: false,
+        offset: 0,
+        limit: 10,
+      },
+    ];
+
+    const sealedResults = views.map((view) =>
+      projectAnalysisView(sealed, view),
+    );
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    for (const [index, view] of views.entries()) {
+      const sealedRes = sealedResults[index]!;
+      const unsealedRes = projectAnalysisView(unsealed, view);
+      expect(sealedRes.ok).toBe(unsealedRes.ok);
+      if (sealedRes.ok && unsealedRes.ok)
+        expect(sealedRes.value).toEqual(unsealedRes.value);
+    }
+    expect(parseSpy).toHaveBeenCalledTimes(1 + views.length);
+
+    const factView = inspectAnalysisViewInputSchema.parse({
+      source: { kind: "inline", evidence: {} },
+      view: {
+        kind: "javascript-facts",
+        where: {
+          kinds: ["javascript-module", "javascript-asset"],
+          paths: ["b.js", "a.js"],
+        },
+        property_keys: ["tag"],
+        offset: 0,
+        limit: 10,
+      },
+    }).view;
+    if (factView.kind !== "javascript-facts") throw new Error("wrong view");
+    expect(
+      projectJavaScriptFacts(
+        (sealed.normalizedResult as typeof analysis).graph.nodes,
+        factView,
+        sealed.normalizedResult as object,
+      ),
+    ).toEqual(projectJavaScriptFacts(analysis.graph.nodes, factView));
+  } finally {
+    parseSpy.mockRestore();
+  }
+});
+
+it("caches sealed inspect_byte_entropy and analyze_function parents across repeated calls", () => {
+  const entropyPayload = {
+    artifact: { path: "/tmp/fixture", bytes: 256, sha256: "2".repeat(64) },
+    block_size: 256,
+    window: { offset: 0, length: 256 },
+    file_entropy: 4,
+    thresholds: { high: 7.5, low: 0.5 },
+    blocks: [{ offset: 0, length: 256, entropy: 4 }],
+    runs: [],
+    limitations: [],
+  };
+  const entropyParent: AnalysisViewParent = {
+    predicateType: "rea.byte-entropy",
+    evidenceId: `ev_${"1".repeat(64)}`,
+    operation: "inspect_byte_entropy",
+    limitations: [],
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(entropyPayload),
+  };
+  const native = nativeParent();
+  const sealedNative: AnalysisViewParent = {
+    ...native,
+    sealedResult: true,
+    normalizedResult: freezeJsonSnapshot(
+      structuredClone(native.normalizedResult) as Record<string, never>,
+    ),
+  };
+  const entropySpy = vi.spyOn(byteEntropySchema, "safeParse");
+  const dossierSpy = vi.spyOn(functionDossierSchema, "safeParse");
+  try {
+    expect(projectAnalysisView(entropyParent, { kind: "summary" }).ok).toBe(
+      true,
+    );
+    expect(
+      projectAnalysisView({ ...entropyParent }, { kind: "summary" }).ok,
+    ).toBe(true);
+    expect(entropySpy).toHaveBeenCalledTimes(1);
+
+    expect(projectAnalysisView(sealedNative, { kind: "summary" }).ok).toBe(
+      true,
+    );
+    expect(
+      projectAnalysisView(
+        { ...sealedNative },
+        { kind: "native", facet: "procedure", offset: 0, limit: 64 },
+      ).ok,
+    ).toBe(true);
+    expect(dossierSpy).toHaveBeenCalledTimes(1);
+  } finally {
+    entropySpy.mockRestore();
+    dossierSpy.mockRestore();
+  }
 });
