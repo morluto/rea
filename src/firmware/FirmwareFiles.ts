@@ -51,7 +51,7 @@ export interface FirmwareEntry {
 }
 
 /** An aborted inventory reports its phase deadline's timeout or its caller's cancellation. */
-const throwIfFirmwareInventoryCancelled = (
+export const throwIfFirmwareInventoryCancelled = (
   signal: AbortSignal | undefined,
   operation: string,
   deadline: FirmwareDeadline | undefined,
@@ -487,7 +487,7 @@ export const firmwareStagingBudgetRemediation = (
 };
 
 /** The same selected aggregate budget is enforced during and after extraction. */
-const firmwareStagingLimit = (
+export const firmwareStagingLimit = (
   operation: string,
   field: "max_output_files" | "max_output_bytes",
   maximum: number,
@@ -508,7 +508,7 @@ const firmwareStagingLimit = (
  * staged file that reaches the producer's limit may be truncated. That limit
  * sits one byte above every budget unless an inherited ceiling removed the byte.
  */
-const firmwareFileSizeLimitReached = (
+export const firmwareFileSizeLimitReached = (
   operation: string,
   fileSizeBytes: number,
 ) =>
