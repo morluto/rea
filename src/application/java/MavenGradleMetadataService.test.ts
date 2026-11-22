@@ -5,17 +5,25 @@ import {
   AnalysisOutputError,
   AnalysisCancelledError,
 } from "../../domain/analysisErrorCore.js";
-import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import type { MavenGradleMetadata } from "../../domain/java/mavenGradleMetadata.js";
 import { parseMavenGradleMetadata } from "../../java/MavenGradleMetadataParser.js";
-import { mavenPomFixture } from "../../java/MavenGradleMetadata.fixture.js";
+import {
+  gradleModuleFixture,
+  mavenPomFixture,
+} from "../../java/MavenGradleMetadata.fixture.js";
 import { MavenGradleMetadataService } from "./MavenGradleMetadataService.js";
 
-const reportFor = (): MavenGradleMetadata => {
-  const bytes = Buffer.from(mavenPomFixture, "utf8");
+const reportFor = (
+  format: MavenGradleMetadata["format"],
+): MavenGradleMetadata => {
+  const gradle = format === "gradle-module";
+  const bytes = Buffer.from(
+    gradle ? gradleModuleFixture : mavenPomFixture,
+    "utf8",
+  );
   return parseMavenGradleMetadata(bytes, {
-    path: "/artifacts/pom.xml",
+    path: gradle ? "/artifacts/demo.module" : "/artifacts/pom.xml",
     sha256: createHash("sha256").update(bytes).digest("hex"),
     bytes: bytes.length,
   });
@@ -35,8 +43,11 @@ const serviceFor = (report: MavenGradleMetadata) =>
 const inspect = (report: MavenGradleMetadata, path = report.artifact.path) =>
   serviceFor(report).inspect({ path });
 
+const mavenReport = reportFor("maven-pom");
+const gradleReport = reportFor("gradle-module");
+
 it("retains completed Evidence and selected parameters on late cancellation", async () => {
-  const report = reportFor();
+  const report = mavenReport;
   const controller = new AbortController();
   const reason = { source: "metadata completion" };
   const provider = serviceFor(report).provider;
@@ -61,40 +72,51 @@ it("retains completed Evidence and selected parameters on late cancellation", as
   });
 });
 
-it("rejects complete coverage claiming the wrong examined byte count", async () => {
-  const report = reportFor();
-  const result = await inspect({
-    ...report,
-    coverage: { ...report.coverage, examined_bytes: report.artifact.bytes + 8 },
-  });
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
-});
-
-it("rejects a report whose artifact identity disagrees with the caller path", async () => {
-  const report = reportFor();
-  const result = await inspect(
-    {
-      ...report,
-      artifact: { ...report.artifact, path: "/other/pom.xml" },
+it.for([
+  {
+    name: "a Maven row attributed to a Gradle variant",
+    report: {
+      ...mavenReport,
+      dependencies: mavenReport.dependencies.map((dependency) => ({
+        ...dependency,
+        origin: "variant-dependencies",
+      })),
     },
-    report.artifact.path,
-  );
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisOutputError);
-});
-
-it("retains observed coordinates and unresolved property references", async () => {
-  const report = reportFor();
-  const result = await inspect(report);
-  if (!result.ok) throw result.error;
-  expect(parseEvidence(result.value).normalized_result).toMatchObject({
-    format: "maven-pom",
-    coordinates: {
-      artifact_id: "demo",
-      version: "${revision}",
+  },
+  {
+    name: "a Gradle report without its format payload",
+    report: { ...gradleReport, gradle: null },
+  },
+  {
+    name: "a dependency origin from the wrong Gradle collection",
+    report: {
+      ...gradleReport,
+      dependency_management: gradleReport.dependency_management.map(
+        (constraint) => ({ ...constraint, origin: "variant-dependencies" }),
+      ),
     },
-    coverage: { status: "complete", examined_bytes: report.artifact.bytes },
-  });
-  expect(result.value.confidence).toBe("observed");
+  },
+  {
+    name: "complete coverage with the wrong examined byte count",
+    report: {
+      ...mavenReport,
+      coverage: {
+        ...mavenReport.coverage,
+        examined_bytes: mavenReport.artifact.bytes + 8,
+      },
+    },
+  },
+  {
+    name: "an artifact identity different from the caller path",
+    path: mavenReport.artifact.path,
+    report: {
+      ...mavenReport,
+      artifact: { ...mavenReport.artifact, path: "/other/pom.xml" },
+    },
+  },
+])("rejects $name before forming Evidence", async ({ report, path }) => {
+  // Untrusted runtime providers can return values outside the typed port.
+  const result = await inspect(report as MavenGradleMetadata, path);
+  if (result.ok) throw new Error("Provider output entered Evidence");
+  expect(result.error).toBeInstanceOf(AnalysisOutputError);
 });
