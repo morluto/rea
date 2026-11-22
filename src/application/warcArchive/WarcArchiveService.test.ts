@@ -146,3 +146,25 @@ it("reports the selected path and cause when the archive cannot be resolved", as
     await resources.close();
   }
 });
+
+it("advises raising a caller-selected max_file_bytes instead of a fixed ceiling", async () => {
+  // A budget below the schema maximum can be raised on the next call, so the
+  // refusal must not claim this release has no override.
+  const path = await inputFile("crawl.warc", RECORD);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectWarcArchiveEvidence(
+      { path, max_file_bytes: 8 },
+      resources,
+    );
+    if (result.ok) throw new Error("expected a file-size refusal");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.remediation.action).toContain(
+      "Raise max_file_bytes above 8",
+    );
+    expect(projected.remediation.action).not.toContain("no runtime override");
+    expect(projected.details?.reported_limits).toEqual({ max_file_bytes: 8 });
+  } finally {
+    await resources.close();
+  }
+});
