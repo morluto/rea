@@ -243,6 +243,7 @@
 * **desktop:** read OpenPGP packet lengths through BinaryReader ([006581b](https://github.com/morluto/rea/commit/006581b838fe64cd2a1b5b22d508c525e92bdf2d)), closes [#11865](https://github.com/morluto/rea/issues/11865)
 * **desktop:** validate task pointer syntax at its shared owner ([7b856fa](https://github.com/morluto/rea/commit/7b856fa5a14d4a361d445c1efd4b1f9037994259))
 * **elf:** read GNU property words through BinaryReader ([add4faf](https://github.com/morluto/rea/commit/add4faf2ad7aeb38d6d8c0e8619e238f01e6a5c1)), closes [#11865](https://github.com/morluto/rea/issues/11865)
+* **environment:** retain the latest replay interference event ([#13408](https://github.com/morluto/rea/issues/13408)) ([b96e2e1](https://github.com/morluto/rea/commit/b96e2e10e751f1026a6a828503b3709e6795897f))
 * **errors:** list distinct resources in providerCleanupErrorFromFailures ([13725d2](https://github.com/morluto/rea/commit/13725d2986dda6bb8b9a3ae449408da67da5c360)), closes [#11859](https://github.com/morluto/rea/issues/11859)
 * **firmware:** use one cooperative OTA reconstruction path ([#13375](https://github.com/morluto/rea/issues/13375)) ([1f2805e](https://github.com/morluto/rea/commit/1f2805e6c859760205f8cab9309f7ee31944d9b3))
 * **ghidra:** require an owned committed project copy ([#13363](https://github.com/morluto/rea/issues/13363)) ([fb6e0dc](https://github.com/morluto/rea/commit/fb6e0dc6e8558fea2931cdfb7280854c0cfbca6c))
