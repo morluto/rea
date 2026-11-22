@@ -11,6 +11,7 @@ import {
   schemaChildren,
   schemaMaps,
   schemaPointerSteps,
+  setOwnSchemaProperty,
 } from "./jsonSchemaKeywords.js";
 
 const referencedDescription = (
@@ -181,22 +182,30 @@ const omitNestedDefaults = (
   for (const [key, value] of Object.entries(schema)) {
     const childPath = trackPaths ? [...path, key] : path;
     if (trackPaths && kept.has(JSON.stringify(childPath))) {
-      output[key] = value;
+      setOwnSchemaProperty(output, key, value);
       continue;
     }
     if (key === "default") continue;
+    let projected = value;
     if (isObjectKeyword(key) && isObject(value)) {
       const mapped: Record<string, unknown> = {};
       for (const [name, child] of Object.entries(value)) {
-        mapped[name] = omitNestedDefaults(
-          child,
-          kept,
-          trackPaths ? [...childPath, name] : path,
+        setOwnSchemaProperty(
+          mapped,
+          name,
+          omitNestedDefaults(
+            child,
+            kept,
+            trackPaths ? [...childPath, name] : path,
+          ),
         );
       }
-      output[key] = mapped;
-    } else if (isArrayKeyword(key) && Array.isArray(value)) {
-      output[key] = value.map((child, index) =>
+      projected = mapped;
+    } else if (
+      (isArrayKeyword(key) || isChildKeyword(key)) &&
+      Array.isArray(value)
+    ) {
+      projected = value.map((child, index) =>
         omitNestedDefaults(
           child,
           kept,
@@ -204,18 +213,9 @@ const omitNestedDefaults = (
         ),
       );
     } else if (isChildKeyword(key)) {
-      output[key] = Array.isArray(value)
-        ? value.map((child, index) =>
-            omitNestedDefaults(
-              child,
-              kept,
-              trackPaths ? [...childPath, String(index)] : path,
-            ),
-          )
-        : omitNestedDefaults(value, kept, childPath);
-    } else {
-      output[key] = value;
+      projected = omitNestedDefaults(value, kept, childPath);
     }
+    setOwnSchemaProperty(output, key, projected);
   }
   return output;
 };

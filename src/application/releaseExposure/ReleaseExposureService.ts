@@ -219,18 +219,19 @@ export class ReleaseExposureService {
     for (const candidate of prepared.scan.fuse_candidates) {
       if (seenFusePaths.has(candidate.path)) continue;
       seenFusePaths.add(candidate.path);
-      fuseImages.push(
-        await settle(
-          () => this.#fuseImage(candidate, digests, options),
-          {
-            kind: "failed",
-            role: candidate.role,
-            path: candidate.path,
-            reason: OWNER_NOT_RUN,
-          },
-          (value) => fuseImageFact(candidate, digests, value),
-        ),
+      const image = await settle(
+        () => this.#fuseImage(candidate, digests, options),
+        {
+          kind: "failed",
+          role: candidate.role,
+          path: candidate.path,
+          reason: OWNER_NOT_RUN,
+        },
+        (value) => fuseImageFact(candidate, digests, value),
       );
+      fuseImages.push(image);
+      if (image.inventoriedBundleFile !== undefined)
+        seenFusePaths.add(image.inventoriedBundleFile);
     }
     const family = fuseImagesRuleOutElectron(
       desktop.family,
@@ -908,30 +909,17 @@ const limitNativeSample = (
   }
   // A bundle read with no layout settles only the root build: a nested
   // asar: false build's host may be one the sample or inventory missed.
-  let electronExecutableIncluded: boolean;
-  if (layouts.length === 0) {
-    electronExecutableIncluded =
-      (bundleRead && !missedOutsideHost) || selectedRead || hostRead(preferred);
-  } else if (missedOutsideHost) {
-    electronExecutableIncluded = false;
-  } else {
-    const preferredByLayout = new Map<string, (typeof preferred)[number][]>();
-    for (const folder of layouts) {
-      if (!settledLayouts.has(folder)) preferredByLayout.set(folder, []);
-    }
-    if (preferredByLayout.size > 0) {
-      for (const image of preferred) {
-        for (const [folder, list] of preferredByLayout) {
-          if (inLayout(folder, image.path)) list.push(image);
-        }
-      }
-    }
-    electronExecutableIncluded = layouts.every(
-      (folder) =>
-        settledLayouts.has(folder) ||
-        hostRead(preferredByLayout.get(folder) ?? []),
-    );
-  }
+  const electronExecutableIncluded =
+    layouts.length === 0
+      ? (bundleRead && !missedOutsideHost) ||
+        selectedRead ||
+        hostRead(preferred)
+      : !missedOutsideHost &&
+        layouts.every(
+          (folder) =>
+            settledLayouts.has(folder) ||
+            hostRead(preferred.filter((image) => inLayout(folder, image.path))),
+        );
   const outsideHosts = hostsAmong(outside);
   // A build without an ASAR names no host, so any sampled image outside the
   // discovered layouts may carry another build's fuses and none settles
