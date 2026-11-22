@@ -443,6 +443,7 @@
 * **mcp:** consolidate derived operation progress coverage ([#12778](https://github.com/morluto/rea/issues/12778)) ([3caa46f](https://github.com/morluto/rea/commit/3caa46f980bbc1d9ef9e1f25b4e046cfc0d03ca9))
 * **mcp:** consolidate HTTP admission and socket reuse checks ([#13252](https://github.com/morluto/rea/issues/13252)) ([333e6de](https://github.com/morluto/rea/commit/333e6de3111f8dcdb56aa6d17c499aa39c0c9f3e))
 * **mcp:** consolidate HTTP factory and shutdown settlement checks ([#13253](https://github.com/morluto/rea/issues/13253)) ([1ed4471](https://github.com/morluto/rea/commit/1ed4471c59753e72fd9bc0d4c409d24049d2ce2d))
+* **mcp:** consolidate input schema compatibility contracts ([#13323](https://github.com/morluto/rea/issues/13323)) ([664c0c5](https://github.com/morluto/rea/commit/664c0c5267c12ab2cfa388d6cb722d084b7ce4bf))
 * **mcp:** consolidate JavaScript Evidence transport checks ([#13055](https://github.com/morluto/rea/issues/13055)) ([9a388af](https://github.com/morluto/rea/commit/9a388afdfca3acbb7a4dc849b047e5c5faf4e906))
 * **mcp:** consolidate progressive catalog wire checks ([#13248](https://github.com/morluto/rea/issues/13248)) ([00974e5](https://github.com/morluto/rea/commit/00974e5a613d6df669c5a7f0ef7f143d03254154))
 * **mcp:** consolidate reduced output schema proof at the SDK boundary ([#12823](https://github.com/morluto/rea/issues/12823)) ([40c6dad](https://github.com/morluto/rea/commit/40c6dade8eb608141ec62dd90a8ee4195d52fbd8))
