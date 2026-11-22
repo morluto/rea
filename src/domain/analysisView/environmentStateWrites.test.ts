@@ -1600,11 +1600,14 @@ const notesOf = (state: StateView) =>
   state.entities
     .filter((entity) => entity.type === "/api/notes")
     .map((entity) => entity.id);
-/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
-const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+const NOTES_INIT_ROWS: readonly TimedCaptureRow[] = [
   ["GET", "/api/notes", [A, B]],
   ["GET", "/api/notes/1001", A],
   ["GET", "/api/notes/1002", B],
+];
+/** Two notes read, the given exchanges, then a POST elsewhere whose returned id the notes are read under. */
+const published = (before: readonly TimedCaptureRow[]): TimedCaptureRow[] => [
+  ...NOTES_INIT_ROWS,
   ...before,
   ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
   ["GET", "/api/notes/1003", C],
@@ -1649,9 +1652,6 @@ describe("creates read under another path", () => {
       effect: "none",
       reason: "no-state-target",
     });
-    expect(planOf(stateOf(published([])), "post_drafts_publish")).toMatchObject(
-      { effect: "create" },
-    );
   });
 
   /** A create linked under project 11, then a call for project 12, whose note a later item read and delete show. */
@@ -1869,80 +1869,68 @@ describe("item lines first recorded after a write, against the lines left", () =
   });
 });
 
-describe("reads overlapping a linked create", () => {
-  it("links a create whose id only a list still running when it began showed before", () => {
-    const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      // Begun before the publish and finished after it, so it may show what the publish made.
-      ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-    expect(notesOf(state)).toEqual(["1001", "1002"]);
-  });
-});
+describe("reads that do not rule out a linked create", () => {
+  const user = (id: number, login: string) => ({ id, login });
+  const changed = user(1001, "alpha2");
 
-describe("earlier reads of the returned id under other types", () => {
-  it("links a create whose id an earlier read of another type named", () => {
-    const user = { id: 1003, login: "gamma" };
-    const state = stateOf([
-      ["GET", "/api/users/1003", user],
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-  });
-});
-
-describe("item reads that show no entity", () => {
-  it("links a create past a read of its id that answered JSON null under another type", () => {
-    const user = (id: number, login: string) => ({ id, login });
-    const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
-      ["GET", "/api/users/1001", user(1001, "alpha")],
-      // Ends the users' initial reads, so the null read below plans nothing.
-      [
-        "PATCH",
-        "/api/users/1001",
-        user(1001, "alpha2"),
-        200,
-        { login: "alpha2" },
+  it.each<{
+    name: string;
+    rows: readonly TimedCaptureRow[];
+    afterPublish?: TimedCaptureRow;
+    observation: number;
+  }>([
+    {
+      name: "a list still running when the publish began",
+      rows: [
+        ...NOTES_INIT_ROWS,
+        ["GET", "/api/notes", [A, B, C], 200, undefined, 2500],
       ],
-      ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
-      ["GET", "/api/users/1003", null],
-      ["GET", "/api/notes/1003", C],
-      ["GET", "/api/notes", [A, B, C]],
-    ]);
-    expect(planOf(state, "post_drafts_publish")).toMatchObject({
-      effect: "create",
-      target: "/api/notes",
-    });
-  });
+      observation: 5,
+    },
+    {
+      name: "the same id seen under another type before the publish",
+      rows: [
+        ["GET", "/api/users/1003", user(1003, "gamma")],
+        ...NOTES_INIT_ROWS,
+      ],
+      observation: 5,
+    },
+    {
+      name: "another type answering JSON null for the same id",
+      rows: [
+        ...NOTES_INIT_ROWS,
+        ["GET", "/api/users/1001", user(1001, "alpha")],
+        // End the users' initial reads before their null response.
+        ["PATCH", "/api/users/1001", changed, 200, { login: "alpha2" }],
+      ],
+      afterPublish: ["GET", "/api/users/1003", null],
+      observation: 7,
+    },
+  ])(
+    "links the publish to the new note despite $name",
+    ({ rows, afterPublish, observation }) => {
+      const state = stateOf([
+        ...rows,
+        ["POST", "/api/drafts/publish", { id: 1003 }, 201, { title: "Gamma" }],
+        ...(afterPublish === undefined ? [] : [afterPublish]),
+        ["GET", "/api/notes/1003", C],
+        ["GET", "/api/notes", [A, B, C]],
+      ]);
+      expect(planOf(state, "post_drafts_publish")).toMatchObject({
+        effect: "create",
+        target: "/api/notes",
+        observation: { ordinal: observation, pointer: "" },
+      });
+      expect(notesOf(state)).toEqual(["1001", "1002"]);
+    },
+  );
 });
 
 describe("what a linked create observes", () => {
   it("observes a linked create only in a read of an id its response named, inside an envelope too", () => {
     const D = note(1004, "Delta");
     const state = stateOf([
-      ["GET", "/api/notes", [A, B]],
-      ["GET", "/api/notes/1001", A],
-      ["GET", "/api/notes/1002", B],
+      ...NOTES_INIT_ROWS,
       [
         "POST",
         "/api/drafts/publish",
