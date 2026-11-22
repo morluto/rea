@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFile, lstat, rename, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buffer } from "node:stream/consumers";
@@ -7,7 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ArtifactEntry } from "../../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { phaseGate } from "../../support/lifecycleHarness.js";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const sampleEntry = async (
@@ -106,38 +107,44 @@ describe("DirectoryArtifactReader.open", () => {
       const root = await createTestTempDirectory("rea-dir-reader-mutate-");
       const path = join(root, "sample.txt");
       const originalBytes = 1024 * 1024 + tail;
-      await writeFile(path, Buffer.alloc(originalBytes, 0x61));
+      const original = Buffer.alloc(originalBytes, 0x61);
+      if (tail !== 0) original.write("end", originalBytes - tail);
+      await writeFile(path, original);
       const reader = new DirectoryArtifactReader(root);
       try {
         const entry = await sampleEntry(reader);
         const stream = await reader.open(entry);
-        const firstChunk = phaseGate();
+        const firstChunk = phaseArrival();
         const consumed = finished(stream, { cleanup: true }).catch(
           (cause: unknown) => cause,
         );
         let observedBytes = 0;
+        const observed = createHash("sha256");
         stream.on("data", (chunk: Buffer) => {
           if (observedBytes === 0) {
             stream.pause();
-            void firstChunk.hold();
+            firstChunk.arrive();
           }
           observedBytes += chunk.length;
+          observed.update(chunk);
         });
         try {
           await firstChunk.reached(consumed, "first directory artifact chunk");
           if (mutation === "truncate")
             await writeFile(path, "short replacement\n");
           else await appendFile(path, Buffer.alloc(originalBytes, 0x62));
-          firstChunk.release();
           stream.resume();
           expect(await consumed).toMatchObject({
             reason: "integrity",
             integrityCheck: "member-identity",
           });
-          if (mutation === "grow") expect(observedBytes).toBe(originalBytes);
-          else expect(observedBytes).toBeLessThanOrEqual(originalBytes);
+          if (mutation === "grow") {
+            expect(observedBytes).toBe(originalBytes);
+            expect(observed.digest("hex")).toBe(
+              createHash("sha256").update(original).digest("hex"),
+            );
+          } else expect(observedBytes).toBeLessThanOrEqual(originalBytes);
         } finally {
-          firstChunk.release();
           stream.destroy();
           await consumed;
         }
