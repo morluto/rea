@@ -28,9 +28,3 @@ export const inspectEvtxArchiveInputSchema = z.strictObject({
 export type InspectEvtxArchiveInput = z.output<
   typeof inspectEvtxArchiveInputSchema
 >;
-
-/** CLI-facing aliases so one owner states each bound once. */
-export const evtxArchiveFileBytesSchema =
-  inspectEvtxArchiveInputSchema.shape.max_file_bytes;
-export const evtxArchiveRecordsSchema =
-  inspectEvtxArchiveInputSchema.shape.max_records;
