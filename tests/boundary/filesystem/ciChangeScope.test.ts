@@ -2267,9 +2267,33 @@ it("owns every explicit native-host test path with the lane that runs it", async
 });
 
 // A darwin gate only skips the case off macOS, so a gated file that no macOS
-// job names passes CI without ever running.
-const DARWIN_GATE =
-  /skipIf\(process\.platform !== "darwin"\)|runIf\(process\.platform === "darwin"\)/u;
+// job names passes CI without ever running. Suites spell the gate inline or
+// through a named `process.platform === "darwin"` condition.
+const isDarwinGated = (source: string): boolean =>
+  /skipIf\(process\.platform !== "darwin"\)|runIf\(process\.platform === "darwin"\)/u.test(
+    source,
+  ) ||
+  [
+    ...source.matchAll(
+      /\b(?:const|let)\s+(\w+)\s*=\s*process\.platform\s*===\s*"darwin"/gu,
+    ),
+  ].some(
+    ([, name]) =>
+      source.includes(`skipIf(!${name})`) || source.includes(`runIf(${name})`),
+  );
+
+it("recognizes inline and named darwin gates", () => {
+  const named = 'const onDarwin = process.platform === "darwin";\n';
+  expect(
+    isDarwinGated('it.skipIf(process.platform !== "darwin")("a", f)'),
+  ).toBe(true);
+  expect(isDarwinGated(`${named}it.skipIf(!onDarwin)("a", f)`)).toBe(true);
+  expect(isDarwinGated(`${named}describe.runIf(onDarwin)("a", f)`)).toBe(true);
+  expect(isDarwinGated(`${named}expect(onDarwin).toBe(true)`)).toBe(false);
+  expect(isDarwinGated('it.skipIf(process.platform !== "linux")("a", f)')).toBe(
+    false,
+  );
+});
 
 it("runs every darwin-gated test file in a macOS job or records why it is manual", async () => {
   const { DARWIN_MANUAL_TESTS } = await loadScopes();
@@ -2278,7 +2302,11 @@ it("runs every darwin-gated test file in a macOS job or records why it is manual
   for (const path of (await git(root, ["ls-files", "*.test.ts"]))
     .split("\n")
     .filter(Boolean))
-    if (DARWIN_GATE.test(await readFile(join(root, path), "utf8")))
+    // This file spells example gates for the detector's own regression.
+    if (
+      path !== "tests/boundary/filesystem/ciChangeScope.test.ts" &&
+      isDarwinGated(await readFile(join(root, path), "utf8"))
+    )
       gated.push(path);
   const jobs = z.object({
     jobs: z.record(

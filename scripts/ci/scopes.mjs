@@ -896,6 +896,7 @@ export const DARWIN_MANUAL_TESTS = {
   "tests/boundary/filesystem/jsonOutputPathCapacity.test.ts": PARTLY_GATED,
   "tests/boundary/filesystem/nativePascalVerifier.test.ts": PARTLY_GATED,
   "tests/boundary/pcap/pcapCommand.test.ts": PARTLY_GATED,
+  "tests/boundary/process/darwinHelperCache.test.ts": PARTLY_GATED,
   "tests/boundary/process/ghidraJavaProbePreparation.test.ts":
     FAILS_ON_CLT_HOST,
   "tests/boundary/process/providerProcess.test.ts": PARTLY_GATED,
