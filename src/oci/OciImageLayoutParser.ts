@@ -751,6 +751,12 @@ const unverifiedBlobPath = (digest: string): string | undefined => {
   return match === null ? undefined : `blobs/${match[1]!}/${match[2]!}`;
 };
 
+/** What the directory listing establishes about one blob path. */
+type BlobLookup =
+  | { readonly state: "listed"; readonly entry: DirectoryArtifactEntry }
+  | { readonly state: "unexamined"; readonly via: string }
+  | { readonly state: "missing" };
+
 const blobRecord = (
   digest: string,
   path: string,
@@ -876,6 +882,22 @@ const inventoryOciImageLayout = async (
 
   const byPath = new Map<string, DirectoryArtifactEntry>();
   for (const entry of entries) byPath.set(entry.path, entry);
+  // A blob under a symlinked blobs or blobs/<algorithm> directory was never
+  // listed, so its absence from the listing proves nothing. Every blob
+  // lookup goes through here so unexamined blobs never read as missing.
+  const lookupBlob = (path: string): BlobLookup => {
+    const entry = byPath.get(path);
+    if (entry !== undefined) return { state: "listed", entry };
+    const parts = path.split("/");
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const ancestor = parts.slice(0, depth).join("/");
+      if (byPath.get(ancestor)?.kind === "symlink")
+        return { state: "unexamined", via: ancestor };
+    }
+    return { state: "missing" };
+  };
+  const unexaminedMessage = (digest: string, via: string): string =>
+    `Blob ${digest} is under symlinked directory ${via}, which was not followed.`;
 
   const layoutEntry = byPath.get("oci-layout");
   if (layoutEntry === undefined)
@@ -1152,8 +1174,18 @@ const inventoryOciImageLayout = async (
       return undefined;
     }
     const path = ociBlobPath(parsed);
-    const entry = byPath.get(path);
-    if (entry === undefined) {
+    const lookup = lookupBlob(path);
+    if (lookup.state === "unexamined") {
+      recordFinding(
+        findings,
+        "symlink_blob",
+        unexaminedMessage(digest, lookup.via),
+        digest,
+        path,
+      );
+      return undefined;
+    }
+    if (lookup.state === "missing") {
       recordFinding(
         findings,
         "missing_blob",
@@ -1163,6 +1195,7 @@ const inventoryOciImageLayout = async (
       );
       return undefined;
     }
+    const entry = lookup.entry;
     if (entry.kind === "symlink") {
       recordFinding(
         findings,
@@ -1277,7 +1310,12 @@ const inventoryOciImageLayout = async (
       parsed === undefined
         ? unverifiedBlobPath(descriptor.digest)
         : ociBlobPath(parsed);
-    if (path === undefined || !byPath.has(path)) return;
+    if (path === undefined) return;
+    const lookup = lookupBlob(path);
+    // An unexamined subject may exist and name further blobs, so the walk
+    // can no longer prove which blobs nothing references.
+    if (lookup.state === "unexamined") referenceGraphTruncated = true;
+    if (lookup.state !== "listed") return;
     remember(descriptor.digest, descriptor.media_type, descriptor.size);
     if (!isOciKnownMediaType(descriptor.media_type)) {
       recordFinding(
@@ -1686,11 +1724,19 @@ const inventoryOciImageLayout = async (
       );
       const path = unverifiedBlobPath(digest);
       if (path !== undefined) referencedPaths.add(path);
-      const entry = path === undefined ? undefined : byPath.get(path);
+      const lookup = path === undefined ? undefined : lookupBlob(path);
+      const entry = lookup?.state === "listed" ? lookup.entry : undefined;
       if (path !== undefined) {
         // Presence defects are independent of whether the digest can be
         // verified, so they get the same findings a supported digest gets.
-        if (entry === undefined)
+        if (lookup?.state === "unexamined")
+          recordFindingOnce(
+            "symlink_blob",
+            unexaminedMessage(digest, lookup.via),
+            digest,
+            path,
+          );
+        else if (entry === undefined)
           recordFindingOnce(
             "missing_blob",
             `Referenced blob ${digest} is missing.`,
@@ -1720,13 +1766,15 @@ const inventoryOciImageLayout = async (
           reference.mediaType,
           reference.declaredSize,
           true,
-          entry === undefined
-            ? "missing"
-            : entry.kind === "file"
-              ? "file"
-              : entry.kind === "symlink"
-                ? "symlink"
-                : "other",
+          lookup?.state === "unexamined"
+            ? "symlink"
+            : entry === undefined
+              ? "missing"
+              : entry.kind === "file"
+                ? "file"
+                : entry.kind === "symlink"
+                  ? "symlink"
+                  : "other",
           {
             present: entry?.kind === "file",
             observed_size: entry?.kind === "file" ? entry.declaredSize : null,
@@ -1737,8 +1785,28 @@ const inventoryOciImageLayout = async (
     }
     const path = ociBlobPath(parsed);
     referencedPaths.add(path);
-    const entry = byPath.get(path);
-    if (entry === undefined) {
+    const lookup = lookupBlob(path);
+    if (lookup.state === "unexamined") {
+      recordFindingOnce(
+        "symlink_blob",
+        unexaminedMessage(digest, lookup.via),
+        digest,
+        path,
+      );
+      blobs.push(
+        blobRecord(
+          digest,
+          path,
+          reference.mediaType,
+          reference.declaredSize,
+          true,
+          "symlink",
+          { present: false },
+        ),
+      );
+      continue;
+    }
+    if (lookup.state === "missing") {
       recordFindingOnce(
         "missing_blob",
         `Referenced blob ${digest} is missing.`,
@@ -1758,6 +1826,7 @@ const inventoryOciImageLayout = async (
       );
       continue;
     }
+    const entry = lookup.entry;
     if (entry.kind === "symlink") {
       recordFindingOnce(
         "symlink_blob",

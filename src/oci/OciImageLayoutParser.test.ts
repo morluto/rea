@@ -1660,6 +1660,54 @@ it("reports missing and symlinked unsupported-digest blobs as presence defects",
   ).toMatchObject({ kind: "symlink", present: false });
 });
 
+it("keeps a referenced blob under a symlinked sha1 directory unexamined, not missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-sha1-dir-symlink-");
+  const { hex, digest } = await writeSha1LayerLayout(root, 5);
+  const linkPath = join(root, "blobs", "sha1");
+  await rename(linkPath, join(root, "elsewhere"));
+  await symlink(join(root, "elsewhere"), linkPath);
+  const report = await inspectLayout(root);
+  expect(report.findings).toContainEqual({
+    kind: "symlink_blob",
+    digest,
+    path: `blobs/sha1/${hex}`,
+    message: `Blob ${digest} is under symlinked directory blobs/sha1, which was not followed.`,
+  });
+  expect(
+    report.findings.some(
+      (finding) => finding.digest === digest && finding.kind === "missing_blob",
+    ),
+  ).toBe(false);
+  expect(report.blobs.find((blob) => blob.digest === digest)).toMatchObject({
+    kind: "symlink",
+    present: false,
+  });
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("keeps referenced sha256 blobs under a symlinked blob directory unexamined, not missing", async () => {
+  const root = await createTestTempDirectory("rea-oci-sha256-dir-symlink-");
+  const written = await writeOciImageLayoutFixture(root);
+  const linkPath = join(root, "blobs", "sha256");
+  await rename(linkPath, join(root, "elsewhere"));
+  await symlink(join(root, "elsewhere"), linkPath);
+  const report = await inspectLayout(root);
+  expect(
+    report.findings.some((finding) => finding.kind === "missing_blob"),
+  ).toBe(false);
+  expect(report.findings).toContainEqual(
+    expect.objectContaining({
+      kind: "symlink_blob",
+      digest: written.manifestDigest,
+      path: `blobs/sha256/${written.manifestDigest.slice("sha256:".length)}`,
+    }),
+  );
+  expect(
+    report.blobs.find((blob) => blob.digest === written.manifestDigest),
+  ).toMatchObject({ kind: "symlink", present: false });
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("refuses a missing oci-layout as malformed input", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-");
   await mkdir(root, { recursive: true });
