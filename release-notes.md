@@ -736,6 +736,7 @@
 * **rizin:** synchronize partial output with command deadlines ([#13040](https://github.com/morluto/rea/issues/13040)) ([3059921](https://github.com/morluto/rea/commit/3059921cc67d7d8506c59a6ca64f9bb399559044))
 * **rizin:** verify ownership when close readback is unavailable ([#13029](https://github.com/morluto/rea/issues/13029)) ([cd6d713](https://github.com/morluto/rea/commit/cd6d713e946da1d2c44f454aee7e3847b03d3c07))
 * **rust:** consolidate auditable revision and cycle checks ([76ae995](https://github.com/morluto/rea/commit/76ae995f2b71d01802c94ff5a2284dcc5ff2b57b))
+* **rust:** consolidate carrier and public Evidence coverage ([#13571](https://github.com/morluto/rea/issues/13571)) ([c70d1af](https://github.com/morluto/rea/commit/c70d1af4162deb4827b5db9f967fb12d18221186))
 * **rust:** consolidate carrier budgets and retained views ([#12872](https://github.com/morluto/rea/issues/12872)) ([75908cc](https://github.com/morluto/rea/commit/75908cc1fa8fd36c0da515cfb62c69db654410ab))
 * **rust:** consolidate dependency cycle and format revision checks ([#12868](https://github.com/morluto/rea/issues/12868)) ([76ae995](https://github.com/morluto/rea/commit/76ae995f2b71d01802c94ff5a2284dcc5ff2b57b))
 * **setup:** consolidate backup transaction coverage ([#13519](https://github.com/morluto/rea/issues/13519)) ([a9ae4aa](https://github.com/morluto/rea/commit/a9ae4aa0bc0d6ce0e57ed9f2fc20224ac8d33dec))
