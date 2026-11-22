@@ -193,7 +193,7 @@ export const inspectOciImageLayoutInputSchema = z.strictObject({
     .max(MAX_INSPECT_OCI_IMAGE_LAYOUT_DESCRIPTOR_BYTES)
     .default(67108864)
     .describe(
-      "Maximum UTF-8 bytes of index entry text (digests, media types, platforms and annotations) retained across all indexes plus the digest text findings retain for rejected index entries, subjects, configs and layers (default 64 MiB); exceeding the budget fails without partial success",
+      "Maximum UTF-8 bytes of descriptor text retained across the layout: index entry digests, media types, platforms and annotations, accepted subject, config and layer digests and media types counted once per referencing manifest or index, and the digest text findings retain for rejected descriptors (default 64 MiB); exceeding the budget fails without partial success",
     ),
   max_index_depth: z
     .number()

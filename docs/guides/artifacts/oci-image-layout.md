@@ -74,8 +74,10 @@ once, but every image carries its own config facts, so the config bytes behind
 each image spend `max_config_bytes` (64 MiB by default, 512 MiB maximum); a
 config shared by many manifests counts once per image. Index entries keep
 their digests, media types, platforms and annotations in the report across all
-indexes, and findings retain the digest text of rejected index entries,
-subjects, configs and layers; together that text spends `max_descriptor_bytes`
+indexes, accepted subjects, configs and layers keep their digests and media
+types once per manifest or index that references them, and findings retain the
+digest text of rejected index entries, subjects, configs and layers; together
+that text spends `max_descriptor_bytes`
 (64 MiB by default, 512 MiB maximum). Exceeding any of these
 budgets refuses the inspect and names the allowance. Nested indexes beyond
 `max_index_depth` become findings and are not walked further.

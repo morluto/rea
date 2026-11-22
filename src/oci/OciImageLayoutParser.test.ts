@@ -2174,7 +2174,7 @@ it("refuses index entry text that accumulates past max_descriptor_bytes", async 
       expect(cause.failure).toMatchObject({
         kind: "limit",
         detail:
-          "OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the 1024-byte budget.",
+          "OCI image layout retained descriptor text exceeds the 1024-byte budget.",
         limit: { name: "max_descriptor_bytes", maximum: 1024 },
       });
       return true;
@@ -2184,6 +2184,92 @@ it("refuses index entry text that accumulates past max_descriptor_bytes", async 
   }
   const report = await inspectLayout(root);
   expect(report.indexes).toHaveLength(4);
+});
+
+it("refuses accepted layer and config text that accumulates past max_descriptor_bytes", async () => {
+  const root = await createTestTempDirectory(
+    "rea-oci-accepted-descriptor-bytes-",
+  );
+  await writeOciImageLayoutFixture(root);
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+  const OCI_LAYER = "application/vnd.oci.image.layer.v1.tar";
+  const expectDescriptorBytesLimit = async () => {
+    const reader = new DirectoryArtifactReader(root);
+    try {
+      await expect(
+        parseOciImageLayout(
+          reader,
+          inspectOciImageLayoutInputSchema.parse({
+            path: root,
+            max_descriptor_bytes: 1024,
+          }),
+        ),
+      ).rejects.toSatisfy((cause: unknown) => {
+        expect(cause).toBeInstanceOf(ParseFailureError);
+        if (!(cause instanceof ParseFailureError)) return false;
+        expect(cause.failure).toMatchObject({
+          kind: "limit",
+          detail:
+            "OCI image layout retained descriptor text exceeds the 1024-byte budget.",
+          limit: { name: "max_descriptor_bytes", maximum: 1024 },
+        });
+        return true;
+      });
+    } finally {
+      await reader.close();
+    }
+  };
+  const writeManifests = async (bodies: string[]) => {
+    const manifests = [];
+    for (const body of bodies)
+      manifests.push({
+        mediaType: OCI_MANIFEST,
+        digest: await putOciBlob(root, body),
+        size: Buffer.byteLength(body),
+      });
+    await writeFile(
+      join(root, "index.json"),
+      `${JSON.stringify({ schemaVersion: 2, mediaType: OCI_INDEX, manifests })}\n`,
+    );
+  };
+  const emptyConfig = await putOciBlob(root, "{}");
+
+  // Accepted layer descriptors with long, distinct digests across manifests
+  // keep their text in image rows and findings, so they spend the budget.
+  const layerManifests = [];
+  for (let index = 0; index < 3; index += 1)
+    layerManifests.push(
+      JSON.stringify({
+        schemaVersion: 2,
+        mediaType: OCI_MANIFEST,
+        config: { ...OCI_EMPTY_CONFIG, digest: emptyConfig },
+        layers: [
+          {
+            mediaType: OCI_LAYER,
+            digest: `sha256:${String(index)}-${"l".repeat(400)}`,
+            size: 1,
+          },
+        ],
+      }),
+    );
+  await writeManifests(layerManifests);
+  await expectDescriptorBytesLimit();
+
+  // An accepted config descriptor with a long digest spends it too.
+  await writeManifests([
+    JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MANIFEST,
+      config: {
+        mediaType: "application/octet-stream",
+        digest: `sha256:${"c".repeat(1100)}`,
+        size: 2,
+      },
+      layers: [],
+    }),
+  ]);
+  await expectDescriptorBytesLimit();
 });
 
 it("refuses rejected descriptor text that accumulates past max_descriptor_bytes", async () => {
@@ -2210,7 +2296,7 @@ it("refuses rejected descriptor text that accumulates past max_descriptor_bytes"
         expect(cause.failure).toMatchObject({
           kind: "limit",
           detail:
-            "OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the 1024-byte budget.",
+            "OCI image layout retained descriptor text exceeds the 1024-byte budget.",
           limit: { name: "max_descriptor_bytes", maximum: 1024 },
         });
         return true;

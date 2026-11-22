@@ -1076,16 +1076,18 @@ const inventoryOciImageLayout = async (
       );
   };
 
-  // Index entries keep their text, annotations included, in the report, and
-  // rejected descriptors embed their untrusted digest in findings, so both
-  // spend max_descriptor_bytes before being retained.
+  // Index entries keep their text, annotations included, in the report;
+  // accepted subjects, configs and layers keep their digest and media type in
+  // image rows, the reference map, findings and blob rows; and rejected
+  // descriptors embed their untrusted digest in findings. All of that text
+  // spends max_descriptor_bytes before being retained.
   let descriptorBytesRetained = 0;
   const spendDescriptorBytes = (bytes: number): void => {
     descriptorBytesRetained += bytes;
     if (descriptorBytesRetained > input.max_descriptor_bytes)
       throw decodeLimit(
         OCI_IMAGE_LAYOUT_FORMAT,
-        `OCI image layout descriptor text retained from index entries and rejected descriptors exceeds the ${String(input.max_descriptor_bytes)}-byte budget.`,
+        `OCI image layout retained descriptor text exceeds the ${String(input.max_descriptor_bytes)}-byte budget.`,
         {
           name: "max_descriptor_bytes",
           maximum: input.max_descriptor_bytes,
@@ -1106,6 +1108,15 @@ const inventoryOciImageLayout = async (
         Buffer.byteLength(annotation.name) +
         Buffer.byteLength(annotation.value);
     spendDescriptorBytes(bytes);
+  };
+  const chargeAcceptedDescriptorText = (descriptor: {
+    digest: string;
+    media_type: string;
+  }): void => {
+    spendDescriptorBytes(
+      Buffer.byteLength(descriptor.digest) +
+        Buffer.byteLength(descriptor.media_type),
+    );
   };
   const chargeRejectedDescriptorText = (value: unknown): void => {
     const digest = rejectedDescriptorDigest(value);
@@ -1255,6 +1266,7 @@ const inventoryOciImageLayout = async (
       );
       return;
     }
+    chargeAcceptedDescriptorText(descriptor);
     reportDescriptorDefects(
       `${owner} ${ownerDigest} subject`,
       value,
@@ -1463,6 +1475,7 @@ const inventoryOciImageLayout = async (
         );
         continue;
       }
+      chargeAcceptedDescriptorText(descriptor);
       reportDescriptorDefects(
         `Manifest ${digest} layers[${String(position)}]`,
         item,
@@ -1493,6 +1506,7 @@ const inventoryOciImageLayout = async (
     }
     let configFacts = EMPTY_CONFIG_FACTS;
     if (configDescriptor !== undefined) {
+      chargeAcceptedDescriptorText(configDescriptor);
       reportDescriptorDefects(
         `Manifest ${digest} config`,
         document.value.config,
