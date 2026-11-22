@@ -21,7 +21,7 @@ import {
   readClientConfigurationFiles,
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
-import { supportedClientRegistrationProfile } from "../../../src/application/SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 const command = currentClientRegistrationCommand({
   platform: process.platform,

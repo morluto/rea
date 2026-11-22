@@ -1,3 +1,6 @@
+import type { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { MavenGradleMetadataService } from "../application/java/MavenGradleMetadataService.js";
+
 import type { NugetNupkgService } from "../application/nuget/NugetNupkgService.js";
 import type { DwarfUnitsService } from "../application/binaryDiagnostics/DwarfUnitsService.js";
 import type { ElfDependenciesService } from "../application/binaryDiagnostics/ElfDependenciesService.js";
@@ -699,6 +702,12 @@ const SERVICE_TOOL_BINDINGS = {
       "inspect_firmware_regions",
       "extract_firmware",
     ])) satisfies Bind<FirmwareAnalysisService>,
+  uefiAnalysis: ((service) =>
+    contractServiceBindings(service, [
+      "inspect_uefi_firmware",
+      "extract_uefi_firmware",
+      "inspect_uefi_nvram",
+    ])) satisfies Bind<UefiAnalysisService>,
   pcapAnalysis: ((service) => ({
     ...contractServiceBindings(service, ["inspect_pcap_client"]),
     inspect_pcap_capture: {
@@ -862,6 +871,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.recover(input, options),
     },
   })) satisfies Bind<JavaScriptRecoveryService>,
+  mavenGradleMetadata: ((service) => ({
+    inspect_maven_gradle_metadata: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<MavenGradleMetadataService>,
   dwarfUnits: ((service) => ({
     inspect_dwarf_units: {
       admission: "application",
@@ -2152,7 +2167,7 @@ const SERVICE_TOOL_BINDINGS = {
     guided_workflows: {
       admission: "application",
       value: async (input) =>
-        jsonValueResult(accessGuidedWorkflows(input, prompts)),
+        jsonValueResult(accessGuidedWorkflows(input, { contracts: prompts })),
     },
   })) satisfies Bind<readonly PromptContract[]>,
 } as const;

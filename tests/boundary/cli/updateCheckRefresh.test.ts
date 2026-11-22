@@ -15,7 +15,7 @@ const cacheFile = (root: string) =>
   `${root}/incur/updates/${encodeURIComponent(PRODUCT_IDENTITY.packageName)}.json`;
 
 cliTest(
-  "the detached update check records the registry's latest version in the update cache",
+  "the detached update check takes precedence over installation and records the latest version",
   async ({ cli }) => {
     const workspace = await createTestWorkspace("rea-update-check-");
     const requests: string[] = [];
@@ -29,11 +29,13 @@ cliTest(
     try {
       const { port } = registry.address() as AddressInfo;
       const result = await cli.run({
-        arguments: ["--incur-update-check"],
+        arguments: ["--incur-update-check", "--update"],
         freshProcess: true,
         environment: {
           ...workspace.environment,
           XDG_CACHE_HOME: workspace.path("cache"),
+          npm_config_cache: workspace.path("npm-cache"),
+          npm_config_prefix: workspace.path("npm-prefix"),
           npm_config_registry: `http://127.0.0.1:${port}/`,
         },
       });

@@ -1,3 +1,7 @@
+import { MavenGradleMetadataProvider } from "../../src/java/MavenGradleMetadataProvider.js";
+import { MavenGradleMetadataService } from "../../src/application/java/MavenGradleMetadataService.js";
+import { inspectMavenGradleMetadataInputSchema } from "../../src/domain/java/mavenGradleMetadata.js";
+import { mavenPomFixture } from "../../src/java/MavenGradleMetadata.fixture.js";
 import { unknownTarget } from "../../src/domain/targetIdentity.js";
 import { PeLoadConfigProvider } from "../../src/native/pe/PeLoadConfigProvider.js";
 import { createArtifactAnalysisResources } from "../../src/providers/artifactResourceFailure.js";
@@ -76,6 +80,7 @@ import {
 } from "../../src/domain/analysisErrorBase.js";
 import { createEvidence, parseEvidence } from "../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
+import { ParseFailureError } from "../../src/domain/parseFailure.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -147,7 +152,7 @@ import { inspectWindowsShortcutInputSchema } from "../../src/domain/native/windo
 import { inspectNativeExportsInputSchema } from "../../src/domain/native/nativeExports.js";
 import { inspectErlangBeamInputSchema } from "../../src/domain/erlang/beam.js";
 import { ModelArtifactProvider } from "../../src/model/ModelArtifactProvider.js";
-import { ggufFixture } from "../fixtures/model/model.js";
+import { ggufFixture, safetensorsFixture } from "../fixtures/model/model.js";
 import { inspectPeResourcesInputSchema } from "../../src/domain/native/peResources.js";
 import { peResourceFixture } from "../../src/domain/pe/peResources.fixture.js";
 import { createServer } from "../../src/server/createServer.js";
@@ -209,17 +214,27 @@ it("preserves opaque NuGet decoder failures and the completed file identity", as
   }
 });
 
-it.each(["close failure", "close cancellation"])(
-  "retains only the completed NuGet file snapshot through %s and cleanup retry",
-  async (outcome) => {
+it.each(
+  ["close failure", "close cancellation"].flatMap((outcome) =>
+    ["NuGet", "Maven/Gradle"].map((kind) => ({ outcome, kind })),
+  ),
+)(
+  "retains only the completed $kind file snapshot through $outcome and cleanup retry",
+  async ({ outcome, kind }) => {
     const path = await selectedImage();
-    const bytes = await nugetNupkgFixture();
+    const bytes =
+      kind === "NuGet"
+        ? await nugetNupkgFixture()
+        : Buffer.from(mavenPomFixture);
     await writeFile(path, bytes);
     const controller = new AbortController();
-    const reason = { source: "NuGet file finalization" };
+    const reason = { source: `${kind} file finalization` };
     if (outcome === "close cancellation")
       fault.onClose = () => controller.abort(reason);
-    const service = new NugetNupkgService(new NugetNupkgProvider());
+    const service =
+      kind === "NuGet"
+        ? new NugetNupkgService(new NugetNupkgProvider())
+        : new MavenGradleMetadataService(new MavenGradleMetadataProvider());
     try {
       const result = await service.inspect(
         { path },
@@ -683,6 +698,92 @@ it("preserves a model permission failure when cancellation arrives during close"
   }
 });
 
+it("keeps the model parser cause through failed close and retry", async () => {
+  const path = await selectedImage();
+  const fixture = (depth: number) => {
+    const nested = "[".repeat(depth) + "0" + "]".repeat(depth);
+    return safetensorsFixture(
+      `{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4],"note":${nested}}}`,
+      Buffer.alloc(4),
+    ).bytes;
+  };
+  const provider = new ModelArtifactProvider();
+  try {
+    fault.blockNew = false;
+    await writeFile(path, fixture(1));
+    const valid = await provider.inspect({ path, hash: "header" });
+    expect(valid).toMatchObject({
+      ok: true,
+      value: { tensors: [{ name: "weight" }] },
+    });
+
+    fault.blockNew = true;
+    await writeFile(path, fixture(33));
+    const result = await provider.inspect({ path, hash: "header" });
+    if (result.ok) throw new Error("Expected a model depth refusal");
+    const { error } = result;
+    const maximum = { maximum_json_depth: 32 };
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { reported_limits: maximum },
+    });
+    expect(error.cleanupPrimary?.cause).toBeInstanceOf(ParseFailureError);
+    expect(error.cleanupPrimary?.cause).toMatchObject({
+      failure: {
+        format: "model",
+        kind: "limit",
+        limit: { name: "json-nesting", maximum: 32 },
+      },
+    });
+    const retained = fault.handles.at(-1);
+    expect(retained?.fd).toBeGreaterThanOrEqual(0);
+    fault.blocked.clear();
+    await provider.close();
+    expect(retained?.fd).toBe(-1);
+    expect(projectAnalysisError(error)).toMatchObject({
+      code: "resource_constraint",
+      details: { reported_limits: maximum },
+    });
+    expect(resolvedAnalysisError(error).cause).toBe(
+      error.cleanupPrimary?.cause,
+    );
+  } finally {
+    fault.blocked.clear();
+    await provider.close();
+  }
+});
+
+it.each(["model", "foreign-fixture"])(
+  "projects only a model-owned parser limit with its enforced maximum (%s)",
+  async (format) => {
+    const path = await selectedImage();
+    const injected = new ParseFailureError({
+      format,
+      kind: "limit",
+      detail: "fixture-owned parser limit",
+      limit: { name: "json-nesting", maximum: 17 },
+    });
+    fault.blockNew = false;
+    fault.laterReadFailure = { position: 0, cause: injected };
+    const provider = new ModelArtifactProvider();
+    try {
+      const result = await provider.inspect({ path, hash: "header" });
+      if (result.ok) throw new Error("Expected a read refusal");
+      expect(result.error.cause).toBe(injected);
+      const projected = projectAnalysisError(result.error);
+      if (format === "model")
+        expect(projected).toMatchObject({
+          code: "resource_constraint",
+          details: { reported_limits: { maximum_json_depth: 17 } },
+          remediation: { action: expect.stringContaining("17 levels") },
+        });
+      else expect(projected.code).toBe("execution_failure");
+    } finally {
+      await provider.close();
+    }
+  },
+);
+
 it("retains earlier GGUF rows and physical failure while retrying failed descriptor cleanup", async () => {
   const path = await selectedImage();
   const seed = ggufFixture();
@@ -1123,6 +1224,7 @@ const stableArtifactProviders = [
   ["native exports", () => new NativeExportsProvider()],
   ["Python pyc", () => new PythonPycProvider()],
   ["NuGet nupkg", () => new NugetNupkgProvider()],
+  ["Maven/Gradle metadata", () => new MavenGradleMetadataProvider()],
 ] as const;
 
 const fileFailureProviders = [
@@ -1136,6 +1238,11 @@ const inspectFileFailure = (
   signal?: AbortSignal,
 ) => {
   const options = signal === undefined ? undefined : { signal };
+  if (provider instanceof MavenGradleMetadataProvider)
+    return provider.inspect(
+      inspectMavenGradleMetadataInputSchema.parse({ path }),
+      options,
+    );
   if (provider instanceof NugetNupkgProvider)
     return provider.inspect(
       inspectNugetNupkgInputSchema.parse({ path }),
@@ -1272,7 +1379,8 @@ it.each(
           provider instanceof KernelBuildConfigProvider ||
           provider instanceof PeCertificatesProvider ||
           provider instanceof PeResourcesProvider ||
-          provider instanceof NugetNupkgProvider
+          provider instanceof NugetNupkgProvider ||
+          provider instanceof MavenGradleMetadataProvider
             ? "ArtifactOperationError"
             : "ProviderAdapterError"),
       );

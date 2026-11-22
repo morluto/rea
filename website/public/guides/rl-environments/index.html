@@ -8,7 +8,28 @@
       name="description"
       content="Turn a recorded web app session into a runnable environment for training and testing AI agents."
     />
+    <!-- website:theme:start -->
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let theme;
+        try {
+          theme = localStorage.getItem("rea-theme");
+        } catch {}
+        if (theme !== "light" && theme !== "dark")
+          theme = matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#1e1e2e" : "#ffffff";
+      })();
+    </script>
+    <script defer src="../../assets/theme.js"></script>
+    <!-- website:theme:end -->
+    <link rel="stylesheet" href="../../assets/styles.css" />
     <!-- website:sharing:start -->
+    <meta name="robots" content="max-image-preview:large" />
     <!-- prettier-ignore -->
     <link rel="canonical" href="https://rea.tools/guides/rl-environments/" />
     <!-- website:languages:start -->
@@ -65,9 +86,8 @@
     <!-- prettier-ignore -->
     <link rel="alternate" hreflang="x-default" href="https://rea.tools/guides/rl-environments/" />
     <!-- website:languages:end -->
-    <!-- prettier-ignore -->
     <meta property="og:type" content="website" />
-    <!-- prettier-ignore -->
+    <link rel="apple-touch-icon" href="../../assets/rea-icon.png" />
     <meta property="og:site_name" content="REA" />
     <!-- prettier-ignore -->
     <meta property="og:title" content="Build RL environments with REA" />
@@ -76,7 +96,7 @@
     <!-- prettier-ignore -->
     <meta property="og:url" content="https://rea.tools/guides/rl-environments/" />
     <!-- prettier-ignore -->
-    <meta property="og:image" content="https://rea.tools/assets/social-card.png" />
+    <meta property="og:image" content="https://rea.tools/assets/share/environments.png" />
     <!-- prettier-ignore -->
     <meta property="og:image:type" content="image/png" />
     <!-- prettier-ignore -->
@@ -86,29 +106,23 @@
     <!-- prettier-ignore -->
     <meta
       property="og:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="Build RL environments with REA"
     />
-    <!-- prettier-ignore -->
+    <link rel="icon" sizes="192x192" href="../../assets/rea-icon.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <!-- prettier-ignore -->
     <meta name="twitter:title" content="Build RL environments with REA" />
     <!-- prettier-ignore -->
     <meta name="twitter:description" content="Turn a recorded web app session into a runnable environment for training and testing AI agents." />
     <!-- prettier-ignore -->
-    <meta name="twitter:image" content="https://rea.tools/assets/social-card.png" />
+    <meta name="twitter:image" content="https://rea.tools/assets/share/environments.png" />
     <!-- prettier-ignore -->
     <meta
       name="twitter:image:alt"
-      content="REA: Find out how software works. Reverse engineering with your coding agent."
+      content="Build RL environments with REA"
     />
     <!-- website:sharing:end -->
-    <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
-    <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
-    <script src="../../assets/theme.js"></script>
-    <!-- website:theme:end -->
-    <link rel="icon" href="../../assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="../../assets/styles.css" />
+    <link rel="icon" href="../../assets/favicon.svg?v=2" type="image/svg+xml" />
     <script src="../../assets/main.js" defer></script>
   </head>
   <body id="top">
@@ -227,6 +241,7 @@
             <li><a href="#run">Run the environment</a></li>
             <li><a href="#tasks">Add tasks and rewards</a></li>
             <li><a href="#check">Check what works</a></li>
+            <li><a href="#desktop">Build a desktop app environment</a></li>
           </ul>
         </nav>
         <article class="article">
@@ -487,6 +502,26 @@
                 >environment reference</a
               >
               covers direct MCP serving, state controls, and limits.
+            </p>
+          </section>
+          <section class="article-section" id="desktop">
+            <h2>Build a desktop app environment</h2>
+            <p>
+              For a Linux desktop app, describe the task you want an agent to
+              practice. For example, ask it to build a Gnote environment where
+              the agent adds olive oil to a shopping list. The agent installs
+              the app on a local build computer, writes the task, exports the
+              environment, and checks it on a fresh computer using screenshots,
+              the mouse, and the keyboard.
+            </p>
+            <p>
+              The build host needs Linux on amd64 or arm64, Docker, and the
+              pinned AgentEnv version. Follow the
+              <a
+                href="https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md#set-up-a-build-host"
+                >desktop build setup guide</a
+              >
+              for installation and readiness checks.
             </p>
           </section>
         </article>

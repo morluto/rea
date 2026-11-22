@@ -67,6 +67,7 @@ public final class ReaGhidraMipsSoftFloat extends GhidraScript {
               FloatDataType.dataType, IntegerDataType.dataType, DoubleDataType.dataType,
               FloatDataType.dataType, DoubleDataType.dataType
             },
+            false,
             false),
         "soft-float prototype self-check");
     int functions = 0;

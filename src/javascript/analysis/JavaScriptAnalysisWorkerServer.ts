@@ -95,10 +95,13 @@ export const serveJavaScriptAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("JavaScript worker request is not valid UTF-8");
         throw new RangeError(
           "JavaScript worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = javaScriptWorkerRequestSchema.parse(raw);
       // Function scope releases source AST/IR/results before accepting another job.
@@ -182,6 +185,14 @@ const analyzeJob = async (
             sha256: sha256Hex(text),
           });
           const next = await requests.next();
+          if (
+            !next.done &&
+            !next.value.ok &&
+            next.value.error._tag === "ControlLineMalformedUtf8"
+          )
+            throw new TypeError(
+              "JavaScript worker admission frame is not valid UTF-8",
+            );
           if (next.done || !next.value.ok)
             throw new TypeError(
               "JavaScript worker admission frame is missing or oversized",

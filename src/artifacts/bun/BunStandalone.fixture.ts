@@ -121,45 +121,20 @@ export const bunPrefixedPayload = (payload: Buffer): Buffer => {
   return Buffer.concat([prefix, payload]);
 };
 
-export const machoBunSection = (section: Buffer): Buffer => {
-  const headerBytes = 32;
-  const commandBytes = 72 + 80;
-  const contentOffset = headerBytes + commandBytes;
-  const bytes = Buffer.alloc(contentOffset + section.length);
-  bytes.writeUInt32LE(0xfeedfacf, 0);
-  bytes.writeUInt32LE(0x0100000c, 4);
-  bytes.writeUInt32LE(2, 12);
-  bytes.writeUInt32LE(1, 16);
-  bytes.writeUInt32LE(commandBytes, 20);
-  bytes.writeUInt32LE(0x19, 32);
-  bytes.writeUInt32LE(commandBytes, 36);
-  bytes.write("__BUN", 40, "utf8");
-  bytes.writeBigUInt64LE(BigInt(section.length), 64);
-  bytes.writeBigUInt64LE(BigInt(contentOffset), 72);
-  bytes.writeBigUInt64LE(BigInt(section.length), 80);
-  bytes.writeUInt32LE(1, 96);
-  bytes.write("__bun", 104, "utf8");
-  bytes.write("__BUN", 120, "utf8");
-  bytes.writeBigUInt64LE(BigInt(section.length), 144);
-  bytes.writeUInt32LE(contentOffset, 152);
-  section.copy(bytes, contentOffset);
-  return bytes;
-};
+export const machoBunSection = (section: Buffer): Buffer =>
+  machoBunSections([section]);
 
 /** Two real `__bun` sections. Inventory must not guess which graph to read. */
 export const machoBunSections = (sections: readonly Buffer[]): Buffer => {
   const headerBytes = 32;
   const sectionCount = sections.length;
   const commandBytes = 72 + 80 * sectionCount;
-  let contentOffset = headerBytes + commandBytes;
-  const contents: Buffer[] = [];
-  const offsets: number[] = [];
-  for (const section of sections) {
-    offsets.push(contentOffset);
-    contents.push(section);
-    contentOffset += section.length;
-  }
-  const bytes = Buffer.alloc(contentOffset);
+  const payloadAt = headerBytes + commandBytes;
+  const payloadSize = sections.reduce(
+    (sum, section) => sum + section.length,
+    0,
+  );
+  const bytes = Buffer.alloc(payloadAt + payloadSize);
   bytes.writeUInt32LE(0xfeedfacf, 0);
   bytes.writeUInt32LE(0x0100000c, 4);
   bytes.writeUInt32LE(2, 12);
@@ -168,15 +143,20 @@ export const machoBunSections = (sections: readonly Buffer[]): Buffer => {
   bytes.writeUInt32LE(0x19, 32);
   bytes.writeUInt32LE(commandBytes, 36);
   bytes.write("__BUN", 40, "utf8");
+  bytes.writeBigUInt64LE(BigInt(payloadSize), 64);
+  bytes.writeBigUInt64LE(BigInt(payloadAt), 72);
+  bytes.writeBigUInt64LE(BigInt(payloadSize), 80);
   bytes.writeUInt32LE(sectionCount, 96);
+  let offset = payloadAt;
   sections.forEach((section, index) => {
     const sectionHeader = 32 + 72 + index * 80;
-    const offset = offsets[index] ?? 0;
     bytes.write("__bun", sectionHeader, "utf8");
     bytes.write("__BUN", sectionHeader + 16, "utf8");
+    bytes.writeBigUInt64LE(BigInt(offset - payloadAt), sectionHeader + 32);
     bytes.writeBigUInt64LE(BigInt(section.length), sectionHeader + 40);
     bytes.writeUInt32LE(offset, sectionHeader + 48);
     section.copy(bytes, offset);
+    offset += section.length;
   });
   return bytes;
 };
@@ -237,11 +217,12 @@ export const elfBunSection = (section: Buffer, nameOffset = 11): Buffer => {
   bytes.writeUInt16LE(1, 62);
   shstr.copy(bytes, shstrOffset);
   section.copy(bytes, sectionOffset);
-  writeElfSection(bytes, tableOffset + 64, 1, shstrOffset, shstr.length);
+  writeElfSection(bytes, tableOffset + 64, 1, 3, shstrOffset, shstr.length);
   writeElfSection(
     bytes,
     tableOffset + 128,
     nameOffset,
+    1,
     sectionOffset,
     section.length,
   );
@@ -252,10 +233,12 @@ const writeElfSection = (
   bytes: Buffer,
   header: number,
   name: number,
+  type: number,
   offset: number,
   size: number,
 ): void => {
   bytes.writeUInt32LE(name, header);
+  bytes.writeUInt32LE(type, header + 4);
   bytes.writeBigUInt64LE(BigInt(offset), header + 24);
   bytes.writeBigUInt64LE(BigInt(size), header + 32);
 };

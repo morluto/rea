@@ -4,9 +4,9 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
 
-const busy = (tool: string): JsonValue => ({
+const busy = (tool?: string): JsonValue => ({
   status: "busy",
-  busy_tool: tool,
+  ...(tool === undefined ? {} : { busy_tool: tool }),
   busy_sec: 0,
   queued_calls: 0,
 });
@@ -112,8 +112,11 @@ it("clamps the last pause to the remaining budget and stops without another read
   });
 });
 
-it("does not read again when the only pause consumes the whole budget", async () => {
-  const { connection, reads } = scripted([busy("config_json_get")]);
+it.each([
+  ["omitted", undefined],
+  ["over-length", "x".repeat(200)],
+])("reports an %s busy tool as unknown", async (_label, tool) => {
+  const { connection, reads } = scripted([busy(tool)]);
   const { clock } = virtualClock();
 
   const failure = await readSettledHealth(connection, {
@@ -121,13 +124,11 @@ it("does not read again when the only pause consumes the whole budget", async ()
     timeoutMs: 100,
     clock,
   }).catch((cause: unknown) => cause);
-
-  expect(reads.length, "the single read before the pause is the only one").toBe(
-    1,
-  );
-  expect(failure, "the last busy payload ends the wait").toMatchObject({
-    _tag: "AnalysisTimeoutError",
-  });
+  if (!(failure instanceof AnalysisTimeoutError)) throw failure;
+  expect(failure.diagnostics).toMatchObject({ busy_tool: "unknown" });
+  expect(failure.userMessage).toContain("busy tool was unknown");
+  if (tool !== undefined) expect(failure.userMessage).not.toContain(tool);
+  expect(reads).toHaveLength(1);
 });
 
 it("reports the busy tool of the last observation", async () => {

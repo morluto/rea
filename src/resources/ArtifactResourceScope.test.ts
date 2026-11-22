@@ -24,28 +24,24 @@ import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 it("waits for admitted operations and shares concurrent close", async () => {
   const scope = new ArtifactResourceScope();
   const admitted = phaseGate();
+  const order: string[] = [];
   const operation = scope.run(async () => {
     await admitted.hold();
+    order.push("operation finished");
+  });
+  scope.addCloseHook(async () => {
+    order.push("scope closed");
   });
   try {
     await admitted.reached(operation, "scope admission");
-    const close = scope.close();
-    expect(scope.close()).toBe(close);
+    const close = Promise.all([scope.close(), scope.close()]);
     await expect(scope.run(async () => undefined)).rejects.toMatchObject({
       reason: "unavailable",
       message: expect.stringContaining("closed"),
     });
-    let closed = false;
-    void close.then(() => {
-      closed = true;
-    });
-    await Promise.resolve();
-    expect(closed).toBe(false);
-
     admitted.release();
-    await operation;
-    await close;
-    expect(closed).toBe(true);
+    await Promise.all([operation, close]);
+    expect(order).toEqual(["operation finished", "scope closed"]);
   } finally {
     admitted.release();
     try {
@@ -108,37 +104,6 @@ it("stops a close hook even when retained cleanup is still failing", async () =>
   expect(hookRuns).toBe(2);
 });
 
-it("runs later close hooks when an earlier hook fails", async () => {
-  const scope = new ArtifactResourceScope();
-  const order: string[] = [];
-  scope.addCloseHook(async () => {
-    order.push("first");
-    throw new Error("first hook failed");
-  });
-  scope.addCloseHook(async () => {
-    order.push("second");
-    throw new Error("second hook failed");
-  });
-
-  const failure = await scope.close().then(
-    () => {
-      throw new Error("close succeeded while hooks failed");
-    },
-    (cause: unknown) => cause,
-  );
-  expect(order).toEqual(["first", "second"]);
-  expect(failure).toBeInstanceOf(AggregateError);
-  expect(
-    (failure as AggregateError).errors.map((error) =>
-      error instanceof Error ? error.message : String(error),
-    ),
-  ).toEqual(["first hook failed", "second hook failed"]);
-
-  order.length = 0;
-  await expect(scope.close()).rejects.toBeInstanceOf(AggregateError);
-  expect(order).toEqual(["first", "second"]);
-});
-
 it("rejects a close hook's undefined reason and retries through the same scope", async () => {
   const scope = new ArtifactResourceScope();
   let denied = true;
@@ -189,7 +154,7 @@ it.each([
   }
 });
 
-it("preserves undefined alongside other close hook failures", async () => {
+it("runs and retries all close hooks in order, preserving their exact failures", async () => {
   const scope = new ArtifactResourceScope();
   const failure = new Error("third hook failed");
   const reasons = [undefined, null, failure];
@@ -202,16 +167,15 @@ it("preserves undefined alongside other close hook failures", async () => {
     });
 
   try {
-    const outcome = await scope.close().then(
-      () => ok(undefined),
-      (error: unknown) => err(error),
-    );
-    expect(outcome.ok).toBe(false);
-    if (outcome.ok || !(outcome.error instanceof AggregateError))
+    const failure = await scope.close().catch((cause: unknown) => cause);
+    if (!(failure instanceof AggregateError))
       throw new Error("Expected all hook failures");
-    expect(outcome.error.errors).toEqual(reasons);
-    expect(outcome.error.errors[2]).toBe(failure);
-    expect(attempted).toEqual(reasons);
+    expect(failure.errors).toStrictEqual(reasons);
+    expect(failure.errors[2]).toBe(reasons[2]);
+    expect(attempted).toStrictEqual(reasons);
+
+    await expect(scope.close()).rejects.toMatchObject({ errors: reasons });
+    expect(attempted).toStrictEqual([...reasons, ...reasons]);
   } finally {
     denied = false;
     await scope.close();

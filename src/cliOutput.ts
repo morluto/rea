@@ -9,7 +9,7 @@ import { formatCliOutput } from "./cli/cliOutputFormatter.js";
 import {
   parseOutputFilter,
   type OutputFilterPath,
-  type UnclosedOutputFilterSlice,
+  type OutputFilterError,
 } from "./cli/outputFilter.js";
 import type { Result } from "./domain/result.js";
 
@@ -104,14 +104,14 @@ interface CliOutputControls {
   readonly filterOutput: string | undefined;
   /** `--filter-output` parsed once; a parse failure fails validation. */
   readonly filterPaths:
-    | Result<readonly OutputFilterPath[], UnclosedOutputFilterSlice>
+    | Result<readonly OutputFilterPath[], OutputFilterError>
     | undefined;
   readonly columns: readonly string[] | undefined;
   readonly format: CliOutputFormat;
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
-  /** First valued output flag that Incur skips because it has no value. */
+  /** First valued output flag with an absent or empty value. */
   readonly missingValue: string | undefined;
   readonly invalidValue: string | undefined;
   readonly tokenCount: boolean;
@@ -142,8 +142,9 @@ export const readCliOutputArguments = (
 ): ParsedCliOutputArguments => {
   const tokens = global.arguments;
   const values = new Set(global.outputValues.map(({ index }) => index));
+  const timing = new Set(global.timingIndices);
+  const rootVersion = global.flags.has("--version");
   let format: CliOutputFormat = "toon";
-  let rootVersion = false;
   let versionEligible = true;
   let formatExplicit = false;
   let filterOutput: string | undefined;
@@ -156,17 +157,13 @@ export const readCliOutputArguments = (
   let tokenOffset: number | undefined;
   for (let index = 0; index < tokens.length; index += 1) {
     const argument = tokens[index]!;
-    // A value is read with the flag that consumed it.
-    if (values.has(index)) continue;
+    // The global split has already consumed output values and timing flags.
+    if (values.has(index) || timing.has(index)) continue;
     // Only these flags can accompany a formatted root version request.
-    if (argument === "--version") {
-      const next = tokens[index + 1];
-      if (next === undefined || next.startsWith("-")) rootVersion = true;
-      else versionEligible = false;
-    } else if (
+    if (
+      argument !== "--version" &&
       argument !== "--json" &&
-      argument !== "--format" &&
-      argument !== "--timings"
+      argument !== "--format"
     )
       versionEligible = false;
     if (argument === "--json") {
@@ -178,7 +175,7 @@ export const readCliOutputArguments = (
     if (argument === "--token-count") tokenCount = true;
     if (!VALUED_OUTPUT_FLAGS.has(argument)) continue;
     const value = values.has(index + 1) ? tokens[index + 1]! : undefined;
-    if (value === undefined) {
+    if (value === undefined || value === "") {
       missingValue ??= argument;
       continue;
     }
@@ -282,7 +279,9 @@ const validateCliOutputControls = (
       format: format === "yaml" || format === "jsonl" ? format : "json",
       code: "INVALID_OUTPUT_FILTER",
       message:
-        "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output.",
+        filterPaths.error.kind === "unclosed_slice"
+          ? "The --filter-output expression has a slice without a closing ]. Close the slice or remove --filter-output."
+          : "The --filter-output expression has a slice with more than two bounds. Use [start,end].",
     };
   const delimited = format === "csv" || format === "tsv";
   // Name missing delimited controls before their combination checks; preserve
@@ -375,7 +374,8 @@ export interface CliPreExecutionError {
   readonly format: StructuredOutputFormat;
   readonly code:
     | Exclude<CliOutputArgumentValidation, { readonly ok: true }>["code"]
-    | "AMP_PROJECT_SCOPE_UNSUPPORTED";
+    | "AMP_PROJECT_SCOPE_UNSUPPORTED"
+    | "CONFIGURATION_INVALID";
   readonly message: string;
 }
 

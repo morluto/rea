@@ -8,6 +8,7 @@ import { detectHexRecordEncoding } from "./firmware/hexRecords.js";
 import { hasUf2Block } from "./firmware/uf2.js";
 import { hasGodotPckHeader } from "./godotPckFormat.js";
 import { nesContainerFormat, parseInesLayout } from "./inesContainer.js";
+import { recognizeAndroidOtaPayload } from "./firmware/androidOtaPayload.js";
 import { hasUImageMagic } from "./uimageFormat.js";
 import { hasUnityFsHeader } from "./unityfsFormat.js";
 import { hasMftFileRecordHeader } from "./windows/ntfsMft.js";
@@ -24,6 +25,7 @@ export type RecognizedArtifactFormat = Extract<
   | "wxapkg"
   | "uimage"
   | "android-boot-image"
+  | "android-ota-payload"
   | "intel-hex"
   | "srec"
   | "uf2"
@@ -94,7 +96,7 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
       const layout = parseInesLayout(prefix, fileSize);
       return layout.ok
         ? { state: "recognized", format: "ines" }
-        : { state: "refused", format: "ines", reason: layout.error };
+        : { state: "refused", format: "ines", reason: layout.error.detail };
     },
     when("zip", hasZipSignature),
     when("godot-pck", hasGodotPckHeader),
@@ -105,6 +107,17 @@ export const ARTIFACT_FORMAT_RECOGNIZERS: readonly ArtifactFormatRecognizer[] =
     ),
     when("uimage", hasUImageMagic),
     when("android-boot-image", hasAndroidBootImageMagic),
+    ({ prefix }) => {
+      const ota = recognizeAndroidOtaPayload(prefix);
+      if (ota === undefined) return undefined;
+      return ota.state === "recognized"
+        ? { state: "recognized", format: "android-ota-payload" }
+        : {
+            state: "refused",
+            format: "android-ota-payload",
+            reason: ota.reason,
+          };
+    },
     ({ prefix }) => {
       const format = detectHexRecordEncoding(prefix);
       return format === undefined ? undefined : { state: "recognized", format };

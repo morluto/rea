@@ -21,6 +21,7 @@ import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
 import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
+import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./hopperPaths/MacHopperPaths.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./resources/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
@@ -316,7 +317,6 @@ test.each([true, false])(
       () => selected.mockRestore(),
     ]);
   },
-  5_000,
 );
 
 test("joins display finalization before preserving a late cancellation", async () => {
@@ -585,6 +585,60 @@ test("probes the selected client's registration environment instead of the termi
     await host.close?.();
   }
 });
+
+test.each(["native", "legacy user alias"] as const)(
+  "reports %s project provider settings without admitting them for probes",
+  async (layout) => {
+    const home = await createTestTempDirectory("rea-doctor-project-settings-");
+    const project = join(home, "project");
+    const direct = join(project, "opencode.json");
+    await mkdir(project);
+    const launcher = {
+      type: "local",
+      command: [process.execPath, CURRENT_ENTRYPOINT_PATH, "mcp"],
+    };
+    const setting = {
+      REA_KUNA_COMMAND: join(project, "unavailable-provider"),
+    };
+    if (layout === "legacy user alias") {
+      await writeFile(direct, JSON.stringify({ mcp: { rea: launcher } }));
+      await writeFile(
+        join(home, "opencode.json"),
+        JSON.stringify({ mcp: { rea: { ...launcher, environment: setting } } }),
+      );
+    } else {
+      await writeFile(
+        direct,
+        JSON.stringify({
+          mcp: { servers: { rea: { ...launcher, environment: setting } } },
+        }),
+      );
+    }
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue(project);
+    const host = createSystemDoctorHost({
+      HOME: home,
+      USERPROFILE: home,
+      ...(layout === "legacy user alias" ? { OPENCODE_CONFIG: direct } : {}),
+    });
+    try {
+      const inspections = await host.providerInspections?.(["opencode"]);
+      expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+        configured: null,
+        available: null,
+        registrationEnvironment: {},
+        checks: [
+          expect.objectContaining({
+            classification: "unknown",
+            code: "project_provider_settings_unapproved",
+          }),
+        ],
+      });
+    } finally {
+      cwd.mockRestore();
+      await host.close?.();
+    }
+  },
+);
 
 test("keeps reading this terminal when no client is selected", async () => {
   const home = await createTestTempDirectory("rea-opencode-doctor-ambient-");
@@ -893,43 +947,69 @@ test("retries a retained registration-file close after a failed retry", async ()
   }
 });
 
-test("does not use terminal readiness when a selected registration is malformed", async () => {
-  const home = await createTestTempDirectory(
-    "rea-doctor-malformed-registration-",
-  );
+test("scopes local provider readiness independently of manual registration status", async () => {
+  const home = await createTestTempDirectory("rea-doctor-registration-scope-");
+  const hopper = join(home, "hopper");
+  await writeFile(hopper, "#!/bin/sh\nexit 0\n", { mode: 0o700 });
+  await mkdir(join(home, ".grokbot"));
   await mkdir(join(home, ".config/opencode"), { recursive: true });
   await writeFile(join(home, ".config/opencode/opencode.json"), "not JSON");
-  const host = createSystemDoctorHost({
-    HOME: home,
-    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  const doctorHost = () =>
+    createSystemDoctorHost(
+      {
+        HOME: home,
+        HOPPER_LAUNCHER_PATH: hopper,
+        GHIDRA_INSTALL_DIR: "/opt/ghidra",
+      },
+      undefined,
+      { platform: "darwin", architecture: "arm64" },
+    );
+  const terminal = await runDoctorOwned(undefined, doctorHost());
+  const manual = await runDoctorOwned(undefined, doctorHost(), {
+    clients: ["grok_bot"],
   });
-  try {
-    const inspections = await host.providerInspections?.(["opencode"]);
-    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
-      configured: null,
-      available: null,
-      checks: [expect.objectContaining({ classification: "unknown" })],
-    });
-    const report = await runDoctor(undefined, host, {
-      clients: ["opencode"],
-      providers: ["ghidra"],
-    });
-    expect(report.scope_checks).toContainEqual(
-      expect.objectContaining({
-        name: "ghidra",
-        ok: false,
-        classification: "unknown",
-      }),
-    );
-    expect(report.scope_checks).not.toContainEqual(
-      expect.objectContaining({
-        name: "provider:ghidra",
-        classification: "missing_analysis_engine",
-      }),
-    );
-  } finally {
-    await host.close?.();
-  }
+  expect(terminal.hopperPath).toBe(hopper);
+  expect(manual.hopperPath).toBe(hopper);
+  expect(manual.scope_checks).toContainEqual(
+    expect.objectContaining({
+      name: "registration:grok_bot",
+      ok: false,
+      remediation: expect.stringContaining("hosted computer"),
+    }),
+  );
+
+  const malformed = await runDoctorOwned(undefined, doctorHost(), {
+    clients: ["opencode"],
+    providers: ["ghidra"],
+  });
+  expect(malformed.hopperPath).toBeUndefined();
+  expect(malformed.checks).toContainEqual(
+    expect.objectContaining({
+      name: "hopper",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+  expect(
+    malformed.providerInspections?.find(({ id }) => id === "ghidra"),
+  ).toMatchObject({
+    configured: null,
+    available: null,
+    checks: [expect.objectContaining({ classification: "unknown" })],
+  });
+  expect(malformed.scope_checks).toContainEqual(
+    expect.objectContaining({
+      name: "ghidra",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+  expect(malformed.scope_checks).not.toContainEqual(
+    expect.objectContaining({
+      name: "provider:ghidra",
+      classification: "missing_analysis_engine",
+    }),
+  );
 });
 
 test("keeps a known provider configuration when only its Java setting is unresolved", async () => {
@@ -967,6 +1047,124 @@ test("keeps a known provider configuration when only its Java setting is unresol
     await host.close?.();
   }
 });
+
+test.each([
+  {
+    kind: "discovery needs HOME",
+    homeUnknown: true,
+    available: "fallback",
+    classification: "unknown",
+  },
+  {
+    kind: "discovery needs USERPROFILE",
+    homeUnknown: false,
+    available: "fallback",
+    classification: "unknown",
+  },
+  {
+    kind: "literal HOME wins over unknown USERPROFILE",
+    homeUnknown: false,
+    available: "literal",
+    classification: "healthy",
+  },
+  {
+    kind: "system launcher wins before HOME is needed",
+    homeUnknown: true,
+    available: "system",
+    classification: "healthy",
+  },
+  {
+    kind: "explicit launcher bypasses HOME discovery",
+    homeUnknown: true,
+    available: "explicit",
+    classification: "healthy",
+  },
+])(
+  "keeps Hopper selection exact when $kind",
+  async ({ homeUnknown, available, classification }) => {
+    const home = await createTestTempDirectory("rea-dsh-hopper-home-");
+    const explicit = join(home, "explicit-hopper");
+    const literalHome = join(home, "client-home");
+    const fallbackHome = join(home, "fallback-home");
+    const userLauncher = (account: string) =>
+      join(
+        account,
+        "Applications",
+        "Hopper Disassembler.app",
+        "Contents",
+        "MacOS",
+        "hopper",
+      );
+    const found =
+      available === "system"
+        ? MAC_HOPPER_SYSTEM_LAUNCHER
+        : available === "explicit"
+          ? explicit
+          : userLauncher(available === "literal" ? literalHome : fallbackHome);
+    await mkdir(join(home, ".dsh"));
+    await writeFile(
+      join(home, ".dsh", "cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        `          XDG_CONFIG_HOME: ${JSON.stringify(join(home, "config"))}`,
+        ...(homeUnknown
+          ? [
+              "          HOME: !!js caller.home",
+              `          USERPROFILE: ${JSON.stringify(fallbackHome)}`,
+            ]
+          : [
+              `          HOME: ${JSON.stringify(available === "literal" ? literalHome : "")}`,
+              "          USERPROFILE: !!js caller.profile",
+            ]),
+        ...(available === "explicit"
+          ? [`          HOPPER_LAUNCHER_PATH: ${JSON.stringify(explicit)}`]
+          : []),
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost(
+      { HOME: home, USERPROFILE: fallbackHome },
+      undefined,
+      { platform: "darwin", architecture: "arm64" },
+    );
+    const report = await runDoctor(
+      undefined,
+      {
+        ...host,
+        async forProviderDiagnostics(clients) {
+          const selected = await host.forProviderDiagnostics!(clients);
+          return {
+            ...selected,
+            host: {
+              ...selected.host,
+              executable: async (path) => path === found,
+              manualHopperPaths: async () => [],
+              brewHopperPath: async () => undefined,
+            },
+          };
+        },
+      },
+      { clients: ["dsh"], providers: ["hopper"] },
+    );
+    expect(report.checks.find(({ name }) => name === "hopper")).toMatchObject({
+      classification,
+      detail:
+        classification === "healthy"
+          ? found
+          : expect.stringContaining(homeUnknown ? "HOME" : "USERPROFILE"),
+    });
+    expect(report.hopperPath).toBe(
+      classification === "healthy" ? found : undefined,
+    );
+  },
+);
 
 test("keeps a Qwen PATH expression unresolved for provider readiness", async () => {
   const home = await createTestTempDirectory("rea-qwen-doctor-path-");
@@ -1041,6 +1239,69 @@ it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS", "USERPROFILE"] as const)(
         available: null,
         checks: [expect.objectContaining({ classification: "unknown" })],
       });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
+it.each([
+  { platform: "linux", absoluteCache: true, available: true },
+  { platform: "linux", absoluteCache: false, available: null },
+  { platform: "darwin", absoluteCache: true, available: null },
+] as const)(
+  "checks the selected Kuna cache on $platform with absolute cache=$absoluteCache",
+  async ({ platform, absoluteCache, available }) => {
+    const home = await createTestTempDirectory("rea-dsh-kuna-cache-");
+    const command = join(home, "kuna");
+    const cache = join(home, "cache");
+    await writeFile(command, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", {
+      mode: 0o700,
+    });
+    await mkdir(join(home, ".dsh"));
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        "          HOME: !!js caller.home",
+        `          XDG_CONFIG_HOME: ${JSON.stringify(join(home, "config"))}`,
+        `          XDG_CACHE_HOME: ${JSON.stringify(absoluteCache ? cache : "relative")}`,
+        `          REA_KUNA_COMMAND: ${JSON.stringify(command)}`,
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({ HOME: home }, undefined, {
+      platform,
+      architecture: "x64",
+    });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      const inspection = inspections?.find(({ id }) => id === "kuna");
+      expect(inspection).toMatchObject({ configured: true, available });
+      if (available)
+        expect(inspection?.checks).toContainEqual(
+          expect.objectContaining({
+            name: "cache",
+            ok: true,
+            details: expect.objectContaining({
+              cache_root: join(cache, "rea", "kuna"),
+            }),
+          }),
+        );
+      else
+        expect(inspection?.checks).toContainEqual(
+          expect.objectContaining({
+            classification: "unknown",
+            detail: expect.stringContaining("HOME"),
+          }),
+        );
     } finally {
       await host.close?.();
     }

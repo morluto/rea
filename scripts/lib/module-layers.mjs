@@ -4,13 +4,9 @@
  * layer. An undeclared unit fails the check, so a new directory must choose
  * its layer when it is added.
  *
- * The order follows docs/architecture/architecture.mermaid: the dependency-free
- * kernel helpers that every layer may use, domain and
- * contracts at the centre, the process/filesystem foundation, the ports
- * that providers implement and application consumes, the shared provider
- * core (src/providers), provider adapters,
- * shared application workflows, production composition, then the CLI and
- * MCP entry points.
+ * The order starts with dependency-free kernel helpers that every layer may
+ * use, then the domain, contracts, process/filesystem foundation, and ports.
+ * Providers implement the ports and application workflows consume them.
  */
 export const LAYER_ORDER = Object.freeze([
   "kernel",
@@ -77,6 +73,7 @@ export const UNIT_LAYERS = Object.freeze(
       "il2cpp",
       "inspector",
       "javascript",
+      "java",
       "jeb",
       "kuna",
       "model",
@@ -90,6 +87,7 @@ export const UNIT_LAYERS = Object.freeze(
       "rust",
       "signals",
       "sqlite",
+      "uefi",
       "v8",
       "wasm",
     ]),
@@ -278,11 +276,18 @@ export const ENTRY_FILES = Object.freeze(
         "DesktopBuildDoctorFacts.ts",
         "DesktopCaptureProvider.ts",
         "DesktopSessionRequests.ts",
+        // Build-computer composition (`capabilityServices`) wires `readHostFile` into `DesktopBuildComputers`.
+        "HostFileRead.ts",
       ],
       dotnet: ["ManagedStaticProvider.ts", "ManagedStaticProviderMetadata.ts"],
       electron: ["ElectronFuseProvider.ts", "ElectronFuseProviderIdentity.ts"],
       erlang: ["BeamProvider.ts", "ErlangBeamProviderIdentity.ts"],
       evm: ["EvmoleInterfaceProvider.ts", "EvmoleProviderIdentity.ts"],
+      uefi: [
+        "UefiAnalysisProvider.ts",
+        "UefiProviderIdentity.ts",
+        "UefiFormatProbe.ts",
+      ],
       firmware: [
         "FirmwareCommand.ts",
         "FirmwareProvider.ts",
@@ -317,6 +322,10 @@ export const ENTRY_FILES = Object.freeze(
         "Il2cppMetadataProvider.ts",
       ],
       inspector: ["V8InspectorProvider.ts", "providerIdentity.ts"],
+      java: [
+        "MavenGradleMetadataProvider.ts",
+        "MavenGradleMetadataProviderIdentity.ts",
+      ],
       javascript: [
         "analysis/JavaScriptAnalysisTransfer.ts",
         "analysis/JavaScriptAnalysisWorkerServer.ts",
@@ -412,6 +421,13 @@ const isEntryFile = (unit, target) =>
  * still is. Keep the list short and say why.
  */
 export const PROVIDER_DEPENDENCIES = Object.freeze([
+  Object.freeze({
+    from: "artifacts",
+    to: "uefi",
+    files: Object.freeze(["UefiArtifactReader.ts", "UefiFormatProbe.ts"]),
+    reason:
+      "artifact inventory uses the UEFI provider's format admission and FV/FFS reader",
+  }),
   Object.freeze({
     from: "inspector",
     to: "browser",

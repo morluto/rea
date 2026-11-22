@@ -12,6 +12,13 @@ hash is the artifact SHA-256. `metadata.tools` names the provider recorded in
 the parent Evidence, the reader that observed these facts, so the document
 depends only on its parent and not on the REA build that projects it.
 
+The Go and Rust readers record `artifact.file_name` using the source host's
+filesystem path rules. A later projection uses that recorded name, including
+literal backslashes in a POSIX file name and mixed separators in a Windows
+path. Older Evidence without this field remains readable: the component name
+keeps the full recorded artifact path, and `rea:unknown` explains that its file
+name is unknown. The path and SHA-256 identity are preserved in both cases.
+
 That hash covers the whole file, and the inventory of a universal Mach-O covers
 one slice of it. For a slice, `metadata.component.properties` names the selection
 with `rea:macho:architecture`, `rea:macho:container`, `rea:macho:offset`,
@@ -31,7 +38,10 @@ Components use Package URLs:
   the path cannot name one. A local path, such as `./dep` or an absolute path,
   has no module identity. Neither does a malformed path, such as one with an
   empty, `.` or `..` segment. Such a component has no Package URL, its
-  `bom-ref` is `go-module:<index>`, and the path stays unknown.
+  `bom-ref` is `go-module:<index>`, and the path stays unknown. A Go module
+  with a single-segment name, such as `standalone`, keeps its recorded module
+  name, version, and graph edges. It also uses a local `bom-ref` because the
+  [Go Package URL type requires a namespace](https://github.com/package-url/purl-spec/blob/5e4dd947d9f535616124f1f870ef9c04f5846227/types/golang-definition.json).
 - Rust crates from crates.io use `pkg:cargo/<name>@<version>`. A slash in a
   crate name is encoded. `pkg:cargo` resolves to crates.io, so a `local`, `git`
   or other source has no Package URL. Its `bom-ref` is `rust-package:<index>`,

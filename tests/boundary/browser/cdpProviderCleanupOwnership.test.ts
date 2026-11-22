@@ -10,16 +10,7 @@ import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.j
 import { inspectElectronPageInputSchema } from "../../../src/domain/javascript/electronObservation.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-
-const retryProviderCleanup = async (
-  provider: CdpElectronProvider,
-): Promise<void> => {
-  const close = Reflect.get(provider, "close") as
-    | (() => Promise<void>)
-    | undefined;
-  expect(close).toBeTypeOf("function");
-  await close?.call(provider);
-};
+import { waitFor } from "../../support/testWait.js";
 
 it.each([
   ["keeps a completed inspection", false],
@@ -47,11 +38,11 @@ it.each([
     });
     const provider = new CdpElectronProvider();
     onTestFinished(async () => {
-      const closeProvider = Reflect.get(provider, "close") as
-        | (() => Promise<void>)
-        | undefined;
-      if (closeProvider !== undefined) await closeProvider.call(provider);
-      await browser.close();
+      try {
+        await provider.close();
+      } finally {
+        await browser.close();
+      }
     });
 
     const close = vi
@@ -62,43 +53,33 @@ it.each([
     const terminate = vi
       .spyOn(WebSocket.prototype, "terminate")
       .mockImplementation(() => undefined);
-    let result:
-      | Awaited<ReturnType<CdpElectronProvider["inspectPage"]>>
-      | undefined;
-    try {
-      result = await provider.inspectPage(
+    const result = await provider
+      .inspectPage(
         inspectElectronPageInputSchema.parse({
           cdp_endpoint: browser.endpoint,
           target_id: "electron-page",
           observation_ms: 0,
         }),
-      );
-    } catch {
-      // The assertion below requires the provider to report cleanup as typed data.
-    } finally {
-      close.mockRestore();
-      terminate.mockRestore();
-    }
+      )
+      .finally(() => {
+        close.mockRestore();
+        terminate.mockRestore();
+      });
 
-    expect(result).toBeDefined();
+    if (result.ok) throw new Error("Expected cleanup failure");
     if (failCapture) {
-      expect(result).toMatchObject({
-        ok: false,
-        error: {
-          _tag: "ProviderAdapterError",
-          cleanupIncomplete: true,
-          diagnostics: {
-            primary_error: { code: "unreadable_output" },
-            cleanup_error: expect.any(Object),
-          },
+      expect(result.error).toMatchObject({
+        _tag: "ProviderAdapterError",
+        cleanupIncomplete: true,
+        diagnostics: {
+          primary_error: { code: "unreadable_output" },
+          cleanup_error: expect.any(Object),
         },
       });
       expect(browser.commands.map(({ method }) => method)).toContain(
         "Page.getFrameTree",
       );
     } else {
-      expect(result).toMatchObject({ ok: false });
-      if (!result || result.ok) throw new Error("Expected cleanup failure");
       expect(result.error).toBeInstanceOf(ProviderCleanupError);
       expect(result.error).toMatchObject({
         cleanupIncomplete: true,
@@ -114,7 +95,9 @@ it.each([
       });
     }
 
-    await retryProviderCleanup(provider);
+    expect(browser.activeConnectionCount()).toBe(1);
+    await provider.close();
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     const methods = browser.commands.map(({ method }) => method);
     expect(methods).not.toContain("Target.closeTarget");
     expect(methods).not.toContain("Browser.close");

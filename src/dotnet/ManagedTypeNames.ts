@@ -56,7 +56,6 @@ export const typeNameLookup = (
       bytes,
       layout,
       cursor.readIndex(layout.blobIndexSize),
-      layout.blob?.size ?? 0,
     );
     const owner = {
       form: "type",

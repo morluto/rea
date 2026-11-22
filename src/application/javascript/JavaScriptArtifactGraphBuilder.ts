@@ -92,7 +92,16 @@ function* buildJavaScriptArtifactGraphInputSteps(
   void,
   { readonly graph: unknown; readonly electronSummary: ElectronBoundarySummary }
 > {
-  const accumulator = new JavaScriptArtifactGraphAccumulator();
+  const loaderConditions = new Map<
+    string,
+    { sha256: string; condition: string }
+  >();
+  for (const { file, javascript } of analysis.files) {
+    const condition = javascript?.loaderCondition;
+    if (condition !== undefined)
+      loaderConditions.set(file.path, { sha256: file.sha256, condition });
+  }
+  const accumulator = new JavaScriptArtifactGraphAccumulator(loaderConditions);
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
     analysis.packages
@@ -180,6 +189,8 @@ function* buildJavaScriptArtifactGraphInputSteps(
         unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
       hasDirectory: (path, container) =>
         fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+      filePathsBelow: (path) =>
+        fileSet.unanalyzed_files?.filePathsBelow?.(path),
     },
     fileNodes: new Map(),
     assetNodes: new Map(),

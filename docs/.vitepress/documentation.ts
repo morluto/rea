@@ -9,6 +9,11 @@ export const documentationSections = [
         route: "/installation",
       },
       {
+        text: "Supported targets and requirements",
+        source: "reference/supported-targets.md",
+        route: "/supported-targets",
+      },
+      {
         text: "Client configuration and troubleshooting",
         source: "getting-started/client-configuration.md",
         route: "/client-configuration",
@@ -26,6 +31,61 @@ export const documentationSections = [
     ],
   },
   {
+    text: "Desktop applications",
+    items: [
+      {
+        text: "Desktop installation directories",
+        source: "desktop-applications.md",
+        route: "/desktop-applications",
+      },
+      {
+        text: "Desktop application capture",
+        source: "desktop-application-capture.md",
+        route: "/desktop-application-capture",
+      },
+      {
+        text: "Desktop application state",
+        source: "desktop-application-state.md",
+        route: "/desktop-application-state",
+      },
+      {
+        text: "Desktop application tasks",
+        source: "desktop-application-tasks.md",
+        route: "/desktop-application-tasks",
+      },
+      {
+        text: "Desktop application export",
+        source: "desktop-application-export.md",
+        route: "/desktop-application-export",
+      },
+      {
+        text: "Desktop build computer",
+        source: "desktop-build-computer.md",
+        route: "/desktop-build-computer",
+      },
+      {
+        text: "Desktop build witness",
+        source: "desktop-build-witness.md",
+        route: "/desktop-build-witness",
+      },
+    ],
+  },
+  {
+    text: "Agent environments",
+    items: [
+      {
+        text: "Build RL environments with REA",
+        source: "agent-environments-quickstart.md",
+        route: "/agent-environments-quickstart",
+      },
+      {
+        text: "Agent environments from recorded captures",
+        source: "agent-environments.md",
+        route: "/agent-environments",
+      },
+    ],
+  },
+  {
     text: "Native binaries",
     items: [
       {
@@ -37,6 +97,11 @@ export const documentationSections = [
         text: "Go binary build metadata",
         source: "guides/native/go-binaries.md",
         route: "/go-binaries",
+      },
+      {
+        text: "DWARF compile units",
+        source: "guides/native/dwarf-units.md",
+        route: "/dwarf-units",
       },
       {
         text: "Offline binary diagnostics",
@@ -74,9 +139,59 @@ export const documentationSections = [
         route: "/windows-shortcut",
       },
       {
+        text: "Acquired NTFS metadata",
         source: "guides/native/ntfs-metadata.md",
         route: "/ntfs-metadata",
-        text: "Acquired NTFS metadata",
+      },
+      {
+        text: "Binary hardening",
+        source: "binary-hardening.md",
+        route: "/binary-hardening",
+      },
+      {
+        text: "ELF note tables",
+        source: "elf-notes.md",
+        route: "/elf-notes",
+      },
+      {
+        text: "ELF dependency tables",
+        source: "elf-dependencies.md",
+        route: "/elf-dependencies",
+      },
+      {
+        text: "Linux kernel modules",
+        source: "kernel-modules.md",
+        route: "/kernel-modules",
+      },
+      {
+        text: "PE Authenticode certificate tables",
+        source: "pe-certificates.md",
+        route: "/pe-certificates",
+      },
+      {
+        text: "PE import and delay-load tables",
+        source: "pe-imports.md",
+        route: "/pe-imports",
+      },
+      {
+        text: "PE TLS callbacks and load configuration",
+        source: "pe-load-config.md",
+        route: "/pe-load-config",
+      },
+      {
+        text: "Match native functions across builds",
+        source: "native-function-matching.md",
+        route: "/native-function-matching",
+      },
+      {
+        text: "Rust binary dependency metadata",
+        source: "rust-binaries.md",
+        route: "/rust-binaries",
+      },
+      {
+        text: "Static CUDA and HIP code objects",
+        source: "gpu-code-objects.md",
+        route: "/gpu-code-objects",
       },
     ],
   },
@@ -123,6 +238,31 @@ export const documentationSections = [
         source: "guides/javascript/v8-code-cache.md",
         route: "/v8-code-cache",
       },
+      {
+        text: "Electron fuse state",
+        source: "electron-fuses.md",
+        route: "/electron-fuses",
+      },
+      {
+        text: "Static JavaScript route inventory",
+        source: "javascript-route-inventory.md",
+        route: "/javascript-route-inventory",
+      },
+      {
+        text: "Bun standalone executables",
+        source: "bun-standalone.md",
+        route: "/bun-standalone",
+      },
+      {
+        text: "Deno compile executables",
+        source: "deno-standalone.md",
+        route: "/deno-standalone",
+      },
+      {
+        text: "Node.js single executable applications",
+        source: "node-sea.md",
+        route: "/node-sea",
+      },
     ],
   },
   {
@@ -168,6 +308,11 @@ export const documentationSections = [
         source: "guides/web/website-script-export.md",
         route: "/website-script-export",
       },
+      {
+        text: "Offline Playwright traces",
+        source: "playwright-traces.md",
+        route: "/playwright-traces",
+      },
     ],
   },
   {
@@ -193,6 +338,16 @@ export const documentationSections = [
         source: "guides/android/flutter-analysis.md",
         route: "/flutter-analysis",
       },
+      {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
+      },
+      {
+        text: "APK signature schemes",
+        source: "apk-signature.md",
+        route: "/apk-signature",
+      },
     ],
   },
   {
@@ -202,6 +357,11 @@ export const documentationSections = [
         text: "Apple Application Inventory Projection",
         source: "guides/apple/apple-application-analysis.md",
         route: "/apple-application-analysis",
+      },
+      {
+        text: "Apple IPS crash reports",
+        source: "apple-ips.md",
+        route: "/apple-ips",
       },
     ],
   },
@@ -218,6 +378,16 @@ export const documentationSections = [
         source: "guides/managed/nuget-nupkg.md",
         route: "/nuget-nupkg",
       },
+      {
+        text: ".NET single-file bundles",
+        source: "dotnet-bundles.md",
+        route: "/dotnet-bundles",
+      },
+      {
+        text: "IL2CPP metadata",
+        source: "il2cpp-metadata.md",
+        route: "/il2cpp-metadata",
+      },
     ],
   },
   {
@@ -228,6 +398,46 @@ export const documentationSections = [
         source: "guides/firmware/firmware-analysis.md",
         route: "/firmware-analysis",
       },
+      {
+        text: "Android OTA update payloads",
+        source: "guides/firmware/android-ota-payload.md",
+        route: "/android-ota-payload",
+      },
+      {
+        text: "Flattened devicetree inspection",
+        source: "devicetree.md",
+        route: "/devicetree",
+      },
+      {
+        text: "ESP flash images",
+        source: "esp-flash-image.md",
+        route: "/esp-flash-image",
+      },
+      {
+        text: "ESP images",
+        source: "esp-image.md",
+        route: "/esp-image",
+      },
+      {
+        text: "U-Boot FIT images",
+        source: "fit-images.md",
+        route: "/fit-images",
+      },
+      {
+        text: "Intel HEX and S-record images",
+        source: "hex-records.md",
+        route: "/hex-records",
+      },
+      {
+        text: "UF2 and DfuSe images",
+        source: "uf2-dfuse.md",
+        route: "/uf2-dfuse",
+      },
+      {
+        text: "U-Boot legacy uImage containers",
+        source: "uimage.md",
+        route: "/uimage",
+      },
     ],
   },
   {
@@ -237,6 +447,71 @@ export const documentationSections = [
         text: "Static HarmonyOS package inventory",
         source: "guides/harmony/harmony-analysis.md",
         route: "/harmony-analysis",
+      },
+    ],
+  },
+  {
+    text: "Packages and metadata",
+    items: [
+      {
+        text: "Offline API contract inventory",
+        source: "api-contracts.md",
+        route: "/api-contracts",
+      },
+      {
+        text: "CycloneDX dependencies",
+        source: "guides/native/cyclonedx-view.md",
+        route: "/cyclonedx-view",
+      },
+      {
+        text: "Maven POM and Gradle module metadata",
+        source: "maven-gradle-metadata.md",
+        route: "/maven-gradle-metadata",
+      },
+      {
+        text: "Release exposure",
+        source: "release-exposure.md",
+        route: "/release-exposure",
+      },
+      {
+        text: "Model file declarations",
+        source: "model-artifacts.md",
+        route: "/model-artifacts",
+      },
+      {
+        text: "Python packaged applications",
+        source: "python-packaged-applications.md",
+        route: "/python-packaged-applications",
+      },
+      {
+        text: "CPython pyc inspection",
+        source: "python-pyc.md",
+        route: "/python-pyc",
+      },
+      {
+        text: "Erlang BEAM files",
+        source: "erlang-beam.md",
+        route: "/erlang-beam",
+      },
+      {
+        text: "Godot PCK archives",
+        source: "godot-pck.md",
+        route: "/godot-pck",
+      },
+      {
+        text: "UnityFS AssetBundle archives",
+        source: "unityfs.md",
+        route: "/unityfs",
+      },
+      {
+        text: "iNES containers",
+        source: "ines-containers.md",
+        route: "/ines-containers",
+      },
+      {
+        text: "WeChat mini-program wxapkg archives",
+        source: "wxapkg.md",
+        route: "/wxapkg",
       },
     ],
   },
@@ -348,6 +623,26 @@ export const documentationSections = [
         source: "providers/jeb-analysis.md",
         route: "/jeb-analysis",
       },
+      {
+        text: "GameCube DOL analysis through Ghidra",
+        source: "ghidra-dol.md",
+        route: "/ghidra-dol",
+      },
+      {
+        text: "PowerPC ELF analysis through Ghidra",
+        source: "ghidra-ppc.md",
+        route: "/ghidra-ppc",
+      },
+      {
+        text: "Kuna provider",
+        source: "kuna-provider.md",
+        route: "/kuna-provider",
+      },
+      {
+        text: "Reverse-engineering tool integrations",
+        source: "reverse-engineering-tools.md",
+        route: "/reverse-engineering-tools",
+      },
     ],
   },
   {
@@ -363,19 +658,29 @@ export const documentationSections = [
         source: "reference/reconstruction-obligation-ledgers.md",
         route: "/reconstruction-obligation-ledgers",
       },
+      {
+        text: "Reconstruction coverage",
+        source: "reconstruction-coverage.md",
+        route: "/reconstruction-coverage",
+      },
     ],
   },
   {
     text: "Development and verification",
     items: [
       {
+        text: "Documentation ownership and authoring",
+        source: "development/documentation.md",
+        route: "/development/documentation",
+      },
+      {
         text: "Settings and recovery",
-        source: "design/limits-and-recovery.md",
+        source: "reference/limits-and-recovery.md",
         route: "/design/limits-and-recovery",
       },
       {
         text: "REA limit inventory",
-        source: "design/rea-limit-inventory.md",
+        source: "reference/rea-limit-inventory.md",
         route: "/design/rea-limit-inventory",
       },
       {
@@ -404,9 +709,19 @@ export const documentationSections = [
         route: "/releasing",
       },
       {
-        text: "REA roadmap",
-        source: "development/roadmap.md",
-        route: "/roadmap",
+        text: "Testing lanes and provider verification",
+        source: "testing-lanes.md",
+        route: "/testing-lanes",
+      },
+      {
+        text: "Measure MCP catalog costs in Codex",
+        source: "mcp-catalog-evaluation.md",
+        route: "/mcp-catalog-evaluation",
+      },
+      {
+        text: "Static analysis in GitHub Actions",
+        source: "ci-analysis.md",
+        route: "/ci-analysis",
       },
     ],
   },
@@ -427,293 +742,6 @@ export const documentationSections = [
         text: "Recorded signal inspection",
         source: "guides/signals/signal-recordings.md",
         route: "/signal-recordings",
-      },
-    ],
-  },
-  {
-    text: "Additional guides",
-    items: [
-      {
-        text: "Offline API contract inventory",
-        source: "api-contracts.md",
-        route: "/api-contracts",
-      },
-      {
-        text: "Bun standalone executables",
-        source: "bun-standalone.md",
-        route: "/bun-standalone",
-      },
-      {
-        text: "Deno compile executables",
-        source: "deno-standalone.md",
-        route: "/deno-standalone",
-      },
-      {
-        text: "Capability composition and ownership",
-        source: "capability-composition.md",
-        route: "/capability-composition",
-      },
-      {
-        text: ".NET single-file bundles",
-        source: "dotnet-bundles.md",
-        route: "/dotnet-bundles",
-      },
-      {
-        text: "ESP flash images",
-        source: "esp-flash-image.md",
-        route: "/esp-flash-image",
-      },
-      {
-        text: "U-Boot FIT images",
-        source: "fit-images.md",
-        route: "/fit-images",
-      },
-      {
-        text: "Measure MCP catalog costs in Codex",
-        source: "mcp-catalog-evaluation.md",
-        route: "/mcp-catalog-evaluation",
-      },
-      {
-        text: "Offline Playwright traces",
-        source: "playwright-traces.md",
-        route: "/playwright-traces",
-      },
-      {
-        text: "Testing lanes and provider verification",
-        source: "testing-lanes.md",
-        route: "/testing-lanes",
-      },
-      {
-        text: "UF2 and DfuSe images",
-        source: "uf2-dfuse.md",
-        route: "/uf2-dfuse",
-      },
-      {
-        text: "WeChat mini-program wxapkg archives",
-        source: "wxapkg.md",
-        route: "/wxapkg",
-      },
-      {
-        text: "Binary hardening",
-        source: "binary-hardening.md",
-        route: "/binary-hardening",
-      },
-      {
-        text: "Desktop application capture",
-        source: "desktop-application-capture.md",
-        route: "/desktop-application-capture",
-      },
-      {
-        text: "Desktop application export",
-        source: "desktop-application-export.md",
-        route: "/desktop-application-export",
-      },
-      {
-        text: "Desktop application state",
-        source: "desktop-application-state.md",
-        route: "/desktop-application-state",
-      },
-      {
-        text: "Desktop application tasks",
-        source: "desktop-application-tasks.md",
-        route: "/desktop-application-tasks",
-      },
-      {
-        text: "Desktop build computer",
-        source: "desktop-build-computer.md",
-        route: "/desktop-build-computer",
-      },
-      {
-        text: "Desktop build witness",
-        source: "desktop-build-witness.md",
-        route: "/desktop-build-witness",
-      },
-      {
-        text: "iNES containers",
-        source: "ines-containers.md",
-        route: "/ines-containers",
-      },
-      {
-        text: "Build RL environments with REA",
-        source: "agent-environments-quickstart.md",
-        route: "/agent-environments-quickstart",
-      },
-      {
-        text: "Agent environments from recorded captures",
-        source: "agent-environments.md",
-        route: "/agent-environments",
-      },
-      {
-        text: "Android boot and vendor_boot images",
-        source: "android-boot-image.md",
-        route: "/android-boot-image",
-      },
-      {
-        text: "APK signature schemes",
-        source: "apk-signature.md",
-        route: "/apk-signature",
-      },
-      {
-        text: "Apple IPS crash reports",
-        source: "apple-ips.md",
-        route: "/apple-ips",
-      },
-      {
-        text: "Static analysis in GitHub Actions",
-        source: "ci-analysis.md",
-        route: "/ci-analysis",
-      },
-      {
-        text: "Desktop installation directories",
-        source: "desktop-applications.md",
-        route: "/desktop-applications",
-      },
-      {
-        text: "Flattened devicetree inspection",
-        source: "devicetree.md",
-        route: "/devicetree",
-      },
-      {
-        text: "DWARF compile units",
-        source: "guides/native/dwarf-units.md",
-        route: "/dwarf-units",
-      },
-      {
-        text: "Electron fuse state",
-        source: "electron-fuses.md",
-        route: "/electron-fuses",
-      },
-      { text: "ELF note tables", source: "elf-notes.md", route: "/elf-notes" },
-      {
-        text: "ELF dependency tables",
-        source: "elf-dependencies.md",
-        route: "/elf-dependencies",
-      },
-      {
-        text: "Erlang BEAM files",
-        source: "erlang-beam.md",
-        route: "/erlang-beam",
-      },
-      { text: "ESP images", source: "esp-image.md", route: "/esp-image" },
-      {
-        text: "GameCube DOL analysis through Ghidra",
-        source: "ghidra-dol.md",
-        route: "/ghidra-dol",
-      },
-      {
-        text: "PowerPC ELF analysis through Ghidra",
-        source: "ghidra-ppc.md",
-        route: "/ghidra-ppc",
-      },
-      {
-        text: "Godot PCK archives",
-        source: "godot-pck.md",
-        route: "/godot-pck",
-      },
-      {
-        text: "Static CUDA and HIP code objects",
-        source: "gpu-code-objects.md",
-        route: "/gpu-code-objects",
-      },
-      {
-        text: "Intel HEX and S-record images",
-        source: "hex-records.md",
-        route: "/hex-records",
-      },
-      {
-        text: "IL2CPP metadata",
-        source: "il2cpp-metadata.md",
-        route: "/il2cpp-metadata",
-      },
-      {
-        text: "Static JavaScript route inventory",
-        source: "javascript-route-inventory.md",
-        route: "/javascript-route-inventory",
-      },
-      {
-        text: "Linux kernel modules",
-        source: "kernel-modules.md",
-        route: "/kernel-modules",
-      },
-      {
-        text: "Kuna provider",
-        source: "kuna-provider.md",
-        route: "/kuna-provider",
-      },
-      {
-        text: "Model file declarations",
-        source: "model-artifacts.md",
-        route: "/model-artifacts",
-      },
-      {
-        text: "Match native functions across builds",
-        source: "native-function-matching.md",
-        route: "/native-function-matching",
-      },
-      {
-        text: "Node.js single executable applications",
-        source: "node-sea.md",
-        route: "/node-sea",
-      },
-      {
-        text: "PE Authenticode certificate tables",
-        source: "pe-certificates.md",
-        route: "/pe-certificates",
-      },
-      {
-        text: "PE import and delay-load tables",
-        source: "pe-imports.md",
-        route: "/pe-imports",
-      },
-      {
-        text: "PE TLS callbacks and load configuration",
-        source: "pe-load-config.md",
-        route: "/pe-load-config",
-      },
-      {
-        text: "Python packaged applications",
-        source: "python-packaged-applications.md",
-        route: "/python-packaged-applications",
-      },
-      {
-        text: "CPython pyc inspection",
-        source: "python-pyc.md",
-        route: "/python-pyc",
-      },
-      {
-        text: "Reconstruction coverage",
-        source: "reconstruction-coverage.md",
-        route: "/reconstruction-coverage",
-      },
-      {
-        text: "Release exposure",
-        source: "release-exposure.md",
-        route: "/release-exposure",
-      },
-      {
-        text: "Reverse-engineering tool integrations",
-        source: "reverse-engineering-tools.md",
-        route: "/reverse-engineering-tools",
-      },
-      {
-        text: "Rust binary dependency metadata",
-        source: "rust-binaries.md",
-        route: "/rust-binaries",
-      },
-      {
-        text: "CycloneDX dependencies",
-        source: "guides/native/cyclonedx-view.md",
-        route: "/cyclonedx-view",
-      },
-      {
-        text: "U-Boot legacy uImage containers",
-        source: "uimage.md",
-        route: "/uimage",
-      },
-      {
-        text: "UnityFS AssetBundle archives",
-        source: "unityfs.md",
-        route: "/unityfs",
       },
     ],
   },

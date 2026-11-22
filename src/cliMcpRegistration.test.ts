@@ -17,7 +17,7 @@ const require = createRequire(import.meta.url);
 const CHILD_PROGRAM = `
   import { homedir } from 'node:os';
   import { join, relative, isAbsolute, delimiter } from 'node:path';
-  import { mkdir, writeFile, readFile, readdir, realpath, stat } from 'node:fs/promises';
+  import { mkdir, writeFile, readFile, readdir, realpath, stat, symlink } from 'node:fs/promises';
   const ambient = process.env.HOME;
   if (!ambient || await realpath(ambient) !== await realpath(homedir())) throw Error('Actual temporary HOME was not selected before importing writers.');
   const root = process.env.REA_REGISTRATION_FIXTURE_ROOT;
@@ -76,6 +76,18 @@ const CHILD_PROGRAM = `
   let result;
   try {
     const defaultsEnvironment = await environmentFor('defaults');
+    if (process.platform !== 'win32') {
+      const runtimeDirectory = join(defaultsEnvironment.HOME, 'runtime');
+      const runtimeAlias = join(defaultsEnvironment.HOME, 'runtime-alias');
+      const outsideBin = join(defaultsEnvironment.HOME, 'outside-bin');
+      const sessionBin = join(runtimeDirectory, 'bin');
+      await mkdir(sessionBin, { recursive: true });
+      await symlink(process.execPath, join(sessionBin, 'node'));
+      await symlink(runtimeDirectory, runtimeAlias, 'dir');
+      await symlink(sessionBin, outsideBin, 'dir');
+      defaultsEnvironment.PATH = outsideBin + delimiter + defaultsEnvironment.PATH;
+      defaultsEnvironment.XDG_RUNTIME_DIR = runtimeAlias;
+    }
     const schema = await serve(defaultsEnvironment, ['mcp','add','--schema','--json']);
     const all = await invoke(defaultsEnvironment, [], undefined);
     const native = [];

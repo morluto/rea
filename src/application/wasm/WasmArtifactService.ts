@@ -102,12 +102,7 @@ export class WasmArtifactService {
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const admission = requireAuthenticationHeadroom(
-      analysisExecutionEnvelopeForAdmission(
-        OPERATION,
-        input.value,
-        execution,
-        "observed",
-      ),
+      analysisExecutionEnvelopeForAdmission(OPERATION, input.value, execution),
       {
         operation: OPERATION,
         path: input.value.path,

@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -46,6 +47,7 @@ const ACCEPTED: readonly (readonly [string, string])[] = [
   ["a zero offset written negatively", "2026-10-09T04:00:00-00:00"],
   ["omitted seconds", "2026-10-09T04:00Z"],
   ["fractional seconds", "2026-10-09T04:00:00.123Z"],
+  ["long fractional UTC seconds", "2026-10-09T04:00:00.1234567890123456789Z"],
   [
     "long fractional seconds with an offset",
     "2026-10-09T04:00:00.123456+05:30",
@@ -64,6 +66,8 @@ const REJECTED: readonly (readonly [string, string])[] = [
   ["an hour above twenty-three", "2026-10-09T24:00:00Z"],
   ["an offset hour above twenty-three", "2026-10-09T04:00:00+24:00"],
   ["a missing offset", "2026-10-09T04:00:00"],
+  ["omitted seconds and offset", "2026-10-09T04:00"],
+  ["a fraction without seconds", "2026-10-09T04:00.5Z"],
   ["a lowercase offset designator", "2026-10-09T04:00:00z"],
   ["a repeated offset designator", "2026-10-09T04:00:00ZZ"],
   ["a basic-format timestamp", "20261009T040000Z"],
@@ -85,10 +89,15 @@ describe("offset datetime schema", () => {
 });
 
 describe("UTC datetime schema", () => {
+  const validateAdvertised = new Ajv2020().compile(
+    z.toJSONSchema(utcDateTimeSchema, { target: "draft-2020-12" }),
+  );
+
   it.each(ACCEPTED.filter(([, value]) => value.endsWith("Z")))(
     "preserves %s without rewriting the source value",
     (_label, value) => {
       expect(utcDateTimeSchema.parse(value)).toBe(value);
+      expect(validateAdvertised(value)).toBe(true);
     },
   );
 
@@ -101,6 +110,7 @@ describe("UTC datetime schema", () => {
     ] as const,
   ])("rejects %s", (_label, value) => {
     expect(utcDateTimeSchema.safeParse(value).success).toBe(false);
+    expect(validateAdvertised(value)).toBe(false);
   });
 });
 
