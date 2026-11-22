@@ -10,6 +10,7 @@ import {
   AnalysisInputError,
   AnalysisOutputError,
 } from "../../domain/analysisErrorCore.js";
+import { parseEvidence } from "../../domain/evidence.js";
 import { ok } from "../../domain/result.js";
 import { peRichHeaderImage } from "../../native/pe/PeRichHeader.fixture.js";
 import { parsePeRichHeader } from "../../native/pe/PeRichHeaderParser.js";
@@ -58,19 +59,25 @@ it("rejects a relative path and extra arguments before reading", async () => {
   expect(calls).toBe(0);
 });
 
-it("discards an observation if the caller cancels while the provider completes", async () => {
+it("retains the completed observation and abort reason when the caller cancels while the provider completes", async () => {
   const controller = new AbortController();
+  const reason = { request: "late PeRichHeader cancellation" };
   const report = await parsedReport();
   const service = new PeRichHeaderService({
     identity,
     inspect: () => {
-      controller.abort();
+      controller.abort(reason);
       return Promise.resolve(ok(report));
     },
   });
   const result = await service.inspect({ path }, { signal: controller.signal });
-  expect(result.ok).toBe(false);
-  if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  if (result.ok) throw new Error("Expected late cancellation");
+  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "inspect_pe_rich_header",
+    normalized_result: report,
+  });
 });
 
 it("locates the whole record in observed Evidence", async () => {
