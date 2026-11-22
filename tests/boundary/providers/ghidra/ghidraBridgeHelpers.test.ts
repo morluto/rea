@@ -413,22 +413,35 @@ describe.skipIf(jdk === undefined)(
 describe.skipIf(jdk === undefined)(
   "ReaGhidraBridge spellingMatches and ValueMatcher.requiresLeafCheck",
   () => {
-    it("skips duplicate leaf matching for suffix-verified non-leaf matchers while preserving non-suffix and regex checks", async () => {
+    it("exercises production literalMatcher, literalCandidateMatcher, and regexMatcher across leaf checks", async () => {
       const cases = [
-        // [mode, needle, qualified, leaf, aliasQualified, aliasLeaf, expected]
-        // Suffixed miss with requiresLeafCheck=false: 1 call (qualified only)
-        ["nonleaf", "missing", "ns::work", "work", "", "", "false||1"],
-        // Suffixed hit with requiresLeafCheck=false: 1 call (qualified hit)
-        ["nonleaf", "work", "ns::work", "work", "", "", "true||1"],
-        // Same spelling miss with requiresLeafCheck=true: still 1 call (leaf.equals(qualified))
-        ["leaf", "missing", "plain", "plain", "", "", "false||1"],
-        // Suffixed miss with requiresLeafCheck=true (regex mode): 2 calls (qualified + leaf)
-        ["leaf", "missing", "ns::work", "work", "", "", "false||2"],
-        // Non-suffix leaf with requiresLeafCheck=false still falls back to leaf (2 calls, true)
-        ["nonleaf", "weird", "ns::work", "weird_leaf", "", "", "true||2"],
-        // Primary miss + suffixed alias miss with requiresLeafCheck=false: 2 calls total
+        // [factory, expr, qualified, leaf, aliasQualified, aliasLeaf, expected]
+        // literalMatcher skips redundant leaf scan when leaf is a suffix of qualified
+        ["literal", "missing", "ns::work", "work", "", "", "false||1"],
+        ["literal", "work", "ns::work", "work", "", "", "true||1"],
+        // literalCandidateMatcher(null / ascii) also skips redundant suffix leaf scans
+        ["candidate-ascii", "miss", "ns::work", "work", "", "", "false||1"],
+        ["candidate-null", "", "ns::work", "work", "", "", "false||1"],
         [
-          "nonleaf",
+          "candidate-ascii",
+          "sort",
+          "ns::other",
+          "other",
+          "alt::\u017fort",
+          "\u017fort",
+          "false|alt::\u017fort|2",
+        ],
+        // Equal primary spelling still runs only 1 check even with requiresLeafCheck=true
+        ["regex-cs", "^missing$", "plain", "plain", "", "", "false||1"],
+        // regexMatcher preserves requiresLeafCheck=true so anchored ^work$ matches the leaf of ns::work
+        ["regex-cs", "^work$", "ns::work", "work", "", "", "true||2"],
+        ["regex-ci", "^WORK$", "ns::work", "work", "", "", "true||2"],
+        ["regex-cs", "^missing$", "ns::work", "work", "", "", "false||2"],
+        // Non-suffix leaf still falls back to leaf scan even for literalMatcher
+        ["literal", "weird", "ns::work", "weird_leaf", "", "", "true||2"],
+        // Primary miss + suffixed alias miss runs 2 qualified checks total under literalMatcher
+        [
+          "literal",
           "missing",
           "ns::work",
           "work",
@@ -436,9 +449,8 @@ describe.skipIf(jdk === undefined)(
           "alias",
           "false||2",
         ],
-        // Primary miss + suffixed alias hit with requiresLeafCheck=false: 2 calls total
         [
-          "nonleaf",
+          "literal",
           "alias",
           "ns::work",
           "work",
@@ -450,7 +462,18 @@ describe.skipIf(jdk === undefined)(
       const stdout = await runBridgeProbe(
         requireProbe(),
         "spelling-match",
-        cases.map((row) => row.slice(0, 6).join("|")).join("\n"),
+        cases
+          .map((row) =>
+            [
+              row[0],
+              encodeUtf16Hex(row[1]),
+              encodeUtf16Hex(row[2]),
+              encodeUtf16Hex(row[3]),
+              encodeUtf16Hex(row[4]),
+              encodeUtf16Hex(row[5]),
+            ].join("|"),
+          )
+          .join("\n"),
       );
       expect(splitProbeLines(stdout)).toEqual(cases.map((row) => row[6]));
     });

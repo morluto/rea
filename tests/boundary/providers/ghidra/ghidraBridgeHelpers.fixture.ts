@@ -160,6 +160,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 public final class ReaGhidraBridgeHelperProbe {
 `;
@@ -756,23 +758,31 @@ const JAVA_PROBE_DRIVER = String.raw`
     private static void runSpellingMatch() throws IOException {
         for (String line : readStdinLines()) {
             String[] fields = line.split("\\|", -1);
-            boolean requiresLeaf = "leaf".equals(fields[0]);
-            String needle = fields[1];
-            String qualified = fields[2];
-            String leaf = fields[3];
-            String aliasQualified = fields[4];
-            String aliasLeaf = fields[5];
+            String factory = fields[0];
+            String expr = decodeHex(fields[1]);
+            String qualified = decodeHex(fields[2]);
+            String leaf = decodeHex(fields[3]);
+            String aliasQualified = decodeHex(fields[4]);
+            String aliasLeaf = decodeHex(fields[5]);
+            ValueMatcher delegate = switch (factory) {
+                case "literal" -> literalMatcher(expr);
+                case "candidate-ascii" -> literalCandidateMatcher(expr);
+                case "candidate-null" -> literalCandidateMatcher(null);
+                case "regex-cs" -> regexMatcher(expr, true);
+                case "regex-ci" -> regexMatcher(expr, false);
+                default -> throw new IllegalArgumentException("Unknown matcher factory: " + factory);
+            };
             int[] calls = new int[1];
             ValueMatcher matcher = new ValueMatcher() {
                 @Override
                 public boolean matches(String value) {
                     calls[0]++;
-                    return value.contains(needle);
+                    return delegate.matches(value);
                 }
 
                 @Override
                 public boolean requiresLeafCheck() {
-                    return requiresLeaf;
+                    return delegate.requiresLeafCheck();
                 }
             };
             ProcedureEntry entry = new ProcedureEntry(
@@ -822,7 +832,7 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
   const literalMethods = extractBridgeSlice(
     bridgeSource,
     "    private static ValueMatcher literalMatcher(String pattern) {",
-    "    private static ValueMatcher regexMatcher(String expression, boolean caseSensitive) {",
+    "    private static SessionDescriptor readDescriptor(",
   );
   const responseMethods = extractBridgeSlice(
     bridgeSource,
