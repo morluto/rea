@@ -183,6 +183,10 @@ const layoutFailureDialect = (
       { reason: read.cleanup.reason },
       { operation: OPERATION, cause: read },
     );
+    // The parser attaches the completed layout hash to the read, not to the
+    // classified parse failure, so carry it over before composing.
+    if (read.partialObservation !== undefined)
+      primary.retainPartialObservation(read.partialObservation);
     bindArtifactFileCleanup(read, cleanup);
     return analysisErrorWithCleanupDependencies(primary, cleanup, OPERATION);
   },

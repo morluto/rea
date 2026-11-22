@@ -3,12 +3,14 @@ import {
   mkdir,
   readFile,
   rename,
+  stat,
   symlink,
   truncate,
   unlink,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
+import { fstatSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -1858,13 +1860,17 @@ it("keeps malformed index.json as the primary when its handle close fails", asyn
   await writeOciImageLayoutFixture(root);
   await writeFile(join(root, "index.json"), "{not json");
   const nativeClose = OwnedFileHandle.prototype.close;
-  // oci-layout is read first; the second handle closed is index.json's.
-  let closes = 0;
+  // Fault only the handle opened on index.json, selected by file identity.
+  const index = await stat(join(root, "index.json"));
+  const faulted: string[] = [];
   const close = vi
     .spyOn(OwnedFileHandle.prototype, "close")
     .mockImplementation(function (this: OwnedFileHandle) {
-      if (++closes === 2)
+      const opened = fstatSync(this.handle.fd);
+      if (opened.dev === index.dev && opened.ino === index.ino) {
+        faulted.push("index.json");
         return Promise.reject(new Error("controlled handle close failure"));
+      }
       return nativeClose.call(this);
     });
   const provider = new OciImageLayoutProvider();
@@ -1872,12 +1878,18 @@ it("keeps malformed index.json as the primary when its handle close fails", asyn
     const result = await provider.inspect(
       inspectOciImageLayoutInputSchema.parse({ path: root }),
     );
-    expect(closes).toBeGreaterThanOrEqual(2);
+    expect(faulted.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(faulted)).toEqual(new Set(["index.json"]));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     // The reader's close retries the handle, so only the primary is checked.
     const primary = primaryAnalysisError(result.error);
     expect(primary).toMatchObject({ _tag: "AnalysisInputError" });
+    // The completed oci-layout hash survives the index.json close failure.
+    expect(primary.partialObservation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: "oci-layout",
+    });
     expect(JSON.stringify(primary)).toContain("is not valid JSON");
   } finally {
     close.mockRestore();
