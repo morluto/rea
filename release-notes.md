@@ -90,6 +90,7 @@
 * **pe:** keep pefile's unrounded raw offset for a sub-page section ([985fa2f](https://github.com/morluto/rea/commit/985fa2fac939d0da5de31d59a4df055d90df1cd8))
 * **process:** name the fixed finalization delivery grace ([ab47c97](https://github.com/morluto/rea/commit/ab47c970a7bdbcda8df9e54242c05fce8b068d02))
 * **process:** record PTY session-leader SIGHUP limitation in Evidence ([95dfbae](https://github.com/morluto/rea/commit/95dfbae68e31a01901deab358db572c472866bcf))
+* **process:** verify nested worker exit after parent cleanup ([#13242](https://github.com/morluto/rea/issues/13242)) ([75a75a1](https://github.com/morluto/rea/commit/75a75a1bd14eeec233650623e8b839bdf26b793d))
 * **reference:** preserve host spelling for Git metadata paths ([ae8cd50](https://github.com/morluto/rea/commit/ae8cd50ff755e810643ee7f6918121796becbc31))
 * **reference:** render invalid Git config path with native separators ([0d71123](https://github.com/morluto/rea/commit/0d7112321d52013fb2be5a593b5bfbe7006a8888))
 * **reference:** retain physical Git read failure after cleanup refusal ([#12848](https://github.com/morluto/rea/issues/12848)) ([f4937a0](https://github.com/morluto/rea/commit/f4937a04be3148a7f9a191f1114a8210b7264108))
