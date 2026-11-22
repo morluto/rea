@@ -1396,9 +1396,13 @@ const declarationsByKind: {
     notCompared:
       "Its header layout, eraseblock counts and volume table come from the image's own bytes, which content comparison covers.",
   },
-  /** How the volume table declares a volume, independent of PEB placement. */
+  /**
+   * How the volume table declares a volume, independent of PEB placement.
+   * The volume ID is a lookup identity, so renumbering is a change.
+   */
   "ubi-volume": {
     declaration: (metadata) => ({
+      id: metadata.id,
       name: metadata.name,
       name_bytes_hex: metadata.name_bytes_hex,
       type: metadata.type,
