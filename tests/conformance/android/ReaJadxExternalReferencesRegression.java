@@ -325,6 +325,31 @@ public class ReaJadxExternalReferencesRegression {
         "StringBuilder.append xrefs lost after notify query");
   }
 
+  private static void verifyBoundedCallerIndexFallback(SessionHolder holder, SessionConfig config,
+      Constructor<?> constructor, Method handle, Path apk) throws Exception {
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.unload(continuation));
+    BuildersKt.runBlocking(EmptyCoroutineContext.INSTANCE,
+        (scope, continuation) -> holder.load(apk.toString(), config, continuation));
+    Object bridge = constructor.newInstance(holder);
+    Field cap = bridge.getClass().getDeclaredField("maxExternalCallerIndexEntries");
+    cap.setAccessible(true);
+    cap.setInt(bridge, 1);
+    JsonObject summary = call(handle, bridge, "get_class_summary", external(null));
+    require(summary.get("observed_method_count").getAsInt() == 2,
+        "Bounded caller cap dropped prototype summaries");
+    Field invField = bridge.getClass().getDeclaredField("externalInventory");
+    invField.setAccessible(true);
+    Object inventory = invField.get(bridge);
+    Method callersAccessor = inventory.getClass().getDeclaredMethod("callersByShortId");
+    callersAccessor.setAccessible(true);
+    require(callersAccessor.invoke(inventory) == null,
+        "Caller index stayed allocated after exceeding maxExternalCallerIndexEntries");
+    JsonObject references = call(handle, bridge, "get_xrefs_to_method", external(0));
+    require(references.get("count").getAsInt() == 3,
+        "Scan fallback missed callers after dropping oversized caller index");
+  }
+
   public static void main(String[] args) throws Exception {
     verifyDoubleEscapedStringBytes();
     Path output = Path.of(args[1]);
@@ -343,6 +368,7 @@ public class ReaJadxExternalReferencesRegression {
       verify(holder, config, constructor, handle, fixtures.get(0), "classes.dex");
       verify(holder, config, constructor, handle, fixtures.get(1), "classes2.dex");
       verifyIntermediateExternalQuery(holder, config, constructor, handle, output);
+      verifyBoundedCallerIndexFallback(holder, config, constructor, handle, fixtures.get(0));
       verifySiteBudget(holder, config, constructor, handle, siteHeavy);
       verifyPrototypeLimit(holder, config, constructor, handle, oversizedPrototype);
       System.out.println("EXTERNAL_REFERENCE_REGRESSION_PASS prototypes=2 using_nodes=3 sites=4 overloaded_callers=true nested=true multidex=true no_source=true post_codegen=true");

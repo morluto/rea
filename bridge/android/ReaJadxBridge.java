@@ -49,8 +49,10 @@ class ReaJadxBridge {
   // once. Change BRIDGE_VERSION with any protocol change REA must not mix.
   static final String BRIDGE_NAME = "rea-jadx-bridge";
   static final String BRIDGE_VERSION = "12";
+  private static final int DEFAULT_MAX_EXTERNAL_CALLER_INDEX_ENTRIES = 4096;
   private static final Gson JSON = new Gson();
   private final SessionHolder holder;
+  private int maxExternalCallerIndexEntries = DEFAULT_MAX_EXTERNAL_CALLER_INDEX_ENTRIES;
   private JadxSession indexedSession;
   private Map<String, List<ClassSnapshot>> classes = Map.of();
   private List<ClassSnapshot> orderedClasses = List.of();
@@ -1035,12 +1037,15 @@ class ReaJadxBridge {
     externalInventory = null;
     SortedMap<String, ExternalMethod> methods = new TreeMap<>();
     Map<String, List<ExternalCallerTarget>> callersByShortId = new HashMap<>();
+    int indexedCallerEntries = 0;
     boolean[] observedClass = {false};
     InvokeBudget budget = new InvokeBudget(MAX_EXTERNAL_XREF_BYTES
         - 4096L - 12L * (className.length() + (long) methodName.length()));
     final class MethodScanState {
       String firstShortId;
       Set<String> extraShortIds;
+      boolean callersIndexed = true;
+      int indexedEntries = 0;
     }
     MethodScanState scanState = new MethodScanState();
     for (ClassSnapshot source : sourceClasses()) {
@@ -1054,16 +1059,24 @@ class ReaJadxBridge {
           String shortId = info.getShortId();
           if (!methods.containsKey(shortId))
             methods.put(shortId, new ExternalMethod(info, externalMethodSummary(info, budget)));
+          if (!scanState.callersIndexed) return;
+          boolean recordCaller = false;
           if (scanState.firstShortId == null) {
             scanState.firstShortId = shortId;
-            callersByShortId.computeIfAbsent(shortId, ignored -> new ArrayList<>())
-                .add(new ExternalCallerTarget(source, selected));
+            recordCaller = true;
           } else if (!scanState.firstShortId.equals(shortId)) {
             if (scanState.extraShortIds == null) scanState.extraShortIds = new HashSet<>();
-            if (scanState.extraShortIds.add(shortId))
-              callersByShortId.computeIfAbsent(shortId, ignored -> new ArrayList<>())
-                  .add(new ExternalCallerTarget(source, selected));
+            recordCaller = scanState.extraShortIds.add(shortId);
           }
+          if (!recordCaller) return;
+          if (scanState.indexedEntries >= maxExternalCallerIndexEntries) {
+            scanState.callersIndexed = false;
+            callersByShortId.clear();
+            return;
+          }
+          scanState.indexedEntries++;
+          callersByShortId.computeIfAbsent(shortId, ignored -> new ArrayList<>())
+              .add(new ExternalCallerTarget(source, selected));
         });
       }
     }
@@ -1073,7 +1086,7 @@ class ReaJadxBridge {
         "No direct DEX invoke references " + className + "." + methodName);
     List<ExternalMethod> result = List.copyOf(methods.values());
     externalInventory = new ExternalInventory(current, className, methodName, result,
-        Collections.unmodifiableMap(callersByShortId));
+        scanState.callersIndexed ? Collections.unmodifiableMap(callersByShortId) : null);
     return result;
   }
 
@@ -1086,24 +1099,38 @@ class ReaJadxBridge {
 
   private record ExternalCaller(MethodNode node, Map<String, Object> row) {}
 
+  private void appendExternalCaller(ClassSnapshot source, MethodSnapshot candidate,
+      InvokeBudget budget, List<ExternalCaller> callers) {
+    String className = String.valueOf(source.summary().get("full_name"));
+    if (classes.get(className).size() != 1)
+      throw new IllegalArgumentException("External caller has an ambiguous APK class identity: " + className);
+    Map<String, Object> row = new LinkedHashMap<>(Map.of(
+        "kind", "method", "name", candidate.name(), "full_name", className + "." + candidate.name(),
+        "containing_class", className, "top_class", source.node().getTopParentClass().getFullName(),
+        "def_pos", 0, "source_selector", Map.of("class_name", className,
+            "method_name", candidate.name(), "overload_index", candidate.overloadIndex()),
+        "direct_invokes", List.of(), "direct_invokes_exhaustive", false));
+    if (!budget.admit(row)) throw new ReferenceLimit("caller_inventory");
+    callers.add(new ExternalCaller(candidate.methodNode(), row));
+  }
+
   /** Reserve the complete using-node inventory before optional instruction positions. */
   private List<ExternalCaller> externalCallers(ExternalInventory inventory, MethodInfo target, InvokeBudget budget) {
-    List<ExternalCallerTarget> targets = inventory.callersByShortId().getOrDefault(target.getShortId(), List.of());
-    List<ExternalCaller> callers = new ArrayList<>(targets.size());
-    for (ExternalCallerTarget callerTarget : targets) {
-      ClassSnapshot source = callerTarget.owner();
-      MethodSnapshot candidate = callerTarget.method();
-      String className = String.valueOf(source.summary().get("full_name"));
-      if (classes.get(className).size() != 1)
-        throw new IllegalArgumentException("External caller has an ambiguous APK class identity: " + className);
-      Map<String, Object> row = new LinkedHashMap<>(Map.of(
-          "kind", "method", "name", candidate.name(), "full_name", className + "." + candidate.name(),
-          "containing_class", className, "top_class", source.node().getTopParentClass().getFullName(),
-          "def_pos", 0, "source_selector", Map.of("class_name", className,
-              "method_name", candidate.name(), "overload_index", candidate.overloadIndex()),
-          "direct_invokes", List.of(), "direct_invokes_exhaustive", false));
-      if (!budget.admit(row)) throw new ReferenceLimit("caller_inventory");
-      callers.add(new ExternalCaller(candidate.methodNode(), row));
+    Map<String, List<ExternalCallerTarget>> indexedCallers = inventory.callersByShortId();
+    if (indexedCallers != null) {
+      List<ExternalCallerTarget> targets = indexedCallers.getOrDefault(target.getShortId(), List.of());
+      List<ExternalCaller> callers = new ArrayList<>(targets.size());
+      for (ExternalCallerTarget callerTarget : targets)
+        appendExternalCaller(callerTarget.owner(), callerTarget.method(), budget, callers);
+      return List.copyOf(callers);
+    }
+    List<ExternalCaller> callers = new ArrayList<>();
+    for (ClassSnapshot source : sourceClasses()) {
+      for (MethodSnapshot candidate : source.methods()) {
+        boolean[] invokes = {false};
+        visitDirectInvokes(candidate.methodNode(), target, (referenced, offset, index, opcode) -> invokes[0] = true);
+        if (invokes[0]) appendExternalCaller(source, candidate, budget, callers);
+      }
     }
     return List.copyOf(callers);
   }
