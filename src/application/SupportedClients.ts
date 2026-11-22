@@ -64,7 +64,6 @@ import {
   MCPORTER_STDIO_INCOMPATIBILITIES,
   type ClientDefinitionInput,
 } from "./SupportedClientLocations.js";
-export { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 /** One supported client configuration location. */
 export interface SetupClient {
   readonly name: string;

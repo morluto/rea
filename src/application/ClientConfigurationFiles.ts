@@ -1,3 +1,4 @@
+import { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "../process/RegularFileRead.js";
@@ -11,10 +12,7 @@ import {
   type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
-import {
-  clientProjectConfigurationPaths,
-  type SetupClient,
-} from "./SupportedClients.js";
+import type { SetupClient } from "./SupportedClients.js";
 import {
   ClientRegistrationEnvironmentShapeError,
   clientRegistrationEnvironment,

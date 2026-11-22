@@ -1,3 +1,4 @@
+import { clientProjectConfigurationPaths } from "./SupportedClientLocations.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 import {
@@ -80,7 +81,6 @@ import {
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
-  clientProjectConfigurationPaths,
   clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
