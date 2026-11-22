@@ -166,12 +166,12 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     ProviderCleanupError
   >();
   #cleanupAttempt: Promise<readonly NativeCommandCleanupFailure[]> | undefined;
-  readonly #usesDefaultResolver: boolean;
-  readonly #resolvedToolCache = new Map<
+  readonly #digests = new Map<
     string,
     {
-      readonly resolved: ResolvedTool;
+      readonly path: string;
       readonly stamp: ExecutableStatStamp;
+      readonly sha256: string;
     }
   >();
   constructor(
@@ -181,12 +181,17 @@ export class XcrunCommandRunner implements NativeCommandRunner {
       signal,
       launcher,
       timeoutMs,
-    ) => resolveXcrunTool(tool, this.environment, signal, launcher, timeoutMs),
+    ) =>
+      resolveXcrunTool(
+        tool,
+        this.environment,
+        signal,
+        launcher,
+        timeoutMs,
+        (path, signal) => this.#digestTool(tool, path, signal),
+      ),
     private readonly launcher?: NativeCommandLauncher,
   ) {
-    this.#usesDefaultResolver =
-      arguments.length < 2 ||
-      (arguments[1] === undefined && launcher === undefined);
     this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
   }
 
@@ -202,41 +207,33 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     return this.#runAfterCleanup(tool, arguments_, options);
   }
 
-  async #resolveToolCached(
+  async #digestTool(
     tool: string,
-    signal: AbortSignal | undefined,
-    timeoutMs: number | undefined,
-  ): Promise<Result<ResolvedTool, NativeCommandFailure>> {
+    path: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const before = await statExecutable(path);
+    const cached = this.#digests.get(tool);
     if (
-      this.#usesDefaultResolver &&
-      this.launcher === undefined &&
-      signal?.aborted !== true
-    ) {
-      const cached = this.#resolvedToolCache.get(tool);
-      if (cached !== undefined) {
-        const current = await statExecutable(cached.resolved.resolvedPath);
-        if (current !== undefined && sameExecutableStamp(current, cached.stamp))
-          return ok(cached.resolved);
-        this.#resolvedToolCache.delete(tool);
-      }
+      signal?.aborted !== true &&
+      before !== undefined &&
+      cached?.path === path &&
+      sameExecutableStamp(cached.stamp, before)
+    )
+      return cached.sha256;
+
+    this.#digests.delete(tool);
+    const sha256 = await hashFile(path, signal);
+    if (before !== undefined) {
+      const after = await statExecutable(path);
+      if (
+        signal?.aborted !== true &&
+        after !== undefined &&
+        sameExecutableStamp(before, after)
+      )
+        this.#digests.set(tool, { path, stamp: after, sha256 });
     }
-    const resolved = await this.resolveTool(
-      tool,
-      signal,
-      this.launcher,
-      timeoutMs,
-    );
-    if (
-      resolved.ok &&
-      this.#usesDefaultResolver &&
-      this.launcher === undefined &&
-      signal?.aborted !== true
-    ) {
-      const stamp = await statExecutable(resolved.value.resolvedPath);
-      if (stamp !== undefined)
-        this.#resolvedToolCache.set(tool, { resolved: resolved.value, stamp });
-    }
-    return resolved;
+    return sha256;
   }
 
   /** Retry every retained owner; a failed retry prevents another command launch. */
@@ -257,9 +254,10 @@ export class XcrunCommandRunner implements NativeCommandRunner {
     const pendingFailures = await this.retryCleanup();
     if (pendingFailures.length > 0)
       return err(commandCleanupFailure(tool, pendingFailures));
-    const resolved = await this.#resolveToolCached(
+    const resolved = await this.resolveTool(
       tool,
       options.signal,
+      this.launcher,
       options.timeoutMs,
     );
     if (!resolved.ok) {
@@ -456,6 +454,7 @@ export const resolveXcrunTool = async (
   signal?: AbortSignal,
   launcher?: NativeCommandLauncher,
   timeoutMs?: number,
+  digest: (path: string, signal?: AbortSignal) => Promise<string> = hashFile,
 ): Promise<Result<ResolvedTool, NativeCommandFailure>> => {
   const found = await captureProcess(
     "/usr/bin/xcrun",
@@ -526,7 +525,7 @@ export const resolveXcrunTool = async (
     const selected = await selectArtifactCommandPath(candidate, signal);
     return ok({
       ...selected,
-      sha256: await hashFile(selected.resolvedPath, signal),
+      sha256: await digest(selected.resolvedPath, signal),
     });
   } catch (cause: unknown) {
     const capture = failureCapture(found.value, false);
