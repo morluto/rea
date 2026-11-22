@@ -56,6 +56,13 @@ const layoutPartial = (
 ): FileSnapshotPartialObservation | undefined =>
   cause instanceof OciImageLayoutRefusal ? cause.layoutObservation : undefined;
 
+/** The host errno that says the selected path names no reachable directory. */
+const selectionErrorCode = (cause: unknown): string | undefined => {
+  const code: unknown =
+    cause instanceof Error ? Reflect.get(cause, "code") : undefined;
+  return code === "ENOENT" || code === "ENOTDIR" ? code : undefined;
+};
+
 /** OCI layout decisions supplied to the shared provider failure owner. */
 const layoutFailureDialect = (
   input: InspectOciImageLayoutInput,
@@ -83,6 +90,22 @@ const layoutFailureDialect = (
             "Select an OCI image-layout directory containing oci-layout, index.json, and blobs/.",
         },
       );
+    // A missing selection, or one under a regular-file ancestor, is a bad
+    // `path` rather than an I/O failure; other root I/O stays an I/O failure.
+    if (
+      cause instanceof DirectoryArtifactRootFailure &&
+      cause.reason === "io"
+    ) {
+      const code = selectionErrorCode(cause.cause);
+      if (code !== undefined)
+        return new AnalysisInputError(OPERATION, { cause, ...options }, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `No directory can be read at the selected path (${code}): ${input.path}.`,
+          },
+        ]);
+    }
     if (
       cause instanceof ArtifactReaderFailure &&
       cause.reason === "path" &&

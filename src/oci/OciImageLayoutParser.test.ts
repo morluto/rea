@@ -1784,6 +1784,31 @@ it("projects a non-directory selection as an unsupported target", async () => {
   }
 });
 
+it.each([
+  ["a missing directory", (root: string) => join(root, "missing")],
+  [
+    "a path under a regular file",
+    (root: string) => join(root, "not-a-layout", "child"),
+  ],
+])("projects %s as an invalid path", async (_name, select) => {
+  const root = await createTestTempDirectory("rea-oci-missing-");
+  await writeFile(join(root, "not-a-layout"), "not a directory");
+  const provider = new OciImageLayoutProvider();
+  try {
+    const result = await provider.inspect(
+      inspectOciImageLayoutInputSchema.parse({ path: select(root) }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok)
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [expect.objectContaining({ path: ["path"] })],
+      });
+  } finally {
+    await provider.close();
+  }
+});
+
 it("keeps the parse refusal and its layout snapshot when reader cleanup also fails", async () => {
   const root = await createTestTempDirectory("rea-oci-cleanup-");
   await writeOciImageLayoutFixture(root);
