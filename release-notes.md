@@ -148,6 +148,7 @@
 * **desktop:** bound retained text lines while counting full files ([#10207](https://github.com/morluto/rea/issues/10207)) ([71a7e0d](https://github.com/morluto/rea/commit/71a7e0d9ff20cfd79b90ff94d57b6380eb5fec4f))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
+* **hopper:** eliminate full name-inventory rebuilds in analyze_function, list_names, and caller reconciliation ([#13307](https://github.com/morluto/rea/issues/13307)) ([ed234b2](https://github.com/morluto/rea/commit/ed234b20163accc77577c1cf7b55c4645e62807a)), closes [#13277](https://github.com/morluto/rea/issues/13277)
 * **ida:** push literal patterns down to find_regex on all protocols and drop catch-all non-ASCII wildcard ([#13291](https://github.com/morluto/rea/issues/13291)) ([dff9b47](https://github.com/morluto/rea/commit/dff9b479ed3228a27bc49037c03ea970123f5a43))
 * **il2cpp:** fix 8x yields and hoist opcode checks before BigInt math in executable scans ([#13272](https://github.com/morluto/rea/issues/13272)) ([7269165](https://github.com/morluto/rea/commit/726916532371dfc65643aa1a9d6723b6edc833ed))
 * **javascript:** index widened summary coverage by root ([#13007](https://github.com/morluto/rea/issues/13007)) ([f2d5cd6](https://github.com/morluto/rea/commit/f2d5cd633734c1baeda7ac73a31fc7f2e40550fe))
