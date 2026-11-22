@@ -59,7 +59,7 @@ For runtime instrumentation, see the [Frida guide](guides/runtime/frida-instrume
   or [capture a Linux desktop application](desktop-application-capture.md).
 - [Use the CLI and retain Evidence](getting-started/cli.md) or
   [look up MCP result and session contracts](reference/mcp-contracts.md).
-- [Report a PE overlay](pe-overlay.md) to see where a Windows image ends on
+- [Report a PE overlay](guides/native/pe-overlay.md) to see where a Windows image ends on
   disk and what follows it.
 
 Browse the [documentation directory](README.md) for formats, provider

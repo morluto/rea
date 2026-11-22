@@ -227,7 +227,7 @@ digest coverage are not verified. Section slack inside the image is not
 reported as overlay. Image end uses each section's declared PointerToRawData
 plus SizeOfRawData; the loader's 512-byte rounded pointer is recorded per
 section and does not shorten that end. See
-[PE overlay](https://github.com/morluto/rea/blob/main/docs/pe-overlay.md).
+[PE overlay](https://github.com/morluto/rea/blob/main/docs/guides/native/pe-overlay.md).
 
 ## Binary hardening
 

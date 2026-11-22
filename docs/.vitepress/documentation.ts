@@ -180,7 +180,7 @@ export const documentationSections = [
       },
       {
         text: "PE overlay",
-        source: "pe-overlay.md",
+        source: "guides/native/pe-overlay.md",
         route: "/pe-overlay",
       },
       {

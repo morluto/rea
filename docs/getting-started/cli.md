@@ -1733,7 +1733,7 @@ rea inspect-pe-overlay /absolute/path/to/application.exe --json
 
 Reports where the PE image ends on disk and the bytes appended after it. A
 certificate table inside that span is split from the other ranges. Use
-`--max-file-bytes` to set the read budget. See [PE overlay](../pe-overlay.md).
+`--max-file-bytes` to set the read budget. See [PE overlay](../guides/native/pe-overlay.md).
 
 ### Binary hardening
 
