@@ -252,46 +252,8 @@ describe("CLI startup imports", () => {
       ),
     ).resolves.toContain("isomorphic-git");
     await expect(
-      resolvedPackages(
-        evaluate(
-          'await import("./dist/application/analysisView/AnalysisViewService.js");',
-        ),
-        HEAVY_SHARED_MODULES,
-      ),
-    ).resolves.toContain("analysis-view-service");
-    await expect(
       resolvedPackages(["scripts/rea.mjs", "mcp", "add", "--help"]),
     ).resolves.toContain("mcp-registration");
-    await expect(
-      resolvedPackages(
-        evaluate(
-          'await import("./dist/domain/analysisView/analysisViewResult.js"); await import("./dist/contracts/sessionToolContracts.js");',
-        ),
-        HEAVY_SHARED_MODULES,
-      ),
-    ).resolves.toEqual(
-      new Set(["analysis-view-result", "session-tool-contracts"]),
-    );
-  });
-
-  it("does not load AnalysisView or session contracts for single-command startup", async () => {
-    for (const command of ["inspect-uefi-nvram", "inspect-sqlite-database"]) {
-      await expect(
-        resolvedPackages(
-          ["scripts/rea.mjs", command, "--help"],
-          HEAVY_SHARED_MODULES,
-        ),
-      ).resolves.toEqual(new Set());
-    }
-    for (const command of ["inspect-wasm-artifact", "guided-workflows"]) {
-      const loaded = await resolvedPackages(
-        ["scripts/rea.mjs", command, "--help"],
-        HEAVY_SHARED_MODULES,
-      );
-      expect(loaded).not.toContain("analysis-view-service");
-      expect(loaded).not.toContain("session-tool-contracts");
-      expect(loaded).not.toContain("mcp-registration");
-    }
   });
 
   it("does not load command-specific code to register the command catalog", async () => {
@@ -357,6 +319,75 @@ describe("CLI startup imports", () => {
     expect(resolved).toContain("server-identity");
     expect(resolved).toContain("catalog-identity");
     expect(resolved).toContain("tool-contracts");
+  });
+});
+
+describe("Bundled heavy startup controls", () => {
+  it("detects bundled heavy modules through native command and AnalysisView runs", async () => {
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "decompile-all", "--help"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toContain("session-tool-contracts");
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "inspect-wasm-artifact", "--help"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toContain("analysis-view-result");
+    const viewDir = await createTestTempDirectory("rea-startup-view-");
+    const samplePath = join(viewDir, "sample.bin");
+    const viewInputPath = join(viewDir, "view.json");
+    await writeFile(samplePath, "hello world 1234".repeat(40));
+    const entropyCommands = await createVerifierCommands();
+    onTestFinished(() => entropyCommands.close());
+    const { stdout: evidenceJson } = await withVerifierCleanup(
+      () =>
+        entropyCommands.exec(
+          process.execPath,
+          ["scripts/rea.mjs", "inspect-byte-entropy", samplePath, "--json"],
+          {
+            cwd: process.cwd(),
+            maxBuffer: 16 * 1_024 * 1_024,
+            timeout: 15_000,
+          },
+        ),
+      [() => entropyCommands.close()],
+    );
+    await writeFile(
+      viewInputPath,
+      JSON.stringify({
+        source: { kind: "inline", evidence: JSON.parse(evidenceJson) },
+        view: { kind: "summary" },
+      }),
+    );
+    const viewResolved = await resolvedPackages(
+      ["scripts/rea.mjs", "inspect-analysis-view", viewInputPath, "--json"],
+      HEAVY_SHARED_MODULES,
+    );
+    expect(viewResolved).toContain("analysis-view-service");
+    expect(viewResolved).toContain("analysis-view-result");
+  });
+
+  it("does not load AnalysisView or session contracts for single-command startup", async () => {
+    for (const command of ["inspect-uefi-nvram", "inspect-sqlite-database"]) {
+      await expect(
+        resolvedPackages(
+          ["scripts/rea.mjs", command, "--help"],
+          HEAVY_SHARED_MODULES,
+        ),
+      ).resolves.toEqual(new Set());
+    }
+    for (const command of ["inspect-wasm-artifact", "guided-workflows"]) {
+      const loaded = await resolvedPackages(
+        ["scripts/rea.mjs", command, "--help"],
+        HEAVY_SHARED_MODULES,
+      );
+      expect(loaded).not.toContain("analysis-view-service");
+      expect(loaded).not.toContain("session-tool-contracts");
+      expect(loaded).not.toContain("mcp-registration");
+    }
   });
 });
 
