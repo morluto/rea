@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -70,10 +70,20 @@ export interface WithheldPlan {
   readonly consent: string | undefined;
 }
 
+/** Largest consent record file admitted from a caller-supplied path. */
+const MAX_CONSENT_BYTES = 1024 * 1024;
+
 /** The consent file's records as the bundle ships them, refused unless it parses; undefined when none was given. */
 const readConsent = async (path: string | undefined) => {
   if (path === undefined) return undefined;
-  const bytes = await readFile(path).catch(() => undefined);
+  let bytes: Buffer | undefined;
+  try {
+    const info = await lstat(path);
+    if (info.isFile() && info.size <= MAX_CONSENT_BYTES)
+      bytes = await readFile(path);
+  } catch {
+    bytes = undefined;
+  }
   const parsed = bytes === undefined ? undefined : safeParseUtf8Json(bytes);
   const consent =
     parsed?.ok === true ? consentFileSchema.safeParse(parsed.value) : undefined;

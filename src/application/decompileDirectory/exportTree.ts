@@ -688,6 +688,9 @@ interface OpenedJournal {
   readonly journalBytes: number;
 }
 
+/** Upper bound on a resume journal file read into memory. */
+const MAX_DECOMPILE_JOURNAL_BYTES = 128 * 1024 * 1024;
+
 /** Read the journal only when it is a regular file, not a symlink. */
 const readJournalBytes = async (
   root: string,
@@ -697,12 +700,20 @@ const readJournalBytes = async (
   const stat = await lstat(path).catch((cause: unknown) => cause);
   if (!isStat(stat)) return stat;
   if (!stat.isFile()) return new Error("journal is not a regular file");
+  if (stat.size > MAX_DECOMPILE_JOURNAL_BYTES)
+    return new Error("decompile journal exceeds maximum admitted size");
   const handle = await open(path, constants.O_RDONLY | NO_FOLLOW).catch(
     (cause: unknown) => cause,
   );
   if (!isFileHandle(handle)) return handle;
   const close = resources.ownFile(handle, path);
-  const bytes = await handle.readFile().catch((cause: unknown) => cause);
+  const opened = await handle.stat().catch((cause: unknown) => cause);
+  const bytes =
+    isStat(opened) &&
+    opened.isFile() &&
+    opened.size <= MAX_DECOMPILE_JOURNAL_BYTES
+      ? await handle.readFile().catch((cause: unknown) => cause)
+      : new Error("decompile journal is not a bounded regular file");
   return (await close())
     ? bytes
     : new Error("decompile journal read handle could not be closed");
@@ -772,8 +783,8 @@ const parseJournal = (
     byPortablePath: new Map(),
     byAddress: new Map(),
   };
-  for (const line of lines.slice(1)) {
-    const parsed = decompileJournalLineSchema.safeParse(parseJson(line));
+  for (let i = 1; i < lines.length; i += 1) {
+    const parsed = decompileJournalLineSchema.safeParse(parseJson(lines[i]!));
     if (!parsed.success || parsed.data.kind !== "function")
       return err(incompatibleJournal());
     const { kind: _kind, ...record } = parsed.data;
@@ -1152,14 +1163,17 @@ const isStat = (
   isDirectory: () => boolean;
   isFile: () => boolean;
   isSymbolicLink: () => boolean;
+  size: number;
 } =>
   typeof value === "object" &&
   value !== null &&
   "isDirectory" in value &&
   "isFile" in value &&
   "isSymbolicLink" in value &&
+  "size" in value &&
   typeof value.isDirectory === "function" &&
-  typeof value.isSymbolicLink === "function";
+  typeof value.isSymbolicLink === "function" &&
+  typeof value.size === "number";
 
 const nodeCode = (cause: unknown): string | undefined =>
   typeof cause === "object" &&
