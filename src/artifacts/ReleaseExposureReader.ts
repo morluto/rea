@@ -121,6 +121,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
+  hasScheme,
   htmlUrlText,
   stripQueryAndFragment,
 } from "../domain/artifactPathSyntax.js";
@@ -2217,7 +2218,8 @@ const examineInlineMaps = (
  * examined as ordinary text was not assessed as a map, so coverage is unknown.
  * A `file:` URL names one absolute location rather than a path beside the
  * script, so even a `.map` target stays unassessed until that location is
- * reached. Any other scheme is remote.
+ * reached. Other schemes name external references. A native absolute path
+ * may contain a Windows drive colon.
  */
 const noteLocalMapReference = (
   state: ScanState,
@@ -2238,7 +2240,7 @@ const noteLocalMapReference = (
     }
     return;
   }
-  if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
+  if (!isAbsolute(path) && hasScheme(url)) return;
   if (path.length === 0) return;
   let decoded: string;
   try {
