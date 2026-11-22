@@ -51,6 +51,8 @@ interface DirectoryTraversalOptions extends ArtifactTraversalOptions {
   readonly descendInto?: (path: string) => boolean;
   /** Bound examined children, including omitted special entries. */
   readonly maximumEntries?: number;
+  /** Charge an examined child to a caller's shared allowance before inspection. */
+  readonly admitExaminedEntry?: () => void;
 }
 
 /** Exhausted an examined-entry budget; unrelated I/O and cleanup failures stay distinct. */
@@ -125,6 +127,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
     const examine = () => {
       if (maximum !== undefined && examined >= maximum)
         throw new DirectoryArtifactTraversalLimit(examined, maximum);
+      options?.admitExaminedEntry?.();
       examined += 1;
     };
     const pending = [root];
