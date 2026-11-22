@@ -56,7 +56,6 @@ import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -90,6 +89,8 @@ import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { runOwned } from "../providers/runOwned.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -450,94 +451,69 @@ const consumeInventory = async (
 ): Promise<ReleaseExposureScan> => {
   const containers = new Map<string, OpenContainer>();
   const progress: ScanProgress = {};
-  let result: ReleaseExposureScan | undefined;
-  let failure: unknown;
-  let failed = false;
-  try {
-    result = await scanOccurrences(input, containers, progress);
-  } catch (cause) {
-    failure = cause;
-    failed = true;
+  let completed: ReleaseExposureScan | undefined;
+  const finalized = await runOwned(
+    async () => {
+      try {
+        return ok(await scanOccurrences(input, containers, progress));
+      } catch (cause) {
+        return err(
+          releaseExposureFailure(cause, input.path, input.maxFileBytes),
+        );
+      }
+    },
+    {
+      providerId: RELEASE_EXPOSURE_PROVIDER.id,
+      operation: OPERATION,
+      signal: input.signal,
+      inspectPrimary: (result) => {
+        if (result.ok) completed = result.value;
+      },
+      close: async () => {
+        const [first, ...remaining] = [
+          ...input.siblingCleanup,
+          ...(await releaseContainers(containers, input.resources)),
+        ];
+        if (first !== undefined)
+          throw input.resources.cleanupFailure({ kind: "completed" }, [
+            first,
+            ...remaining,
+          ]);
+      },
+      diagnostics: (scan) => ({ scan: jsonValueSchema.parse(scan) }),
+    },
+  );
+  if (finalized.kind === "completed") return finalized.value;
+  const cleanupIncomplete = finalized.error.cleanupIncomplete;
+  if (cleanupIncomplete || finalized.kind === "cancelled") {
+    const observed = completed ?? progress.assemble?.();
+    if (observed !== undefined)
+      input.visitInterruptedScan?.({
+        ...prependLimitations(observed, [
+          cleanupIncomplete ? SCAN_INTERRUPTED : SCAN_CANCELLED,
+        ]),
+        coverage:
+          completed !== undefined && !cleanupIncomplete
+            ? observed.coverage
+            : "unknown",
+      });
   }
-  const [firstCleanup, ...remainingCleanup] = [
-    ...input.siblingCleanup,
-    ...(await releaseContainers(containers, input.resources)),
-  ];
-  // A cancelled scan keeps what it examined, as one stopped on cleanup does;
-  // the caller still receives the cancellation.
-  const cancelled = failed && wasCancelled(failure);
-  if (
-    firstCleanup !== undefined ||
-    (failed && leftCleanupUnfinished(failure)) ||
-    cancelled
-  )
-    reportInterruptedScan(
-      input,
-      result ?? progress.assemble?.(),
-      cancelled && firstCleanup === undefined && !leftCleanupUnfinished(failure)
-        ? SCAN_CANCELLED
-        : SCAN_INTERRUPTED,
-    );
-  if (firstCleanup !== undefined) {
-    const primary = failed
-      ? releaseExposureFailure(failure, input.path, input.maxFileBytes)
-      : new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-          cause: firstCleanup.cause,
-          diagnostics:
-            result === undefined
-              ? undefined
-              : { scan: jsonValueSchema.parse(result) },
-        });
-    throw projectStableArtifactFailure(
-      input.resources.cleanupFailure({ kind: "completed" }, [
-        firstCleanup,
-        ...remainingCleanup,
-      ]),
-      primary,
-      input.path,
-      RELEASE_EXPOSURE_PROVIDER.id,
+  if (finalized.kind === "completed-cleanup-retained")
+    throw analysisErrorWithCleanupDependencies(
+      new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
+        cause: finalized.error.cause,
+        diagnostics: finalized.error.diagnostics,
+      }),
+      finalized.error,
       OPERATION,
     );
-  }
-  if (failed) throw failure;
-  if (result === undefined)
-    throw invariantViolation("Release exposure scan produced no result.");
-  return result;
+  throw finalized.error;
 };
 
 /** What a failed scan can still assemble once it has somewhere to record facts. */
 interface ScanProgress {
   assemble?: () => ReleaseExposureScan;
 }
-
-const leftCleanupUnfinished = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  if (failure instanceof AnalysisError) return failure.cleanupIncomplete;
-  return (
-    failure instanceof ArtifactReaderFailure && failure.cleanup !== undefined
-  );
-};
-
-const wasCancelled = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  return (
-    failure instanceof AnalysisCancelledError ||
-    (failure instanceof ArtifactReaderFailure && failure.reason === "cancelled")
-  );
-};
-
-/** Completed findings survive the failure; what was not reached stays unknown. */
-const reportInterruptedScan = (
-  input: ConsumeInput,
-  scan: ReleaseExposureScan | undefined,
-  reason: string,
-): void => {
-  if (scan === undefined) return;
-  input.visitInterruptedScan?.({
-    ...prependLimitations(scan, [reason]),
-    coverage: "unknown",
-  });
-};
 
 /** Hand each package reader to the resource scope so a failed close keeps its path and can be retried. */
 const releaseContainers = async (
@@ -3553,14 +3529,8 @@ const listSiblings = async (
     resource: `directory beside the selected file: ${directory}`,
     handle: owner,
   });
-  if (!listed.ok && listed.error instanceof AnalysisError) {
-    if (attempt.kind === "failed")
-      throw resources.cleanupFailure({ kind: "failed", cause: listed.error }, [
-        attempt,
-      ]);
-    throw listed.error;
-  }
   if (attempt.kind === "failed") siblingCleanup.push(attempt);
+  if (!listed.ok && listed.error instanceof AnalysisError) throw listed.error;
   if (!listed.ok || listed.value) noteIncompleteSiblings(state);
   return entries;
 };

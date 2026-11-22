@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   AnalysisArtifactChangedError,
+  AnalysisCancelledError,
   AnalysisResourceConstraintError,
 } from "../domain/analysisErrorCore.js";
 import { pe } from "../domain/binaryTarget.fixture.js";
@@ -33,7 +34,10 @@ import { binaryPlistObjectTable } from "../../tests/fixtures/binaryPlistObjectTa
 import { javaClassFile } from "../../tests/fixtures/javaClassFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { universalMacho } from "../../tests/fixtures/universalMacho.js";
-import { phaseGate } from "../../tests/support/lifecycleHarness.js";
+import {
+  controlledCleanup,
+  phaseGate,
+} from "../../tests/support/lifecycleHarness.js";
 import {
   ArtifactReaderFailure,
   type ArtifactEntry,
@@ -165,6 +169,7 @@ vi.mock("../filesystem/RegularFile.js", async () => {
 
 const directoryReads = vi.hoisted(() => ({
   count: 0,
+  afterRead: undefined as (() => void) | undefined,
   failClose: false,
   failedHandle: undefined as undefined | object,
   closeHandles: [] as object[],
@@ -193,9 +198,11 @@ vi.mock("node:fs/promises", async () => {
           }
           await close();
         },
-        read: () => {
+        read: async () => {
           directoryReads.count += 1;
-          return read();
+          const entry = await read();
+          directoryReads.afterRead?.();
+          return entry;
         },
       });
       return directory;
@@ -1051,82 +1058,155 @@ describe("ReleaseExposureReader package carrier identity", () => {
 });
 
 describe("ReleaseExposureReader package cleanup", () => {
-  it.each([false, true])(
-    "reports package cleanup failure and retains the scan or primary error (scan fails: %s)",
-    async (scanFails) => {
+  it.each(["completed scan", "changed artifact", "late cancellation"] as const)(
+    "retains failed package cleanup after %s",
+    async (scenario) => {
       const root = await createTestTempDirectory("rea-release-exposure-close-");
       const archive = join(root, "app.asar");
       await writeFile(archive, sourceMapArchive());
-      let created = 0;
-      let closes = 0;
-      createdReaders.wrap = (reader, path) => {
-        if (!path.endsWith("app.asar")) return reader;
-        created += 1;
-        if (created === 1) return reader;
-        const original = reader.close.bind(reader);
-        let attempts = 0;
-        reader.close = async () => {
-          attempts += 1;
-          closes += 1;
-          if (attempts < 3) throw new Error(`close failed: ${path}`);
-          await original();
-        };
-        return reader;
-      };
       const reader = new ReleaseExposureReader();
+      const gate = phaseGate();
+      const cleanup = controlledCleanup({ refused: true });
+      const controller = new AbortController();
+      const reason = { phase: "release of inventoried package" };
       const primary = new AnalysisArtifactChangedError(
         "audit_release_exposure",
         archive,
         "scan target changed",
       );
-      try {
-        const result = await reader.inspect(
-          { path: archive },
-          undefined,
-          scanFails
-            ? () => {
-                throw primary;
-              }
-            : ignoreText,
-        );
-        if (result.ok) throw new Error("Expected a failed audit.");
-        expect(result.error.cleanupIncomplete).toBe(true);
-        expect(result.error.cleanupResources).toContain(archive);
-        if (scanFails)
-          expect(result.error.diagnostics?.primary_error).toMatchObject({
-            code: "artifact_changed",
-            details: { reason: "scan target changed" },
-          });
-        else
-          expect(result.error.diagnostics?.primary_error).toMatchObject({
-            details: {
-              diagnostics: { scan: { source_maps: { embedded: 1 } } },
-            },
-          });
-        await expect(reader.close()).rejects.toSatisfy((error: unknown) => {
-          const message =
-            error instanceof Error ? error.message : String(error);
-          const resources =
-            typeof error === "object" &&
-            error !== null &&
-            "cleanupResources" in error
-              ? (error as { cleanupResources: readonly string[] })
-                  .cleanupResources
-              : [];
-          return (
-            message.includes("app.asar") ||
-            resources.some((resource) => resource.includes("app.asar"))
+      const interrupted: ReleaseExposureScan[] = [];
+      await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const close = source.close.bind(source);
+          source.close = async () => {
+            await gate.hold();
+            await cleanup.close(close);
+          };
+          return source;
+        },
+        async () => {
+          const audit = reader.inspect(
+            { path: archive },
+            { signal: controller.signal },
+            scenario === "changed artifact"
+              ? () => {
+                  throw primary;
+                }
+              : ignoreText,
+            (scan) => interrupted.push(scan),
           );
-        });
-        expect(closes).toBeGreaterThan(1);
-        await reader.close();
-        expect(result.error.cleanupIncomplete).toBe(false);
-      } finally {
-        createdReaders.wrap = undefined;
-        await reader.close().catch(() => undefined);
-      }
+          try {
+            await gate.reached(audit, "first package close");
+            if (scenario !== "completed scan") controller.abort(reason);
+            gate.release();
+            const result = await audit;
+            if (result.ok) throw new Error("Expected a failed audit.");
+            expect(result.error.cleanupIncomplete).toBe(true);
+            expect(result.error.cleanupResources).toEqual([archive]);
+            expect(cleanup.attempts).toBe(1);
+            if (scenario === "changed artifact") {
+              expect(result.error.cleanupPrimary).toBe(primary);
+            } else {
+              expect(interrupted).toMatchObject([
+                { coverage: "unknown", source_maps: { embedded: 1 } },
+              ]);
+              if (scenario === "late cancellation") {
+                const cancellation = result.error.cleanupPrimary;
+                expect(cancellation).toBeInstanceOf(AnalysisCancelledError);
+                expect(cancellation?.cause).toBe(reason);
+              } else {
+                expect(result.error.diagnostics?.primary_error).toMatchObject({
+                  details: {
+                    diagnostics: { scan: { source_maps: { embedded: 1 } } },
+                  },
+                });
+              }
+            }
+            await expect(reader.close()).rejects.toMatchObject({
+              cleanupResources: [archive],
+            });
+            expect(cleanup.attempts).toBe(2);
+            cleanup.allow();
+            await reader.close();
+            expect(cleanup.attempts).toBe(3);
+            expect(result.error.cleanupIncomplete).toBe(false);
+          } finally {
+            gate.release();
+            cleanup.allow();
+            await audit;
+            await reader.close();
+          }
+        },
+      );
     },
   );
+
+  it("keeps the cancelled sibling listing owned after its package closes on retry", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-sibling-and-package-",
+    );
+    const archive = join(root, "app.asar");
+    const directory = `directory beside the selected file: ${root}`;
+    await writeFile(archive, sourceMapArchive());
+    const reader = new ReleaseExposureReader();
+    const controller = new AbortController();
+    const reason = { phase: "sibling directory read" };
+    const packageCleanup = controlledCleanup({ refused: true });
+    directoryReads.closeHandles = [];
+    directoryReads.afterRead = () => controller.abort(reason);
+    directoryReads.failClose = true;
+    try {
+      const result = await withPostInventoryArchive(
+        archive,
+        (source) => {
+          const close = source.close.bind(source);
+          source.close = () => packageCleanup.close(close);
+          return source;
+        },
+        () =>
+          reader.inspect(
+            { path: archive },
+            { signal: controller.signal },
+            ignoreText,
+          ),
+      );
+      if (result.ok) throw new Error("Expected retained cleanup");
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupResources).toEqual(
+        expect.arrayContaining([archive, directory]),
+      );
+      expect(packageCleanup.attempts).toBe(1);
+      packageCleanup.allow();
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanupResources: [directory],
+      });
+      expect(packageCleanup.attempts).toBe(2);
+      expect(result.error.cleanupResources).toEqual([directory]);
+      expect(result.error.cleanupIncomplete).toBe(true);
+      expect(result.error.cleanupPrimary).toBeInstanceOf(
+        AnalysisCancelledError,
+      );
+      expect(result.error.cleanupPrimary?.cause).toBe(reason);
+      // Dir.close has no validity signal after a rejection. The confirmed
+      // package release and its retry count must stay settled independently.
+      directoryReads.failClose = false;
+      await expect(reader.close()).rejects.toMatchObject({
+        cleanupResources: [directory],
+      });
+      expect(directoryReads.closeHandles).toEqual([
+        directoryReads.failedHandle,
+      ]);
+      expect(packageCleanup.attempts).toBe(2);
+    } finally {
+      directoryReads.afterRead = undefined;
+      directoryReads.failClose = false;
+      directoryReads.failedHandle = undefined;
+      directoryReads.closeHandles = [];
+      packageCleanup.allow();
+      await reader.close().catch(() => undefined);
+    }
+  });
 });
 
 describe("ReleaseExposureReader replaced native images", () => {
@@ -4961,9 +5041,18 @@ describe("ReleaseExposureReader Node shebang .map scripts", () => {
 });
 
 describe("ReleaseExposureReader resource admission", () => {
-  it.each(["file", "directory"] as const)(
-    "joins the final package reader close for a %s audit",
-    async (selection) => {
+  it.each([
+    { selection: "file", action: "close" },
+    { selection: "directory", action: "close" },
+    { selection: "file", action: "cancel", reason: null },
+    {
+      selection: "directory",
+      action: "cancel",
+      reason: { phase: "package close" },
+    },
+  ] as const)(
+    "joins final package cleanup for $action during a $selection audit",
+    async (scenario) => {
       const root = await createTestTempDirectory("rea-release-exposure-scope-");
       const archive = join(root, "app.asar");
       await writeFile(
@@ -4972,6 +5061,9 @@ describe("ReleaseExposureReader resource admission", () => {
       );
       const reader = new ReleaseExposureReader();
       const cleanup = phaseGate();
+      let released = false;
+      const controller = new AbortController();
+      const interrupted: ReleaseExposureScan[] = [];
       await withPostInventoryArchive(
         archive,
         (source) => {
@@ -4979,25 +5071,48 @@ describe("ReleaseExposureReader resource admission", () => {
           source.close = async () => {
             await cleanup.hold();
             await close();
+            released = true;
           };
           return source;
         },
         async () => {
-          const path = selection === "file" ? archive : root;
-          const audit = reader.inspect({ path }, undefined, ignoreText);
+          const path = scenario.selection === "file" ? archive : root;
+          const audit = reader.inspect(
+            { path },
+            { signal: controller.signal },
+            ignoreText,
+            (scan) => interrupted.push(scan),
+          );
           try {
             await cleanup.reached(audit, "package reader close");
-            const closed = reader.close();
+            if (scenario.action === "cancel") controller.abort(scenario.reason);
+            const pending =
+              scenario.action === "close" ? reader.close() : audit;
             expect(
               await Promise.race([
-                closed.then(() => true),
+                pending.then(() => true),
                 setImmediate(false),
               ]),
             ).toBe(false);
             cleanup.release();
-            const [result] = await Promise.all([audit, closed]);
-            if (!result.ok) throw result.error;
-            expect(result.value.text_members.scanned).toBe(1);
+            await pending;
+            const result = await audit;
+            expect(released).toBe(true);
+            if (scenario.action === "cancel") {
+              if (result.ok)
+                throw new Error(
+                  "Audit succeeded after caller cancellation during close",
+                );
+              expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+              expect(result.error.cause).toBe(scenario.reason);
+              expect(interrupted).toMatchObject([
+                { coverage: "complete", text_members: { scanned: 1 } },
+              ]);
+            } else {
+              if (!result.ok) throw result.error;
+              expect(result.value.text_members.scanned).toBe(1);
+              expect(interrupted).toEqual([]);
+            }
           } finally {
             cleanup.release();
             await audit;
