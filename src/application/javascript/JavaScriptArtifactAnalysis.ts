@@ -3,8 +3,8 @@ import { posix } from "node:path";
 
 import { setImmediate } from "node:timers/promises";
 
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
-import { JAVASCRIPT_SEMANTIC_RELATION_FAMILIES } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
+
 import { resolveJavaScriptSourceMapReference } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import {
   inspectLocalSourceMapDeclarations,
@@ -39,11 +39,7 @@ import {
 } from "./JavaScriptJsonDocuments.js";
 import { assertJavaScriptAnalysisActive } from "./JavaScriptAnalysisControl.js";
 import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
-import type {
-  JavaScriptAnalyzedSource,
-  JavaScriptSourceAnalysisFailure,
-  JavaScriptSourceAnalysisPort,
-} from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -52,24 +48,12 @@ import {
 } from "../../resources/index.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import {
-  AnalysisCancelledError,
   AnalysisResourceConstraintError,
   AnalysisTimeoutError,
   cancelledBy,
   carriedReason,
 } from "../../domain/analysisErrorCore.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
-import type { Result } from "../../domain/result.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
-import {
-  collectJavaScriptPreloadPathsFromWindows,
-  createJavaScriptPackageTypeLookup,
-  formatPreloadDiscoveryLimitation,
-  hasModuleScopedJavaScript,
-  preloadTargetKey,
-} from "./JavaScriptPreloadDiscovery.js";
-
-export { createJavaScriptPackageTypeLookup };
 
 interface MutableArtifactAnalysis {
   readonly jsonDocuments: JavaScriptJsonDocuments;
@@ -85,452 +69,6 @@ interface MutableArtifactAnalysis {
   parseFailures: number;
 }
 
-interface SourceStatsDelta {
-  readonly visitedNodes: number;
-  readonly findings: number;
-  readonly modules: number;
-  readonly parseFailures: number;
-}
-
-interface ReanalyzableModuleJs {
-  readonly file: JavaScriptArtifactFile;
-  readonly stateFileIndex: number;
-  workerCallIndex: number;
-  statsDelta: SourceStatsDelta;
-  pendingOpIndex: number;
-}
-
-type PendingProjectionOp =
-  | {
-      readonly kind: "adopt";
-      readonly projection: JavaScriptSemanticFileProjection;
-      readonly nodes: number;
-      readonly unknowns: number;
-    }
-  | {
-      readonly kind: "unavailable";
-      readonly file: JavaScriptArtifactFile;
-      readonly reason: string;
-      readonly limits: Readonly<Record<string, JsonValue>> | null;
-      readonly unknownReason: "resource-limit" | "incomplete-module";
-      readonly nodes: number;
-      readonly unknowns: number;
-    };
-
-class PendingSemanticProjection {
-  readonly #target: JavaScriptSemanticGraphProjection;
-  readonly #deferred: boolean;
-  readonly #ops: (PendingProjectionOp | null)[] = [];
-  #reservedNodes = 0;
-  #reservedUnknowns = 0;
-
-  constructor(target: JavaScriptSemanticGraphProjection, deferred: boolean) {
-    this.#target = target;
-    this.#deferred = deferred;
-  }
-
-  remainingCapacity() {
-    return this.#deferred
-      ? this.#target.remainingFileCapacity({
-          nodes: this.#reservedNodes,
-          unknowns: this.#reservedUnknowns,
-        })
-      : this.#target.remainingFileCapacity();
-  }
-
-  adopt(projection: JavaScriptSemanticFileProjection): number {
-    if (!this.#deferred) {
-      this.#target.adoptFileProjection(projection);
-      return -1;
-    }
-    const nodes = projection.nodes.length;
-    const unknowns = projection.unknowns.length;
-    this.#reservedNodes += nodes;
-    this.#reservedUnknowns += unknowns;
-    this.#ops.push({ kind: "adopt", projection, nodes, unknowns });
-    return this.#ops.length - 1;
-  }
-
-  recordUnavailable(
-    file: JavaScriptArtifactFile,
-    reason: string,
-    limits: Readonly<Record<string, JsonValue>> | null,
-    unknownReason: "resource-limit" | "incomplete-module",
-  ): number {
-    if (!this.#deferred) {
-      this.#target.recordUnavailableFile(file, reason, limits, unknownReason);
-      return -1;
-    }
-    const nodes = file.kind === "javascript" ? 1 : 0;
-    const unknowns =
-      file.kind === "javascript"
-        ? JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.length
-        : 0;
-    this.#reservedNodes += nodes;
-    this.#reservedUnknowns += unknowns;
-    this.#ops.push({
-      kind: "unavailable",
-      file,
-      reason,
-      limits,
-      unknownReason,
-      nodes,
-      unknowns,
-    });
-    return this.#ops.length - 1;
-  }
-
-  remove(opIndex: number): void {
-    if (!this.#deferred || opIndex < 0) return;
-    const op = this.#ops[opIndex];
-    if (op === undefined || op === null) return;
-    this.#reservedNodes -= op.nodes;
-    this.#reservedUnknowns -= op.unknowns;
-    this.#ops[opIndex] = null;
-  }
-
-  flush(): void {
-    if (!this.#deferred) return;
-    for (const op of this.#ops) {
-      if (op === null) continue;
-      if (op.kind === "adopt") this.#target.adoptFileProjection(op.projection);
-      else
-        this.#target.recordUnavailableFile(
-          op.file,
-          op.reason,
-          op.limits,
-          op.unknownReason,
-        );
-    }
-    this.#ops.length = 0;
-    this.#reservedNodes = 0;
-    this.#reservedUnknowns = 0;
-  }
-}
-
-interface SourceAdoptionContext {
-  readonly state: MutableArtifactAnalysis;
-  readonly sourceIndices: (number | "replaced")[];
-  readonly pendingProjection: PendingSemanticProjection;
-  readonly filesByPath: ReadonlyMap<string, JavaScriptArtifactFile>;
-  readonly unanalyzedFiles: JavaScriptArtifactFileSet["unanalyzed_files"];
-  readonly discoveredPreloadPaths: Set<string>;
-  readonly discoverPreloads: boolean;
-}
-
-const applySourceResult = (
-  ctx: SourceAdoptionContext,
-  file: JavaScriptArtifactFile,
-  result: Result<JavaScriptAnalyzedSource, JavaScriptSourceAnalysisFailure>,
-  targetStateIndex: number,
-  workerCallIndex: number,
-): {
-  readonly statsDelta: SourceStatsDelta;
-  readonly pendingOpIndex: number;
-  readonly error: AnalysisError | null;
-  readonly hasJavaScriptFacts: boolean;
-} => {
-  const facts = result.ok ? result.value : result.error;
-  for (const revoked of facts.revokedStaticProjections ?? []) {
-    const index = ctx.sourceIndices[revoked.sourceIndex];
-    if (index === "replaced") continue;
-    const previous = index === undefined ? undefined : ctx.state.files[index];
-    if (previous === undefined)
-      throw new TypeError(
-        "Revoked application projection has no retained source",
-      );
-    ctx.state.files[index!] = {
-      ...previous,
-      application_projection_failure: {
-        reason: revoked.error.message,
-        error: projectAnalysisError(revoked.error),
-        limits: revoked.error.reportedLimits,
-      },
-    };
-  }
-  const error = result.ok ? null : result.error.error;
-  const limits = errorReportedLimits(error);
-  const failure: JavaScriptArtifactAnalysisFailure | undefined =
-    error === null
-      ? undefined
-      : {
-          scope: javascriptArtifactAnalysisScopes.javascript,
-          status: "interrupted",
-          reason: `${file.path}: ${error.message}`,
-          error: projectAnalysisError(error),
-          limits,
-        };
-  ctx.sourceIndices[workerCallIndex] = targetStateIndex;
-  const applicationProjectionFailure = facts.applicationProjectionFailure;
-  ctx.state.files[targetStateIndex] = {
-    file,
-    javascript: facts.javascript,
-    semantic: facts.module === null ? null : { ir: facts.module },
-    ...(failure === undefined ? {} : { analysis_failure: failure }),
-    ...(applicationProjectionFailure === undefined
-      ? {}
-      : {
-          application_projection_failure: {
-            reason: applicationProjectionFailure.message,
-            error: projectAnalysisError(applicationProjectionFailure),
-            limits: applicationProjectionFailure.reportedLimits,
-          },
-        }),
-  };
-  let pendingOpIndex = -1;
-  if (facts.projection !== null)
-    pendingOpIndex = ctx.pendingProjection.adopt(facts.projection);
-  else {
-    const semanticUnavailableReason =
-      failure?.reason ??
-      javaScriptSemanticSourceExclusion(
-        file,
-        facts.javascript?.parse_status ?? null,
-      );
-    if (semanticUnavailableReason !== null)
-      pendingOpIndex = ctx.pendingProjection.recordUnavailable(
-        file,
-        semanticUnavailableReason,
-        failure?.limits ?? null,
-        error instanceof AnalysisResourceConstraintError ||
-          error instanceof AnalysisTimeoutError
-          ? "resource-limit"
-          : "incomplete-module",
-      );
-  }
-  const statsDelta = computeStatsDelta(facts.javascript, facts.module);
-  addStatsDelta(ctx.state, statsDelta);
-  if (ctx.discoverPreloads && facts.javascript !== null)
-    collectJavaScriptPreloadPathsFromWindows({
-      sourceFile: file,
-      windows: facts.javascript.electron.browser_windows,
-      files: ctx.filesByPath,
-      jsonDocuments: ctx.state.jsonDocuments,
-      unanalyzedFiles: ctx.unanalyzedFiles,
-      targetPaths: ctx.discoveredPreloadPaths,
-    });
-  return {
-    statsDelta,
-    pendingOpIndex,
-    error,
-    hasJavaScriptFacts: facts.javascript !== null,
-  };
-};
-
-const computeStatsDelta = (
-  javascript: JavaScriptStaticAnalysis | null,
-  module: JavaScriptAnalyzedSource["module"],
-): SourceStatsDelta => {
-  if (javascript === null)
-    return { visitedNodes: 0, findings: 0, modules: 0, parseFailures: 0 };
-  return {
-    visitedNodes: javascript.visited_ast_nodes,
-    findings: findingCount(javascript) + (module?.moduleLinks.length ?? 0),
-    modules: javascript.bundler_registrations.reduce(
-      (count, item) => count + item.modules.length,
-      0,
-    ),
-    parseFailures: javascript.parse_status === "failed" ? 1 : 0,
-  };
-};
-
-const addStatsDelta = (
-  state: MutableArtifactAnalysis,
-  delta: SourceStatsDelta,
-): void => {
-  state.visitedNodes += delta.visitedNodes;
-  state.findings += delta.findings;
-  state.modules += delta.modules;
-  state.parseFailures += delta.parseFailures;
-};
-
-const subtractStatsDelta = (
-  state: MutableArtifactAnalysis,
-  delta: SourceStatsDelta,
-): void => {
-  state.visitedNodes -= delta.visitedNodes;
-  state.findings -= delta.findings;
-  state.modules -= delta.modules;
-  state.parseFailures -= delta.parseFailures;
-};
-
-const errorReportedLimits = (
-  error: AnalysisError | null,
-): Readonly<Record<string, JsonValue>> | null =>
-  error instanceof AnalysisResourceConstraintError
-    ? error.reportedLimits
-    : error instanceof AnalysisTimeoutError
-      ? { worker_timeout_ms: error.timeoutMs }
-      : null;
-
-const isSignalAborted = (signal?: AbortSignal): boolean =>
-  signal?.aborted === true;
-
-const recordCaughtFileFailure = (input: {
-  readonly ctx: SourceAdoptionContext;
-  readonly file: JavaScriptArtifactFile;
-  readonly interruption: AnalysisError;
-  readonly analysisStarted: boolean;
-  readonly targetStateIndex: number;
-}): void => {
-  const { ctx, file, interruption, analysisStarted, targetStateIndex } = input;
-  const scope = javascriptArtifactAnalysisScopes[file.kind];
-  ctx.state.files[targetStateIndex] = {
-    file,
-    javascript: null,
-    semantic: null,
-    ...(scope === null
-      ? {}
-      : {
-          analysis_failure: {
-            scope,
-            status: analysisStarted ? "interrupted" : "not-started",
-            reason: `${file.path}: ${interruption.message}`,
-            error: projectAnalysisError(interruption),
-            limits: null,
-          },
-        }),
-  };
-  ctx.pendingProjection.recordUnavailable(
-    file,
-    interruption.message,
-    null,
-    "incomplete-module",
-  );
-};
-
-const reanalyzeDiscoveredPreloads = async (input: {
-  readonly ctx: SourceAdoptionContext;
-  readonly worker: Pick<JavaScriptSourceAnalysisPort, "analyze">;
-  readonly reanalyzable: readonly ReanalyzableModuleJs[];
-  readonly signal: AbortSignal | undefined;
-  readonly onPhase:
-    | ((file: JavaScriptArtifactFile, phase: string) => Promise<void>)
-    | undefined;
-  readonly nextWorkerCallIndex: () => number;
-}): Promise<AnalysisError | null> => {
-  const { ctx, worker, reanalyzable, signal, onPhase, nextWorkerCallIndex } =
-    input;
-  const reanalyzed = new Set<number>();
-  let progressed = true;
-  while (progressed) {
-    progressed = false;
-    for (const entry of reanalyzable) {
-      if (reanalyzed.has(entry.stateFileIndex)) continue;
-      if (!ctx.discoveredPreloadPaths.has(preloadTargetKey(entry.file)))
-        continue;
-      reanalyzed.add(entry.stateFileIndex);
-      progressed = true;
-      await setImmediate();
-      if (signal?.aborted === true)
-        return cancelledBy("analyze_javascript_application", signal);
-      subtractStatsDelta(ctx.state, entry.statsDelta);
-      ctx.sourceIndices[entry.workerCallIndex] = "replaced";
-      ctx.pendingProjection.remove(entry.pendingOpIndex);
-      try {
-        const result = await worker.analyze(
-          entry.file,
-          ctx.pendingProjection.remainingCapacity(),
-          signal,
-          onPhase === undefined
-            ? undefined
-            : (phase) => onPhase(entry.file, phase),
-          "commonjs",
-        );
-        const workerCallIndex = nextWorkerCallIndex();
-        const applied = applySourceResult(
-          ctx,
-          entry.file,
-          result,
-          entry.stateFileIndex,
-          workerCallIndex,
-        );
-        entry.workerCallIndex = workerCallIndex;
-        entry.statsDelta = applied.statsDelta;
-        entry.pendingOpIndex = applied.pendingOpIndex;
-        if (
-          applied.error !== null &&
-          (!(applied.error instanceof AnalysisResourceConstraintError) ||
-            applied.error.reportedLimits?.parent_result_budget_exhausted ===
-              true)
-        )
-          return applied.error;
-      } catch (cause: unknown) {
-        let interruption: AnalysisError;
-        if (cause instanceof AnalysisError) interruption = cause;
-        else if (
-          cause instanceof ArtifactReaderFailure &&
-          cause.reason === "cancelled"
-        )
-          interruption = translateArtifactFailure(
-            "analyze_javascript_application",
-            cause,
-          );
-        else if (isSignalAborted(signal) && cause === signal?.reason)
-          interruption = cancelledBy(
-            "analyze_javascript_application",
-            carriedReason(cause),
-          );
-        else throw cause;
-        recordCaughtFileFailure({
-          ctx,
-          file: entry.file,
-          interruption,
-          analysisStarted: true,
-          targetStateIndex: entry.stateFileIndex,
-        });
-        return interruption;
-      }
-    }
-  }
-  return null;
-};
-
-const recordUnvisitedFilesAfterInterruption = (
-  fileSet: JavaScriptArtifactFileSet,
-  state: MutableArtifactAnalysis,
-  projection: JavaScriptSemanticGraphProjection,
-  interruption: AnalysisError,
-): void => {
-  const analyzedPaths = new Set(state.files.map(({ file }) => file.path));
-  const failure = {
-    reason: `Source analysis was interrupted: ${interruption.message}`,
-    error: projectAnalysisError(interruption),
-    limits: errorReportedLimits(interruption),
-  };
-  // This interruption has one cause. Share its immutable failure per phase
-  // rather than copying it for every unvisited source in a large bundle.
-  const failures = new Map<
-    JavaScriptArtifactAnalysisScope,
-    JavaScriptArtifactAnalysisFailure
-  >();
-  for (const file of fileSet.files) {
-    if (analyzedPaths.has(file.path)) continue;
-    if (classifyUnavailableSource(file, state, projection)) continue;
-    const scope = javascriptArtifactAnalysisScopes[file.kind];
-    let unavailable = scope === null ? undefined : failures.get(scope);
-    if (scope !== null && unavailable === undefined) {
-      unavailable = { ...failure, scope, status: "not-started" };
-      failures.set(scope, unavailable);
-    }
-    state.files.push({
-      file,
-      javascript: null,
-      semantic: null,
-      ...(unavailable === undefined ? {} : { analysis_failure: unavailable }),
-    });
-    projection.recordUnavailableFile(
-      file,
-      failure.reason,
-      failure.limits,
-      interruption instanceof AnalysisResourceConstraintError ||
-        interruption instanceof AnalysisTimeoutError
-        ? "resource-limit"
-        : "incomplete-module",
-    );
-  }
-};
-
 /** Analyze sources behind a hard heap boundary, retaining collected facts on interruption. */
 export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   fileSet: JavaScriptArtifactFileSet,
@@ -543,7 +81,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   ) => Promise<void>,
   signal?: AbortSignal,
   onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
-  preloadPaths?: ReadonlySet<string>,
+  preloadPaths: ReadonlySet<string> = new Set(),
   /** Discovery gaps that may leave a declared preload in its package scope. */
   preloadLimitations: readonly string[] = [],
 ): Promise<{
@@ -551,51 +89,22 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
+  const sourceIndices: number[] = [];
   const packageTypeFor = createJavaScriptPackageTypeLookup(
     fileSet,
     state.jsonDocuments,
   );
-  const orderedFiles =
-    fileSet.source_selection === undefined
-      ? javaScriptAnalysisOrder(fileSet.files)
-      : fileSet.files;
-  const discoverPreloads =
-    preloadPaths === undefined &&
-    hasModuleScopedJavaScript(orderedFiles, packageTypeFor);
-  const pendingProjection = new PendingSemanticProjection(
-    projection,
-    discoverPreloads,
-  );
-  const ctx: SourceAdoptionContext = {
-    state,
-    sourceIndices: [],
-    pendingProjection,
-    filesByPath: discoverPreloads
-      ? new Map(fileSet.files.map((file) => [file.path, file]))
-      : new Map(),
-    unanalyzedFiles: fileSet.unanalyzed_files,
-    discoveredPreloadPaths: new Set(preloadPaths),
-    discoverPreloads,
-  };
-  const effectivePreloadLimitations = [...preloadLimitations];
-  const reanalyzable: ReanalyzableModuleJs[] = [];
-  const totalIncludedJs = discoverPreloads
-    ? orderedFiles.filter(
-        (file) => file.kind === "javascript" && file.text.included,
-      ).length
-    : 0;
-  let visitedIncludedJs = 0;
-  let workerCallCounter = 0;
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-
-  for (const file of orderedFiles) {
+  for (const file of fileSet.source_selection === undefined
+    ? javaScriptAnalysisOrder(fileSet.files)
+    : fileSet.files) {
     let analysisStarted = false;
     try {
       await setImmediate();
-      if (classifyUnavailableSource(file, state, pendingProjection)) {
+      if (classifyUnavailableSource(file, state, projection)) {
         if (signal?.aborted === true) {
           interruption = cancelledBy("analyze_javascript_application", signal);
           break;
@@ -612,63 +121,104 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         assertJavaScriptAnalysisActive(signal);
         continue;
       }
-      visitedIncludedJs += 1;
-      const packageType = packageTypeFor(file);
-      const isJsExtension = posix.extname(file.path) === ".js";
-      const effectivePackageType =
-        isJsExtension && ctx.discoveredPreloadPaths.has(preloadTargetKey(file))
-          ? "commonjs"
-          : packageType;
       const result = await worker.analyze(
         file,
-        pendingProjection.remainingCapacity(),
+        projection.remainingFileCapacity(),
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
-        effectivePackageType,
+        preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
+          posix.extname(file.path) === ".js"
+          ? "commonjs"
+          : packageTypeFor(file),
       );
-      const workerCallIndex = workerCallCounter++;
-      const stateFileIndex = state.files.length;
-      const applied = applySourceResult(
-        ctx,
-        file,
-        result,
-        stateFileIndex,
-        workerCallIndex,
-      );
-      if (
-        discoverPreloads &&
-        isJsExtension &&
-        effectivePackageType === "module"
-      )
-        reanalyzable.push({
-          file,
-          stateFileIndex,
-          workerCallIndex,
-          statsDelta: applied.statsDelta,
-          pendingOpIndex: applied.pendingOpIndex,
-        });
-      if (applied.error !== null) {
-        const skipped =
-          applied.error instanceof AnalysisResourceConstraintError &&
-          applied.error.reportedLimits?.parent_result_budget_exhausted !== true;
-        if (
-          discoverPreloads &&
-          !applied.hasJavaScriptFacts &&
-          !isSignalAborted(signal) &&
-          !(applied.error instanceof AnalysisCancelledError)
-        )
-          effectivePreloadLimitations.push(
-            formatPreloadDiscoveryLimitation(
-              file.path,
-              applied.error.message,
-              skipped,
-              totalIncludedJs - visitedIncludedJs,
-            ),
+      const facts = result.ok ? result.value : result.error;
+      for (const revoked of facts.revokedStaticProjections ?? []) {
+        const index = sourceIndices[revoked.sourceIndex];
+        const previous = index === undefined ? undefined : state.files[index];
+        if (previous === undefined)
+          throw new TypeError(
+            "Revoked application projection has no retained source",
           );
-        if (!skipped) {
-          interruption = applied.error;
-          break;
-        }
+        state.files[index!] = {
+          ...previous,
+          application_projection_failure: {
+            reason: revoked.error.message,
+            error: projectAnalysisError(revoked.error),
+            limits: revoked.error.reportedLimits,
+          },
+        };
+      }
+      const applicationProjectionFailure = facts.applicationProjectionFailure;
+      if (facts.projection !== null)
+        projection.adoptFileProjection(facts.projection);
+      const error = result.ok ? null : result.error.error;
+      const limits =
+        error instanceof AnalysisResourceConstraintError
+          ? error.reportedLimits
+          : error instanceof AnalysisTimeoutError
+            ? { worker_timeout_ms: error.timeoutMs }
+            : null;
+      const failure: JavaScriptArtifactAnalysisFailure | undefined =
+        error === null
+          ? undefined
+          : {
+              scope: javascriptArtifactAnalysisScopes.javascript,
+              status: "interrupted",
+              reason: `${file.path}: ${error.message}`,
+              error: projectAnalysisError(error),
+              limits,
+            };
+      sourceIndices.push(state.files.length);
+      state.files.push({
+        file,
+        javascript: facts.javascript,
+        semantic: facts.module === null ? null : { ir: facts.module },
+        ...(failure === undefined ? {} : { analysis_failure: failure }),
+        ...(applicationProjectionFailure === undefined
+          ? {}
+          : {
+              application_projection_failure: {
+                reason: applicationProjectionFailure.message,
+                error: projectAnalysisError(applicationProjectionFailure),
+                limits: applicationProjectionFailure.reportedLimits,
+              },
+            }),
+      });
+      const semanticUnavailableReason =
+        failure?.reason ??
+        javaScriptSemanticSourceExclusion(
+          file,
+          facts.javascript?.parse_status ?? null,
+        );
+      if (facts.projection === null && semanticUnavailableReason !== null)
+        projection.recordUnavailableFile(
+          file,
+          semanticUnavailableReason,
+          failure?.limits ?? null,
+          error instanceof AnalysisResourceConstraintError ||
+            error instanceof AnalysisTimeoutError
+            ? "resource-limit"
+            : "incomplete-module",
+        );
+      if (facts.javascript !== null) {
+        state.visitedNodes += facts.javascript.visited_ast_nodes;
+        state.findings +=
+          findingCount(facts.javascript) +
+          (facts.module?.moduleLinks.length ?? 0);
+        state.modules += facts.javascript.bundler_registrations.reduce(
+          (count, item) => count + item.modules.length,
+          0,
+        );
+        if (facts.javascript.parse_status === "failed")
+          state.parseFailures += 1;
+      }
+      if (
+        error !== null &&
+        (!(error instanceof AnalysisResourceConstraintError) ||
+          error.reportedLimits?.parent_result_budget_exhausted === true)
+      ) {
+        interruption = error;
+        break;
       }
     } catch (cause: unknown) {
       if (cause instanceof AnalysisError) interruption = cause;
@@ -686,56 +236,79 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
           carriedReason(cause),
         );
       else throw cause;
-      if (
-        discoverPreloads &&
-        file.kind === "javascript" &&
-        file.text.included &&
-        signal?.aborted !== true &&
-        !(interruption instanceof AnalysisCancelledError)
-      )
-        effectivePreloadLimitations.push(
-          formatPreloadDiscoveryLimitation(
-            file.path,
-            interruption.message,
-            false,
-            totalIncludedJs - visitedIncludedJs,
-          ),
-        );
-      recordCaughtFileFailure({
-        ctx,
+      const scope = javascriptArtifactAnalysisScopes[file.kind];
+      state.files.push({
         file,
-        interruption,
-        analysisStarted,
-        targetStateIndex: state.files.length,
+        javascript: null,
+        semantic: null,
+        ...(scope === null
+          ? {}
+          : {
+              analysis_failure: {
+                scope,
+                status: analysisStarted ? "interrupted" : "not-started",
+                reason: `${file.path}: ${interruption.message}`,
+                error: projectAnalysisError(interruption),
+                limits: null,
+              },
+            }),
       });
+      projection.recordUnavailableFile(
+        file,
+        interruption.message,
+        null,
+        "incomplete-module",
+      );
       break;
     }
   }
-  if (
-    discoverPreloads &&
-    interruption === null &&
-    ctx.discoveredPreloadPaths.size > 0 &&
-    reanalyzable.length > 0
-  )
-    interruption = await reanalyzeDiscoveredPreloads({
-      ctx,
-      worker,
-      reanalyzable,
-      signal,
-      onPhase,
-      nextWorkerCallIndex: () => workerCallCounter++,
-    });
-  pendingProjection.flush();
-  if (interruption !== null)
-    recordUnvisitedFilesAfterInterruption(
-      fileSet,
-      state,
-      projection,
-      interruption,
-    );
+  if (interruption !== null) {
+    const analyzedPaths = new Set(state.files.map(({ file }) => file.path));
+    const failure = {
+      reason: `Source analysis was interrupted: ${interruption.message}`,
+      error: projectAnalysisError(interruption),
+      limits:
+        interruption instanceof AnalysisResourceConstraintError
+          ? interruption.reportedLimits
+          : interruption instanceof AnalysisTimeoutError
+            ? { worker_timeout_ms: interruption.timeoutMs }
+            : null,
+    };
+    // This interruption has one cause. Share its immutable failure per phase
+    // rather than copying it for every unvisited source in a large bundle.
+    const failures = new Map<
+      JavaScriptArtifactAnalysisScope,
+      JavaScriptArtifactAnalysisFailure
+    >();
+    for (const file of fileSet.files) {
+      if (analyzedPaths.has(file.path)) continue;
+      if (classifyUnavailableSource(file, state, projection)) continue;
+      const scope = javascriptArtifactAnalysisScopes[file.kind];
+      let unavailable = scope === null ? undefined : failures.get(scope);
+      if (scope !== null && unavailable === undefined) {
+        unavailable = { ...failure, scope, status: "not-started" };
+        failures.set(scope, unavailable);
+      }
+      state.files.push({
+        file,
+        javascript: null,
+        semantic: null,
+        ...(unavailable === undefined ? {} : { analysis_failure: unavailable }),
+      });
+      projection.recordUnavailableFile(
+        file,
+        failure.reason,
+        failure.limits,
+        interruption instanceof AnalysisResourceConstraintError ||
+          interruption instanceof AnalysisTimeoutError
+          ? "resource-limit"
+          : "incomplete-module",
+      );
+    }
+  }
   restoreInventoryOrder(fileSet.files, state.files);
   return {
-    analysis: finalizeArtifactAnalysis(state, effectivePreloadLimitations),
+    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
     interruption,
   };
 };
@@ -834,17 +407,12 @@ const analyzeArtifactMetadata = (
 const classifyUnavailableSource = (
   file: JavaScriptArtifactFile,
   state: MutableArtifactAnalysis,
-  projection:
-    | Pick<JavaScriptSemanticGraphProjection, "recordUnavailableFile">
-    | PendingSemanticProjection,
+  projection: JavaScriptSemanticGraphProjection,
 ): boolean => {
   const reason = javaScriptArtifactTextExclusion(file);
   if (reason === null) return false;
   state.files.push({ file, javascript: null, semantic: null });
-  if (projection instanceof PendingSemanticProjection)
-    projection.recordUnavailable(file, reason, null, "incomplete-module");
-  else
-    projection.recordUnavailableFile(file, reason, null, "incomplete-module");
+  projection.recordUnavailableFile(file, reason, null, "incomplete-module");
   return true;
 };
 
@@ -872,6 +440,58 @@ const addStructuredObservations = (
   const json = analyzeJavaScriptJsonModule(file, state.jsonDocuments);
   state.jsonModules.push(json);
   if (json.status === "invalid") state.parseFailures += 1;
+};
+
+/**
+ * Node's package scope for a source is its nearest package.json; the lookup
+ * stops at a `node_modules` directory (Node's package scope resolution). Only
+ * a same-container, readable manifest object establishes the type; any other
+ * nearest manifest, including one whose bytes are unavailable, or none in the
+ * inventory, leaves the scope unknown.
+ */
+export const createJavaScriptPackageTypeLookup = (
+  fileSet: JavaScriptArtifactFileSet,
+  jsonDocuments: JavaScriptJsonDocuments,
+): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {
+  const manifests = new Map<string, JavaScriptArtifactFile>();
+  for (const file of fileSet.files)
+    if (posix.basename(file.path) === "package.json")
+      manifests.set(
+        `${file.container_sha256}:${posix.dirname(file.path)}`,
+        file,
+      );
+  const unavailableManifests = new Set(
+    fileSet.unavailable_relevant_files
+      .filter(({ path }) => posix.basename(path) === "package.json")
+      .map(
+        ({ path, container_sha256 }) =>
+          `${container_sha256}:${posix.dirname(path)}`,
+      ),
+  );
+  return (file) => {
+    for (
+      let directory = posix.dirname(file.path);
+      posix.basename(directory) !== "node_modules";
+      directory = posix.dirname(directory)
+    ) {
+      const key = `${file.container_sha256}:${directory}`;
+      if (unavailableManifests.has(key)) return "unknown";
+      const manifest = manifests.get(key);
+      if (manifest !== undefined) {
+        const document = jsonDocuments.read(manifest);
+        if (document.status !== "included" || document.packageFields === null)
+          return "unknown";
+        const type = document.packageFields.type;
+        return type === "module" || type === "commonjs" ? type : "unspecified";
+      }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
+      if (directory === "." || directory === "" || directory === "/") break;
+    }
+    return "unknown";
+  };
 };
 
 const parsePackage = (

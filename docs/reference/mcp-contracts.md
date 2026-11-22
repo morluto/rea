@@ -465,10 +465,20 @@ pages do not start a provider or create another decompilation. An
 `analyze_function` dossier is a different observation.
 `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
-unknown metadata. Missing omission counts remain null. Summary output carries
-every matching record; actual transport admission still applies. Omitted
-`detail` preserves complete canonical bundle delivery; filters require summary
-or records.
+unknown metadata. Missing omission counts remain null.
+
+Summary output carries every matching record when neither `offset` nor `limit`
+is supplied. To page metadata, supply either field: `offset` defaults to 0 and
+`limit` to 64. The optional `page` object reports `offset`, `limit` and
+`next_offset`; follow `page.next_offset` until it is null. Filters apply before
+paging, and rows retain canonical Evidence ID order. `matching_records`,
+`direct_links` and `missing_direct_links` still count every filtered record and
+its direct links, including records outside the page. `total_retained_records`
+and `unknown_revisions` continue to describe the entire session. Keep the
+session unchanged while following offsets. If a metadata page exceeds the
+response budget, keep its filters and offset and reduce its limit; export if a
+single metadata row still cannot fit. Omitted `detail` preserves complete
+canonical bundle delivery; filters require summary, records or links.
 
 To read a discovered record without transferring the whole bundle, call
 `get_evidence_bundle` with `detail: "records"` and the same exact `filters`.
@@ -482,8 +492,8 @@ such as annotations. `missing_evidence_links` lists direct `evidence_links` of
 the returned records that this session or bundle does not retain; links are not
 traversed. A selection is not an Evidence bundle: it omits manifests and
 residual unknowns, cannot be imported, and describes historical observations
-rather than current provider or database state. `offset` and `limit` require
-`detail: "records"`. If one page exceeds the response budget, select fewer
+rather than current provider or database state. `offset` and `limit` apply to
+summary, records or links delivery. If one record page exceeds the response budget, select fewer
 records or one `evidence_id`; a single record larger than one response still
 needs `export_evidence_bundle`, or `inspect_analysis_view` pages where its parent
 supports views.
@@ -569,7 +579,9 @@ file, not nonexistent, and neither status describes analysis coverage. Importing
 a missing source changes this membership without changing any Evidence ID.
 
 For a portable exported bundle, the CLI shares this projection:
-`rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"}}' --format json`.
+`rea inspect-evidence-bundle '{"path":"/tmp/evidence.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --format json`.
+Follow `page.next_offset` to discover further matching records without their
+payloads, or omit both paging fields for the complete summary.
 `"detail":"records"` with an `evidence_id` filter returns that complete record,
 and `"detail":"links"` reads link membership.
 The CLI validates and materializes that local bundle under its existing memory
@@ -1316,6 +1328,20 @@ constraint, and `details.path` names that file. A `.dext`, `.kext`,
 `.qlgenerator` or `.mdimporter` directory reports `bundle_type_unsupported`. A
 resource root reports its `layout` as `contents`, `root`,
 `versioned-framework` or `flattened-framework`.
+
+When the caller opens a directory, `inspect_macho` and `inspect_signature`
+include `normalized_result.bundle_provenance`. It records the canonical bundle
+directory, selected layout, lookup path and SHA-256 of the Info.plist bytes
+read during resolution, and the declared executable name. For versioned
+frameworks, `version_directory` records where the program directory resolved.
+The `framework` object reports the directory's name without `.framework` and
+whether it exactly matches the declared name. A mismatch does not override
+`CFBundleExecutable`. The Mach-O summary includes these fields under
+`summary.bundle_provenance`. The binary is still the Evidence subject.
+These facts describe the selection at open time. Reopening refreshes them
+from the new admission, including when the executable bytes stay the same.
+A retained report includes those facts when a later inspection or cleanup step fails.
+Direct file selections and older Evidence can omit this object.
 
 `open_bundle_resources` selects a separate read-only app resource session
 without resolving `CFBundleExecutable`, including when it is absent or

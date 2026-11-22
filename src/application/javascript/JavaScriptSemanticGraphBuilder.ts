@@ -113,18 +113,10 @@ interface FileContext extends SemanticFlowProjectionContext {
   >;
 }
 
-/** Pending node/unknown counts held in staged file projections before adoption. */
-export interface JavaScriptSemanticProjectionReservation {
-  readonly nodes: number;
-  readonly unknowns: number;
-}
-
 /** File-local semantic projection that does not retain consumed source IR. */
 export interface JavaScriptSemanticGraphProjection {
   /** Node capacity offered to the next independently analyzed source file. */
-  readonly remainingFileCapacity: (
-    reserved?: JavaScriptSemanticProjectionReservation,
-  ) => JavaScriptSemanticProjectionCapacity;
+  readonly remainingFileCapacity: () => JavaScriptSemanticProjectionCapacity;
   /** Adopt decoded file-local facts; final validation and proof remain in this realm. */
   readonly adoptFileProjection: (
     projection: JavaScriptSemanticFileProjection,
@@ -408,17 +400,14 @@ export const createJavaScriptSemanticGraphProjection = (
     return graph;
   };
   return {
-    remainingFileCapacity: (reserved) => ({
+    remainingFileCapacity: () => ({
       nodes: Math.min(
         fileNodeCeiling,
-        Math.max(0, nodeCeiling - state.nodes.size - (reserved?.nodes ?? 0)),
+        Math.max(0, nodeCeiling - state.nodes.size),
       ),
       unknowns: Math.min(
         fileUnknownCeiling,
-        Math.max(
-          0,
-          unknownCeiling - state.unknowns.size - (reserved?.unknowns ?? 0),
-        ),
+        Math.max(0, unknownCeiling - state.unknowns.size),
       ),
     }),
     adoptFileProjection: (projection) => {
