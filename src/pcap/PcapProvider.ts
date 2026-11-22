@@ -593,10 +593,27 @@ export class PcapProvider {
         };
       }),
     );
-    for (const settled of admittedTools) {
-      if (settled.status === "rejected") throw settled.reason;
-      this.wiresharkIdentities.set(settled.value.command, settled.value.entry);
+    const rejected = admittedTools.filter((item) => item.status === "rejected");
+    const first = rejected[0];
+    if (first !== undefined) {
+      let primary: unknown = first.reason;
+      for (const { reason } of rejected.slice(1)) {
+        if (!(reason instanceof AnalysisError) || !reason.cleanupIncomplete)
+          continue;
+        primary = analysisErrorWithCleanupDependencies(
+          classifyProviderFailure(primary, this.#failureDialect(operation)),
+          reason,
+          operation,
+        );
+      }
+      throw primary;
     }
+    for (const settled of admittedTools)
+      if (settled.status === "fulfilled")
+        this.wiresharkIdentities.set(
+          settled.value.command,
+          settled.value.entry,
+        );
     const identity = await inspectPcapClient(
       selection,
       async (command) =>
