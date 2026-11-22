@@ -501,6 +501,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             site = root / "website/public"
             WEBSITE.sync_pages(root)
             shutil.copyfile(ROOT / "website/_site/assets/social-card.png", site / "assets/social-card.png")
+            shutil.copytree(ROOT / "website/_site/assets/share", site / "assets/share")
             PREPARE.prepare_notes_example(site)
             page = WEBSITE.new_page(root, "blog/new-example", 'A <test> & "result"', 'Check "quotes" & <markup>.')
             source = page.read_text()
@@ -538,6 +539,59 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             for _, message in cases:
                 with self.subTest(message=message):
                     self.assertIn(f"{page.relative_to(site)}: {message}", diagnostics)
+
+    def test_repository_fragments_use_rendered_headings_and_html_ids(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "website").mkdir()
+            (root / "docs").mkdir()
+            (root / "docs/guide.md").write_text(dedent("""\
+                ---
+                title: Guide
+                ---
+
+                ````markdown
+                ```
+                # Example heading
+                <span id="example-id"></span>
+                ```
+                ````
+
+                Guide heading
+                -------------
+
+                ## Read [the guide](another-guide.md) with `rea`
+
+                ## ![Caf&eacute; *crème*](badge.svg)
+
+                <p id="block-id">A block anchor.</p>
+
+                An <span id="inline-id">inline anchor</span>.
+            """), encoding="utf-8")
+            (root / "docs/rule.md").write_text("---\nOrdinary heading\n---\n", encoding="utf-8")
+            page = root / "website/README.md"
+            page.write_text(dedent("""\
+                ---
+                description: "[Metadata](../docs/not-a-link.md)"
+                ---
+
+                [Setext](../docs/guide.md#guide-heading)
+                [Leading rule](../docs/rule.md#ordinary-heading)
+                [Formatted](../docs/guide.md#read-the-guide-with-rea)
+                [Image alt text](../docs/guide.md#caf%C3%A9-cr%C3%A8me)
+                [Block ID](../docs/guide.md#block-id)
+                [Inline ID](../docs/guide.md#inline-id)
+                [Metadata title](../docs/guide.md#title-guide)
+                [Fenced heading](../docs/guide.md#example-heading)
+                [Fenced ID](../docs/guide.md#example-id)
+            """), encoding="utf-8")
+
+            source = page.relative_to(root)
+            self.assertEqual(VERIFY.check_repository_links(root), [
+                f"{source}: missing Markdown fragment: ../docs/guide.md#title-guide",
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-heading",
+                f"{source}: missing Markdown fragment: ../docs/guide.md#example-id",
+            ])
 
     def test_repository_links_preserve_targets_and_containment_through_aliased_roots(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -580,7 +634,7 @@ class WebsiteMaintenanceChecks(unittest.TestCase):
             alias = Path(directory) / "site-alias"
             alias.symlink_to(site, target_is_directory=True)
             # The tiny link fixture intentionally omits the social preview.
-            expected = ["Social preview PNG is missing; run scripts/prepare-website.py"]
+            expected = ["Social preview PNG is missing: assets/social-card.png; run scripts/prepare-website.py"]
             self.assertEqual(VERIFY.check_site(site)[3], expected)
             self.assertEqual(VERIFY.check_site(alias)[3], expected)
             (site.parent / "outside.html").write_text("<p>Outside</p>")
@@ -909,7 +963,7 @@ class WebsiteTranslationChecks(unittest.TestCase):
         arabic.feed((site / "ar/faq/index.html").read_text())
         self.assertEqual(arabic.lang, "ar")
 
-    def test_every_reading_page_loads_theme_before_styles(self):
+    def test_reading_pages_set_the_initial_theme_and_defer_external_scripts(self):
         site = ROOT / "website/_site"
         english_pages = reading_pages(ROOT / "website/public")
         self.assertTrue(english_pages)
@@ -924,12 +978,12 @@ class WebsiteTranslationChecks(unittest.TestCase):
                         self.assertEqual(len(colors), 1)
                         self.assertEqual(colors[0].attrs.get("content"), "#ffffff")
                         self.assertNotIn("media", colors[0].attrs)
-                        theme = [node for node in doc.nodes if node.tag == "script" and (node.attrs.get("src") or "").endswith("/assets/theme.js")]
-                        self.assertEqual(len(theme), 1)
-                        for deferred in ("defer", "async", "type"):
-                            self.assertNotIn(deferred, theme[0].attrs)
+                        scripts = [node for node in doc.nodes if node.tag == "script"]
+                        for node in scripts:
+                            if node.attrs.get("src"):
+                                self.assertTrue("defer" in node.attrs or "async" in node.attrs or node.attrs.get("type") == "module")
                         stylesheet = next(node for node in doc.nodes if node.tag == "link" and node.attrs.get("rel") == "stylesheet")
-                        self.assertLess(theme[0].start, stylesheet.start)
+                        self.assertTrue(any(node.start < stylesheet.start and "src" not in node.attrs and "type" not in node.attrs for node in scripts))
                         toggle = [node for node in doc.nodes if "data-theme-toggle" in node.attrs]
                         self.assertEqual(len(toggle), 1)
                         self.assertEqual(toggle[0].tag, "button")

@@ -328,46 +328,24 @@ msgid ""
 "and AI agents."
 msgstr ""
 
-#: website/public/blog/index.html:85 website/public/blog/index.html:98
-#: website/public/blog/reverse-engineering-models/index.html:85
-#: website/public/blog/reverse-engineering-models/index.html:98
-#: website/public/blog/touhou-reconstruction/index.html:85
-#: website/public/blog/touhou-reconstruction/index.html:98
-#: website/public/contributors/index.html:85
-#: website/public/contributors/index.html:98
-#: website/public/examples/dino-lab/index.html:85
-#: website/public/examples/dino-lab/index.html:98
-#: website/public/faq/index.html:85 website/public/faq/index.html:98
-#: website/public/first-investigation/index.html:85
-#: website/public/first-investigation/index.html:98
-#: website/public/get-started/index.html:85
-#: website/public/get-started/index.html:98
-#: website/public/guides/browser/index.html:85
-#: website/public/guides/browser/index.html:98
-#: website/public/guides/index.html:85 website/public/guides/index.html:98
-#: website/public/guides/javascript/index.html:85
-#: website/public/guides/javascript/index.html:98
-#: website/public/guides/native/index.html:85
-#: website/public/guides/native/index.html:98
-#: website/public/guides/rl-environments/index.html:85
-#: website/public/guides/rl-environments/index.html:98
-#: website/public/index.html:85 website/public/index.html:98
-#: website/public/showcase/aegis/index.html:85
-#: website/public/showcase/aegis/index.html:98
-#: website/public/showcase/ctf/index.html:85
-#: website/public/showcase/ctf/index.html:98
-#: website/public/showcase/dx-ball/index.html:85
-#: website/public/showcase/dx-ball/index.html:98
-#: website/public/showcase/index.html:85 website/public/showcase/index.html:98
-#: website/public/showcase/notion/index.html:85
-#: website/public/showcase/notion/index.html:98
-#: website/public/showcase/th04/index.html:85
-#: website/public/showcase/th04/index.html:98
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
+"Син надпис REA до дизасемблиран код, шестнадесетични данни и схема на "
+"работата на агента."
 
 #: website/public/blog/index.html:118
 #: website/public/blog/reverse-engineering-models/index.html:118
@@ -8647,6 +8625,11 @@ msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr ""
 
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "Анализатор размишлява пред компютър"
+
 #: website/public/index.html:522 website/public/index.html:449
 msgctxt "page:index.html"
 msgid "Illustrative expert reasoning"
@@ -13976,4 +13959,10 @@ msgstr ""
 #, python-brace-format
 #~ msgctxt "page:contributors/index.html"
 #~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr ""
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
 #~ msgstr ""

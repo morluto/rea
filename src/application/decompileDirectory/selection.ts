@@ -1,5 +1,8 @@
 import type { DecompileDirectoryInput } from "../../contracts/decompileDirectory.js";
-import { addressCoordinate } from "../../domain/native/addressCoordinate.js";
+import {
+  addressCoordinate,
+  type NativeAddressCoordinate,
+} from "../../domain/native/addressCoordinate.js";
 import { nativeAddressCoordinateInputSchema } from "../../domain/native/nativeAddress.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -77,7 +80,10 @@ export const selectProcedures = (
     if (!selected.has(row.address) && matches(row, input, bounds))
       selected.set(row.address, row);
   }
-  const procedures = [...selected.values()].sort(compareProcedures);
+  const procedures = sortByProcedureAddress(
+    [...selected.values()],
+    compareProcedureTie,
+  );
   return {
     procedures,
     excluded: seen.size - procedures.length,
@@ -138,32 +144,68 @@ const matchesAddress = (address: string, bounds: DecompileBounds): boolean => {
   );
 };
 
-const compareProcedures = (
+const compareProcedureTie = (
   left: SelectedProcedure,
   right: SelectedProcedure,
 ): number => {
-  const byAddress = compareProcedureAddresses(left.address, right.address);
-  if (byAddress !== 0) return byAddress;
   const byName = compareUnicodeCodePoints(left.name ?? "", right.name ?? "");
   return byName === 0
     ? compareUnicodeCodePoints(left.address, right.address)
     : byName;
 };
 
+/** Precompute address coordinates once before sorting, falling back on unparsed strings. */
+export const sortByProcedureAddress = <T extends { readonly address: string }>(
+  items: readonly T[],
+  tieBreak?: (left: T, right: T) => number,
+): T[] =>
+  items
+    .map((item) => ({
+      item,
+      coordinate: addressCoordinate(item.address),
+    }))
+    .sort((left, right) => {
+      const byAddress = compareParsedProcedureAddresses(
+        left.item.address,
+        left.coordinate,
+        right.item.address,
+        right.coordinate,
+      );
+      return byAddress !== 0 || tieBreak === undefined
+        ? byAddress
+        : tieBreak(left.item, right.item);
+    })
+    .map(({ item }) => item);
+
+const compareParsedProcedureAddresses = (
+  leftAddress: string,
+  leftCoordinate: NativeAddressCoordinate | null,
+  rightAddress: string,
+  rightCoordinate: NativeAddressCoordinate | null,
+): number => {
+  if (leftCoordinate === null || rightCoordinate === null) {
+    if (leftCoordinate === null && rightCoordinate === null)
+      return compareUnicodeCodePoints(leftAddress, rightAddress);
+    return leftCoordinate === null ? 1 : -1;
+  }
+  const space = compareUnicodeCodePoints(
+    leftCoordinate.space ?? "",
+    rightCoordinate.space ?? "",
+  );
+  if (space !== 0) return space;
+  if (leftCoordinate.offset < rightCoordinate.offset) return -1;
+  if (leftCoordinate.offset > rightCoordinate.offset) return 1;
+  return 0;
+};
+
 /** Numeric order within an address space; unparsed addresses sort last. */
 export const compareProcedureAddresses = (
   left: string,
   right: string,
-): number => {
-  const a = addressCoordinate(left);
-  const b = addressCoordinate(right);
-  if (a === null || b === null) {
-    if (a === null && b === null) return compareUnicodeCodePoints(left, right);
-    return a === null ? 1 : -1;
-  }
-  const space = compareUnicodeCodePoints(a.space ?? "", b.space ?? "");
-  if (space !== 0) return space;
-  if (a.offset < b.offset) return -1;
-  if (a.offset > b.offset) return 1;
-  return 0;
-};
+): number =>
+  compareParsedProcedureAddresses(
+    left,
+    addressCoordinate(left),
+    right,
+    addressCoordinate(right),
+  );

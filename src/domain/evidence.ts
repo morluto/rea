@@ -31,6 +31,8 @@ import {
 } from "./analysisProfile.js";
 import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
 import {
+  detachedJsonObjectSchema,
+  detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
   jsonValueValidationIssue,
@@ -210,6 +212,15 @@ export const validateAnalysisProfileProvider = (
 export const evidenceSchema = evidenceBaseSchema.superRefine(
   validateAnalysisProfileProvider,
 );
+
+/** Strict Evidence parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceSchema = evidenceBaseSchema
+  .safeExtend({
+    parameters: detachedJsonObjectSchema,
+    raw_result: detachedJsonValueSchema.nullable(),
+    normalized_result: detachedJsonValueSchema,
+  })
+  .superRefine(validateAnalysisProfileProvider);
 
 const authenticatedEvidenceSchema = evidenceSchema.superRefine(
   (evidence, context) => {

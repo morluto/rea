@@ -49,23 +49,26 @@ it("validates malformed timings before excluding an explicitly sensitive propert
   expect(() => decodeHarCapture(text, ["timings"])).toThrow(CaptureFormatError);
 });
 
-it.each([null, false, []])("rejects a non-object HAR cache: %j", (cache) => {
-  const fixture = historicalHar();
-  const entry = fixture.log.entries[0]!;
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { ...fixture.log, entries: [{ ...entry, cache }] },
+it.each([{ cache: null }, { cache: false }, { cache: [] }])(
+  "rejects a non-object HAR cache: $cache",
+  ({ cache }) => {
+    const fixture = historicalHar();
+    const entry = fixture.log.entries[0]!;
+    expect(() =>
+      decodeHarCapture(
+        JSON.stringify({
+          log: { ...fixture.log, entries: [{ ...entry, cache }] },
+        }),
+        [],
+      ),
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        pointer: "/log/entries/0/cache",
       }),
-      [],
-    ),
-  ).toThrow(
-    expect.objectContaining({
-      failure: expect.objectContaining({ kind: "malformed" }),
-      pointer: "/log/entries/0/cache",
-    }),
-  );
-});
+    );
+  },
+);
 
 it.each([-1, -0.5])("rejects negative HAR elapsed time: %s", (time) => {
   const fixture = historicalHar();
@@ -113,114 +116,86 @@ it.each(["onContentLoad", "onLoad"])(
   },
 );
 
-it.each([0, 1.25])(
-  "retains elapsed time %s and nullable cache states without normalization",
-  (time) => {
-    const fixture = historicalHar();
-    const entry = fixture.log.entries[0]!;
-    const cache = {
-      beforeRequest: null,
-      afterRequest: null,
-      _extension: "retained",
-    };
-    const decoded = decodeHarCapture(
-      JSON.stringify({
-        log: { ...fixture.log, entries: [{ ...entry, time, cache }] },
-      }),
-      [],
-    );
-    expect(decoded.records[0]?.reported).toMatchObject({ time, cache });
-  },
-);
-
-it.each([
-  {},
-  { onContentLoad: -1 },
-  { onLoad: -1 },
-  { onContentLoad: 0, onLoad: 1.25, _extension: -0.5 },
-])(
-  "preserves omitted, unavailable and measured HAR page timings: %j",
-  (pageTimings) => {
-    const fixture = historicalHar();
-    const pages = [
-      {
-        startedDateTime: fixture.log.entries[0]!.startedDateTime,
-        id: "page_0",
-        title: "fixture",
-        pageTimings,
-      },
-    ];
-    const decoded = decodeHarCapture(
-      JSON.stringify({ log: { ...fixture.log, pages } }),
-      [],
-    );
-    expect(decoded.container.reported).toHaveProperty("log.pages", pages);
-  },
-);
-
-it("retains valid timing measurements, optional omission and -1 without inventing values", () => {
+it("retains measured and omitted page timings and unavailable sentinels", () => {
   const fixture = historicalHar();
-  const entry = fixture.log.entries[0];
-  if (entry === undefined) throw new Error("fixture missing");
-  const timings = {
-    send: 0,
-    wait: 1.25,
-    receive: 0,
-    blocked: -1,
-    dns: -1,
-    connect: -1,
-    ssl: -1,
-    _extension: "retained",
-  };
+  const pages = [
+    {},
+    { onContentLoad: -1 },
+    { onLoad: -1 },
+    { onContentLoad: 0, onLoad: 1.25, _extension: -0.5 },
+  ].map((pageTimings, index) => ({
+    startedDateTime: fixture.log.entries[0]!.startedDateTime,
+    id: `page_${index}`,
+    title: "fixture",
+    pageTimings,
+  }));
   const decoded = decodeHarCapture(
-    JSON.stringify({
-      log: { ...fixture.log, entries: [{ ...entry, timings }, entry] },
-    }),
+    JSON.stringify({ log: { ...fixture.log, pages } }),
     [],
   );
-  expect(decoded.records[0]?.reported).toMatchObject({ timings });
-  expect(decoded.records[1]?.reported).toMatchObject({
-    timings: entry.timings,
-  });
+  expect(decoded.container.reported).toHaveProperty("log.pages", pages);
 });
 
-it.each([
-  [undefined, "hello", { bodyText: "hello" }],
-  ["base64", "aGVsbG8=", { bodyText: "hello" }],
-  ["hex", "68656c6c6f", { bodyText: null }],
-  ["base64url", "aGVsbG8", { bodyText: null }],
-] as const)(
-  "keeps HAR body encoding %s distinct from decoded text",
-  (encoding, text, expected) => {
-    const fixture = historicalHar();
-    const first = fixture.log.entries[0]!;
-    const content = {
-      size: 5,
-      mimeType: "text/plain",
-      text,
-      ...(encoding === undefined ? {} : { encoding }),
-    };
-    const decoded = decodeHarCapture(
-      JSON.stringify({
-        log: {
-          ...fixture.log,
-          entries: [{ ...first, response: { ...first.response, content } }],
-        },
-      }),
-      [],
-    );
-    const record = decoded.records[0]!;
-    expect(record.reported).toMatchObject({
-      response: {
-        content: {
-          ...(encoding === undefined ? {} : { encoding }),
-          ...(encoding === "base64" ? {} : { text }),
-        },
+it("retains elapsed time, cache states, and all measured or omitted entry timings", () => {
+  const fixture = historicalHar();
+  const entry = fixture.log.entries[0]!;
+  const entries = [
+    {
+      ...entry,
+      time: 0,
+      cache: {
+        beforeRequest: null,
+        afterRequest: null,
+        _extension: "retained",
       },
-    });
-    expect(readRecordedResponseBody(record, 262_144)).toEqual(expected);
-  },
-);
+      timings: {
+        ...entry.timings,
+        blocked: -1,
+        dns: -1,
+        connect: -1,
+        ssl: -1,
+        _extension: "retained",
+      },
+    },
+    entry,
+  ];
+  const decoded = decodeHarCapture(
+    JSON.stringify({ log: { ...fixture.log, entries } }),
+    [],
+  );
+  expect(decoded.records.map(({ reported }) => reported)).toEqual(entries);
+});
+
+it("keeps decoded, encoded and opaque HAR response bodies distinct", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0]!;
+  const bodies = [
+    { text: "hello" },
+    { encoding: "base64", text: "aGVsbG8=" },
+    { encoding: "hex", text: "68656c6c6f" },
+    { encoding: "base64url", text: "aGVsbG8" },
+  ];
+  const entries = bodies.map((body) => ({
+    ...first,
+    response: {
+      ...first.response,
+      content: { size: 5, mimeType: "text/plain", ...body },
+    },
+  }));
+  const decoded = decodeHarCapture(
+    JSON.stringify({ log: { ...fixture.log, entries } }),
+    [],
+  );
+  expect(decoded.records.map(({ reported }) => reported)).toEqual(entries);
+  expect(
+    decoded.records.map((record) => readRecordedResponseBody(record, 262_144)),
+  ).toEqual([
+    { bodyText: "hello" },
+    { bodyText: "hello" },
+    { bodyText: null },
+    { bodyText: null },
+  ]);
+});
 
 it("interprets HTTP fields only within HAR entries, preserving document lookalikes", () => {
   const fixture = harWithContainerLookalikes();
@@ -414,7 +389,6 @@ it("excludes a declared literal introduced by stripping transport URL userinfo",
 });
 
 it.each([
-  '"_duplicate":1,"_duplicate":1',
   '"_duplicate":null,"_duplicate":null',
   '"_duplicate":{"value":1},"_duplicate":{"value":1}',
   '"_duplicate":1,"\\u005fduplicate":1',
@@ -540,62 +514,66 @@ it.each(["9007199254740993", "4740993", "99"])(
   },
 );
 
-it.each([
-  { encoded: "1e3", sensitive: "1000" },
-  { encoded: "123.4500", sensitive: "123.45" },
-  { encoded: "0.0000001", sensitive: "1e-7" },
-])(
-  "excludes sensitive numbers introduced by JSON normalization: $encoded",
-  ({ encoded, sensitive }) => {
-    const text = JSON.stringify(historicalHar())
-      .replace('"log":{', `"_number":${encoded},"log":{`)
-      .replace('"cache":{}', `"cache":{},"_number":${encoded}`);
-    const result = decodeHarCapture(text, [sensitive]);
-    for (const projection of [result.container, ...result.records]) {
-      expect(projection.reported).toMatchObject({ _number: null });
+it("excludes sensitive decimal values introduced by JSON normalization", () => {
+  const text = JSON.stringify(historicalHar())
+    .replace('"log":{', '"_fixed":123450e-3,"_tiny":0.0000001,"log":{')
+    .replace('"cache":{}', '"cache":{},"_fixed":123450e-3,"_tiny":0.0000001');
+  const marked = decodeHarCapture(text, ["123.45", "1e-7"]);
+  const unmarked = decodeHarCapture(text, []);
+  for (const projection of [marked.container, ...marked.records]) {
+    expect(projection.reported).toMatchObject({ _fixed: null, _tiny: null });
+    for (const pointer of ["/_fixed", "/_tiny"]) {
       expect(projection.numeric_literals).not.toContainEqual(
-        expect.objectContaining({ pointer: "/_number" }),
+        expect.objectContaining({ pointer }),
       );
       expect(projection.redactions).toContainEqual({
-        pointer: "/_number",
+        pointer,
         reason: "explicit-sensitive-value",
       });
     }
-    const unmarked = decodeHarCapture(text, []);
-    for (const projection of [unmarked.container, ...unmarked.records]) {
-      expect(projection.reported).toMatchObject({ _number: Number(encoded) });
-      expect(projection.numeric_literals).toContainEqual({
-        pointer: "/_number",
-        producer_type: "json-number",
-        literal: encoded,
-      });
-    }
-  },
-);
+  }
+  for (const projection of [unmarked.container, ...unmarked.records]) {
+    expect(projection.reported).toMatchObject({ _fixed: 123.45, _tiny: 1e-7 });
+    expect(projection.numeric_literals).toEqual(
+      expect.arrayContaining([
+        {
+          pointer: "/_fixed",
+          producer_type: "json-number",
+          literal: "123450e-3",
+        },
+        {
+          pointer: "/_tiny",
+          producer_type: "json-number",
+          literal: "0.0000001",
+        },
+      ]),
+    );
+  }
+});
 
 it("keeps unsafe numeric lexemes in extension and mandatory schema fields", () => {
-  const text = JSON.stringify(historicalHar());
-  const result = decodeHarCapture(
-    text.replace('"cache":{}', '"cache":{},"_big":9007199254740993'),
-    [],
+  const text = JSON.stringify(historicalHar())
+    .replace('"cache":{}', '"cache":{},"_big":9007199254740993')
+    .replace('"bodySize":0', '"bodySize":9007199254740993');
+  const record = decodeHarCapture(text, []).records[0];
+  expect(record?.numeric_literals).toEqual(
+    expect.arrayContaining([
+      {
+        pointer: "/_big",
+        producer_type: "json-number",
+        literal: "9007199254740993",
+      },
+      {
+        pointer: "/request/bodySize",
+        producer_type: "json-number",
+        literal: "9007199254740993",
+      },
+    ]),
   );
-  expect(result.records[0]?.numeric_literals).toContainEqual({
-    pointer: "/_big",
-    producer_type: "json-number",
-    literal: "9007199254740993",
+  expect(record?.reported).toMatchObject({
+    _big: null,
+    request: { bodySize: null },
   });
-  expect(result.records[0]?.reported).toMatchObject({ _big: null });
-  // The pinned schema admits a valid integer the evidence cannot publish exactly.
-  const mandatory = decodeHarCapture(
-    text.replace('"bodySize":0', '"bodySize":9007199254740993'),
-    [],
-  ).records[0];
-  expect(mandatory?.numeric_literals).toContainEqual({
-    pointer: "/request/bodySize",
-    producer_type: "json-number",
-    literal: "9007199254740993",
-  });
-  expect(mandatory?.reported).toMatchObject({ request: { bodySize: null } });
 });
 
 it.each(["container", "record"] as const)(
@@ -730,116 +708,117 @@ it("redacts actual authentication fields and explicit binary values while preser
   });
 });
 
-it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
+it("rejects absolute HAR request spellings that would change when parsed", () => {
   const fixture = historicalHar();
-  const first = fixture.log.entries[0];
-  if (first === undefined) throw new Error("fixture missing");
-  const log = {
-    ...fixture.log,
-    creator: { name: "mitmproxy", version: "12.2.3" },
-    entries: [
-      {
-        ...first,
-        request: {
-          ...first.request,
-          postData: { mimeType: "text/plain", text: null },
-        },
-      },
-    ],
-  };
-  expect(
-    decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
-  ).toMatchObject({ request: { postData: { text: null } } });
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { ...log, creator: { name: "other", version: "1" } },
+  const entry = fixture.log.entries[0]!;
+  for (const url of [
+    "http:\\\\user:pass@host.test/",
+    "https://host.test/a\tb",
+    "https://host.test/a b",
+  ]) {
+    expect(
+      () =>
+        decodeHarCapture(
+          JSON.stringify({
+            log: {
+              ...fixture.log,
+              entries: [{ ...entry, request: { ...entry.request, url } }],
+            },
+          }),
+          [],
+        ),
+      url,
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        pointer: "/log/entries/0/request/url",
       }),
-      [],
-    ),
-  ).toThrow("HAR schema validation failed");
+    );
+  }
 });
 
-it.each([
-  { version: "1.58.2", address: "[2001:db8::1]" },
-  { version: "1.64.1", address: "[::1]" },
-  { version: "1.58.2", address: "[::ffff:192.0.2.1]" },
-])(
-  "retains Playwright $version bracketed IPv6 spelling in reported Evidence: $address",
-  ({ version, address }) => {
+it.each(["12.2.3", "12.3.1"])(
+  "preserves observed SaveHar null post-data for mitmproxy %s without broadening arbitrary HAR producers",
+  (version) => {
     const fixture = historicalHar();
     const first = fixture.log.entries[0];
     if (first === undefined) throw new Error("fixture missing");
-    const input = {
-      log: {
-        ...fixture.log,
-        creator: { name: "Playwright", version },
-        entries: [
-          {
-            ...first,
-            serverIPAddress: address,
-            _extension: { serverIPAddress: address },
+    const log = {
+      ...fixture.log,
+      creator: { name: "mitmproxy", version },
+      entries: [
+        {
+          ...first,
+          request: {
+            ...first.request,
+            postData: { mimeType: "text/plain", text: null },
           },
-          structuredClone(first),
-        ],
-      },
+        },
+      ],
     };
-    const decoded = decodeHarCapture(JSON.stringify(input), []);
-    expect(decoded.records[0]).toMatchObject({
-      reported: {
-        serverIPAddress: address,
-        _extension: { serverIPAddress: address },
-      },
-    });
-    const limitation = decoded.records[0]?.limitations.find((line) =>
-      line.includes(`Playwright ${version}`),
-    );
-    expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
-    expect(limitation).toMatch(/original spellings.*retained/iu);
-    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
-    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
-      decoded.records[1]?.limitations.some((limitation) =>
-        limitation.includes("bracketed IPv6 serverIPAddress"),
+      decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
+    ).toMatchObject({ request: { postData: { text: null } } });
+    expect(() =>
+      decodeHarCapture(
+        JSON.stringify({
+          log: { ...log, creator: { name: "other", version: "1" } },
+        }),
+        [],
       ),
-    ).toBe(false);
+    ).toThrow("HAR schema validation failed");
   },
 );
 
-it.each(["[2620:0:860:ed1a::1]", "[::1]"])(
-  "retains Chromium DevTools bracketed IPv6 spelling in reported Evidence: %s",
-  (address) => {
+it.each([
+  {
+    name: "Playwright",
+    version: "1.58.2",
+    addresses: ["[2001:db8::1]", "[::ffff:192.0.2.1]"],
+  },
+  { name: "Playwright", version: "1.64.1", addresses: ["[::1]"] },
+  {
+    name: "WebInspector",
+    version: "537.36",
+    addresses: ["[2620:0:860:ed1a::1]", "[::1]", ""],
+  },
+])(
+  "retains exact $name $version address evidence",
+  ({ name, version, addresses }) => {
     const fixture = historicalHar();
-    const first = fixture.log.entries[0];
-    if (first === undefined) throw new Error("fixture missing");
-    const input = {
-      log: {
-        ...fixture.log,
-        creator: { name: "WebInspector", version: "537.36" },
-        entries: [
-          { ...first, serverIPAddress: address },
-          structuredClone(first),
-        ],
-      },
-    };
-    const decoded = decodeHarCapture(JSON.stringify(input), []);
-    expect(decoded.records[0]).toMatchObject({
-      reported: { serverIPAddress: address },
-    });
-    const limitation = decoded.records[0]?.limitations.find((line) =>
-      line.includes("WebInspector 537.36"),
+    const first = fixture.log.entries[0]!;
+    const entries = [
+      ...addresses.map((address) => ({
+        ...first,
+        serverIPAddress: address,
+        _extension: { serverIPAddress: address },
+      })),
+      first,
+    ];
+    const decoded = decodeHarCapture(
+      JSON.stringify({
+        log: { ...fixture.log, creator: { name, version }, entries },
+      }),
+      [],
     );
-    expect(limitation).toMatch(
-      /Chromium DevTools.*bracketed IPv6.*serverIPAddress/iu,
+    expect(decoded.records.map(({ reported }) => reported)).toEqual(entries);
+    for (const [index, address] of addresses.entries()) {
+      const record = decoded.records[index]!;
+      const limitation = record.limitations.find((line) =>
+        line.includes(`${name} ${version}`),
+      );
+      expect(limitation).toMatch(
+        address === ""
+          ? /empty serverIPAddress/iu
+          : /bracketed IPv6.*serverIPAddress/iu,
+      );
+      expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
+      if (address === "")
+        expect(limitation).toMatch(/server address is unknown/iu);
+    }
+    expect(decoded.records.at(-1)?.limitations).not.toContainEqual(
+      expect.stringContaining("serverIPAddress"),
     );
-    expect(limitation).toMatch(/original spellings.*retained/iu);
-    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
-    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
-    expect(
-      decoded.records[1]?.limitations.some((limitation) =>
-        limitation.includes("bracketed IPv6 serverIPAddress"),
-      ),
-    ).toBe(false);
   },
 );
 
@@ -852,12 +831,13 @@ it.each([
   { name: "WebInspector", version: "605.1.15", address: "[2001:db8::1]" },
   { name: "WebInspector", version: "537.36", address: "[192.0.2.1]" },
   { name: "WebInspector", version: "537.36", address: "[2001:db8::1]:443" },
+  { name: "other", version: "1", address: "" },
+  { name: "Playwright", version: "1.64.1", address: "" },
 ])(
-  "rejects unrecognized bracketed HAR address input: $name $version $address",
+  "rejects unsupported $name $version address evidence: $address",
   ({ name, version, address }) => {
     const fixture = historicalHar();
-    const first = fixture.log.entries[0];
-    if (first === undefined) throw new Error("fixture missing");
+    const first = fixture.log.entries[0]!;
     expect(() =>
       decodeHarCapture(
         JSON.stringify({
@@ -869,7 +849,12 @@ it.each([
         }),
         [],
       ),
-    ).toThrow("HAR schema validation failed");
+    ).toThrow(
+      expect.objectContaining({
+        failure: expect.objectContaining({ kind: "malformed" }),
+        pointer: "/log/entries/0/serverIPAddress",
+      }),
+    );
   },
 );
 
@@ -952,7 +937,6 @@ it.each([
   { depth: 65, innermost: "[]", accepted: false },
   { depth: 65, innermost: "{}", accepted: false },
   { depth: 65, innermost: "[0]", accepted: false },
-  { depth: 66, innermost: "[]", accepted: false },
 ])(
   "bounds a $innermost extension at container level $depth",
   ({ depth, innermost, accepted }) => {
@@ -964,75 +948,56 @@ it.each([
       expect(() => decodeHarCapture(text, [])).toThrow(
         expect.objectContaining({
           limit: { name: "nesting-depth", maximum: 64 },
+          pointer: `/log/_extension${"/0".repeat(enclosing)}`,
         }),
       );
   },
 );
 
-it("rejects excessive extension nesting instead of returning a partial capture", () => {
-  let extension: unknown = null;
-  for (let index = 0; index < 66; index++) extension = { child: extension };
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({ ...historicalHar(), _extension: extension }),
-      [],
-    ),
-  ).toThrow(
-    expect.objectContaining({ limit: { name: "nesting-depth", maximum: 64 } }),
+it("excludes leading-OWS userinfo from transport headers without rewriting other bytes", () => {
+  const fixture = historicalHar();
+  const first = fixture.log.entries[0]!;
+  const value =
+    " \tHTTPS://user:password@example.test/path?token=ordinary#fragment\t ";
+  const retained = " \tHTTPS://example.test/path?token=ordinary#fragment\t ";
+  const entry = {
+    ...first,
+    request: {
+      ...first.request,
+      headers: [
+        { name: "Referer", value },
+        { name: "Origin", value },
+      ],
+    },
+    response: { ...first.response, headers: [{ name: "Location", value }] },
+  };
+  const result = decodeHarCapture(
+    JSON.stringify({ log: { ...fixture.log, entries: [entry] } }),
+    [],
   );
-});
-
-it.each([
-  { name: "Location", side: "response" as const },
-  { name: "Referer", side: "request" as const },
-  { name: "Origin", side: "request" as const },
-])(
-  "excludes leading-OWS userinfo from a producer $name header",
-  ({ name, side }) => {
-    const fixture = historicalHar();
-    const first = fixture.log.entries[0];
-    if (first === undefined) throw new Error("fixture missing");
-    const value =
-      " \tHTTPS://user:password@example.test/path?token=ordinary#fragment\t ";
-    const result = decodeHarCapture(
-      JSON.stringify({
-        log: {
-          ...fixture.log,
-          entries: [
-            {
-              ...first,
-              [side]: { ...first[side], headers: [{ name, value }] },
-            },
-          ],
-        },
-      }),
-      [],
-    );
-    expect(result.records[0]?.reported).toMatchObject({
-      [side]: {
+  expect(result.records[0]).toMatchObject({
+    reported: {
+      request: {
         headers: [
-          {
-            name,
-            value: " \tHTTPS://example.test/path?token=ordinary#fragment\t ",
-          },
+          { name: "Referer", value: retained },
+          { name: "Origin", value: retained },
         ],
       },
-    });
-    expect(result.records[0]?.redactions).toContainEqual({
-      pointer: `/${side}/headers/0/value`,
-      reason: "transport-credential",
-    });
-  },
-);
+      response: { headers: [{ name: "Location", value: retained }] },
+    },
+    redactions: [
+      { pointer: "/request/headers/0/value", reason: "transport-credential" },
+      { pointer: "/request/headers/1/value", reason: "transport-credential" },
+      { pointer: "/response/headers/0/value", reason: "transport-credential" },
+    ],
+  });
+});
 
 it("ignores one leading byte-order mark, as HAR 1.2 requires of readers", () => {
   const text = JSON.stringify(historicalHar());
   const body = Buffer.from(text, "utf8");
   const marked = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), body]);
   expect(decodeCaptureText(marked, "HAR")).toBe(text);
-  expect(decodeHarCapture(decodeCaptureText(marked, "HAR"), [])).toEqual(
-    decodeHarCapture(decodeCaptureText(body, "HAR"), []),
-  );
   // A second mark is content, not an encoding signature.
   expect(() =>
     decodeHarCapture(

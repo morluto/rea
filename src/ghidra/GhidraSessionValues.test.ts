@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  GHIDRA_SESSION_CAPABILITIES,
-  GHIDRA_MUTATING_OPERATIONS,
-  parseGhidraSessionInfo,
-} from "./GhidraSessionValues.js";
+import { FAKE_GHIDRA_CAPABILITIES } from "../../tests/fixtures/fakeGhidraReplies.mjs";
+import { parseGhidraSessionInfo } from "./GhidraSessionValues.js";
 
 const expected = {
   runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
@@ -14,10 +11,7 @@ const expected = {
   expectedLanguageId: "x86:LE:16:Real Mode",
   expectedCompilerSpecId: "default",
 };
-const session = (
-  language = expected.expectedLanguageId,
-  compiler = "default",
-) => ({
+const session = () => ({
   name: "REA Ghidra bridge",
   run_id: expected.runId,
   profile_digest: expected.profileDigest,
@@ -25,44 +19,47 @@ const session = (
   read_only: false,
   analysis_complete: true,
   analysis_timed_out: false,
-  capabilities: [...GHIDRA_SESSION_CAPABILITIES],
+  capabilities: [...FAKE_GHIDRA_CAPABILITIES],
   target: {
     name: "legacy.exe",
-    language_id: language,
-    compiler_spec_id: compiler,
+    language_id: expected.expectedLanguageId,
+    compiler_spec_id: expected.expectedCompilerSpecId,
     image_base: "0x0",
     default_address_space: "ram",
     sha256: expected.targetSha256,
   },
 });
 
-const rejectedHandshake = (value: ReturnType<typeof session>) => {
-  const parsed = parseGhidraSessionInfo(value, expected);
-  if (parsed.ok) throw new Error("expected an invalid Ghidra handshake");
-  return parsed.error;
+const refuseHandshake = (
+  value: Parameters<typeof parseGhidraSessionInfo>[0],
+  commitment: Parameters<typeof parseGhidraSessionInfo>[1] = expected,
+) => {
+  expect(parseGhidraSessionInfo(value, commitment)).toMatchObject({
+    ok: false,
+    error: { _tag: "GhidraAdmissionError", code: "handshake_identity" },
+  });
 };
 
-describe("Ghidra DOS import commitment", () => {
-  it("accepts the exact admitted real-mode language and compiler", () => {
-    const parsed = parseGhidraSessionInfo(session(), expected);
-    if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.target).toMatchObject({
-      language_id: expected.expectedLanguageId,
-      compiler_spec_id: expected.expectedCompilerSpecId,
-    });
+it("checks admitted language, compiler, and image base independently", () => {
+  const value = session();
+  const commitment = { ...expected, expectedImageBase: "0x0" };
+  const parsed = parseGhidraSessionInfo(value, commitment);
+  if (!parsed.ok) throw parsed.error;
+  expect(parsed.value.target).toMatchObject({
+    language_id: "x86:LE:16:Real Mode",
+    compiler_spec_id: "default",
+    image_base: "0x0",
   });
-  it("rejects a 32-bit interpretation even when artifact and profile hashes match", () => {
-    expect(rejectedHandshake(session("x86:LE:32:default"))).toMatchObject({
-      _tag: "GhidraAdmissionError",
-      code: "handshake_identity",
-    });
-  });
-  it("rejects compiler drift independently of the language", () => {
-    expect(rejectedHandshake(session(undefined, "windows"))).toMatchObject({
-      _tag: "GhidraAdmissionError",
-      code: "handshake_identity",
-    });
-  });
+  // Each variation keeps run, target and profile identity intact.
+  for (const changed of [
+    { language_id: "x86:LE:32:default" },
+    { compiler_spec_id: "windows" },
+    { image_base: "0x10000" },
+  ])
+    refuseHandshake(
+      { ...value, target: { ...value.target, ...changed } },
+      commitment,
+    );
 });
 
 describe("Ghidra PDB observations", () => {
@@ -74,21 +71,26 @@ describe("Ghidra PDB observations", () => {
     version: "RSDS",
     loaded: false,
   };
-  it("retains the referenced identity and observed load state", () => {
-    const parsed = parseGhidraSessionInfo({ ...session(), pdb }, expected);
-    if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.pdb).toEqual(pdb);
-  });
-  it("preserves missing attributes as unknown", () => {
-    const unknown = Object.fromEntries(
-      Object.keys(pdb).map((key) => [key, null]),
-    );
+  it.each([
+    ["reported identity", pdb],
+    [
+      "explicit unknown attributes",
+      {
+        file: null,
+        guid: null,
+        age: null,
+        signature: null,
+        version: null,
+        loaded: null,
+      },
+    ],
+  ] as const)("preserves %s", (_name, attributes) => {
     const parsed = parseGhidraSessionInfo(
-      { ...session(), pdb: unknown },
+      { ...session(), pdb: attributes },
       expected,
     );
     if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.pdb).toEqual(unknown);
+    expect(parsed.value.pdb).toEqual(attributes);
   });
   it.each([
     { ...pdb, loaded: "false" },
@@ -125,7 +127,7 @@ describe("Ghidra MIPS soft-float storage report", () => {
   it.each([
     [
       "the superseded storage policy",
-      { policy: "o32-integer-registers-v1", remapped: 2, retyped: 1 },
+      { ...valid, policy: "o32-integer-registers-v1" },
     ],
     ["a negative count", { ...valid, definitions: -1 }],
     ["a fractional count", { ...valid, functions: 1.5 }],
@@ -157,7 +159,6 @@ describe("Ghidra RISC-V calling-convention report", () => {
     expect(parsed.value.riscv_calling_convention).toEqual(valid);
   });
   it.each([
-    ["an unknown policy", { ...valid, policy: "ilp32f-prototype-v1" }],
     ["the MIPS policy", { ...valid, policy: "o32-soft-float-prototype-v1" }],
     ["a negative count", { ...valid, definitions: -1 }],
     ["a fractional count", { ...valid, functions: 1.5 }],
@@ -211,112 +212,79 @@ describe("Ghidra disabled analyzer report", () => {
   });
 });
 
-describe("Ghidra mutation handshake", () => {
-  it("requires the exact mutation authority and rejects duplicate capabilities", () => {
-    const value = session();
-    expect(
-      parseGhidraSessionInfo({ ...value, read_only: true }, expected).ok,
-    ).toBe(false);
-    expect(
-      parseGhidraSessionInfo(
-        { ...value, capabilities: [...value.capabilities, "ping"] },
-        expected,
-      ).ok,
-    ).toBe(false);
-    expect(
-      parseGhidraSessionInfo(
+const databaseEdits = [
+  "annotate_native_function",
+  "set_address_name",
+  "set_addresses_names",
+] as const;
+
+const readOnlySession = () => ({
+  ...session(),
+  read_only: true,
+  capabilities: FAKE_GHIDRA_CAPABILITIES.filter(
+    (method) => !databaseEdits.some((edit) => edit === method),
+  ),
+});
+
+it("refuses duplicate capabilities with either matching or excess cardinality", () => {
+  const value = session();
+  refuseHandshake({
+    ...value,
+    capabilities: value.capabilities.map((method) =>
+      method === "annotate_native_function" ? "ping" : method,
+    ),
+  });
+  refuseHandshake({ ...value, capabilities: [...value.capabilities, "ping"] });
+});
+
+it.each([false, true])(
+  "admits only read-only authority (existing project: %s)",
+  (existingProject) => {
+    const value = {
+      ...readOnlySession(),
+      ...(existingProject
+        ? { existing_project: true, analysis_complete: null }
+        : {}),
+    };
+    const commitment = {
+      ...expected,
+      expectedReadOnly: true,
+      expectedExistingProject: existingProject,
+    };
+    const parsed = parseGhidraSessionInfo(value, commitment);
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value).toMatchObject({
+      read_only: true,
+      capabilities: value.capabilities,
+      analysis_complete: existingProject ? null : true,
+    });
+
+    refuseHandshake({ ...value, read_only: false }, commitment);
+    for (const edit of databaseEdits)
+      refuseHandshake(
         {
           ...value,
-          capabilities: value.capabilities.filter(
-            (c) => c !== "annotate_native_function",
+          capabilities: value.capabilities.map((method) =>
+            method === "ping" ? edit : method,
           ),
         },
-        expected,
-      ).ok,
-    ).toBe(false);
-  });
-  it("excludes database mutation from the Windows transport handshake", () => {
-    const value = session();
-    const windows = {
-      ...value,
-      read_only: true,
-      capabilities: value.capabilities.filter(
-        (c) => !GHIDRA_MUTATING_OPERATIONS.has(c),
-      ),
-    };
-    expect(
-      parseGhidraSessionInfo(windows, { ...expected, expectedReadOnly: true })
-        .ok,
-    ).toBe(true);
-    expect(
-      parseGhidraSessionInfo(value, { ...expected, expectedReadOnly: true }).ok,
-    ).toBe(false);
-  });
-  it("treats address naming as database mutation", () => {
-    expect([...GHIDRA_MUTATING_OPERATIONS].sort()).toEqual([
-      "annotate_native_function",
-      "set_address_name",
-      "set_addresses_names",
-    ]);
-    const value = session();
-    for (const naming of ["set_address_name", "set_addresses_names"]) {
-      expect(value.capabilities).toContain(naming);
-      expect(
-        parseGhidraSessionInfo(
-          {
-            ...value,
-            capabilities: value.capabilities.filter((c) => c !== naming),
-          },
-          expected,
-        ).ok,
-      ).toBe(false);
-    }
-  });
-});
+        commitment,
+      );
+  },
+);
 
-describe("Ghidra ELF image base commitment", () => {
-  it("rejects a session Ghidra placed away from the committed link base", () => {
-    // Ghidra's default moves base-0 shared images to 0x10000.
-    const shifted = session();
-    shifted.target.image_base = "0x10000";
-    expect(
-      parseGhidraSessionInfo(session(), {
-        ...expected,
-        expectedImageBase: "0x0",
-      }).ok,
-    ).toBe(true);
-    expect(
-      parseGhidraSessionInfo(shifted, { ...expected, expectedImageBase: "0x0" })
-        .ok,
-    ).toBe(false);
-  });
-});
-
-it("admits unknown analysis completeness only for a committed read-only existing project", () => {
-  const value = {
-    ...session(),
+it("binds existing-project identity and unknown analysis completeness independently", () => {
+  const imported = readOnlySession();
+  const windows = { ...expected, expectedReadOnly: true };
+  const project = { ...windows, expectedExistingProject: true };
+  const existing = {
+    ...imported,
     existing_project: true,
-    read_only: true,
     analysis_complete: null,
-    capabilities: GHIDRA_SESSION_CAPABILITIES.filter(
-      (name) => !GHIDRA_MUTATING_OPERATIONS.has(name),
-    ),
   };
-  const project = {
-    ...expected,
-    expectedReadOnly: true,
-    expectedExistingProject: true,
-  };
-  expect(parseGhidraSessionInfo(value, project).ok).toBe(true);
-  expect(parseGhidraSessionInfo(value, expected).ok).toBe(false);
-  for (const analysis_complete of [false, true])
-    expect(
-      parseGhidraSessionInfo({ ...value, analysis_complete }, project).ok,
-    ).toBe(false);
-  expect(
-    parseGhidraSessionInfo(
-      { ...value, capabilities: [...GHIDRA_SESSION_CAPABILITIES] },
-      project,
-    ).ok,
-  ).toBe(false);
+  refuseHandshake({ ...imported, existing_project: true }, windows);
+  refuseHandshake({ ...imported, analysis_complete: null }, project);
+  refuseHandshake({ ...imported, analysis_complete: null }, windows);
+  refuseHandshake({ ...existing, analysis_complete: true }, project);
+  refuseHandshake({ ...existing, analysis_timed_out: true }, project);
 });

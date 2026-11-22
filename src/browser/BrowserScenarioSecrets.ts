@@ -58,6 +58,7 @@ interface SecretPattern {
 }
 interface SecretReplacement extends SecretPattern {
   readonly id: string;
+  readonly marker: string;
 }
 interface SecretNeedle {
   readonly id: string;
@@ -161,11 +162,17 @@ const declaredPatterns = (
 const secretReplacements = (
   values: ReadonlyMap<string, string>,
   spellings: SecretSpellings,
+  markerPatterns: readonly SecretPattern[],
 ): readonly SecretReplacement[] =>
   [...values]
-    .flatMap(([id, secret]) =>
-      secretPatterns(secret, spellings).map((pattern) => ({ id, ...pattern })),
-    )
+    .flatMap(([id, secret]) => {
+      const marker = redactionMarker(id, markerPatterns);
+      return secretPatterns(secret, spellings).map((pattern) => ({
+        id,
+        marker,
+        ...pattern,
+      }));
+    })
     .sort(
       (left, right) =>
         right.text.length - left.text.length ||
@@ -235,15 +242,13 @@ const redactionMarker = (
 ): string => {
   const candidates = [`${REDACTION_PREFIX}${id}]`, "[REDACTED]", "…", ""];
   return (
-    candidates.find((candidate) =>
-      patterns.every(
-        (pattern) =>
-          !patternMatches(
-            candidate,
-            lowercasePercentEscapes(candidate),
-            pattern,
-          ),
-      ),
+    candidates.find(
+      (candidate) =>
+        !containsSecretPattern(
+          candidate,
+          lowercasePercentEscapes(candidate),
+          patterns,
+        ),
     ) ?? ""
   );
 };
@@ -251,51 +256,54 @@ const redactionMarker = (
 const replaceSecretLiterals = (
   value: string,
   replacements: readonly SecretReplacement[],
-  patterns: readonly SecretPattern[],
-  markerPatterns: readonly SecretPattern[] = patterns,
-): string => {
+): { readonly output: string; readonly replaced: boolean } => {
   const normalizedValue = replacements.some(
     ({ percentInsensitive }) => percentInsensitive,
   )
     ? lowercasePercentEscapes(value)
     : value;
+  const nextIndices = new Int32Array(replacements.length).fill(-2);
   const parts: string[] = [];
   let offset = 0;
   while (offset < value.length) {
-    let next:
-      | ((typeof replacements)[number] & { readonly index: number })
-      | undefined;
-    for (const replacement of replacements) {
-      const search = replacement.searchText;
-      const view = replacement.percentInsensitive ? normalizedValue : value;
-      const index = view.indexOf(search, offset);
+    let next: SecretReplacement | undefined;
+    let nextIndex = -1;
+    for (let i = 0; i < replacements.length; i += 1) {
+      const replacement = replacements[i]!;
+      let index = nextIndices[i]!;
+      if (index === -1) continue;
+      if (index === -2 || index < offset) {
+        const view = replacement.percentInsensitive ? normalizedValue : value;
+        index = view.indexOf(replacement.searchText, offset);
+        nextIndices[i] = index;
+      }
       if (
         index >= 0 &&
         (next === undefined ||
-          index < next.index ||
-          (index === next.index && replacement.text.length > next.text.length))
-      )
-        next = { ...replacement, index };
+          index < nextIndex ||
+          (index === nextIndex && replacement.text.length > next.text.length))
+      ) {
+        next = replacement;
+        nextIndex = index;
+      }
     }
     if (next === undefined) break;
-    const marker = redactionMarker(next.id, markerPatterns);
-    parts.push(value.slice(offset, next.index), marker);
-    offset = next.index + next.text.length;
+    parts.push(value.slice(offset, nextIndex), next.marker);
+    offset = nextIndex + next.text.length;
   }
-  if (parts.length === 0) return value;
+  if (parts.length === 0) return { output: value, replaced: false };
   parts.push(value.slice(offset));
-  return parts.join("");
+  return { output: parts.join(""), replaced: true };
 };
 
 const secretNeedles = (
   replacements: readonly SecretReplacement[],
-  patterns: readonly SecretPattern[],
 ): SecretNeedle[] =>
   replacements.map((pattern) => ({
     id: pattern.id,
     needle: Buffer.from(pattern.searchText),
     percentInsensitive: pattern.percentInsensitive,
-    marker: Buffer.from(redactionMarker(pattern.id, patterns)),
+    marker: Buffer.from(pattern.marker),
   }));
 
 /** Resolved secret values kept only for one in-memory scenario session. */
@@ -334,9 +342,13 @@ export class BrowserScenarioSecrets {
     const values = this.values;
     this.urlPatterns = declaredPatterns(values, "url");
     this.textPatterns = declaredPatterns(values, "text");
-    this.urlReplacements = secretReplacements(values, "url");
-    this.textReplacements = secretReplacements(values, "text");
-    this.textNeedles = secretNeedles(this.textReplacements, this.textPatterns);
+    this.urlReplacements = secretReplacements(values, "url", this.urlPatterns);
+    this.textReplacements = secretReplacements(
+      values,
+      "text",
+      this.textPatterns,
+    );
+    this.textNeedles = secretNeedles(this.textReplacements);
     this.redactionCostPerCharacter = this.costOf(
       this.textReplacements,
       this.urlReplacements,
@@ -349,16 +361,12 @@ export class BrowserScenarioSecrets {
     url: readonly SecretReplacement[],
   ): number {
     let cost = 8;
-    for (const [replacements, patterns] of [
-      [text, this.textPatterns],
-      [url, this.urlPatterns],
-    ] as const)
+    for (const replacements of [text, url] as const)
       for (const replacement of replacements)
         cost = Math.max(
           cost,
           8 +
-            (Buffer.byteLength(redactionMarker(replacement.id, patterns)) * 8 +
-              128) /
+            (Buffer.byteLength(replacement.marker) * 8 + 128) /
               replacement.text.length,
         );
     return cost;
@@ -724,12 +732,8 @@ export class BrowserScenarioSecrets {
         : this.textReplacements;
     const patterns = scope === "response" ? replacements : this.textPatterns;
     if (patterns.length === 0) return value;
-    const output = replaceSecretLiterals(
-      value,
-      replacements,
-      patterns,
-      this.textPatterns,
-    );
+    const { output, replaced } = replaceSecretLiterals(value, replacements);
+    if (!replaced) return output;
     return containsSecretPattern(
       output,
       lowercasePercentEscapes(output),
@@ -813,13 +817,9 @@ export class BrowserScenarioSecrets {
         : this.urlReplacements;
     const patterns = scope === "response" ? replacements : this.urlPatterns;
     if (patterns.length === 0) return sanitizeBrowserUrl(value);
-    const output = replaceSecretLiterals(
-      value,
-      replacements,
-      patterns,
-      this.urlPatterns,
-    );
+    const { output, replaced } = replaceSecretLiterals(value, replacements);
     if (
+      replaced &&
       containsSecretPattern(output, lowercasePercentEscapes(output), patterns)
     )
       return {

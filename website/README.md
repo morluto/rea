@@ -17,7 +17,7 @@ frontend framework or bundler. A build generates all editions in
 Korean editions load the variable Noto Sans KR webfont through Google Fonts
 (`fonts.googleapis.com` and `fonts.gstatic.com`) so the preferred Korean font
 does not depend on fonts installed on the reader's PC. Other editions keep
-system fonts. Text remains visible while the font loads (`display=swap`), and
+system fonts. The Korean font stylesheet loads at low priority. Text remains visible while the font loads (`display=swap`), and
 local Korean fonts are used if Google Fonts is unavailable. The stylesheet is
 added during translation rendering; generated `_site/` pages are not authored.
 
@@ -47,7 +47,7 @@ install them with `sudo apt-get install libcairo2 fonts-dejavu-core`. On an
 Apple Silicon Mac, enter an ARM shell first with `/usr/bin/arch -arm64 /bin/zsh`. Install
 the ARM build with `/opt/homebrew/bin/brew install cairo pkg-config`. Install
 the sharing-card font with `/opt/homebrew/bin/brew install --cask font-dejavu`.
-The card in `public/assets/social-card.svg` requests DejaVu Sans, so Cairo output
+The SVG sharing artwork requests DejaVu fonts, so Cairo output
 uses a fallback font without it. Verify with `fc-match "DejaVu Sans"`. The result
 should name DejaVu. A plain
 `brew` call can select the Intel brew when `/usr/local/bin` comes first or the
@@ -92,15 +92,15 @@ Edit the page's HTML in `public/`. Keep the question, evidence and result easy t
 follow. The writing and design guidance in [style-guide.md](style-guide.md)
 applies to every page.
 
-| Change                          | Edit                                                             | Then run                                        |
-| ------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------- |
-| Page text, examples or figures  | The page's HTML outside the marked shared regions                | `python3 scripts/website.py check`              |
-| Search title or description     | The page's `<title>` and first description meta tag              | `python3 scripts/website.py sync`, then `check` |
-| Main navigation                 | `NAVIGATION` in `scripts/website.py`                             | `sync`, then `check`                            |
-| Header, social links or footer  | `templates/header.html.tmpl` or `templates/footer.html.tmpl`     | `sync`, then `check`                            |
-| Theme loading and browser color | `templates/theme.html.tmpl` and `public/assets/theme.js`         | `sync`, then `check`                            |
-| Shared link previews            | `templates/sharing.html.tmpl` or `public/assets/social-card.svg` | `sync`, then `check`                            |
-| Translation                     | `locales/<language>/messages.po`                                 | `translations check`, then `check`              |
+| Change                          | Edit                                                               | Then run                                        |
+| ------------------------------- | ------------------------------------------------------------------ | ----------------------------------------------- |
+| Page text, examples or figures  | The page's HTML outside the marked shared regions                  | `python3 scripts/website.py check`              |
+| Search title or description     | The page's `<title>` and first description meta tag                | `python3 scripts/website.py sync`, then `check` |
+| Main navigation                 | `NAVIGATION` in `scripts/website.py`                               | `sync`, then `check`                            |
+| Header, social links or footer  | `templates/header.html.tmpl` or `templates/footer.html.tmpl`       | `sync`, then `check`                            |
+| Theme loading and browser color | `templates/theme.html.tmpl` and `public/assets/theme.js`           | `sync`, then `check`                            |
+| Shared link previews            | `templates/sharing.html.tmpl`, `artwork/` and `scripts/website.py` | `sync`, then `check`                            |
+| Translation                     | `locales/<language>/messages.po`                                   | `translations check`, then `check`              |
 
 After changing English text, run `python3 scripts/website.py translations extract`
 before `check`. Existing translations and reviewer comments survive extraction;
@@ -248,10 +248,12 @@ live response after publication. The mirrored `/rea/robots.txt` is not the
 hostname-root robots file for `morluto.github.io`; canonical HTML tags establish
 the mirror's preference.
 
-`public/assets/social-card.svg` is the maintained 1200 × 630 preview source.
-CairoSVG generates `social-card.png` for sharing clients. Commit the SVG, not the
-PNG. Both hosts receive the generated image in the same publishing artifact.
-The preview uses the site's typography, palette and direct headline.
+The default card uses the original blue REA wordmark and the refined analysis panel. `SOCIAL_FIGURES` in `scripts/website.py` maps
+individual routes to their figures. The build renders 1200 × 630 PNGs for both
+hosts. Each language edition uses its own title and description and shares the
+same artwork for a given route. Open Graph, X Cards and Google structured data
+reference the same image. Pages permit large image previews, and blog posts
+also include `BlogPosting` structured data.
 
 Verification checks route-specific canonicals, unique titles, descriptions,
 sharing fields, image dimensions, indexing policy and complete sitemap coverage.
@@ -335,8 +337,8 @@ language editions and tabs on the same host. If storage is blocked, the button
 still works for the current page. Without JavaScript, the site stays light and
 the button stays hidden.
 
-The shared `theme` head region loads `assets/theme.js` before the stylesheet so a
-saved choice applies before the first paint. That script owns the resolved
+The shared `theme` head region applies the saved choice inline before the first
+paint. The deferred `assets/theme.js` then synchronizes the resolved
 `data-theme`, browser `theme-color` and `website-theme-change` event. The CSS
 palette, embedded SVGs and dinosaur canvas follow that choice. Keep the theme
 region in the page scaffold and run `sync` after editing its template.
@@ -616,6 +618,10 @@ Verify <https://rea.tools/>, <https://rea.tools/guides/javascript/>,
 404, and directory pages retain trailing slashes so relative assets and links
 resolve correctly. The root README and browser guide use `https://rea.tools/`
 as the public website URL.
+
+The build minifies the shared stylesheet. It also publishes permanent redirects
+from `/showcases` to `/showcase/` and from `/environments` to
+`/guides/rl-environments/`. GitHub Pages serves static redirects for the same URLs.
 
 Production publication uses the synchronized GitHub Actions workflow below.
 Local Wrangler commands above publish only the separate preview Worker.

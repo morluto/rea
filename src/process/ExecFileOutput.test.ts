@@ -352,10 +352,13 @@ describe.skipIf(process.platform === "win32")(
       const ready = join(directory, "ready");
       const stopped = join(directory, "stopped");
       const release = join(directory, "release");
+      // Publish the signal by rename so the poller never reads a created but
+      // still-empty file while the child is alive.
       const script = [
         'const fs = require("node:fs");',
         'for (const name of ["SIGINT", "SIGTERM"]) process.on(name, () => {',
-        `  fs.writeFileSync(${JSON.stringify(stopped)}, name);`,
+        `  fs.writeFileSync(${JSON.stringify(`${stopped}.partial`)}, name);`,
+        `  fs.renameSync(${JSON.stringify(`${stopped}.partial`)}, ${JSON.stringify(stopped)});`,
         `  const exitCode = ${JSON.stringify(exitCode)};`,
         "  if (exitCode !== null) process.exit(exitCode);",
         "});",

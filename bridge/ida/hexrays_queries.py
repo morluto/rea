@@ -237,12 +237,12 @@ def _function_entry_targets(f):
 
 def callees(addrs, limit):
     rows = []
+    imports = None
     for addr in addrs:
         f = _entry(addr)
         if f is None:
             rows.append({"callees": None, "error": "Not a function"})
             continue
-        imports = _imports()
         found = {}
         for to in _call_targets(f):
             if to in found:
@@ -254,6 +254,8 @@ def callees(addrs, limit):
             else:
                 # Imports, pointer slots and code outside every function stay
                 # visible by address instead of being dropped.
+                if imports is None:
+                    imports = _imports()
                 name = imports.get(to) or ida_name.get_name(to) or _hex(to)
                 found[to] = {"addr": _hex(to), "name": name, "type": "external"}
         items = [found[to] for to in sorted(found)]
