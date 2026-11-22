@@ -3434,7 +3434,7 @@ const readSpan = async (
             { integrityCheck: "member-identity" },
           );
         state.memberBytesRead += bytes.length - charged;
-        return Buffer.from(bytes);
+        return bytes;
       },
     );
   } catch (cause) {
