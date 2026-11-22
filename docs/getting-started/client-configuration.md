@@ -948,7 +948,8 @@ root's `config.json`, `kilo.json`, `kilo.jsonc`, `opencode.json` and
 the root (or in an empty `KILO_CONFIG_DIR`). A relative Kilo path depends on
 Kilo's working directory, so REA refuses it. The entry is
 `{ "type": "local", "command": [exe, ...args], "enabled": true }`, plus
-`environment` only when it is non-empty; an existing `enabled: false` is kept.
+`environment` only when it is non-empty. `rea mcp add` preserves an existing
+`enabled: false`; `rea setup` sets `enabled: true`.
 `KILO_CONFIG_CONTENT` is Kilo's highest layer and is never edited (see
 [installation](installation.md)); project registration with `rea mcp add` is in
 the [CLI guide](cli.md). Kilo also reads its legacy extension MCP files
