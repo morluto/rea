@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import * as inventoryProducer from "../domain/managed/managedMetadataInventory.js";
+import { describe, expect, it, vi } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { InternalInvariantError } from "../domain/internalInvariant.js";
@@ -3428,3 +3429,66 @@ it.each([false, true])(
     );
   },
 );
+
+describe("user string capacity overflow preserves decoded members", () => {
+  it("retains already-decoded members in one pass when #US literals overflow capacity", () => {
+    const { heap, tokens } = fixtureUserStringHeap([
+      "small",
+      "x".repeat(8_000),
+    ]);
+    const bytes = buildManagedPeFixture({
+      ilBody: ldstrBody(tokens),
+      userStringHeap: heap,
+    });
+    const target = managedPeFixtureTarget(bytes);
+    const spy = vi.spyOn(inventoryProducer, "readManagedMetadataInventory");
+    try {
+      const result = inspectManagedMembersBytes(bytes, target, {
+        maxRepresentationBytes: 40_000,
+      });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(result.types).toHaveLength(1);
+      expect(result.fields).toHaveLength(1);
+      expect(result.methods).toHaveLength(1);
+      expect(
+        result.methods[0]?.body.anchors.map(({ opcode }) => opcode),
+      ).toContain("ldstr");
+      expect(result.coverage).toEqual({ state: "complete", issues: [] });
+      expect(result.user_strings).toMatchObject({
+        state: "partial",
+        literals: [],
+        issues: [{ code: "resource-limit", scope: "metadata.#US" }],
+      });
+      expect(result.limitations.join(" ")).toMatch(/literals are not examined/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("falls back to type-inventory recovery when members themselves exceed capacity", () => {
+    const { heap, tokens } = fixtureUserStringHeap(["small"]);
+    const bytes = buildManagedPeFixture({
+      ilBody: ldstrBody(tokens),
+      userStringHeap: heap,
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { maxRepresentationBytes: 6_000 },
+    );
+
+    expect(result.types).toHaveLength(1);
+    expect(result.methods).toEqual([]);
+    expect(result.user_strings).toBeNull();
+    expect(result.coverage).toMatchObject({
+      state: "partial",
+      issues: [
+        expect.objectContaining({
+          code: "resource-limit",
+          scope: "metadata.representation",
+        }),
+      ],
+    });
+  });
+});

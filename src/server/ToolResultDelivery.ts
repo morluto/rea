@@ -19,9 +19,9 @@ import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
-  MCP_TRANSPORT_EVIDENCE_EXPORT,
   MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -91,11 +91,10 @@ interface OverflowNextStep {
 
 const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
   const projection = evidenceBundleProjection(value);
-  // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
     return {
-      text: MCP_TRANSPORT_EVIDENCE_EXPORT,
-      operation: "export_evidence_bundle",
+      text: MCP_TRANSPORT_EVIDENCE_SUMMARY,
+      operation: "get_evidence_bundle",
     };
   return {
     text:

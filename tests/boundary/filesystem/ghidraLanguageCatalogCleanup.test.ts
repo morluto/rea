@@ -7,6 +7,9 @@ import {
   ArtifactResourceScope,
 } from "../../../src/resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ghidraFileDialect } from "../../../src/ghidra/GhidraFileArtifacts.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -16,6 +19,7 @@ interface FileControl {
   synchronizedClose: boolean;
   invalidateOnFailure: boolean;
   readFails: boolean;
+  openDenied: boolean;
   invalidated: boolean;
   closeCalls: number;
   opens: number;
@@ -25,13 +29,20 @@ interface FileControl {
 // that releases synchronized closes only after all of them are pending.
 const { controls, barrier } = vi.hoisted(() => {
   const state = { expected: 0, arrived: 0, release: () => {} };
-  const gate = new Promise<void>((resolve) => {
+  let gate = new Promise<void>((resolve) => {
     state.release = resolve;
   });
   return {
     controls: new Map<string, FileControl>(),
     barrier: {
       state,
+      reset: (expected: number) => {
+        state.expected = expected;
+        state.arrived = 0;
+        gate = new Promise<void>((resolve) => {
+          state.release = resolve;
+        });
+      },
       arrive: async () => {
         state.arrived += 1;
         if (state.arrived >= state.expected) state.release();
@@ -45,8 +56,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
+      const path = String(args[0]);
+      const control = controls.get(basename(path));
+      if (control?.openDenied) {
+        // Guarantee the other worker has reached its real descriptor close.
+        await barrier.arrive();
+        throw Object.assign(new Error("definition open denied"), {
+          code: "EACCES",
+          path,
+        });
+      }
       const real = await actual.open(...args);
-      const control = controls.get(basename(String(args[0])));
       if (control === undefined) return real;
       control.opens += 1;
       let released = false;
@@ -89,6 +109,7 @@ const control = (name: string, overrides: Partial<FileControl> = {}) => {
     synchronizedClose: false,
     invalidateOnFailure: false,
     readFails: false,
+    openDenied: false,
     invalidated: false,
     closeCalls: 0,
     opens: 0,
@@ -257,4 +278,99 @@ it("retains an invalidated descriptor owner and keeps later reads blocked", asyn
   // The owner refuses to re-close an invalidated descriptor it never confirmed.
   expect(broken.closeCalls).toBe(1);
   expect(resources.hasPending).toBe(true);
+});
+
+it("merges sibling cleanup observations and leases across concurrent definition failures", async () => {
+  const resources = scope();
+  const root = await createTestTempDirectory("rea-ghidra-ldefs-multi-");
+  for (let index = 0; index < 10; index += 1) {
+    const name = `mod_${String(index).padStart(2, "0")}`;
+    const languages = join(root, "Ghidra/Processors", name, "data/languages");
+    await mkdir(languages, { recursive: true });
+    await writeFile(
+      join(languages, `${name}.ldefs`),
+      `<language_definitions><language id="${name}:LE:32:default"/></language_definitions>`,
+    );
+  }
+  const first = control("mod_01.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  const second = control("mod_03.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  barrier.reset(2);
+
+  const failure = await readGhidraLanguageCatalog(root, resources).catch(
+    (cause: unknown) => cause,
+  );
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({
+    cleanup: {
+      resources: [
+        expect.stringContaining("mod_01.ldefs"),
+        expect.stringContaining("mod_03.ldefs"),
+      ],
+    },
+  });
+  if (failure instanceof ArtifactReaderFailure)
+    expect(failure.cleanupLeases).toHaveLength(2);
+  expect(resources.hasPending).toBe(true);
+
+  first.closeFails = false;
+  second.closeFails = false;
+  expect(
+    await readGhidraLanguageCatalog(await installation("x86"), resources),
+  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
+  expect(first.closeCalls).toBe(2);
+  expect(second.closeCalls).toBe(2);
+  expect(resources.hasPending).toBe(false);
+  expect(await readGhidraLanguageCatalog(root, resources)).toHaveLength(10);
+});
+
+it("reports the denied definition as primary while owning a sibling close retry", async () => {
+  const resources = scope();
+  const root = await installation("denied");
+  const siblingDirectory = join(root, "Ghidra/Processors/stuck/data/languages");
+  await mkdir(siblingDirectory, { recursive: true });
+  await writeFile(
+    join(siblingDirectory, "stuck.ldefs"),
+    "<language_definitions/>",
+  );
+  control("denied.ldefs", { openDenied: true });
+  const stuck = control("stuck.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  barrier.reset(2);
+
+  const cause = await readGhidraLanguageCatalog(root, resources).catch(
+    (cause: unknown) => cause,
+  );
+  const failure = classifyProviderFailure(
+    cause,
+    ghidraFileDialect("resolve_analysis_profile"),
+  );
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: [join(siblingDirectory, "stuck.ldefs")],
+      diagnostics: {
+        primary_error: {
+          code: "access_denied",
+          details: {
+            path: join(
+              root,
+              "Ghidra/Processors/denied/data/languages/denied.ldefs",
+            ),
+          },
+        },
+      },
+    },
+  });
+  stuck.closeFails = false;
+  await resources.close();
+  expect(stuck.closeCalls).toBe(2);
+  expect(failure.cleanupIncomplete).toBe(false);
 });

@@ -62,6 +62,7 @@ const HAR_PRODUCER_PROFILES: readonly HarProducerProfile[] = [
     emptyServerAddress: true,
   },
   { name: "mitmproxy", version: "12.2.3", nullPostDataText: true },
+  { name: "mitmproxy", version: "12.3.1", nullPostDataText: true },
 ];
 
 /** Validation changes tied to observed spelling and the declared producer. */

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   MAX_FIRMWARE_STAGING_BYTES,
@@ -11,72 +12,51 @@ import {
 import { inventoryFirmwareOutput } from "../../../src/firmware/FirmwareFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("refuses staging bytes at the schema ceiling with the ceiling recovery", async () => {
+it("reports the cumulative staging-byte limit and only offers supported increases", async () => {
   const root = await createTestTempDirectory("rea-firmware-ceiling-bytes-");
-  // A sparse file reports its declared size without storing the bytes, so the
-  // refusal is exercised at the real schema ceiling rather than a toy budget.
-  const sparse = await open(join(root, "oversized.bin"), "w");
+  // Each file fits either budget. Together they exceed even the ceiling.
+  await writeFile(join(root, "first.bin"), "12");
+  const sparse = await open(join(root, "second.bin"), "w");
   try {
-    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES + 1);
+    await sparse.truncate(MAX_FIRMWARE_STAGING_BYTES - 1);
   } finally {
     await sparse.close();
   }
 
-  const rejected = await inventoryFirmwareOutput(
-    root,
-    MAX_FIRMWARE_STAGING_BYTES,
-    MAX_FIRMWARE_STAGING_ENTRIES,
-    Number.MAX_SAFE_INTEGER,
-    "extract_firmware",
-  ).catch((cause: unknown) => cause);
+  for (const [limit, adjustable] of [
+    [MAX_FIRMWARE_STAGING_BYTES - 1, true],
+    [MAX_FIRMWARE_STAGING_BYTES, false],
+  ] as const) {
+    const failure: unknown = await inventoryFirmwareOutput(
+      root,
+      limit,
+      MAX_FIRMWARE_STAGING_ENTRIES,
+      Number.MAX_SAFE_INTEGER,
+      "extract_firmware",
+    ).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisResourceConstraintError))
+      throw new Error("Expected a staging capacity failure", {
+        cause: failure,
+      });
 
-  expect(rejected).toMatchObject({
-    _tag: "AnalysisResourceConstraintError",
-    resource: "capacity",
-    retryable: false,
-  });
-  const projected = projectAnalysisError(rejected as never);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    retryable: false,
-    details: {
-      reported_limits: { max_output_bytes: MAX_FIRMWARE_STAGING_BYTES },
-    },
-  });
-  const action = projected.remediation.action;
-  expect(action).toContain(`max_output_bytes=${MAX_FIRMWARE_STAGING_BYTES}`);
-  expect(action).toMatch(/raising max_output_bytes further is not supported/iu);
-  expect(action).toMatch(/smaller firmware byte range.*smaller image/iu);
-  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
+    const projected = projectAnalysisError(failure);
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "capacity",
+        reported_limits: { max_output_bytes: limit },
+      },
+    });
+    const action = projected.remediation.action;
+    expect(action).toContain(`max_output_bytes=${limit}`);
+    expect(action).toContain(`maximum ${MAX_FIRMWARE_STAGING_BYTES}`);
+    expect(action).toContain("analysis_timeout_ms does not raise");
+    expect(action.includes("Increase max_output_bytes")).toBe(adjustable);
+    expect(action).toContain(
+      adjustable
+        ? "narrower firmware byte range"
+        : "smaller firmware byte range",
+    );
+  }
 });
-
-it("still offers a raise for a budget below the schema ceiling", async () => {
-  const root = await createTestTempDirectory("rea-firmware-below-ceiling-");
-  await writeFile(join(root, "one.bin"), "12");
-
-  const rejected = await inventoryFirmwareOutput(
-    root,
-    1,
-    MAX_FIRMWARE_STAGING_ENTRIES,
-    Number.MAX_SAFE_INTEGER,
-    "extract_firmware",
-  ).catch((cause: unknown) => cause);
-
-  const projected = projectAnalysisError(rejected as never);
-  expect(projected).toMatchObject({
-    code: "resource_constraint",
-    details: { reported_limits: { max_output_bytes: 1 } },
-  });
-  const action = projected.remediation.action;
-  expect(action).toContain("max_output_bytes=1");
-  expect(action).toContain(
-    `Increase max_output_bytes up to ${MAX_FIRMWARE_STAGING_BYTES}`,
-  );
-  expect(action).toMatch(/narrower firmware byte range/iu);
-  expect(action).toMatch(/analysis_timeout_ms does not raise/iu);
-});
-
-// The entry ceiling needs more staged entries than the schema permits, so the
-// at-ceiling entry wording stays covered by
-// src/firmware/FirmwareStagingBudget.test.ts and the below-ceiling entry wiring
-// by firmwareReportFiles.test.ts.

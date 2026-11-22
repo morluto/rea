@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { err, ok, type Result } from "../domain/result.js";
 import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isRecord } from "../kernel/isRecord.js";
 import { KunaDocumentError } from "./KunaDocumentError.js";
 
 /**
@@ -255,6 +256,25 @@ export interface KunaInventoryFunction {
   readonly size: number;
 }
 
+const isLowerHexPrefixed = (value: unknown): value is string => {
+  if (typeof value !== "string" || value.length < 3) return false;
+  if (value.charCodeAt(0) !== 48 || value.charCodeAt(1) !== 120) return false;
+  for (let i = 2; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (!((code >= 48 && code <= 57) || (code >= 97 && code <= 102)))
+      return false;
+  }
+  return true;
+};
+
+const isStringArray = (value: unknown): value is readonly string[] => {
+  if (!Array.isArray(value)) return false;
+  for (let i = 0; i < value.length; i += 1) {
+    if (typeof value[i] !== "string") return false;
+  }
+  return true;
+};
+
 /** Parse the callable-symbol inventory `kuna functions --json` writes. */
 export const parseKunaInventory = (
   text: string,
@@ -264,6 +284,33 @@ export const parseKunaInventory = (
     value = JSON.parse(text);
   } catch {
     return err("the function inventory is not JSON");
+  }
+  if (isRecord(value) && Array.isArray(value.functions)) {
+    const rawFunctions: unknown[] = value.functions;
+    const functions: KunaInventoryFunction[] = new Array(rawFunctions.length);
+    let valid = true;
+    for (let i = 0; i < rawFunctions.length; i += 1) {
+      const entry = rawFunctions[i];
+      if (
+        !isRecord(entry) ||
+        typeof entry.name !== "string" ||
+        !isLowerHexPrefixed(entry.address_hex) ||
+        !isStringArray(entry.aliases) ||
+        typeof entry.size !== "number" ||
+        !Number.isSafeInteger(entry.size) ||
+        entry.size < 0
+      ) {
+        valid = false;
+        break;
+      }
+      functions[i] = {
+        name: entry.name,
+        address: entry.address_hex,
+        aliases: entry.aliases,
+        size: entry.size,
+      };
+    }
+    if (valid) return ok(functions);
   }
   const parsed = inventorySchema.safeParse(value);
   if (!parsed.success)

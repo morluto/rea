@@ -465,6 +465,13 @@ describe("response-budget recovery routes", () => {
       "get_evidence_bundle",
     ],
     [
+      "bundle summary",
+      "get_evidence_bundle",
+      { kind: "evidence-bundle-summary" },
+      {},
+      "get_evidence_bundle",
+    ],
+    [
       "bundle records",
       "get_evidence_bundle",
       { kind: "evidence-record-selection" },
