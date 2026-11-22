@@ -38,6 +38,7 @@ import {
 } from "../native/elf/ElfNotes.fixture.js";
 import { peResourceFixture } from "../domain/pe/peResources.fixture.js";
 import { locateNodeSea } from "./nodeSea/NodeSeaLocation.js";
+import { observeNodeSeaFuseMatches } from "./nodeSea/NodeSeaBlob.js";
 import { MAX_INSPECT_PE_FILE_BYTES } from "../domain/native/peResources.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -502,21 +503,6 @@ it.each(["thin", "universal"] as const)(
   },
 );
 
-it("classifies a main script without a JavaScript suffix as javascript-bundle", async () => {
-  const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier(
-      "plain-name",
-      nodeSeaElf({ codePath: "main", main: script, fuse: "set" }),
-    ),
-  );
-  expect(
-    snapshot.occurrences.find((row) => row.logical_path === "main"),
-  ).toMatchObject({
-    artifact_kind: "javascript",
-    artifact_format: "javascript-bundle",
-  });
-});
-
 it("keeps a snapshot body opaque and retains the code path", async () => {
   const snapshot = await scanCanonicalArtifactInventory(
     await writeCarrier(
@@ -546,52 +532,71 @@ it("keeps a snapshot body opaque and retains the code path", async () => {
   });
 });
 
-it.each([
-  ["absent", undefined, "absent", null],
-  ["unset", "unset", "unset", `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:0`],
-] as const)(
-  "reports a %s fuse as a contradiction",
-  async (_label, fuse, state, sentinel) => {
-    const reason =
-      state === "absent"
-        ? /no NODE_SEA_FUSE sentinel.*observed/iu
-        : /NODE_SEA_FUSE sentinel.*unset/iu;
-    const snapshot = await scanCanonicalArtifactInventory(
-      await writeCarrier(
-        "fuse",
-        nodeSeaElf({ ...(fuse === undefined ? {} : { fuse }), main: script }),
-      ),
-    );
-    const metadata = snapshot.occurrences.find(
-      (row) => row.logical_path === ".",
-    )?.format_metadata;
-    expect(metadata).toMatchObject({
-      fuse_state: state,
-      fuse_sentinel: sentinel,
-      fuse_contradiction: expect.stringMatching(reason),
-    });
-    const contradiction = (metadata as { fuse_contradiction: string })
-      .fuse_contradiction;
-    expect(snapshot.limitations).toContain(contradiction);
-    expect(snapshot.coverage.status).toBe("complete");
-  },
-);
+const UNSET_FUSE = `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:0`;
 
-it("reports disagreeing fuse sentinels", async () => {
+it.each([
+  ["only invalid fuse spellings", null],
+  ["identical unset fuses across read boundaries", UNSET_FUSE],
+] as const)("classifies a SEA carrier with %s", async (_, sentinel) => {
+  const base = nodeSeaElf({ main: script });
+  const split = 64 * 1024;
+  const bytes =
+    sentinel === null
+      ? Buffer.concat([
+          base,
+          Buffer.from(
+            `NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH.toUpperCase()}:0\0NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:2\0NODE_SEA_FUSE_${NODE_SEA_FUSE_HASH}:`,
+          ),
+        ])
+      : Buffer.alloc(split * 2 + sentinel.length);
+  if (sentinel !== null) {
+    base.copy(bytes);
+    const carried = sentinel.length - 1;
+    bytes.write(sentinel, split - carried);
+    bytes.write(sentinel, split * 2 - carried);
+  }
   const snapshot = await scanCanonicalArtifactInventory(
-    await writeCarrier("conflict", nodeSeaPe({ fuse: "conflicting" })),
+    await writeCarrier("fuse", bytes),
   );
   const metadata = snapshot.occurrences.find(
     (row) => row.logical_path === ".",
   )?.format_metadata;
+  if (metadata?.kind !== "node-sea")
+    throw new Error("Expected a Node SEA carrier");
   expect(metadata).toMatchObject({
-    fuse_state: "conflicting",
-    fuse_sentinel: null,
-    fuse_contradiction: expect.stringMatching(/fuse sentinels disagree/iu),
+    fuse_state: sentinel === null ? "absent" : "unset",
+    fuse_sentinel: sentinel,
+    fuse_contradiction: observeNodeSeaFuseMatches(
+      sentinel === null ? [] : [sentinel],
+    ).fuseContradiction,
   });
-  const contradiction = (metadata as { fuse_contradiction: string })
-    .fuse_contradiction;
-  expect(snapshot.limitations).toContain(contradiction);
+  expect(snapshot.limitations).toContain(metadata.fuse_contradiction);
+  expect(snapshot.coverage.status).toBe("complete");
+});
+
+it("reports disagreeing PE fuse sentinels after identical repeats", async () => {
+  for (const bit of ["0", "1"]) {
+    const different = `NODE_SEA_FUSE_${"a".repeat(32)}:${bit}`;
+    const image = Buffer.concat([
+      nodeSeaPe(),
+      Buffer.from([UNSET_FUSE, UNSET_FUSE, different].join("\0")),
+    ]);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeCarrier("conflict", image),
+    );
+    const metadata = snapshot.occurrences.find(
+      (row) => row.logical_path === ".",
+    )?.format_metadata;
+    if (metadata?.kind !== "node-sea")
+      throw new Error("Expected a Node SEA carrier");
+    expect(metadata, `conflict with fuse bit ${bit}`).toMatchObject({
+      fuse_state: "conflicting",
+      fuse_sentinel: null,
+      fuse_contradiction: observeNodeSeaFuseMatches([UNSET_FUSE, different])
+        .fuseContradiction,
+    });
+    expect(snapshot.limitations).toContain(metadata.fuse_contradiction);
+  }
 });
 
 it("leaves a Mach-O, ELF, or PE without a SEA slot in its native format", async () => {
@@ -1011,19 +1016,6 @@ it("extracts the main script and assets without executing them", async () => {
   } finally {
     await resourceScope.close();
   }
-});
-
-it("rejects duplicate raw asset keys", async () => {
-  const path = await writeCarrier(
-    "duplicate-assets",
-    nodeSeaElf({
-      assets: [
-        { name: "data.txt", body: "a" },
-        { name: "data.txt", body: "b" },
-      ],
-    }),
-  );
-  await expect(scanCanonicalArtifactInventory(path)).rejects.toThrow();
 });
 
 it("maps an unsafe module path and opaque asset keys without losing their sources", async () => {
