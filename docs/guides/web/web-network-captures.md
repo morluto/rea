@@ -388,6 +388,24 @@ global, per-record and Evidence explanations added during projection. Contract
 field names, typed discriminators and exact decoder identities keep their
 canonical meanings; declarations do not rename formats or providers.
 
+A HAR capture's header names, query parameter names and JSON or form body
+member names that look like credentials (whole name segments such as `token`,
+`secret`, `password`, `api_key`, `authorization` or `session`) and hold a
+retained value are counted in a limitation that lists up to 20 of them by
+record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
+of text, says how many are not listed, and never names a value; the
+[environment build](../../agent-environments.md) runs the same scan as its
+`credential-named-members` warning. Values already excluded, such as the
+standard authentication headers or declared sensitive values, are not counted.
+The scan reads at most 524288 values in all across the selected records: a
+body's values are bounded from its text before it is parsed, and a header
+list, query string or form-parameter list is charged by its length before it
+is read, so a body larger than 4 MiB of UTF-8 text, or any of these that would
+take the scan past its budget, is not scanned, and a second limitation counts
+them by record and side. Names do not establish sensitivity, so nothing is excluded on
+them; declare the values as sensitive to exclude them. Other capture formats
+are not scanned.
+
 Historical evidence does not prove runtime attribution, execution or deployment
 authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
 wire fragments. Native dictionary duplicate keys have the unchanged upstream
@@ -417,6 +435,20 @@ retained. Empty query pairs are ignored. Original URLs stay in parent Evidence;
 name decoding does not normalize the recorded paths used for grouping.
 The inventory describes observed names, without inferring required parameters,
 value types or a complete API schema. Sensitive-parent refusals still apply.
+
+Select `include_request_header_names: true` in the view to include the header,
+cookie and set-cookie names recorded for each group. The default and explicit
+`false` omit the `request_header_names` field. Selected groups carry
+`request_headers`, `cookie_names` and `set_cookie_names`, each an array of
+`{name, record_ordinals}` entries sorted by Unicode code point and listed once
+per record. `request_headers` holds the `request.headers` names verbatim, so
+`Accept` and `accept` stay distinct, while credential header names such as
+`Authorization` and `Cookie` appear as names only. `cookie_names` holds the
+`request.cookies` names and `set_cookie_names` the `response.cookies` names.
+No header, cookie or set-cookie value, prefix, digest or substring is copied,
+including from headers whose value was redacted at capture time. A name's
+presence does not establish authentication, session semantics, a required
+header or a complete header schema.
 
 | Rule       | Exact segment format                                 | Placeholder  |
 | ---------- | ---------------------------------------------------- | ------------ |

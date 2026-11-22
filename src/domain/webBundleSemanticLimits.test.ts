@@ -107,11 +107,16 @@ it("attributes each reached budget to its own script and preserves unaffected sc
     [results[0]!.script_key],
     [results[1]!.script_key],
   ]);
-  expect(report.observations.endpoints.map((entry) => entry.value)).toEqual([
-    "/health",
-    "/health",
-    "/unaffected",
+  // The same endpoint from both limited scripts merges and keeps both scripts.
+  expect(report.observations.endpoints).toMatchObject([
+    {
+      value: "/health",
+      occurrences: 2,
+      script_keys: [results[0]!.script_key, results[1]!.script_key],
+    },
+    { value: "/unaffected" },
   ]);
+  expect(report.observations.endpoints).toHaveLength(2);
   expect(report.completeness).toMatchObject({
     status: "partial",
     parsed_scripts: 3,

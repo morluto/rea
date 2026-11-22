@@ -626,3 +626,21 @@ it("keeps Hopper's result projection and invalid-pattern contract with the share
   });
   await search.close();
 });
+
+it("returns ordered matching indices across large batches in the supervised worker", async () => {
+  const values = Array.from({ length: 2500 }, (_, i) =>
+    i % 2 === 0 ? `sym_hit_${String(i)}` : `sym_miss_${String(i)}`,
+  );
+  const matched = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^sym_hit_\\d+$",
+    caseSensitive: true,
+    values,
+  });
+  expect(matched.ok).toBe(true);
+  if (!matched.ok) return;
+  expect(matched.value.length).toBe(1250);
+  expect(matched.value[0]).toBe(0);
+  expect(matched.value[1]).toBe(2);
+  expect(matched.value.at(-1)).toBe(2498);
+});

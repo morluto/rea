@@ -1,9 +1,11 @@
 """Read references from authored website formats before resolving their targets."""
 
 from html.parser import HTMLParser
+import re
 from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
+import yaml
 
 
 class ReferenceMarkdown(MarkdownIt):
@@ -12,7 +14,25 @@ class ReferenceMarkdown(MarkdownIt):
         return url
 
 
-MARKDOWN = ReferenceMarkdown("commonmark").enable("table")
+_MARKDOWN = ReferenceMarkdown("commonmark").enable("table")
+_FRONT_MATTER = re.compile(
+    r"\A\ufeff?---[ \t]*\r?\n(.*?)^---[ \t]*(?:\r?\n|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+
+
+def parse_markdown(source):
+    """Parse the document body, excluding a leading YAML metadata mapping."""
+    front_matter = _FRONT_MATTER.match(source)
+    if front_matter:
+        try:
+            metadata = yaml.compose(front_matter[1], Loader=yaml.SafeLoader)
+        except yaml.YAMLError:
+            pass
+        else:
+            if isinstance(metadata, yaml.MappingNode):
+                source = source[front_matter.end():]
+    return _MARKDOWN.parse(source)
 
 
 def html_references(source):
@@ -41,7 +61,7 @@ def markdown_references(source):
             if token.children:
                 yield from destinations(token.children)
 
-    return destinations(MARKDOWN.parse(source))
+    return destinations(parse_markdown(source))
 
 
 def split_reference(value):

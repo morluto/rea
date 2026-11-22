@@ -94,3 +94,61 @@ describe("bounded output excerpts", () => {
     expect(excerpt.text).toBe("�A … [output omitted] … B�");
   });
 });
+
+describe("bounded output ring buffer", () => {
+  it("matches head and tail bytes across repeated small writes wrapping the ring buffer", () => {
+    const limit = 19;
+    const headLimit = Math.ceil(limit / 2);
+    const tailLimit = limit - headLimit;
+    const excerpt = new BoundedOutputExcerpt(limit);
+    const chunks = Array.from({ length: 120 }, (_, index) =>
+      Buffer.from(index % 7 === 0 ? `🙂${index}` : `_${index}_`),
+    );
+    for (const chunk of chunks) excerpt.append(chunk);
+    const full = Buffer.concat(chunks);
+    const expectedHead = full.subarray(0, headLimit).toString("utf8");
+    const expectedTail = full
+      .subarray(full.length - tailLimit)
+      .toString("utf8");
+    expect(expectedHead).toBe("🙂0_1__2");
+    expect(expectedTail).toBe("8_🙂119");
+    expect(excerpt.truncated).toBe(true);
+    expect(full.length).toBeGreaterThan(headLimit + tailLimit);
+    expect(excerpt.text).toBe(
+      `${expectedHead} … [output omitted] … ${expectedTail}`,
+    );
+  });
+
+  it("drops split UTF-8 bytes at a wrapped ring tail boundary", () => {
+    const limit = 13;
+    const headLimit = Math.ceil(limit / 2);
+    const tailLimit = limit - headLimit;
+    const excerpt = new BoundedOutputExcerpt(limit);
+    const chunks = Array.from({ length: 120 }, (_, index) =>
+      Buffer.from(index % 7 === 0 ? `🙂${index}` : `_${index}_`),
+    );
+    for (const chunk of chunks) excerpt.append(chunk);
+    const full = Buffer.concat(chunks);
+    const rawHead = full.subarray(0, headLimit);
+    const rawTail = full.subarray(full.length - tailLimit);
+    expect(rawHead.toString("utf8")).toBe("🙂0_1");
+    // The 6-byte tail starts inside the 4-byte "🙂" before "119".
+    expect([...rawTail.subarray(0, 3)]).toEqual([0x9f, 0x99, 0x82]);
+    expect(rawTail.subarray(3).toString("utf8")).toBe("119");
+    expect(excerpt.truncated).toBe(true);
+    expect(excerpt.text).toBe("🙂0_1 … [output omitted] … 119");
+  });
+
+  it("handles zero budget and oversized tail replacement after partial writes", () => {
+    const empty = new BoundedOutputExcerpt(0);
+    empty.append(Buffer.from("abcdef"));
+    expect(empty.truncated).toBe(true);
+    expect(empty.text).toBe(" … [output omitted] … ");
+
+    const replaced = new BoundedOutputExcerpt(10);
+    replaced.append(Buffer.from("1234567"));
+    replaced.append(Buffer.from("ABCDEFGHIJK"));
+    expect(replaced.truncated).toBe(true);
+    expect(replaced.text).toBe("12345 … [output omitted] … GHIJK");
+  });
+});

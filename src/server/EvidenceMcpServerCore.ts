@@ -329,7 +329,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         return catalog.discover(input);
       },
     );
-    const catalog = new ProgressiveToolCatalog(
+    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
       this.registrations,
       adapter,
       this.catalogIdentity,
@@ -445,21 +445,24 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const presented = this.presentInput(name, config);
-    const registeredConfig = {
-      ...config,
-      ...(presented.description === undefined
-        ? {}
-        : { description: presented.description }),
-      ...(presented.inputSchema === undefined
-        ? {}
-        : {
-            inputSchema: captureInputValidation(
-              name,
-              presented.inputSchema as StandardSchemaWithJSON,
-            ),
-          }),
-    };
+    const advertised = this.advertisesTool(name);
+    const presented = advertised ? this.presentInput(name, config) : config;
+    const registeredConfig = advertised
+      ? {
+          ...config,
+          ...(presented.description === undefined
+            ? {}
+            : { description: presented.description }),
+          ...(presented.inputSchema === undefined
+            ? {}
+            : {
+                inputSchema: captureInputValidation(
+                  name,
+                  presented.inputSchema as StandardSchemaWithJSON,
+                ),
+              }),
+        }
+      : config;
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -498,7 +501,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       registeredConfig as never,
       scoped as never,
     );
-    if (!this.advertisesTool(name)) registered.disable();
+    if (!advertised) registered.disable();
     return registered;
   }
 

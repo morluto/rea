@@ -1,5 +1,6 @@
 import { parseFailureFromCause } from "../domain/parseFailure.js";
 import { LC } from "../domain/apple/machoLoadCommandCodes.js";
+import type { BundleExecutableProvenance } from "../domain/apple/bundleExecutableProvenance.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -74,6 +75,7 @@ export type MachoEncryptionRead =
 
 interface NativeMachoInspectionContext {
   readonly target: BinaryTarget;
+  readonly bundleProvenance?: BundleExecutableProvenance;
   readonly signal?: AbortSignal;
   /** Read load-command encryption facts from the bytes the tools inspect. */
   readonly readEncryption: (
@@ -472,7 +474,12 @@ export const inspectNativeMacho = async (
             limitations: [...normalized.limitations, ...locationLimitations],
           });
   return ok({
-    result: jsonValueSchema.parse(result),
+    result: jsonValueSchema.parse({
+      ...result,
+      ...(context.bundleProvenance === undefined
+        ? {}
+        : { bundle_provenance: context.bundleProvenance }),
+    }),
     limitations: result.limitations,
     locations: fileOffsetLocations(result, containerOffset, binary.sliceSize),
   });

@@ -1305,15 +1305,20 @@ const hasContainerDirectory = (
     )
   )
     return true;
-  // Inventory has files rather than directory entries. An admitted descendant
-  // establishes a package directory even without package.json.
+  // An admitted file can establish a directory without an explicit entry.
+  // Use the inventory's prefix range when available to avoid walking every
+  // analyzed file for each package searched along the ancestor chain.
   const prefix = `${candidate}/`;
-  for (const [path, file] of input.files)
+  const indexedPaths = input.unanalyzedFiles?.filePathsBelow?.(candidate);
+  for (const path of indexedPaths ?? input.files.keys()) {
+    if (indexedPaths === undefined && !path.startsWith(prefix)) continue;
+    const file = input.files.get(path);
     if (
-      path.startsWith(prefix) &&
+      file !== undefined &&
       admitsRuntimeContainer(input, path, file.container_sha256)
     )
       return true;
+  }
   const container = crossesRuntimeArchiveBoundary(input, `${candidate}/`)
     ? undefined
     : input.files.get(input.sourcePath)?.container_sha256;
