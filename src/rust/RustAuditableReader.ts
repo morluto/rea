@@ -391,25 +391,26 @@ const assertDepth = (text: string): void => {
   let depth = 0;
   let quoted = false;
   let escaped = false;
-  for (const char of text) {
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
     if (quoted) {
       if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quoted = false;
+      else if (code === 0x5c) escaped = true;
+      else if (code === 0x22) quoted = false;
       continue;
     }
-    if (char === '"') {
+    if (code === 0x22) {
       quoted = true;
       continue;
     }
-    if (char === "{" || char === "[") {
+    if (code === 0x7b || code === 0x5b) {
       depth += 1;
       if (depth > JSON_DEPTH)
         throw malformedInput(
           RUST_AUDITABLE_FORMAT,
           "Dependency JSON nesting exceeds 32 levels",
         );
-    } else if ((char === "}" || char === "]") && depth > 0) depth -= 1;
+    } else if ((code === 0x7d || code === 0x5d) && depth > 0) depth -= 1;
   }
 };
 
