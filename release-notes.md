@@ -696,6 +696,7 @@
 * **rust:** consolidate auditable revision and cycle checks ([76ae995](https://github.com/morluto/rea/commit/76ae995f2b71d01802c94ff5a2284dcc5ff2b57b))
 * **rust:** consolidate carrier budgets and retained views ([#12872](https://github.com/morluto/rea/issues/12872)) ([75908cc](https://github.com/morluto/rea/commit/75908cc1fa8fd36c0da515cfb62c69db654410ab))
 * **rust:** consolidate dependency cycle and format revision checks ([#12868](https://github.com/morluto/rea/issues/12868)) ([76ae995](https://github.com/morluto/rea/commit/76ae995f2b71d01802c94ff5a2284dcc5ff2b57b))
+* **setup:** consolidate backup, skill recovery and consent journeys ([#13498](https://github.com/morluto/rea/issues/13498)) ([1ad48ef](https://github.com/morluto/rea/commit/1ad48ef3c0179a5d25cbca2ab6ab504f454e927d))
 * **setup:** consolidate client cleanup and shared registration coverage ([#13503](https://github.com/morluto/rea/issues/13503)) ([10c21a6](https://github.com/morluto/rea/commit/10c21a608cd0c92050750e270a5fcf1b4bb003da))
 * **setup:** consolidate configuration transaction and recovery checks ([#13289](https://github.com/morluto/rea/issues/13289)) ([d0cbb20](https://github.com/morluto/rea/commit/d0cbb20a6c735b70f4cd2e98e36fcd51c65ba9c2))
 * **setup:** consolidate Hopper download failure coverage ([#12928](https://github.com/morluto/rea/issues/12928)) ([1c2ad52](https://github.com/morluto/rea/commit/1c2ad52b285c24a26873bef16abb0f2630a0410c))
