@@ -354,19 +354,26 @@ export const androidVbmetaRefusals = () =>
     },
     {
       name: "authentication-over-cap",
-      bytes: androidVbmetaHeader({
-        authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
-      }),
+      // Fully present, so only the admission budget refuses it.
+      bytes: Buffer.concat([
+        androidVbmetaHeader({
+          authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
+        }),
+        Buffer.alloc(DEFAULTS.authentication_block_bytes + 64),
+      ]),
       kind: "limit",
       code: "truncated",
       category: "truncated",
     },
     {
       name: "descriptors-over-cap",
-      bytes: androidVbmetaHeader({
-        auxiliaryDataBlockSize: DEFAULTS.descriptor_bytes + 64,
-        descriptorsSize: DEFAULTS.descriptor_bytes + 64,
-      }),
+      bytes: Buffer.concat([
+        androidVbmetaHeader({
+          auxiliaryDataBlockSize: DEFAULTS.descriptor_bytes + 64,
+          descriptorsSize: DEFAULTS.descriptor_bytes + 64,
+        }),
+        Buffer.alloc(DEFAULTS.descriptor_bytes + 64),
+      ]),
       kind: "limit",
       code: "truncated",
       category: "truncated",

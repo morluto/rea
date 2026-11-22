@@ -223,22 +223,24 @@ const u32 = (bytes: Buffer, offset: number): number =>
 const u64 = (bytes: Buffer, offset: number): bigint =>
   new BinaryReader(bytes, false, FORMAT).word(offset, 64);
 
-const u64Capped = (
-  bytes: Buffer,
+/**
+ * Apply an admission budget to a size the structure already accepted, so an
+ * input that cannot be repaired by a larger budget never reports a limit.
+ */
+const requireAdmitted = (
+  value: number,
   offset: number,
   field: string,
   maximum: number,
   name: string,
-): number => {
-  const value = u64(bytes, offset);
-  if (value > BigInt(maximum))
+): void => {
+  if (value > maximum)
     capacity(
-      `${field} of ${value.toString()} bytes exceeds the selected ${String(maximum)}-byte admission`,
-      { name, maximum, required: value },
+      `${field} of ${String(value)} bytes exceeds the selected ${String(maximum)}-byte admission`,
+      { name, maximum, required: BigInt(value) },
       field,
       offset,
     );
-  return Number(value);
 };
 
 /** Metadata-only u64, never used to address bytes, kept as a decimal string. */
@@ -381,20 +383,8 @@ export const androidVbmetaImageExtent = (
       );
     if (!hasAndroidVbmetaMagic(bytes))
       malformed("magic is not AVB0", "magic", 0);
-    const authenticationSize = u64Capped(
-      bytes,
-      12,
-      "authentication block",
-      limits.authentication_block_bytes,
-      AUTHENTICATION_BLOCK_LIMIT,
-    );
-    const auxiliarySize = u64Capped(
-      bytes,
-      20,
-      "auxiliary block",
-      limits.auxiliary_block_bytes,
-      AUXILIARY_BLOCK_LIMIT,
-    );
+    const authenticationSize = u64Safe(bytes, 12, "authentication block");
+    const auxiliarySize = u64Safe(bytes, 20, "auxiliary block");
     requireBlockAligned(authenticationSize, "authentication block");
     requireBlockAligned(auxiliarySize, "auxiliary block");
     const hashOffset = u64Safe(bytes, 32, "hash offset");
@@ -414,13 +404,7 @@ export const androidVbmetaImageExtent = (
       "public key metadata size",
     );
     const descriptorsOffset = u64Safe(bytes, 96, "descriptors offset");
-    const descriptorsSize = u64Capped(
-      bytes,
-      104,
-      "descriptor bytes",
-      limits.descriptor_bytes,
-      DESCRIPTOR_BYTES_LIMIT,
-    );
+    const descriptorsSize = u64Safe(bytes, 104, "descriptor bytes");
     rangeInside(hashOffset, hashSize, authenticationSize, "hash", 32);
     rangeInside(
       signatureOffset,
@@ -450,13 +434,39 @@ export const androidVbmetaImageExtent = (
       "descriptors",
       96,
     );
-    const imageSize = AVB_HEADER_SIZE + authenticationSize + auxiliarySize;
-    if (imageSize > fileSize)
+    const declaredEnd =
+      BigInt(AVB_HEADER_SIZE) +
+      BigInt(authenticationSize) +
+      BigInt(auxiliarySize);
+    if (declaredEnd > BigInt(fileSize))
       truncated(
-        `image is truncated: vbmeta ends at byte ${String(imageSize)} but the file is ${String(fileSize)} bytes`,
+        `image is truncated: vbmeta ends at byte ${declaredEnd.toString()} but the file is ${String(fileSize)} bytes`,
         "image",
         fileSize,
       );
+    const imageSize = Number(declaredEnd);
+    // Budgets apply only once the declared extents fit the file and blocks.
+    requireAdmitted(
+      authenticationSize,
+      12,
+      "authentication block",
+      limits.authentication_block_bytes,
+      AUTHENTICATION_BLOCK_LIMIT,
+    );
+    requireAdmitted(
+      auxiliarySize,
+      20,
+      "auxiliary block",
+      limits.auxiliary_block_bytes,
+      AUXILIARY_BLOCK_LIMIT,
+    );
+    requireAdmitted(
+      descriptorsSize,
+      104,
+      "descriptor bytes",
+      limits.descriptor_bytes,
+      DESCRIPTOR_BYTES_LIMIT,
+    );
     // libavb rejects a header unless the release field's last byte is NUL.
     const releaseEnd = 128 + AVB_RELEASE_STRING_SIZE - 1;
     if (bytes[releaseEnd] !== 0)

@@ -446,17 +446,45 @@ it("admits a descriptor table past the default count when the caller raises it",
   const header = androidVbmetaHeader({
     authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
   });
-  expect(failed(header).failure).toMatchObject({
+  const present = Buffer.concat([
+    header,
+    Buffer.alloc(DEFAULTS.authentication_block_bytes + 64),
+  ]);
+  expect(failed(present).failure).toMatchObject({
     kind: "limit",
     limit: { required: BigInt(DEFAULTS.authentication_block_bytes + 64) },
   });
-  // Once admitted, the declared block is checked against the file instead.
+});
+
+it("reports a declared extent the file cannot hold before any admission budget", () => {
+  // A raised budget cannot repair these inputs, so they never report a limit.
+  const header = androidVbmetaHeader({
+    authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
+  });
+  expect(failed(header).failure).toMatchObject({
+    kind: "truncated",
+    field: "image",
+  });
   expect(
-    failed(header, header.length, {
-      ...DEFAULTS,
-      authentication_block_bytes: DEFAULTS.authentication_block_bytes + 64,
-    }).failure,
-  ).toMatchObject({ kind: "truncated", field: "image" });
+    failed(
+      androidVbmetaHeader({
+        descriptorsSize: DEFAULTS.descriptor_bytes + 64,
+      }),
+    ).failure,
+  ).toMatchObject({ kind: "malformed", field: "descriptors" });
+  // The same over-budget descriptor table, fully present, is a limit.
+  const auxiliary = DEFAULTS.descriptor_bytes + 64;
+  const fits = Buffer.concat([
+    androidVbmetaHeader({
+      auxiliaryDataBlockSize: auxiliary,
+      descriptorsSize: auxiliary,
+    }),
+    Buffer.alloc(auxiliary),
+  ]);
+  expect(
+    failed(fits, fits.length, { ...DEFAULTS, auxiliary_block_bytes: auxiliary })
+      .failure,
+  ).toMatchObject({ kind: "limit", field: "descriptor bytes" });
 });
 
 it("refuses a raised-limit kernel cmdline too long to hex-encode as a capacity failure", () => {
@@ -500,9 +528,12 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
     });
   }
   const overAuthentication = failed(
-    androidVbmetaHeader({
-      authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
-    }),
+    Buffer.concat([
+      androidVbmetaHeader({
+        authenticationDataBlockSize: DEFAULTS.authentication_block_bytes + 64,
+      }),
+      Buffer.alloc(DEFAULTS.authentication_block_bytes + 64),
+    ]),
   );
   expect(overAuthentication.failure).toMatchObject({
     kind: "limit",
@@ -574,9 +605,12 @@ it("refuses header ranges, alignment, truncation, and ceilings", () => {
     expect(counted.failure.limit.maximum).toBe(DEFAULTS.descriptor_count);
 
   const auxiliary = failed(
-    androidVbmetaHeader({
-      auxiliaryDataBlockSize: DEFAULTS.auxiliary_block_bytes + 64,
-    }),
+    Buffer.concat([
+      androidVbmetaHeader({
+        auxiliaryDataBlockSize: DEFAULTS.auxiliary_block_bytes + 64,
+      }),
+      Buffer.alloc(DEFAULTS.auxiliary_block_bytes + 64),
+    ]),
   );
   expect(auxiliary.failure).toMatchObject({
     kind: "limit",
