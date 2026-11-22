@@ -234,6 +234,49 @@ it("refuses a volume with a missing LEB while serving the others", async () => {
   }
 });
 
+it("refuses a volume whose only LEB sits in a corrupt PEB instead of serving it empty", async () => {
+  const path = await writeCarrier(
+    "lost.ubi",
+    ubiImage([
+      ...ubiLayoutPebs([
+        { id: 0, name: "kernel", type: "static", reservedPebs: 1 },
+      ]),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x4b, "KERNEL"),
+        sqnum: 2n,
+        usedEbs: 1,
+        vidCrc: 0,
+      },
+    ]),
+  );
+  const reader = new UbiImageArtifactReader(path);
+  try {
+    const entries = [];
+    for await (const entry of reader.entries()) entries.push(entry);
+    expect(entries).toMatchObject([
+      {
+        path: "volumes/kernel",
+        declaredSize: null,
+        limitations: [UBI_IMAGE_LIMITATIONS.lostLebs],
+        formatMetadata: {
+          kind: "ubi-volume",
+          used_ebs: null,
+          data_bytes: null,
+          extractable: false,
+        },
+      },
+    ]);
+    await expect(reader.open(entries[0]!)).rejects.toBeInstanceOf(
+      ArtifactEntryContentUnavailable,
+    );
+  } finally {
+    await reader.close();
+  }
+});
+
 it("serves the older LEB copy when a newer wear-leveling copy fails its data CRC", async () => {
   const records: UbiFixtureVolumeRecord[] = [
     { id: 0, name: "rootfs", type: "dynamic", reservedPebs: 1 },

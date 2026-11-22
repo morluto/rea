@@ -93,7 +93,9 @@ zero bytes. A static volume whose LEBs disagree on `used_ebs`, declare a
 `used_ebs` of 0 while mapped, declare more
 data than a LEB holds, or hold less than a full usable LEB before the last
 one, is refused the same way, as is a volume whose VID headers declare a
-volume type or `data_pad` other than its volume table record. LEBs of volumes without
+volume type or `data_pad` other than its volume table record. A volume with no
+mapped LEB is empty only when no PEB is corrupt; otherwise a corrupt PEB may
+have held its data, so it is refused the same way with `used_ebs: null`. LEBs of volumes without
 a volume table record, and LEB numbers outside their volume, are counted in
 `ignored_leb_count`. A full extract fails when any volume is refused.
 

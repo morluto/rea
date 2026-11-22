@@ -70,6 +70,8 @@ export const UBI_IMAGE_LIMITATIONS = {
     "A newer wear-leveling copy of a logical eraseblock failed its data CRC, so the older copy was used.",
   unverifiedCopy:
     "A volume whose logical eraseblock is left with only wear-leveling copies that failed their data CRC is inventoried but not reassembled.",
+  lostLebs:
+    "A volume with no mapped logical eraseblock in an image with corrupt physical eraseblocks is inventoried but not reassembled, since the corrupt eraseblocks may have held its data.",
   updateMarker:
     "The volume table marks an interrupted update for this volume; its reassembled bytes may be incomplete.",
 } as const;
@@ -79,7 +81,8 @@ export type UbiVolumeExtractRefusal =
   | "missing_lebs"
   | "invalid_static_size"
   | "vid_record_mismatch"
-  | "unverified_copy";
+  | "unverified_copy"
+  | "lost_lebs";
 
 export const ubiVolumeExtractRefusalLimitation = (
   refusal: UbiVolumeExtractRefusal,
@@ -89,6 +92,7 @@ export const ubiVolumeExtractRefusalLimitation = (
     invalid_static_size: UBI_IMAGE_LIMITATIONS.invalidStaticSize,
     vid_record_mismatch: UBI_IMAGE_LIMITATIONS.vidRecordMismatch,
     unverified_copy: UBI_IMAGE_LIMITATIONS.unverifiedCopy,
+    lost_lebs: UBI_IMAGE_LIMITATIONS.lostLebs,
   })[refusal];
 
 /** How parsing a UBI image failed, in the shared byte-format failure algebra. */
@@ -1011,17 +1015,23 @@ const assembleVolume = (
   staleLebCopyCount: number,
   geometry: UbiGeometry,
   path: string,
+  corruptPebsPresent: boolean,
 ): { readonly volume: UbiVolume; readonly ignored: number } => {
   const usableLebSize = geometry.lebSize - record.dataPad;
   const inRange = [...lebs.entries()]
     .filter(([lnum]) => lnum < record.reservedPebs)
     .sort(([left], [right]) => left - right);
   let ignored = lebs.size - inRange.length;
+  // No surviving header cannot establish emptiness when a corrupt PEB may
+  // have held the volume's only LEBs.
+  const lost = inRange.length === 0 && corruptPebsPresent;
   const usedEbsValues = new Set(inRange.map(([, leb]) => leb.vid.usedEbs));
   const usedEbs =
     record.type === "static"
       ? usedEbsValues.size === 0
-        ? 0
+        ? lost
+          ? null
+          : 0
         : usedEbsValues.size === 1
           ? [...usedEbsValues][0]!
           : null
@@ -1035,7 +1045,9 @@ const assembleVolume = (
     ? "vid_record_mismatch"
     : inRange.some(([, leb]) => leb.unverified)
       ? "unverified_copy"
-      : null;
+      : lost
+        ? "lost_lebs"
+        : null;
   let contentLebs: number;
   if (record.type === "static") {
     const lastLnum = (usedEbs ?? 0) - 1;
@@ -1156,6 +1168,9 @@ export const assembleUbiImage = (
   for (const [volId, volume] of lebs)
     if (volId !== UBI_LAYOUT_VOLUME_ID && !known.has(volId))
       ignoredLebCount += volume.size;
+  const count = (state: UbiPeb["state"]): number =>
+    pebs.filter((peb) => peb.state === state).length;
+  const corruptPebCount = count("corrupt");
   const volumes = volumeTable.records.map((record) => {
     const assembled = assembleVolume(
       record,
@@ -1163,13 +1178,11 @@ export const assembleUbiImage = (
       stale.get(record.id) ?? 0,
       geometry,
       volumePath(record.name, record.id, used),
+      corruptPebCount > 0,
     );
     ignoredLebCount += assembled.ignored;
     return assembled.volume;
   });
-  const count = (state: UbiPeb["state"]): number =>
-    pebs.filter((peb) => peb.state === state).length;
-  const corruptPebCount = count("corrupt");
   const { min, max } = counterRange(pebs);
   return {
     geometry,

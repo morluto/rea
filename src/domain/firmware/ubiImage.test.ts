@@ -310,6 +310,63 @@ it("skips PEBs with a bad EC or VID header CRC and names the limitation", () => 
   });
 });
 
+describe("a volume whose only LEB sits in a corrupt PEB", () => {
+  const lostImage = (
+    type: "dynamic" | "static",
+    corruption: { readonly vidCrc: number } | { readonly ecCrc: number },
+  ) =>
+    ubiImage([
+      ...ubiLayoutPebs([{ id: 0, name: "kernel", type, reservedPebs: 2 }]),
+      {
+        kind: "leb",
+        volId: 0,
+        lnum: 0,
+        data: ubiLebData(0x30, "KERNEL"),
+        sqnum: 2n,
+        ...(type === "static" ? { usedEbs: 1 } : {}),
+        ...corruption,
+      },
+    ]);
+
+  it.each([
+    ["static", "VID", { vidCrc: 0 }],
+    ["static", "EC", { ecCrc: 0 }],
+    ["dynamic", "VID", { vidCrc: 0 }],
+    ["dynamic", "EC", { ecCrc: 0 }],
+  ] as const)(
+    "refuses a %s volume behind a bad %s header CRC instead of serving it empty",
+    (type, _header, bad) => {
+      const parsed = image(lostImage(type, bad));
+      expect(parsed.corruptPebCount).toBe(1);
+      expect(parsed.volumes[0]).toMatchObject({
+        name: "kernel",
+        usedEbs: null,
+        mappedLebCount: 0,
+        extractRefusal: "lost_lebs",
+        dataBytes: null,
+        ranges: [],
+        limitations: [UBI_IMAGE_LIMITATIONS.lostLebs],
+      });
+      expect(parsed.limitations).toContain(UBI_IMAGE_LIMITATIONS.lostLebs);
+    },
+  );
+
+  it("still reads an unmapped volume as empty without corrupt PEBs", () => {
+    const parsed = image(
+      ubiImage(
+        ubiLayoutPebs([
+          { id: 0, name: "kernel", type: "static", reservedPebs: 2 },
+        ]),
+      ),
+    );
+    expect(parsed.volumes[0]).toMatchObject({
+      usedEbs: 0,
+      extractRefusal: null,
+      dataBytes: 0,
+    });
+  });
+});
+
 it("refuses a dynamic volume with a missing LEB instead of inventing bytes", () => {
   const bytes = ubiImage([
     ...ubiLayoutPebs(RECORDS),
