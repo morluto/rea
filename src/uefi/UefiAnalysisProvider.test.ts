@@ -5875,3 +5875,75 @@ it("marks coverage partial when Ghidra decompilation is incomplete with failed f
     await provider.close();
   }
 });
+
+it("validates manifest payload digests and falls back to path/payload metadata on mismatch", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-digest-mismatch-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "driver.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "StaleName",
+          payload_file: "driver.efi",
+          payload_sha256: "0".repeat(64),
+          phase: "PEI",
+          guid: "11111111-2222-3333-4444-555555555555",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) =>
+        lim.includes("Manifest payload_sha256 mismatch for driver.efi"),
+      ),
+    ).toBe(true);
+    expect(result.modules[0]!.name).toBe("driver");
+    expect(result.modules[0]!.phase).toBe("MISC");
+    expect(result.modules[0]!.guid).toBeNull();
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reports skipped symlink entry as partial coverage and incorporates it into directory identity", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-symlink-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const { symlink } = await import("node:fs/promises");
+  await symlink("nonexistent.efi", join(inDir, "broken_link.efi"));
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some((lim) => lim.includes("Omitted symlink entry")),
+    ).toBe(true);
+    const emptySha = createHash("sha256").update("").digest("hex");
+    expect(result.image_sha256).not.toBe(emptySha);
+  } finally {
+    await provider.close();
+  }
+});

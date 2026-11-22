@@ -2557,16 +2557,34 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       let manifestEntry: DirectoryArtifactEntry | undefined;
       const candidateEntries: DirectoryArtifactEntry[] = [];
       let traversalLimitReached = false;
+      let isCoveragePartial = false;
+      interface OmittedDirectoryCandidate {
+        readonly identityRelPath: string;
+        readonly reason: string;
+      }
+      const omittedCandidates: OmittedDirectoryCandidate[] = [];
 
       try {
         for await (const entry of reader.entries(signal, {
           maximumEntries: MAX_DIRECTORY_INVENTORY_ENTRIES,
           onCoverage: (coverage) => {
+            if (coverage.status === "unknown") {
+              isCoveragePartial = true;
+            }
             for (const lim of coverage.limitations) {
               if (limitations.length < 50) limitations.push(lim);
             }
           },
           onOmission: (omission) => {
+            isCoveragePartial = true;
+            const identityRelPath =
+              HOST_PLATFORM.platform === "win32"
+                ? omission.path.replaceAll("\\", "/")
+                : omission.path;
+            omittedCandidates.push({
+              identityRelPath,
+              reason: `omission:${omission.kind}`,
+            });
             if (limitations.length < 50) {
               limitations.push(`Omitted unreadable path: ${omission.path}`);
             }
@@ -2579,6 +2597,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               manifestEntry = entry;
             } else {
               candidateEntries.push(entry);
+            }
+          } else if (entry.kind === "symlink") {
+            isCoveragePartial = true;
+            const identityRelPath =
+              HOST_PLATFORM.platform === "win32"
+                ? entry.path.replaceAll("\\", "/")
+                : entry.path;
+            omittedCandidates.push({
+              identityRelPath,
+              reason: "symlink",
+            });
+            if (limitations.length < 50) {
+              limitations.push(`Omitted symlink entry: ${entry.path}`);
             }
           }
         }
@@ -2609,6 +2640,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         name?: string | undefined;
         phase?: string | undefined;
         type?: string | undefined;
+        payloadSha256?: string | undefined;
       };
       const isWindows = HOST_PLATFORM.platform === "win32";
       const manifestModulesByExactRelPath = new Map<
@@ -2758,11 +2790,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   validType = m.type_name;
                 }
 
+                let validPayloadSha256: string | undefined = undefined;
+                const declaredSha =
+                  typeof m.payload_sha256 === "string"
+                    ? m.payload_sha256
+                    : typeof m.payloadSha256 === "string"
+                      ? m.payloadSha256
+                      : typeof m.sha256 === "string"
+                        ? m.sha256
+                        : undefined;
+                if (
+                  declaredSha !== undefined &&
+                  /^[0-9a-f]{64}$/i.test(declaredSha)
+                ) {
+                  validPayloadSha256 = declaredSha.toLowerCase();
+                }
+
                 const manifestEntryRecord: ManifestModuleEntry = {
                   guid: validGuid,
                   name: validName,
                   phase: validPhase,
                   type: validType,
+                  payloadSha256: validPayloadSha256,
                 };
                 manifestModulesByExactRelPath.set(
                   exactNorm,
@@ -2804,19 +2853,18 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         readonly identityRelPath: string;
         readonly name: string;
         readonly size: number;
-        readonly phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
-        readonly typeName?: string | undefined;
-        readonly guid: string | null;
-        readonly rawName: string;
-        readonly cleanName: string;
+        phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+        typeName?: string | undefined;
+        guid: string | null;
+        rawName: string;
+        cleanName: string;
+        readonly fallbackPhase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC";
+        readonly fallbackGuid: string | null;
+        readonly fallbackRawName: string;
+        readonly fallbackCleanName: string;
+        readonly fromManifest?: ManifestModuleEntry | undefined;
       }
       const admittedCandidates: AdmittedCandidateModule[] = [];
-
-      interface OmittedDirectoryCandidate {
-        readonly identityRelPath: string;
-        readonly reason: string;
-      }
-      const omittedCandidates: OmittedDirectoryCandidate[] = [];
 
       for (const entry of candidateEntries) {
         checkpoint();
@@ -2976,7 +3024,50 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
           manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey);
 
-        let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" = "MISC";
+        const fallbackPhase = hierarchySegments.some((s) => s === "sec")
+          ? "SEC"
+          : hierarchySegments.some((s) => s === "pei" || s === "peim")
+            ? "PEI"
+            : hierarchySegments.some((s) => s === "smm")
+              ? "SMM"
+              : hierarchySegments.some(
+                    (s) => s === "app" || s === "application",
+                  )
+                ? "APP"
+                : hierarchySegments.some((s) => s === "dxe")
+                  ? "DXE"
+                  : "MISC";
+
+        let fallbackGuid: string | null = null;
+        const nameMatch = entryName.match(embeddedGuidRegex);
+        if (nameMatch && nameMatch[1]) {
+          fallbackGuid = nameMatch[1].toLowerCase();
+        } else {
+          const parentDirName = basename(dirname(fullPath));
+          const parentMatch = parentDirName.match(embeddedGuidRegex);
+          if (parentMatch && parentMatch[1]) {
+            fallbackGuid = parentMatch[1].toLowerCase();
+          }
+        }
+
+        let fallbackRawName = entryName.replace(/\.(pe|efi|bin|te)$/i, "");
+        if (fallbackGuid) {
+          const parentBase = basename(dirname(fullPath));
+          const prefix = `${fallbackGuid}_`;
+          if (parentBase.toLowerCase().startsWith(prefix)) {
+            const candidateName = parentBase.slice(prefix.length);
+            if (candidateName.length > 0) {
+              fallbackRawName = candidateName;
+            }
+          }
+        }
+        const fallbackCleanName = fallbackRawName.replace(
+          /[^a-zA-Z0-9_-]/g,
+          "_",
+        );
+
+        let phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC" =
+          fallbackPhase;
         const manifestPhase = fromManifest?.phase?.toUpperCase();
         if (
           manifestPhase &&
@@ -2989,20 +3080,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             | "SMM"
             | "APP"
             | "MISC";
-        } else if (hierarchySegments.some((s) => s === "sec")) {
-          phase = "SEC";
-        } else if (hierarchySegments.some((s) => s === "pei" || s === "peim")) {
-          phase = "PEI";
-        } else if (hierarchySegments.some((s) => s === "smm")) {
-          phase = "SMM";
-        } else if (
-          hierarchySegments.some((s) => s === "app" || s === "application")
-        ) {
-          phase = "APP";
-        } else if (hierarchySegments.some((s) => s === "dxe")) {
-          phase = "DXE";
-        } else if (hierarchySegments.some((s) => s === "misc")) {
-          phase = "MISC";
         } else {
           const typePhase = phaseFromFfsTypeName(fromManifest?.type);
           if (typePhase !== undefined) {
@@ -3010,27 +3087,16 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           }
         }
 
-        let guid: string | null = null;
+        let guid: string | null = fallbackGuid;
         if (
           fromManifest !== undefined &&
           "guid" in fromManifest &&
           fromManifest.guid !== undefined
         ) {
           guid = fromManifest.guid ? fromManifest.guid.toLowerCase() : null;
-        } else {
-          const nameMatch = entryName.match(embeddedGuidRegex);
-          if (nameMatch && nameMatch[1]) {
-            guid = nameMatch[1].toLowerCase();
-          } else {
-            const parentDirName = basename(dirname(fullPath));
-            const parentMatch = parentDirName.match(embeddedGuidRegex);
-            if (parentMatch && parentMatch[1]) {
-              guid = parentMatch[1].toLowerCase();
-            }
-          }
         }
 
-        let rawName = entryName.replace(/\.(pe|efi|bin|te)$/i, "");
+        let rawName = fallbackRawName;
         if (
           typeof fromManifest?.name === "string" &&
           fromManifest.name.length > 0
@@ -3059,6 +3125,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           guid,
           rawName,
           cleanName,
+          fallbackPhase,
+          fallbackGuid,
+          fallbackRawName,
+          fallbackCleanName,
+          fromManifest,
         });
       }
 
@@ -3084,6 +3155,23 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         const content = await buffer(await reader.open(cand.entry, signal));
         const fileSha256 = sha256Hex(content);
         dirHash.update(compositeKey([cand.identityRelPath, fileSha256]) + "\n");
+
+        if (
+          cand.fromManifest?.payloadSha256 !== undefined &&
+          cand.fromManifest.payloadSha256 !== fileSha256
+        ) {
+          isCoveragePartial = true;
+          if (limitations.length < 50) {
+            limitations.push(
+              `Manifest payload_sha256 mismatch for ${cand.identityRelPath}; manifest row metadata ignored.`,
+            );
+          }
+          cand.guid = cand.fallbackGuid;
+          cand.rawName = cand.fallbackRawName;
+          cand.cleanName = cand.fallbackCleanName;
+          cand.phase = cand.fallbackPhase;
+          cand.typeName = undefined;
+        }
 
         let retainedBytes: Buffer | undefined;
         if (retainedPreloadBytes + content.byteLength <= MAX_PRELOAD_BYTES) {
@@ -3153,7 +3241,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
 
       const dirCoverage: "complete" | "partial" =
-        limitations.length > 0 ? "partial" : "complete";
+        limitations.length > 0 || isCoveragePartial ? "partial" : "complete";
 
       const publishedExecution = await this.#stageAndPublishModules(
         request,
