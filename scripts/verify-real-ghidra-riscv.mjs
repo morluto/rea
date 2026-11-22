@@ -641,7 +641,7 @@ try {
     });
   }
   // ESP-IDF's flash layout: the NOBITS .flash_rodata_dummy reserves
-  // .flash.text's addresses. Ghidra 12.1.4's loader puts such code in an overlay
+  // .flash.text's addresses. Ghidra 12.2's loader puts such code in an overlay
   // that DWARF import and default-space references never reach, unless REA
   // prepares the memory map before analysis.
   const esp = await buildRiscvFixture(workspace, 32, {

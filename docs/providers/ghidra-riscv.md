@@ -278,9 +278,11 @@ and H4, flash text and rodata share one virtual window from `0x42000020`, and
 the linker script reserves the text's addresses in the rodata segment with the
 NOBITS section `.flash_rodata_dummy`. For C5 and C61, a second NOBITS section,
 `.ext_ram.dummy`, also reserves the text and rodata addresses for external RAM.
-Ghidra 12.1.4's ELF loader resolves overlapping sections in favour of the later
-one: the reservation takes the default address space and `.flash.text` goes
-into an overlay space. Ghidra's DWARF importer, its call-frame (FDE) processing
+Ghidra 12.2's ELF loader, like 12.1.4's, resolves overlapping sections in
+favour of the later one: the reservation takes the default address space and
+`.flash.text` goes into an overlay space. Ghidra 12.2 also gives each section the
+permissions of the first `PT_LOAD` that contains its address, so the reservation
+can be marked executable; REA tells it from the code by its missing bytes. Ghidra's DWARF importer, its call-frame (FDE) processing
 and references from other code and data resolve ELF virtual addresses in the
 default space only. Without
 preparation, code in that overlay gets no DWARF signature, local variables or

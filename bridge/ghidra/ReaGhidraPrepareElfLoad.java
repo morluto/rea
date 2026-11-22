@@ -25,7 +25,7 @@ import java.util.Set;
 
 /**
  * Give an executable section that a NOBITS reservation shares addresses with the default address
- * space before auto-analysis (docs/providers/ghidra-riscv.md). Ghidra 12.1.4's ELF loader resolves the
+ * space before auto-analysis (docs/providers/ghidra-riscv.md). Ghidra 12.2's ELF loader resolves the
  * overlap in favour of the later section, so ESP-IDF's .flash_rodata_dummy keeps the default space
  * and .flash.text lands in an overlay, which DWARF import, call-frame entries and default-space
  * references never reach. REA's TypeScript admission commits both sections, and the script refuses

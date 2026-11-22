@@ -1,7 +1,7 @@
 ENTRY(rea_riscv_esp_entry)
 /*
  * esp32c6-shared-window.ld with the NOLOAD reservation before the code in the
- * section table. Ghidra 12.1.4's ELF loader gives overlapping addresses to the
+ * section table. Ghidra 12.2's ELF loader gives overlapping addresses to the
  * later section, so this order already loads the code in the default address
  * space, and REA's load preparation must change nothing.
  */
