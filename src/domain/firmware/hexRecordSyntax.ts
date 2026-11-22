@@ -84,6 +84,7 @@ export const trimTrailingBlanks = (
 const decodeHexDigits = (
   line: Uint8Array,
   from: number,
+  scratch?: Uint8Array,
 ): Result<Uint8Array, string> => {
   for (let column = from; column < line.length; column += 1)
     if (HEX_VALUES[line[column] ?? 0] === -1)
@@ -92,8 +93,12 @@ const decodeHexDigits = (
       );
   if ((line.length - from) % 2 !== 0)
     return err(`odd number of hex digits (${String(line.length - from)})`);
-  const bytes = new Uint8Array((line.length - from) / 2);
-  for (let index = 0; index < bytes.length; index += 1)
+  const byteLength = (line.length - from) / 2;
+  const bytes =
+    scratch !== undefined && scratch.length >= byteLength
+      ? scratch.subarray(0, byteLength)
+      : new Uint8Array(byteLength);
+  for (let index = 0; index < byteLength; index += 1)
     bytes[index] =
       (HEX_VALUES[line[from + index * 2] ?? 0] ?? 0) * 16 +
       (HEX_VALUES[line[from + index * 2 + 1] ?? 0] ?? 0);
@@ -106,9 +111,12 @@ const byteSum = (bytes: Uint8Array): number =>
 const startCharacterFailure = (line: Uint8Array, expected: string): string =>
   `invalid character 0x${hex(line[0] ?? 0, 2)} at column 1; a record starts with '${expected}'`;
 
-const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
+const parseIntelRecord = (
+  line: Uint8Array,
+  scratch?: Uint8Array,
+): Result<HexRecord, string> => {
   if (line[0] !== COLON) return err(startCharacterFailure(line, ":"));
-  const decoded = decodeHexDigits(line, 1);
+  const decoded = decodeHexDigits(line, 1, scratch);
   if (!decoded.ok) return decoded;
   const bytes = decoded.value;
   if (bytes.length < 5)
@@ -147,7 +155,10 @@ const parseIntelRecord = (line: Uint8Array): Result<HexRecord, string> => {
   });
 };
 
-const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
+const parseSrecRecord = (
+  line: Uint8Array,
+  scratch?: Uint8Array,
+): Result<HexRecord, string> => {
   if (line[0] !== LETTER_S) return err(startCharacterFailure(line, "S"));
   if (line.length < 2) return err("record has no type character");
   const digit = (line[1] ?? 0) - 0x30;
@@ -156,7 +167,7 @@ const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
       `invalid record type character 0x${hex(line[1] ?? 0, 2)} at column 2`,
     );
   const type = `S${String(digit)}`;
-  const decoded = decodeHexDigits(line, 2);
+  const decoded = decodeHexDigits(line, 2, scratch);
   if (!decoded.ok) return decoded;
   const bytes = decoded.value;
   const count = bytes[0] ?? 0;
@@ -186,5 +197,8 @@ const parseSrecRecord = (line: Uint8Array): Result<HexRecord, string> => {
 export const parseRecord = (
   encoding: HexRecordEncoding,
   line: Uint8Array,
+  scratch?: Uint8Array,
 ): Result<HexRecord, string> =>
-  encoding === "intel-hex" ? parseIntelRecord(line) : parseSrecRecord(line);
+  encoding === "intel-hex"
+    ? parseIntelRecord(line, scratch)
+    : parseSrecRecord(line, scratch);
