@@ -38,6 +38,7 @@
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **audit:** bind Electron fuse reads to the inventoried file ([#13348](https://github.com/morluto/rea/issues/13348)) ([0ecb6dd](https://github.com/morluto/rea/commit/0ecb6dde4b8bd7ebe3e56ef9096c9da63b40f726))
+* **audit:** interpret Go trimpath rewrites at the flag parser ([#13349](https://github.com/morluto/rea/issues/13349)) ([caa2fab](https://github.com/morluto/rea/commit/caa2fab47654acf3131d7998796d4722c513a38e))
 * **audit:** preserve distinct opaque CodeView paths ([#13346](https://github.com/morluto/rea/issues/13346)) ([25d0c53](https://github.com/morluto/rea/commit/25d0c53a4095ce0ba785a1ab279c08d59b71fd6b))
 * **audit:** preserve explicit source map schemes ([#13345](https://github.com/morluto/rea/issues/13345)) ([d0929f9](https://github.com/morluto/rea/commit/d0929f9aa2b887dbbe2fc4ad6e1f757b7b1bd274))
 * **audit:** preserve non-ASCII whitespace in Go build paths ([#13340](https://github.com/morluto/rea/issues/13340)) ([2691758](https://github.com/morluto/rea/commit/26917581d63ba53345ef70fe02cdc14486b2888a))
