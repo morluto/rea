@@ -510,6 +510,125 @@ const nodeViolations = (
   return violations;
 };
 
+const hasNodeOrPatternViolation = (
+  node: unknown,
+  isRoot: boolean,
+  keyword?: string,
+): boolean => {
+  if (!isRecord(node))
+    return (
+      typeof node === "boolean" &&
+      !(node === false && keyword === "additionalProperties")
+    );
+  for (const key in node)
+    if (Object.hasOwn(node, key) && !ALLOWED_KEYWORDS.has(key)) return true;
+  const { type } = node;
+  if (Array.isArray(type)) return true;
+  if (type === undefined) {
+    if (!isNullableUnion(node)) return true;
+  } else if (
+    type === "null" &&
+    keyword === "anyOf" &&
+    Object.keys(node).length === 1
+  ) {
+    return false;
+  } else if (typeof type !== "string" || !PRIMITIVE_TYPES.has(type)) {
+    return true;
+  }
+  if (type === "array" && node.items === undefined) return true;
+  if (node.items !== undefined && type !== "array") return true;
+  if (Array.isArray(node.items)) return true;
+  if (node.enum !== undefined) {
+    const values = node.enum;
+    if (
+      type !== "string" ||
+      !Array.isArray(values) ||
+      values.length === 0 ||
+      values.some((value) => typeof value !== "string" || value === "")
+    )
+      return true;
+  }
+  if (node.anyOf !== undefined) {
+    const branches = node.anyOf;
+    if (
+      isRoot ||
+      node.properties !== undefined ||
+      !Array.isArray(branches) ||
+      branches.length < 2 ||
+      branches.some((branch) => !isRecord(branch) || branch.type === undefined)
+    )
+      return true;
+  }
+  if (
+    typeof node.description === "string" &&
+    node.description.length > ADVERTISED_DESCRIPTION_MAX_CHARACTERS
+  )
+    return true;
+  for (const bound of ["minLength", "maxLength", "minItems", "maxItems"])
+    if (
+      typeof node[bound] === "number" &&
+      node[bound] >= ADVERTISED_BOUND_LIMIT
+    )
+      return true;
+  if (isRecord(node.properties))
+    for (const name in node.properties)
+      if (Object.hasOwn(node.properties, name) && !PROPERTY_NAME.test(name))
+        return true;
+  if (
+    typeof node.pattern === "string" &&
+    portablePatternViolations(node.pattern).length > 0
+  )
+    return true;
+  for (const key in node) {
+    if (!Object.hasOwn(node, key)) continue;
+    const value = node[key];
+    if (schemaMaps.has(key) && isRecord(value)) {
+      for (const childName in value)
+        if (
+          Object.hasOwn(value, childName) &&
+          hasNodeOrPatternViolation(value[childName], false, key)
+        )
+          return true;
+    } else if (schemaArrays.has(key) && Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++)
+        if (hasNodeOrPatternViolation(value[i], false, key)) return true;
+    } else if (schemaChildren.has(key)) {
+      if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i++)
+          if (hasNodeOrPatternViolation(value[i], false, key)) return true;
+      } else if (hasNodeOrPatternViolation(value, false, key)) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+/**
+ * Short-circuiting equivalent of `advertisedInputDialectViolations(tool).length > 0`
+ * for an input schema without allocating per-violation diagnostics.
+ */
+export const hasAdvertisedInputDialectViolation = (
+  input: unknown,
+  options?: { readonly skipRootBounds?: boolean },
+): boolean => {
+  if (
+    !options?.skipRootBounds &&
+    (serializedBytes(input) > ADVERTISED_INPUT_SCHEMA_MAX_BYTES ||
+      schemaDepth(input) > COMPACT_SCHEMA_MAX_DEPTH)
+  )
+    return true;
+  if (
+    !isRecord(input) ||
+    input.type !== "object" ||
+    Object.hasOwn(input, "anyOf") ||
+    Object.hasOwn(input, "oneOf") ||
+    Object.hasOwn(input, "allOf")
+  )
+    return true;
+  return hasNodeOrPatternViolation(input, true);
+};
+
 /** Advertised tool fields the portable dialect constrains. */
 export interface AdvertisedToolDefinition {
   readonly name: string;
