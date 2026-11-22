@@ -509,6 +509,7 @@
 * **managed:** consolidate graph projection checks ([#12979](https://github.com/morluto/rea/issues/12979)) ([7cc9fa1](https://github.com/morluto/rea/commit/7cc9fa1166b04d97c38dac63a83a41b0045aa29d))
 * **managed:** consolidate identity and finalization checks ([#12845](https://github.com/morluto/rea/issues/12845)) ([52cf28b](https://github.com/morluto/rea/commit/52cf28b28e544eae8c4f9af5587de8d11aa78dda))
 * **managed:** consolidate metadata ExtraData coverage ([e8105d6](https://github.com/morluto/rea/commit/e8105d6be9c5b96a0635f09e0eeef9672f112e8f))
+* **managed:** consolidate observed member matching proofs ([#13386](https://github.com/morluto/rea/issues/13386)) ([2fdf3d6](https://github.com/morluto/rea/commit/2fdf3d61d92526ecc2c978b7029f4f86f6de3b2b))
 * **managed:** consolidate snapshot cancellation coverage ([52cf28b](https://github.com/morluto/rea/commit/52cf28b28e544eae8c4f9af5587de8d11aa78dda))
 * **managed:** exercise both comparison snapshot admissions ([#13384](https://github.com/morluto/rea/issues/13384)) ([6154c61](https://github.com/morluto/rea/commit/6154c610a65096aeddcc05c4d22a55564736d042))
 * **mcp:** consolidate admission and lifecycle checks ([#12833](https://github.com/morluto/rea/issues/12833)) ([bb7bdd2](https://github.com/morluto/rea/commit/bb7bdd2fba4cbdd72e3c82df93fa64b7f0575799))
