@@ -190,6 +190,7 @@ export class ByteEntropyService {
     };
     try {
       const before = await this.files.stat(input.path, { bigint: true });
+      assertArtifactReadActive(options?.signal);
       if (!before.isFile()) throw invalid("path", "Expected a regular file.");
       admitted = true;
       // Only an admitted selected file may consult filesystem spelling. Do not

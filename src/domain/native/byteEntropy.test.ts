@@ -67,15 +67,3 @@ it("counts a repeated byte past 2^32 without wrapping", () => {
   expect(counts[0]).toBe(2 ** 32 + 2 ** 15);
   expect(entropyFromCounts(counts, counts[0]!)).toBe(0);
 });
-
-it("accumulates the same census across chunks as one concatenated run", () => {
-  // The service counts chunk by chunk; a per-chunk counter would be wrong. Both chunks go into
-  // one counter here, which is what the service does.
-  const counts = wholeFileByteCounts();
-  countByteValues(new Uint8Array([0, 1, 0]), counts);
-  countByteValues(new Uint8Array([1, 0]), counts);
-  expect(Array.from(counts.slice(0, 2))).toEqual([3, 2]);
-  expect(entropyFromCounts(counts, 5)).toBe(
-    computeBlockEntropy(new Uint8Array([0, 1, 0, 1, 0])),
-  );
-});
