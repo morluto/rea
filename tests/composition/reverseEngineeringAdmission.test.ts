@@ -1,6 +1,5 @@
 import { spawnFailure } from "../support/process/spawnFailure.js";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -108,7 +107,7 @@ it.each([
 );
 
 it("gives a call's place back at its deadline while a file stat it gave up on has not returned", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-abandoned-"));
+  const directory = await createTestTempDirectory("rea-reverse-abandoned-");
   const paths = Array.from({ length: 8 }, (_, index) =>
     join(directory, `fixture-${String(index)}.bin`),
   );
@@ -153,7 +152,6 @@ it("gives a call's place back at its deadline while a file stat it gave up on ha
     answer();
     await Promise.allSettled(held);
     await service.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
