@@ -39,7 +39,7 @@ describe("PowerPC ELF header boundaries", () => {
   );
 
   it("reads ELF64 flags at their own offset without claiming support", () => {
-    const bytes = header(false, 64);
+    const bytes = header(false, 64, 21);
     bytes.writeUInt32BE(0x80000000, 48);
     const parsed = parseExecutableHeader(bytes, "x64");
     if (!parsed.ok) throw new Error(parsed.error);

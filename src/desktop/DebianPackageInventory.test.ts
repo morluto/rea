@@ -28,6 +28,7 @@ import {
 import { exportInstall } from "../domain/desktop/appExportInstall.js";
 import { elfImage } from "../domain/desktop/elfImage.fixture.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
+import { mixedDpkgOwnershipStdout } from "./DpkgOwnershipQuery.fixture.js";
 import {
   runHostQuery,
   type QueryOutcome,
@@ -379,6 +380,58 @@ it.skipIf(process.platform === "win32")(
     const plan = exportInstall(installed, "typora", "arm64");
     if (!plan.ok) throw new Error(plan.error.reason);
     expect(plan.value.libraryPackages).toEqual(["libnspr4", "libnss3"]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not join a lossy installed source to a different index with a literal replacement character",
+  async () => {
+    const uri = "https://vendor.invalid/a\ufffdb";
+    const source = `${uri} ./ Packages`;
+    const repository = {
+      ...TYPORA,
+      source,
+      line: () => "deb https://vendor.invalid/a%EF%BF%BDb ./\n",
+      indexTarget: TYPORA.indexTarget.replaceAll(
+        "https://downloads.typora.io/linux",
+        uri,
+      ),
+    };
+    const { inspect, runQuery } = await vendorFixture({ repository });
+    const result = await inspect(async (command, argv, signal, options) => {
+      if (
+        command !== "apt-cache" ||
+        argv.length !== 2 ||
+        argv[1] !== "typora:arm64"
+      )
+        return runQuery(command, argv, signal, options);
+      const outcome = await runQuery(command, argv, signal, options);
+      if (typeof outcome !== "object")
+        throw new Error("Fixture did not return APT policy");
+      const malformed = Buffer.from(
+        outcome.stdout.replace("\ufffd", "ÿ"),
+        "latin1",
+      );
+      return runHostQuery(
+        process.execPath,
+        [
+          "-e",
+          'process.stdout.write(Buffer.from(process.argv[1], "base64"))',
+          malformed.toString("base64"),
+        ],
+        signal,
+        options,
+      );
+    });
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      name: "typora",
+      sources: [],
+    });
+    expect(result.value.inventory.package.apt_repositories).toEqual([]);
+    expect(result.value.limitations).toContain(
+      "apt-cache policy contained unreadable UTF-8, so the installed version's repository sources are unknown.",
+    );
   },
 );
 
@@ -1094,6 +1147,43 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     });
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "keeps exact executable ownership and stops on an undecodable first spelling",
+  async () => {
+    const { root, runQuery, inspect } = await writerFixture();
+    const selected = join(root, "bin/libreoffice");
+    const aliasName = "damaged-�";
+    const alias = join(root, "bin", aliasName);
+    await symlink(selected, alias);
+    const raw = mixedDpkgOwnershipStdout(selected, alias);
+    const queried: string[] = [];
+    const run: QueryRunner = async (command, argv, signal, options) => {
+      if (command !== "dpkg-query" || argv[0] !== "-S")
+        return runQuery(command, argv, signal, options);
+      queried.push(...argv.slice(1));
+      return {
+        stdout: raw.toString("utf8"),
+        ...(options?.preserveStdoutBytes ? { stdoutBuffer: raw } : {}),
+        exitCode: 1,
+      };
+    };
+
+    const owned = await inspect({ executable: "libreoffice" }, { run });
+    expect(owned.installed).toMatchObject({
+      kind: "deb",
+      name: "actual-owner",
+    });
+    expect(queried.splice(0)).toEqual([selected]);
+
+    const unknown = await inspect({ executable: aliasName }, { run });
+    expect(unknown.installed).toMatchObject({ kind: "unknown", name: null });
+    expect(unknown.limitations).toContain(
+      `dpkg-query returned unreadable ownership records for ${alias}, so the package that owns the executable is unknown.`,
+    );
+    expect(queried).toEqual([alias]);
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "desktop entry program ownership",

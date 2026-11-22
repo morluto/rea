@@ -18,6 +18,7 @@ import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
 import {
   analysisErrorWithCleanupFailure,
   analysisErrorWithCloseRejection,
+  withInheritedCleanupOwnership,
 } from "../domain/analysisErrorCleanup.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
 import { recognizeEvidence } from "../domain/evidenceValidation.js";
@@ -177,9 +178,5 @@ export const managedAnalysisCleanupFailure = (
       ),
     },
   );
-  return err(
-    error.cleanupIncomplete
-      ? failure.bindCleanupDependencies([error])
-      : failure,
-  );
+  return err(withInheritedCleanupOwnership(failure, error));
 };

@@ -118,7 +118,7 @@ export const erlangBeamSchema = z.strictObject({
     .nullable(),
   module: z.string().nullable(),
   coverage: z.strictObject({
-    // "partial" when bytes trail the declared FOR1 form and go unexamined.
+    // "partial" when bytes trail the declared FOR1 form or a decoded table.
     status: knownCoverageStatusSchema,
     examined_chunks: uint,
     atoms: uint,

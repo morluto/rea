@@ -13,6 +13,7 @@ import type {
   ManagedParseIssue,
 } from "./managedArtifact.js";
 import {
+  admitManagedProjection,
   managedDecodeBudget,
   type ManagedDecodeBudget,
 } from "./managedDecodeBudget.js";
@@ -32,6 +33,7 @@ import {
   type MetadataCodedIndexCoordinate,
   type MetadataTokenFact,
   metadataToken,
+  readRequiredMetadataName,
   readMetadataString,
   metadataBlobOffset,
 } from "./managedMetadataHeaps.js";
@@ -41,6 +43,10 @@ import type {
   TypeMemberListFacts,
 } from "./managedTypeMemberLists.js";
 import type { TypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
+import {
+  readDefinitionField,
+  type UnresolvedDefinition,
+} from "./managedUnresolvedDefinitions.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
 
 export type ManagedType = ManagedMemberInspection["types"][number];
@@ -83,6 +89,7 @@ interface TypeDefinition extends TypeRange {
   readonly row: number;
   readonly name: string | undefined;
   readonly namespace: string | undefined;
+  readonly unresolved: UnresolvedDefinition | null;
 }
 
 /**
@@ -186,23 +193,46 @@ const readTypeDefinition = (
   current: TypeMemberListEntry,
 ): TypeDefinition => {
   const { source } = current;
-  const { nameIndex, namespaceIndex } = source;
+  const token = metadataToken(2, row);
   // Keep both independent name failures, but decode each heap coordinate once.
-  const namespace = readManagedValue(
-    () =>
-      readMetadataString(bytes, layout, namespaceIndex, layout.strings.size),
+  const namespaceField = readDefinitionField(
+    () => readMetadataString(bytes, layout, source.namespaceIndex),
     issues,
+    "Namespace",
+    source.namespaceOffset,
+    source.namespaceIndex,
   );
-  const name = readManagedValue(
-    () => readMetadataString(bytes, layout, nameIndex, layout.strings.size),
+  const nameField = readDefinitionField(
+    () => readRequiredMetadataName(bytes, layout, "TypeDef", token, source),
     issues,
+    "Name",
+    source.nameOffset,
+    source.nameIndex,
   );
+  const name = typeof nameField === "string" ? nameField : undefined;
+  const namespace =
+    typeof namespaceField === "string" ? namespaceField : undefined;
+  const unresolved =
+    name === undefined || namespace === undefined
+      ? admitManagedProjection(
+          {
+            kind: "TypeDef" as const,
+            token,
+            row_offset: source.rowOffset,
+            failed_fields: [nameField, namespaceField].filter(
+              (field) => typeof field !== "string",
+            ),
+          },
+          managedDecodeBudget(layout),
+        )
+      : null;
   return {
     source,
     row,
     name,
     namespace,
-    token: metadataToken(2, row),
+    unresolved,
+    token,
     fullName:
       namespace === undefined || name === undefined
         ? null
@@ -241,11 +271,13 @@ export const parseTypes = (
   readonly types: readonly DecodedTypeDefinition[];
   readonly issues: readonly ManagedParseIssue[];
   readonly nesting: ManagedTypeNesting;
+  readonly unresolvedDefinitions: UnresolvedDefinition[];
 } => {
   const fields = memberListTable(layout, 4);
   const methods = memberListTable(layout, 6);
   const items: DecodedTypeDefinition[] = [];
   const issues: ManagedParseIssue[] = [];
+  const unresolvedDefinitions: UnresolvedDefinition[] = [];
   const nesting = readManagedTypeNesting(bytes, layout, issues);
   for (const definition of definitions) {
     const { row, name, namespace, token } = definition;
@@ -253,8 +285,11 @@ export const parseTypes = (
       name === undefined ||
       namespace === undefined ||
       definition.fullName === null
-    )
+    ) {
+      if (definition.unresolved !== null)
+        unresolvedDefinitions.push(definition.unresolved);
       continue;
+    }
     const { flags, extendsRaw, extendsOffset, rowOffset } = definition.source;
     const fieldRange = rowRange(
       fields,
@@ -308,7 +343,7 @@ export const parseTypes = (
       },
     });
   }
-  return { types: items, issues, nesting };
+  return { types: items, issues, nesting, unresolvedDefinitions };
 };
 
 export const readCompressed = (

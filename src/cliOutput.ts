@@ -111,7 +111,7 @@ interface CliOutputControls {
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
-  /** First valued output flag that Incur skips because it has no value. */
+  /** First valued output flag with an absent or empty value. */
   readonly missingValue: string | undefined;
   readonly invalidValue: string | undefined;
   readonly tokenCount: boolean;
@@ -175,7 +175,7 @@ export const readCliOutputArguments = (
     if (argument === "--token-count") tokenCount = true;
     if (!VALUED_OUTPUT_FLAGS.has(argument)) continue;
     const value = values.has(index + 1) ? tokens[index + 1]! : undefined;
-    if (value === undefined) {
+    if (value === undefined || value === "") {
       missingValue ??= argument;
       continue;
     }
@@ -374,7 +374,8 @@ export interface CliPreExecutionError {
   readonly format: StructuredOutputFormat;
   readonly code:
     | Exclude<CliOutputArgumentValidation, { readonly ok: true }>["code"]
-    | "AMP_PROJECT_SCOPE_UNSUPPORTED";
+    | "AMP_PROJECT_SCOPE_UNSUPPORTED"
+    | "CONFIGURATION_INVALID";
   readonly message: string;
 }
 

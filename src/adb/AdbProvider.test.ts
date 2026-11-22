@@ -871,42 +871,30 @@ ${shellStub({
   });
 });
 
-it("reports UTF-8 byte counts in total_bytes for non-ASCII logcat output", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      logcat:
-        "08-10 13:00:00.000 I/Tag( 1): 中文\n08-10 13:00:00.000 I/Tag( 1): 😀\n",
-    }),
-  );
-  const result = await evidenceResult(providerOver(binary), {
-    operation: "read_adb_logcat",
-    input: { serial: "emulator-5554", count: 500, buffer: "main" },
-  });
-  expect(result.lines).toEqual([
-    "08-10 13:00:00.000 I/Tag( 1): 中文",
-    "08-10 13:00:00.000 I/Tag( 1): 😀",
+it("counts the captured logcat bytes while retaining decoded Unicode lines", async () => {
+  const prefix = "08-10 13:00:00.000 I/Tag( 1): ";
+  const capture = Buffer.concat([
+    Buffer.from(`${prefix}中文\n${prefix}😀\n${prefix}A`),
+    Buffer.from([0xff]),
+    Buffer.from("B\n"),
   ]);
-  // 30-byte prefix + 6-byte CJK + LF = 37; 30-byte prefix + 4-byte emoji + LF = 35.
-  expect(result.total_bytes).toBe(72);
-});
-
-it("counts raw captured bytes in total_bytes for malformed UTF-8 logcat output", async () => {
-  const { binary } = await writeAdbStub(
-    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
-if [ "$1" = "-s" ] && [ "$3" = "shell" ]; then
-  printf '%b' '08-10 13:00:00.000 I/Tag( 1): A\\377B\\n'
-  exit 0
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "logcat" ]; then
+  exec cat '${join(root, "logcat.bin")}'
 fi
-printf 'unexpected arguments: %s\\n' "$@"
 exit 1`,
   );
+  await writeFile(join(root, "logcat.bin"), capture);
   const result = await evidenceResult(providerOver(binary), {
     operation: "read_adb_logcat",
     input: { serial: "emulator-5554", count: 500, buffer: "main" },
   });
-  // 30-byte prefix + "A" + one raw 0xff byte + "B" + LF = 34 captured bytes.
-  // Re-encoding the decoded U+FFFD replacement would report 36.
-  expect(result.total_bytes).toBe(34);
+  expect(result).toMatchObject({
+    lines: [`${prefix}中文`, `${prefix}😀`, `${prefix}A�B`],
+    total_bytes: capture.byteLength,
+    coverage: "complete",
+  });
 });
 
 it("marks coverage partial when `pkg=null` leaves permissions unknown", async () => {
@@ -1980,37 +1968,13 @@ it.each(["complete", "truncated"] as const)(
   },
 );
 
-it("inspects the display and window focus", async () => {
-  const { binary } = await writeAdbStub(
-    shellStub({
-      "wm:size": "Physical size: 1080x2340\n",
-      "wm:density": "Physical density: 420\n",
-      "dumpsys:window":
-        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
-    }),
-  );
-  const display = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_display",
-    input: { serial: "emulator-5554" },
-  });
-  expect(display.physical_size).toEqual({ width: 1080, height: 2340 });
-  expect(display.physical_density).toBe(420);
-  const window = await evidenceResult(providerOver(binary), {
-    operation: "inspect_adb_window",
-    input: { serial: "emulator-5554" },
-  });
-  expect(window.focused_window).toBe(
-    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
-  );
-});
-
-// Older builds print `wm density` as a bare number; the display projection
-// must keep it as the physical density (morluto/rea#3942).
-it("keeps a bare numeric wm density as the physical density", async () => {
+it("inspects display and window focus with a bare physical density", async () => {
   const { binary } = await writeAdbStub(
     shellStub({
       "wm:size": "Physical size: 1080x2340\n",
       "wm:density": "420\n",
+      "dumpsys:window":
+        "  mCurrentFocus=Window{abcdef u0 com.example.app/com.example.app.MainActivity}\n",
     }),
   );
   const display = await evidenceResult(providerOver(binary), {
@@ -2022,6 +1986,13 @@ it("keeps a bare numeric wm density as the physical density", async () => {
     physical_density: 420,
     override_density: null,
   });
+  const window = await evidenceResult(providerOver(binary), {
+    operation: "inspect_adb_window",
+    input: { serial: "emulator-5554" },
+  });
+  expect(window.focused_window).toBe(
+    "Window{abcdef u0 com.example.app/com.example.app.MainActivity}",
+  );
 });
 
 it("reads Android 16 focus declarations from displays when windows omits them", async () => {

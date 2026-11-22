@@ -1,3 +1,5 @@
+import { omitEnvironmentSettings } from "../process/snapshotEnvironment.js";
+import { userConfigRegistrationFallback } from "./UserConfigurationLocation.js";
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import {
   isClientConfigurationCleanupFailure,
@@ -12,7 +14,10 @@ import {
   type AnalysisCleanupLease,
 } from "../resources/index.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
+import {
+  currentClientRegistrationCommand,
+  defaultClientRegistrationBlocker,
+} from "./ClientRegistrationIdentity.js";
 import {
   SUPPORTED_NODE_VERSION_PROSE,
   supportsNodeVersion,
@@ -56,10 +61,6 @@ import {
   explicitSetupRegistrationEnvironment,
   providerRegistrationEnvironment,
 } from "./SetupRegistrationEnvironment.js";
-import {
-  msixPackagesDirectory,
-  packagePrivateLauncherBlocker,
-} from "./MsixPackageStorage.js";
 import type {
   SetupHost,
   SetupInitialState,
@@ -87,15 +88,12 @@ const setupRegistration = (
     entrypointPath: CURRENT_ENTRYPOINT_PATH,
     environment,
   });
-  const registrationCommandBlocker =
-    registrationCommand.length === 0
-      ? "REA could not determine the current executable entrypoint. Run setup through the installed REA CLI or a supported package runner before configuring clients."
-      : platform === "win32"
-        ? packagePrivateLauncherBlocker(
-            registrationCommand,
-            msixPackagesDirectory(homeDirectory, environment),
-          )
-        : undefined;
+  const registrationCommandBlocker = defaultClientRegistrationBlocker(
+    registrationCommand,
+    platform,
+    homeDirectory,
+    environment,
+  );
   return registrationCommandBlocker === undefined
     ? { registrationCommand }
     : { registrationCommand, registrationCommandBlocker };
@@ -129,8 +127,11 @@ export const hostRemediation = (host: SetupHost): string | undefined =>
 export const systemSetupHost = (
   selectedDoctorHost: DoctorHost | undefined = undefined,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  savedDefaults?: ReadonlySet<string>,
 ): SetupHost => {
-  const doctorHost = selectedDoctorHost ?? systemDoctorHost({ environment });
+  const doctorHost =
+    selectedDoctorHost ??
+    systemDoctorHost({ environment, registrationScope: "user" });
   const platform = doctorHost.platform;
   const { homeDirectory } = doctorHost;
   const macHopperHost =
@@ -191,12 +192,25 @@ export const systemSetupHost = (
       scope?: DoctorScope,
     ): Promise<SetupInitialState> => {
       const diagnosis = await runDoctor(undefined, doctorHost, scope);
+      const hopperSetting =
+        diagnosis.staticProviderSettings?.HOPPER_LAUNCHER_PATH;
       const providerEnvironment: SetupProviderEnvironment = {
-        ...providerRegistrationEnvironment(diagnosis.providerInspections ?? []),
-        ...(diagnosis.hopperPath === undefined
-          ? {}
-          : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
-        ...explicitSetupRegistrationEnvironment(environment),
+        ...omitEnvironmentSettings(
+          {
+            ...providerRegistrationEnvironment(
+              diagnosis.providerInspections ?? [],
+            ),
+            ...(diagnosis.hopperPath === undefined ||
+            hopperSetting?.source === "config"
+              ? {}
+              : { HOPPER_LAUNCHER_PATH: diagnosis.hopperPath }),
+            ...explicitSetupRegistrationEnvironment(environment),
+          },
+          savedDefaults,
+        ),
+        ...(savedDefaults !== undefined && savedDefaults.size > 0
+          ? userConfigRegistrationFallback(environment, platform)
+          : {}),
       };
       const requestedProvider = analysisProviderSelectorSchema.safeParse(
         environment.REA_ANALYSIS_PROVIDER,
@@ -205,9 +219,10 @@ export const systemSetupHost = (
         ...(diagnosis.hopperPath === undefined
           ? {}
           : { hopperPath: diagnosis.hopperPath }),
-        ...(typeof environment.HOPPER_LAUNCHER_PATH === "string" &&
-        environment.HOPPER_LAUNCHER_PATH.trim() !== "" &&
-        diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+        ...(diagnosis.hopperPath !== undefined &&
+        (hopperSetting === undefined
+          ? diagnosis.hopperPath === environment.HOPPER_LAUNCHER_PATH
+          : hopperSetting.source !== "auto")
           ? { hopperLauncherConfigured: true }
           : {}),
         providerConfigured:
@@ -306,6 +321,7 @@ export const systemSetupHost = (
       resources,
       doctorHost.resolveProviderRequestBudget,
       platform,
+      environment,
     ),
     skillNeedsInstall: (clientIds) =>
       canonicalSkillNeedsInstall(
@@ -367,6 +383,7 @@ const clientConfigurationOperations = (
   resources: ArtifactResourceScope,
   resolveProviderRequestBudget: DoctorHost["resolveProviderRequestBudget"],
   platform: NodeJS.Platform,
+  launcherEnvironment: Readonly<NodeJS.ProcessEnv>,
 ) => ({
   configureClient: (
     client: SetupClient,
@@ -382,6 +399,7 @@ const clientConfigurationOperations = (
             command,
             resolveProviderRequestBudget,
             platform,
+            launcherEnvironment,
           ),
     ),
   clientNeedsConfigure: (
@@ -398,6 +416,7 @@ const clientConfigurationOperations = (
             command,
             resolveProviderRequestBudget,
             platform,
+            launcherEnvironment,
           )),
     ),
   inspectClientConfiguration: (
@@ -412,6 +431,7 @@ const clientConfigurationOperations = (
         command,
         resolveProviderRequestBudget,
         platform,
+        launcherEnvironment,
       ),
     ),
 });

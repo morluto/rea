@@ -13,9 +13,13 @@ import {
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { isUrlLikeModuleSpecifier } from "../domain/webBundleAnalyzerAst.js";
+import { unwrapJavaScriptExpression } from "../domain/javascript/javascriptAstValues.js";
 import { analyzeParsedJavaScriptReferences } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { traverseJavaScriptAst } from "../domain/javascript/javascriptSemanticTraversal.js";
-import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
+import {
+  isTypeScriptSourcePath,
+  parseJavaScriptSource,
+} from "../domain/javascript/javascriptSourceParser.js";
 import {
   semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
@@ -632,19 +636,23 @@ const fetchOne = async (
       }
       throw cause;
     }
-    if (!response.ok) {
+    // This request asks for the whole map. Even valid JSON inside a byte
+    // range does not establish the complete source-map representation.
+    if (!response.ok || response.status === 206) {
+      const limitation =
+        response.status === 206
+          ? "Source-map server returned HTTP 206 (Partial Content). A complete map response is required."
+          : `Source-map server returned HTTP ${String(response.status)}.`;
       await cancelUnreadResponse(
         response,
         fetchedUrl,
-        new Error(
-          `Source-map server returned HTTP ${String(response.status)}.`,
-        ),
+        new Error(limitation),
         signal,
       );
       return emptySourceMapItem(
         request,
         "fetch_failed",
-        `Source-map server returned HTTP ${String(response.status)}.`,
+        limitation,
         fetchedUrl,
       );
     }
@@ -1609,15 +1617,10 @@ const resolveOriginalSource = (
   }
 };
 
-const sourceMediaType = (source: string | null): string => {
-  const path = source === null ? null : originalSourcePath(source);
-  return path?.endsWith(".ts") ||
-    path?.endsWith(".tsx") ||
-    path?.endsWith(".mts") ||
-    path?.endsWith(".cts")
+const sourceMediaType = (source: string | null): string =>
+  source !== null && isTypeScriptSourcePath(originalSourcePath(source))
     ? "text/typescript"
     : "text/javascript";
-};
 
 const originalDependency = (
   node: t.Node,
@@ -1635,14 +1638,13 @@ const originalDependency = (
       ? null
       : { kind: "dynamic_import", specifier };
   }
-  if (
-    (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-    t.isIdentifier(node.callee, { name: "require" })
-  ) {
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+    const callee = unwrapJavaScriptExpression(node.callee).node;
+    if (!t.isIdentifier(callee, { name: "require" })) return null;
     const specifier = stringValue(node.arguments[0]);
     return specifier === undefined
       ? null
-      : { kind: "require", specifier, requireCallee: node.callee };
+      : { kind: "require", specifier, requireCallee: callee };
   }
   // `import x = require("m")` is only legal at module top level and always
   // refers to the host loader, so it needs no unbound-`require` check. An

@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 
+import {
+  duplicateManagedHeap as duplicateHeap,
+  type DuplicateHeapVariant as Variant,
+} from "../../tests/fixtures/managedDuplicateMetadataHeap.js";
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
@@ -11,86 +15,16 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 
-const FIRST_MVID = "11111111-1111-1111-1111-111111111111";
-const SECOND_MVID = "22222222-2222-2222-2222-222222222222";
-
-type Variant = "forward" | "reverse" | "alias" | "outside-root";
-
-const duplicateHeap = (
-  bytes: Buffer,
-  name: "#GUID" | "#US" | "#Blob",
-  alternateHeap: Buffer,
-  variant: Variant,
-) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture omitted a CLI header");
-  const size = pe.cli.metadata.size;
-  const start = pe.rvaToOffset(pe.cli.metadata.rva, size, "fixture metadata");
-  const original = Buffer.from(bytes.subarray(start, start + size));
-  const streamCount = original.readUInt16LE(30);
-  const headers: number[] = [];
-  let heapHeader = -1;
-  let end = 32;
-  for (let index = 0; index < streamCount; index += 1) {
-    headers.push(end);
-    const terminator = original.indexOf(0, end + 8);
-    if (original.toString("ascii", end + 8, terminator) === name)
-      heapHeader = end;
-    end = Math.ceil((terminator + 1) / 4) * 4;
-  }
-  if (heapHeader < 0) throw new Error(`Fixture omitted ${name}`);
-  const headerSize = 8 + Math.ceil((name.length + 1) / 4) * 4;
-  const alternate = size + headerSize;
-  const extended = Buffer.alloc(
-    variant === "alias" ? alternate : alternate + alternateHeap.byteLength,
-  );
-  original.copy(extended, 0, 0, end);
-  original.copy(extended, end + headerSize, end);
-  extended.writeUInt16LE(streamCount + 1, 30);
-  for (const header of headers)
-    extended.writeUInt32LE(original.readUInt32LE(header) + headerSize, header);
-  const originalHeap = extended.readUInt32LE(heapHeader);
-  const [first, second] = (
-    {
-      forward: [originalHeap, alternate],
-      reverse: [alternate, originalHeap],
-      alias: [originalHeap, originalHeap],
-      "outside-root": [originalHeap, extended.length],
-    } as const
-  )[variant];
-  if (variant !== "alias") alternateHeap.copy(extended, alternate);
-  extended.writeUInt32LE(first, heapHeader);
-  extended.writeUInt32LE(second, end);
-  const originalSize = original.readUInt32LE(heapHeader + 4);
-  extended.writeUInt32LE(
-    variant === "reverse" ? alternateHeap.byteLength : originalSize,
-    heapHeader + 4,
-  );
-  extended.writeUInt32LE(
-    variant === "alias" || variant === "reverse"
-      ? originalSize
-      : alternateHeap.byteLength,
-    end + 4,
-  );
-  extended.write(name, end + 8);
-  bytes.set(extended, start);
-  bytes.writeUInt32LE(extended.length, pe.cli.headerOffset + 12);
-
-  return {
-    bytes,
-    duplicateHeader: start + end,
-    firstHeader: start + heapHeader,
-    firstRange: start + first,
-    secondRange: start + second,
-    metadataEnd: start + extended.length,
-  };
-};
+const FIRST_MVID = "67452301-ab89-efcd-1032-547698badcfe";
+const SECOND_MVID = "98badcfe-5476-1032-efcd-ab8967452301";
 
 const duplicateGuidFixture = (variant: Variant) =>
   duplicateHeap(
-    buildManagedPeFixture({ mvid: Buffer.alloc(16, 0x11) }),
+    buildManagedPeFixture({
+      mvid: Buffer.from("0123456789abcdef1032547698badcfe", "hex"),
+    }),
     "#GUID",
-    Buffer.alloc(16, 0x22),
+    Buffer.from("fedcba9876543210efcdab8967452301", "hex"),
     variant,
   );
 

@@ -90,7 +90,11 @@ describe("managed metadata heap entries", () => {
       size: bytes.length,
       version: "",
       streamNames: ["#Blob"],
-      strings: { name: "#Strings", offset: 0, size: 0 },
+      strings: {
+        kind: "available",
+        stream: { name: "#Strings", offset: 0, size: 0 },
+        issue: null,
+      },
       guid: {
         kind: "available",
         stream: { name: "#GUID", offset: 0, size: 0 },
@@ -173,7 +177,11 @@ it("does not re-charge the decode budget on metadata string cache hits", () => {
     size: strBytes.length,
     version: "",
     streamNames: ["#Strings"],
-    strings: { name: "#Strings", offset: 0, size: strBytes.length },
+    strings: {
+      kind: "available",
+      stream: { name: "#Strings", offset: 0, size: strBytes.length },
+      issue: null,
+    },
     guid: {
       kind: "available",
       stream: { name: "#GUID", offset: 0, size: 0 },
@@ -191,10 +199,8 @@ it("does not re-charge the decode budget on metadata string cache hits", () => {
     codedIndexSize: () => 2,
   } as unknown as ManagedMetadataLayout;
 
-  const first = readMetadataString(strBytes, layout, 1, layout.strings.size);
+  const first = readMetadataString(strBytes, layout, 1);
   expect(first).toHaveLength(strLen);
 
-  expect(() =>
-    readMetadataString(strBytes, layout, 1, layout.strings.size),
-  ).not.toThrow();
+  expect(() => readMetadataString(strBytes, layout, 1)).not.toThrow();
 });

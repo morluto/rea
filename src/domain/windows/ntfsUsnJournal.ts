@@ -2,6 +2,7 @@ import { BinaryReader } from "../binaryContainer.js";
 import { err, ok, type Result } from "../result.js";
 
 const COMMON_HEADER_BYTES = 8;
+const ZERO_PADDING_BLOCK = Buffer.alloc(64 * 1024);
 /** Bound extent objects in each inline event independently of source record length. */
 export const USN_INLINE_EXTENT_LIMIT = 16;
 
@@ -55,12 +56,29 @@ export function* readUsnJournal(
     const length = journal.u32(fileOffset);
     if (length === 0 && journal.u32(fileOffset + 4) === 0) {
       const start = fileOffset;
-      do {
-        fileOffset += COMMON_HEADER_BYTES;
-      } while (
+      fileOffset += COMMON_HEADER_BYTES;
+      if (
         fileOffset + COMMON_HEADER_BYTES <= bytes.length &&
         journal.word(fileOffset, 64) === 0n
-      );
+      ) {
+        fileOffset += COMMON_HEADER_BYTES;
+        // Compare long zero runs in native code, then resolve the exact end
+        // on record boundaries without consuming a short trailing header.
+        while (
+          ZERO_PADDING_BLOCK.length <= bytes.length - fileOffset &&
+          ZERO_PADDING_BLOCK.compare(
+            bytes,
+            fileOffset,
+            fileOffset + ZERO_PADDING_BLOCK.length,
+          ) === 0
+        )
+          fileOffset += ZERO_PADDING_BLOCK.length;
+        while (
+          fileOffset + COMMON_HEADER_BYTES <= bytes.length &&
+          journal.word(fileOffset, 64) === 0n
+        )
+          fileOffset += COMMON_HEADER_BYTES;
+      }
       yield err({
         kind: "padding",
         fileOffset: start,

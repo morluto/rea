@@ -151,25 +151,23 @@ export const readMetadataString = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   index: number,
-  heapExtent: number,
 ): string => {
   if (index === 0) return "";
-  if (index < 0 || index >= layout.strings.size)
+  const declaration = layout.strings;
+  if (declaration.kind === "ambiguous")
+    throw new ManagedHeapAmbiguityFailure(declaration.issue);
+  const heap = declaration.stream;
+  if (index < 0 || index >= heap.size)
     throw managedFailure(
       "invalid-heap-index",
       "metadata.#Strings",
       "String heap index is outside #Strings",
-      layout.strings.offset + Math.max(index, 0),
+      heap.offset + Math.max(index, 0),
     );
-  const start = layout.strings.offset + index;
+  const start = heap.offset + index;
   const cached = managedDecodeBudget(layout).cachedString(index);
-  if (cached !== undefined && cached.encodedBytes <= heapExtent) {
-    return cached.value;
-  }
-  const maximum = Math.min(
-    layout.strings.offset + layout.strings.size,
-    start + heapExtent + 1,
-  );
+  if (cached !== undefined) return cached;
+  const maximum = heap.offset + heap.size;
   let end = start;
   while (end < maximum && bytes[end] !== 0) end += 1;
   if (end === maximum)
@@ -182,7 +180,7 @@ export const readMetadataString = (
   managedDecodeBudget(layout).reserveString(end - start, start);
   try {
     const value = decodeStrictUtf8(bytes.subarray(start, end), "preserve");
-    managedDecodeBudget(layout).cacheString(index, value, end - start);
+    managedDecodeBudget(layout).cacheString(index, value);
     return value;
   } catch (cause: unknown) {
     void cause;
@@ -193,6 +191,28 @@ export const readMetadataString = (
       start,
     );
   }
+};
+
+/** Read a required row name; nil and a nonzero index of an empty string are invalid. */
+export const readRequiredMetadataName = (
+  bytes: Buffer,
+  layout: ManagedMetadataLayout,
+  table: "TypeDef" | "Field" | "MethodDef",
+  token: string,
+  {
+    nameIndex,
+    nameOffset,
+  }: { readonly nameIndex: number; readonly nameOffset: number },
+): string => {
+  const name = readMetadataString(bytes, layout, nameIndex);
+  if (name.length === 0)
+    throw managedFailure(
+      "invalid-row",
+      `metadata.${table}:${token}`,
+      `${table} Name index ${String(nameIndex)} must reference a nonempty string`,
+      nameOffset,
+    );
+  return name;
 };
 
 /** File coordinate used when reporting a budget for decoded blob facts. */
@@ -339,9 +359,10 @@ export const readMetadataUserString = (
   budget.reserveString(units, start);
   // Check the serialized flag independently of literal decoding. A difference
   // from ECMA-335 is observable metadata, not proof of runtime rejection.
+  const reader = new BinaryReader(bytes, true, "managed");
   let expectedFlag = 0;
   for (let unitIndex = 0; unitIndex < units; unitIndex++) {
-    const unit = bytes.readUInt16LE(content + unitIndex * 2);
+    const unit = reader.u16(content + unitIndex * 2);
     if (
       unit > 0xff ||
       (unit >= 0x01 && unit <= 0x08) ||
@@ -391,13 +412,14 @@ export const readMetadataGuid = (
       heapOffset + Math.max(relative, 0),
     );
   const offset = heapOffset + relative;
-  const part1 = bytes.readUInt32LE(offset).toString(16).padStart(8, "0");
-  const part2 = bytes
-    .readUInt16LE(offset + 4)
+  const reader = new BinaryReader(bytes, true, "managed");
+  const part1 = reader.u32(offset).toString(16).padStart(8, "0");
+  const part2 = reader
+    .u16(offset + 4)
     .toString(16)
     .padStart(4, "0");
-  const part3 = bytes
-    .readUInt16LE(offset + 6)
+  const part3 = reader
+    .u16(offset + 6)
     .toString(16)
     .padStart(4, "0");
   const part4 = bytes.subarray(offset + 8, offset + 10).toString("hex");

@@ -1,10 +1,9 @@
 import { execFile, spawnSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const run = promisify(execFile);
 const compilerProbe = spawnSync("g++", ["--version"], { stdio: "ignore" });
@@ -22,32 +21,28 @@ describe.skipIf(process.platform === "win32" && compilerMissing)(
         new URL("../../native/windows/src/", import.meta.url),
       );
       const source = join(include, "handle_close_test.cc");
-      const directory = await mkdtemp(join(tmpdir(), "rea-handle-close-"));
+      const directory = await createTestTempDirectory("rea-handle-close-");
       const binary = join(directory, "handle-close-test");
-      try {
-        await run(
-          "g++",
-          [
-            "-std=c++17",
-            "-Wall",
-            "-Wextra",
-            "-Werror",
-            `-I${include}`,
-            source,
-            "-o",
-            binary,
-          ],
-          { encoding: "utf8", timeout: 60_000 },
-        );
-        const result = await run(binary, [], {
-          encoding: "utf8",
-          timeout: 30_000,
-        });
-        expect(result.stdout).toBe("");
-        expect(result.stderr).toBe("");
-      } finally {
-        await rm(directory, { recursive: true, force: true });
-      }
+      await run(
+        "g++",
+        [
+          "-std=c++17",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          `-I${include}`,
+          source,
+          "-o",
+          binary,
+        ],
+        { encoding: "utf8", timeout: 60_000 },
+      );
+      const result = await run(binary, [], {
+        encoding: "utf8",
+        timeout: 30_000,
+      });
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
     });
   },
 );

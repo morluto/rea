@@ -20,6 +20,8 @@ const CAPTURE_SHARED_INPUTS = [
   "src/process/LinuxResourceLimits*",
   "scripts/ci/require-provider-tests.mjs",
 ];
+const UBUNTU_ARCHIVE_ACTION =
+  ".github/actions/ubuntu-archive/action.{yml,yaml}";
 
 // Ownership of the native-host, real-provider and website verification lanes.
 // Shared build inputs are classified once in plan.mjs rather than repeated in
@@ -68,6 +70,8 @@ const PATH_SCOPES = {
     ...CAPTURE_SHARED_INPUTS,
     "scripts/verify-signal-recording.mjs",
     ".github/workflows/real-signal-recording.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
   ],
   readiness: [
     "tests/conformance/readiness/**",
@@ -208,7 +212,9 @@ const PATH_SCOPES = {
     ".github/actions/publish-mcp/**",
     ".github/actions/prepare-release-package/**",
     ".github/workflows/release-recovery.yml",
+    ".github/workflows/release-abandon.yml",
     "scripts/ci/release-recovery.mjs",
+    "scripts/ci/release-attempt.*",
     "scripts/ci/verified-package.mjs",
     "scripts/ci/qualified-package-envelope.mjs",
     "scripts/ci/prepare-npm-publication.mjs",
@@ -220,6 +226,7 @@ const PATH_SCOPES = {
     "tests/boundary/mcp/packageCatalogVerification.test.ts",
     "scripts/verify-published-package.mjs",
     "tests/boundary/filesystem/releaseRecovery.test.ts",
+    "tests/boundary/filesystem/releaseAttempt.test.ts",
     "tests/boundary/filesystem/mcpRegistryPublication.test.ts",
     "tests/boundary/filesystem/npmRelease.test.ts",
     "tests/boundary/process/releaseArtifactCanary.test.ts",
@@ -236,6 +243,8 @@ const PATH_SCOPES = {
     "scripts/run-exclusive-command.mjs",
     "tests/process-global/runnerCancellation.test.ts",
     "tests/process-global/windowsOwnedCommand.test.ts",
+    "tests/process-global/curatedWindowsLane.test.ts",
+    "src/desktop/AgentEnvBridgeSources.ts",
     "src/ghidra/GhidraBridgeSources.ts",
     "native/windows/**",
     "src/process/capture/FilesystemSnapshot.ts",
@@ -247,8 +256,9 @@ const PATH_SCOPES = {
     "scripts/verify-package-*",
     "scripts/verify-packed-bridge.*",
     "scripts/verify-windows-*.mjs",
-    ".github/actions/windows-cross-compiler/action.yml",
-    ".github/actions/ubuntu-archive/action.yml",
+    ".github/actions/windows-cross-compiler/action.{yml,yaml}",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "scripts/build-windows-native.mjs",
     "scripts/windows-capabilities.mjs",
     "scripts/prepack.mjs",
@@ -295,6 +305,7 @@ const PATH_SCOPES = {
     // Live advertisement, independent of the POSIX-generated catalog.
     "tests/boundary/mcp/toolSchemaValidity.test.ts",
     "tests/boundary/filesystem/safeOutputTree.test.ts",
+    "tests/boundary/filesystem/safeOutputTreePublication.test.ts",
     "tests/boundary/providers/native/artifactProvider.archiveSafety.test.ts",
     "tests/boundary/providers/native/artifactProvider.extractionCompleteness.test.ts",
     "tests/boundary/filesystem/setupUnavailableProvider.test.ts",
@@ -438,7 +449,8 @@ const PATH_SCOPES = {
   ],
   binary_layout: [
     ".github/workflows/real-binary-layout.yml",
-    ".github/actions/ubuntu-archive/action.yml",
+    UBUNTU_ARCHIVE_ACTION,
+    ".github/actions/host-apt-packages/action.{yml,yaml}",
     "bridge/pwntools/**",
     "src/native/pwntools/**",
     "src/config/pwntoolsInputLimit*.ts",

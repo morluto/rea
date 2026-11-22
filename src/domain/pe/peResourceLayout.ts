@@ -2,14 +2,17 @@ import {
   PE_RESOURCE_DATA_ENTRY_BYTES,
   PE_RESOURCE_DIRECTORY_BYTES,
   PE_RESOURCE_ENTRY_BYTES,
+  PE_RESOURCE_ENTRY_LIMIT,
   PE_RESOURCE_NAME_PREFIX_BYTES,
+  peResourceRangeFits,
   readPeResourceDataEntryFacts,
   readPeResourceDirectoryFacts,
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
 } from "./peResourceTreeFacts.js";
+import { err, ok, type Result } from "../result.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
-import { ParseFailureError } from "../parseFailure.js";
+import { decodeLimit, ParseFailureError } from "../parseFailure.js";
 import {
   PE_SECTION_HEADER_BYTES,
   readPeSectionHeader,
@@ -176,6 +179,8 @@ export interface PeResourcePayloadRange {
   readonly bytes: number;
 }
 
+type DirectoryFailure = "unreadable" | ParseFailureError<"limit">;
+
 /** Budgeted reads relative to one admitted resource root. */
 class PeResourceTree {
   #examined = 0;
@@ -187,22 +192,35 @@ class PeResourceTree {
     private readonly maxEntries: number,
   ) {}
 
-  relative(at: number, length: number): Promise<Buffer | undefined> {
-    return at < 0 || at > this.layout.size - length
-      ? Promise.resolve(undefined)
-      : this.read(this.root + at, length);
+  contains(at: number, length: number): boolean {
+    return peResourceRangeFits(at, length, this.layout.size);
   }
 
-  async directory(at: number): Promise<Buffer | undefined> {
+  relative(at: number, length: number): Promise<Buffer | undefined> {
+    return this.contains(at, length)
+      ? this.read(this.root + at, length)
+      : Promise.resolve(undefined);
+  }
+
+  async directory(at: number): Promise<Result<Buffer, DirectoryFailure>> {
     const header = await this.relative(at, PE_RESOURCE_DIRECTORY_BYTES);
-    if (header === undefined) return undefined;
+    if (header === undefined) return err("unreadable");
     const { entryCount } = readPeResourceDirectoryFacts(header);
-    if (entryCount > this.maxEntries - this.#examined) return undefined;
-    this.#examined += entryCount;
-    return this.relative(
-      at + PE_RESOURCE_DIRECTORY_BYTES,
-      entryCount * PE_RESOURCE_ENTRY_BYTES,
-    );
+    const rowsAt = at + PE_RESOURCE_DIRECTORY_BYTES;
+    const rowsBytes = entryCount * PE_RESOURCE_ENTRY_BYTES;
+    if (!this.contains(rowsAt, rowsBytes)) return err("unreadable");
+    const required = this.#examined + entryCount;
+    if (required > this.maxEntries)
+      return err(
+        decodeLimit(
+          "pe",
+          `PE resource directory needs at least ${required} entries; the inspection allowance is ${this.maxEntries}.`,
+          { name: PE_RESOURCE_ENTRY_LIMIT, maximum: this.maxEntries, required },
+        ),
+      );
+    this.#examined = required;
+    const rows = await this.relative(rowsAt, rowsBytes);
+    return rows === undefined ? err("unreadable") : ok(rows);
   }
 }
 
@@ -234,7 +252,7 @@ const openPeResourceTree = async (
 
 /** Walk state: whether a `typeId` branch could not be examined for `name`. */
 interface NamedResourceWalk {
-  unresolved: boolean;
+  unresolved?: DirectoryFailure;
 }
 
 /**
@@ -249,22 +267,25 @@ async function* namedResourceTargets(
   name: string,
   walk: NamedResourceWalk,
 ) {
-  const types = await tree.directory(0);
-  if (types === undefined) return;
+  const root = await tree.directory(0);
+  if (!root.ok) return;
+  const types = root.value;
   const expected = Buffer.from(name, "utf16le");
   for (let at = 0; at < types.length; at += PE_RESOURCE_ENTRY_BYTES) {
     const type = readPeResourceEntryFacts(
       types.subarray(at, at + PE_RESOURCE_ENTRY_BYTES),
     );
     if (type.identity.kind !== "id" || type.identity.id !== typeId) continue;
-    const names =
+    const directory =
       type.target.kind === "directory"
         ? await tree.directory(type.target.offset)
-        : undefined;
-    if (names === undefined) {
-      walk.unresolved = true;
+        : err("unreadable" as const);
+    if (!directory.ok) {
+      if (directory.error === "unreadable" || walk.unresolved === undefined)
+        walk.unresolved = directory.error;
       continue;
     }
+    const names = directory.value;
     for (
       let entry = 0;
       entry < names.length;
@@ -277,15 +298,18 @@ async function* namedResourceTargets(
       const nameAt = identity.offset;
       const length = await tree.relative(nameAt, PE_RESOURCE_NAME_PREFIX_BYTES);
       if (length === undefined) {
-        walk.unresolved = true;
+        walk.unresolved = "unreadable";
         continue;
       }
-      if (readPeResourceNameFacts(length).utf16Units !== name.length) continue;
-      const candidate = await tree.relative(
-        nameAt + PE_RESOURCE_NAME_PREFIX_BYTES,
-        expected.length,
-      );
-      if (candidate === undefined) walk.unresolved = true;
+      const { utf16Units, payloadBytes } = readPeResourceNameFacts(length);
+      const payloadAt = nameAt + PE_RESOURCE_NAME_PREFIX_BYTES;
+      if (!tree.contains(payloadAt, payloadBytes)) {
+        walk.unresolved = "unreadable";
+        continue;
+      }
+      if (utf16Units !== name.length) continue;
+      const candidate = await tree.relative(payloadAt, payloadBytes);
+      if (candidate === undefined) walk.unresolved = "unreadable";
       else if (candidate.equals(expected)) yield target;
     }
   }
@@ -307,18 +331,16 @@ export const hasPeResourceName = async (
 ): Promise<boolean> => {
   const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return false;
-  const first = await namedResourceTargets(tree, typeId, name, {
-    unresolved: false,
-  }).next();
+  const first = await namedResourceTargets(tree, typeId, name, {}).next();
   return first.done !== true;
 };
 
 /**
  * Payload ranges of the `typeId` resource named `name`, from the same bounded
  * walk as `hasPeResourceName`. The image is not read whole. A tree that never
- * reaches the name reports no ranges. Once the name is found, a language
- * directory, data entry, or payload that cannot be resolved is a format
- * failure, as is any `typeId` branch the walk could not examine.
+ * reaches the name reports no ranges. Once the name is found, unreadable
+ * framing in the selected path or a peer type branch remains malformed and
+ * an exhausted entry allowance remains a limit failure.
  */
 export const locatePeResourcePayloads = async (
   prefix: Buffer,
@@ -331,14 +353,17 @@ export const locatePeResourcePayloads = async (
   const tree = await openPeResourceTree(prefix, fileSize, read, maxEntries);
   if (tree === undefined) return [];
   const found: PeResourcePayloadRange[] = [];
-  const walk: NamedResourceWalk = { unresolved: false };
+  const walk: NamedResourceWalk = {};
   for await (const target of namedResourceTargets(tree, typeId, name, walk)) {
-    const languages =
-      target.kind === "directory"
-        ? await tree.directory(target.offset)
-        : undefined;
-    if (languages === undefined)
+    if (target.kind !== "directory")
       return peFailure(`PE ${name} resource directory is unreadable.`);
+    const directory = await tree.directory(target.offset);
+    if (!directory.ok) {
+      if (directory.error === "unreadable")
+        return peFailure(`PE ${name} resource directory is unreadable.`);
+      throw directory.error;
+    }
+    const languages = directory.value;
     const before = found.length;
     for (let at = 0; at < languages.length; at += PE_RESOURCE_ENTRY_BYTES) {
       const language = readPeResourceEntryFacts(
@@ -358,9 +383,12 @@ export const locatePeResourcePayloads = async (
     if (found.length === before)
       return peFailure(`PE ${name} resource has no data entry.`);
   }
-  if (walk.unresolved && found.length > 0)
-    return peFailure(
-      `PE ${name} resource sits beside a resource type branch that cannot be read.`,
-    );
+  if (walk.unresolved !== undefined && found.length > 0) {
+    if (walk.unresolved === "unreadable")
+      return peFailure(
+        `PE ${name} resource sits beside a resource type branch that cannot be read.`,
+      );
+    throw walk.unresolved;
+  }
   return found;
 };

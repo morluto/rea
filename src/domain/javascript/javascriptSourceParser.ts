@@ -225,7 +225,7 @@ const parserOptionsForLoader = (
   // semantic context. Recovery options must not admit a wrapper return in ESM.
   const parserOptions: ParserOptions = {
     ...options,
-    plugins: parserPluginsForPath(sourcePath),
+    plugins: options.plugins ?? parserPluginsForPath(sourcePath),
     ...(module
       ? {
           sourceType: "module",
@@ -239,7 +239,7 @@ const parserOptionsForLoader = (
             allowNewTargetOutsideFunction: true,
           }
         : detectsJavaScriptLoader(sourcePath, packageContext) ||
-            /\.(?:ts|tsx|mts|cts)$/iu.test(sourcePath ?? "")
+            isTypeScriptSourcePath(sourcePath)
           ? {
               allowReturnOutsideFunction: false,
               allowNewTargetOutsideFunction: false,
@@ -337,7 +337,8 @@ const parseWithRuntimeContext = (
   // ESM and TypeScript file loading remove the UTF-8 signature before a
   // hashbang; JavaScript CommonJS loading does not. Preserve original indexes
   // through Babel's origin options rather than repairing downstream ranges.
-  const compilerSource = /\.(?:jsx|ts|tsx|mts|cts)$/iu.test(sourcePath ?? "");
+  const compilerSource =
+    /\.jsx$/iu.test(sourcePath ?? "") || isTypeScriptSourcePath(sourcePath);
   const signedHashbang = source.startsWith("\uFEFF#!");
   const conditionalCommonJs =
     signedHashbang &&
@@ -429,6 +430,18 @@ const parseWithRuntimeContext = (
   return file;
 };
 
+const sourceSyntaxPlugins: ParserPlugin[] = [
+  "decorators-legacy",
+  "sourcePhaseImports",
+];
+const javaScriptPlugins = (): ParserPlugin[] => [...sourceSyntaxPlugins, "jsx"];
+const typeScriptSourceSuffix =
+  /\.(?:(?<declaration>d)\.)?(?:(?<module>[cm])ts|ts(?<jsx>x)?)$/iu;
+
+/** Whether the filename supplies TypeScript grammar, independent of loader mode. */
+export const isTypeScriptSourcePath = (sourcePath?: string): boolean =>
+  typeScriptSourceSuffix.test(sourcePath ?? "");
+
 /**
  * Babel plugins for one source path. Single owner for TypeScript/JSX
  * mode selection (tsc + Babel `typescript` plugin semantics).
@@ -450,21 +463,23 @@ const parseWithRuntimeContext = (
  */
 const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   const path = sourcePath ?? "";
-  const syntax: ParserPlugin[] = ["decorators-legacy", "sourcePhaseImports"];
-  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return [...syntax, "jsx"];
-  const dts = /\.d\.(?:ts|mts|cts)$/iu.test(path);
-  const isTsLike = /\.(?:ts|cts|mts)$/iu.test(path);
-  const isTsx = /\.tsx$/iu.test(path);
-  const explicitModuleSuffix = /\.[cm]ts$/iu.test(path);
+  if (/\.(?:js|jsx|mjs|cjs)$/iu.test(path)) return javaScriptPlugins();
+  const suffix = typeScriptSourceSuffix.exec(path)?.groups;
+  const jsx = suffix?.jsx !== undefined;
+  const dts = suffix?.declaration !== undefined && !jsx;
   const typescript: ParserPlugin = [
     "typescript",
     {
       dts,
-      ...(explicitModuleSuffix ? { disallowAmbiguousJSXLike: true } : {}),
+      ...(suffix?.module === undefined
+        ? {}
+        : { disallowAmbiguousJSXLike: true }),
     },
   ];
-  const jsxCapable = !dts && (isTsx || !isTsLike);
-  return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
+  const jsxCapable = suffix === undefined || jsx;
+  return jsxCapable
+    ? [...sourceSyntaxPlugins, "jsx", typescript]
+    : [...sourceSyntaxPlugins, typescript];
 };
 
 const runtimeSourceTypeForPath = (
@@ -572,15 +587,11 @@ export const parseRecoveredJavaScript = (
   };
 };
 
-/**
- * Parse inert JavaScript or TypeScript facts without attaching comments to AST
- * nodes. An observed package type selects the runtime context of .js/.ts
- * sources as it does for reference imports, including their wrapper grammar.
- */
-export const parseJavaScriptSource = (
+const parseStaticJavaScriptSource = (
   source: string,
-  sourcePath?: string,
-  observedPackageType?: JavaScriptPackageType,
+  sourcePath: string | undefined,
+  observedPackageType: JavaScriptPackageType | undefined,
+  plugins?: ParserPlugin[],
 ): ParsedJavaScriptSource | null => {
   try {
     const runtimeSourceType = runtimeSourceTypeForPath(sourcePath);
@@ -592,6 +603,7 @@ export const parseJavaScriptSource = (
     const options = {
       errorRecovery: true,
       attachComment: false,
+      ...(plugins === undefined ? {} : { plugins }),
     };
     const file = parseWithRuntimeContext(
       source,
@@ -643,6 +655,30 @@ export const parseJavaScriptSource = (
     return null;
   }
 };
+
+/**
+ * Parse inert JavaScript or TypeScript facts without attaching comments to AST
+ * nodes. An observed package type selects the runtime context of .js/.ts
+ * sources as it does for reference imports, including their wrapper grammar.
+ */
+export const parseJavaScriptSource = (
+  source: string,
+  sourcePath?: string,
+  observedPackageType?: JavaScriptPackageType,
+): ParsedJavaScriptSource | null =>
+  parseStaticJavaScriptSource(source, sourcePath, observedPackageType);
+
+/** An observed browser language selects syntax without implying a Node loader. */
+export const parseCapturedJavaScriptSource = (
+  source: string,
+  observedLanguage: string | null,
+): ParsedJavaScriptSource | null =>
+  parseStaticJavaScriptSource(
+    source,
+    undefined,
+    undefined,
+    observedLanguage === "JavaScript" ? javaScriptPlugins() : undefined,
+  );
 
 /** A script's top-level lexical this may be its ambient global; wrappers and modules isolate it. */
 export const javaScriptThisOwner = (
