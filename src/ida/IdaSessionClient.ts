@@ -800,10 +800,19 @@ export class IdaSessionClient implements AnalysisClient {
       init_hexrays: true,
       preferred_session_id: workspace.sessionId,
     });
-    this.#openOutcome = rejectedOpenDatabaseSchema.safeParse(raw).success
-      ? "no_worker"
-      : "reply_received";
+    const rejected = rejectedOpenDatabaseSchema.safeParse(raw);
+    this.#openOutcome = rejected.success ? "no_worker" : "reply_received";
     this.#lifecycle.push(raw);
+    // The supervisor reports any open failure as `{ error }` rather than an
+    // MCP tool error; keep its reason instead of reading it as malformed data.
+    if (rejected.success) {
+      const diagnostic = createIdaDiagnosticRedactor(this.config);
+      const reason = diagnostic.blocks([rejected.data.error]);
+      throw new IdaToolRejection(
+        diagnostic.message("IDA MCP tool failed: ", reason),
+        { diagnostics: { reason } },
+      );
+    }
     const opened = openDatabaseSchema.parse(raw);
     if (!sameIdaHostPath(opened.session.input_path, workspace.inputPath))
       throw new IdaIdentityRefusal(

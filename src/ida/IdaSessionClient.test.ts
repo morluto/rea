@@ -2241,3 +2241,22 @@ describe("headless IDA literal string predicate pushdown", () => {
     }
   });
 });
+
+describe("headless IDA open rejection", () => {
+  it("reports an idb_open rejection with its upstream reason", async () => {
+    const { producer, client } = await fixture("headless");
+    producer.overrideCall = (name) =>
+      name === "idb_open"
+        ? { error: "Input was rejected before creating a session" }
+        : undefined;
+
+    const result = await client.execute("health", {});
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain(
+      "Input was rejected before creating a session",
+    );
+    expect(result.error.message).not.toContain("malformed or unsupported");
+    expect((await client.close()).ok).toBe(true);
+  });
+});
