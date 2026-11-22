@@ -418,6 +418,42 @@ const denoSectionTruncated = (): ArtifactReaderFailure =>
  * for example an Intel Deno executable stored as a `__DATA` asset of a
  * non-Deno host. Such a sentinel is not a trailer candidate.
  */
+const mergeOwnedRanges = (
+  ranges: readonly OwnedRange[],
+): readonly OwnedRange[] => {
+  if (ranges.length <= 1) return ranges;
+  const sorted = [...ranges].sort((left, right) =>
+    left.start < right.start ? -1 : left.start > right.start ? 1 : 0,
+  );
+  const merged: { start: bigint; end: bigint }[] = [
+    { start: sorted[0]!.start, end: sorted[0]!.end },
+  ];
+  for (let index = 1; index < sorted.length; index += 1) {
+    const next = sorted[index]!;
+    const current = merged.at(-1)!;
+    if (next.start <= current.end) {
+      if (next.end > current.end) current.end = next.end;
+    } else merged.push({ start: next.start, end: next.end });
+  }
+  return merged;
+};
+
+const isOwnedOffset = (
+  merged: readonly OwnedRange[],
+  offset: bigint,
+): boolean => {
+  let low = 0;
+  let high = merged.length - 1;
+  while (low <= high) {
+    const mid = (low + high) >>> 1;
+    const range = merged[mid]!;
+    if (offset < range.start) high = mid - 1;
+    else if (offset >= range.end) low = mid + 1;
+    else return true;
+  }
+  return false;
+};
+
 const locateIntelTrailers = async (
   carrier: Carrier,
   base: number,
@@ -433,6 +469,7 @@ const locateIntelTrailers = async (
   let truncated: number[] = [];
   /** Sentinels of marker-confirmed trailers too short to hold their marker. */
   let undersized: number[] = [];
+  const mergedOwned = mergeOwnedRanges(owned);
   const pending = (): boolean =>
     trailers.length > 0 || truncated.length > 0 || undersized.length > 0;
   while (position > base) {
@@ -461,7 +498,7 @@ const locateIntelTrailers = async (
       const sentinelStart = chunkStart + index;
       searchFrom = index - 1;
       const at = BigInt(sentinelStart);
-      if (owned.some((range) => at >= range.start && at < range.end)) continue;
+      if (isOwnedOffset(mergedOwned, at)) continue;
       if (lengthAt + 8 > window.length) continue;
       const claimed = new BinaryReader(window, true, "deno").word(lengthAt, 64);
       const sliceEnd = base + sliceSize;

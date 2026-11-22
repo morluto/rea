@@ -335,9 +335,12 @@ const nullableForm = (out: Schema): Schema => {
 /** One projection: guidance sentences accumulate while the schema is built. */
 class DialectProjection {
   readonly notes: string[] = [];
+  readonly #seenNotes = new Set<string>();
 
   note(sentence: string): void {
-    if (!this.notes.includes(sentence)) this.notes.push(sentence);
+    if (this.#seenNotes.has(sentence)) return;
+    this.#seenNotes.add(sentence);
+    this.notes.push(sentence);
   }
 
   project(value: unknown, path: string): unknown {

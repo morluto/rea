@@ -433,14 +433,15 @@ export const inspectManagedMembersBytes = (
     );
     appendManagedParseIssues(issues, targets.issues);
     const incompleteMembers =
-      [...fields.fields, ...memberRefs.refs].some(
+      fields.fields.some(
+        (member) => member.signature.parse_status !== "decoded",
+      ) ||
+      memberRefs.refs.some(
         (member) => member.signature.parse_status !== "decoded",
       ) ||
       resolvedMethods.some(
-        (method) => method.signature.parse_status !== "decoded",
-      ) ||
-      resolvedMethods.some(
         (method) =>
+          method.signature.parse_status !== "decoded" ||
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );
