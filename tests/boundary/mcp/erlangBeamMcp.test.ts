@@ -12,6 +12,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { analysisRefusalRemediation } from "../../../src/domain/analysisRefusal.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -96,7 +97,17 @@ mcpTest(
     const root = await createTestTempDirectory("rea-beam-capacity-");
     const rowLimit = MAX_INSPECT_ERLANG_BEAM_TABLE_ROWS;
     const halfRowLimit = Math.floor(rowLimit / 2);
-    const rowRemediation = `The file exceeds the ${String(rowLimit)}-row ceiling this operation accepts; select a smaller artifact.`;
+    const rowRefusal = {
+      kind: "fixed_ceiling",
+      operation: "inspect_erlang_beam",
+      ceiling: {
+        name: "BEAM table row ceiling",
+        kind: "parser",
+        limit: rowLimit,
+        unit: "rows",
+      },
+    } as const;
+    const rowRemediation = analysisRefusalRemediation(rowRefusal);
     try {
       for (const [label, bytes, settings, budget, remediation] of [
         [
@@ -106,14 +117,14 @@ mcpTest(
           ]),
           { max_atoms: 1 },
           { max_atoms: 1 },
-          "Raise max_atoms above 1",
+          expect.stringContaining("Raise max_atoms above 1"),
         ],
         [
           "chunks",
           erlangBeamFixture(),
           { max_chunks: 1 },
           { max_chunks: 1 },
-          "Raise max_chunks above 1",
+          expect.stringContaining("Raise max_chunks above 1"),
         ],
         [
           "single-table-rows",
@@ -144,8 +155,21 @@ mcpTest(
         expect(error, label).toMatchObject({
           code: "resource_constraint",
           retryable: false,
-          remediation: { action: expect.stringContaining(remediation) },
-          details: { resource: "capacity", reported_limits: budget },
+          remediation: { action: remediation },
+          details: {
+            resource: "capacity",
+            reported_limits: budget,
+            ...("max_table_rows" in budget
+              ? {
+                  refusal: {
+                    kind: "fixed_ceiling",
+                    allowance_kind: "parser",
+                    limit: rowLimit,
+                    unit: "rows",
+                  },
+                }
+              : {}),
+          },
         });
       }
       const malformed = join(root, "malformed-atoms.beam");

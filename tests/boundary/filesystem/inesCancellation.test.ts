@@ -23,7 +23,7 @@ import {
   ArtifactFileCleanupFailure,
   withArtifactFileHandle,
 } from "../../../src/resources/ArtifactFileOperation.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
+import { readFileHandleRange } from "../../../src/filesystem/readFileHandleRange.js";
 import { abortIfNeeded } from "../../../src/resources/StreamDigest.js";
 import * as regularFile from "../../../src/filesystem/RegularFile.js";
 
@@ -583,7 +583,7 @@ it.each([
         resources,
         controller.signal,
         (file) =>
-          readFileHandlePrefix(file, 16, () =>
+          readFileHandleRange(file, 0, 16, () =>
             abortIfNeeded(controller.signal),
           ),
       ).catch((cause: unknown) => cause);

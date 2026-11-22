@@ -111,6 +111,7 @@ const createManagedApplicationGraphEvidence = (
       limitations: result.limitations,
       evidenceLinks: result.evidence_links,
     },
+    { immutable: true },
   );
 
 const subjectTarget = (

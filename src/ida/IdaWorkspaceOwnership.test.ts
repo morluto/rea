@@ -14,7 +14,6 @@ import {
   createIdaTarget,
   RecordingIdaMcp,
 } from "../../tests/fixtures/idaMcp.js";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
 import { IdaWorkspace } from "./IdaWorkspace.js";
@@ -77,44 +76,34 @@ describe("IDA workspace ownership before input preparation", () => {
   );
 
   it.skipIf(process.platform === "win32")(
-    "allocates in the physical parent selected through a symlink and ..",
+    "opens the canonical private input in the physical workspace selected through a symlink and ..",
     async () => {
       const { root, target } = await createIdaTarget();
       roots.push(root);
+      const physical = join(root, "physical", "workspace");
+      const lexical = join(root, "workspace");
       await mkdir(join(root, "physical", "inner"), { recursive: true });
-      await mkdir(join(root, "physical", "workspace"));
-      await mkdir(join(root, "workspace"));
+      await mkdir(physical);
+      await mkdir(lexical);
       await symlink(join(root, "physical", "inner"), join(root, "link"));
-      const selected = `${root}/link/../workspace`;
-      for (const parent of [selected, await realpath(selected)]) {
-        const workspace = await IdaWorkspace.allocate(target, parent);
-        try {
-          expect(dirname(workspace.directory)).toBe(await realpath(selected));
-          expect(await readdir(join(root, "workspace"))).toEqual([]);
-        } finally {
-          await workspace.remove();
-        }
-      }
-    },
-  );
-
-  it.skipIf(process.platform === "win32")(
-    "opens the private input through a canonical path when the workspace root is a symlink",
-    async () => {
-      const { root, target } = await createIdaTarget();
-      roots.push(root);
-      const linked = join(
-        await createTestTempDirectory("rea-ida-link-"),
-        "root",
+      const { client, producer } = clientFor(
+        `${root}/link/../workspace`,
+        target,
       );
-      await symlink(root, linked);
-      const { client, producer } = clientFor(linked, target);
-      expect((await client.execute("health", {})).ok).toBe(true);
-      const open = producer.calls.find(({ name }) => name === "idb_open");
-      expect(
-        String(open?.args.input_path).startsWith(`${await realpath(root)}/`),
-      ).toBe(true);
-      expect((await client.close()).ok).toBe(true);
+      try {
+        const health = await client.execute("health", {});
+        if (!health.ok) throw health.error;
+        const input = producer.calls.find(({ name }) => name === "idb_open")
+          ?.args.input_path;
+        if (typeof input !== "string")
+          throw new Error("Expected a private input path");
+        expect(dirname(dirname(input))).toBe(await realpath(physical));
+        expect(input).toBe(await realpath(input));
+        expect(await readdir(lexical)).toEqual([]);
+      } finally {
+        expect((await client.close()).ok).toBe(true);
+      }
+      expect(await readdir(physical)).toEqual([]);
     },
   );
 

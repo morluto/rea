@@ -55,6 +55,7 @@ import { z } from "zod";
 import {
   createAnalysisExecution,
   type AnalysisClient,
+  type ExecutionOptions,
   type AnalysisOperation,
   type AnalysisProvider,
   type CapabilityDescriptor,
@@ -95,7 +96,11 @@ import {
   AnalysisError,
   resolvedAnalysisError,
 } from "../domain/analysisErrorBase.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   projectPlistValue,
   nonFiniteRealLimitation,
@@ -108,6 +113,10 @@ import type { NativeUiObservationResult } from "../domain/native/nativeUiObserva
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
 import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
 import { machoKnownCodeSignSelector } from "../domain/apple/machoArchitectureSelection.js";
+import {
+  bundleExecutableProvenance,
+  type BundleExecutableProvenance,
+} from "../domain/apple/bundleExecutableProvenance.js";
 import {
   demangleSwiftSchema,
   inspectPlistSchema,
@@ -301,7 +310,7 @@ class NativeMacOSClient implements AnalysisClient {
   async execute(
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
-    options?: { readonly signal?: AbortSignal },
+    options?: ExecutionOptions,
   ) {
     if (this.#closed)
       return err(
@@ -411,8 +420,18 @@ class NativeMacOSClient implements AnalysisClient {
     ) {
       return this.#observeNativeUi(operation, parameters, options?.signal);
     }
+    const admittedBundle = options?.bundleExecutableProvenance;
+    const bundleProvenance =
+      admittedBundle === undefined && this.activeTarget !== undefined
+        ? bundleExecutableProvenance(this.activeTarget)
+        : (admittedBundle ?? undefined);
     const pending = Promise.resolve().then(() =>
-      this.#dispatchCommand(operation, parameters, options?.signal),
+      this.#dispatchCommand(
+        operation,
+        parameters,
+        options?.signal,
+        bundleProvenance,
+      ),
     );
     this.#pendingCommandOperations.add(pending);
     try {
@@ -646,6 +665,7 @@ class NativeMacOSClient implements AnalysisClient {
       | "demangle_swift",
     parameters: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
+    bundleProvenance: BundleExecutableProvenance | undefined,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     const timeout = readNativeDeadline(
       parameters.native_command_timeout_ms,
@@ -668,9 +688,14 @@ class NativeMacOSClient implements AnalysisClient {
     const timeoutMs = timeout.timeoutMs;
     switch (operation) {
       case "inspect_macho":
-        return this.#inspectMacho(parameters, signal, timeoutMs);
+        return this.#inspectMacho(
+          parameters,
+          signal,
+          timeoutMs,
+          bundleProvenance,
+        );
       case "inspect_signature":
-        return this.#inspectSignature(signal, timeoutMs);
+        return this.#inspectSignature(signal, timeoutMs, bundleProvenance);
       case "inspect_plist":
         return this.#inspectPlist(parameters, signal, timeoutMs);
       case "list_architectures":
@@ -731,7 +756,7 @@ class NativeMacOSClient implements AnalysisClient {
               limitations,
             });
             return ok({
-              result: jsonValueSchema.parse(result),
+              result: ownedJsonValueSchema.parse(result),
               limitations,
               locations: architectureLocations(result.architectures.items),
             });
@@ -778,7 +803,7 @@ class NativeMacOSClient implements AnalysisClient {
       limitations: [],
     });
     return ok({
-      result: jsonValueSchema.parse(result),
+      result: ownedJsonValueSchema.parse(result),
       limitations: [],
       locations: [],
     });
@@ -787,6 +812,7 @@ class NativeMacOSClient implements AnalysisClient {
   async #inspectSignature(
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    bundleProvenance: BundleExecutableProvenance | undefined,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     // This provider's signature inspection covers Mach-O code signatures
     // only. On another container, codesign's "not signed" verdict cannot
@@ -804,7 +830,13 @@ class NativeMacOSClient implements AnalysisClient {
     const inspected = await withSignatureTarget(
       this.target,
       this.#signatureResources,
-      (binding) => this.#inspectBoundSignature(binding, signal, timeoutMs),
+      (binding) =>
+        this.#inspectBoundSignature(
+          binding,
+          signal,
+          timeoutMs,
+          bundleProvenance,
+        ),
       signal,
       this.privateRuntimeRootFactory,
     );
@@ -821,6 +853,7 @@ class NativeMacOSClient implements AnalysisClient {
     binding: SignatureTargetBinding,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    bundleProvenance: BundleExecutableProvenance | undefined,
   ): Promise<Result<InspectSignature, AnalysisError>> {
     const architecture =
       this.target.kind === "executable" ? this.target.architecture : undefined;
@@ -983,6 +1016,9 @@ class NativeMacOSClient implements AnalysisClient {
     const observation = () =>
       inspectSignatureSchema.parse({
         ...parsed,
+        ...(bundleProvenance === undefined
+          ? {}
+          : { bundle_provenance: bundleProvenance }),
         designated_requirement: requirementText,
         entitlements: entitlementValue.value,
         slices: {
@@ -1444,6 +1480,7 @@ class NativeMacOSClient implements AnalysisClient {
     parameters: Readonly<Record<string, JsonValue>>,
     signal: AbortSignal | undefined,
     timeoutMs: number,
+    bundleProvenance: BundleExecutableProvenance | undefined,
   ): Promise<Result<NativeObservation, AnalysisError>> {
     if (!isMachOFormat(this.target.format))
       return err(
@@ -1464,6 +1501,7 @@ class NativeMacOSClient implements AnalysisClient {
         (source) =>
           inspectNativeMacho({
             target: this.target,
+            ...(bundleProvenance === undefined ? {} : { bundleProvenance }),
             ...(signal === undefined ? {} : { signal }),
             run: (tool, arguments_, commandSignal, acceptNonZeroIf) =>
               this.#run(
@@ -2256,7 +2294,7 @@ const nativePlistObservation = (input: {
     limitations: parsed.limitations,
   });
   return {
-    result: jsonValueSchema.parse(result),
+    result: ownedJsonValueSchema.parse(result),
     limitations: parsed.limitations,
     locations: [{ kind: "artifact-path", path }],
   };

@@ -52,6 +52,37 @@ export const isSidecar = (path: string): boolean => {
 export const isWithin = (path: string, root: string): boolean =>
   root === "." || path === root || path.startsWith(`${root}/`);
 
+/** Check whether `path` lies at or beneath any root in `rootSet` in O(path depth). */
+export const isWithinAnyRoot = (
+  path: string,
+  rootSet: ReadonlySet<string>,
+): boolean => {
+  if (rootSet.size === 0) return false;
+  if (rootSet.has(".") || rootSet.has(path)) return true;
+  let slash = path.lastIndexOf("/");
+  while (slash > 0) {
+    if (rootSet.has(path.slice(0, slash))) return true;
+    slash = path.lastIndexOf("/", slash - 1);
+  }
+  return false;
+};
+
+/** Find the matching root in a disjoint `rootSet` (or `"."` when present) in O(path depth). */
+export const findWithinRoot = (
+  path: string,
+  rootSet: ReadonlySet<string>,
+): string | null => {
+  if (rootSet.size === 0) return null;
+  if (rootSet.has(path)) return path;
+  let slash = path.lastIndexOf("/");
+  while (slash > 0) {
+    const ancestor = path.slice(0, slash);
+    if (rootSet.has(ancestor)) return ancestor;
+    slash = path.lastIndexOf("/", slash - 1);
+  }
+  return rootSet.has(".") ? "." : null;
+};
+
 /**
  * English (en-US) case fold used only for Apple's fixed anatomy vocabulary.
  * Reported paths keep the archive spelling. Inventory identity stays case-sensitive.
@@ -147,12 +178,12 @@ const applicationRoots = (
 };
 
 const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
+  const rootSet = new Set<string>(roots);
   const paths = new Set<string>(roots);
   for (const path of directoryPaths(tree)) {
-    if (
-      APPLE_BUNDLE_EXTENSION.test(path.split("/").at(-1) ?? "") &&
-      roots.some((root) => isWithin(path, root))
-    )
+    const slash = path.lastIndexOf("/");
+    const tail = slash < 0 ? path : path.slice(slash + 1);
+    if (APPLE_BUNDLE_EXTENSION.test(tail) && isWithinAnyRoot(path, rootSet))
       paths.add(path);
   }
   return [...paths].sort(compare).map((path) => {
@@ -161,7 +192,7 @@ const detectBundles = (tree: Tree, roots: readonly string[]): Bundle[] => {
       path,
       parent_path: enclosingBundle(path, paths),
       layout,
-      role: roots.includes(path) ? "application" : bundleRole(path),
+      role: rootSet.has(path) ? "application" : bundleRole(path),
       role_basis: "path-convention",
       info_plist_path: infoPlistPath(path, layout, tree),
       executable_candidates: executableCandidates(path, layout, tree),

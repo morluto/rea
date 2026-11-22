@@ -93,7 +93,8 @@ describe("Ghidra launch failure diagnostics", () => {
   });
 
   it("bounds projected launcher output and marks truncation explicitly", async () => {
-    const oversized = `${"x".repeat(EXPECTED_OUTPUT_BOUND_BYTES)}UNRETAINED-TAIL`;
+    const retained = "x".repeat(EXPECTED_OUTPUT_BOUND_BYTES - 1);
+    const oversized = `${retained}éUNRETAINED-TAIL`;
     const javaHome = await failingJavaHome(
       `#!/bin/sh\nprintf '%s' '${oversized}' >&2\nexit 1\n`,
     );
@@ -104,13 +105,12 @@ describe("Ghidra launch failure diagnostics", () => {
     );
     if (launched.ok) throw new Error("expected the launch to fail");
     const outcome = launchOutcomeOf(launched.error);
-    expect(outcome?.["stderrTruncated"]).toBe(true);
-    expect(outcome?.["outputTruncated"]).toBe(false);
-    expect(outcome?.["stderrBytes"]).toBe(oversized.length);
-    const stderr = outcome?.["stderr"];
-    if (typeof stderr !== "string") throw new Error("Expected launcher stderr");
-    expect(stderr.length).toBeLessThanOrEqual(EXPECTED_OUTPUT_BOUND_BYTES);
-    expect(stderr).not.toContain("UNRETAINED-TAIL");
+    expect(outcome).toMatchObject({
+      stderr: retained,
+      stderrBytes: Buffer.byteLength(oversized),
+      stderrTruncated: true,
+      outputTruncated: false,
+    });
   });
 
   it("leaves non-command launch failures without retained output", async () => {

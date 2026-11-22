@@ -546,3 +546,96 @@ it.each([
     });
   },
 );
+
+it("validates patterns even when the worker has no candidate values", async () => {
+  const invalid = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "[",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(invalid).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisInputError", operation: "search_procedures" },
+  });
+  const empty = await matchRegexValues({
+    operation: "search_procedures",
+    pattern: "^main$",
+    caseSensitive: false,
+    values: [],
+  });
+  expect(empty).toEqual({ ok: true, value: [] });
+});
+
+it("preserves Unicode, supplementary emoji, lone surrogates, and empty strings via packed buffer", async () => {
+  const values = [
+    "",
+    "ascii_only",
+    "Δelta",
+    "😀_emoji",
+    "\uD800",
+    "middle",
+    "",
+    "😀_end",
+  ];
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^(😀_|\\u{1F600}_|δ)",
+      caseSensitive: false,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [2, 3, 7] });
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^$",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [0, 6] });
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "[\\uD800]",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [4] });
+});
+
+it("matches across mixed ASCII, Unicode, and oversized single-item chunk boundaries", async () => {
+  const hugeString = `${"a".repeat(300_000)}NEEDLE_${"b".repeat(100)}`;
+  const values = Array.from({ length: 5_000 }, (_, i) => `item_${i}`);
+  values[12] = "Δ_chunk0";
+  values[4095] = "edge_chunk0_NEEDLE";
+  values[4096] = "start_chunk1_ascii";
+  values[4500] = hugeString;
+  values[4501] = "😀_post_huge_NEEDLE";
+  values[4999] = "\uD800_tail_NEEDLE";
+
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "NEEDLE|Δ_chunk0",
+      caseSensitive: true,
+      values,
+    }),
+  ).toEqual({ ok: true, value: [12, 4095, 4500, 4501, 4999] });
+
+  const allEmpty = Array.from({ length: 4_200 }, () => "");
+  allEmpty[4097] = "";
+  expect(
+    await matchRegexValues({
+      operation: "search_strings",
+      pattern: "^$",
+      caseSensitive: true,
+      values: allEmpty,
+    }),
+  ).toEqual({
+    ok: true,
+    value: Array.from({ length: 4_200 }, (_, i) => i),
+  });
+});

@@ -33,7 +33,7 @@ import {
   zipPackageFormatForPath,
   type ZipPackageFormat,
 } from "../../domain/zipPackageFormat.js";
-import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { hasDosMzMagic, parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import {
   classifyFatContainerEvidence,
   readFatContainerHeader,
@@ -642,7 +642,7 @@ export const classifyArtifactBytes = (
   const native = readNativeHeaderFormat(prefix, fileSize);
   if (!native.ok) return "unknown";
   if (native.value !== null) return native.value;
-  if (prefix.length >= 2 && prefix[0] === 0x4d && prefix[1] === 0x5a) {
+  if (hasDosMzMagic(prefix)) {
     if (
       !Number.isSafeInteger(fileSize) ||
       fileSize < prefix.length ||

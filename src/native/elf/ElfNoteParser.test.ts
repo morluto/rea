@@ -1278,6 +1278,20 @@ it.each([
   },
 );
 
+it.each([
+  [10, "AT_NOTELF"],
+  [24, "AT_BASE_PLATFORM"],
+  [27, "AT_RSEQ_FEATURE_SIZE"],
+  [28, "AT_RSEQ_ALIGN"],
+  [29, "AT_HWCAP3"],
+  [30, "AT_HWCAP4"],
+  [51, "AT_MINSIGSTKSZ"],
+])("names auxv type %i as %s", (type, name) => {
+  const notes = coreAuxvNote([[type, 1]]);
+  const { entries } = parse(elfNoteFixture({ ownership: "program", notes }));
+  expect(entries[0]?.core?.auxv?.[0]?.type_name).toBe(name);
+});
+
 it("tolerates malformed core notes by returning null without throwing", () => {
   const truncatedPrpsinfo = elfNote("CORE", 3, Buffer.alloc(20)); // requires 136 for 64-bit
   const truncatedFile = elfNote(

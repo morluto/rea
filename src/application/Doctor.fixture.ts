@@ -13,7 +13,9 @@ export const createDoctorHostFixture = (
   runtime: { id: "node", version: "24.22.1" },
   macosVersion: () => Promise.resolve("14.0"),
   linuxDistribution: () => Promise.resolve(undefined),
-  validTarget: (path) => Promise.resolve(path.includes("Hopper")),
+  inspectTarget: async (path) => {
+    throw new Error(`Unexpected target check for ${path}`);
+  },
   executable: (path) => Promise.resolve(path.includes("Hopper")),
   inspectLinuxHopper: () =>
     Promise.resolve(

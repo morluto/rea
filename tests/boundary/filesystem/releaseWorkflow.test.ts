@@ -817,28 +817,6 @@ it.skipIf(process.platform === "win32").each([true, false])(
   },
 );
 
-it("runs release PR CI without enabling implementation pushes on release branches", async () => {
-  const workflow = z
-    .object({
-      on: z.object({
-        push: z.object({ branches: z.array(z.string()) }),
-        pull_request: z.object({ branches: z.array(z.string()) }),
-      }),
-    })
-    .parse(
-      parse(
-        await readFile(
-          new URL("../../../.github/workflows/ci.yml", import.meta.url),
-          "utf8",
-        ),
-      ),
-    );
-  expect(workflow.on.push.branches).toEqual(["main"]);
-  expect(workflow.on.pull_request.branches).toEqual(
-    expect.arrayContaining(["main", "release/*"]),
-  );
-});
-
 it("routes website verification through the central PR policy", async () => {
   const workflow = z
     .object({

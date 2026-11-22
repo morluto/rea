@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { createWebTextArtifact } from "../../src/domain/webContentArtifact.js";
+import type { IncludedScript } from "../../src/domain/webBundleAnalyzerState.js";
 import type { WebBundleAnalysis } from "../../src/domain/webBundleAnalysis.js";
 
 export const sampleWebBundleAnalysis = (): WebBundleAnalysis => ({
@@ -96,4 +99,24 @@ export const sampleWebBundleAnalysis = (): WebBundleAnalysis => ({
     visited_ast_nodes: 150,
   },
   limitations: ["Script evaluation was omitted"],
+});
+
+export const webBundleWorkerScript = (text: string): IncludedScript => ({
+  script_key: `scr_${createHash("sha256").update(text).digest("hex")}`,
+  frame_id: "frame-1",
+  url: "https://app.example.test/app.js",
+  origin: "https://app.example.test",
+  cdp_hash: null,
+  length: Buffer.byteLength(text),
+  is_module: false,
+  language: "JavaScript",
+  source_map_url: null,
+  resource_reconciliation: {
+    status: "unmatched",
+    reason: "no_exact_sanitized_url",
+  },
+  source: {
+    included: true,
+    artifact: createWebTextArtifact(text, "application/javascript"),
+  },
 });

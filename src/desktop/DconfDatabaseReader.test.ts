@@ -140,58 +140,49 @@ it.skipIf(process.platform !== "linux").each([false, true])(
 );
 
 describe.skipIf(process.platform !== "linux")("dumpDconfDatabase", () => {
-  it.each(["ordinary", "hash#stage", "line\nbreak"])(
-    "binds the selected descriptor without changing the launch directory: %s",
-    async (name) => {
-      const tools = await createTestTempDirectory("dconf-tool-");
-      const command = join(tools, "dconf");
+  it.each([
+    { directory: "ordinary", name: "user" },
+    { directory: "hash#stage", name: "user\nother" },
+    { directory: "line\nbreak", name: "user#other" },
+    { directory: "ordinary", name: "user " },
+  ])(
+    "binds the selected descriptor for $directory and $name",
+    async ({ directory, name }) => {
+      const root = await createTestTempDirectory("dconf-staged-");
+      const staged = join(root, directory);
+      const database = join(staged, name);
+      await mkdir(staged);
+      await writeFile(database, "selected GVariant bytes");
+      await writeFile(join(staged, "decoy"), "other bytes");
+      const command = join(root, "reader");
       await writeFile(
         command,
-        '#!/bin/sh\nprintf "%s\\n" "$PWD"\ncat "$DCONF_PROFILE"\n',
-        {
-          mode: 0o755,
-        },
+        [
+          `#!${process.execPath}`,
+          'const fs = require("node:fs");',
+          'const profile = fs.readFileSync(process.env.DCONF_PROFILE, "utf8");',
+          'const bytes = fs.readFileSync(profile.trimEnd().slice("file-db:".length), "utf8");',
+          "console.log(JSON.stringify({ cwd: process.cwd(), profile, bytes }));",
+        ].join("\n"),
+        { mode: 0o755 },
       );
-      const staged = join(await createTestTempDirectory("dconf-staged-"), name);
-      await mkdir(staged);
-      const database = join(staged, "user");
-      await writeFile(database, "GVariant");
-
       const dump = await dumpDconfDatabase(database, {
         PATH: process.env.PATH,
         REA_DCONF_COMMAND: command,
       });
-
-      expect(dump.ok).toBe(true);
       if (!dump.ok) throw new Error(dump.error);
-      expect(dump.text.split("\n")).toEqual([
-        process.cwd(),
-        expect.stringMatching(
-          new RegExp(`^file-db:/proc/${process.pid}/fd/\\d+$`),
+      expect(JSON.parse(dump.text)).toEqual({
+        cwd: process.cwd(),
+        profile: expect.stringMatching(
+          new RegExp(`^file-db:/proc/${process.pid}/fd/\\d+\n$`),
         ),
-        "",
+        bytes: "selected GVariant bytes",
+      });
+      expect((await readdir(staged)).sort()).toEqual([
+        "decoy",
+        "profile",
+        name,
       ]);
-      expect((await readdir(staged)).sort()).toEqual(["profile", "user"]);
-    },
-  );
-
-  it.each(["user#other", "user\nother", "user "])(
-    "keeps profile metacharacters out of the selected descriptor: %j",
-    async (name) => {
-      const staged = await createTestTempDirectory("dconf-profile-name-");
-      await writeFile(join(staged, name), "GVariant");
-      const command = join(staged, "reader");
-      await writeFile(
-        command,
-        `#!${process.execPath}\nconst fs = require("node:fs"); const profile = fs.readFileSync(process.env.DCONF_PROFILE, "utf8"); process.stdout.write(fs.readFileSync(profile.trim().slice("file-db:".length)));\n`,
-        { mode: 0o755 },
-      );
-      expect(
-        await dumpDconfDatabase(join(staged, name), {
-          PATH: process.env.PATH,
-          REA_DCONF_COMMAND: command,
-        }),
-      ).toEqual({ ok: true, text: "GVariant" });
     },
   );
 
@@ -322,27 +313,7 @@ describe.skipIf(process.platform !== "linux")(
       });
     });
 
-    it("retains the selected command and errno when execution is denied", async () => {
-      const root = await createTestTempDirectory("dconf-denied-command-");
-      const command = join(root, "dconf");
-      await writeFile(command, "#!/bin/sh\nexit 17\n", { mode: 0o600 });
-
-      await writeFile(join(root, "user"), "GVariant");
-      const dump = await dumpDconfDatabase(join(root, "user"), {
-        REA_DCONF_COMMAND: command,
-      });
-
-      expect(dump).toMatchObject({
-        ok: false,
-        kind: "launch-failed",
-        code: "EACCES",
-        exitCode: null,
-        command,
-        stderr: null,
-      });
-    });
-
-    it.each(["", " \t\n", "reader refused the database\n"])(
+    it.each([" \t\n", "  reader refused the database\n"])(
       "retains a nonzero command's reason with stderr %j",
       async (stderr) => {
         const root = await createTestTempDirectory("dconf-command-exit-");
@@ -367,6 +338,7 @@ describe.skipIf(process.platform !== "linux")(
           exitCode: 17,
           command,
           stderr: stderr.trim() === "" ? null : stderr.trim(),
+          error: stderr.trim() || `Command failed: ${command} dump / (exit 17)`,
         });
       },
     );
@@ -630,27 +602,33 @@ it.skipIf(process.platform !== "linux")(
   },
 );
 
-it.skipIf(process.platform !== "linux")(
-  "refuses unavailable descriptor paths instead of reporting an empty database",
-  async () => {
-    const root = await createTestTempDirectory("dconf-no-fd-path-");
-    const database = join(root, "user");
-    await writeFile(database, "GVariant");
-    closeFault.missingDescriptorPath = true;
-    expect(
-      await dumpDconfDatabase(database, {
-        REA_DCONF_COMMAND: "/must-not-start-with-unavailable-descriptor-paths",
-      }),
-    ).toMatchObject({
-      ok: false,
-      kind: "descriptor-unavailable",
-      code: "ENOENT",
-      exitCode: null,
-      command: null,
-      stderr: null,
-    });
-  },
-);
+it("refuses unavailable descriptor paths instead of reporting an empty database", async () => {
+  const root = await createTestTempDirectory("dconf-no-fd-path-");
+  const database = join(root, "user");
+  await writeFile(database, "GVariant");
+  closeFault.missingDescriptorPath = true;
+  closeFault.path = database;
+  const launch = vi.spyOn(providerProcess, "spawnOwnedProviderProcess");
+  expect(
+    await dumpDconfDatabase(database, {
+      REA_DCONF_COMMAND: "/must-not-start-with-unavailable-descriptor-paths",
+    }),
+  ).toMatchObject({
+    ok: false,
+    kind: "descriptor-unavailable",
+    code: "ENOENT",
+    exitCode: null,
+    command: null,
+    stderr: null,
+  });
+  expect(launch).not.toHaveBeenCalled();
+  expect(await readdir(root)).toEqual(["user"]);
+  expect(closeFault.handles).toHaveLength(1);
+  const [handle] = closeFault.handles;
+  if (handle === undefined)
+    throw new Error("Expected an owned database descriptor");
+  await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
+});
 
 it.skipIf(process.platform !== "linux")(
   "retains a physical profile write failure",

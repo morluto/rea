@@ -97,6 +97,12 @@ compressed file bytes. Other compressed payload sections remain opaque.
 - DT_NEEDED/PT_INTERP are reported names, not resolved runtime paths. GOT/PLT
   maps are derived convenience views and may collapse aliases. PLT inference
   can emulate selected instructions in Unicorn; its outputs are static candidates.
+  Each PLT section (`.plt`, `.plt.got`, `.plt.sec`, `.MIPS.stubs`) uses its
+  own Unicorn instance with a 1 GiB virtual map. REA releases each instance
+  before the next section. The tested CET x86-64 images used about 1.1 GiB of
+  address space during PLT emulation and fit within the default limit. Under
+  a tighter `address_space_bytes`, upstream skips the remaining PLT sections
+  and reports a warning in `diagnostics.stderr`. Structural facts are unaffected.
   Exec syscall tracing observes host process launches. Map completeness
   remains unknown and original upstream warnings are returned inline.
 - Canary, PIE, NX, executable-stack and RELRO are static inferences. NX and
@@ -144,7 +150,9 @@ extended-index verification uses 256 MiB and an explicit five-minute request
 timeout in its separate opt-in MCP lane. REA does not silently truncate the result. Python lowers resource soft limits to the selected policy: defaults are 3 GiB
 virtual address space, 30 CPU seconds and 64 MiB file output. Inherited tighter soft/hard limits are
 retained, and the effective values are returned in the result limitations. Virtual address space is not RSS;
-Unicorn needs a large virtual map. Limits fail with no partial success, and
+Unicorn needs a large virtual map. Limits fail with no partial success, except
+upstream PLT emulation, which returns a reduced PLT map with its warning in
+`diagnostics.stderr` when the address space cannot fit an emulator, and
 owned process/root cleanup completes independently of cancellation.
 
 For core files and optional pwndbg mapping context, use the
@@ -473,6 +481,7 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
 
 Unreadable names, out-of-range name ordinals and unreadable forwarders are
 listed in `issues`, their entries are not reported, and coverage is `partial`.
+A declared PE export directory shorter than its 40-byte table is malformed.
 PE export tables and strings use file-backed headers and declared section
 content. A name's terminating NUL must also fit within those mapped bytes.
 PE export names are bounded null-terminated byte strings and may continue
@@ -486,14 +495,23 @@ Entry 0 is the reserved undefined symbol: `st_info`, `st_other`, `st_shndx`,
 `st_value` and `st_size` must be zero, and any other value rejects the table.
 The gABI also requires `st_name` to be zero. A nonzero `st_name` with those
 fields zero does not define an export: the entry is skipped, coverage stays
-complete, and `limitations` records the name offset. An ELF without section
-headers is `unsupported`. With section headers, a missing
-`SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
-observed, including a directory containing only the inactive null section.
-Enumerating dynamic symbols from that segment is not implemented. A present
-section directory with neither a dynamic symbol table nor a dynamic segment
-reports a complete empty inventory. Mach-O exports are reported by
-`inspect_macho`.
+complete, and `limitations` records the name offset.
+
+When `SHT_DYNSYM` is absent, including an ELF with no section headers, the
+reader locates symbols and strings through `PT_DYNAMIC` and their file-backed
+`PT_LOAD` mappings. `DT_HASH` or a nonempty `DT_GNU_HASH` supplies the symbol
+count; if both supply a count, they must agree. A missing hash table or empty
+GNU buckets without a SysV count leaves coverage `unsupported`, because the
+complete symbol inventory is unknown. Unmapped, conflicting or truncated
+table ranges are refused.
+
+The dynamic fallback retains readable `DT_VERSYM` indices and hidden flags,
+but does not decode names from `DT_VERDEF` or `DT_VERNEED`. Versioned exports
+therefore retain their rows with null version names and `partial` coverage;
+an unreadable `DT_VERSYM` retains `version: "unknown"`. Section-backed version
+names continue to use the tables described above. A present section directory
+with neither a dynamic symbol table nor a dynamic segment reports a complete
+empty inventory. Mach-O exports are reported by `inspect_macho`.
 
 ELF export tables marked `SHF_COMPRESSED` are not decompressed. A compressed
 dynamic symbol table or its string table reports `unsupported` coverage rather
