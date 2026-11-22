@@ -7,7 +7,8 @@ import {
   advertisedInputDialectViolations,
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
-import { stripAnnotations } from "./compactJsonSchema.js";
+import { inlineWithinBudget, stripAnnotations } from "./compactJsonSchema.js";
+import { JsonSchemaReferences } from "./jsonSchemaReferences.js";
 
 const serializedBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
@@ -322,8 +323,11 @@ describe("portable dialect unions", () => {
               },
               {
                 type: "object",
-                properties: { kind: { const: "type" } },
-                required: ["kind"],
+                properties: {
+                  kind: { const: "type" },
+                  text: { type: "string" },
+                },
+                required: ["kind", "text"],
               },
             ],
           },
@@ -349,8 +353,11 @@ describe("portable dialect unions", () => {
         },
         {
           type: "object",
-          properties: { kind: { type: "string", enum: ["type"] } },
-          required: ["kind"],
+          properties: {
+            kind: { type: "string", enum: ["type"] },
+            text: { type: "string" },
+          },
+          required: ["kind", "text"],
         },
       ],
     });
@@ -359,7 +366,7 @@ describe("portable dialect unions", () => {
     for (const value of [
       [],
       [{ kind: "click" }],
-      [{ kind: "type" }],
+      [{ kind: "type", text: "ok" }],
       [{ kind: "other" }],
     ])
       expect(advertised({ actions: value })).toBe(
@@ -1069,5 +1076,58 @@ describe("reduced array item presentation", () => {
     for (const input of [{}, { view: "x" }, { view: "y" }])
       if (canonicalValidate(input))
         expect(advertisedValidate(input)).toBe(true);
+  });
+});
+
+describe("on-the-fly annotation stripping parity", () => {
+  it("matches pre-stripped inlining for map keys, empty schemas, ref siblings, and stripped pointers", () => {
+    const cases: readonly Record<string, unknown>[] = [
+      {
+        type: "object",
+        description: "Root doc stays.",
+        default: { x: 1 },
+        properties: {
+          default: { type: "boolean", default: true, title: "Default flag" },
+          any: { description: "Becomes json value schema." },
+          forbid: { not: { description: "Empty negation." } },
+          aliased: { $ref: "#/$defs/leaf", description: "Sibling doc drops." },
+        },
+        $defs: {
+          leaf: { type: "string", description: "Def doc drops.", title: "L" },
+        },
+      },
+      {
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        definitions: { leaf: { type: "number", examples: [1] } },
+        properties: {
+          count: { $ref: "#/definitions/leaf", description: "Doc drops." },
+        },
+      },
+      {
+        type: "object",
+        $defs: {
+          node: { type: "string", default: "fallback" },
+        },
+        properties: {
+          bad: { $ref: "#/$defs/node/default" },
+        },
+      },
+      {
+        type: "object",
+        properties: {
+          bad: { $ref: "#/properties/x/description" },
+          x: { type: "string", description: "Stripped doc" },
+        },
+      },
+    ];
+    for (const schema of cases) {
+      const expected = inlineWithinBudget(stripAnnotations(schema), 16_384);
+      const actual = inlineWithinBudget(schema, 16_384, {
+        stripAnnotations: true,
+        references: new JsonSchemaReferences(schema),
+      });
+      expect(actual).toEqual(expected);
+    }
   });
 });

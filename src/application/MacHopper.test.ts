@@ -61,16 +61,26 @@ it.skipIf(process.platform === "win32")(
     const executable = join(contents, "MacOS", "Hopper");
     await mkdir(join(contents, "MacOS"), { recursive: true });
     await writeFile(executable, "inert fixture");
-    await writeFile(
-      selected,
-      "<plist><dict><key>CFBundleExecutable</key><string>Hopper</string><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>",
-    );
+    const plistSource =
+      "<plist><dict><key>CFBundleExecutable</key><string>Hopper</string><key>LSMinimumSystemVersion</key><string>13.0</string></dict></plist>";
+    await writeFile(selected, plistSource);
     await symlink(selected, plist);
     const host = systemMacHopperInstallHost(root, {}, async () => "15.0");
     try {
       await expect(resolveAppleBundleExecutable(app)).resolves.toEqual({
         ok: true,
-        value: { executable: await realpath(executable), infoPlist: plist },
+        value: {
+          executable: await realpath(executable),
+          infoPlist: plist,
+          bundleExecutableSelection: {
+            canonical_path: app,
+            layout: "contents",
+            declared_executable: "Hopper",
+            info_plist_sha256: createHash("sha256")
+              .update(plistSource)
+              .digest("hex"),
+          },
+        },
       });
       await expect(host.minimumSystemVersion(app)).resolves.toBe("13.0");
     } finally {

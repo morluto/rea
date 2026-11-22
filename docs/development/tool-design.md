@@ -621,9 +621,13 @@ the application layer.
 CLI commands register through
 [`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
 add the registrar to its family there and its module to `src/cli.ts`. The build
-records which registrar defines each top-level command, and a one-shot command
-loads only that registrar's module graph; help, completions, `--llms` and unknown
-names load the complete CLI. A registrar's command definitions must not depend
+records which registrar defines each top-level command, and running a known
+non-built-in command (including single-command discovery with `--help`, `-h`,
+`--schema`, `--llms`, or `--llms-full`) loads only that registrar's module
+graph. Root discovery, unknown command names, built-in requests (`completions`,
+`mcp` CLI subcommands, shell completion, and other built-in flags outside
+standalone `--version` and retired per-command `--mcp`), and a missing or
+unusable recording load the complete CLI. A registrar's command definitions must not depend
 on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
 that each one registers alone with the definitions the complete CLI gives it.
 Modules that every registrar imports set the startup cost of every command; load
