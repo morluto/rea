@@ -53,7 +53,7 @@ cliTest(
         });
         expect(parseMcpToolError(response)).toEqual({ error: result.json });
       }
-      expect(await readFile(path)).toEqual(bytes);
+      expect((await readFile(path)).equals(bytes)).toBe(true);
     }
   },
 );
