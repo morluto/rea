@@ -77,6 +77,7 @@
 * **cli:** register Kilo in linked worktrees of bare repositories ([#13285](https://github.com/morluto/rea/issues/13285)) ([27657b7](https://github.com/morluto/rea/commit/27657b7420a765d13f6e58e212c2b897900b5154))
 * **cli:** reject nonnumeric output slice bounds ([#13344](https://github.com/morluto/rea/issues/13344)) ([9a6ee71](https://github.com/morluto/rea/commit/9a6ee7188697c5e99616dbb75154ce2cdbc79af7))
 * **cli:** report retained MCP registration backups on typed failures ([#13268](https://github.com/morluto/rea/issues/13268)) ([c1a1de9](https://github.com/morluto/rea/commit/c1a1de9bfb385e1ba15519779fd0680bd737ebfd))
+* **config:** preserve unknown Harness group ownership ([#13434](https://github.com/morluto/rea/issues/13434)) ([eb3f35e](https://github.com/morluto/rea/commit/eb3f35ea05c7a1657bab40ed5fe35566092e1c88))
 * **cyclonedx:** keep recorded tool references unique ([#13425](https://github.com/morluto/rea/issues/13425)) ([7db00e8](https://github.com/morluto/rea/commit/7db00e8fd6306b880a7f25e5418de5a475761485))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
 * **desktop:** classify complete filename boundary code points ([d9f2fd3](https://github.com/morluto/rea/commit/d9f2fd365dea6622e90bad56f29b278920e0fee2))
