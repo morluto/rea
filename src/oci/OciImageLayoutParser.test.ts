@@ -2890,6 +2890,12 @@ it("refuses a layout whose shared config expands past max_config_bytes", async (
   } finally {
     await reader.close();
   }
+  // Exact total across all five images fits without double-charging the first
+  // uncached parse.
+  const exactReport = await inspectLayout(root, {
+    max_config_bytes: configBytes * 5,
+  });
+  expect(exactReport.images).toHaveLength(5);
   const maximum = configBytes * 2;
   await expectConfigBudgetRefusal(root, maximum, configBytes * 3);
 });
@@ -2922,15 +2928,147 @@ it("charges expanded history records rather than config source bytes", async () 
     await reader.close();
   }
   expect(factBytes).toBeGreaterThan(maximum);
-  await expectConfigBudgetRefusal(root, maximum, factBytes);
+  const required = await expectConfigBudgetRefusal(root, maximum);
+  expect(required).toBeGreaterThan(maximum);
+  expect(required).toBeLessThan(factBytes);
+  // Exact serialized size is admitted without over-charging or double-charging.
+  const exact = await inspectLayout(root, { max_config_bytes: factBytes });
+  expect(exact.images[0]?.history).toHaveLength(256);
+  await expectConfigBudgetRefusal(root, factBytes - 1, factBytes);
+});
+
+it("refuses a large sparse history before building every expanded record", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-sparse-history-");
+  const count = 50_000;
+  const config = `${JSON.stringify({
+    architecture: "amd64",
+    os: "linux",
+    rootfs: { type: "layers", diff_ids: [] },
+    history: Array.from({ length: count }, () => ({})),
+  })}\n`;
+  await writeSharedLayerLayout(root, 1, 1, config);
+  const maximum = 4096;
+  const emptyRecordBytes = jsonByteLength({
+    created: null,
+    created_by: null,
+    empty_layer: null,
+    comment: null,
+  });
+  const fullHistoryBytes = count * (emptyRecordBytes + 1);
+  const required = await expectConfigBudgetRefusal(root, maximum);
+  expect(required).toBeGreaterThan(maximum);
+  // Stops on the first record past `maximum`, far below the ~3.4 MB full array.
+  expect(required).toBeLessThanOrEqual(maximum + emptyRecordBytes + 1);
+  expect(required).toBeLessThan(fullHistoryBytes / 100);
+});
+
+it("refuses expanding config Env bindings before building every binding", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-sparse-env-");
+  const count = 20_000;
+  const config = `${JSON.stringify({
+    architecture: "amd64",
+    os: "linux",
+    config: { Env: Array.from({ length: count }, () => "A") },
+    rootfs: { type: "layers", diff_ids: [] },
+  })}\n`;
+  await writeSharedLayerLayout(root, 1, 1, config);
+  const maximum = 2048;
+  const oneBindingBytes = jsonByteLength({ name: "A", value: null });
+  const required = await expectConfigBudgetRefusal(root, maximum);
+  expect(required).toBeGreaterThan(maximum);
+  expect(required).toBeLessThanOrEqual(maximum + oneBindingBytes + 1);
+  expect(required).toBeLessThan((count * oneBindingBytes) / 100);
+});
+
+it("charges a second distinct config against the remaining max_config_bytes allowance", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-remaining-");
+  const OCI_INDEX = "application/vnd.oci.image.index.v1+json";
+  const OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json";
+  const OCI_CONFIG = "application/vnd.oci.image.config.v1+json";
+  const OCI_LAYER = "application/vnd.oci.image.layer.v1.tar";
+  await mkdir(join(root, "blobs", "sha256"), { recursive: true });
+  await writeFile(
+    join(root, "oci-layout"),
+    `${JSON.stringify({ imageLayoutVersion: "1.0.0" })}\n`,
+  );
+  const layerBody = "layer";
+  const layerDigest = await putOciBlob(root, layerBody);
+  const firstConfig = `${JSON.stringify({
+    architecture: "amd64",
+    os: "linux",
+    rootfs: { type: "layers", diff_ids: [] },
+    history: Array.from({ length: 16 }, () => ({})),
+  })}\n`;
+  const secondConfig = `${JSON.stringify({
+    architecture: "arm64",
+    os: "linux",
+    rootfs: { type: "layers", diff_ids: [] },
+    history: Array.from({ length: 10_000 }, () => ({})),
+  })}\n`;
+  const addImage = async (configBody: string) => {
+    const configDigest = await putOciBlob(root, configBody);
+    const manifestBody = `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_MANIFEST,
+      config: {
+        mediaType: OCI_CONFIG,
+        digest: configDigest,
+        size: Buffer.byteLength(configBody),
+      },
+      layers: [
+        {
+          mediaType: OCI_LAYER,
+          digest: layerDigest,
+          size: Buffer.byteLength(layerBody),
+        },
+      ],
+    })}\n`;
+    const manifestDigest = await putOciBlob(root, manifestBody);
+    return {
+      mediaType: OCI_MANIFEST,
+      digest: manifestDigest,
+      size: Buffer.byteLength(manifestBody),
+    };
+  };
+  const first = await addImage(firstConfig);
+  const second = await addImage(secondConfig);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [first],
+    })}\n`,
+  );
+  const firstReport = await inspectLayout(root);
+  const firstBytes = configFactBytes(firstReport.images[0]!);
+  await writeFile(
+    join(root, "index.json"),
+    `${JSON.stringify({
+      schemaVersion: 2,
+      mediaType: OCI_INDEX,
+      manifests: [first, second],
+    })}\n`,
+  );
+  const maximum = firstBytes + 1024;
+  const emptyRecordBytes = jsonByteLength({
+    created: null,
+    created_by: null,
+    empty_layer: null,
+    comment: null,
+  });
+  const required = await expectConfigBudgetRefusal(root, maximum);
+  expect(required).toBeGreaterThan(maximum);
+  expect(required).toBeLessThanOrEqual(maximum + emptyRecordBytes + 1);
 });
 
 const expectConfigBudgetRefusal = async (
   root: string,
   maximum: number,
-  required: number,
-): Promise<void> => {
+  expectedRequired?: number,
+): Promise<number> => {
   const reader = new DirectoryArtifactReader(root);
+  let observedRequired: number | undefined;
   try {
     await expect(
       parseOciImageLayout(
@@ -2948,9 +3086,16 @@ const expectConfigBudgetRefusal = async (
         limit: {
           name: "max_config_bytes",
           maximum,
-          required,
+          ...(expectedRequired === undefined
+            ? {}
+            : { required: expectedRequired }),
         },
       });
+      if (cause.failure.kind !== "limit") return false;
+      expect(typeof cause.failure.limit.required).toBe("number");
+      if (typeof cause.failure.limit.required !== "number") return false;
+      expect(cause.failure.limit.required).toBeGreaterThan(maximum);
+      observedRequired = cause.failure.limit.required;
       return true;
     });
   } finally {
@@ -2965,13 +3110,16 @@ const expectConfigBudgetRefusal = async (
       }),
     );
     expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(JSON.stringify(primaryAnalysisError(result.error))).toContain(
-      "max_config_bytes",
-    );
+    if (!result.ok)
+      expect(JSON.stringify(primaryAnalysisError(result.error))).toContain(
+        "max_config_bytes",
+      );
   } finally {
     await provider.close();
   }
+  if (observedRequired === undefined)
+    throw new Error("expected max_config_bytes refusal with numeric required");
+  return observedRequired;
 };
 
 it("reports invalid rootfs.diff_ids members and keeps the other image facts", async () => {

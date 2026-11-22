@@ -75,18 +75,11 @@ const BASE_LIMITATIONS = [
 const nonempty = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null;
 
-const asStringArray = (value: unknown): string[] | null => {
-  if (!Array.isArray(value)) return null;
-  const items: string[] = [];
-  for (const item of value) {
-    if (typeof item !== "string") return null;
-    items.push(item);
-  }
-  return items;
+const isStringArray = (value: unknown): value is readonly string[] => {
+  if (!Array.isArray(value)) return false;
+  for (const item of value) if (typeof item !== "string") return false;
+  return true;
 };
-
-const objectKeys = (value: unknown): string[] =>
-  isRecord(value) ? Object.keys(value) : [];
 
 const annotationsOf = (value: unknown): { name: string; value: string }[] => {
   if (!isRecord(value)) return [];
@@ -427,10 +420,41 @@ const hashBlob = async (
   }
 };
 
+type ChargeConfigBytes = (bytes: number) => void;
+
+const chargeArrayItem = (
+  charge: ChargeConfigBytes,
+  count: number,
+  bytes: number,
+): void => {
+  charge(bytes + (count > 0 ? 1 : 0));
+};
+
+const NULL_JSON_BYTES = 4;
+const EMPTY_STRING_JSON_BYTES = 2;
+
+const jsonStringBytes = (value: string): number =>
+  value.length <= 8192
+    ? Buffer.byteLength(JSON.stringify(value), "utf8")
+    : jsonByteLength(value);
+
+const EMPTY_ENV_BINDING_BYTES = jsonByteLength({ name: "", value: null });
+const envBindingBytes = (name: string, value: string | null): number =>
+  EMPTY_ENV_BINDING_BYTES +
+  (jsonStringBytes(name) - EMPTY_STRING_JSON_BYTES) +
+  (value === null ? 0 : jsonStringBytes(value) - NULL_JSON_BYTES);
+
+const EMPTY_LABEL_BYTES = jsonByteLength({ name: "", value: "" });
+const labelBytes = (name: string, value: string): number =>
+  EMPTY_LABEL_BYTES +
+  (jsonStringBytes(name) - EMPTY_STRING_JSON_BYTES) +
+  (jsonStringBytes(value) - EMPTY_STRING_JSON_BYTES);
+
 const envBindings = (
   value: unknown,
   includeValues: boolean,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): OciImageLayoutImage["env"] => {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -453,11 +477,10 @@ const envBindings = (
       if (first === -1) first = position;
       continue;
     }
-    bindings.push({
-      name,
-      value:
-        includeValues && separator !== -1 ? item.slice(separator + 1) : null,
-    });
+    const envValue =
+      includeValues && separator !== -1 ? item.slice(separator + 1) : null;
+    chargeArrayItem(charge, bindings.length, envBindingBytes(name, envValue));
+    bindings.push({ name, value: envValue });
   }
   if (invalid > 0)
     defects.push(
@@ -494,9 +517,26 @@ const historyRecordOf = (
   comment: typeof item.comment === "string" ? item.comment : null,
 });
 
+const EMPTY_HISTORY_RECORD_BYTES = jsonByteLength(historyRecordOf({}));
+const historyRecordBytes = (
+  record: OciImageLayoutImage["history"][number],
+): number =>
+  EMPTY_HISTORY_RECORD_BYTES +
+  (record.created === null
+    ? 0
+    : jsonStringBytes(record.created) - NULL_JSON_BYTES) +
+  (record.created_by === null
+    ? 0
+    : jsonStringBytes(record.created_by) - NULL_JSON_BYTES) +
+  (record.empty_layer === false ? 1 : 0) +
+  (record.comment === null
+    ? 0
+    : jsonStringBytes(record.comment) - NULL_JSON_BYTES);
+
 const historyOf = (
   value: unknown,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): OciImageLayoutImage["history"] => {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) {
@@ -516,6 +556,8 @@ const historyOf = (
       if (first === -1) first = position;
       continue;
     }
+    const record = historyRecordOf(item);
+    chargeArrayItem(charge, history.length, historyRecordBytes(record));
     for (const [name, expected] of HISTORY_FIELDS) {
       const member = item[name];
       if (
@@ -529,7 +571,7 @@ const historyOf = (
         else current.count += 1;
       }
     }
-    history.push(historyRecordOf(item));
+    history.push(record);
   }
   if (invalid > 0)
     defects.push(
@@ -584,6 +626,14 @@ const EMPTY_CONFIG_FACTS: ConfigFacts = {
   history: [],
 };
 
+// Fixed JSON skeleton of ConfigFacts (braces, keys, colons, commas, and the
+// empty `[]` for always-array fields), leaving each nullable field's value
+// and each array's elements to be charged incrementally as they are built.
+const CONFIG_FACTS_BASE_BYTES =
+  jsonByteLength(EMPTY_CONFIG_FACTS) -
+  Object.values(EMPTY_CONFIG_FACTS).filter((value) => value === null).length *
+    NULL_JSON_BYTES;
+
 /**
  * Keys of a config set such as ExposedPorts. An empty key names nothing, so
  * it is omitted and reported as a defect instead of becoming an empty fact.
@@ -592,13 +642,24 @@ const configKeys = (
   value: unknown,
   label: string,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): string[] => {
-  if (value !== undefined && value !== null && !isRecord(value))
+  if (value === undefined || value === null) return [];
+  if (!isRecord(value)) {
     defects.push(`${label} is not a JSON object; it is not modeled`);
-  const keys = objectKeys(value);
-  const named = keys.filter((key) => key !== "");
-  if (named.length !== keys.length)
-    defects.push(`${label} has an empty key; it is omitted`);
+    return [];
+  }
+  const named: string[] = [];
+  let hasEmpty = false;
+  for (const key of Object.keys(value)) {
+    if (key === "") {
+      hasEmpty = true;
+      continue;
+    }
+    chargeArrayItem(charge, named.length, jsonStringBytes(key));
+    named.push(key);
+  }
+  if (hasEmpty) defects.push(`${label} has an empty key; it is omitted`);
   return named;
 };
 
@@ -606,7 +667,11 @@ const configKeys = (
  * rootfs.diff_ids as nonempty strings. Members that are not are omitted and
  * reported, so a damaged config keeps its other facts.
  */
-const diffIdsOf = (rootfs: Record<string, unknown>, defects: string[]) => {
+const diffIdsOf = (
+  rootfs: Record<string, unknown>,
+  defects: string[],
+  charge: ChargeConfigBytes,
+) => {
   const value = rootfs.diff_ids;
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
@@ -618,6 +683,7 @@ const diffIdsOf = (rootfs: Record<string, unknown>, defects: string[]) => {
   let first = -1;
   for (const [position, item] of value.entries()) {
     if (typeof item === "string" && item !== "") {
+      chargeArrayItem(charge, diffIds.length, jsonStringBytes(item));
       diffIds.push(item);
       continue;
     }
@@ -650,13 +716,20 @@ const stringField = (
   value: unknown,
   label: string,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): string | null => {
-  if (value === undefined || value === null) return null;
-  if (typeof value !== "string") {
-    defects.push(`${label} is not a string; it is not modeled`);
+  if (value === undefined || value === null) {
+    charge(NULL_JSON_BYTES);
     return null;
   }
-  return nonempty(value);
+  if (typeof value !== "string") {
+    defects.push(`${label} is not a string; it is not modeled`);
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  const result = nonempty(value);
+  charge(result === null ? NULL_JSON_BYTES : jsonStringBytes(result));
+  return result;
 };
 
 /** A string-array config field such as Cmd, reported when malformed. */
@@ -664,11 +737,23 @@ const stringArrayField = (
   value: unknown,
   label: string,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): string[] | null => {
-  if (value === undefined || value === null) return null;
-  const items = asStringArray(value);
-  if (items === null)
+  if (value === undefined || value === null) {
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  if (!isStringArray(value)) {
     defects.push(`${label} is not an array of strings; it is not modeled`);
+    charge(NULL_JSON_BYTES);
+    return null;
+  }
+  charge(2);
+  const items: string[] = [];
+  for (const item of value) {
+    chargeArrayItem(charge, items.length, jsonStringBytes(item));
+    items.push(item);
+  }
   return items;
 };
 
@@ -676,14 +761,23 @@ const stringArrayField = (
 const labelsField = (
   value: unknown,
   defects: string[],
+  charge: ChargeConfigBytes,
 ): { name: string; value: string }[] => {
   if (value === undefined || value === null) return [];
   if (!isRecord(value)) {
     defects.push("config.Labels is not a JSON object; it is not modeled");
     return [];
   }
-  const labels = annotationsOf(value);
-  const dropped = Object.keys(value).length - labels.length;
+  const labels: { name: string; value: string }[] = [];
+  let dropped = 0;
+  for (const [name, entry] of Object.entries(value)) {
+    if (typeof entry !== "string") {
+      dropped += 1;
+      continue;
+    }
+    chargeArrayItem(charge, labels.length, labelBytes(name, entry));
+    labels.push({ name, value: entry });
+  }
   if (dropped > 0)
     defects.push(
       `config.Labels has ${String(dropped)} value${dropped === 1 ? "" : "s"} that ${dropped === 1 ? "is" : "are"} not a string; ${dropped === 1 ? "it is" : "they are"} omitted`,
@@ -694,12 +788,22 @@ const labelsField = (
 /**
  * Image facts from one config document, with the defects that left any of
  * them out. Defects are reported once per config blob by the caller.
+ * Serialized fact bytes are charged against `allowance` incrementally as
+ * records are built so expanding inputs such as sparse `history` arrays
+ * refuse before allocating every record.
  */
 const parseConfig = (
   value: unknown,
   includeEnvValues: boolean,
+  allowance: number,
+  overflow: (bytes: number) => ParseFailureError<"limit">,
 ): { facts: ConfigFacts; defects: string[] } => {
   if (!isRecord(value)) return { facts: EMPTY_CONFIG_FACTS, defects: [] };
+  const budget = new Budget(Math.max(0, allowance));
+  const charge: ChargeConfigBytes = (bytes) => {
+    budget.charge(bytes, () => overflow(budget.used + bytes));
+  };
+  charge(CONFIG_FACTS_BASE_BYTES);
   const defects: string[] = [];
   const config = configSubobject(
     value.config,
@@ -713,42 +817,67 @@ const parseConfig = (
   );
   return {
     facts: {
-      architecture: stringField(value.architecture, "architecture", defects),
-      os: stringField(value.os, "os", defects),
-      variant: stringField(value.variant, "variant", defects),
-      created: stringField(value.created, "created", defects),
-      author: stringField(value.author, "author", defects),
-      user: stringField(config.User ?? config.user, "config.User", defects),
-      env: envBindings(config.Env ?? config.env, includeEnvValues, defects),
+      architecture: stringField(
+        value.architecture,
+        "architecture",
+        defects,
+        charge,
+      ),
+      os: stringField(value.os, "os", defects, charge),
+      variant: stringField(value.variant, "variant", defects, charge),
+      created: stringField(value.created, "created", defects, charge),
+      author: stringField(value.author, "author", defects, charge),
+      user: stringField(
+        config.User ?? config.user,
+        "config.User",
+        defects,
+        charge,
+      ),
+      env: envBindings(
+        config.Env ?? config.env,
+        includeEnvValues,
+        defects,
+        charge,
+      ),
       entrypoint: stringArrayField(
         config.Entrypoint ?? config.entrypoint,
         "config.Entrypoint",
         defects,
+        charge,
       ),
-      cmd: stringArrayField(config.Cmd ?? config.cmd, "config.Cmd", defects),
+      cmd: stringArrayField(
+        config.Cmd ?? config.cmd,
+        "config.Cmd",
+        defects,
+        charge,
+      ),
       working_dir: stringField(
         config.WorkingDir ?? config.workingDir,
         "config.WorkingDir",
         defects,
+        charge,
       ),
       exposed_ports: configKeys(
         config.ExposedPorts ?? config.exposedPorts,
         "config.ExposedPorts",
         defects,
+        charge,
       ),
       volumes: configKeys(
         config.Volumes ?? config.volumes,
         "config.Volumes",
         defects,
+        charge,
       ),
-      labels: labelsField(config.Labels ?? config.labels, defects),
+      labels: labelsField(config.Labels ?? config.labels, defects, charge),
       stop_signal: stringField(
         config.StopSignal ?? config.stopSignal,
         "config.StopSignal",
         defects,
+        charge,
       ),
-      rootfs_diff_ids: diffIdsOf(rootfs, defects),
-      history: historyOf(value.history, defects),
+      rootfs_diff_ids: diffIdsOf(rootfs, defects, charge),
+      history: historyOf(value.history, defects, charge),
     },
     defects,
   };
@@ -1116,18 +1245,20 @@ const inventoryOciImageLayout = async (
     { facts: ConfigFacts; bytes: number } | undefined
   >();
   let configBytesExpanded = 0;
+  const configBytesLimit = (required: number) =>
+    decodeLimit(
+      OCI_IMAGE_LAYOUT_FORMAT,
+      `OCI image layout config facts exceed the ${String(input.max_config_bytes)}-byte budget.`,
+      {
+        name: "max_config_bytes",
+        maximum: input.max_config_bytes,
+        required,
+      },
+    );
   const chargeConfigBytes = (bytes: number): void => {
     configBytesExpanded += bytes;
     if (configBytesExpanded > input.max_config_bytes)
-      throw decodeLimit(
-        OCI_IMAGE_LAYOUT_FORMAT,
-        `OCI image layout config facts exceed the ${String(input.max_config_bytes)}-byte budget.`,
-        {
-          name: "max_config_bytes",
-          maximum: input.max_config_bytes,
-          required: configBytesExpanded,
-        },
-      );
+      throw configBytesLimit(configBytesExpanded);
   };
 
   // Index entries keep their text, annotations included, in the report;
@@ -1708,6 +1839,8 @@ const inventoryOciImageLayout = async (
           const parsedConfig = parseConfig(
             configDocument.value,
             input.include_env_values,
+            input.max_config_bytes - configBytesExpanded,
+            (bytes) => configBytesLimit(configBytesExpanded + bytes),
           );
           // A defective member is omitted from the facts rather than
           // failing the whole inventory, and the config is reported once.
