@@ -6,6 +6,7 @@ import { createVerifierHttpServer } from "../../../scripts/lib/verifier-http-ser
 import { createIdaMcpConnection } from "../../../src/ida/IdaMcpConnection.js";
 import { createStreamableHttpJebMcpConnection } from "../../../src/jeb/JebMcpConnection.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { idaConnectionDependencies } from "../../support/idaConnectionDependencies.js";
 
 const requestSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
@@ -143,6 +144,7 @@ const createConnection = (provider: "ida" | "jeb", endpoint: string) => {
         timeoutMs: 1_000,
       },
       {},
+      idaConnectionDependencies(),
     );
     return {
       connect: () => connection.connect(),

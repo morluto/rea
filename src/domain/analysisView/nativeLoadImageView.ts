@@ -4,7 +4,10 @@ import {
   nativeLoadImageObservationSchema,
   nativeLoadImageSchema,
   nativeUnsupportedLoadImageSchema,
-  nativeDosLoadImageSchema,
+  nativeDosMzLoadImageSchema,
+  nativeDosComVerifiedComLoaderLoadImageSchema,
+  nativeDosComVerifiedBinaryLoaderLoadImageSchema,
+  nativeDosComMismatchLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeDolLoadImageSchema,
 } from "../native/nativeLoadImage.js";
@@ -23,6 +26,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 
 const observation = nativeLoadImageObservationSchema.shape;
@@ -120,7 +124,22 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       observations: true,
       limitations: true,
     }),
-    nativeDosLoadImageSchema.omit({
+    nativeDosMzLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedComLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComVerifiedBinaryLoaderLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeDosComMismatchLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,
@@ -197,7 +216,7 @@ const selectRows = (source: readonly (Row | string)[], view: PageRequest) => {
   };
 };
 
-/** Query the owner's parsed historical observations without reopening the target. */
+/** Query the owner's parsed observations without reopening the target. */
 export const projectNativeLoadImageView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -277,7 +296,7 @@ export const projectNativeLoadImageView = (
           sections: "sections" in report ? report.sections.length : null,
         },
       },
-      coverage: completeWithinViewCoverage(1, 1),
+      coverage: completeWithinViewCoverage(1),
     });
 
   const selected =
@@ -290,27 +309,19 @@ export const projectNativeLoadImageView = (
           ? report.sections
           : undefined
         : observed[view.collection];
-  const page = selectRows(selected ?? [], view);
-  const symbolUnrecorded =
-    view.collection === "relocations" &&
-    (view.fields === undefined ||
-      view.fields.some((field: string) => field === "symbol")) &&
-    page.rows.some(({ record }) => !("symbol" in record));
+  const page = selected === undefined ? undefined : selectRows(selected, view);
   return ok({
     ...shared,
-    unknowns: symbolUnrecorded
-      ? [
-          ...shared.unknowns,
-          "The relocation symbol was not recorded for at least one selected row.",
-        ]
-      : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,
     items: nativeLoadImageViewItemsSchema.parse({
       collection: view.collection,
-      rows: selected === undefined ? null : page.rows,
+      rows: page?.rows ?? null,
     }),
-    coverage: pageViewCoverage(view.offset, page.rows.length, page.total),
+    coverage:
+      page === undefined
+        ? unavailableViewCoverage()
+        : pageViewCoverage(view.offset, page.rows.length, page.total),
   });
 };

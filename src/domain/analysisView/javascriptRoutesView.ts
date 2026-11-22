@@ -32,6 +32,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget } from "../evidence.js";
 
 const identity = { kind: z.literal("javascript-routes") };
 const paging = {
@@ -128,14 +129,6 @@ export const webRoutesSummaryDeliveryShape = {
     webBundleViewRequestSchema,
   ]),
 };
-export const javaScriptRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(javaScriptRoutesSummaryDeliveryShape),
-]);
-export const webRoutesDeliverySchema = z.discriminatedUnion("detail", [
-  z.strictObject(javaScriptRoutesCompleteDeliveryShape),
-  z.strictObject(webRoutesSummaryDeliveryShape),
-]);
 export const javaScriptRouteProvenanceSchema = z.strictObject({
   source_id: javaScriptRouteInventorySourceSchema.shape.id,
   occurrence_id: javaScriptRouteOccurrenceSchema.shape.id.nullable(),
@@ -275,16 +268,16 @@ const read = (parent: AnalysisViewParent): Result<Checked, AnalysisError> => {
 const candidates = <T extends { id: string }>(
   rows: Table<T>,
   selected: readonly string[] | undefined,
-): readonly T[] =>
-  selected === undefined
-    ? rows.rows
-    : [...new Set(selected)]
-        .flatMap((id) => {
-          const entry = rows.byId.get(id);
-          return entry === undefined ? [] : [entry];
-        })
-        .sort((a, b) => a.index - b.index)
-        .map((entry) => entry.row);
+): readonly T[] => {
+  if (selected === undefined) return rows.rows;
+  const entries: { row: T; index: number }[] = [];
+  for (const id of new Set(selected)) {
+    const entry = rows.byId.get(id);
+    if (entry !== undefined) entries.push(entry);
+  }
+  entries.sort((a, b) => a.index - b.index);
+  return entries.map((entry) => entry.row);
+};
 const choose = (
   row: Record<string, JsonValue>,
   fields: readonly string[],
@@ -348,8 +341,8 @@ export const projectJavaScriptRoutesView = (
       path: identity.data.input_path,
       sha256: identity.data.root_artifact_sha256,
     };
-    const subject = parent.subject;
-    if (subject != null && subject.digest.sha256 !== artifact.sha256)
+    const subject = evidenceFileTarget(parent);
+    if (subject != null && subject.sha256 !== artifact.sha256)
       return err(
         inputError(
           "Parent subject does not match its application artifact identity.",
@@ -425,10 +418,7 @@ export const projectJavaScriptRoutesView = (
         },
       },
       byte_limited: false,
-      coverage: completeWithinViewCoverage(
-        inventory.routes.length,
-        inventory.routes.length,
-      ),
+      coverage: completeWithinViewCoverage(inventory.routes.length),
     };
     return jsonValueByteLength(summary, PROJECTION_BYTES) > PROJECTION_BYTES
       ? tooLarge()
@@ -454,7 +444,7 @@ export const projectJavaScriptRoutesView = (
       sources: readonly string[];
     },
   ) => {
-    const rows = candidates(source, ids).filter(predicate),
+    const rows = candidates(source, ids),
       items: Record<string, JsonValue>[] = [],
       refs = new Map<string, JavaScriptRouteInventorySource>();
     // Count the fixed envelope once. Counter widths and status text reserve the
@@ -480,12 +470,17 @@ export const projectJavaScriptRoutesView = (
         ),
       byte_limited = false;
     if (bytes > PAGE_BYTES) return tooLarge();
-    for (
-      let index = page.offset;
-      index < rows.length && items.length < page.limit;
-      index++
-    ) {
-      const projected = project(rows[index]!),
+    let total = 0;
+    for (const row of rows) {
+      if (!predicate(row)) continue;
+      const matchedIndex = total++;
+      if (
+        matchedIndex < page.offset ||
+        items.length >= page.limit ||
+        byte_limited
+      )
+        continue;
+      const projected = project(row),
         additions: JavaScriptRouteInventorySource[] = [];
       let addedBytes =
         jsonValueByteLength(projected.item, PAGE_BYTES - bytes) +
@@ -505,11 +500,11 @@ export const projectJavaScriptRoutesView = (
       if (bytes + addedBytes > PAGE_BYTES) {
         if (items.length === 0) return tooLarge();
         byte_limited = true;
-        break;
+        continue;
       }
       bytes += addedBytes;
       items.push(projected.item);
-      for (const row of additions) refs.set(row.id, row);
+      for (const sourceRow of additions) refs.set(sourceRow.id, sourceRow);
     }
     const result = {
       ...shared,
@@ -517,7 +512,7 @@ export const projectJavaScriptRoutesView = (
       sources: [...refs.values()],
       summary: null,
       byte_limited,
-      coverage: pageViewCoverage(page.offset, items.length, rows.length),
+      coverage: pageViewCoverage(page.offset, items.length, total),
     };
     return jsonValueByteLength({ ...result, items }, PROJECTION_BYTES) >
       PROJECTION_BYTES

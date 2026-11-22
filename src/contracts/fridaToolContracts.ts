@@ -1,17 +1,28 @@
+import {
+  fridaCapturePolicySchema,
+  fridaCapturePolicyInputSchema,
+} from "../domain/fridaCapturePolicy.js";
 import { z } from "zod";
 
-import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
-import { toolContractMetadata } from "./toolEffects.js";
+import {
+  toolContractMetadata,
+  evidenceEffects,
+  toolEffects,
+} from "./toolEffects.js";
 import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,
   fridaSessionStatusSchema,
 } from "../domain/fridaSessionStatus.js";
-import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/analysisView.js";
+import { fridaSessionStatusSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/fridaSessionStatusSummarySchema.js";
 import {
   fridaDeviceListSchema,
   fridaProcessListSchema,
@@ -56,6 +67,7 @@ const exclusiveDeviceSelector = <Schema extends z.ZodTypeAny>(schema: Schema) =>
 const sessionId = z.string().uuid();
 
 const scriptOutput = z.strictObject({
+  capture_limits: fridaCapturePolicySchema.optional(),
   script_id: z.string().uuid(),
   source_kind: z.enum(["inline", "file"]),
   source_path: z.string().nullable(),
@@ -68,7 +80,11 @@ const scriptOutput = z.strictObject({
 export const FRIDA_TOOL_CONTRACTS = [
   {
     name: "list_frida_devices",
-    ...toolContractMetadata("list_frida_devices"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_frida_devices",
+      toolEffects({ launchesProcess: true, accessesNetwork: true }),
+    ),
     kind: "native-provider",
     description:
       "List Frida devices currently available to this host, optionally connecting to the caller-selected remote Frida endpoint. Remote authentication options are used for this call only and are never returned or recorded.",
@@ -78,7 +94,14 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "list_frida_processes",
-    ...toolContractMetadata("list_frida_processes"),
+    cli: true,
+    ...toolContractMetadata(
+      "list_frida_processes",
+      toolEffects({
+        launchesProcess: true,
+        accessesNetwork: true,
+      }),
+    ),
     kind: "native-provider",
     description:
       "List processes observed on a selected Frida device or caller-supplied remote endpoint. A remote connection is closed after discovery; authentication values are never returned or recorded.",
@@ -100,13 +123,23 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "start_frida_session",
-    ...toolContractMetadata("start_frida_session"),
+    ...toolContractMetadata(
+      "start_frida_session",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Attach Frida to one selected process or spawn one selected target. Spawned targets remain paused until resume_frida_session, allowing scripts to load before execution. Closing a session detaches instrumentation; it does not kill the target.",
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
@@ -134,7 +167,17 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "load_frida_script",
-    ...toolContractMetadata("load_frida_script"),
+    ...toolContractMetadata(
+      "load_frida_script",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Load caller-supplied JavaScript into a Frida session. Scripts can read or change target memory and behavior and can access the target process's capabilities. Messages and script errors are returned inline as Evidence; source content is not persisted.",
@@ -143,7 +186,9 @@ export const FRIDA_TOOL_CONTRACTS = [
         session_id: sessionId,
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
-        path: localPathStringSchema.optional(),
+        path: absoluteLocalPathStringSchema
+          .describe("Absolute local JavaScript source file to load")
+          .optional(),
       })
       .refine(
         (value) =>
@@ -169,7 +214,17 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "resume_frida_session",
-    ...toolContractMetadata("resume_frida_session"),
+    ...toolContractMetadata(
+      "resume_frida_session",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Resume the process created by a paused Frida spawn session. Attached processes are already running and cannot be resumed through this operation.",
@@ -184,7 +239,16 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "unload_frida_script",
-    ...toolContractMetadata("unload_frida_script"),
+    ...toolContractMetadata(
+      "unload_frida_script",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Unload one caller-selected Frida script from a live session. This removes that script's instrumentation from the target.",
@@ -205,7 +269,7 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "frida_session_status",
-    ...toolContractMetadata("frida_session_status"),
+    ...toolContractMetadata("frida_session_status", evidenceEffects),
     kind: "native-provider",
     description:
       "Read observed Frida session state on each call. Default detail=complete returns queued script messages and capture truncation. detail=summary retains the complete observation in this session and returns identity, state, scripts, retained message count and truncation without payloads. Export the complete parent with export_evidence_bundle; retained summaries are historical and never refresh live state.",
@@ -223,7 +287,17 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "close_frida_session",
-    ...toolContractMetadata("close_frida_session"),
+    ...toolContractMetadata(
+      "close_frida_session",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
       "Unload session scripts and attempt to detach REA's Frida session. Then resume a still-paused spawned process if script cleanup or session detach confirms instrumentation was released. Cleanup failures are reported. REA never kills the target; its final state is reported as unknown.",
@@ -238,20 +312,34 @@ export const FRIDA_TOOL_CONTRACTS = [
   },
   {
     name: "instrument_with_frida",
-    ...toolContractMetadata("instrument_with_frida"),
+    cli: true,
+    ...toolContractMetadata(
+      "instrument_with_frida",
+      toolEffects({
+        mutatesTarget: true,
+        mutatesSession: true,
+        launchesProcess: true,
+        accessesNetwork: true,
+        executesForeignCode: true,
+        idempotent: false,
+      }),
+    ),
     kind: "native-provider",
     description:
-      "Run one caller-authored Frida script against an explicitly selected process and detach when the observation window ends. The CLI and MCP share this ephemeral workflow; use MCP session operations for persistent sessions. Remote authentication is used only for this call and excluded from Evidence.",
+      "Run caller-authored Frida JavaScript against a selected process for one observation window, then detach. Scripts can read/change target memory and behavior and use the process's capabilities. CLI and MCP share this ephemeral workflow; use start_frida_session/load_frida_script for a persistent session. Remote authentication is call-local and excluded from Evidence. Detachment does not establish target termination.",
     inputSchema: z
       .strictObject({
         mode: z.enum(["attach", "spawn"]),
+        capture_limits: fridaCapturePolicyInputSchema.optional(),
         ...deviceSelector.shape,
         pid: z.int().positive().optional(),
         program: localPathStringSchema.optional(),
         argv: z.array(z.string()).optional(),
         source_kind: z.enum(["inline", "file"]),
         source: z.string().optional(),
-        path: localPathStringSchema.optional(),
+        path: absoluteLocalPathStringSchema
+          .describe("Absolute local JavaScript source file to load")
+          .optional(),
         duration_ms: z.int().min(0).max(60_000).default(1_000),
       })
       .refine(

@@ -1,3 +1,13 @@
+import { isProcessOwnershipInspectionCancellation } from "../ProcessInspectionCancellation.js";
+import { resolveSystemPs } from "../systemPs.js";
+import { processInspectionCancellations } from "../ProcessInspectionCleanup.js";
+import type { ProcessCaptureResourceScope } from "./ProcessCaptureLifecycle.js";
+import {
+  captureInspectionFailures,
+  normalizeCaptureFailure,
+  ProcessCaptureSamplingFailure,
+  type ProcessCaptureError,
+} from "./ProcessCaptureError.js";
 import type { ProcessSamplingCoverage } from "../../domain/process/processCaptureCoverage.js";
 import type {
   ProcessSample,
@@ -14,7 +24,7 @@ import {
   type SampledProcessRow as ProcessRow,
 } from "./LinuxProcessSampling.js";
 import {
-  isSamplingAbort,
+  settleSamplingReads,
   mergeSamplingDiagnostics,
   readProcSamplingSource,
   readSamplingSource,
@@ -26,6 +36,7 @@ import {
 
 interface SampleProcessContext {
   readonly rootPid: number;
+  readonly platform: NodeJS.Platform;
   readonly elapsedMs: number;
   readonly limit: number;
   readonly identities: Map<number, string>;
@@ -38,7 +49,7 @@ type ProcessIdentitySnapshot = Pick<
 >;
 
 /** Prove that forkpty completed session setup and installed the run token. */
-export const isInitializedPtyRoot = (options: {
+const isInitializedPtyRoot = (options: {
   readonly rootPid: number;
   readonly expectedRunId: string;
   readonly before: ProcessIdentitySnapshot;
@@ -99,7 +110,7 @@ const sampleLinux = async (
     );
     const batch = level.slice(0, batchSize);
     level = level.slice(batchSize);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       batch.map(({ pid, expectedParent }) =>
         inspectLinuxProcess(pid, expectedParent, signal, identities),
       ),
@@ -125,10 +136,11 @@ const sampleLinux = async (
 };
 
 const readPsRowsRaw = async (
+  platform: NodeJS.Platform,
   signal: AbortSignal,
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileOutput(
-    "ps",
+    (await resolveSystemPs(platform)).command,
     ["-axo", "pid=,ppid=,pgid=,sess=,command="],
     { signal, stopSignal: "SIGTERM" },
   );
@@ -143,6 +155,7 @@ const readPsRowsRaw = async (
       session_id: Number(match[4]) || null,
       command: match[5] ?? "",
       startTime: undefined,
+      lifecycle: undefined,
     }))
     .filter(
       (row) =>
@@ -155,11 +168,12 @@ const readPsRowsRaw = async (
 };
 
 const readPsRows = async (
+  platform: NodeJS.Platform,
   signal: AbortSignal,
 ): Promise<SamplingObservation<readonly ProcessRow[] | undefined>> =>
   samplingReadObservation(
     await readSamplingSource("process table (ps)", signal, () =>
-      readPsRowsRaw(signal),
+      readPsRowsRaw(platform, signal),
     ),
   );
 
@@ -168,7 +182,7 @@ const sampleLinuxFallback = async (
   context: SampleProcessContext,
   root: ProcessRow,
 ): Promise<SamplingObservation<readonly ProcessRow[]>> => {
-  const observed = await readPsRows(context.signal);
+  const observed = await readPsRows(context.platform, context.signal);
   if (observed.value === undefined)
     return samplingObservation([root], observed.diagnostics);
   const childrenByParent = new Map<number, number[]>();
@@ -195,7 +209,7 @@ const sampleLinuxFallback = async (
     );
     const candidates = batch.filter(({ pid }) => !visited.has(pid));
     for (const { pid } of candidates) visited.add(pid);
-    const observations = await Promise.all(
+    const observations = await settleSamplingReads(
       candidates.map(({ pid, expectedParent }) =>
         inspectLinuxProcessMetadata(
           pid,
@@ -231,12 +245,12 @@ const sampleLinuxFallback = async (
 };
 
 const readRootIdentity = async (
+  platform: NodeJS.Platform,
   rootPid: number,
   signal: AbortSignal,
 ): Promise<SamplingObservation<ProcessRow | undefined>> => {
-  if (process.platform === "linux")
-    return readLinuxProcessStat(rootPid, signal);
-  const rows = await readPsRows(signal);
+  if (platform === "linux") return readLinuxProcessStat(rootPid, signal);
+  const rows = await readPsRows(platform, signal);
   return samplingObservation(
     rows.value?.find(({ pid }) => pid === rootPid),
     rows.diagnostics,
@@ -244,13 +258,14 @@ const readRootIdentity = async (
 };
 
 const inspectInitializedPtyRoot = async (
+  platform: NodeJS.Platform,
   rootPid: number,
   runId: string,
   signal: AbortSignal,
 ): Promise<
   SamplingObservation<{ readonly startTime: string | undefined } | undefined>
 > => {
-  const before = await readRootIdentity(rootPid, signal);
+  const before = await readRootIdentity(platform, rootPid, signal);
   if (
     before.value === undefined ||
     before.value.process_group_id !== rootPid ||
@@ -258,7 +273,7 @@ const inspectInitializedPtyRoot = async (
   )
     return samplingObservation(undefined, before.diagnostics);
   const observedRunId =
-    process.platform === "linux"
+    platform === "linux"
       ? await readProcSamplingSource(
           `/proc/${String(rootPid)}/environ`,
           signal,
@@ -271,7 +286,7 @@ const inspectInitializedPtyRoot = async (
             () => readProcessRunId(rootPid, undefined, signal),
           ),
         );
-  const after = await readRootIdentity(rootPid, signal);
+  const after = await readRootIdentity(platform, rootPid, signal);
   const diagnostics = mergeSamplingDiagnostics(
     before.diagnostics,
     observedRunId.diagnostics,
@@ -297,7 +312,7 @@ const samplePs = async (
   const { rootPid, limit, signal } = context;
   if (limit <= 0) return samplingObservation([]);
 
-  const observed = await readPsRows(signal);
+  const observed = await readPsRows(context.platform, signal);
   const rows = observed.value ?? [];
   const rowByPid = new Map(rows.map((row) => [row.pid, row]));
   const childrenByParent = new Map<number, ProcessRow[]>();
@@ -334,11 +349,11 @@ const samplePs = async (
 const sampleProcesses = async (
   context: SampleProcessContext,
 ): Promise<SamplingObservation<readonly ProcessSample[]>> => {
-  if (process.platform === "win32" || context.limit <= 0)
+  if (context.platform === "win32" || context.limit <= 0)
     return samplingObservation([]);
 
   const rows =
-    process.platform === "linux"
+    context.platform === "linux"
       ? await sampleLinux(context)
       : await samplePs(context);
 
@@ -362,10 +377,32 @@ const sampleProcesses = async (
   return samplingObservation(samples, rows.diagnostics);
 };
 
+/** A private stop intent qualifies only explicit pure cancellation from every rejected read. */
+const isOwnedSamplingShutdown = (cause: unknown, reason: unknown): boolean => {
+  const inspections = captureInspectionFailures(cause);
+  return (
+    inspections.length > 0 &&
+    (!(cause instanceof ProcessCaptureSamplingFailure) ||
+      cause.userCategory === "cancelled") &&
+    inspections.every(
+      (inspection) =>
+        isProcessOwnershipInspectionCancellation(
+          inspection.inspectionFailure,
+        ) &&
+        processInspectionCancellations(inspection.inspectionFailure).every(
+          (fact) => fact.reason === reason,
+        ),
+    )
+  );
+};
+
 /** Start bounded process-tree sampling and expose an awaited stop. */
 export const startProcessSampler = (options: {
   readonly rootPid: number;
   readonly runId: string;
+  /** The host whose process table is sampled: procfs on Linux, ps elsewhere. */
+  readonly platform: NodeJS.Platform;
+  readonly resourceScope: ProcessCaptureResourceScope;
   readonly started: number;
   readonly limit: number;
   readonly samples: ProcessSample[];
@@ -374,27 +411,31 @@ export const startProcessSampler = (options: {
   readonly partial: boolean;
   readonly coverage: ProcessSamplingCoverage;
 }>) => {
-  const { rootPid, runId, started, limit, samples } = options;
+  const { rootPid, runId, platform, started, limit, samples } = options;
   const identities = new Map<number, string>();
   const lastObservations = new Map<number, string>();
   let pending: Promise<void> | undefined;
   let stopped = false;
+  const shutdownReason = Symbol("process sampler shutdown");
+  let stopRequested = false;
   let abortCurrent: (() => void) | undefined;
   let limitReached = false;
   let samplingFailures = 0;
   let samplingWasInterrupted = false;
   let firstSamplingFailure: string | null = null;
   let rootInitialized = false;
+  let inspectionFailure: ProcessCaptureError | undefined;
 
   const sample = (): void => {
     if (stopped || pending !== undefined) return;
 
     const controller = new AbortController();
-    abortCurrent = () => controller.abort();
+    abortCurrent = () => controller.abort(shutdownReason);
     pending = (async () => {
       let diagnostics = mergeSamplingDiagnostics();
       if (!rootInitialized) {
         const identity = await inspectInitializedPtyRoot(
+          platform,
           rootPid,
           runId,
           controller.signal,
@@ -408,6 +449,7 @@ export const startProcessSampler = (options: {
       }
       const observation = await sampleProcesses({
         rootPid,
+        platform,
         elapsedMs: monotonicProcessCaptureClock() - started,
         limit: limit + 1,
         identities,
@@ -442,17 +484,33 @@ export const startProcessSampler = (options: {
         }
       })
       .catch((cause: unknown) => {
-        if (isSamplingAbort(cause, controller.signal)) {
-          samplingWasInterrupted = true;
-        } else {
-          samplingFailures += 1;
-          firstSamplingFailure ??=
-            cause instanceof Error
-              ? `${cause.name}: ${cause.message}`
-              : typeof cause === "string"
-                ? cause
-                : `Unexpected sampling rejection (${typeof cause})`;
+        const normalized = normalizeCaptureFailure(cause);
+        const inspections = captureInspectionFailures(normalized);
+        for (const inspection of inspections)
+          options.resourceScope.retainInspectionFailure(inspection);
+        if (inspections.length > 0) {
+          if (
+            stopRequested &&
+            isOwnedSamplingShutdown(normalized, shutdownReason)
+          ) {
+            samplingWasInterrupted = true;
+            return;
+          }
+          inspectionFailure =
+            normalized instanceof ProcessCaptureSamplingFailure
+              ? normalized
+              : inspections[0];
+          stopped = true;
+          clearInterval(timer);
+          return;
         }
+        samplingFailures += 1;
+        firstSamplingFailure ??=
+          cause instanceof Error
+            ? `${cause.name}: ${cause.message}`
+            : typeof cause === "string"
+              ? cause
+              : `Unexpected sampling rejection (${typeof cause})`;
       })
       .then(() => {
         abortCurrent = undefined;
@@ -464,10 +522,12 @@ export const startProcessSampler = (options: {
   sample();
 
   return async () => {
+    stopRequested = true;
     stopped = true;
     clearInterval(timer);
     abortCurrent?.();
     await pending;
+    if (inspectionFailure !== undefined) throw inspectionFailure;
     const failureCount = samplingFailures + (samplingWasInterrupted ? 1 : 0);
     const interrupted =
       "Sampler shutdown interrupted an unfinished process observation; unexamined processes remain unknown";

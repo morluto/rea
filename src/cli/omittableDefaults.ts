@@ -1,23 +1,23 @@
-import { z } from "incur";
+import { z } from "zod";
 
 import type { CliInstance } from "./types.js";
-import { visitRegisteredCommands } from "./visitRegisteredCommands.js";
+import { cliCommands } from "./commandRegistry.js";
 
 type CommandInputs = Partial<Record<(typeof INPUT_GROUPS)[number], unknown>>;
 
-const INPUT_GROUPS = ["args", "env", "options"] as const;
+const INPUT_GROUPS = ["args", "options"] as const;
 
 /**
  * Advertise parser-filled defaults as omittable CLI inputs.
  *
- * Incur derives `--schema`, the `--llms` manifests, and help synopses from
+ * The CLI derives `--schema`, the `--llms` manifests, and help synopses from
  * Zod's output view, where a defaulted field always has a value and is
  * therefore listed as required. Callers may omit such a field, so each one is
  * wrapped as optional while its default, constraints, metadata, and parsed
  * value stay unchanged.
  */
 export const presentOmittableDefaults = (cli: CliInstance): void => {
-  visitRegisteredCommands(cli, (command) => presentInputs(command));
+  for (const { definition } of cliCommands(cli)) presentInputs(definition);
 };
 
 const presentInputs = (command: CommandInputs): void => {
@@ -33,17 +33,20 @@ const withOmittableDefaults = (schema: z.ZodObject): z.ZodObject => {
     fillsOmission(field),
   );
   if (omittable.length === 0) return schema;
-  return schema.safeExtend(
+  const metadata = schema.meta();
+  const result = schema.safeExtend(
     Object.fromEntries(
       omittable.map(([key, field]) => [key, optionalWithMetadata(field)]),
     ),
   );
+  return metadata === undefined ? result : result.meta(metadata);
 };
 
-/** Let the object parser decide omission; Incur advertises required outputs. */
+/** Check input omission without allocating an object wrapper per required field. */
 const fillsOmission = (field: z.ZodType): boolean =>
   field._zod.optout === undefined &&
-  z.object({ value: field }).safeParse({}).success;
+  field._zod.optin !== undefined &&
+  field.safeParse(undefined).success;
 
 const optionalWithMetadata = (field: z.ZodType): z.ZodType => {
   const metadata = field.meta();

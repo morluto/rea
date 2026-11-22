@@ -1,7 +1,9 @@
 import { plistUidValue } from "./plistUid.js";
 import { z } from "zod";
 
-import { jsonObjectSchema, jsonValueSchema } from "../jsonValue.js";
+import { jsonObjectSchema, ownedJsonValueSchema } from "../jsonValue.js";
+import { parseJsonWithDuplicatePolicy } from "../jsonDuplicateMember.js";
+import { malformedInput } from "../parseFailure.js";
 
 const objectNode = z.strictObject({
   id: z.string().min(1),
@@ -92,7 +94,8 @@ export const requireInterfaceBuilderArchive = (value: unknown): void => {
     )
   )
     return;
-  throw new TypeError(
+  throw malformedInput(
+    "interface-builder-archive",
     "Property list is not a recognized Interface Builder archive",
   );
 };
@@ -646,7 +649,9 @@ const jsonSafeRecord = (value: Record<string, unknown>) =>
       try {
         const serialized = JSON.stringify(item);
         if (serialized === undefined) return [];
-        const parsed = jsonValueSchema.safeParse(JSON.parse(serialized));
+        const decoded = parseJsonWithDuplicatePolicy(serialized, "reject");
+        if (!decoded.ok) return [];
+        const parsed = ownedJsonValueSchema.safeParse(decoded.value);
         return parsed.success ? [[key, parsed.data]] : [];
       } catch (cause: unknown) {
         // Unserializable entries are omitted from the record.

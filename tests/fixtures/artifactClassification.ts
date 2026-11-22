@@ -1,5 +1,5 @@
-import { createAsarHeaderSignatureProbe } from "../../src/artifacts/AsarHeader.js";
 import { classifyArtifactContent } from "../../src/artifacts/inventory/ArtifactGraphConstruction.js";
+import { createAsarHeaderSignatureProbe } from "../../src/resources/index.js";
 
 /** Observe a supplied byte prefix before assigning an inventory path role. */
 export const classifyArtifactBytesAtPath = (

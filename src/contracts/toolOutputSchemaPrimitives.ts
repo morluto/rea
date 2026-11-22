@@ -1,10 +1,11 @@
+import { nativeSegmentListSchema } from "../domain/native/nativeSegments.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
-import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
 import {
   evidenceSchema,
@@ -53,6 +54,29 @@ export const requireOutputSchema = <
 /** The readiness owner's repair instruction; never the failure description. */
 const providerRemediation = z.string().min(1);
 
+const nativeValueFlowDeclaration = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("supported") }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.string().min(1),
+  }),
+]);
+const nativeValueFlowSupport = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("supported"),
+    provider_id: z.string().min(1),
+  }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    provider_id: z.string().min(1),
+    reason: z.string().min(1),
+  }),
+  z.strictObject({
+    status: z.literal("unknown"),
+    provider_id: z.string().min(1).nullable(),
+  }),
+]);
+
 const providerCapabilityFacts = {
   operation: z.string(),
   effects: z.object({
@@ -65,6 +89,9 @@ const providerCapabilityFacts = {
     requires_root: z.boolean(),
   }),
   limitations: z.array(z.string()),
+  native_value_flow: nativeValueFlowDeclaration.exactOptional(),
+  independent_decompile: z.literal(true).exactOptional(),
+  call_destination_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -80,6 +107,7 @@ export const providerCapability = z.discriminatedUnion("available", [
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
     remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 export type ProviderCapability = z.output<typeof providerCapability>;
@@ -99,6 +127,10 @@ const providerCapabilityGroupFacts = {
   operations: z.array(z.string().min(1)).min(1),
   effects: z.array(providerCapabilityFacts.effects.keyof()),
   limitations: z.array(z.string()),
+  native_value_flow: nativeValueFlowDeclaration.exactOptional(),
+  independent_decompile: providerCapabilityFacts.independent_decompile,
+  call_destination_decompile:
+    providerCapabilityFacts.call_destination_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -114,6 +146,7 @@ const providerCapabilityGroup = z.discriminatedUnion("available", [
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
     remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 
@@ -136,11 +169,24 @@ export const expandProviderCapabilities = (
       group.operations.map((operation) => ({
         ...providerCapability.parse({
           operation,
+          ...(group.native_value_flow === undefined
+            ? {}
+            : { native_value_flow: group.native_value_flow }),
+          ...(group.independent_decompile === undefined
+            ? {}
+            : { independent_decompile: group.independent_decompile }),
+          ...(group.call_destination_decompile === undefined
+            ? {}
+            : { call_destination_decompile: group.call_destination_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
           ...("remediation" in group && group.remediation !== undefined
             ? { remediation: group.remediation }
+            : {}),
+          ...("runtime_unavailable" in group &&
+          group.runtime_unavailable === true
+            ? { runtime_unavailable: true }
             : {}),
           effects: Object.fromEntries(
             PROVIDER_EFFECT_NAMES.map((name) => [
@@ -305,16 +351,34 @@ const providerTargetSupport = z.discriminatedUnion("status", [
   }),
 ]);
 
+/** Where a selected provider's choice came from; never a priority or fallback. */
+const analysisProviderSelectionSource = z.enum([
+  "request",
+  "environment",
+  "auto-single-candidate",
+]);
+
+const providerSelectionRejection = z.object({
+  provider_id: z.string(),
+  origin: z.enum(["availability", "target"]),
+  code: z.string().min(1),
+  reason: z.string().min(1),
+  remediation: providerRemediation.exactOptional(),
+  diagnostics: jsonObjectSchema,
+});
+
 /** Complete candidate facts, including provider-owned diagnostics and capability sets. */
 export const analysisProviderCandidate = z.object({
   provider: providerIdentity,
   availability: providerAvailability,
   target_support: providerTargetSupport,
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(providerSelectionRejection),
   capabilities: z.array(providerCapabilitySet),
 });
 
-/** Summary candidate: the same status, code, and reason without remediation, diagnostics or capabilities. */
+/** Summary candidate: the same status, code, reason and rejection codes without remediation, diagnostics or capabilities. */
 export const analysisProviderCandidateSummary = z.strictObject({
   provider: providerIdentity,
   availability: z.discriminatedUnion("status", [
@@ -328,6 +392,15 @@ export const analysisProviderCandidateSummary = z.strictObject({
     providerTargetSupportStates.unsupported.strict(),
   ]),
   selected: z.boolean(),
+  selection_source: analysisProviderSelectionSource.nullable(),
+  rejections: z.array(
+    z.strictObject({
+      provider_id: z.string(),
+      origin: z.enum(["availability", "target"]),
+      code: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  ),
 });
 
 const clientFeatureNameSchema = z.enum([
@@ -369,6 +442,11 @@ const toolAvailabilityFacts = {
   surface: z.string(),
   default_mode_available: z.boolean().optional(),
   modes: z.array(toolAvailabilityMode).optional(),
+  value_flow_support: nativeValueFlowSupport
+    .describe(
+      "The named provider's declared ability to supply value flow for some functions, separate from runtime readiness. Supported does not guarantee a model for a particular function; unknown means no declaration.",
+    )
+    .exactOptional(),
   client_requirements: z.object({
     required: z.array(clientFeatureNameSchema),
     optional: z.array(clientFeatureNameSchema),
@@ -395,6 +473,12 @@ const toolAvailabilityFacts = {
   }),
 };
 
+/**
+ * Advertised operations the current provider offers for part of an
+ * unavailable operation's question. They do not replace that operation.
+ */
+const toolAvailabilityAlternatives = z.array(z.string().min(1)).min(1);
+
 export const toolUnavailabilityReason = z.enum([
   "client_capability_missing",
   "target_required",
@@ -416,6 +500,7 @@ export const toolAvailability = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: toolUnavailabilityReason,
     remediation: z.string().nullable(),
+    alternatives: toolAvailabilityAlternatives.optional(),
   }),
 ]);
 export type ToolAvailability = z.output<typeof toolAvailability>;
@@ -434,6 +519,7 @@ const toolAvailabilityStatusGroupFacts = {
   names: z.array(z.string().min(1)).min(1),
   default_mode_available: toolAvailabilityFacts.default_mode_available,
   modes: toolAvailabilityFacts.modes,
+  value_flow_support: toolAvailabilityFacts.value_flow_support,
   client_requirements: toolAvailabilityFacts.client_requirements.optional(),
 };
 
@@ -443,6 +529,7 @@ const toolAvailabilityGroupFacts = {
   default_mode_available:
     toolAvailabilityStatusGroupFacts.default_mode_available,
   modes: toolAvailabilityStatusGroupFacts.modes,
+  value_flow_support: toolAvailabilityStatusGroupFacts.value_flow_support,
   client_requirements: toolAvailabilityStatusGroupFacts.client_requirements,
   effects: z.array(toolAvailabilityFacts.effects.keyof()),
   annotations: z.array(toolAvailabilityFacts.annotations.keyof()),
@@ -461,6 +548,7 @@ const toolAvailabilityGroupOf = <Facts extends z.ZodRawShape>(facts: Facts) =>
       available: z.literal(false),
       reason: toolUnavailabilityReason,
       remediation: z.string().nullable(),
+      alternatives: toolAvailabilityAlternatives.optional(),
     }),
   ]);
 
@@ -550,6 +638,11 @@ export const sessionProviderFacts = z
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,
     provider_operation_health: providerOperationHealth,
+    analysis_provider_candidates_observed: z
+      .enum(["status_request", "target_selection", "not_applicable"])
+      .describe(
+        "When provider candidate observations were collected: this status request, the retained target selection, or not applicable to a resource-only session.",
+      ),
     analysis_provider_binding: z
       .object({
         provider: providerIdentity,
@@ -559,6 +652,7 @@ export const sessionProviderFacts = z
           "auto-single-candidate",
         ]),
         analysis_profile: analysisProfileSchema,
+        release_verification: providerReleaseVerificationSchema.optional(),
       })
       .nullable(),
     client_features: z.object({
@@ -641,34 +735,7 @@ export const addressedEntry = z.object({
   address: z.string(),
   name: z.string(),
 });
-const unavailable = z.object({
-  available: z.literal(false),
-  reason: z.string(),
-});
-
-const availableMemoryPermissions = z.object({
-  available: z.literal(true),
-  source: z.literal("ghidra-memory-block"),
-});
-
-const memoryRegionOutput = z.object({
-  name: z.string(),
-  start: z.string(),
-  end: z.string(),
-  readable: z.boolean().nullable(),
-  writable: z.boolean().nullable(),
-  executable: z.boolean().nullable(),
-  permissions: z.union([unavailable, availableMemoryPermissions]),
-  provenance: z.enum(["hopper-public-python-api", "ghidra-memory-block"]),
-  address_space: z.string().optional(),
-  image_base: z.string().optional(),
-  initialized: z.boolean().optional(),
-  overlay: z.boolean().optional(),
-});
-
-export const segmentOutput = evidenceResultOf(
-  z.array(memoryRegionOutput.extend({ sections: z.array(memoryRegionOutput) })),
-);
+export const segmentOutput = evidenceResultOf(nativeSegmentListSchema);
 
 export const procedureInfoOutput = evidenceResultOf(procedureInfoSchema);
 
@@ -695,5 +762,3 @@ export const objcClassDiscoveryOutput = evidenceResultOf(
     identity_coverage: objcClassDiscoveryCoverageSchema,
   }),
 );
-
-export const functionDossierOutput = evidenceResultOf(functionDossierSchema);

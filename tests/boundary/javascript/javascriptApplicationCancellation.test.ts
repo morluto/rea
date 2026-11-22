@@ -1,12 +1,13 @@
 import { setImmediate } from "node:timers";
 import { mkdir, open, realpath, symlink, writeFile } from "node:fs/promises";
+import { javascriptSourceAnalysis } from "../../../src/composition/javascriptSourceAnalysis.js";
 import { basename, join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import {
   ArtifactResourceScope,
   type ArtifactResourceOwner,
-} from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactResourceScope.js";
 import { analyzeJavaScriptApplication as analyzeOwnedApplication } from "../../../src/application/javascript/JavaScriptApplicationService.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -57,6 +58,7 @@ it.each(["worker-phase", "final-cleanup", "no-cancellation"] as const)(
       { input_path: root, format: "directory" },
       scope,
       {
+        sourceAnalysis: javascriptSourceAnalysis,
         signal: controller.signal,
         progress: {
           async report(event) {
@@ -95,6 +97,63 @@ it.each(["worker-phase", "final-cleanup", "no-cancellation"] as const)(
   },
 );
 
+it("retains worker cleanup when progress reporting fails during analysis", async () => {
+  const root = await createTestTempDirectory("rea-js-progress-cleanup-");
+  await writeFile(join(root, "main.js"), "export const observed = 7;");
+  await writeFile(join(root, "second.js"), "export const later = 8;");
+  const primary = new Error("progress reporting failed");
+  let sourceReports = 0;
+  let denyRemoval = true;
+  let runtimePath: string | undefined;
+  const originalClose = PrivateRuntimeRoot.prototype.close;
+  const close = vi
+    .spyOn(PrivateRuntimeRoot.prototype, "close")
+    .mockImplementation(async function (this: PrivateRuntimeRoot) {
+      if (basename(this.path).startsWith("rea-javascript-analysis-")) {
+        runtimePath = this.path;
+        if (denyRemoval) throw new Error("worker root removal failed");
+      }
+      await originalClose.call(this);
+    });
+  const reuse = vi
+    .spyOn(JavaScriptAnalysisWorker.prototype, "canReuse")
+    .mockReturnValue(false);
+  const scope = new ArtifactResourceScope();
+  onTestFinished(async () => {
+    denyRemoval = false;
+    try {
+      await scope.close();
+    } finally {
+      close.mockRestore();
+      reuse.mockRestore();
+    }
+  });
+  const result = await analyzeOwnedApplication(
+    { input_path: root, format: "directory" },
+    scope,
+    {
+      sourceAnalysis: javascriptSourceAnalysis,
+      progress: {
+        async report(event) {
+          if (
+            event.phase === "parse_javascript_source" &&
+            ++sourceReports === 2
+          )
+            throw primary;
+        },
+      },
+    },
+  );
+  if (result.ok) throw new Error("Expected progress failure");
+  expect(runtimePath).toBeDefined();
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toContain(runtimePath);
+  expect(result.error.cause).toMatchObject({ cause: { cause: primary } });
+  denyRemoval = false;
+  await scope.close();
+  expect(result.error.cleanupIncomplete).toBe(false);
+});
+
 it.each(["during cleanup", "on the next control turn"] as const)(
   "retains the final source when cancellation arrives %s after analysis",
   async (timing) => {
@@ -129,7 +188,10 @@ it.each(["during cleanup", "on the next control turn"] as const)(
     const result = await analyzeOwnedApplication(
       { input_path: selected, format: "directory" },
       scope,
-      { signal: controller.signal },
+      {
+        sourceAnalysis: javascriptSourceAnalysis,
+        signal: controller.signal,
+      },
     );
     if (result.ok) throw new Error("Cancelled handoff must not succeed");
     expect(result.error.cause).toBe(reason);
@@ -542,6 +604,7 @@ it("keeps the exact retained descriptor owner through application failure transl
   const result = await analyzeOwnedApplication(
     { input_path: root, format: "directory" },
     scope,
+    { sourceAnalysis: javascriptSourceAnalysis },
   );
   if (result.ok) throw new Error("Expected retained cleanup to block analysis");
   expect(result.error.cleanupIncomplete).toBe(true);

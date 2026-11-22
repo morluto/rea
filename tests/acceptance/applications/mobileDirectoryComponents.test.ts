@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { minimalElfImage } from "../../fixtures/nativeHeaders.js";
 
 import {
   TextReader,
@@ -19,7 +20,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { harmonyApplicationProjectionResultSchema } from "../../../src/domain/harmony/harmonyApplication.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, type CliInvocation } from "../../support/cli/cliFixture.js";
 
 const harmony = {
   family: "HarmonyOS",
@@ -140,12 +141,14 @@ const fixtures = [
 
 cliTest.for(fixtures)(
   "preserves entry kinds in $family projections through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-directory-");
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const mode of ["directories", "files", "nested"] as const) {
+      // Keep one fresh dispatcher check per family; reuse later commands.
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: mode === "directories" });
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const path of fixture.paths) {
         if (mode !== "files")
@@ -156,9 +159,7 @@ cliTest.for(fixtures)(
             path.endsWith(".dylib")
               ? new Uint8ArrayReader(thinMach(0xfeedfacf, 0x0100000c))
               : path.endsWith(".so")
-                ? new Uint8ArrayReader(
-                    Uint8Array.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
-                  )
+                ? new Uint8ArrayReader(Uint8Array.from(minimalElfImage()))
                 : new TextReader("opaque fixture content"),
           );
       }
@@ -168,7 +169,7 @@ cliTest.for(fixtures)(
       const path = join(root, `${mode}.${fixture.extension}`);
       await writeFile(path, bytes);
 
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
@@ -194,7 +195,7 @@ cliTest.for(fixtures)(
 
       const input = { inventory_evidence: [inventoryEvidence] };
       const originalInput = JSON.stringify(input);
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, originalInput, "--json"],
         environment,
       });
@@ -260,6 +261,7 @@ cliTest.for(fixtures)(
         inventory_complete: true,
       });
       if ("packaging_model" in projection) {
+        expect(projection.unclassified_components, mode).toEqual([]);
         expect(projection.packaging_model, mode).toBe(
           mode === "files" ? "stage" : "unknown",
         );
@@ -314,12 +316,13 @@ cliTest.for([
   },
 ])(
   "preserves encrypted $family path facts through CLI and stdio MCP",
-  { timeout: 60_000 },
   async (fixture, { cli }) => {
     const root = await createTestTempDirectory("rea-mobile-encrypted-paths-");
     const environment = { HOME: root, USERPROFILE: root };
     const { call } = await connectLocalToolsMcp(environment);
     for (const encrypted of [false, true]) {
+      const run = (invocation: CliInvocation) =>
+        cli.run({ ...invocation, freshProcess: !encrypted });
       const writer = new ZipWriter(new Uint8ArrayWriter());
       for (const member of fixture.paths)
         await writer.add(
@@ -330,14 +333,14 @@ cliTest.for([
       const bytes = await writer.close();
       const path = join(root, `${encrypted}.${fixture.extension}`);
       await writeFile(path, bytes);
-      const inspected = await cli.run({
+      const inspected = await run({
         arguments: ["inspect-artifact", path, "--json"],
         environment,
       });
       expect(inspected.exitCode, inspected.stderr).toBe(0);
       const inventory = parseEvidence(inspected.json);
       const input = { inventory_evidence: [inventory] };
-      const projected = await cli.run({
+      const projected = await run({
         arguments: [fixture.command, JSON.stringify(input), "--json"],
         environment,
       });

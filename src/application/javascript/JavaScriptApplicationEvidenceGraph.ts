@@ -1,9 +1,23 @@
 import {
+  canBorrowParsedJsonSnapshot,
+  freezeJsonSnapshot,
+  immutableJsonSnapshotMember,
+  isImmutableJsonSnapshot,
+} from "../../domain/immutableJson.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import {
   JAVASCRIPT_APPLICATION_PROVIDER,
   JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
   MANAGED_WORKFLOW_PROVIDER,
 } from "../../domain/investigationProviders.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  evidenceFileTarget,
+  evidenceSubjectDisplay,
+  evidenceSubjectTarget,
+  type Evidence,
+  type EvidenceSubjectTarget,
+} from "../../domain/evidence.js";
 import { readEvidence } from "../../domain/evidenceValidation.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import {
@@ -34,6 +48,31 @@ export interface ApplicationGraphEvidenceSource {
   readonly rootArtifactSha256: string;
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
+
+/** Carry a subject only when it identifies the graph's root artifact. */
+export const applicationGraphSubjectTarget = (
+  source: ApplicationGraphEvidenceSource,
+): EvidenceSubjectTarget | undefined => {
+  const subject = source.evidence.subject;
+  const staticRootObserved =
+    source.kind === "static-application" &&
+    source.graph.nodes.some(
+      (node) =>
+        node.kind === "artifact" &&
+        node.identity.strategy === "content-digest" &&
+        node.identity.sha256 === source.rootArtifactSha256 &&
+        node.observations.some(
+          ({ evidence }) => evidence.extractor.operation === "inventory-root",
+        ),
+    );
+  const file = evidenceFileTarget({ subject });
+  return staticRootObserved ||
+    (source.kind === "managed-application" &&
+      file?.format === "pe" &&
+      file.sha256 === source.rootArtifactSha256)
+    ? evidenceSubjectTarget(subject)
+    : undefined;
+};
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */
 export interface ApplicationGraphEvidenceInputFailure {
@@ -93,41 +132,70 @@ export const parseApplicationGraphEvidence = (
     const evidence = parseEvidenceInput(input);
     const owned = ownedApplicationSources.get(evidence);
     if (owned !== undefined) return owned;
+    const immutable =
+      isImmutableEvidence(evidence) && isImmutableJsonSnapshot(evidence);
+    let source: ApplicationGraphEvidenceSource;
     if (evidence.operation === "analyze_javascript_application") {
       requirePredicate(evidence, "rea.javascript-application-analysis", path);
       requireProvider(evidence, JAVASCRIPT_APPLICATION_PROVIDER, path);
-      return staticApplicationSource(evidence, path);
-    }
-    if (evidence.operation === "reconcile_javascript_runtime") {
+      source = staticApplicationSource(evidence, path, immutable);
+    } else if (evidence.operation === "reconcile_javascript_runtime") {
       requirePredicate(evidence, "rea.javascript-runtime-reconciliation", path);
       requireProvider(
         evidence,
         JAVASCRIPT_RUNTIME_RECONCILIATION_PROVIDER,
         path,
       );
-      return staticRuntimeSource(evidence, path);
-    }
-    if (evidence.operation === "project_managed_application_graph") {
+      source = staticRuntimeSource(evidence, path, immutable);
+    } else if (evidence.operation === "project_managed_application_graph") {
       requirePredicate(evidence, "rea.managed-application-graph", path);
       requireProvider(evidence, MANAGED_WORKFLOW_PROVIDER, path);
-      return managedApplicationSource(evidence, path);
+      source = managedApplicationSource(evidence, path, immutable);
+    } else {
+      throw invalidEvidence(
+        path,
+        "operation",
+        "Expected authenticated JavaScript analysis, runtime reconciliation, or managed application graph Evidence.",
+      );
     }
-    throw invalidEvidence(
-      path,
-      "operation",
-      "Expected authenticated JavaScript analysis, runtime reconciliation, or managed application graph Evidence.",
-    );
+    if (immutable) {
+      const cached = Object.freeze(source);
+      ownedApplicationSources.set(evidence, cached);
+      return cached;
+    }
+    return source;
   });
+
+const borrowOrSealNormalizedResult = <Parsed extends JsonValue>(
+  evidence: Evidence,
+  parsed: Parsed,
+  immutable: boolean,
+  memberKeys: readonly string[],
+): Parsed => {
+  if (!immutable) return parsed;
+  const snapshot = immutableJsonSnapshotMember(evidence, "normalized_result");
+  const owned =
+    snapshot !== undefined && canBorrowParsedJsonSnapshot(snapshot, parsed)
+      ? (snapshot as Parsed)
+      : freezeJsonSnapshot(parsed);
+  for (const key of memberKeys) immutableJsonSnapshotMember(owned, key);
+  return owned;
+};
 
 const staticApplicationSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => javascriptApplicationAnalysisResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+    "semantic_graph",
+  ]);
   return staticApplicationSourceForResult(evidence, result, path);
 };
 
@@ -169,6 +237,7 @@ const staticApplicationSourceForResult = (
 const staticRuntimeSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
@@ -179,11 +248,14 @@ const staticRuntimeSource = (
       "authority",
       "Runtime reconciliation Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => javascriptRuntimeReconciliationResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+  ]);
   assertResultEvidenceLinksInEnvelope(
     result.evidence_links,
     evidence,
@@ -211,6 +283,7 @@ const staticRuntimeSource = (
 const managedApplicationSource = (
   evidence: Evidence,
   path: readonly (string | number)[],
+  immutable: boolean,
 ): ApplicationGraphEvidenceSource => {
   if (
     evidence.authority !== "analyst-inference" ||
@@ -221,11 +294,14 @@ const managedApplicationSource = (
       "authority",
       "Managed application graph Evidence must use analyst-inference authority and inferred confidence.",
     );
-  const result = parseCallerValue(
+  const parsed = parseCallerValue(
     (input) => managedApplicationGraphResultSchema.parse(input),
     evidence.normalized_result,
     [...path, "normalized_result"],
   );
+  const result = borrowOrSealNormalizedResult(evidence, parsed, immutable, [
+    "graph",
+  ]);
   assertResultEvidenceLinksInEnvelope(
     result.evidence_links,
     evidence,
@@ -265,11 +341,12 @@ const assertApplicationSubject = (
   result: JavaScriptApplicationAnalysisResult,
   path: readonly (string | number)[],
 ): void => {
+  const target = evidenceFileTarget(evidence);
   if (
-    evidence.subject === null ||
-    evidence.subject.digest.sha256 !== result.root_artifact_sha256 ||
-    evidence.subject.format !== result.format ||
-    evidence.subject.local_path !== result.input_path
+    target === undefined ||
+    target.sha256 !== result.root_artifact_sha256 ||
+    target.format !== result.format ||
+    evidenceSubjectDisplay(evidence)?.local_path !== result.input_path
   )
     throw invalidEvidence(
       path,
@@ -330,7 +407,9 @@ export const parseNativeApplicationEvidence = (
 > =>
   captureInputValidation(() => {
     const parsed = inputs.map((input) => parseEvidenceInput(input));
-    const withoutSubject = parsed.findIndex(({ subject }) => subject === null);
+    const withoutSubject = parsed.findIndex(
+      (evidence) => evidenceFileTarget(evidence) === undefined,
+    );
     if (withoutSubject !== -1)
       throw invalidEvidence(
         [...path, withoutSubject],

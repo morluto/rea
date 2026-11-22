@@ -278,8 +278,23 @@ cliTest(
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.json).normalized_result,
     );
+    const graph = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence.normalized_result,
+    );
+    expect(graph.manifest.root_format).toBe("node-sea");
     expect(
-      inspection.next_probes.map((probe) => probe.operation),
+      graph.occurrences.find((row) => row.logical_path === "main"),
+    ).toMatchObject({
+      artifact_kind: "javascript",
+      artifact_format: "javascript-bundle",
+      format_metadata: {
+        kind: "node-sea-entry",
+        role: "main-script",
+        source_path: "main",
+      },
+    });
+    expect(
+      inspection.next_probes.map(({ operation }) => operation),
     ).not.toContain("analyze_javascript_application");
   },
 );
@@ -291,8 +306,15 @@ cliTest("rejects a malformed SEA blob through the CLI", async ({ cli }) => {
   const result = await cli.run({
     arguments: ["inspect-artifact", source, "--json"],
   });
-  expect(result.exitCode).not.toBe(0);
-  expect(result.stdout + result.stderr).toContain("Node SEA blob magic");
+  expect(result.exitCode).toBe(1);
+  expect(result.json).toMatchObject({
+    code: "artifact_operation_failed",
+    details: {
+      operation: "inspect_artifact",
+      reason: "format",
+      detail: expect.stringMatching(/magic/iu),
+    },
+  });
 });
 
 cliTest(
@@ -315,8 +337,20 @@ cliTest(
       arguments: ["inspect-artifact", source, "--json"],
     });
     expect(result.exitCode).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
-      "Node SEA asset count exceeds",
-    );
+    expect(result.json).toMatchObject({
+      code: "truncated",
+      retryable: true,
+      details: {
+        reason: "limit",
+        boundary: "capacity",
+        reader_limit: {
+          parameter: "artifact_limits.node_sea.asset_count",
+          effective_value: 100_000,
+          required_value: 100_001,
+          unit: "count",
+          can_increase: true,
+        },
+      },
+    });
   },
 );

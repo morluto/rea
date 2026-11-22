@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
-import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.js";
+import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
 
 const base = 0x100000000n;
 const provenance = {
@@ -28,6 +28,46 @@ const classWithMetaclass = (options: { duplicateRoot?: boolean } = {}) => {
 };
 
 describe("Objective-C class-object coverage units", () => {
+  it("decodes deep protocol adoption in child-first order", () => {
+    const count = 5_000;
+    const bytes = Buffer.alloc(0x1000 + count * 128);
+    objcRecordBudgetMacho("protocol").copy(bytes);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 64);
+    bytes.writeBigUInt64LE(BigInt(bytes.length), 80);
+    bytes.writeBigUInt64LE(base + 0x1000n, 0x6c0);
+    for (let index = 0; index < count; index++) {
+      const at = 0x1000 + index * 128;
+      bytes.writeBigUInt64LE(base + 0x980n, at + 8);
+      bytes.writeUInt32LE(72, at + 64);
+      if (index + 1 < count) {
+        bytes.writeBigUInt64LE(base + BigInt(at + 96), at + 16);
+        bytes.writeBigUInt64LE(1n, at + 96);
+        bytes.writeBigUInt64LE(base + BigInt(at + 128), at + 104);
+      }
+    }
+    const result = decodeAppleDispatchMetadata(bytes, count * 3, provenance);
+    expect(result.objc_classes).toMatchObject([
+      { name: "FixtureClass", decode: { status: "decoded", reason: null } },
+    ]);
+    expect(
+      result.objc_protocol_records.map(({ location }) => location.file_offset),
+    ).toEqual(
+      Array.from(
+        { length: count },
+        (_, index) => 0x1000 + (count - index - 1) * 128,
+      ),
+    );
+    expect(result.objc_protocol_records[0]).toMatchObject({
+      name: "FixtureProtocol",
+      adopted_protocols: [],
+      decode: { status: "decoded", reason: null },
+    });
+    expect(result.objc_protocol_records.at(-1)).toMatchObject({
+      name: "FixtureProtocol",
+      adopted_protocols: ["FixtureProtocol"],
+      decode: { status: "decoded", reason: null },
+    });
+  });
   it("counts both admitted class and metaclass records", () => {
     const result = decodeAppleDispatchMetadata(
       classWithMetaclass(),

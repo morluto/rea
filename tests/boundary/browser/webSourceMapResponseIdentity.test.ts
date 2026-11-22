@@ -1,11 +1,9 @@
 import { createHash } from "node:crypto";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js";
-import {
-  analyzeWebBundleInputSchema,
-  webSourceMapsSchema,
-} from "../../../src/domain/webBundleAnalysis.js";
+import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
 const origin = "https://maps.example.test";
 const request = (index: number) => ({
@@ -22,110 +20,162 @@ const input = analyzeWebBundleInputSchema.parse({
 const digest = (bytes: Uint8Array | string): string =>
   createHash("sha256").update(bytes).digest("hex");
 
-it.each([
-  { label: "an empty body", body: "" },
-  { label: "JSON", body: "not-json" },
-  { label: "BOM and XSSI framing", body: "\uFEFF)]}'\nnot-json" },
-  {
-    label: "mapping indices",
-    body: JSON.stringify({
-      version: 3,
-      sources: ["a.js"],
-      names: [],
-      mappings: "ACAA",
-    }),
-  },
-])(
-  "retains completed body identity when $label is invalid",
-  async ({ body }) => {
-    const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-      fetch: () => Promise.resolve(new Response(body, { status: 200 })),
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
-      items: [
-        {
-          status: "invalid",
-          artifact: null,
-          response_identity: {
-            sha256: digest(body),
-            bytes: Buffer.byteLength(body),
-            representation: "fetch-response-body-bytes",
-          },
-          original_sources: [],
-          original_module_edges: [],
-          mappings: [],
-          limitation: expect.stringContaining("Response text was not retained"),
-        },
-      ],
-    });
-    expect(webSourceMapsSchema.parse(result.value)).toEqual(result.value);
-  },
-);
-
-it("retains only completed response bytes when UTF-8 decoding fails", async () => {
-  const body = Uint8Array.of(0x7b, 0x22, 0xc3, 0x28, 0x22, 0x7d);
-  const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-    fetch: () => Promise.resolve(new Response(body, { status: 200 })),
+it("preserves redirected response identity across decoding failures and valid UTF-8", async () => {
+  const mapWithSourceBytes = (source: Uint8Array) =>
+    Buffer.concat([
+      Buffer.from('{"version":3,"names":[],"sources":["source'),
+      source,
+      Buffer.from('.ts"],"mappings":"AAAA"}'),
+    ]);
+  const invalid = [
+    { name: "absent", body: null },
+    {
+      name: "mapping-index",
+      body: JSON.stringify({
+        version: 3,
+        sources: ["a.js"],
+        names: [],
+        mappings: "ACAA",
+      }),
+    },
+    {
+      name: "invalid-json",
+      body: Buffer.from("not-json"),
+      diagnostic: "Source-map JSON is not a version 3 map",
+    },
+    {
+      name: "invalid-utf8",
+      body: mapWithSourceBytes(Uint8Array.of(0xff)),
+      diagnostic: "Source-map response is not valid UTF-8",
+    },
+  ] as const;
+  const valid = {
+    name: "replacement-character",
+    body: mapWithSourceBytes(Buffer.from("�")),
+  };
+  const fixtures = [...invalid, valid].map((scenario, index) => ({
+    ...scenario,
+    ...request(index + 1),
+    effectiveUrl: `${origin}/maps/${scenario.name}.map?token=source-value#fragment`,
+  }));
+  const redirects = new Map(
+    fixtures.map((scenario) => [scenario.fetchUrl, scenario.effectiveUrl]),
+  );
+  const replies = new Map(
+    fixtures.map((scenario) => [scenario.effectiveUrl, scenario]),
+  );
+  const calls: string[] = [];
+  const result = await fetchWebSourceMapsOk(fixtures, input, undefined, {
+    fetch: async (url) => {
+      const received = String(url);
+      calls.push(received);
+      const location = redirects.get(received);
+      if (location !== undefined)
+        return new Response(null, { status: 302, headers: { location } });
+      const scenario = replies.get(received);
+      if (scenario === undefined)
+        throw new Error(`Unexpected request: ${received}`);
+      return new Response(scenario.body);
+    },
   });
-  if (!result.ok) throw result.error;
-  expect(result.value).toMatchObject({
-    status: "unavailable",
-    items: [
-      {
+
+  expect(result).toMatchObject({
+    status: "partial",
+    requested: fixtures.length,
+    processed: fixtures.length,
+  });
+  expect(calls.sort()).toEqual(
+    fixtures
+      .flatMap(({ fetchUrl, effectiveUrl }) => [fetchUrl, effectiveUrl])
+      .sort(),
+  );
+  const byScript = new Map(result.items.map((item) => [item.script_key, item]));
+  for (const fixture of fixtures) {
+    const item = byScript.get(fixture.scriptKey);
+    if (item === undefined)
+      throw new Error(`Missing result for ${fixture.name}`);
+    expect(item, fixture.name).toMatchObject({
+      declared_url: fixture.declaredUrl,
+      effective_url: fixture.effectiveUrl,
+    });
+    if (fixture.name === valid.name) {
+      expect(item).toMatchObject({
+        status: "included",
+        artifact: {
+          text: valid.body.toString("utf8"),
+          sha256: digest(valid.body),
+        },
+      });
+    } else {
+      expect(item, fixture.name).toMatchObject({
         status: "invalid",
         artifact: null,
         response_identity: {
-          sha256: digest(body),
-          bytes: body.byteLength,
+          sha256: digest(fixture.body ?? ""),
+          bytes: Buffer.byteLength(fixture.body ?? ""),
           representation: "fetch-response-body-bytes",
         },
         original_sources: [],
         original_module_edges: [],
         mappings: [],
         limitation: expect.stringContaining("Response text was not retained"),
-      },
-    ],
-  });
+      });
+      if ("diagnostic" in fixture)
+        expect(item.limitation, fixture.name).toContain(fixture.diagnostic);
+    }
+  }
 });
 
-it("retains completed body identity when map interpretation reaches its deadline", async () => {
+it("keeps earlier maps and the timed-out map body identity when its stream ends at the deadline", async () => {
   const body = JSON.stringify({
     version: 3,
     sources: ["a.js"],
     names: [],
     mappings: "AAAA",
   });
-  const response = new Response(body, { status: 200 });
-  const realDecode = TextDecoder.prototype.decode;
   let clock = 0;
   const clockSpy = vi.spyOn(performance, "now").mockImplementation(() => clock);
-  const decodeSpy = vi
-    .spyOn(TextDecoder.prototype, "decode")
-    .mockImplementation(function (
-      this: TextDecoder,
-      input?: Parameters<TextDecoder["decode"]>[0],
-      options?: Parameters<TextDecoder["decode"]>[1],
-    ) {
-      const text = realDecode.call(this, input, options);
-      clock = 1_001;
-      return text;
-    });
+  let sentBody = false;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (sentBody) {
+          clock = 1_001;
+          controller.close();
+          return;
+        }
+        sentBody = true;
+        controller.enqueue(Buffer.from(body));
+      },
+    },
+    { highWaterMark: 0 },
+  );
+
   try {
-    const result = await fetchWebSourceMaps([request(1)], input, undefined, {
-      timeoutMs: 1_000,
-      fetch: () => Promise.resolve(response),
-    });
-    if (!result.ok) throw result.error;
-    expect(result.value).toMatchObject({
-      status: "unavailable",
-      requested: 1,
-      processed: 1,
+    const earlier = request(1);
+    const timedOut = request(2);
+    const result = await fetchWebSourceMapsOk(
+      [earlier, timedOut],
+      { ...input, source_map_fetch_timeout_ms: 1_000 },
+      undefined,
+      {
+        fetch: async (url) =>
+          new Response(String(url) === earlier.fetchUrl ? body : stream),
+      },
+    );
+    expect(result).toMatchObject({
+      status: "partial",
+      requested: 2,
+      processed: 2,
       items: [
         {
+          status: "included",
+          script_key: earlier.scriptKey,
+          artifact: { text: body, sha256: digest(body) },
+          original_sources: [{ source: `${origin}/a.js` }],
+        },
+        {
+          script_key: timedOut.scriptKey,
           status: "fetch_failed",
           artifact: null,
           response_identity: {
@@ -143,34 +193,30 @@ it("retains completed body identity when map interpretation reaches its deadline
       ],
     });
   } finally {
-    decodeSpy.mockRestore();
     clockSpy.mockRestore();
   }
 });
 
-it("refuses oversized text before JSON interpretation while retaining body identity and later maps", async () => {
-  // JSON escaping expands these decoded control characters beyond the fixed
-  // 32 MiB source-map output allowance while the response stays below 64 MiB.
-  const oversized = Buffer.alloc(6 * 1024 * 1024, 1);
-  const oversizedText = oversized.toString("utf8");
+it("retains body identity and later maps when escaping exceeds the output budget", async () => {
+  const budget = 8_000;
+  const oversized = Buffer.alloc(2_000, 1);
+  expect(oversized.byteLength).toBeLessThan(budget);
+  expect(
+    Buffer.byteLength(JSON.stringify(oversized.toString("utf8"))),
+  ).toBeGreaterThan(budget);
   const valid = JSON.stringify({
     version: 3,
     sources: ["a.js"],
     names: [],
     mappings: "AAAA",
   });
-  const parseSpy = vi.spyOn(JSON, "parse");
-  onTestFinished(() => parseSpy.mockRestore());
-  let calls = 0;
   const result = await fetchWebSourceMaps(
     [request(1), request(2)],
-    input,
+    { ...input, source_map_limits: { output_bytes: budget } },
     undefined,
     {
-      fetch: () =>
-        Promise.resolve(
-          new Response(calls++ === 0 ? oversized : valid, { status: 200 }),
-        ),
+      fetch: async (url) =>
+        new Response(String(url) === request(1).fetchUrl ? oversized : valid),
     },
   );
   if (!result.ok) throw result.error;
@@ -193,32 +239,11 @@ it("refuses oversized text before JSON interpretation while retaining body ident
       { status: "included", artifact: { text: valid }, mappings: [{}] },
     ],
   });
+  const limitation = result.value.items[0]?.limitation;
+  expect(limitation).toMatch(/JSON[- ]escap/i);
+  expect(limitation).toContain("source_map_limits.output_bytes is 8000 bytes");
+  expect(limitation).toContain("Increase that per-call field");
   expect(Buffer.byteLength(JSON.stringify(result.value))).toBeLessThanOrEqual(
-    32 * 1024 * 1024,
+    budget,
   );
-  expect(parseSpy.mock.calls.some(([text]) => text === oversizedText)).toBe(
-    false,
-  );
-  expect(calls).toBe(2);
-});
-
-it("keeps historical invalid rows with no response identity admissible", () => {
-  const historical = {
-    status: "unavailable",
-    requested: 1,
-    processed: 1,
-    items: [
-      {
-        script_key: request(1).scriptKey,
-        declared_url: request(1).declaredUrl,
-        status: "invalid",
-        artifact: null,
-        original_sources: [],
-        original_module_edges: [],
-        mappings: [],
-        limitation: "Source-map JSON is not a version 3 map.",
-      },
-    ],
-  };
-  expect(webSourceMapsSchema.parse(historical)).toMatchObject(historical);
 });

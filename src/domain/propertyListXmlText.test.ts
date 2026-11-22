@@ -36,6 +36,7 @@ it.each([
     expect.objectContaining({
       name: "XmlPlistTextDecodeError",
       reason,
+      kind: reason === "unsupported-encoding" ? "unsupported" : "malformed",
     } satisfies Partial<XmlPlistTextDecodeError>),
   );
 });

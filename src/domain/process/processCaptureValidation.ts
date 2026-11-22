@@ -1,3 +1,5 @@
+import canonicalize from "canonicalize";
+
 import {
   digestProcessCommitment,
   processScenarioOutputBudgetProjectionSchema,
@@ -20,6 +22,11 @@ type RequireInvariant = (
   message: string,
 ) => void;
 
+const sameJsonValue = (left: unknown, right: unknown): boolean => {
+  const encoded = canonicalize(left);
+  return encoded !== undefined && encoded === canonicalize(right);
+};
+
 const orderedTimestamps = (values: readonly number[]): boolean =>
   values.every((value, index) => {
     const previous = values[index - 1];
@@ -39,6 +46,9 @@ const validateCommitments = (
     : manifest.executable_sha256 === null &&
         manifest.executable_identity.reason !==
           null, "manifest.executable_identity", "launch identity and executable digest do not agree");
+  require((manifest.root_process.state === "withheld-by-caller") ===
+    capture.normalization
+      .pids, "manifest.root_process", "root process identity must be withheld exactly when PID normalization is selected");
   for (const [field, value] of [
     ["full_scenario_sha256", manifest.scenario],
     ["comparison_contract_sha256", manifest.comparison_contract],
@@ -254,6 +264,15 @@ const validateLifecycle = (
   ), "filesystem_checkpoints", "filesystem snapshot times must be ordered");
   require(!capture.filesystem_checkpoints.some(({ truncated }) => truncated) ||
     capture.truncated, "truncated", "filesystem snapshot truncation must propagate to the capture");
+  // Comparison reads only the checkpoints, so the top-level copies must not disagree.
+  const [initial, final] = capture.filesystem_checkpoints;
+  require(sameJsonValue(initial?.files, capture.files_before) &&
+    initial?.effects.length === 0 &&
+    sameJsonValue(final?.files, capture.files_after) &&
+    sameJsonValue(
+      final?.effects,
+      capture.filesystem_effects,
+    ), "filesystem_checkpoints", "top-level filesystem snapshots and effects must match the initial and final checkpoints");
   require(capture.exit.reason === "exited" ||
     capture.exit.code ===
       null, "exit", "deadline termination cannot declare a normal exit code");

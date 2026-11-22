@@ -1,10 +1,11 @@
 import { parse } from "@babel/parser";
 import * as t from "@babel/types";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import {
   importSpecifier,
   readImportSpecifiers,
@@ -40,7 +41,7 @@ const exportedValues = (tree: ReturnType<typeof syntax>) => {
   return names;
 };
 
-/** Derive migrated metadata symbols from their current source owners. */
+/** Derive metadata symbols from their source owners. */
 const metadataSymbols = async () => {
   const pending = [resolve(root, "src/composition/capabilityDeclarations.ts")];
   const seen = new Set<string>();
@@ -165,6 +166,7 @@ const scriptsBelow = async (directory: string): Promise<string[]> => {
 };
 
 const linkFailures = async (
+  repository: string,
   file: string,
   source: string,
   symbols: ReadonlySet<string>,
@@ -174,25 +176,25 @@ const linkFailures = async (
   for (const { name, reference, line } of links) {
     if (reference === undefined) {
       failures.push(
-        `${relative(root, file)}:${line}: unresolved ${name} import`,
+        `${relative(repository, file)}:${line}: unresolved ${name} import`,
       );
       continue;
     }
     const target = reference.startsWith("file:")
       ? fileURLToPath(reference)
       : reference.startsWith("dist/")
-        ? resolve(root, reference)
+        ? resolve(repository, reference)
         : resolve(dirname(file), reference);
-    const compiled = relative(root, target).replaceAll("\\", "/");
+    const compiled = relative(repository, target).replaceAll("\\", "/");
     if (!compiled.startsWith("dist/")) continue;
     const sourcePath = resolve(
-      root,
+      repository,
       compiled.replace(/^dist\//u, "src/"),
     ).replace(/\.js$/u, ".ts");
     const exports = exportedValues(syntax(await readFile(sourcePath, "utf8")));
     if (!exports.has(name))
       failures.push(
-        `${relative(root, file)}:${line}: ${compiled} has no ${name} export`,
+        `${relative(repository, file)}:${line}: ${compiled} has no ${name} export`,
       );
   }
   return { failures, checked: links.length };
@@ -208,6 +210,7 @@ it("links verifier metadata exports through static, namespace and packaged dynam
   let checked = 0;
   for (const file of files) {
     const result = await linkFailures(
+      root,
       file,
       await readFile(file, "utf8"),
       symbols,
@@ -220,20 +223,21 @@ it("links verifier metadata exports through static, namespace and packaged dynam
 });
 
 it.each([
-  'import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";',
-  'const { GHIDRA_OPERATIONS } = await import(pathToFileURL(join(packageRoot, "dist/ghidra/GhidraProviderCapabilities.js")));',
-  'const metadata = await import("../dist/ghidra/GhidraProviderCapabilities.js"); metadata.GHIDRA_OPERATIONS;',
-])(
-  "detects a metadata consumer whose old owner no longer exports its requirement: %s",
-  async (source) => {
-    const result = await linkFailures(
-      resolve(root, "scripts/authored-negative-control.mjs"),
-      source,
-      await metadataSymbols(),
-    );
-    expect(result.failures).toHaveLength(1);
-    expect(result.failures[0]).toMatch(
-      / has no (?:HOPPER_PROVIDER_IDENTITY|GHIDRA_OPERATIONS) export$/u,
-    );
-  },
-);
+  'import { REQUIRED_METADATA } from "../dist/metadata.js";',
+  'const { REQUIRED_METADATA } = await import(pathToFileURL(join(packageRoot, "dist/metadata.js")));',
+  'const metadata = await import("../dist/metadata.js"); metadata.REQUIRED_METADATA;',
+])("detects a missing metadata export referenced by %s", async (source) => {
+  const repository = await createTestTempDirectory("rea-verifier-metadata-");
+  await mkdir(join(repository, "src"));
+  const target = join(repository, "src", "metadata.ts");
+  const verifier = join(repository, "scripts", "fixture.mjs");
+  const symbols = new Set(["REQUIRED_METADATA"]);
+  await writeFile(target, "export const OTHER_METADATA = 1;\n");
+  const broken = await linkFailures(repository, verifier, source, symbols);
+  expect(broken.failures).toEqual([
+    expect.stringContaining("dist/metadata.js has no REQUIRED_METADATA export"),
+  ]);
+  await writeFile(target, "export const REQUIRED_METADATA = 1;\n");
+  const linked = await linkFailures(repository, verifier, source, symbols);
+  expect(linked.failures).toEqual([]);
+});

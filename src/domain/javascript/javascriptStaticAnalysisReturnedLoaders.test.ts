@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { parseReferenceSourceImports } from "../referenceSourceImportParsing.js";
 
-import { analyzeParsedJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { parseRecoveredJavaScript } from "./javascriptSourceParser.js";
 
 const analyze = (source: string, path = "main.cjs") => {

@@ -50,3 +50,38 @@ console.log(JSON.stringify([nested("./dep.cjs"), current("./dep.cjs")]));`,
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains a parent in a createRequire filename that re-enters a same-named directory through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-create-require-parent-");
+    await writeFixtureFiles(root, {
+      "app/main.mjs": `import { createRequire } from "node:module";
+const sibling = createRequire(new URL("../source/anchor.cjs", import.meta.url));
+console.log(JSON.stringify(sibling("./dep.cjs")));`,
+      "app/dep.cjs": 'module.exports = "app";',
+      "source/dep.cjs": 'module.exports = "source";',
+    });
+
+    expect(await runNodeJsonControl(root, "app/main.mjs")).toBe("source");
+    const { graph } = await analyzeJavaScriptDirectory(surface, cli, root);
+    expect(
+      graph.edges
+        .filter(
+          ({ relation, properties }) =>
+            relation === "imports" &&
+            properties.specifier === "./dep.cjs" &&
+            properties.kind === "require",
+        )
+        .map(({ properties }) => ({
+          resolution_base_path: properties.resolution_base_path,
+          resolved_path: properties.resolved_path,
+        })),
+    ).toEqual([
+      {
+        resolution_base_path: "../source/anchor.cjs",
+        resolved_path: "source/dep.cjs",
+      },
+    ]);
+  },
+);

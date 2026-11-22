@@ -9,11 +9,13 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { build } from "plist";
+import { build, buildBinary } from "plist";
 import { expect, it } from "vitest";
 
 import { ArtifactProvider } from "../../../src/artifacts/ArtifactProvider.js";
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { inspectBundleKeyedArchive } from "../../../src/artifacts/apple/KeyedArchiveReader.js";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import {
@@ -207,6 +209,39 @@ it.each([
     "inspect_plist",
   ],
   [
+    "plist with another archiver and scalar $top",
+    Buffer.from(
+      build({ $archiver: "MyArchiver", $objects: ["$null"], $top: "root" }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  // A UID projects as an object but is not the $top roots dictionary.
+  [
+    "plist with another archiver and a binary UID $top",
+    Buffer.from(
+      buildBinary({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
+    "plist with another archiver and an XML CF$UID $top",
+    Buffer.from(
+      build({
+        $archiver: "MyArchiver",
+        $objects: ["$null", "value"],
+        $top: { CF$UID: 1 },
+      }),
+    ),
+    'its $archiver is "MyArchiver" without an $objects table and $top roots',
+    "inspect_plist",
+  ],
+  [
     "compiled NIBArchive",
     Buffer.concat([Buffer.from("NIBArchive"), Buffer.alloc(40)]),
     "compiled NIBArchive",
@@ -263,6 +298,37 @@ it.each([
   },
 );
 
+it("decodes an archive another keyed archiver wrote, as Foundation does", async () => {
+  // SceneKit writes .scn scenes with SCNKeyedArchiver; NSKeyedUnarchiver reads them.
+  const root = await bundle();
+  await writeFile(
+    join(root, "Contents", "Resources", "Scene.scn"),
+    Buffer.from(
+      build({
+        $archiver: "SCNKeyedArchiver",
+        $version: 100000,
+        $objects: ["$null", "value"],
+        $top: { root: { CF$UID: 1 }, other: { CF$UID: 1 } },
+      }),
+    ),
+  );
+  const { archiver, roots, objects, references, limitations } = await inspect(
+    root,
+    { path: "Contents/Resources/Model.plist" },
+  );
+  expect(archiver).toBe("NSKeyedArchiver");
+  await expect(
+    inspect(root, { path: "Contents/Resources/Scene.scn" }),
+  ).resolves.toMatchObject({
+    archive_path: "Contents/Resources/Scene.scn",
+    archiver: "SCNKeyedArchiver",
+    roots,
+    objects,
+    references,
+    limitations,
+  });
+});
+
 it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
   const root = await bundle();
   await writeFile(
@@ -278,7 +344,6 @@ it("keeps a damaged NSKeyedArchiver archive a format failure", async () => {
     message: expect.stringContaining("$objects array"),
   });
 });
-
 it("selects a decomposed bundle path by its normalized spelling and reports the raw identity", async () => {
   const root = await bundle();
   const rawPath = `Contents/Resources/Caf\u0065\u0301.plist`;
@@ -402,3 +467,49 @@ const asAnalysisError = (value: unknown): AnalysisError => {
   if (!(value instanceof AnalysisError)) throw value;
   return value;
 };
+
+it.skipIf(process.platform === "win32")(
+  "reads bundle-relative archives from a bundle whose executable is a plist",
+  async () => {
+    const root = await createTestTempDirectory("rea-keyed-plist-bundle-");
+    const bundlePath = join(root, "Fixture.app");
+    await mkdir(join(bundlePath, "Contents", "Resources"), { recursive: true });
+    await writeFile(
+      join(bundlePath, "Info.plist"),
+      "<plist><dict><key>CFBundleExecutable</key><string>Settings.plist</string></dict></plist>",
+    );
+    await writeFile(
+      join(bundlePath, "Settings.plist"),
+      build({ setting: "value" }),
+    );
+    await writeFile(
+      join(bundlePath, "Contents", "Resources", "Model.plist"),
+      Buffer.from(archive),
+    );
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([], "auto", () => true),
+      [new ArtifactProvider(process.env, "darwin")],
+    );
+    try {
+      const opened = await session.open(bundlePath);
+      if (!opened.ok) throw opened.error;
+      expect(session.activeTarget()).toMatchObject({
+        kind: "artifact",
+        format: "plist",
+        bundleInfoPlist: join(bundlePath, "Info.plist"),
+      });
+      const inspected = await session.execute("inspect_keyed_archive", {
+        path: "Contents/Resources/Model.plist",
+      });
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.result).toMatchObject({
+        archive_path: "Contents/Resources/Model.plist",
+        objects: expect.arrayContaining([
+          expect.objectContaining({ value: "value" }),
+        ]),
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);

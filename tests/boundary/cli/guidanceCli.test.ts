@@ -75,6 +75,13 @@ it("reports no matches and rejects invalid CLI inputs", async () => {
   });
   const empty = await run(["guidance", "--query", "   "]);
   expect(empty.exitCode).not.toBe(0);
+  // Numeric coercion would read "0x2" as a two-match page.
+  const hexLimit = await run(["guidance", "--query", "module", "--limit=0x2"]);
+  expect(hexLimit.exitCode).not.toBe(0);
+  expect(JSON.parse(hexLimit.stdout)).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [expect.objectContaining({ path: "limit" })],
+  });
   const malformed = await run([
     "guidance",
     "--action",

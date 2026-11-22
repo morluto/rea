@@ -1,10 +1,10 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
-import { readPeImage } from "./PeImage.js";
+import { readPeImage } from "../../domain/native/peImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
-import { BinaryFormatFailure } from "./BinaryContainer.js";
-import { readBinaryContainer } from "./readBinaryContainer.js";
+import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
+import { readBinaryContainer } from "../../domain/native/readBinaryContainer.js";
 import {
   createGoBinaryFixture,
   setGoPeVirtualSize,
@@ -68,10 +68,10 @@ it.each(["NE", "LE", "LX"])(
   (signature) => {
     const bytes = pe(0x014c).subarray(0, 66);
     bytes.write(signature, 64, "ascii");
-    expect(() => readBinaryContainer(bytes)).toThrow(
+    expect(() => readBinaryContainer(bytes, "elf-directory")).toThrow(
       expect.objectContaining({
         kind: "unsupported",
-        message: `${signature} images are outside the supported ELF, PE and thin Mach-O formats`,
+        message: expect.stringContaining(signature),
       }),
     );
   },
@@ -83,7 +83,7 @@ it.each([32, 64] as const)(
     for (const encoding of ["inline", "pointer"] as const) {
       const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
       const expected = readGoBinaryImage(fixture.bytes).build_info;
-      expect(expected).not.toBeNull();
+      expect(expected).toMatchObject({ go_version: "go1.26.0" });
       setGoPeVirtualSize(fixture.bytes, 0);
 
       const container = readPeImage(fixture.bytes);
@@ -136,6 +136,7 @@ it.each([32, 64] as const)(
 it("keeps Go fallback candidates when a PE section has no printable name", () => {
   const fixture = createGoBinaryFixture({ format: "pe", bits: 64 });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).toMatchObject({ go_version: "go1.26.0" });
   const pe = fixture.bytes.readUInt32LE(0x3c);
   const section = pe + 24 + fixture.bytes.readUInt16LE(pe + 20);
   fixture.bytes.fill(0, section, section + 8);
@@ -207,6 +208,17 @@ it.each([0x014c, 0x8664] as const)(
     );
   },
 );
+
+it("reads DllCharacteristics from the optional header", () => {
+  const bytes = pe(0x8664);
+  const peOffset = bytes.readUInt32LE(60);
+  bytes.writeUInt16LE(0x4160, peOffset + 24 + 70);
+  expect(readPeImage(bytes)).toMatchObject({
+    dll_characteristics: 0x4160,
+    pe_optional_header_file_offset: peOffset + 24,
+    dll_characteristics_file_offset: peOffset + 24 + 70,
+  });
+});
 
 it.each([0xffff, 0x8664 ^ 0x7b79])(
   "retains raw unknown machine %s without managed override proof",

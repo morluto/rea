@@ -38,9 +38,9 @@ const run = async (operation, input) => {
     const target = evidence.normalized_result.target;
     check(
       "resource Evidence preserves the decoded APK subject identity",
-      evidence.subject?.digest.sha256 === target.sha256 &&
+      evidence.subject?.identity.sha256 === target.sha256 &&
         evidence.subject?.local_path === target.path &&
-        evidence.subject?.format === "apk",
+        evidence.subject?.identity.format === "apk",
     );
   }
   return result.value.normalized_result;

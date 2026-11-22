@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium } from "playwright-core";
 
+import { newPlaywrightCdpSession } from "../../dist/browser/PlaywrightCdpSession.js";
 import { PlaywrightScenarioSession } from "../../dist/browser/PlaywrightScenarioSession.js";
 import { PlaywrightScenarioServiceWorkers } from "../../dist/browser/PlaywrightScenarioServiceWorkers.js";
 import { createBrowserScenarioProvider } from "../../dist/composition/browserScenario.js";
@@ -106,7 +107,11 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
     let page;
     for (const context of observer.contexts()) {
       for (const candidate of context.pages()) {
-        const cdp = await context.newCDPSession(candidate);
+        const cdp = await newPlaywrightCdpSession(
+          context,
+          candidate,
+          "capture_browser_scenario",
+        );
         const { targetInfo } = await cdp.send("Target.getTargetInfo");
         await cdp.detach();
         if (targetInfo.targetId === targetId) page = candidate;
@@ -356,7 +361,11 @@ export async function verifyScenarioServiceWorkers(endpoint, targetId) {
       let policyPage;
       for (const context of policyBrowser.contexts()) {
         for (const candidate of context.pages()) {
-          const cdp = await context.newCDPSession(candidate);
+          const cdp = await newPlaywrightCdpSession(
+            context,
+            candidate,
+            "capture_browser_scenario",
+          );
           const { targetInfo } = await cdp.send("Target.getTargetInfo");
           await cdp.detach();
           if (targetInfo.targetId === targetId) policyPage = candidate;
@@ -595,7 +604,11 @@ const verifyRejectedPolicyInstallation = async (context, endpoint, origin) => {
     let policy;
     try {
       await page.goto(origin);
-      const cdp = await context.newCDPSession(page);
+      const cdp = await newPlaywrightCdpSession(
+        context,
+        page,
+        "capture_browser_scenario",
+      );
       const { targetInfo } = await cdp.send("Target.getTargetInfo");
       await cdp.detach();
       policy = new PlaywrightScenarioServiceWorkers(

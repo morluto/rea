@@ -107,8 +107,12 @@ workspaceCliTest.for([
             operation: "cutter_command",
             reason:
               mode === "missing-watermark"
-                ? "The bridge did not provide authenticated proof that earlier connections reached a terminal state."
-                : "The bridge status response did not contain a valid session identity.",
+                ? expect.stringMatching(
+                    /did not.*authenticated proof.*earlier connections.*terminal state/iu,
+                  )
+                : expect.stringMatching(
+                    /status.*did not contain.*valid session identity/iu,
+                  ),
             diagnostics: { auxiliary_operation: "status" },
           },
         });

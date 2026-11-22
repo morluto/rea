@@ -354,8 +354,9 @@ it("selects output EOF before a later abort when the current job has no terminal
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
@@ -390,8 +391,9 @@ it("selects startup EOF before an abort queued by the same close event", async (
     if (!result.ok)
       expect(result.error.error).toMatchObject({
         _tag: "AnalysisOutputError",
-        reason:
-          "JavaScript worker closed output before the operation received its terminal response",
+        reason: expect.stringMatching(
+          /worker closed output.*terminal response/i,
+        ),
       });
   } finally {
     await worker.close();
@@ -753,47 +755,68 @@ it("admits a final valid control frame written after the worker exit event", asy
   }
 });
 
-it("retains the owned worker's V8 heap exhaustion classification", async () => {
-  const worker = new JavaScriptAnalysisWorker(
-    { heapMb: 128, timeoutMs: 30_000 },
-    async (request) =>
-      spawnOwnedProviderProcess({
-        ...request,
-        arguments: [
-          "-e",
-          `${ready} process.stdin.once("data", () => { process.stderr.write("FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n"); process.exit(7); });`,
-        ],
-      }),
-  );
-  try {
-    const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.error).toBeInstanceOf(
-        AnalysisResourceConstraintError,
-      );
-      const projected = projectAnalysisError(result.error.error);
-      if (javaScriptRuntime(process.versions).id === "node") {
-        expect(projected.message).toContain(
-          "128 MiB V8 old-space heap (max_heap_mb)",
+it.each([
+  ["at the start of stderr", 0],
+  // The 256 KiB retention budget keeps only the head; the report lies past it.
+  ["past the retained stderr budget", 300 * 1024],
+])(
+  "retains the owned worker's V8 heap exhaustion classification %s",
+  async (_where, noise) => {
+    const worker = new JavaScriptAnalysisWorker(
+      { heapMb: 128, timeoutMs: 30_000 },
+      async (request) =>
+        spawnOwnedProviderProcess({
+          ...request,
+          arguments: [
+            "-e",
+            `${ready} process.stdin.once("data", () => { process.stderr.write("x".repeat(${String(noise)}) + "\\nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\\n", () => process.exit(7)); });`,
+          ],
+        }),
+    );
+    try {
+      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.error).toBeInstanceOf(
+          AnalysisResourceConstraintError,
         );
-        expect(projected.remediation.action).toContain("--max-heap-mb");
-      } else {
-        expect(projected.message).toContain(
-          "Bun ignores the V8 old-space flag",
-        );
-        expect(projected.message).not.toContain(
-          "128 MiB V8 old-space heap (max_heap_mb)",
-        );
-        expect(projected.remediation.action).not.toContain(
-          "Increase max_heap_mb",
-        );
+        // The runtime's own report survives even when it lies past the
+        // retained stderr.
+        expect(result.error.error.diagnostics).toMatchObject({
+          runtime_exhaustion_report: {
+            runtime: "v8",
+            stream: "stderr",
+            line_complete: true,
+          },
+        });
+        const projected = projectAnalysisError(result.error.error);
+        if (javaScriptRuntime(process.versions).id === "node") {
+          expect(projected.message).toContain(
+            "128 MiB V8 old-space heap (max_heap_mb)",
+          );
+          // The adapter-neutral remediation names the request field; only
+          // the CLI renders its option.
+          expect(projected.remediation.action).toContain(
+            "Increase max_heap_mb",
+          );
+          expect(projected.remediation.action).not.toContain("--max-heap-mb");
+        } else {
+          expect(projected.message).toContain(
+            "Bun ignores the V8 old-space flag",
+          );
+          expect(projected.message).not.toContain(
+            "128 MiB V8 old-space heap (max_heap_mb)",
+          );
+          expect(projected.remediation.action).not.toContain(
+            "Increase max_heap_mb",
+          );
+        }
       }
+    } finally {
+      await worker.close();
     }
-  } finally {
-    await worker.close();
-  }
-});
+  },
+);
 
 it("captures late stderr completely when the exited worker's inherited pipes close", async () => {
   const worker = new JavaScriptAnalysisWorker(

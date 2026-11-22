@@ -1,18 +1,17 @@
+import { registerCliCommand } from "../../../src/cli/commandRegistry.js";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { Writable } from "node:stream";
 
-import { Cli, Formatter } from "incur";
 import { estimateTokenCount } from "tokenx";
 import { expect, it } from "vitest";
+import { parseAllDocuments } from "yaml";
 
+import { formatCliOutput } from "../../../src/cli/cliOutputFormatter.js";
 import {
   parseCliOutputArguments,
   renderCliDocument,
 } from "../../../src/cliOutput.js";
-import { adaptCliOutputArgumentsForIncur } from "../../../src/cliBuiltinArguments.js";
-import {
-  createCliResultOutput,
-  streamCliCommandResults,
-} from "../../../src/cli/cliResultOutput.js";
+import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 
 const source = [{ selected: 1 }, { other: 2 }, { selected: null }];
 
@@ -30,8 +29,6 @@ const runFilteredCli = async (
   fields?: readonly string[],
   expectedExitCode = 0,
 ): Promise<string> => {
-  const cli = Cli.create("filtered-array-test", { sync: false });
-  cli.command("rows", { run: () => value });
   const args = [
     "rows",
     "--format",
@@ -50,9 +47,10 @@ const runFilteredCli = async (
     }),
   );
   if (output === undefined) throw new Error("Missing CLI output owner");
-  streamCliCommandResults(cli, output);
+  const cli = createCommandCli(output);
+  registerCliCommand(cli, "rows", { run: () => value });
   let fallback = "";
-  await cli.serve(adaptCliOutputArgumentsForIncur(args), {
+  await cli.serve(args, {
     exit: (code) => {
       expect(code).toBe(expectedExitCode);
     },
@@ -65,6 +63,20 @@ const runFilteredCli = async (
   expect(output.failed).toBe(false);
   return Buffer.concat(chunks).toString("utf8");
 };
+
+it.each(["yaml", "toon", "md"] as const)(
+  "emits a selected null as %s",
+  async (format) => {
+    const stdout = await runFilteredCli({ binding: null }, format, "binding");
+    if (format === "yaml") {
+      const documents = parseAllDocuments(stdout);
+      expect(documents).toHaveLength(1);
+      expect(documents[0]?.toJSON()).toBeNull();
+    } else {
+      expect(stdout).toBe("null\n");
+    }
+  },
+);
 
 it.each(["csv", "tsv"] as const)(
   "exports only explicitly selected %s fields and retains page metadata",
@@ -255,8 +267,6 @@ it.each(
     const value = Object.freeze(
       source.map((item) => Object.freeze({ ...item })),
     );
-    const cli = Cli.create("filtered-array-test", { sync: false });
-    cli.command("rows", { run: () => value });
     const args = [
       "rows",
       "--format",
@@ -276,7 +286,8 @@ it.each(
       }),
     );
     if (output === undefined) throw new Error("Missing CLI output owner");
-    streamCliCommandResults(cli, output);
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "rows", { run: () => value });
     let fallback = "";
     let status = 0;
     await cli.serve(args, {
@@ -320,8 +331,6 @@ it.each(
 it.each(["json", "jsonl"] as const)(
   "counts the normalized filtered %s records",
   async (format) => {
-    const cli = Cli.create("filtered-count-test", { sync: false });
-    cli.command("rows", { run: () => source });
     const args = [
       "rows",
       "--format",
@@ -341,7 +350,8 @@ it.each(["json", "jsonl"] as const)(
       }),
     );
     if (output === undefined) throw new Error("Missing CLI output owner");
-    streamCliCommandResults(cli, output);
+    const cli = createCommandCli(output);
+    registerCliCommand(cli, "rows", { run: () => source });
     let fallback = "";
     await cli.serve(args, {
       exit: (code) => {
@@ -352,7 +362,7 @@ it.each(["json", "jsonl"] as const)(
       },
     });
     expect(Buffer.concat(chunks).toString()).toBe(
-      `${estimateTokenCount(Formatter.format([1, null, null], format))}\n`,
+      `${estimateTokenCount(formatCliOutput([1, null, null], format))}\n`,
     );
     expect(fallback).toBe("");
   },
@@ -376,7 +386,6 @@ it.each(["selected", "toString", "constructor"])(
     await output?.write(value, {
       command: "rows",
       duration: "0ms",
-      format: "json",
     });
     expect(JSON.parse(Buffer.concat(chunks).toString())).toEqual(
       filter === "selected"
@@ -409,7 +418,6 @@ it("finishes JSONL after a bounded large record before a missing selection", asy
   await output.write(value, {
     command: "rows",
     duration: "0ms",
-    format: "jsonl",
   });
   const lines = Buffer.concat(chunks).toString().trimEnd().split("\n");
   expect(lines.map((line) => JSON.parse(line))).toEqual([
@@ -486,7 +494,7 @@ it("projects consecutive slices through nested root arrays and merges cell field
 it.each([
   ["rows[0,2][-2,-1]", { rows: [[1], [3]] }],
   ["rows[0,2][1,1]", { rows: [[], []] }],
-  ["rows[0,2][invalid,1]", { rows: [[1], [3]] }],
+  ["rows[0,2][,1]", { rows: [[1], [3]] }],
 ] as const)("retains parsed slice bounds for %s", async (filter, expected) => {
   const output = await runFilteredCli(
     {
@@ -530,7 +538,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource[0]?.rows[0]?.retained).toEqual([0, 10]);
   },
 );
@@ -555,7 +563,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
           .map((line) => JSON.parse(line)),
       ).toEqual([1, null, null]);
     else if (format === "md") expect(output).toBe("\\[1,null,null\\]\n");
-    else expect(output).toBe(`${Formatter.format(selected, format)}\n`);
+    else expect(output).toBe(`${formatCliOutput(selected, format)}\n`);
     expect(value).toEqual([{ selected: 1 }, {}, { selected: null }]);
   },
 );
@@ -589,7 +597,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
       ).toEqual(expected);
     else if (format === "md")
       expect(outputs[0]).toBe(renderCliDocument(expected, format, false));
-    else expect(outputs[0]).toBe(`${Formatter.format(expected, format)}\n`);
+    else expect(outputs[0]).toBe(`${formatCliOutput(expected, format)}\n`);
     expect(projectionSource).toEqual(before);
   },
 );
@@ -683,10 +691,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"] as const)(
         },
       }),
     );
-    await output?.write(
-      { rows: [1, 2] },
-      { command: "rows", duration: "0ms", format },
-    );
+    await output?.write({ rows: [1, 2] }, { command: "rows", duration: "0ms" });
     expect(output?.error).toMatchObject({
       code: "invalid_request",
       message: expect.stringContaining("non-index property"),

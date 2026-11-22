@@ -1,5 +1,16 @@
 import { crc32, zstdCompressSync } from "node:zlib";
 
+/** A valid independent raw-block frame; its window is unrelated to its tiny output. */
+export const zstandardWindowFrameFixture = (windowDescriptor: number) => {
+  const content = Buffer.from("REA independent frame control\n");
+  const compressed = Buffer.from(
+    "28b52ffd0090f1000052454120696e646570656e64656e74206672616d6520636f6e74726f6c0a",
+    "hex",
+  );
+  compressed[5] = windowDescriptor;
+  return { content, compressed };
+};
+
 /** One non-Zip64 member, independently framed from the PKWARE APPNOTE records. */
 export const zstandardZipFixture = (
   content: Buffer,
@@ -8,9 +19,10 @@ export const zstandardZipFixture = (
     readonly crc?: number;
     readonly declaredSize?: number;
     readonly compressed?: Buffer;
+    readonly name?: string;
   } = {},
 ): Buffer => {
-  const name = Buffer.from("member.txt");
+  const name = Buffer.from(options.name ?? "member.txt");
   const compressed = options.compressed ?? zstdCompressSync(content);
   const method = options.method ?? 93;
   const checksum = options.crc ?? crc32(content);

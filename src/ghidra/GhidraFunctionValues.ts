@@ -1,5 +1,6 @@
 import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { nativeAddressObservationSchema } from "../domain/native/nativeAddress.js";
+import { addressDistance } from "../domain/native/addressCoordinate.js";
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import {
@@ -35,11 +36,7 @@ import {
   swiftLargeStringLiteralOmissionSchema,
 } from "../domain/native/swiftStringLiteral.js";
 import { functionBodyEntryAgrees } from "../domain/native/functionBody.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   relationshipCoverageSchema,
@@ -47,6 +44,7 @@ import {
 } from "../domain/relationshipCoverage.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { outputContractDiagnostics } from "../domain/native/nativeProviderOutput.js";
 import {
   ghidraIdentifierSchema,
   ghidraInputAddressSchema,
@@ -195,7 +193,7 @@ const dossierReferenceEdge =
   });
 
 const ghidraFunctionDossier = functionDossierSchema
-  .extend({
+  .safeExtend({
     procedure: dossierProcedureIdentity.safeExtend({
       signature: functionDossierSchema.shape.procedure.shape.signature,
       locals: z.array(localVariable),
@@ -267,15 +265,6 @@ const ghidraFunctionDossier = functionDossierSchema
   .strict()
   .superRefine((value, context) => {
     if (
-      (value.swift_string_literals === undefined) !==
-      (value.swift_string_literal_omissions === undefined)
-    )
-      context.addIssue({
-        code: "custom",
-        message:
-          "Ghidra dossier must record Swift literals and their omissions together",
-      });
-    if (
       !value.limitations.some((item) => /indirect|computed/u.test(item)) ||
       !value.limitations.some((item) => /provider|Ghidra|Hopper/u.test(item))
     )
@@ -288,6 +277,51 @@ const ghidraFunctionInstructionWindow = functionInstructionWindowSchema
   .extend({ procedure: procedureIdentity })
   .strict();
 
+// Ghidra emits containment exactly for an interior listing address. The shared
+// schema keeps it optional: other statuses have no container.
+const ghidraInstruction = nativeInstructionSchema.superRefine(
+  (value, context) => {
+    if (
+      (value.status === "not-instruction-boundary") !==
+      (value.containing_instruction !== undefined)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["containing_instruction"],
+        message:
+          "Ghidra instruction containment must match the reported status",
+      });
+    if ((value.status === "data") !== (value.containing_data !== undefined))
+      context.addIssue({
+        code: "custom",
+        path: ["containing_data"],
+        message: "Ghidra data containment must match the reported status",
+      });
+    const data = value.containing_data;
+    if (data !== undefined) {
+      const distance = addressDistance(data.address, value.address);
+      if (distance === null || distance >= data.length)
+        context.addIssue({
+          code: "custom",
+          path: ["containing_data", "address"],
+          message:
+            "Ghidra containing data must enclose the queried byte in the same address space",
+        });
+    }
+    const containing = value.containing_instruction;
+    if (containing !== undefined) {
+      const distance = addressDistance(containing.address, value.address);
+      if (distance === null || distance === 0 || distance >= containing.length)
+        context.addIssue({
+          code: "custom",
+          path: ["containing_instruction", "address"],
+          message:
+            "Ghidra containing instruction must enclose the queried byte in the same address space",
+        });
+    }
+  },
+);
+
 const resultSchemas = {
   annotate_native_function: nativeFunctionAnnotationsSchema.safeExtend({
     dossier: ghidraFunctionDossier,
@@ -299,7 +333,7 @@ const resultSchemas = {
   procedure_info: procedureInfo,
   procedure_pseudo_code: z.string().nullable(),
   read_function_instructions: ghidraFunctionInstructionWindow,
-  inspect_native_instruction: nativeInstructionSchema,
+  inspect_native_instruction: ghidraInstruction,
   inspect_native_data_type: nativeDataTypeSchema,
   resolve_native_call_targets: nativeCallTargetsSchema,
   procedure_references: procedureReferences,
@@ -372,7 +406,12 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge returned an invalid function observation envelope for this operation",
-          envelope.success ? undefined : { cause: envelope.error },
+          envelope.success
+            ? undefined
+            : {
+                cause: envelope.error,
+                diagnostics: outputContractDiagnostics(envelope.error, value),
+              },
         ),
       );
     observation = envelope.data;
@@ -382,7 +421,9 @@ export const parseGhidraFunctionResult = (
   const parsed = resultSchemas[operation].safeParse(observation.value);
   return parsed.success
     ? ok({
-        value: jsonValueSchema.parse(parsed.data),
+        // `observation.value` comes from an admitted JsonValue and `resultSchemas[operation]`
+        // outputs fresh plain objects/arrays whose fields are all JSON-safe.
+        value: parsed.data as JsonValue,
         limitations: observation.limitations,
         ...(observation.cache_policy === undefined
           ? {}
@@ -415,7 +456,13 @@ export const parseGhidraFunctionResult = (
         new AnalysisOutputError(
           operation,
           "Ghidra bridge output did not match the function-analysis contract",
-          { cause: parsed.error },
+          {
+            cause: parsed.error,
+            diagnostics: outputContractDiagnostics(
+              parsed.error,
+              observation.value,
+            ),
+          },
         ),
       );
 };

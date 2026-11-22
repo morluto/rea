@@ -10,6 +10,7 @@ import {
   readComparisonResult,
   type ParsedComparisonEvidence,
 } from "./comparisonEvidenceResult.js";
+import type { ComparisonEvidenceOperation } from "./comparisonEvidenceIdentity.js";
 import type { Evidence } from "./evidence.js";
 import { evidenceInputSchema } from "./evidenceReference.js";
 import { err, ok, type Result } from "./result.js";
@@ -28,6 +29,12 @@ import {
 import { prefixedDigestSchema } from "./../domain/digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
+type ChangedBehaviorComparisonOperation = Exclude<
+  ComparisonEvidenceOperation,
+  "compare_web_screenshots"
+>;
+type ChangedBehaviorComparison =
+  ParsedComparisonEvidence<ChangedBehaviorComparisonOperation>;
 
 /** Input for aggregating existing comparison Evidence. */
 export const changedBehaviorInputSchema = z.strictObject({
@@ -115,7 +122,8 @@ export const changedBehaviorResultSchema = z
 
 export type ChangedBehaviorResult = z.infer<typeof changedBehaviorResultSchema>;
 type Finding = z.infer<typeof findingSchema>;
-type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
+type ProcessComparison = z.infer<typeof processCaptureComparisonSchema>;
+type RuntimeStatus = ProcessComparison["status"];
 
 /** Find observed runtime changes and separately report static change candidates. */
 interface FoundChangedBehavior {
@@ -146,7 +154,11 @@ export const findChangedBehavior = (input: unknown): FoundChangedBehavior => {
   const findings = evidence.flatMap(findingsFor).sort(compareFindings);
   const runtimeStatuses = evidence.flatMap((comparison) =>
     comparison.operation === "compare_process_captures"
-      ? [comparison.result.status]
+      ? [
+          unprovenEqualityReason(comparison.result) === undefined
+            ? comparison.result.status
+            : "unknown",
+        ]
       : [],
   );
   const links = uniqueSorted(
@@ -193,17 +205,20 @@ const parseComparisonEvidence = (
   input: unknown,
   fullInput: unknown,
   index: number,
-): ParsedComparisonEvidence => {
+): ChangedBehaviorComparison => {
   const parsedEvidence = readEvidence(input);
   if (!parsedEvidence.ok) throw parsedEvidence.error;
   const evidence = parsedEvidence.value;
-  if (!isComparisonEvidenceOperation(evidence.operation))
+  if (
+    !isComparisonEvidenceOperation(evidence.operation) ||
+    evidence.operation === "compare_web_screenshots"
+  )
     throw callerInputError(
       fullInput,
       ["comparisons", index],
       "Changed-behavior analysis requires process, artifact, or function comparison Evidence",
     );
-  const operation = evidence.operation;
+  const operation: ChangedBehaviorComparisonOperation = evidence.operation;
   if (!hasComparisonEvidenceIdentity(evidence))
     throw evidenceIntegrityError(
       "Comparison Evidence operation, predicate, and provider disagree",
@@ -221,7 +236,7 @@ const parseComparisonEvidence = (
   return result.value;
 };
 
-const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
+const findingsFor = (comparison: ChangedBehaviorComparison): Finding[] => {
   if (comparison.operation === "compare_process_captures")
     return processFindings(comparison);
   if (comparison.operation === "compare_functions")
@@ -231,7 +246,7 @@ const findingsFor = (comparison: ParsedComparisonEvidence): Finding[] => {
 
 const processFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_process_captures" }
   >,
 ): Finding[] => {
@@ -243,7 +258,7 @@ const processFindings = (
     ["filesystem", result.filesystem, "resource"],
     ["process", result.process, "runtime"],
   ] as const;
-  return dimensions.flatMap(([dimension, status, scope]) =>
+  const findings = dimensions.flatMap(([dimension, status, scope]) =>
     status === "unchanged"
       ? []
       : [
@@ -254,43 +269,81 @@ const processFindings = (
             status,
             classification: isChange(status)
               ? "observed_change"
-              : "unresolved_branch",
+              : status === "contradiction"
+                ? "contradiction"
+                : "unresolved_branch",
             limitations: result.limitations,
           }),
         ],
   );
+  const reason = unprovenEqualityReason(result);
+  return reason === undefined
+    ? findings
+    : [
+        ...findings,
+        makeFinding({
+          evidence,
+          dimension: "first_divergence",
+          scope: "runtime",
+          status: "unknown",
+          classification: "unresolved_branch",
+          limitations: [...result.limitations, reason],
+        }),
+      ];
 };
+
+/** Unchanged dimensions do not establish equality while divergence stays unknown. */
+const unprovenEqualityReason = (
+  result: ProcessComparison,
+): string | undefined =>
+  result.status === "unchanged" && result.first_divergence.status === "unknown"
+    ? result.first_divergence.reason
+    : undefined;
 
 const functionFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_functions" }
   >,
 ): Finding[] => {
   const { evidence, result } = comparison;
-  return result.dimensions.flatMap((dimension) =>
-    dimension.status === "unchanged"
-      ? []
-      : [
-          makeFinding({
-            evidence,
-            dimension: dimension.dimension,
-            scope: "static_candidate",
-            status: dimension.status,
-            classification:
-              dimension.status === "unknown"
-                ? "unresolved_branch"
-                : dimension.conclusion_kind,
-            limitations: dimension.limitations,
-            links: dimension.evidence_links,
-          }),
-        ],
-  );
+  return result.dimensions.flatMap((dimension) => {
+    const finding = (status: "changed" | "unknown") =>
+      makeFinding({
+        evidence,
+        dimension: dimension.dimension,
+        scope: "static_candidate",
+        status,
+        classification:
+          status === "unknown"
+            ? "unresolved_branch"
+            : dimension.conclusion_kind,
+        limitations:
+          status === "unknown" &&
+          dimension.dimension === "calls" &&
+          dimension.discovery_status === undefined
+            ? [
+                ...dimension.limitations,
+                "Static call discovery coverage was not recorded in the comparison.",
+              ]
+            : dimension.limitations,
+        links: dimension.evidence_links,
+      });
+    const findings =
+      dimension.status === "unchanged" ? [] : [finding(dimension.status)];
+    if (
+      dimension.dimension === "calls" &&
+      dimension.status !== "unknown" &&
+      dimension.discovery_status !== "complete"
+    )
+      findings.push(finding("unknown"));
+    return findings;
+  });
 };
 
 const artifactFindings = (
   comparison: Extract<
-    ParsedComparisonEvidence,
+    ChangedBehaviorComparison,
     { readonly operation: "compare_artifacts" }
   >,
 ): Finding[] => {
@@ -356,7 +409,8 @@ const behaviorStatus = (
 ): ChangedBehaviorResult["behavior_status"] => {
   if (statuses.length === 0) return "unknown";
   if (statuses.includes("truncated")) return "truncated";
-  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.includes("unknown") || statuses.includes("contradiction"))
+    return "unknown";
   return statuses.some(isChange) ? "observed_changed" : "observed_unchanged";
 };
 

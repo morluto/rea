@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { FirmwareAnalysisService } from "../../../src/application/firmware/FirmwareAnalysisService.js";
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 describe("firmware request validation projection", () => {
@@ -31,7 +31,6 @@ describe("firmware request validation projection", () => {
       const service = new FirmwareAnalysisService({ execute });
       const result = await service.execute("extract_firmware", input);
 
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected request validation to fail");
       const projected = projectAnalysisError(result.error);
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
@@ -50,8 +49,9 @@ describe("firmware request validation projection", () => {
             },
           ],
         },
-        remediation: {
-          action: expect.stringContaining("Correct the listed fields"),
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "extract_firmware",
         },
       });
       expect(execute).not.toHaveBeenCalled();

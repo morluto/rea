@@ -1,25 +1,29 @@
+import { coverageStatusSchema } from "../domain/coverage.js";
+import { procedureReferencesSchema } from "../domain/native/procedureReferences.js";
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
+import { artifactInventorySummaryViewResultSchema } from "../domain/analysisView/summarySchemas/artifactInventorySummarySchema.js";
+import { batchDecompileSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/batchDecompileSummarySchema.js";
+import { interfaceBuilderSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/interfaceBuilderSummarySchema.js";
+import { machoSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/machoSummarySchema.js";
 import {
-  nativeObservationSummaryViewResultSchemas,
-  byteEntropySummaryViewResultSchema,
-  nativeFunctionMatchingSummaryViewResultSchema,
-  nativeFunctionSummaryViewResultSchema,
-  nativeInventorySummaryViewResultSchema,
-  batchDecompileSummaryViewResultSchema,
-  nativeLoadImageSummaryViewResultSchema,
-  artifactInventorySummaryViewResultSchema,
-  interfaceBuilderSummaryViewResultSchema,
-  machoSummaryViewResultSchema,
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
-} from "../domain/analysisView/analysisView.js";
-import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
-import { byteEntropySchema } from "../domain/native/byteEntropy.js";
+} from "../domain/analysisView/summarySchemas/managedSummarySchemas.js";
+import { nativeFeatureTraceSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeFeatureTraceSummarySchema.js";
+import { nativeFunctionMatchingSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeFunctionMatchingSummarySchema.js";
+import { nativeFunctionSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeFunctionSummarySchema.js";
+import { nativeInventorySummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeInventorySummarySchema.js";
+import { nativeLoadImageSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeLoadImageSummarySchema.js";
+import { nativeObservationSummaryViewResultSchemas } from "../domain/analysisView/summarySchemas/nativeObservationSummarySchemas.js";
+import { nativeProcedureReferencesSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/nativeProcedureReferencesSummarySchema.js";
+import { procedurePseudocodeSummaryViewResultSchema } from "../domain/analysisView/summarySchemas/procedurePseudocodeSummarySchema.js";
+import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
+import { byteEntropyOutputSchema } from "./native/byteEntropyOutputSchema.js";
+import { openBinaryOutputSchema } from "./openBinaryToolContract.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
@@ -32,11 +36,6 @@ import {
   analysisBookmarkSchema,
   nativeInventoryRowsSchemas,
 } from "../domain/native/nativeInventory.js";
-import {
-  referenceEdgeSchema,
-  unresolvedCallSchema,
-} from "../domain/native/nativeReference.js";
-import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
 import {
   evidenceBundleExportReceiptSchema,
@@ -100,13 +99,14 @@ import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
 import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
-} from "./errorSchemas.js";
+  analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
+} from "../domain/analysisErrorProjectionSchema.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressedEntry,
-  functionDossierOutput,
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
@@ -119,14 +119,19 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
-import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
+import { processScenarioPlanSchema } from "../domain/process/processScenario.js";
+const contextFacetErrorSchema = z.discriminatedUnion("code", [
+  analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
+  evidenceIntegrityErrorProjectionSchema,
+]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -138,7 +143,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 
@@ -227,16 +232,14 @@ export const officialOutputSchemas = {
         ),
     }),
   ),
-  procedure_references: evidenceResultOf(
-    z.object({
-      procedure: procedureIdentitySchema,
-      direction: z.enum(["incoming", "outgoing"]),
-      reference_kinds_available: z.boolean(),
-      unresolved_calls: z.array(unresolvedCallSchema),
-      references: z.array(referenceEdgeSchema),
-    }),
+  procedure_references: analysisDetailOutputSchemaOf(
+    procedureReferencesSchema,
+    nativeProcedureReferencesSummaryViewResultSchema,
   ),
-  procedure_pseudo_code: evidenceResultOf(nullableText),
+  procedure_pseudo_code: analysisDetailOutputSchemaOf(
+    nullableText,
+    procedurePseudocodeSummaryViewResultSchema,
+  ),
   resolve_containing_procedure: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,
@@ -263,21 +266,9 @@ export const officialOutputSchemas = {
   xrefs: evidenceResultOf(nativeAddressListSchema),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
-const literalTraceOutput = evidenceResultOf(
-  z.object({
-    query: z.string(),
-    search_mode: z.literal("literal"),
-    matches: z.array(literalFeatureMatchSchema),
-    references: z.array(
-      z.object({
-        target_address: z.string(),
-        source_address: z.string(),
-        containing_procedure: traceContainingProcedureSchema,
-      }),
-    ),
-    truncated: z.boolean(),
-    residual_unknowns: z.array(z.string()),
-  }),
+const literalTraceOutput = analysisDetailOutputSchemaOf(
+  literalFeatureTraceSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
 );
 
 const callPathTraceOutput = evidenceResultOf(
@@ -286,6 +277,16 @@ const callPathTraceOutput = evidenceResultOf(
     goal: z.string().nullable(),
     direction: z.enum(["forward", "backward"]),
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
+    search_scope: z.object({
+      graph: z.literal("provider_observed_graph"),
+      discovery: coverageStatusSchema,
+      observed_goal_status: z.enum([
+        "not_requested",
+        "reached",
+        "not_reached",
+        "unknown",
+      ]),
+    }),
     nodes: z.array(
       z.object({
         address: z.string(),
@@ -404,12 +405,6 @@ export const enhancedOutputSchemas = {
   trace_call_path: callPathTraceOutput,
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
-/** Complete entropy Evidence or its retained summary, shared by the named contract. */
-export const byteEntropyOutputSchema = analysisDetailOutputSchemaOf(
-  byteEntropySchema,
-  byteEntropySummaryViewResultSchema,
-);
-
 /** Exact Evidence schemas for provider-neutral native inspection. */
 export const nativeOutputSchemas = {
   inspect_byte_entropy: byteEntropyOutputSchema,
@@ -483,9 +478,7 @@ export const managedWorkflowOutputSchemas = {
 /** Exact structured-content schemas for target lifecycle operations. */
 export const sessionOutputSchemas = {
   reset_investigation: lifecycleResultOf(resetInvestigationReceiptSchema),
-  open_binary: lifecycleResultOf(
-    z.discriminatedUnion("format", [...liveBinaryTargetSummaryVariants]),
-  ),
+  open_binary: openBinaryOutputSchema,
   open_bundle_resources: lifecycleResultOf(bundleResourceRootSchema),
   close_binary: lifecycleResultOf(
     z.union([
@@ -566,7 +559,13 @@ export const sessionOutputSchemas = {
       total: z.int().min(0),
     }),
   ),
-  capture_process_scenario: evidenceResultOf(processCaptureSchema),
+  capture_process_scenario: evidenceResultOf(
+    z
+      .union([processCaptureSchema, processScenarioPlanSchema])
+      .describe(
+        `A capture, or the plan a dry run produced without launching a process. ${processCaptureSchema.description ?? ""}`,
+      ),
+  ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),
@@ -603,8 +602,3 @@ export const sessionOutputSchemas = {
     }),
   ),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
-
-/** Exact Evidence schema for read-only Electron fuse inspection. */
-export const electronFuseOutputSchemas = {
-  inspect_electron_fuses: evidenceResultOf(electronFuseReportSchema),
-};

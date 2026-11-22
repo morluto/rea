@@ -286,6 +286,226 @@ it("keeps exact endpoints, deduplicates sites and counts excluded forwarding ali
   });
 });
 
+it("preserves pointer and walk coverage separately and rejects inconsistent pointer identity", () => {
+  const pointer = {
+    kind: "pointer",
+    from_address: "@16384",
+    from_address_hex: "0x4000",
+    from_name: "slot",
+    to_address: "@8192",
+    to_address_hex: "0x2000",
+    to_name: "callee",
+    width: 8,
+    source: "chained-fixups",
+  };
+  const source = {
+    ...xrefs(),
+    coverage: {
+      decoded: true,
+      section: "__TEXT,__text",
+      code_section: true,
+      executable: true,
+      unwalked: [
+        {
+          name: "middle",
+          address: "@20480",
+          address_hex: "0x5000",
+          section: "__TEXT,__const",
+        },
+      ],
+      notes: ["middle was not walked"],
+    },
+    data_refs_coverage: "chained-fixups",
+    data_refs_count: 1,
+    data_refs: [pointer],
+  };
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0x2000"),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      addresses: ["0x1004", "0x4000"],
+      pointerCoverage: "chained-fixups",
+      pointers: [
+        {
+          from_address: "0x4000",
+          to_address: "0x2000",
+          source: "chained-fixups",
+        },
+      ],
+      walkCoverage: { unwalked: [{ address: "0x5000" }] },
+    },
+  });
+  pointer.to_address_hex = "0x2001";
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0x2000"),
+  ).toMatchObject({
+    ok: false,
+    error: { code: "xref_endpoints" },
+  });
+});
+
+it("counts pointer rows excluded because they target a forwarding alias", () => {
+  const pointer = (from: number, to: number) => ({
+    kind: "pointer",
+    from_address: `@${from}`,
+    from_address_hex: `0x${from.toString(16)}`,
+    from_name: null,
+    to_address: `@${to}`,
+    to_address_hex: `0x${to.toString(16)}`,
+    to_name: null,
+    width: 8,
+    source: "dynamic-relocations",
+  });
+  const source = {
+    ...xrefs(),
+    data_refs_coverage: "dynamic-relocations",
+    data_refs_count: 2,
+    data_refs: [pointer(16384, 8192), pointer(16392, 12288)],
+  };
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0x2000"),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      addresses: ["0x1004", "0x4000"],
+      rows: 5,
+      excludedAliasRows: 2,
+      targetAliases: [{ name: "slot", address: "0x3000" }],
+      pointers: [
+        { from_address: "0x4000", to_address: "0x2000" },
+        { from_address: "0x4008", to_address: "0x3000" },
+      ],
+    },
+  });
+});
+
+it("preserves full-width pointer and unwalked addresses without numeric rounding", () => {
+  const source = {
+    binary: input,
+    direction: "to",
+    count: 0,
+    target: {
+      name: null,
+      address: "@18446744073709551615",
+      address_hex: "0xffffffffffffffff",
+      aliases: [],
+    },
+    xrefs: [],
+    coverage: {
+      decoded: false,
+      section: null,
+      code_section: null,
+      executable: null,
+      unwalked: [
+        {
+          name: "candidate",
+          address: "@9007199254740993",
+          address_hex: "0x20000000000001",
+          section: ".text",
+        },
+      ],
+      notes: [],
+    },
+    data_refs_coverage: "dynamic-relocations",
+    data_refs_count: 1,
+    data_refs: [
+      {
+        kind: "pointer",
+        from_address: "@9007199254740995",
+        from_address_hex: "0x20000000000003",
+        from_name: null,
+        to_address: "@18446744073709551615",
+        to_address_hex: "0xffffffffffffffff",
+        to_name: null,
+        width: 8,
+        source: "dynamic-relocations",
+      },
+    ],
+  };
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0xffffffffffffffff"),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      addresses: ["0x20000000000003"],
+      rows: 1,
+      excludedAliasRows: 0,
+      pointers: [
+        { from_address: "0x20000000000003", to_address: "0xffffffffffffffff" },
+      ],
+      walkCoverage: { unwalked: [{ address: "0x20000000000001" }] },
+    },
+  });
+});
+
+it("distinguishes unreported pointer coverage from an explicitly empty pointer list", () => {
+  const source = xrefs();
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0x2000"),
+  ).toMatchObject({
+    ok: true,
+    value: { pointerCoverage: null, pointers: null, walkCoverage: null },
+  });
+  expect(
+    parseKunaIncomingReferences(
+      wire({
+        ...source,
+        data_refs_coverage: "none",
+        data_refs_count: 0,
+        data_refs: [],
+      }),
+      input,
+      "0x2000",
+    ),
+  ).toMatchObject({
+    ok: true,
+    value: { pointerCoverage: "none", pointers: [], walkCoverage: null },
+  });
+});
+
+it("rejects partial or inconsistent pointer inventories rather than reporting them empty", () => {
+  const source = xrefs();
+  for (const fields of [
+    { data_refs: [] },
+    { data_refs_count: 0 },
+    { data_refs_count: 1, data_refs: [] },
+  ]) {
+    expect(
+      parseKunaIncomingReferences(
+        wire({ ...source, ...fields }),
+        input,
+        "0x2000",
+      ),
+    ).toEqual({
+      ok: false,
+      error: { code: "xref_count" },
+    });
+  }
+});
+
+it("preserves unknown coverage for an address outside known sections", () => {
+  const source = {
+    ...xrefs(),
+    coverage: {
+      decoded: false,
+      section: null,
+      code_section: null,
+      executable: null,
+      unwalked: [],
+      notes: [],
+    },
+  };
+  expect(
+    parseKunaIncomingReferences(wire(source), input, "0x2000"),
+  ).toMatchObject({
+    ok: true,
+    value: {
+      walkCoverage: { section: null, code_section: null, executable: null },
+    },
+  });
+});
+
 it.each([
   [
     "count",
@@ -342,4 +562,61 @@ it("bounds u64 input parsing before BigInt allocation", () => {
   expect(normalizeKunaAddress("0xffffffffffffffff")).toBe("0xffffffffffffffff");
   expect(normalizeKunaAddress("0x10000000000000000")).toBeUndefined();
   expect(normalizeKunaAddress("caller")).toBeUndefined();
+});
+
+it("accepts out-of-order calleeOrder sequences and rejects gaps or fast-path row fallback errors", async () => {
+  const reordered = graph();
+  reordered.edges[0]!.calleeOrder = 1;
+  reordered.edges[1]!.calleeOrder = 0;
+  expect(await parseKunaCallGraph(wire(reordered), input)).toMatchObject({
+    ok: true,
+    value: { edgeCount: 2 },
+  });
+  const gapped = graph();
+  gapped.edges[0]!.calleeOrder = 2;
+  gapped.edges[1]!.calleeOrder = 0;
+  expect(await parseKunaCallGraph(wire(gapped), input)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: "graph callee orders are incomplete",
+    },
+  });
+  const badEdge = graph();
+  badEdge.edges[0]!.kind = "invalid";
+  expect(await parseKunaCallGraph(wire(badEdge), input)).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisOutputError",
+      diagnostics: { code: "row_field", member: "graph edge", field: "kind" },
+    },
+  });
+});
+
+it("keeps arm64 direct BL normalization while skipping non-BL instructions and rejecting malformed xref rows", () => {
+  const doc = xrefs();
+  doc.xrefs[0]!.instruction = "bl\t0X002000";
+  doc.xrefs[1]!.instruction = "blx 0x2000";
+  const parsed = parseKunaIncomingReferences(wire(doc), input, "0x2000");
+  expect(parsed).toMatchObject({
+    ok: true,
+    value: {
+      arm64DirectCalls: [
+        {
+          from_address: "0x1004",
+          caller_address: "0x1000",
+          to_address: "0x2000",
+          instruction: "bl\t0X002000",
+        },
+      ],
+    },
+  });
+  const malformed = xrefs();
+  malformed.xrefs[0]!.address_hex = "0x01";
+  expect(parseKunaIncomingReferences(wire(malformed), input, "0x2000")).toEqual(
+    {
+      ok: false,
+      error: { code: expect.any(String) },
+    },
+  );
 });

@@ -1,4 +1,13 @@
-import { expect, it } from "vitest";
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+} from "../../fixtures/evidenceSubject.js";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { expect, it, onTestFinished } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
 import {
@@ -13,10 +22,13 @@ import {
   parseEvidence,
   type Evidence,
 } from "../../../src/domain/evidence.js";
+import { createEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const reference = (source: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -37,7 +49,7 @@ const harness = (inputElements?: string) =>
         }),
   });
 
-it("admits an independent inline dossier and composes its summary parent without producer work", async () => {
+it("advertises retained Evidence and composes an independent dossier without producer work", async () => {
   const { session, client } = await harness();
   const source = FUNCTION_COMPARISON_EXAMPLE.left;
   const selection = {
@@ -66,9 +78,23 @@ it("admits an independent inline dossier and composes its summary parent without
   expect(receipt.normalized_result).toMatchObject({
     parent_evidence_id: source.evidence_id,
   });
+  const retainedInput = { ...selection, functions: [reference(source)] };
+  const callPath = (await client.listTools()).tools.find(
+    ({ name }) => name === "build_call_path",
+  );
+  if (callPath === undefined) throw new Error("Expected build_call_path");
+  expect(callPath.description).toContain(
+    '{"kind":"retained-evidence","evidence_id":"ev_..."}',
+  );
+  expect(callPath.description).toContain("parent_evidence_id");
+  const validation = createMcpSchemaValidation();
+  expect(
+    validation.assertions.validate(callPath.inputSchema, retainedInput),
+  ).toBe(true);
+
   const retained = await client.callTool({
     name: "build_call_path",
-    arguments: { ...selection, functions: [reference(source)] },
+    arguments: retainedInput,
   });
   expect(retained.isError, JSON.stringify(retained)).not.toBe(true);
   expect(parseEvidence(retained.structuredContent)).toEqual(expected);
@@ -77,13 +103,12 @@ it("admits an independent inline dossier and composes its summary parent without
 it("keeps input capacity limits while composing dossiers that cannot be resent inline", async () => {
   const { session, client } = await harness("1024");
   const base = FUNCTION_COMPARISON_EXAMPLE.left;
-  if (base.subject === null) throw new Error("Missing fixture subject");
   const dossier = functionDossierSchema.parse(base.normalized_result);
   const source = createEvidence(
     {
-      path: base.subject.local_path,
-      sha256: base.subject.digest.sha256,
-      format: base.subject.format,
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
     },
     base.provider,
     {
@@ -108,7 +133,10 @@ it("keeps input capacity limits while composing dossiers that cannot be resent i
     arguments: { ...selection, functions: [source] },
   });
   expect(parseMcpToolError(inline)).toMatchObject({
-    error: { code: "resource_constraint" },
+    error: {
+      code: "resource_constraint",
+      remediation: { action: expect.stringContaining("retained-evidence") },
+    },
   });
   const retained = await client.callTool({
     name: "build_call_path",
@@ -190,4 +218,69 @@ it("reports missing or wrong-kind records without recording a successful workflo
   });
   expect(wrong.isError).toBe(true);
   expect(session.exportEvidenceBundle().records).toHaveLength(1);
+});
+
+it("reports missing sources for a retained dossier with a large link set", async () => {
+  const client = new Client(
+    {
+      name: "large-evidence-links-test",
+      version: "1",
+    },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  onTestFinished(() => client.close());
+  await client.connect(
+    new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+    }),
+  );
+  const base = FUNCTION_COMPARISON_EXAMPLE.left;
+  const links = Array.from(
+    { length: 150_000 },
+    (_, index) => `ev_${index.toString(16).padStart(64, "0")}`,
+  );
+  const source = createEvidence(
+    {
+      path: fileSubjectDisplay(base.subject).local_path,
+      sha256: fileIdentity(base.subject).sha256,
+      format: fileIdentity(base.subject).format,
+    },
+    base.provider,
+    {
+      operation: "analyze_function",
+      parameters: base.parameters,
+      result: base.normalized_result,
+      confidence: base.confidence,
+      authority: base.authority,
+      relationshipCoverage: { status: "complete" },
+      evidenceLinks: links,
+    },
+  );
+  const directory = await createTestTempDirectory("rea-large-links-");
+  const path = join(directory, "bundle.json");
+  await writeFile(path, JSON.stringify(createEvidenceBundle([source])));
+  const imported = await client.callTool({
+    name: "import_evidence_bundle",
+    arguments: { path },
+  });
+  expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+
+  const result = await client.callTool({
+    name: "build_call_path",
+    arguments: {
+      functions: [reference(source)],
+      start: { address: "0x1000" },
+      goal: { address: "0x1000" },
+    },
+  });
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      details: {
+        reason: "missing",
+        evidence_id: links.at(-1),
+        reference_scope: "retained-closure",
+      },
+    },
+  });
 });

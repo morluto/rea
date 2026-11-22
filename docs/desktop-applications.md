@@ -94,7 +94,7 @@ same bundle. Export writes only the caller-selected output file.
 | Family       | Evidence used                                                                                                                                                                                                                                  |
 | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | .NET         | A PE optional header declares a nonempty CLI directory.                                                                                                                                                                                        |
-| Unity Mono   | A managed assembly below `*_Data/Managed` or `Contents/Resources/Data/Managed` has an exact UnityEngine assembly reference.                                                                                                                    |
+| Unity Mono   | A PE file below `*_Data/Managed` or `Contents/Resources/Data/Managed` has an exact UnityEngine assembly reference in the probed metadata.                                                                                                      |
 | Unity IL2CPP | A recognized IL2CPP metadata magic (with the raw version when complete) coexists with a conventionally named native `GameAssembly.dll`, `GameAssembly.so`, `GameAssembly.dylib` or `libil2cpp.so` image. Build correspondence remains unknown. |
 | Godot        | A `GDPC` header at file start or a validated executable trailer offset.                                                                                                                                                                        |
 | GameMaker    | A bounded `FORM` container starts with a `GEN8` chunk. The scan probes conventional `data.win`, `game.unx`, and `game.ios` data files for that header.                                                                                         |
@@ -109,6 +109,21 @@ admitted file path, including when no native library was found. This probe does
 not establish full metadata validity or correspondence to a native binary;
 version 24 inspection still applies only to supported header layouts. See
 [IL2CPP metadata](il2cpp-metadata.md).
+
+The Unity Mono probe reads the mapped CLI header prefix and follows its metadata
+directory to look for an `AssemblyRef` witness. A readable prefix and reference
+can support this candidate while the rest of the declared CLI header extent
+remains unverified. Use `inspect_managed_artifact` to check the complete CLI
+header and managed metadata for that file.
+
+In a managed directory with a Unity Mono witness, `Assembly-CSharp.dll` and
+`Assembly-CSharp-firstpass.dll` get an `inspect_managed_members` probe listed
+first; project-named asmdef assemblies keep only the ordinary managed probes.
+The same probe is offered for those names in `Managed/` of a
+`<Product>_BackUpThisFolder_ButDontShipItWithYourGame` folder (or when that
+folder is the root); whether its IL matches the shipped IL2CPP code is unknown.
+Point the scan at the game folder: a root that is the `<Product>_Data` or
+`Managed` folder itself has no Mono witness path and gets no member probe.
 
 Candidates are derived or inferred from these facts and do not prove loading or
 execution. BepInEx, MelonLoader, Easy Anti-Cheat and BattlEye labels identify

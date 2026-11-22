@@ -1,30 +1,146 @@
+import {
+  fileIdentity,
+  fileSubjectDisplay,
+  fileSubjectTarget,
+} from "../../../tests/fixtures/evidenceSubject.js";
 import { expect, it, vi } from "vitest";
 
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import { createJavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
+import { createJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
 } from "../../contracts/javascript/javascriptApplicationWorkflowExamples.js";
-import { JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE } from "../../contracts/javascript/javascriptExportShapeComparisonExample.js";
 import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import {
   compareApplicationVersionsEvidence,
-  compareJavaScriptExportShapesEvidence,
   traceApplicationFeatureEvidence,
 } from "./JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./JavaScriptRuntimeReconciliationService.js";
 import { traceJavaScriptSemanticsEvidence } from "./JavaScriptSemanticTraceService.js";
+import { inspectAnalysisView } from "../analysisView/AnalysisViewService.js";
 
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
   evidence_id,
 });
 
-const native = createEvidence(
-  { path: "/example/addon.node", sha256: "e".repeat(64), format: "elf" },
-  { id: "fixture", name: "Native fixture", version: "1" },
-  { operation: "procedure_info", parameters: {}, result: {} },
-);
+it("keeps a static trace subject unknown when legacy graph root evidence is omitted", () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  const result = javascriptApplicationAnalysisResultSchema.parse(
+    original.normalized_result,
+  );
+  const { graph_id: _graphId, ...graphInput } = result.graph;
+  const graph = createJavaScriptApplicationGraph({
+    ...graphInput,
+    nodes: graphInput.nodes.filter(({ kind }) => kind !== "artifact"),
+    root_node_ids: graphInput.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .map(({ node_id }) => node_id),
+    edges: [],
+  });
+  const { graph_id: _semanticId, ...semanticInput } = result.semantic_graph;
+  const semanticGraph = createJavaScriptSemanticGraph({
+    ...semanticInput,
+    application_graph_id: graph.graph_id,
+  });
+  const legacy = createEvidence(
+    fileSubjectTarget(original.subject),
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: { ...result, graph, semantic_graph: semanticGraph },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const trace = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: legacy,
+  });
+  if (!trace.ok) throw trace.error;
+  expect(trace.value.evidence.subject.identity.kind).toBe("unknown");
+});
+
+const nativeObservation = (address: string) =>
+  createEvidence(
+    { path: "/example/addon.node", sha256: "e".repeat(64), format: "elf" },
+    { id: "fixture", name: "Native fixture", version: "1" },
+    { operation: "procedure_info", parameters: { address }, result: {} },
+  );
+
+const native = nativeObservation("0x1000");
+
+it("preserves the verified application subject in both trace workflows", async () => {
+  const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
+  const application = createEvidence(
+    {
+      path: fileSubjectDisplay(original.subject).local_path,
+      sha256: fileIdentity(original.subject).sha256,
+      format: fileIdentity(original.subject).format,
+      architecture: "x86_64",
+      name: "caller-selected-name",
+    },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  const feature = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application,
+  });
+  const semantic = traceJavaScriptSemanticsEvidence({
+    application,
+    query: {
+      seed: { kind: "property", name: "unobserved" },
+      direction: "ownership",
+    },
+  });
+  for (const result of [feature, semantic]) {
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence.subject).toEqual(application.subject);
+  }
+  if (!feature.ok) throw feature.error;
+  const view = await inspectAnalysisView({
+    source: { kind: "inline", evidence: feature.value.evidence },
+    view: { kind: "summary" },
+  });
+  if (!view.ok) throw view.error;
+  expect(view.value.subject).toEqual(application.subject);
+});
+
+it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {
+  const original = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE.right;
+  const reconciliation = createEvidence(
+    { path: "/other/artifact", sha256: "f".repeat(64), format: "file" },
+    original.provider,
+    {
+      operation: original.operation,
+      predicateType: original.predicate_type,
+      parameters: original.parameters,
+      result: original.normalized_result,
+      confidence: "inferred",
+      authority: "analyst-inference",
+      evidenceLinks: original.evidence_links,
+    },
+  );
+  const result = traceApplicationFeatureEvidence({
+    ...JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+    application: reconciliation,
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.evidence.subject.identity.kind).toBe("unknown");
+});
 
 it("resolves feature native arrays without changing source identity or unknowns", () => {
   const input = {
@@ -57,15 +173,18 @@ it("resolves feature native arrays without changing source identity or unknowns"
   expect(lookup).toHaveBeenCalledTimes(2);
 });
 
-it("resolves per-side native observations with one lookup per repeated exact ID", () => {
-  const input = {
-    ...JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
-    left_native_observations: [native],
-    right_native_observations: [native],
-  };
-  const inline = compareApplicationVersionsEvidence(input);
+it("preserves native Evidence on each side while resolving a shared ID once", () => {
+  const { left, right } = JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE;
+  const leftNative = nativeObservation("0x1100");
+  const rightNative = nativeObservation("0x1200");
+  const inline = compareApplicationVersionsEvidence({
+    left,
+    right,
+    left_native_observations: [leftNative, native],
+    right_native_observations: [rightNative, native],
+  });
   const records = new Map(
-    [input.left, input.right, native].map((record) => [
+    [left, right, leftNative, rightNative, native].map((record) => [
       record.evidence_id,
       record,
     ]),
@@ -73,10 +192,10 @@ it("resolves per-side native observations with one lookup per repeated exact ID"
   const lookup = vi.fn((id: string) => records.get(id));
   const retained = compareApplicationVersionsEvidence(
     {
-      left: reference(input.left),
-      right: reference(input.right),
-      left_native_observations: [reference(native)],
-      right_native_observations: [reference(native)],
+      left: reference(left),
+      right: reference(right),
+      left_native_observations: [reference(leftNative), reference(native)],
+      right_native_observations: [reference(rightNative), reference(native)],
     },
     lookup,
   );
@@ -86,28 +205,13 @@ it("resolves per-side native observations with one lookup per repeated exact ID"
     inline.value.evidence.evidence_id,
   );
   expect(retained.value.result).toEqual(inline.value.result);
-  expect(lookup).toHaveBeenCalledTimes(3);
-});
-
-it("uses retained graphs for exact export-shape comparison", () => {
-  const input = JAVASCRIPT_EXPORT_SHAPE_COMPARISON_EXAMPLE;
-  const inline = compareJavaScriptExportShapesEvidence(input);
-  const records = new Map(
-    [input.left, input.right].map((record) => [record.evidence_id, record]),
-  );
-  const retained = compareJavaScriptExportShapesEvidence(
-    {
-      ...input,
-      left: reference(input.left),
-      right: reference(input.right),
-    },
-    (id) => records.get(id),
-  );
-  if (!inline.ok) throw inline.error;
-  if (!retained.ok) throw retained.error;
-  expect(retained.value.evidence.evidence_id).toBe(
-    inline.value.evidence.evidence_id,
-  );
+  expect(retained.value.evidence.parameters).toMatchObject({
+    left_evidence_id: left.evidence_id,
+    right_evidence_id: right.evidence_id,
+    left_native_evidence_ids: [leftNative.evidence_id, native.evidence_id],
+    right_native_evidence_ids: [rightNative.evidence_id, native.evidence_id],
+  });
+  expect(lookup.mock.calls.flat().sort()).toEqual([...records.keys()].sort());
 });
 
 it("resolves nested static layers and runtime arrays before source-owned reconciliation", () => {
@@ -169,7 +273,12 @@ it("reports missing nested references before reconciliation without guessing a s
   });
   expect(result).toMatchObject({
     ok: false,
-    error: { _tag: "EvidenceIntegrityError" },
+    error: {
+      _tag: "EvidenceIntegrityError",
+      reason: "missing",
+      evidenceId: layer.analysis.evidence_id,
+      diagnostics: { input_path: ["static_layers", 0, "analysis"] },
+    },
   });
 });
 

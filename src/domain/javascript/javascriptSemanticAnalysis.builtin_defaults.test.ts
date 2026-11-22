@@ -58,6 +58,155 @@ it.each([
   expect(ir.configurationOperations.map(({ key }) => key)).toEqual(["MODE"]);
 });
 
+// Whether `process` still names the original global process object uses
+// activation timing, like the require loader. Each row states why the
+// replacement is proven to run after the read or write, or why it may not.
+it.each([
+  {
+    source: `const value = process.env.kept; for (const x of [1]) process = other;`,
+    keys: ["kept"],
+    why: "the loop is a later top-level statement, so it starts only after the read",
+  },
+  {
+    source: `const value = process.env.kept; for (const x of []) process = other;`,
+    keys: ["kept"],
+    why: "an empty array literal with unchanged array iteration never runs the body",
+  },
+  {
+    source: `process = wrap(process.env.kept);`,
+    keys: ["kept"],
+    why: "the right-hand side is evaluated before the assignment stores its value",
+  },
+  {
+    source: `process.env = {}; for (const x of [1]) process = other; const proc = require('process'); const mode = proc.env.wrong;`,
+    keys: [],
+    why: "the env write runs before the loop, so it reaches the original object",
+  },
+  {
+    source: `globalThis.process.env = {}; for (const x of [1]) globalThis.process = other; const proc = require('process'); const mode = proc.env.wrong;`,
+    keys: [],
+    why: "a qualified write before the loop reaches the original object",
+  },
+  {
+    source: `Array.prototype[Symbol.iterator] = gen; const value = process.env.maybe; for (const x of []) process = other;`,
+    keys: [],
+    why: "a replaced array iterator can yield from an empty literal",
+  },
+  {
+    source: `for (const x of [1]) process = other; const value = process.env.wrong;`,
+    keys: [],
+    why: "the loop body runs before the read",
+  },
+  {
+    source: `class Box { value = process.env.wrong; } for (const x of [1]) process = other; new Box();`,
+    keys: [],
+    why: "an instance field runs on construction, after the loop",
+  },
+  {
+    source: `process = class { value = process.env.wrong; }; new process();`,
+    keys: [],
+    why: "a field of the replacement class runs on construction, after the replacement",
+  },
+])(
+  "orders process replacement by activation: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(source).configurationOperations.map(
+        ({ key }) => key,
+      ),
+    ).toEqual(keys);
+  },
+);
+
+// A write through `process` reaches the original object unless a replacement
+// is proven to run before it. A replacement that may run first is not enough.
+it.each([
+  {
+    source: `process.env = {}; while (ready) process = other;`,
+    keys: [],
+    why: "the loop body may never run, and runs only after the write",
+  },
+  {
+    source: `if (ready) process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be skipped, so the write may reach the original",
+  },
+  {
+    source: `process.env = {}; if (ready) process = other;`,
+    keys: [],
+    why: "the write runs before the replacement",
+  },
+  {
+    source: `if (ready) globalThis.process = other; globalThis.process.env = {};`,
+    keys: [],
+    why: "a skipped qualified replacement leaves the original in place",
+  },
+  {
+    source: `function swap() { process = other; } swap(); process.env = {};`,
+    keys: [],
+    why: "a replacement inside a function body is not proven to run",
+  },
+  {
+    source: `function write() { process.env = {}; } write(); process = other;`,
+    keys: [],
+    why: "the write runs in a call made before the replacement",
+  },
+  {
+    source: `process = other; process.env = {};`,
+    keys: [],
+    why: "the replacement may be the original object itself",
+  },
+  {
+    source: `if (ready) process = other; patch(process);`,
+    keys: [],
+    why: "an escape that may reach the original is kept like a write",
+  },
+  {
+    source: `if (ready) globalThis.process = other; patch(globalThis.process);`,
+    keys: [],
+    why: "a qualified escape that may reach the original is kept",
+  },
+  {
+    source: `if (ready) process = other; process.env.kept = "";`,
+    keys: [],
+    why: "a nested write that may reach the original is kept",
+  },
+  {
+    source: `process = {}; patch(process);`,
+    keys: ["kept"],
+    why: "a fresh replacement always runs before the escape",
+  },
+  {
+    source: `process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh object always replaces the original before the write",
+  },
+  {
+    source: `globalThis.process = {}; process.env = {};`,
+    keys: ["kept"],
+    why: "a fresh qualified replacement always runs before the write",
+  },
+  {
+    source: `const original = process; process = {}; if (ready) process = original; process.env = {};`,
+    keys: [],
+    why: "a later conditional write may restore the original before the write",
+  },
+  {
+    source: `const host = ready ? globalThis : {}; host.process = {}; process.env = {};`,
+    keys: [],
+    why: "a write through a possible alias of the global object may not replace process",
+  },
+])(
+  "attributes process writes that may reach the original: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `${source} const proc = require('process'); const mode = proc.env.kept;`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(keys);
+  },
+);
+
 it("preserves exports captured before a later loader overwrite", () => {
   const ir = analyzeCommonJsSemanticFixture(`
     const fs=require('node:fs'); fs.readFileSync('before');
@@ -562,7 +711,9 @@ it.each([
 it("preserves a saved promises object after deleting its parent export", () => {
   const ir =
     analyzeCommonJsSemanticFixture(`const fs = require('fs'); const fsp = fs.promises;
-    delete fs.promises; const handle = fsp.open('kept'); handle.close();`);
+    delete fs.promises;
+    async function useHandle() { const handle = await fsp.open('kept'); handle.close(); }
+    useHandle();`);
   expect(
     ir.resourceOperations.map(({ kind, method }) => ({ kind, method })),
   ).toEqual([
@@ -591,7 +742,9 @@ it("recognizes nested ESM namespace receivers as original built-ins", () => {
 it("keeps intact fs/promises identity after deleting the fs.promises slot", () => {
   const ir =
     analyzeCommonJsSemanticFixture(`const fs=require('fs'); delete fs.promises;
-    const fsp=require('fs/promises'); const handle=fsp.open('kept'); handle.close();`);
+    const fsp=require('fs/promises');
+    async function useHandle() { const handle=await fsp.open('kept'); handle.close(); }
+    useHandle();`);
   expect(
     ir.resourceOperations.map(({ kind, method }) => ({ kind, method })),
   ).toEqual([
@@ -677,3 +830,204 @@ it("retains an earlier captured function after its object method is replaced", (
     { kind: "acquire", method: "open" },
   ]);
 });
+
+it.each([
+  "import { readFile } from 'node:fs/promises'; readFile('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFile('config.json');",
+  "import fs from 'node:fs'; fs.promises.readFile('config.json');",
+  "const { readFile } = require('fs/promises'); readFile('config.json');",
+  "const fsp = require('node:fs/promises'); fsp.readFile('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFile('config.json');",
+])(
+  "recovers configuration file reads from promise-based fs APIs: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toMatchObject([
+      {
+        kind: "file",
+        key: "config.json",
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
+it("recovers partial configuration file reads from promise-based fs APIs with dynamic path", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "import { readFile } from 'node:fs/promises'; readFile(getConfigPath());",
+  );
+  expect(ir.configurationOperations).toMatchObject([
+    {
+      kind: "file",
+      key: null,
+      resolution: "partial",
+    },
+  ]);
+});
+
+it("invalidates promise-based configuration file reads after mutation", () => {
+  const ir = analyzeCommonJsSemanticFixture(
+    "const fs = require('fs'); fs.promises.readFile = custom; const fsp = require('fs/promises'); fsp.readFile('wrong');",
+  );
+  expect(ir.configurationOperations).toEqual([]);
+});
+
+it.each([
+  "const { readFileSync } = require('fs/promises'); readFileSync('config.json');",
+  "const { readFileSync } = require('node:fs/promises'); readFileSync('config.json');",
+  "import { readFileSync } from 'node:fs/promises'; readFileSync('config.json');",
+  "import fs from 'node:fs/promises'; fs.readFileSync('config.json');",
+  "const fs = require('node:fs'); fs.promises.readFileSync('config.json');",
+])(
+  "does not treat nonexistent readFileSync on promise-based fs as configuration read: %s",
+  (source) => {
+    const ir = analyzeCommonJsSemanticFixture(source);
+    expect(ir.configurationOperations).toEqual([]);
+  },
+);
+
+// A directly invoked source function receives its arguments through its
+// parameters, whose effects are indexed like any other source effect. Each
+// row states why `fs.readFileSync` is or is not still the original method.
+it.each([
+  {
+    source: `(function(p){})(fs);`,
+    keys: ["kept"],
+    why: "the body never uses the argument",
+  },
+  {
+    source: `(function(p){ p.readFileSync = custom })({}, fs);`,
+    keys: ["kept"],
+    why: "no parameter binds the second argument and the body never reads arguments",
+  },
+  {
+    source: `(function(p, p){ p.readFileSync = custom })(fs, other);`,
+    keys: ["kept"],
+    why: "the later duplicate parameter binds the other argument",
+  },
+  {
+    source: `(function(p){ p.readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a write through the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ var q = p; q.readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a local alias of the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ later(() => { p.readFileSync = custom }) })(fs);`,
+    keys: [],
+    why: "a closure over the parameter reaches the argument",
+  },
+  {
+    source: `(function(p){ return p })(fs).readFileSync = custom;`,
+    keys: [],
+    why: "the returned parameter is the argument",
+  },
+  {
+    source: `(function(p){ patch(p) })(fs);`,
+    keys: [],
+    why: "the parameter escapes to unknown code",
+  },
+  {
+    source: `(function(p){ store.v = p })(fs);`,
+    keys: [],
+    why: "the parameter is stored in an unknown object",
+  },
+  {
+    source: `(function(p){ arguments[0].readFileSync = custom })(fs);`,
+    keys: [],
+    why: "the arguments object reaches the argument",
+  },
+  {
+    source: `(function(...r){ r[0].readFileSync = custom })(fs);`,
+    keys: [],
+    why: "a rest parameter is a new array holding the argument",
+  },
+  {
+    source: `(function(p){ eval(src) })(fs);`,
+    keys: [],
+    why: "direct eval may reach the parameter",
+  },
+  {
+    source: `const box = {fs}; (function(b){ b.fs.readFileSync = custom })(box);`,
+    keys: [],
+    why: "a write below the parameter reaches the argument's child",
+  },
+  {
+    source: `unknown(fs);`,
+    keys: [],
+    why: "an unknown callee still receives an escape",
+  },
+  {
+    source: `(function(get){ patch(get()) })(() => fs);`,
+    keys: [],
+    why: "a callable argument's result reaches the parameter's callers",
+  },
+  {
+    source: `(function(get){ get().readFileSync = custom })(() => fs);`,
+    keys: [],
+    why: "a write through a callable argument's result reaches its value",
+  },
+  {
+    source: `(function f(p){ patch(f["arguments"][0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `(function f(p){ patch(f.arguments[0]) })(fs);`,
+    keys: [],
+    why: "a sloppy function's arguments property reaches the argument",
+  },
+  {
+    source: `function g(){ patch(g.caller.arguments[0]) } (function(p){ g() })(fs);`,
+    keys: [],
+    why: "a called sloppy function reaches its caller's arguments",
+  },
+  {
+    source: `function g(){ patch(g.caller) } (function(p){ "use strict"; g() })(fs);`,
+    keys: ["kept"],
+    why: "a strict function exposes no arguments property",
+  },
+  {
+    source: `try { (function(p){ throw p })(fs); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a value thrown out of the callee reaches its caller's handler",
+  },
+  {
+    source: `try { (function(){ throw fs })(); } catch (e) { patch(e) }`,
+    keys: [],
+    why: "a captured value thrown out of a function reaches the caller's handler",
+  },
+])(
+  "tracks direct invocation arguments through parameters: $source ($why)",
+  ({ source, keys }) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `const fs=require('fs'); ${source} fs.readFileSync('kept');`,
+      ).configurationOperations.map(({ key }) => key),
+    ).toEqual(keys);
+  },
+);
+
+it("treats a value thrown uncaught at the top level as reaching host handlers", () => {
+  // `process.on("uncaughtException", ...)` may change the thrown module
+  // before the timer callback reads it.
+  expect(
+    analyzeCommonJsSemanticFixture(
+      `const fs=require('fs'); setTimeout(() => fs.readFileSync('later')); throw fs;`,
+    ).configurationOperations.map(({ key }) => key),
+  ).toEqual([]);
+});
+
+it.each(["constructor", "toString"])(
+  "analyzes a module named like an Object.prototype key: %s",
+  (specifier) => {
+    expect(
+      analyzeCommonJsSemanticFixture(
+        `const m=require("${specifier}"); m.has("x");`,
+      ).configurationOperations,
+    ).toEqual([]);
+  },
+);

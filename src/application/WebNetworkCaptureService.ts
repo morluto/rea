@@ -1,13 +1,14 @@
+import { unknownTarget } from "../domain/targetIdentity.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { excludeCaptureCoordinates } from "../domain/webNetworkCaptureCoordinates.js";
 import { redactExplicitText } from "../domain/explicitSensitiveValues.js";
-import type { ExecutionOptions } from "./AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { WebNetworkCapturePort } from "./WebNetworkCapturePort.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisOutputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { createEvidence, type Evidence } from "../domain/evidence.js";
@@ -22,7 +23,8 @@ import {
   type WebNetworkCapture,
 } from "../domain/webNetworkCapture.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { scanCredentialNames } from "./environment/environmentBuildReport.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
 
 const OPERATION = "inspect_web_network_capture";
 
@@ -41,11 +43,7 @@ export class WebNetworkCaptureService {
     options?: ExecutionOptions,
   ): Promise<Result<Evidence, AnalysisError>> {
     if (options?.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(OPERATION, {
-          cause: options.signal.reason,
-        }),
-      );
+      return err(cancelledBy(OPERATION, options.signal));
     const failure = (error: AnalysisError): Result<never, AnalysisError> =>
       err(redactExplicitFailure(error, captureSensitiveValues(rawInput)));
     const parsed = inspectWebNetworkCaptureInputSchema.safeParse(rawInput);
@@ -98,15 +96,23 @@ export class WebNetworkCaptureService {
         );
       }
       if (partialFailure !== undefined) {
-        loaded.error.partialObservation = undefined;
+        const rejected = loaded.error.partialObservation;
+        for (
+          let owner: AnalysisError | undefined = loaded.error;
+          owner !== undefined;
+          owner = owner.cleanupPrimary
+        ) {
+          if (owner.partialObservation === rejected)
+            owner.partialObservation = undefined;
+        }
         partialFailure.retainSecondaryFailure(loaded.error);
         return failure(
           loaded.error.cleanupIncomplete
-            ? analysisErrorWithCleanupFailure(
+            ? analysisErrorWithCleanupDependencies(
                 partialFailure,
                 loaded.error,
                 OPERATION,
-              ).bindCleanupDependencies([partialFailure, loaded.error])
+              )
             : partialFailure,
         );
       }
@@ -152,6 +158,8 @@ export class WebNetworkCaptureService {
     const safeValue = excludeCaptureCoordinates(value, input.sensitive_values);
     const redactText = (text: string): string =>
       redactExplicitText(text, input.sensitive_values);
+    const isSensitive = (text: string): boolean =>
+      input.sensitive_values.some((literal) => text.includes(literal));
     const selected =
       input.record_ordinals ?? value.records.map(({ ordinal }) => ordinal);
     const records = [];
@@ -181,16 +189,8 @@ export class WebNetworkCaptureService {
         limitations: record.limitations.map(redactText),
       });
     }
-    const safePath = input.sensitive_values.some((literal) =>
-      input.capture_path.includes(literal),
-    )
-      ? ""
-      : input.capture_path;
-    const safeSha256 = input.sensitive_values.some((literal) =>
-      artifactSha256.includes(literal),
-    )
-      ? null
-      : artifactSha256;
+    const safePath = isSensitive(input.capture_path) ? "" : input.capture_path;
+    const safeSha256 = isSensitive(artifactSha256) ? null : artifactSha256;
     const subjectUnavailableReason = redactText(
       "The explicitly sensitive artifact digest is excluded; its cryptographic identity is unknown in this Evidence.",
     );
@@ -201,14 +201,13 @@ export class WebNetworkCaptureService {
             "The explicitly sensitive artifact path is excluded; its size remains available.",
           ]
         : []),
+      ...(safeValue.format === "har"
+        ? credentialNameLimitations(scanCredentialNames(records))
+        : []),
     ].map(redactText);
     const parameters = jsonObjectSchema.parse({
       capture_path: safePath,
-      ...(input.sensitive_values.some((literal) =>
-        input.format.includes(literal),
-      )
-        ? {}
-        : { format: input.format }),
+      ...(isSensitive(input.format) ? {} : { format: input.format }),
       record_ordinals: selected,
       ...(input.protobuf === undefined
         ? {}
@@ -235,56 +234,111 @@ export class WebNetworkCaptureService {
             },
           }),
       sensitive_value_count: input.sensitive_values.length,
+      ...(input.max_input_bytes === undefined
+        ? {}
+        : { max_input_bytes: input.max_input_bytes }),
+      ...(input.max_reply_bytes === undefined
+        ? {}
+        : { max_reply_bytes: input.max_reply_bytes }),
+      ...(input.max_nesting_depth === undefined
+        ? {}
+        : { max_nesting_depth: input.max_nesting_depth }),
       ...(input.capture_timeout_ms === undefined
         ? {}
         : { capture_timeout_ms: input.capture_timeout_ms }),
     });
-    return ok(
-      createEvidence(
-        safeSha256 === null
-          ? undefined
-          : {
-              path: safePath,
-              sha256: safeSha256,
-              format: "file",
-            },
-        value.decoder,
-        {
-          operation: OPERATION,
-          parameters,
-          result: {
-            ...safeValue,
-            artifact: {
-              ...value.artifact,
-              path: safePath,
-              sha256: safeSha256,
-            },
-            records,
-            limitations:
-              safeSha256 === null
-                ? [...limitations, subjectUnavailableReason]
-                : limitations,
+    const evidence = createEvidence(
+      safeSha256 === null
+        ? unknownTarget("not-observed")
+        : {
+            path: safePath,
+            sha256: safeSha256,
+            format: "file",
           },
-          ...(safeValue.format !== "qlog"
-            ? {}
-            : {
-                analysisProfile: createAnalysisProfile(value.decoder, {
-                  qlog_profile: safeValue.qlog.profile,
-                  clock: safeValue.qlog.clock,
-                  scope: safeValue.qlog.scope,
-                }),
-              }),
-          confidence: "observed",
-          authority: "historical-reference",
-          limitations,
-          ...(safeSha256 === null ? { subjectUnavailableReason } : {}),
-          locations:
-            safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
+      value.decoder,
+      {
+        operation: OPERATION,
+        parameters,
+        result: {
+          ...safeValue,
+          artifact: {
+            ...value.artifact,
+            path: safePath,
+            sha256: safeSha256,
+          },
+          records,
+          limitations:
+            safeSha256 === null
+              ? [...limitations, subjectUnavailableReason]
+              : limitations,
         },
-      ),
+        ...(safeValue.format !== "qlog"
+          ? {}
+          : {
+              analysisProfile: createAnalysisProfile(value.decoder, {
+                qlog_profile: safeValue.qlog.profile,
+                clock: safeValue.qlog.clock,
+                scope: safeValue.qlog.scope,
+              }),
+            }),
+        confidence: "observed",
+        authority: "historical-reference",
+        limitations:
+          safeSha256 === null
+            ? [subjectUnavailableReason, ...limitations]
+            : limitations,
+        locations:
+          safePath === "" ? [] : [{ kind: "artifact-path", path: safePath }],
+      },
     );
+    return ok(evidence);
   }
 }
+
+/** A count with its first pointers, as the credential-name scan tallies them. */
+type ScanTally = {
+  readonly count: number;
+  readonly pointers: readonly string[];
+};
+
+/** Listed pointers stay within this many characters, so one long member name cannot inflate a limitation. */
+const LISTED_POINTER_CHARACTERS = 1024;
+
+/** The pointers that fit the sample in order, then how many of the counted names are not listed. */
+const listedPointers = (tally: ScanTally): string => {
+  const listed: string[] = [];
+  let length = 0;
+  for (const pointer of tally.pointers) {
+    const added = pointer.length + (listed.length > 0 ? 2 : 0);
+    if (length + added > LISTED_POINTER_CHARACTERS) break;
+    length += added;
+    listed.push(pointer);
+  }
+  const unlisted = tally.count - listed.length;
+  if (unlisted === 0) return listed.join(", ");
+  const rest = `${String(unlisted)} ${listed.length > 0 ? "more " : ""}not listed`;
+  return listed.length > 0 ? `${listed.join(", ")}; ${rest}` : rest;
+};
+
+/**
+ * The credential-name scan environment-build runs over selected HAR records,
+ * as limitations: counts and pointers to names that hold a retained value,
+ * never the values, and what the scan did not read.
+ */
+const credentialNameLimitations = (
+  scan: ReturnType<typeof scanCredentialNames>,
+): string[] => [
+  ...(scan.count > 0
+    ? [
+        `${String(scan.count)} recorded header, query parameter or body member names look like credentials and hold a retained value (${listedPointers(scan)}); names do not establish sensitivity, so declare the values as explicitly sensitive to exclude them.`,
+      ]
+    : []),
+  ...(scan.skipped.count > 0
+    ? [
+        `${String(scan.skipped.count)} recorded bodies, header lists or query strings were not scanned: each is cut, over 4 MiB of text, past the 524288 values the credential-name scan reads in all, or a response body whose retained source is unavailable (${listedPointers(scan.skipped)}).`,
+      ]
+    : []),
+];
 
 const isCapturePartialCandidate = (value: unknown): boolean => {
   if (typeof value !== "object" || value === null || Array.isArray(value))

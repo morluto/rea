@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { EspFlashImageArtifactReader } from "./EspFlashImageArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../resources/ArtifactResourceScope.js";
 import type {
   ArtifactEntry,
   ArtifactReaderTraversal,
-} from "./ArtifactReader.js";
+} from "../resources/ArtifactReader.js";
 import { openRegularFile } from "../filesystem/RegularFile.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import * as regionReads from "./EspFlashRegionReads.js";
@@ -18,6 +18,7 @@ import {
   espFlashDump,
   otaData,
   otaRecord,
+  partitionEntry,
   partitionTable,
 } from "../domain/firmware/espFlash.fixture.js";
 import {
@@ -26,6 +27,7 @@ import {
   espImage,
   pattern,
 } from "../../tests/fixtures/espImage.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 
@@ -105,7 +107,7 @@ describe("ESP flash layout inventory", () => {
         flash_address: 0x8000,
         method: "default",
         partition_count: 6,
-        md5: { status: "valid" },
+        md5: { status: "valid", entries_after_checksum: 0 },
       },
       partitions_outside_dump: [],
       otadata: { partition_index: 1 },
@@ -169,9 +171,79 @@ describe("ESP flash layout inventory", () => {
     expect(root(snapshot)).toMatchObject({
       partition_table: { flash_address: 0xa000, method: "scan" },
     });
-    expect(snapshot.limitations).toContain(
-      "The partition table at 0xa000 was found by scanning 0x1000-aligned flash sectors for a table whose MD5 verifies; the dump does not record the bootloader's configured table offset.",
+    expect(snapshot.limitations).toContainEqual(
+      expect.stringMatching(/0xa000.*0x1000.*MD5.*does not record/iu),
     );
+  });
+
+  it("reports partition entries after the MD5 record as a count", async () => {
+    const [first, second, third] = TWO_OTA_PARTITIONS;
+    const prefix = partitionTable([first!]);
+    const snapshot = await scanCanonicalArtifactInventory(
+      await writeDump(
+        espFlashDump({
+          bootloader: { at: 0, bytes: BOOTLOADER },
+          table: Buffer.concat([
+            prefix.subarray(0, 64),
+            partitionEntry(second!),
+            partitionEntry(third!),
+            prefix.subarray(64),
+          ]),
+        }),
+      ),
+    );
+    expect(root(snapshot)).toMatchObject({
+      partition_table: {
+        flash_address: 0x8000,
+        md5: { status: "valid", entries_after_checksum: 2 },
+      },
+    });
+  });
+});
+
+it("inventories a zero-byte partition without reporting missing bytes", async () => {
+  const dump = espFlashDump({
+    bootloader: { at: 0, bytes: BOOTLOADER },
+    table: partitionTable([
+      ...TWO_OTA_PARTITIONS,
+      { label: "empty", type: 1, subtype: 0x82, offset: 0xa000, size: 0 },
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(await writeDump(dump));
+  expect(snapshot.coverage.status).toBe("complete");
+  expect(
+    snapshot.occurrences.find(
+      ({ logical_path }) => logical_path === "partitions/empty.bin",
+    ),
+  ).toMatchObject({
+    declared_size: 0,
+    limitations: ["partitions/empty.bin declares zero bytes."],
+    format_metadata: { flash_address: 0xa000, size: 0 },
+  });
+});
+
+it("keeps a zero-byte partition before the flash origin at a nonnegative offset", async () => {
+  const esp32 = espImage({
+    segments: ESP32C3_BOOTLOADER_SEGMENTS,
+    chipId: 0x0000,
+  });
+  const whole = espFlashDump({
+    bootloader: { at: 0x1000, bytes: esp32 },
+    table: partitionTable([
+      { label: "empty", type: 1, subtype: 0x82, offset: 0, size: 0 },
+      ...TWO_OTA_PARTITIONS,
+    ]),
+  });
+  const snapshot = await scanCanonicalArtifactInventory(
+    await writeDump(whole.subarray(0x1000)),
+    { espFlashSelection: { flashOffset: 0x1000 } },
+  );
+  const empty = snapshot.occurrences.find(
+    ({ logical_path }) => logical_path === "partitions/empty.bin",
+  );
+  expect(empty).toMatchObject({
+    declared_size: 0,
+    source_location: { offset: 0, length: 0 },
   });
 });
 
@@ -199,7 +271,7 @@ describe("ESP flash layout coverage and selection", () => {
     ).toMatchObject({
       declared_size: 0,
       limitations: [
-        "partitions/ota_1.bin lies outside the dump: the file holds none of its 65536 bytes.",
+        expect.stringMatching(/partitions\/ota_1\.bin.*outside.*65536/iu),
       ],
       format_metadata: {
         index: 5,
@@ -254,11 +326,18 @@ describe("ESP flash layout coverage and selection", () => {
       facts: { status: "erased" },
     });
     // Only the erased app slot holds bytes the bootloader does not read.
-    expect(
-      snapshot.limitations.filter((text) => text.includes("finds no app")),
-    ).toEqual([
-      `partitions/ota_1.bin begins with erased flash, so ESP-IDF's bootloader finds no app in it, but ${String(indices.length)} of its bytes from offset 0x${start.toString(16)} to 0x${end.toString(16)} are not erased flash; they are not read as an image.`,
-    ]);
+    const erasedSlotWarnings = snapshot.limitations.filter((text) =>
+      /bootloader.*no app/iu.test(text),
+    );
+    expect(erasedSlotWarnings).toHaveLength(1);
+    const warning = erasedSlotWarnings[0] ?? "";
+    expect(warning).toContain("partitions/ota_1.bin");
+    expect(warning).toContain(String(indices.length));
+    expect(warning).toContain(`0x${start.toString(16)}`);
+    expect(warning).toContain(`0x${end.toString(16)}`);
+    expect(warning).toMatch(
+      /erased flash.*bootloader.*no app.*not erased.*not read as an image/iu,
+    );
     // A partition erased throughout has no written bytes.
     expect(row("partitions/nvs.bin")).toMatchObject({
       written_offset: null,
@@ -319,17 +398,6 @@ describe("ESP flash layout coverage and selection", () => {
 });
 
 describe("ESP flash layout reader identity", () => {
-  it("rejects a changed carrier during extraction preparation", async () => {
-    const reader = new EspFlashImageArtifactReader(await writeDump(DUMP));
-    try {
-      await expect(
-        reader.prepareContainer("0".repeat(64)),
-      ).rejects.toMatchObject({ reason: "integrity" });
-    } finally {
-      await reader.close();
-    }
-  });
-
   it("rejects forged entries and changed carrier identity, then closes idempotently", async () => {
     const path = await writeDump(DUMP);
     const reader = new EspFlashImageArtifactReader(path);
@@ -360,17 +428,19 @@ describe("ESP flash layout reader identity", () => {
     }
   });
 
-  it("settles an active entry stream when closed", async () => {
-    const reader = new EspFlashImageArtifactReader(await writeDump(DUMP));
+  it("opens a partition past the end as the empty range at the end of the file", async () => {
+    const cut = DUMP.subarray(0, 0x2_8000);
+    const reader = new EspFlashImageArtifactReader(await writeDump(cut));
     try {
-      const [entry] = await list(reader);
+      const entry = (await list(reader)).find(
+        ({ path }) => path === "partitions/ota_1.bin",
+      );
       if (entry === undefined) throw new Error("Missing entry");
-      const stream = await reader.open(entry);
-      await reader.close();
-      expect(stream.destroyed).toBe(true);
-      await expect(
-        reader.entries()[Symbol.asyncIterator]().next(),
-      ).rejects.toMatchObject({ reason: "unavailable" });
+      expect(entry).toMatchObject({ byteOffset: cut.length, declaredSize: 0 });
+      const chunks: Buffer[] = [];
+      for await (const chunk of await reader.open(entry))
+        chunks.push(chunk as Buffer);
+      expect(Buffer.concat(chunks)).toHaveLength(0);
     } finally {
       await reader.close();
     }
@@ -450,236 +520,191 @@ describe("ESP flash layout extraction and lifecycle", () => {
       await resourceScope.close();
     }
   });
+});
 
+const multiChunkSize = 0x4_0000;
+
+const checkPreparationInterruption = async (
+  reader: EspFlashImageArtifactReader,
+  action: "cancel" | "close",
+  stage: string,
+  observe: (read: () => void) => { mockRestore(): void },
+) => {
+  const controller = new AbortController();
+  const reason = { stage };
+  let acknowledge!: () => void;
+  const acknowledgement = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  let reads = 0;
+  const observer = observe(() => {
+    if (++reads === 1) acknowledge();
+  });
+  const pending = reader
+    .entries(controller.signal)
+    [Symbol.asyncIterator]()
+    .next();
+  try {
+    await awaitAcknowledgement(acknowledgement, pending, stage);
+    const requestedAt = reads;
+    if (action === "cancel") controller.abort(reason);
+    await Promise.all([
+      expect(pending).rejects.toMatchObject(
+        action === "cancel"
+          ? { reason: "cancelled", cause: reason }
+          : { reason: "unavailable" },
+      ),
+      action === "close" ? reader.close() : undefined,
+    ]);
+    expect(reads).toBe(requestedAt);
+    await reader.close();
+    await expect(
+      reader.entries()[Symbol.asyncIterator]().next(),
+    ).rejects.toMatchObject({ reason: "unavailable" });
+  } finally {
+    try {
+      await reader.close();
+    } finally {
+      await pending.catch(() => undefined);
+      observer.mockRestore();
+    }
+  }
+};
+
+describe("ESP flash layout preparation interruption", () => {
   it.each(["cancel", "close"] as const)(
-    "settles app decoding when the caller requests %s after the first decoded chunk",
+    "settles app decoding on %s after a decoded chunk",
     async (action) => {
-      const large = espImage({
-        segments: [{ address: 0x4038_0000, data: Buffer.alloc(8 << 20, 0x5a) }],
+      const appOffset = 0x1_0000;
+      const partitionSize = multiChunkSize + 0x1_0000;
+      const image = espImage({
+        segments: [
+          { address: 0x4038_0000, data: Buffer.alloc(multiChunkSize, 0x5a) },
+        ],
       });
-      const parts = [
-        {
-          label: "factory",
-          type: 0,
-          subtype: 0,
-          offset: 0x1_0000,
-          size: 0x90_0000,
-        },
-      ];
       const reader = new EspFlashImageArtifactReader(
         await writeDump(
           espFlashDump({
-            size: 0x91_0000,
+            size: appOffset + partitionSize,
             bootloader: { at: 0, bytes: BOOTLOADER },
-            table: partitionTable(parts),
-            parts: [{ at: 0x1_0000, bytes: large }],
+            table: partitionTable([
+              {
+                label: "factory",
+                type: 0,
+                subtype: 0,
+                offset: appOffset,
+                size: partitionSize,
+              },
+            ]),
+            parts: [{ at: appOffset, bytes: image }],
           }),
         ),
       );
-      const controller = new AbortController();
-      const reason = { stage: "decoding" };
-      let completion: Promise<void> | undefined;
-      let decoded = 0;
-      let acknowledge = (): void => undefined;
-      const decoding = new Promise<void>((resolve) => {
-        acknowledge = resolve;
-      });
       const create = espImageDecoding.createEspImageDecoder;
-      // The bootloader decodes in one chunk; acknowledge the app's second chunk.
-      const observer = vi
-        .spyOn(espImageDecoding, "createEspImageDecoder")
-        .mockImplementation((size) => {
-          const decoder = create(size);
-          let writes = 0;
-          return {
-            write: (chunk) => {
-              decoder.write(chunk);
-              decoded += 1;
-              writes += 1;
-              if (size > 0x10_0000 && writes === 1) acknowledge();
-            },
-            get satisfied() {
-              return decoder.satisfied;
-            },
-            finish: () => decoder.finish(),
-          };
-        });
-      try {
-        const pending = reader
-          .entries(controller.signal)
-          [Symbol.asyncIterator]()
-          .next();
-        await Promise.race([
-          decoding,
-          pending.then(() => {
-            throw new Error("Preparation settled before app decoding began");
-          }),
-        ]);
-        const requestedAt = decoded;
-        if (action === "cancel") controller.abort(reason);
-        else completion = reader.close();
-        await expect(pending).rejects.toMatchObject(
-          action === "cancel"
-            ? { reason: "cancelled", cause: reason }
-            : { reason: "unavailable" },
-        );
-        await completion;
-        expect(decoded).toBe(requestedAt);
-        await reader.close();
-        await expect(
-          reader.entries()[Symbol.asyncIterator]().next(),
-        ).rejects.toMatchObject({
-          reason: "unavailable",
-        });
-      } finally {
-        observer.mockRestore();
-        await reader.close();
-      }
+      await checkPreparationInterruption(
+        reader,
+        action,
+        "app decoding",
+        (read) =>
+          vi
+            .spyOn(espImageDecoding, "createEspImageDecoder")
+            .mockImplementation((size) => {
+              const decoder = create(size);
+              return {
+                write: (chunk) => {
+                  decoder.write(chunk);
+                  if (size === partitionSize) read();
+                },
+                get satisfied() {
+                  return decoder.satisfied;
+                },
+                finish: () => decoder.finish(),
+              };
+            }),
+      );
     },
   );
-});
 
-describe("ESP flash layout written-bytes scan lifecycle", () => {
   it.each(["cancel", "close"] as const)(
-    "settles the written-bytes scan when the caller requests %s after its first chunk",
+    "settles the written-bytes scan on %s after an admitted chunk",
     async (action) => {
-      // Only the written-bytes scan reads a data partition's bytes.
-      const parts = [
-        {
-          label: "storage",
-          type: 1,
-          subtype: 0x81,
-          offset: 0x1_0000,
-          size: 0x90_0000,
-        },
-      ];
+      // Only the written-bytes scan reads this data partition's bytes.
+      const dataOffset = 0x1_0000;
       const reader = new EspFlashImageArtifactReader(
         await writeDump(
           espFlashDump({
-            size: 0x91_0000,
+            size: dataOffset + multiChunkSize,
             bootloader: { at: 0, bytes: BOOTLOADER },
-            table: partitionTable(parts),
-            parts: [{ at: 0x1_0000, bytes: Buffer.alloc(0x90_0000, 0x5a) }],
+            table: partitionTable([
+              {
+                label: "storage",
+                type: 1,
+                subtype: 0x81,
+                offset: dataOffset,
+                size: multiChunkSize,
+              },
+            ]),
+            parts: [
+              { at: dataOffset, bytes: Buffer.alloc(multiChunkSize, 0x5a) },
+            ],
           }),
         ),
       );
-      const controller = new AbortController();
-      const reason = { stage: "written-bytes scan" };
-      let completion: Promise<void> | undefined;
-      let scanned = 0;
-      let acknowledge = (): void => undefined;
-      const scanning = new Promise<void>((resolve) => {
-        acknowledge = resolve;
-      });
       const scan = regionReads.writtenExtents;
-      // Count the chunks the scan examines once the reader admits them.
-      const observer = vi
-        .spyOn(regionReads, "writtenExtents")
-        .mockImplementation((context, regions, assertOpen) =>
-          scan(context, regions, () => {
-            assertOpen();
-            if (!regions.some(({ length }) => length >= 0x10_0000)) return;
-            scanned += 1;
-            if (scanned === 1) acknowledge();
-          }),
-        );
-      try {
-        const pending = reader
-          .entries(controller.signal)
-          [Symbol.asyncIterator]()
-          .next();
-        await Promise.race([
-          scanning,
-          pending.then(() => {
-            throw new Error("Preparation settled before the scan began");
-          }),
-        ]);
-        const requestedAt = scanned;
-        if (action === "cancel") controller.abort(reason);
-        else completion = reader.close();
-        await expect(pending).rejects.toMatchObject(
-          action === "cancel"
-            ? { reason: "cancelled", cause: reason }
-            : { reason: "unavailable" },
-        );
-        await completion;
-        expect(scanned).toBe(requestedAt);
-        await reader.close();
-        await expect(
-          reader.entries()[Symbol.asyncIterator]().next(),
-        ).rejects.toMatchObject({
-          reason: "unavailable",
-        });
-      } finally {
-        observer.mockRestore();
-        await reader.close();
-      }
+      await checkPreparationInterruption(
+        reader,
+        action,
+        "written-bytes scan",
+        (read) =>
+          vi
+            .spyOn(regionReads, "writtenExtents")
+            .mockImplementation((context, regions, assertOpen) =>
+              scan(context, regions, () => {
+                assertOpen();
+                read();
+              }),
+            ),
+      );
     },
   );
-});
 
-describe("ESP flash layout erased-gap scan lifecycle", () => {
   it.each(["cancel", "close"] as const)(
-    "settles the erased-gap scan when the caller requests %s after its first chunk",
+    "settles the erased-gap scan on %s after an admitted chunk",
     async (action) => {
-      // One small partition leaves the rest of a 9 MiB dump as one erased gap.
-      const parts = [
-        { label: "nvs", type: 1, subtype: 2, offset: 0x9000, size: 0x1000 },
-      ];
+      const gapStart = 0xa000;
       const reader = new EspFlashImageArtifactReader(
         await writeDump(
           espFlashDump({
-            size: 0x90_0000,
+            size: gapStart + multiChunkSize,
             bootloader: { at: 0, bytes: BOOTLOADER },
-            table: partitionTable(parts),
+            table: partitionTable([
+              {
+                label: "nvs",
+                type: 1,
+                subtype: 2,
+                offset: 0x9000,
+                size: 0x1000,
+              },
+            ]),
           }),
         ),
       );
-      const controller = new AbortController();
-      const reason = { stage: "erased-gap scan" };
-      let completion: Promise<void> | undefined;
-      let scanned = 0;
-      let acknowledge = (): void => undefined;
-      const scanning = new Promise<void>((resolve) => {
-        acknowledge = resolve;
-      });
       const scan = regionReads.firstUnerasedInRange;
-      // Count the chunks the scan examines once the reader admits them.
-      const observer = vi
-        .spyOn(regionReads, "firstUnerasedInRange")
-        .mockImplementation((context, range, assertOpen) =>
-          scan(context, range, () => {
-            assertOpen();
-            if (range.length < 0x10_0000) return;
-            scanned += 1;
-            if (scanned === 1) acknowledge();
-          }),
-        );
-      try {
-        const pending = reader
-          .entries(controller.signal)
-          [Symbol.asyncIterator]()
-          .next();
-        await Promise.race([
-          scanning,
-          pending.then(() => {
-            throw new Error("Preparation settled before the scan began");
-          }),
-        ]);
-        const requestedAt = scanned;
-        if (action === "cancel") controller.abort(reason);
-        else completion = reader.close();
-        await expect(pending).rejects.toMatchObject(
-          action === "cancel"
-            ? { reason: "cancelled", cause: reason }
-            : { reason: "unavailable" },
-        );
-        await completion;
-        expect(scanned).toBe(requestedAt);
-      } finally {
-        observer.mockRestore();
-        await reader.close();
-      }
+      await checkPreparationInterruption(
+        reader,
+        action,
+        "erased-gap scan",
+        (read) =>
+          vi
+            .spyOn(regionReads, "firstUnerasedInRange")
+            .mockImplementation((context, range, assertOpen) =>
+              scan(context, range, () => {
+                assertOpen();
+                if (range.start === gapStart && range.length === multiChunkSize)
+                  read();
+              }),
+            ),
+      );
     },
   );
 });

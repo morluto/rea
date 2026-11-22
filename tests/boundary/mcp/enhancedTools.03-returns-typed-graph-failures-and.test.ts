@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AnalysisOperationPort } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisOperationPort } from "../../../src/ports/AnalysisProvider.js";
 import { EnhancedTools } from "../../../src/application/EnhancedTools.js";
 
 import {
@@ -20,8 +20,9 @@ describe("enhanced MCP tools", () => {
       execute: () => Promise.resolve(ok(inventory({}))),
     });
 
-    const unresolved = await tools.execute("find_xrefs_to_name", {
-      name: "missing",
+    const unresolved = await tools.executeValidated({
+      name: "find_xrefs_to_name",
+      input: { name: "missing" },
     });
 
     expect(unresolved).toEqual({
@@ -65,9 +66,8 @@ describe("enhanced MCP tools", () => {
       },
     };
 
-    const result = await new EnhancedTools(analysis).execute(
-      "analyze_swift_types",
-      {},
+    const result = await new EnhancedTools(analysis).executeValidated(
+      { name: "analyze_swift_types", input: {} },
       controller.signal,
     );
 
@@ -101,6 +101,9 @@ it("exact-name xrefs preserves ambiguity independently of inventory order and ac
     });
     expect(parseMcpToolError(rejected).error).toMatchObject({
       code: "invalid_request",
+      remediation: {
+        action: expect.stringContaining("Select an exact address"),
+      },
       details: {
         issues: [
           expect.objectContaining({
@@ -110,6 +113,7 @@ it("exact-name xrefs preserves ambiguity independently of inventory order and ac
         ],
       },
     });
+    expect(parseMcpToolError(rejected).error.recovery).toBeUndefined();
   }
   expect(queried).toEqual([]);
   rows = [

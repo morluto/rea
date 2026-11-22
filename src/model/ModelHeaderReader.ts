@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
-import { assertArtifactReadActive } from "../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
-  ModelFormatFailure,
+  assertArtifactReadActive,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
+import {
+  modelCapacityFailure,
   MODEL_HEADER_BYTES,
   rejectModel,
 } from "./ModelFormat.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
 
 /** Sequential prefix reader. Read-ahead is permitted only inside a parser-proven header extent. */
 export class ModelHeaderReader {
@@ -26,15 +29,30 @@ export class ModelHeaderReader {
   /** Safetensors declares JSON bytes separately from its fixed length prefix. */
   excludeSafetensorsLengthPrefix(): void {
     if (this.position !== 8)
-      throw new TypeError(
+      throw invariantViolation(
         "Safetensors header budget must follow its eight-byte length prefix",
       );
     this.#headerPrefixBytes = 8;
   }
 
-  /** Minimum bytes implied by the remaining declared header records, never tensor payload. */
-  guarantee(bytes: number): void {
-    const end = this.position + bytes;
+  /** Validate a raw file extent before host conversion or allocation admission. */
+  requireFileExtent(offset: number, length: bigint): void {
+    if (
+      !Number.isSafeInteger(offset) ||
+      offset < 0 ||
+      length < 0n ||
+      BigInt(offset) + length > BigInt(this.size)
+    )
+      rejectModel("Declared extent is outside the file");
+  }
+
+  /** Minimum header bytes; physical validity precedes the independent header budget. */
+  guarantee(bytes: number | bigint): void {
+    if (typeof bytes === "number" && !Number.isSafeInteger(bytes))
+      rejectModel("Invalid header field length");
+    const length = BigInt(bytes);
+    this.requireFileExtent(this.position, length);
+    const end = this.position + Number(length);
     this.#validateEnd(end);
     this.#guaranteedEnd = Math.max(this.#guaranteedEnd, end);
   }
@@ -43,10 +61,9 @@ export class ModelHeaderReader {
     if (!Number.isSafeInteger(end) || end < 0 || end > this.size)
       rejectModel("Declared header extent is outside the file");
     if (end - this.#headerPrefixBytes > MODEL_HEADER_BYTES)
-      throw new ModelFormatFailure(
-        "capacity",
-        "Model header exceeds 100,000,000 bytes. This release has no runtime override.",
+      throw modelCapacityFailure(
         "header-bytes",
+        "Model header exceeds 100,000,000 bytes. This release has no runtime override.",
       );
   }
 
@@ -77,6 +94,7 @@ export class ModelHeaderReader {
           throw new ArtifactReaderFailure(
             "integrity",
             "Model header ended before its admitted file extent",
+            { integrityCheck: "read-coverage" },
           );
         this.#hash.update(next.subarray(offset, offset + result.bytesRead));
         offset += result.bytesRead;
@@ -126,6 +144,7 @@ export class ModelHeaderReader {
         throw new ArtifactReaderFailure(
           "integrity",
           "Model ended before its admitted extent during full-file hashing",
+          { integrityCheck: "read-coverage" },
         );
       this.#hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;

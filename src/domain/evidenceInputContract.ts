@@ -11,6 +11,7 @@ type EvidenceInputDeclaration =
 // Zod registries carry owner metadata through describe/meta clones. This is a
 // schema declaration registry, never a store of caller Evidence or references.
 const declarations = z.registry<EvidenceInputDeclaration>();
+const referenceAlternatives = z.registry<{ readonly retained: true }>();
 const borrowedDeclarations = new WeakMap<object, z.ZodType>();
 
 /** Inspect authored declarations, including described clones, for catalog checks. */
@@ -22,6 +23,14 @@ export const declareEvidenceInput = <Schema extends z.ZodType>(
   schema: Schema,
 ): Schema => {
   declarations.add(schema, { kind: "evidence" });
+  return schema;
+};
+
+/** Mark a source union that accepts both inline Evidence and a retained reference. */
+export const declareEvidenceReferenceAlternative = <Schema extends z.ZodType>(
+  schema: Schema,
+): Schema => {
+  referenceAlternatives.add(schema, { retained: true });
   return schema;
 };
 
@@ -94,6 +103,8 @@ type Visitor<Failure> = (
 export interface EvidenceInputContract<Frame = unknown> {
   readonly frameSchema: z.ZodType<Frame>;
   readonly hasEvidence: boolean;
+  /** A declared field can replace inline Evidence with a retained reference. */
+  readonly hasEvidenceReferenceAlternative: boolean;
   resolve<Failure>(
     input: unknown,
     visit: Visitor<Failure>,
@@ -102,9 +113,13 @@ export interface EvidenceInputContract<Frame = unknown> {
 }
 
 const contracts = new WeakMap<z.ZodType, EvidenceInputContract>();
-const identity = (schema: z.ZodType): EvidenceInputContract => ({
+const identity = (
+  schema: z.ZodType,
+  hasEvidenceReferenceAlternative = false,
+): EvidenceInputContract => ({
   frameSchema: schema,
   hasEvidence: false,
+  hasEvidenceReferenceAlternative,
   resolve: (input) => ok(input),
 });
 
@@ -129,11 +144,14 @@ export const getEvidenceInputContract = <Schema extends z.ZodType>(
 };
 
 const compile = (schema: z.ZodType): EvidenceInputContract => {
+  if (referenceAlternatives.get(schema) !== undefined)
+    return identity(schema, true);
   const declared = declarations.get(schema);
   if (declared?.kind === "evidence")
     return {
       frameSchema: z.unknown().nonoptional(),
       hasEvidence: true,
+      hasEvidenceReferenceAlternative: true,
       resolve: (input, visit, path = []) => visit(input, path),
     };
   if (declared?.kind === "borrowed") {
@@ -156,9 +174,11 @@ const compile = (schema: z.ZodType): EvidenceInputContract => {
     schema instanceof z.ZodReadonly
   ) {
     const child = getEvidenceInputContract(schema.unwrap() as z.ZodType);
-    if (!child.hasEvidence) return identity(schema);
+    if (!child.hasEvidence)
+      return identity(schema, child.hasEvidenceReferenceAlternative);
     return {
       hasEvidence: true,
+      hasEvidenceReferenceAlternative: child.hasEvidenceReferenceAlternative,
       frameSchema: replaceWrappedSchema(schema, child.frameSchema),
       resolve: (input, visit, path = []) =>
         input === undefined ||
@@ -185,9 +205,14 @@ const objectContract = (schema: z.ZodObject): EvidenceInputContract => {
       [key, getEvidenceInputContract(child as z.ZodType)] as const,
   );
   const selected = children.filter(([, child]) => child.hasEvidence);
-  if (selected.length === 0) return identity(schema);
+  const hasEvidenceReferenceAlternative = children.some(
+    ([, child]) => child.hasEvidenceReferenceAlternative,
+  );
+  if (selected.length === 0)
+    return identity(schema, hasEvidenceReferenceAlternative);
   return {
     hasEvidence: true,
+    hasEvidenceReferenceAlternative,
     frameSchema: schema.clone(
       {
         ...schema.def,
@@ -215,9 +240,11 @@ const objectContract = (schema: z.ZodObject): EvidenceInputContract => {
 
 const arrayContract = (schema: z.ZodArray): EvidenceInputContract => {
   const child = getEvidenceInputContract(schema.element as z.ZodType);
-  if (!child.hasEvidence) return identity(schema);
+  if (!child.hasEvidence)
+    return identity(schema, child.hasEvidenceReferenceAlternative);
   return {
     hasEvidence: true,
+    hasEvidenceReferenceAlternative: child.hasEvidenceReferenceAlternative,
     frameSchema: schema.clone(
       { ...schema.def, element: child.frameSchema },
       { parent: true },
@@ -242,7 +269,11 @@ const unionContract = (schema: z.ZodUnion): EvidenceInputContract => {
   const options = schema.options.map((option) =>
     getEvidenceInputContract(option as z.ZodType),
   );
-  if (!options.some((option) => option.hasEvidence)) return identity(schema);
+  const hasEvidenceReferenceAlternative = options.some(
+    (option) => option.hasEvidenceReferenceAlternative,
+  );
+  if (!options.some((option) => option.hasEvidence))
+    return identity(schema, hasEvidenceReferenceAlternative);
   // Capture the successful branch while parsing; choosing it again later would
   // repeat defaults, overwrites and refinements. Keys are only parser results.
   const branches = new WeakMap<object, EvidenceInputContract>();
@@ -257,6 +288,7 @@ const unionContract = (schema: z.ZodUnion): EvidenceInputContract => {
   );
   return {
     hasEvidence: true,
+    hasEvidenceReferenceAlternative,
     frameSchema: frame.clone({
       ...frame.def,
       ...(schema.def.error === undefined ? {} : { error: schema.def.error }),

@@ -4,6 +4,7 @@ import {
   webSourceLocationFixture,
   webSourceMapDecoderFixture as decoder,
 } from "../../tests/fixtures/webSourceLocation.js";
+import { webModuleArtifactsFixture } from "../../tests/fixtures/webModuleTrace.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
@@ -16,29 +17,50 @@ import {
   webSourceLocationResultSchema,
 } from "../domain/webSourceLocation.js";
 import { WebSourceLocationService } from "./WebSourceLocationService.js";
-import type { WebSourceMapPort } from "./WebSourceLocationPorts.js";
+import type { WebSourceMapPort } from "../ports/WebSourceLocationPorts.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { releaseOwnedCleanup } from "../../tests/support/cleanupRelease.js";
 
 const service = (data = webSourceLocationFixture(), port = decoder) =>
   new WebSourceLocationService({ load: () => Promise.resolve(ok(data)) }, port);
-const expectCodecDeadline = (
-  evidence: {
-    readonly limitations: readonly string[];
-    readonly normalized_result: unknown;
+
+it.each(["opaque", "already released"] as const)(
+  "tracks the remaining web cleanup owner beside an %s sibling",
+  async (sibling) => {
+    const live = new ProviderCleanupError("artifacts", ["artifact-root"], {});
+    const released = new ProviderCleanupError("codec", ["codec-root"], {});
+    released.bindCleanupResourceOwner({ cleanupResources: ["codec-root"] });
+    releaseOwnedCleanup(released);
+    const other =
+      sibling === "opaque" ? new Error("codec close unconfirmed") : released;
+    const workflow = new WebSourceLocationService(
+      {
+        load: async () => ok(webSourceLocationFixture()),
+        close: async () => {
+          throw live;
+        },
+      },
+      {
+        ...decoder,
+        close: async () => {
+          throw other;
+        },
+      },
+    );
+    const failure: unknown = await workflow
+      .close()
+      .catch((cause: unknown) => cause);
+    if (!(failure instanceof ProviderCleanupError))
+      throw new Error("expected aggregate cleanup failure");
+    expect(failure.cause).toMatchObject({ errors: [live, other] });
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toEqual(["artifact-root"]);
+    releaseOwnedCleanup(live);
+    expect(failure.cleanupResources).toEqual([]);
+    expect(failure.cleanupIncomplete).toBe(sibling === "opaque");
   },
-  timeoutMs: number,
-): void => {
-  const phrase = `${String(timeoutMs)} ms decode_timeout_ms deadline`;
-  const result = webSourceLocationResultSchema.parse(
-    evidence.normalized_result,
-  );
-  expect(
-    evidence.limitations.filter((text) => text.includes(phrase)),
-  ).toHaveLength(1);
-  expect(
-    result.limitations.filter((text) => text.includes(phrase)),
-  ).toHaveLength(1);
-};
-it("passes an explicit decode deadline and omits the default from Evidence", async () => {
+);
+it("retains codec budgets and passes only an explicit decode deadline", async () => {
   const seen: Array<number | undefined> = [];
   const port: WebSourceMapPort = {
     trace: (input) => {
@@ -46,35 +68,29 @@ it("passes an explicit decode deadline and omits the default from Evidence", asy
       return decoder.trace(input);
     },
   };
-  const explicit = await service(undefined, port).trace({
-    ...args,
-    decode_timeout_ms: 250,
-  });
-  if (!explicit.ok) throw explicit.error;
-  expect(explicit.value.parameters.decode_timeout_ms).toBe(250);
-  expectCodecDeadline(explicit.value, 250);
-  const omitted = await service(undefined, port).trace(args);
-  if (!omitted.ok) throw omitted.error;
-  expect(omitted.value.parameters).not.toHaveProperty("decode_timeout_ms");
-  expectCodecDeadline(omitted.value, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS);
-  expect(seen).toEqual([250, undefined]);
-});
-
-it("reports shared decoder record costs in result and Evidence limitations", async () => {
-  const response = await service().trace(args);
-  if (!response.ok) throw response.error;
-  const result = webSourceLocationResultSchema.parse(
-    response.value.normalized_result,
-  );
-  for (const limitations of [response.value.limitations, result.limitations]) {
-    expect(limitations).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining(
-          "shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections",
-        ),
-      ]),
+  const workflow = service(undefined, port);
+  for (const timeout of [250, undefined]) {
+    const input =
+      timeout === undefined ? args : { ...args, decode_timeout_ms: timeout };
+    const result = await workflow.trace(input);
+    if (!result.ok) throw result.error;
+    const evidence = result.value;
+    expect(evidence.parameters).toEqual(input);
+    expect(
+      webSourceLocationResultSchema.parse(evidence.normalized_result)
+        .limitations,
+    ).toEqual(evidence.limitations);
+    const effective = timeout ?? DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS;
+    const budget = evidence.limitations.filter((text) =>
+      text.includes(`${effective} ms decode_timeout_ms deadline`),
     );
+    expect(budget).toEqual([
+      expect.stringContaining(
+        "shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections",
+      ),
+    ]);
   }
+  expect(seen).toEqual([250, undefined]);
 });
 
 it.each([
@@ -99,6 +115,52 @@ it.each([
   },
 );
 it.each([
+  {
+    position: { line: 3, column: 0 },
+    issue: {
+      path: ["generated_position", "line"],
+      minimum: 1,
+      maximum: 2,
+      message: expect.stringMatching(/line 3.*line 2.*one-based/i),
+    },
+  },
+  {
+    position: { line: 1, column: 4 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 3,
+      message: expect.stringMatching(
+        /column 4.*line 1.*column 3.*zero-based UTF-16/i,
+      ),
+    },
+  },
+  {
+    position: { line: 2, column: 3 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 2,
+    },
+  },
+])(
+  "reports a generated position past the retained script as out of range: %j",
+  async ({ position, issue }) => {
+    const { importMap: _importMap, ...script } =
+      webModuleArtifactsFixture("abc\r\nde");
+    const data = { ...webSourceLocationFixture(), ...script };
+    const response = await service(data).trace({
+      ...args,
+      generated_position: position,
+    });
+    if (response.ok) throw new Error("expected invalid input");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ ...issue, reason: "out_of_range" }] },
+    });
+  },
+);
+it.each([
   "file:///analysis/app.map",
   "webpack:///bundle/app.map",
   "https://selected-user:selected-value@app.test/maps/app.map",
@@ -118,46 +180,81 @@ it.each([
     ).toBe(url);
   },
 );
-it.each(["source", "map", "map-path", "map-url"])(
-  "rejects changed artifact identity before decoding: %s",
-  async (variant) => {
-    const fixture = webSourceLocationFixture();
-    const data = {
-      ...fixture,
-      source: variant === "source" ? "different" : fixture.source,
-      sourceMap: { ...fixture.sourceMap },
-    };
-    if (variant === "map") data.sourceMap.text += " ";
-    if (variant === "map-path") data.sourceMap.file.path = "/other.map";
-    if (variant === "map-url") data.sourceMap.url = "https://other.test/";
-    const response = await service(data, {
+it("independently refuses changed artifact coordinates and byte identity before decoding", async () => {
+  const fixture = webSourceLocationFixture();
+  const { sourceMap } = fixture;
+  const badDigest = sourceMap.text.replace("original.ts", "modified.ts");
+  expect(Buffer.byteLength(badDigest)).toBe(sourceMap.file.bytes);
+  expect(badDigest).not.toBe(sourceMap.text);
+  const maps = [
+    ["digest", { ...sourceMap, text: badDigest }],
+    [
+      "bytes",
+      {
+        ...sourceMap,
+        file: { ...sourceMap.file, bytes: sourceMap.file.bytes + 1 },
+      },
+    ],
+    ["path", { ...sourceMap, file: { ...sourceMap.file, path: "/other.map" } }],
+    ["url", { ...sourceMap, url: "https://other.test/" }],
+  ] as const;
+  for (const [name, data] of [
+    ["script", { ...fixture, source: "different" }],
+    ...maps.map(
+      ([name, map]) => [name, { ...fixture, sourceMap: map }] as const,
+    ),
+  ] as const) {
+    const result = await service(data, {
       trace: () => {
-        throw new Error("must not decode");
+        throw new Error(`Decoded a mismatched ${name}`);
       },
     }).trace(args);
-    if (response.ok) throw new Error("expected changed identity failure");
-    expect(response.error._tag).toBe("AnalysisOutputError");
-  },
-);
-it.each(["digest", "url", "point"])(
-  "rejects changed codec identity: %s",
-  async (variant) => {
-    const port: WebSourceMapPort = {
-      trace: async (input) => {
-        const decoded = await decoder.trace(input);
-        if (!decoded.ok) return decoded;
-        const report = decoded.value;
-        if (variant === "digest") report.source_map_sha256 = "f".repeat(64);
-        if (variant === "url") report.url_context = "https://other.test/";
-        if (variant === "point") report.lookup.requested.column += 1;
-        return Promise.resolve(ok(report));
+    if (result.ok) throw new Error(`Accepted a mismatched ${name}`);
+    expect(result.error, name).toBeInstanceOf(AnalysisOutputError);
+  }
+});
+
+it("retains changed codec identity as independent evidence, including after cancellation", async () => {
+  const fixture = webSourceLocationFixture();
+  const decoded = await decoder.trace({
+    text: fixture.sourceMap.text,
+    path: fixture.sourceMap.file.path,
+    url: args.source_map.url,
+    position: args.generated_position,
+  });
+  if (!decoded.ok) throw decoded.error;
+  const report = decoded.value;
+  const reports = [
+    { ...report, source_map_sha256: "f".repeat(64) },
+    { ...report, url_context: "https://other.test/" },
+    ...[
+      { line: 2, column: 0 },
+      { line: 1, column: 1 },
+    ].map((requested) => ({
+      ...report,
+      lookup: { ...report.lookup, requested },
+    })),
+  ];
+  const controller = new AbortController();
+  for (const [index, changed] of reports.entries()) {
+    const result = await service(fixture, {
+      trace: async () => {
+        if (index === 0) controller.abort();
+        return ok(changed);
       },
-    };
-    const response = await service(undefined, port).trace(args);
-    if (response.ok) throw new Error("expected changed codec identity failure");
-    expect(response.error._tag).toBe("AnalysisOutputError");
-  },
-);
+    }).trace(args, index === 0 ? { signal: controller.signal } : undefined);
+    if (result.ok) throw new Error("Expected changed codec identity failure");
+    expect(result.error).toBeInstanceOf(AnalysisOutputError);
+    expect(result.error.partialObservation).toEqual({
+      kind: "web-trace-observation",
+      analysis: "incomplete",
+      manifest: fixture.manifestFile,
+      source: fixture.sourceFile,
+      source_map: fixture.sourceMap.file,
+      source_map_observation: { association: "independent", report: changed },
+    });
+  }
+});
 it.each([
   {
     runtime: {
@@ -236,7 +333,7 @@ it("honors cancellation both before acquisition and across decoder completion", 
     authority: "historical-reference",
     subject: {
       local_path: fixture.sourceFile.path,
-      digest: { sha256: fixture.sourceFile.sha256 },
+      identity: { sha256: fixture.sourceFile.sha256 },
     },
     parameters: args,
     raw_result: { source_map_text: fixture.sourceMap.text },
@@ -256,37 +353,4 @@ it("honors cancellation both before acquisition and across decoder completion", 
       fixture.sourceMap.file.path,
     ].map((path) => ({ kind: "artifact-path", path })),
   });
-
-  const malformedDecoder: WebSourceMapPort = {
-    trace: async (input, options) => {
-      const decoded = await decoder.trace(input, options);
-      return decoded.ok
-        ? ok({ ...decoded.value, source_map_sha256: "b".repeat(64) })
-        : decoded;
-    },
-  };
-  const malformed = await new WebSourceLocationService(
-    { load: () => Promise.resolve(ok(webSourceLocationFixture())) },
-    malformedDecoder,
-  ).trace(args);
-  expect(malformed.ok).toBe(false);
-  if (!malformed.ok)
-    expect(malformed.error).toBeInstanceOf(AnalysisOutputError);
-
-  const invalidController = new AbortController();
-  const malformedLate = await new WebSourceLocationService(
-    { load: () => Promise.resolve(ok(webSourceLocationFixture())) },
-    {
-      trace: async (input, options) => {
-        const decoded = await decoder.trace(input, options);
-        invalidController.abort();
-        return decoded.ok
-          ? ok({ ...decoded.value, source_map_sha256: "b".repeat(64) })
-          : decoded;
-      },
-    },
-  ).trace(args, { signal: invalidController.signal });
-  expect(malformedLate.ok).toBe(false);
-  if (!malformedLate.ok)
-    expect(malformedLate.error).toBeInstanceOf(AnalysisOutputError);
 });

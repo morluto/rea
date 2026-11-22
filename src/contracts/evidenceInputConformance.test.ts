@@ -177,57 +177,53 @@ describe("public Evidence input declarations", () => {
     expect(problems).toEqual([]);
   });
 
-  it("detects bare/described records and independently declared references", () => {
-    expect(
-      declarationIssues(
-        z.strictObject({
-          left: evidenceSchema.describe("Complete source"),
-          right: retainedEvidenceReferenceSchema.describe("Retained source"),
-        }),
-      ),
-    ).toEqual([
+  it("reports bare and unsupported sources alongside valid declared fields", () => {
+    const mixed = z
+      .object({
+        supported: evidenceInputSchema.describe("Declared source"),
+        bundle: evidenceBundleSchema,
+        fileSource: evidenceSourceInputSchema.describe(
+          "Explicit file authority",
+        ),
+        left: evidenceSchema.describe("Complete source"),
+        right: retainedEvidenceReferenceSchema.describe("Retained source"),
+        records: z.record(z.string(), evidenceInputSchema),
+      })
+      .catchall(evidenceInputSchema);
+    expect(declarationIssues(mixed)).toEqual([
+      "input.catchall: declared Evidence hidden by unsupported object catchall",
       "input.left: bare record requires the shared Evidence input declaration",
+      "input.records.values: declared Evidence hidden by unsupported record",
       "input.right: bare reference requires the shared Evidence input declaration",
     ]);
   });
 
-  it("does not let a supported sibling conceal an unsupported marked input path", () => {
-    const schema = z.strictObject({
-      supported: evidenceInputSchema,
-      records: z.record(z.string(), evidenceInputSchema),
-    });
-    expect(getEvidenceInputContract(schema).hasEvidence).toBe(true);
-    expect(declarationIssues(schema)).toEqual([
-      "input.records.values: declared Evidence hidden by unsupported record",
-    ]);
-    const dynamic = z
-      .object({ supported: evidenceInputSchema })
-      .catchall(evidenceInputSchema);
-    expect(declarationIssues(dynamic)).toEqual([
-      "input.catchall: declared Evidence hidden by unsupported object catchall",
-    ]);
-  });
-
-  it("follows nested optional/default/union declarations and stops at collection owners", () => {
-    const schema = z.strictObject({
-      layers: z
-        .array(
-          z.strictObject({
-            source: evidenceInputSchema.describe("Selected source").optional(),
-          }),
-        )
-        .default([]),
-      choice: z.union([
-        z.strictObject({
-          kind: z.literal("source"),
-          source: evidenceInputSchema,
-        }),
-        z.strictObject({ kind: z.literal("none") }),
-      ]),
-      bundle: evidenceBundleSchema,
-      fileSource: evidenceSourceInputSchema.describe("Explicit file authority"),
-    });
-    expect(declarationIssues(schema)).toEqual([]);
+  it("distinguishes replaceable inline Evidence from reference-only sources", () => {
+    for (const schema of [
+      evidenceInputSchema,
+      evidenceSourceInputSchema,
+      analysisViewSourceSchema,
+      z.array(evidenceInputSchema.optional()),
+    ])
+      expect(
+        getEvidenceInputContract(schema).hasEvidenceReferenceAlternative,
+      ).toBe(true);
+    for (const schema of [
+      retainedEvidenceReferenceSchema,
+      evidenceFileReferenceSchema,
+      exportEnvironmentBundleInputSchema.shape.source,
+      z.object({ address: z.string() }),
+    ])
+      expect(
+        getEvidenceInputContract(schema).hasEvidenceReferenceAlternative,
+      ).toBe(false);
+    // Reference guidance must not change the separately owned source parser.
+    expect(
+      getEvidenceInputContract(evidenceSourceInputSchema).hasEvidence,
+    ).toBe(false);
+    expect(getEvidenceInputContract(analysisViewSourceSchema).hasEvidence).toBe(
+      false,
+    );
   });
 
   it("rejects skipping defaults above Evidence-bearing request unions", () => {

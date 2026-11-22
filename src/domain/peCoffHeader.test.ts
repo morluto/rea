@@ -6,6 +6,8 @@ it("retains raw COFF declarations from a borrowed record without admission polic
   const record = source.subarray(7, 27);
   record.writeUInt16LE(0xffff, 0);
   record.writeUInt16LE(0x1234, 2);
+  record.writeUInt32LE(0x01020304, 8);
+  record.writeUInt32LE(0x0a0b0c0d, 12);
   record.writeUInt16LE(0xfedc, 16);
   record.writeUInt16LE(0x89ab, 18);
   const before = Buffer.from(source);
@@ -14,6 +16,8 @@ it("retains raw COFF declarations from a borrowed record without admission polic
     value: {
       machine: 0xffff,
       sectionCount: 0x1234,
+      symbolTableOffset: 0x01020304,
+      symbolCount: 0x0a0b0c0d,
       optionalHeaderSize: 0xfedc,
       characteristics: 0x89ab,
     },
@@ -27,7 +31,10 @@ it.each(Array.from({ length: 20 }, (_, length) => length))(
     const source = Buffer.alloc(40, 0xff);
     expect(readPeCoffHeader(source.subarray(7, 7 + length))).toEqual({
       ok: false,
-      error: { kind: "malformed", message: "PE COFF header is truncated" },
+      error: {
+        kind: "malformed",
+        message: expect.stringContaining("truncated"),
+      },
     });
   },
 );

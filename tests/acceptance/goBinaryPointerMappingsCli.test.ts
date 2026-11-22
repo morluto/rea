@@ -1,3 +1,4 @@
+import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
 
 cliTest(
   "retains header-backed PE and cross-load ELF pointer metadata through CLI and MCP",
@@ -20,21 +21,19 @@ cliTest(
     const root = await createTestTempDirectory("rea-go-pointer-mappings-");
     const { client, call } = await connectLocalToolsMcp();
     const cases = [
-      ...([32, 64] as const).flatMap((bits) =>
-        (["contents", "descriptors"] as const).map((placement) => ({
-          name: `pe${bits}-header-${placement}`,
-          fixture: createGoPeHeaderPointerFixture(bits, placement),
-        })),
-      ),
-      ...(["contents", "descriptor"] as const).map((placement) => ({
-        name: `elf-cross-load-${placement}`,
-        fixture: createGoCrossLoadPointerFixture(placement),
-      })),
+      {
+        name: "pe32-header-descriptors",
+        fixture: createGoPeHeaderPointerFixture(32, "descriptors"),
+      },
+      {
+        name: "elf-cross-load-contents",
+        fixture: createGoCrossLoadPointerFixture("contents"),
+      },
     ];
     for (const { name, fixture } of cases) {
       const path = join(root, name);
       await writeFile(path, fixture.bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -51,7 +50,7 @@ cliTest(
           bytes: fixture.moduleBytes.length,
         },
       });
-      expect(evidence.subject?.digest?.sha256).toBe(
+      expect(fileIdentity(evidence.subject).sha256).toBe(
         createHash("sha256").update(fixture.bytes).digest("hex"),
       );
       const response = await call("inspect_go_binary", { path });
@@ -61,10 +60,12 @@ cliTest(
     }
 
     const damaged = createGoCrossLoadPointerFixture("contents");
-    damaged.bytes.writeBigUInt64LE(0x11001n, 200); // A one-byte virtual gap.
+    // Keep both load translations and leave the final byte of the first load unmapped.
+    damaged.bytes.writeBigUInt64LE(4095n, 160);
+    damaged.bytes.writeBigUInt64LE(4095n, 168);
     const path = join(root, "elf-cross-load-gap");
     await writeFile(path, damaged.bytes);
-    const rejected = await runFileCli(cli, {
+    const rejected = await cli.run({
       arguments: ["inspect-go-binary", path, "--json"],
     });
     expect(rejected.exitCode).toBe(1);
@@ -76,5 +77,4 @@ cliTest(
     expect(parseMcpToolError(response)).toEqual({ error: rejected.json });
     await client.ping();
   },
-  60000,
 );

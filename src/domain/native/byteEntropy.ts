@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const offsetSchema = z
   .number()
@@ -10,7 +10,9 @@ const entropySchema = z.number().min(0).max(8);
 
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
-  path: localPathStringSchema,
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to the file",
+  ),
   block_size: z
     .number()
     .int()
@@ -67,9 +69,40 @@ export const entropyFromCounts = (
   return Math.round(entropy * 10000) / 10000;
 };
 
+/**
+ * Counter for a whole-file byte census.
+ *
+ * A file may be larger than 4 GiB and one byte value may occur at least 2^32 times,
+ * so the bin has to hold counts a `Uint32Array` would wrap. Indexed reads into a
+ * `Float64Array` measure the same as into an integer bin, so exactness is free here.
+ */
+export const wholeFileByteCounts = (): Float64Array => new Float64Array(256);
+
+/**
+ * Add a run of bytes to a census.
+ *
+ * The counter is a `Float64Array` because one value can occur more than 2^32 times in a
+ * whole-file census, and an integer bin would wrap. Indexed reads into a float counter measure the
+ * same as into an integer one, so the exactness costs nothing; the gain over `for...of` comes from
+ * the indexed reads, not from the bin.
+ *
+ * Both the per-block entropy and the service's whole-file census call this, so the loop exists
+ * once and a caller cannot pick a narrower counter without the signature rejecting it.
+ */
+export const countByteValues = (
+  bytes: Uint8Array,
+  counts: Float64Array,
+): void => {
+  const length = bytes.length;
+  for (let index = 0; index < length; index += 1) {
+    const key = bytes[index] as number;
+    counts[key] = counts[key]! + 1;
+  }
+};
+
 export const computeBlockEntropy = (bytes: Uint8Array): number => {
   const counts = new Float64Array(256);
-  for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
+  countByteValues(bytes, counts);
   return entropyFromCounts(counts, bytes.length);
 };
 

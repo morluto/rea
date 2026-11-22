@@ -1,13 +1,25 @@
+import {
+  fitsPeRvaSpan as fitsRva,
+  appendPeConsumedSpan as consume,
+} from "./PeRvaSpans.js";
 import { setImmediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
 import {
   BinaryFormatFailure,
+  BinaryReader,
   BinaryMappingFailure,
   BinaryResourceFailure,
   createFileMappingIndex,
   imageFileMappings,
-} from "../metadata/BinaryContainer.js";
-import { readPeImage, type PeImage } from "../metadata/PeImage.js";
+  mappedFileOffset,
+  type FileMappingIndex,
+} from "../../domain/binaryContainer.js";
+import {
+  peDeclaredFileMappings,
+  readPeImage,
+  type PeImage,
+} from "../../domain/native/peImage.js";
+import { peSectionVirtualExtent } from "../../domain/peSectionHeader.js";
 import {
   guardFlagRecord,
   loadConfigFieldCovered,
@@ -29,45 +41,25 @@ import {
 
 const PE_TLS_DIRECTORY = 9;
 const PE_LOAD_CONFIG_DIRECTORY = 10;
-const PE_RVA_END = 0x100000000;
 /** Callback slots decoded between event-loop yields and cancellation checks. */
 const ENTRIES_PER_YIELD = 1024;
 
-/** The parser-owned allowance an image exhausted. */
-export type PeLoadConfigLimit = "callbacks";
-
-/** Structured parser allowance refusal; consumers branch on `limit`, never on prose. */
-export class PeLoadConfigLimitFailure extends BinaryResourceFailure {
-  constructor(
-    readonly limit: PeLoadConfigLimit,
-    readonly allowance: number,
-    message: string,
-  ) {
-    super("structure", allowance, message);
-    this.name = "PeLoadConfigLimitFailure";
+/** Derived locations may be unmapped; ambiguous mappings remain malformed. */
+const optionalFileOffset = (lookup: () => number): number | null => {
+  try {
+    return lookup();
+  } catch (cause) {
+    if (!(cause instanceof BinaryMappingFailure) || cause.reason !== "unmapped")
+      throw cause;
+    return null;
   }
-}
+};
+
+/** The parser-owned allowances an image can exhaust. */
+export const PE_LOAD_CONFIG_LIMITS = ["callbacks"] as const;
+export type PeLoadConfigLimit = (typeof PE_LOAD_CONFIG_LIMITS)[number];
 
 const hex = (value: bigint | number): string => `0x${value.toString(16)}`;
-
-const fitsRva = (rva: number, size: number): boolean =>
-  Number.isSafeInteger(rva) &&
-  rva >= 0 &&
-  Number.isSafeInteger(size) &&
-  size > 0 &&
-  rva <= PE_RVA_END - size;
-
-/** Append one consumed file span, merging it when the previous span abuts it. */
-const consume = (
-  spans: { offset: number; bytes: number }[],
-  offset: number,
-  bytes: number,
-): void => {
-  const last = spans.at(-1);
-  if (last !== undefined && last.offset + last.bytes === offset)
-    last.bytes += bytes;
-  else spans.push({ offset, bytes });
-};
 
 type DirectorySpan = PeLoadConfigTls["directory"];
 
@@ -89,8 +81,7 @@ const sectionNameIndex = (
   const events: { at: number; index: number; open: boolean }[] = [];
   sections.forEach((section, index) => {
     if (section.format !== "pe") return;
-    const span =
-      section.virtual_size === 0 ? section.raw_size : section.virtual_size;
+    const span = peSectionVirtualExtent(section.virtual_size, section.raw_size);
     if (span <= 0) return;
     events.push(
       { at: section.virtual_address, index, open: true },
@@ -137,29 +128,32 @@ const sectionNameIndex = (
 };
 
 /**
- * Read one PE TLS directory and load configuration without executing the image.
- * Yields to the event loop and honors cancellation every
- * `ENTRIES_PER_YIELD` callback slots.
+ * Read one PE TLS directory and load configuration from a parsed PE image
+ * without executing the image. Yields to the event loop and honors cancellation
+ * every `ENTRIES_PER_YIELD` callback slots.
  */
-export const parsePeLoadConfig = async (
+export const parsePeLoadConfigFromImage = async (
   bytes: Buffer,
+  image: PeImage,
   artifact: PeLoadConfig["artifact"],
   input: InspectPeLoadConfigInput,
   signal?: AbortSignal,
 ): Promise<PeLoadConfig> => {
   assertArtifactReadActive(signal);
-  const image = readPeImage(bytes);
   const bits = image.bits;
   const base = image.image_base;
-  const lookup = createFileMappingIndex(
-    imageFileMappings(image),
-    image.zero_fills,
-  );
   const pointerWidth = bits === 64 ? 8 : 4;
-  const readPointer = (offset: number): bigint =>
-    bits === 64
-      ? bytes.readBigUInt64LE(offset)
-      : BigInt(bytes.readUInt32LE(offset));
+  const reader = new BinaryReader(bytes, true, "pe");
+  // Build section and mapping indices only when directory 9 or 10 exists and needs them.
+  let mappingIndex: FileMappingIndex | undefined;
+  const getLookup = (): FileMappingIndex =>
+    (mappingIndex ??= createFileMappingIndex(
+      imageFileMappings(image),
+      image.zero_fills,
+    ));
+  let cachedSectionName: ((rva: number) => string | null) | undefined;
+  const sectionName = (rva: number): string | null =>
+    (cachedSectionName ??= sectionNameIndex(image.sections))(rva);
 
   const dataDirectory = (index: number): DirectorySpan | null => {
     const entry = image.pe_data_directories[index];
@@ -179,7 +173,7 @@ export const parsePeLoadConfig = async (
     return {
       rva,
       size,
-      file_offset: lookup.offset(base + BigInt(rva), size),
+      file_offset: getLookup().offset(base + BigInt(rva), size),
     };
   };
 
@@ -189,23 +183,13 @@ export const parsePeLoadConfig = async (
     return delta <= 0xffffffffn ? Number(delta) : null;
   };
 
-  const sectionName = sectionNameIndex(image.sections);
-
   const locate = (va: bigint): PeLoadConfigLocated => {
     if (va === 0n)
       return { va: "0x0", rva: null, file_offset: null, section: null };
     const rva = rvaOf(va);
     let fileOffset: number | null = null;
     if (rva !== null) {
-      try {
-        fileOffset = lookup.offset(va, 1);
-      } catch (cause) {
-        if (
-          !(cause instanceof BinaryMappingFailure) ||
-          cause.reason !== "unmapped"
-        )
-          throw cause;
-      }
+      fileOffset = optionalFileOffset(() => getLookup().offset(va, 1));
     }
     return {
       va: hex(va),
@@ -216,23 +200,30 @@ export const parsePeLoadConfig = async (
   };
 
   const tls = await readTls({
-    bytes,
+    reader,
     bits,
     directory: dataDirectory(PE_TLS_DIRECTORY),
     pointerWidth,
-    readPointer,
     locate,
     rvaOf,
     sectionName,
-    lookup,
+    lookup: { offset: (address, size) => getLookup().offset(address, size) },
+    templateFileOffset: (address, size) =>
+      optionalFileOffset(() =>
+        mappedFileOffset(
+          peDeclaredFileMappings(image),
+          address,
+          size,
+          image.zero_fills,
+        ),
+      ),
     maxCallbacks: input.max_callbacks,
     signal,
   });
   const loadConfig = readLoadConfig({
-    bytes,
+    reader,
     bits,
     directory: dataDirectory(PE_LOAD_CONFIG_DIRECTORY),
-    readPointer,
     locate,
     structOffset: (rva, size) => {
       if (!fitsRva(rva, size))
@@ -241,7 +232,7 @@ export const parsePeLoadConfig = async (
           `Load configuration Size ${String(size)} extends beyond the 32-bit RVA space`,
         );
       try {
-        return lookup.offset(base + BigInt(rva), size);
+        return getLookup().offset(base + BigInt(rva), size);
       } catch (cause) {
         if (cause instanceof BinaryMappingFailure)
           throw new BinaryFormatFailure(
@@ -265,28 +256,49 @@ export const parsePeLoadConfig = async (
   };
 };
 
+/**
+ * Read one PE TLS directory and load configuration without executing the image.
+ * Yields to the event loop and honors cancellation every
+ * `ENTRIES_PER_YIELD` callback slots.
+ */
+export const parsePeLoadConfig = async (
+  bytes: Buffer,
+  artifact: PeLoadConfig["artifact"],
+  input: InspectPeLoadConfigInput,
+  signal?: AbortSignal,
+): Promise<PeLoadConfig> => {
+  assertArtifactReadActive(signal);
+  return parsePeLoadConfigFromImage(
+    bytes,
+    readPeImage(bytes),
+    artifact,
+    input,
+    signal,
+  );
+};
+
 const readTls = async ({
-  bytes,
+  reader,
   bits,
   directory,
   pointerWidth,
-  readPointer,
   locate,
   rvaOf,
   sectionName,
   lookup,
+  templateFileOffset,
   maxCallbacks,
   signal,
 }: {
-  readonly bytes: Buffer;
+  readonly reader: BinaryReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
   readonly pointerWidth: number;
-  readonly readPointer: (offset: number) => bigint;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly rvaOf: (va: bigint) => number | null;
   readonly sectionName: (rva: number) => string | null;
   readonly lookup: { offset(address: bigint, size: number): number };
+  readonly templateFileOffset: (address: bigint, size: number) => number | null;
   readonly maxCallbacks: number;
   readonly signal: AbortSignal | undefined;
 }): Promise<PeLoadConfigTls | null> => {
@@ -297,14 +309,13 @@ const readTls = async ({
       "malformed",
       `TLS directory is ${String(directory.size)} bytes; PE${String(bits)} requires ${String(structBytes)}`,
     );
+  const readPointer = (offset: number) => reader.word(offset, bits);
   const start = readPointer(directory.file_offset);
   const end = readPointer(directory.file_offset + pointerWidth);
   const index = readPointer(directory.file_offset + pointerWidth * 2);
   const callbacksVa = readPointer(directory.file_offset + pointerWidth * 3);
-  const sizeOfZeroFill = bytes.readUInt32LE(
-    directory.file_offset + pointerWidth * 4,
-  );
-  const characteristics = bytes.readUInt32LE(
+  const sizeOfZeroFill = reader.u32(directory.file_offset + pointerWidth * 4);
+  const characteristics = reader.u32(
     directory.file_offset + pointerWidth * 4 + 4,
   );
   if (end < start)
@@ -325,7 +336,7 @@ const readTls = async ({
     const rva = rvaOf(start);
     rawSection = rva === null ? null : sectionName(rva);
   } else {
-    rawFile = lookup.offset(start, rawSize);
+    rawFile = templateFileOffset(start, rawSize);
     const startRva = rvaOf(start);
     const last = startRva === null ? null : startRva + rawSize - 1;
     if (startRva !== null && last !== null && last <= 0xffffffff) {
@@ -352,10 +363,11 @@ const readTls = async ({
       consume(callbackArrayLocations, slotOffset, pointerWidth);
       if (value === 0n) break;
       if (callbacks.length >= maxCallbacks)
-        throw new PeLoadConfigLimitFailure(
-          "callbacks",
+        throw new BinaryResourceFailure(
+          "structure",
           maxCallbacks,
           `TLS callback array exceeds the ${String(maxCallbacks)}-entry callback allowance`,
+          "callbacks" satisfies PeLoadConfigLimit,
         );
       callbacks.push(locate(value));
       slot += BigInt(pointerWidth);
@@ -380,17 +392,15 @@ const readTls = async ({
 };
 
 const readLoadConfig = ({
-  bytes,
+  reader,
   bits,
   directory,
-  readPointer,
   locate,
   structOffset,
 }: {
-  readonly bytes: Buffer;
+  readonly reader: BinaryReader;
   readonly bits: 32 | 64;
   readonly directory: DirectorySpan | null;
-  readonly readPointer: (offset: number) => bigint;
   readonly locate: (va: bigint) => PeLoadConfigLocated;
   readonly structOffset: (rva: number, size: number) => number;
 }): PeLoadConfigDirectory | null => {
@@ -400,7 +410,7 @@ const readLoadConfig = ({
       "malformed",
       "Load configuration directory is shorter than its Size field",
     );
-  const size = bytes.readUInt32LE(directory.file_offset);
+  const size = reader.u32(directory.file_offset);
   if (size < 4)
     throw new BinaryFormatFailure(
       "malformed",
@@ -420,12 +430,10 @@ const readLoadConfig = ({
   const readField = (name: PeLoadConfigField): bigint | null => {
     if (!loadConfigFieldCovered(bits, size, name)) return null;
     const field = loadConfigFieldLayout(bits, name);
-    return readUnsignedField(
-      bytes,
-      directory.file_offset + field.offset,
-      field.width,
-      readPointer,
-    );
+    const offset = directory.file_offset + field.offset;
+    return field.width === 2
+      ? BigInt(reader.u16(offset))
+      : reader.word(offset, field.width === 4 ? 32 : 64);
   };
   const located = (
     name: PeLoadConfigLocatedField,
@@ -497,15 +505,3 @@ const readLoadConfig = ({
     inferences: decoded?.inferences ?? [],
   };
 };
-
-const readUnsignedField = (
-  bytes: Buffer,
-  offset: number,
-  width: 2 | 4 | 8,
-  readPointer: (offset: number) => bigint,
-): bigint =>
-  width === 8
-    ? readPointer(offset)
-    : BigInt(
-        width === 4 ? bytes.readUInt32LE(offset) : bytes.readUInt16LE(offset),
-      );

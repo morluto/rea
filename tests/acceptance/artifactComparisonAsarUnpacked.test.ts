@@ -4,66 +4,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import {
-  artifactInventoryResultSchema,
-  type ArtifactInventoryResult,
-} from "../../src/domain/artifactGraph.js";
-import { artifactComparisonResultSchema } from "../../src/domain/artifactComparison.js";
-import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
-import {
-  artifactGraphDigest,
-  artifactManifestId,
-} from "../../src/domain/artifactIdentity.js";
+import { artifactInventoryResultSchema } from "../../src/domain/artifactGraph.js";
 import { parseArtifactInventoryEvidence } from "../../src/domain/artifactInventoryEvidence.js";
-import {
-  createEvidence,
-  parseEvidence,
-  type Evidence,
-} from "../../src/domain/evidence.js";
-import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { historicalInventoryEvidence } from "../fixtures/artifactEvidence.js";
+import { connectArtifactComparisonMcp } from "../fixtures/artifactComparisonMcp.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-
-const historicalInventory = (source: Evidence): Evidence => {
-  const inventory = artifactInventoryResultSchema.parse(
-    source.normalized_result,
-  );
-  const occurrences = inventory.occurrences.map(
-    ({ unpacked: _unpacked, ...occurrence }) => occurrence,
-  );
-  const graphSha256 = artifactGraphDigest({
-    nodes: inventory.nodes,
-    occurrences,
-    edges: inventory.edges,
-    contradictions: inventory.integrity_contradictions,
-  });
-  const historical: ArtifactInventoryResult = {
-    ...inventory,
-    occurrences,
-    manifest: {
-      ...inventory.manifest,
-      graph_sha256: graphSha256,
-      manifest_id: artifactManifestId(
-        inventory.manifest.root_artifact_id,
-        graphSha256,
-      ),
-    },
-  };
-  return createEvidence(
-    {
-      path: source.subject!.local_path,
-      sha256: inventory.manifest.root_sha256,
-      format: inventory.manifest.root_format,
-    },
-    source.provider,
-    {
-      operation: "inventory_artifact",
-      parameters: {},
-      result: historical,
-      confidence: "derived",
-      authority: "shipped-artifact",
-    },
-  );
-};
 
 it("compares ASAR companion declarations from public MCP inventories and preserves historical unknowns", async () => {
   const root = await createTestTempDirectory("rea-asar-unpacked-comparison-");
@@ -77,28 +22,7 @@ it("compares ASAR companion declarations from public MCP inventories and preserv
 
   // This fixture validates advertised SDK-converted input/output schemas and
   // every structured response against the declared JSON Schema dialect.
-  const { call } = await connectLocalToolsMcp();
-  const inspect = async (path: string): Promise<Evidence> => {
-    const opened = await call("open_binary", { path });
-    expect(opened.isError, JSON.stringify(opened)).not.toBe(true);
-    const inspected = await call("inspect_artifact", {});
-    expect(inspected.isError, JSON.stringify(inspected)).not.toBe(true);
-    const inspection = artifactInspectionResultSchema.parse(
-      parseEvidence(inspected.structuredContent).normalized_result,
-    );
-    const inventory = inspection.substeps.find(
-      ({ operation }) => operation === "inventory_artifact",
-    )?.evidence;
-    if (inventory === undefined) throw new Error("Missing inventory Evidence");
-    return parseEvidence(inventory);
-  };
-  const compare = async (left: Evidence, right: Evidence) => {
-    const response = await call("compare_artifacts", { left, right });
-    expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    return artifactComparisonResultSchema.parse(
-      parseEvidence(response.structuredContent).normalized_result,
-    );
-  };
+  const { inspect, compare } = await connectArtifactComparisonMcp();
   const packed = await inspect(packedPath);
   const unpacked = await inspect(unpackedPath);
   const packedInventory = artifactInventoryResultSchema.parse(
@@ -144,7 +68,10 @@ it("compares ASAR companion declarations from public MCP inventories and preserv
 
   // Model an authenticated pre-field snapshot with its original graph commitment,
   // rather than editing a current Evidence payload without updating its identity.
-  const historical = historicalInventory(packed);
+  const historical = historicalInventoryEvidence(
+    packed,
+    ({ unpacked: _unpacked, ...occurrence }) => occurrence,
+  );
   const historicalParsed = parseArtifactInventoryEvidence(historical);
   expect(
     historicalParsed.inventory.occurrences.map(

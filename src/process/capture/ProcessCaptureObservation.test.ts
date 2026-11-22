@@ -1,12 +1,20 @@
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
+import { failedInspectionDescriptor } from "../../../tests/fixtures/processInspectionCleanup.js";
 import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "./FilesystemSnapshot.js";
-import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
-import { isInitializedPtyRoot } from "./ProcessSampling.js";
-import { readLinuxChildren } from "./LinuxProcessSampling.js";
+import {
+  buildCaptureResult,
+  POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+} from "./ProcessCaptureLifecycle.js";
+import {
+  PROC_READ_CONCURRENCY,
+  readLinuxChildren,
+  readLinuxOpenFiles,
+} from "./LinuxProcessSampling.js";
+import { SamplingReadBatchFailure } from "./ProcessSamplingObservation.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
 import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
@@ -209,8 +217,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
 
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
-    reason:
-      "Sensitive scripted input literals and retained terminal echoes are redacted. Terminal states are reconstructed from the redacted stream; private display effects and transformed values remain unknown.",
+    reason: expect.stringMatching(
+      /sensitive scripted input.*terminal echoes.*redacted.*terminal states.*redacted stream.*private display effects.*transformed values.*unknown/iu,
+    ),
   });
 });
 
@@ -228,52 +237,6 @@ it("collects and deduplicates children from every Linux thread", async () => {
     value: [201, 202, 203],
     diagnostics: { count: 0, first: null, interrupted: false },
   });
-});
-
-it("admits PTY samples only after stable session and token setup", () => {
-  const initialized = {
-    pid: 100,
-    parent_pid: 10,
-    process_group_id: 100,
-    session_id: 100,
-    startTime: "200",
-  };
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, process_group_id: 10, session_id: 10 },
-      observedRunId: undefined,
-      after: initialized,
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: { ...initialized, startTime: "201" },
-    }),
-  ).toBe(false);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: initialized,
-      observedRunId: "run-token",
-      after: initialized,
-    }),
-  ).toBe(true);
-  expect(
-    isInitializedPtyRoot({
-      rootPid: 100,
-      expectedRunId: "run-token",
-      before: { ...initialized, session_id: null },
-      observedRunId: "run-token",
-      after: { ...initialized, session_id: null },
-    }),
-  ).toBe(true);
 });
 
 it("cancels filesystem snapshots before traversing declared roots", async () => {
@@ -375,3 +338,184 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
     expect(result.truncated).toBe(false);
   },
 );
+
+it("records the PTY session-leader SIGHUP limitation on POSIX captures only", () => {
+  const capture = emptyCapture();
+  const buildForPlatform = (platform: string) =>
+    buildCaptureResult({
+      frames: [],
+      exit: { exitCode: 0, reason: "exited" },
+      samples: [],
+      before: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      after: {
+        files: [],
+        truncated: false,
+        completeRoots: [],
+        coverage: emptyFilesystemCoverage(),
+      },
+      truncationDetails: truncationDetails([], [], []),
+      scenario: processScenarioSchema.parse(base),
+      rootPid: 1,
+      samplingPartial: false,
+      renderedFrames: [],
+      interactions: [],
+      checkpoints: capture.filesystem_checkpoints,
+      settlement: {
+        state: capture.settlement.state,
+        elapsed_ms: capture.settlement.elapsed_ms,
+      },
+      manifest: { ...capture.manifest, platform },
+      eventJournal: [],
+    });
+
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(
+    /PTY session leader/iu,
+  );
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/SIGHUP/u);
+  expect(POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION).toMatch(/group/iu);
+  for (const posixPlatform of ["linux", "darwin"]) {
+    expect(buildForPlatform(posixPlatform).limitations).toContain(
+      POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+    );
+  }
+  const winLimitations = buildForPlatform("win32").limitations;
+  expect(winLimitations).not.toContain(
+    POSIX_PTY_SESSION_LEADER_SIGHUP_LIMITATION,
+  );
+  expect(winLimitations.some((line) => line.includes("SIGHUP"))).toBe(false);
+});
+
+describe("readLinuxOpenFiles", () => {
+  it("bounds descriptor readlink concurrency to PROC_READ_CONCURRENCY while preserving descriptor order", async () => {
+    const total = PROC_READ_CONCURRENCY * 2 + 7;
+    const descriptors = Array.from({ length: total }, (_, index) =>
+      String(index),
+    );
+    let active = 0;
+    let maxActive = 0;
+    const observation = await readLinuxOpenFiles(
+      100,
+      new AbortController().signal,
+      {
+        descriptors: () => Promise.resolve(descriptors),
+        readlink: async (_pid, descriptor) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          try {
+            const index = Number(descriptor);
+            // Resolve even descriptors slower than odd ones to verify order preservation.
+            await new Promise((resolve) =>
+              setTimeout(resolve, index % 2 === 0 ? 4 : 1),
+            );
+            if (index === 1) return "socket:[1234]";
+            if (index === 2) return "/tmp/removed.log (deleted)";
+            return `/var/log/fd-${descriptor}`;
+          } finally {
+            active -= 1;
+          }
+        },
+      },
+    );
+    expect(maxActive).toBe(PROC_READ_CONCURRENCY);
+    expect(observation.diagnostics).toEqual({
+      count: 0,
+      first: null,
+      interrupted: false,
+    });
+    expect(observation.value).toHaveLength(total - 1);
+    expect(observation.value.slice(0, 4)).toEqual([
+      "/var/log/fd-0",
+      "/tmp/removed.log",
+      "/var/log/fd-3",
+      "/var/log/fd-4",
+    ]);
+    expect(observation.value.at(-1)).toBe(`/var/log/fd-${String(total - 1)}`);
+  });
+
+  it("ignores expected fd-close races and retains permission/I/O failures in descriptor order", async () => {
+    const descriptors = ["1", "2", "3", "4", "5"];
+    const observation = await readLinuxOpenFiles(
+      100,
+      new AbortController().signal,
+      {
+        descriptors: () => Promise.resolve(descriptors),
+        readlink: async (_pid, descriptor) => {
+          if (descriptor === "1")
+            throw Object.assign(new Error("closed"), { code: "ENOENT" });
+          if (descriptor === "2") {
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            throw Object.assign(new Error("denied"), { code: "EACCES" });
+          }
+          if (descriptor === "3")
+            throw Object.assign(new Error("io error"), { code: "EIO" });
+          if (descriptor === "4")
+            throw Object.assign(new Error("exited"), { code: "ESRCH" });
+          return "/app/data.db";
+        },
+      },
+    );
+    expect(observation.value).toEqual(["/app/data.db"]);
+    expect(observation.diagnostics).toMatchObject({
+      count: 2,
+      interrupted: false,
+    });
+    expect(observation.diagnostics.first).toContain("/proc/100/fd/2: EACCES");
+  });
+
+  it("stops remaining batches on abort while settling all issued batch reads", async () => {
+    const total = PROC_READ_CONCURRENCY + 5;
+    const descriptors = Array.from({ length: total }, (_, index) =>
+      String(index),
+    );
+    const controller = new AbortController();
+    const seen: string[] = [];
+    let settledInFirstBatch = 0;
+    const observation = await readLinuxOpenFiles(100, controller.signal, {
+      descriptors: () => Promise.resolve(descriptors),
+      readlink: async (_pid, descriptor) => {
+        seen.push(descriptor);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        if (descriptor === "0") controller.abort({ reason: "stop" });
+        settledInFirstBatch += 1;
+        return `/tmp/file-${descriptor}`;
+      },
+    });
+    expect(seen).toHaveLength(PROC_READ_CONCURRENCY);
+    expect(settledInFirstBatch).toBe(PROC_READ_CONCURRENCY);
+    expect(observation.value).toHaveLength(PROC_READ_CONCURRENCY);
+    expect(observation.diagnostics.interrupted).toBe(true);
+  });
+
+  it("settles the active batch before propagating an inspection cleanup failure", async () => {
+    const file = await failedInspectionDescriptor();
+    let peerSettled = false;
+    try {
+      const failure = await readLinuxOpenFiles(
+        100,
+        new AbortController().signal,
+        {
+          descriptors: () => Promise.resolve(["0", "1"]),
+          readlink: async (_pid, descriptor) => {
+            if (descriptor === "0") throw file.failure;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+            peerSettled = true;
+            return "/tmp/ok";
+          },
+        },
+      ).catch((cause: unknown) => cause);
+      expect(peerSettled).toBe(true);
+      expect(failure).toBeInstanceOf(SamplingReadBatchFailure);
+      expect((failure as SamplingReadBatchFailure).inspectionFailures).toEqual([
+        file.failure,
+      ]);
+    } finally {
+      file.allow();
+      await file.failure.owner.close();
+    }
+  });
+});

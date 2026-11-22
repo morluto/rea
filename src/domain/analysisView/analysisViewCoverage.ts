@@ -9,16 +9,45 @@ export const analysisViewCoverageSchema = z.strictObject({
   exhausted: z.boolean(),
 });
 
+const unavailableViewCoverageSchema = z.strictObject({
+  status: z.literal("unavailable"),
+  examined: z.literal(0),
+  total: z.null(),
+  next_offset: z.null(),
+  exhausted: z.literal(false),
+});
+
+/** Only views with nullable collections can report unavailable page coverage. */
+export const nullableCollectionViewCoverageSchema = z.discriminatedUnion(
+  "status",
+  [analysisViewCoverageSchema, unavailableViewCoverageSchema],
+);
+
 export type AnalysisViewCoverage = z.output<typeof analysisViewCoverageSchema>;
 
-/** Coverage for a summary, facet, or single selected object. */
+/** Unrecorded or inapplicable collections have no known total or continuation. */
+export const unavailableViewCoverage = (): z.output<
+  typeof unavailableViewCoverageSchema
+> => ({
+  status: "unavailable",
+  examined: 0,
+  total: null,
+  next_offset: null,
+  exhausted: false,
+});
+
+/**
+ * Coverage for a summary, facet, or single selected object that returns every
+ * record of its source collection. The view examined exactly the records it
+ * returns; whether the producer's collection is complete stays in the parent
+ * Evidence's own coverage and limitations.
+ */
 export const completeWithinViewCoverage = (
-  examined: number,
-  total: number,
+  returned: number,
 ): AnalysisViewCoverage => ({
   status: "complete-within-view",
-  examined,
-  total,
+  examined: returned,
+  total: returned,
   next_offset: null,
   exhausted: true,
 });
