@@ -13,6 +13,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  realpath,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -59,6 +60,7 @@ import * as linuxInventory from "../../desktop/LinuxApplicationInventory.js";
 import { X11WindowObserver } from "../../desktop/X11WindowObserver.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import { CaptureFile } from "./DesktopCaptureOutput.js";
+import { indexState, observedFileAt } from "./DesktopStateVersions.js";
 import {
   captureDesktopApplication,
   type DesktopCaptureRequest,
@@ -331,6 +333,116 @@ it.each([false, true])(
     } finally {
       vi.restoreAllMocks();
       await lease.release();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "publishes omissions only from checkpoints completed before a later read is cancelled",
+  async () => {
+    const { root, home, environment } = await fixture();
+    const physicalHome = await realpath(home);
+    const output = join(root, "out");
+    const baseline = join(physicalHome, "baseline-too-large.txt");
+    const committed = join(physicalHome, "committed-too-large.txt");
+    const abandoned = join(physicalHome, "a-abandoned-too-large.txt");
+    const interrupted = join(physicalHome, "b-interrupted.txt");
+    const oversized = "x".repeat(17);
+    await writeFile(baseline, oversized);
+    const controller = new AbortController();
+    const reason = new Error("cancel at the next physical content read");
+    const original = DesktopContentStore.prototype.retain;
+    const observed: string[] = [];
+    const retain = vi
+      .spyOn(DesktopContentStore.prototype, "retain")
+      .mockImplementation(async function (
+        this: DesktopContentStore,
+        path,
+        version,
+        signal,
+      ) {
+        if (path === interrupted) controller.abort(reason);
+        const outcome = await original.call(this, path, version, signal);
+        if (outcome.kind === "omitted") observed.push(path);
+        return outcome;
+      });
+
+    try {
+      const desktopHost = host(environment);
+      const recorded = captureFixture();
+      const evidence = await captureDesktopApplication(
+        { ...request(output), statePaths: [home], maxFileBytes: 16 },
+        {
+          ...desktopHost,
+          desktop: {
+            ...desktopHost.desktop,
+            inspectApplication: async () => ({
+              ok: true,
+              value: {
+                inventory: { ...recorded.application, state_directories: [] },
+                limitations: [],
+                signingKeys: new Map(),
+              },
+            }),
+            runningApplicationWindows: async () => ({
+              state: "listed",
+              windows: [],
+            }),
+            runSession: async ({ checkpoint }) => {
+              const seen = { openedFiles: new Set<string>(), titles: [] };
+              await writeFile(committed, oversized);
+              await checkpoint("saved", "request", 500, seen);
+              await writeFile(abandoned, oversized);
+              await writeFile(interrupted, "small");
+              await expect(
+                checkpoint("interrupted", "request", 1000, seen),
+              ).rejects.toMatchObject({
+                reason: "cancelled",
+                cause: reason,
+              });
+              return {
+                session: { ...recorded.session, end_reason: "cancelled" },
+                unreleased: undefined,
+                unreadableWindowSamples: 0,
+              };
+            },
+          },
+        },
+        controller.signal,
+      );
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
+      );
+      expect(observed).toEqual([baseline, committed, abandoned]);
+      expect(capture.state.checkpoints.map(({ name }) => name)).toEqual([
+        "baseline",
+        "saved",
+      ]);
+
+      const published = desktopApplicationCaptureSchema.parse(
+        JSON.parse(await readFile(join(output, "capture.json"), "utf8"))
+          .normalized_result,
+      );
+      const index = indexState(published);
+      expect(observedFileAt(baseline, 0, index)).toEqual({
+        present: true,
+        sha256: null,
+      });
+      expect(observedFileAt(committed, 1, index)).toEqual({
+        present: true,
+        sha256: null,
+      });
+      expect(observedFileAt(abandoned, 0, index)).toEqual({
+        present: false,
+        sha256: null,
+      });
+      expect(capture.state.omitted_content).toEqual([
+        { path: baseline, reason: "too_large" },
+        { path: committed, reason: "too_large" },
+      ]);
+    } finally {
+      retain.mockRestore();
     }
   },
 );
