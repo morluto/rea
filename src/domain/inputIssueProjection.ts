@@ -8,6 +8,7 @@ import {
   knownViewMistakeGuidance,
 } from "./inputArgumentGuidance.js";
 import { isRecord } from "../kernel/isRecord.js";
+import { jsonValueByteLength } from "./jsonValueByteLength.js";
 
 const isRootArgument = (path: readonly unknown[]): boolean =>
   path.length === 0 || (path.length === 1 && path[0] === "input");
@@ -100,20 +101,35 @@ export const projectInputIssuesBounded = (
     // least one omitted field diagnostic each.
     const omittedIssueCount = issues.length - index;
     if (output.length > 0) return { issues: output, omittedIssueCount };
-    // One compound issue, such as `unrecognized_keys` naming hundreds of keys,
-    // can exceed the allowance on its own. Retain a diagnostic at its path so the
-    // caller keeps the location instead of only an omission notice.
+    // Report the first omitted location without copying a path that alone
+    // exceeds the allowance. Keep exact components of the nearest parent.
     const first = issues[0];
     if (first === undefined) return { issues: output, omittedIssueCount };
-    const path = first.path.flatMap((part) =>
-      typeof part === "string" || typeof part === "number" ? [part] : [],
-    );
+    let message = `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`;
+    const shortened = `${message} The diagnostic reports the nearest parent because the full location exceeds the response budget.`;
+    const path: (string | number)[] = [];
+    let remaining =
+      budgetBytes -
+      jsonValueByteLength({
+        path,
+        reason: "invalid_value",
+        message: shortened,
+      });
+    for (const part of first.path) {
+      if (typeof part !== "number" && typeof part !== "string") continue;
+      remaining -= 1 + jsonValueByteLength(part, remaining - 1);
+      if (remaining < 0) {
+        message = shortened;
+        break;
+      }
+      path.push(part);
+    }
     return {
       issues: [
         {
           path,
           reason: "invalid_value",
-          message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
+          message,
         },
       ],
       omittedIssueCount,

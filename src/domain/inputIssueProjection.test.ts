@@ -12,40 +12,11 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 import { applicationFeatureSeedSchema } from "./javascript/javascriptFeatureTraceSchemas.js";
 import { updateAnalysisSettingsInputSchema } from "../contracts/analysisSettingsContracts.js";
-import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
-import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
-import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import { toolContract } from "../contracts/toolContracts.js";
 
 const projectFlattenedIssueGroups = (
   ...args: Parameters<typeof projectInputIssueGroupsWithinBudget>
 ) => projectInputIssueGroupsWithinBudget(...args)?.flat();
-
-const officialContract = (
-  name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
-) => {
-  const contract = OFFICIAL_TOOL_CONTRACTS.find((c) => c.name === name);
-  if (contract === undefined)
-    throw new Error(`Missing official contract: ${name}`);
-  return contract;
-};
-
-const applicationContract = (
-  name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
-) => {
-  const contract = APPLICATION_TOOL_CONTRACTS.find((c) => c.name === name);
-  if (contract === undefined)
-    throw new Error(`Missing application contract: ${name}`);
-  return contract;
-};
-
-const enhancedContract = (
-  name: (typeof ENHANCED_TOOL_CONTRACTS)[number]["name"],
-) => {
-  const contract = ENHANCED_TOOL_CONTRACTS.find((c) => c.name === name);
-  if (contract === undefined)
-    throw new Error(`Missing enhanced contract: ${name}`);
-  return contract;
-};
 
 describe("input issue projection", () => {
   it("builds application input errors with projected and semantic issues", () => {
@@ -188,134 +159,64 @@ describe("input issue projection", () => {
 });
 
 describe("input issue argument guidance", () => {
-  it("guides callers from neighboring-tool argument names while keeping unknown keys strict", () => {
-    const input = { address: "0x401000", count: 10 };
-    for (const op of [
-      "read_function_instructions",
-      "procedure_pseudo_code",
-      "procedure_assembly",
-    ] as const) {
-      const parsed = officialContract(op).inputSchema.safeParse(input);
-      if (parsed.success) throw new Error("expected invalid input");
-      const error = analysisInputErrorFromIssues(
-        op,
-        parsed.error.issues,
-        input,
-      );
-      expect(error.issues).toEqual([
-        { path: ["procedure"], reason: "missing_argument", expected: "string" },
-        {
-          path: ["address"],
-          reason: "unknown_argument",
-          expected: "procedure",
-          message: expect.stringMatching(/address.*procedure/i),
-        },
-        { path: ["count"], reason: "unknown_argument" },
-      ]);
-      const action = projectAnalysisError(error).remediation.action;
-      expect(action).toMatch(/procedure.*address/i);
-      expect(action).toContain(op);
-    }
-
-    const searchInput = { query: "flag" };
-    for (const op of ["search_strings", "search_procedures"] as const) {
-      const parsed = officialContract(op).inputSchema.safeParse(searchInput);
-      if (parsed.success) throw new Error("expected invalid input");
-      const searchError = analysisInputErrorFromIssues(
-        op,
-        parsed.error.issues,
-        searchInput,
-      );
-      expect(searchError.issues).toEqual([
-        { path: ["pattern"], reason: "missing_argument", expected: "string" },
-        {
-          path: ["query"],
-          reason: "unknown_argument",
-          expected: "pattern",
-          message: expect.stringMatching(/query.*pattern/i),
-        },
-      ]);
-      const action = projectAnalysisError(searchError).remediation.action;
-      expect(action).toMatch(/pattern.*query/i);
-      expect(action).toContain(op);
-    }
-  });
-
-  it("guides callers for symmetric neighboring-tool argument names", () => {
-    const addressInput = { procedure: "main" };
-    for (const op of ["resolve_containing_procedure", "read_bytes"] as const) {
-      const parsed = officialContract(op).inputSchema.safeParse(addressInput);
-      if (parsed.success) throw new Error("expected invalid input");
-      const error = analysisInputErrorFromIssues(
-        op,
-        parsed.error.issues,
-        addressInput,
-      );
-      expect(error.issues).toEqual([
-        { path: ["address"], reason: "missing_argument", expected: "string" },
-        {
-          path: ["procedure"],
-          reason: "unknown_argument",
-          expected: "address",
-          message: expect.stringMatching(/procedure.*address/i),
-        },
-      ]);
-      const action = projectAnalysisError(error).remediation.action;
-      expect(action).toMatch(/address.*procedure/i);
-      expect(action).toContain(op);
-    }
-
-    const xrefsParsed =
-      officialContract("xrefs").inputSchema.safeParse(addressInput);
-    if (xrefsParsed.success) throw new Error("expected invalid input");
-    const xrefsError = analysisInputErrorFromIssues(
-      "xrefs",
-      xrefsParsed.error.issues,
-      addressInput,
-    );
-    expect(xrefsError.issues).toEqual([
+  it("corrects neighboring-tool keys without accepting unknown arguments", () => {
+    const cases = [
       {
-        path: ["procedure"],
-        reason: "unknown_argument",
-        expected: "address",
-        message: expect.stringMatching(/procedure.*address/i),
-      },
-    ]);
-    const xrefsAction = projectAnalysisError(xrefsError).remediation.action;
-    expect(xrefsAction).toMatch(/address.*procedure/i);
-    expect(xrefsAction).toContain("xrefs");
-
-    const queryInput = { pattern: "flag" };
-    const queryCases = [
-      {
-        op: "search_guidance" as const,
-        contract: applicationContract("search_guidance"),
+        operations: [
+          "read_function_instructions",
+          "procedure_pseudo_code",
+          "procedure_assembly",
+        ],
+        from: "address",
+        to: "procedure",
+        input: { address: "0x401000", count: 10 },
+        otherIssues: [{ path: ["count"], reason: "unknown_argument" }],
       },
       {
-        op: "trace_feature" as const,
-        contract: enhancedContract("trace_feature"),
+        operations: ["search_strings", "search_procedures"],
+        from: "query",
+        to: "pattern",
+        input: { query: "flag" },
       },
-    ];
-    for (const { op, contract } of queryCases) {
-      const parsed = contract.inputSchema.safeParse(queryInput);
-      if (parsed.success) throw new Error("expected invalid input");
-      const error = analysisInputErrorFromIssues(
-        op,
-        parsed.error.issues,
-        queryInput,
-      );
-      expect(error.issues).toEqual([
-        { path: ["query"], reason: "missing_argument", expected: "string" },
-        {
-          path: ["pattern"],
-          reason: "unknown_argument",
-          expected: "query",
-          message: expect.stringMatching(/pattern.*query/i),
-        },
-      ]);
-      const action = projectAnalysisError(error).remediation.action;
-      expect(action).toMatch(/query.*pattern/i);
-      expect(action).toContain(op);
+      {
+        operations: ["resolve_containing_procedure", "read_bytes", "xrefs"],
+        from: "procedure",
+        to: "address",
+        input: { procedure: "main" },
+      },
+      {
+        operations: ["search_guidance", "trace_feature"],
+        from: "pattern",
+        to: "query",
+        input: { pattern: "flag" },
+      },
+    ] as const;
+    for (const { operations, from, to, input, ...extras } of cases) {
+      for (const operation of operations) {
+        const parsed = toolContract(operation).inputSchema.safeParse(input);
+        if (parsed.success)
+          throw new Error(`Expected ${operation} to reject ${from}`);
+        const error = analysisInputErrorFromIssues(
+          operation,
+          parsed.error.issues,
+          input,
+        );
+        expect(error.issues, operation).toEqual([
+          ...(operation === "xrefs"
+            ? []
+            : [{ path: [to], reason: "missing_argument", expected: "string" }]),
+          {
+            path: [from],
+            reason: "unknown_argument",
+            expected: to,
+            message: expect.stringMatching(new RegExp(`${from}.*${to}`, "i")),
+          },
+          ...("otherIssues" in extras ? extras.otherIssues : []),
+        ]);
+        const action = projectAnalysisError(error).remediation.action;
+        expect(action, operation).toMatch(new RegExp(`${to}.*${from}`, "i"));
+        expect(action, operation).toContain(operation);
+      }
     }
   });
 });
@@ -327,7 +228,7 @@ describe("input issue argument guidance suppression", () => {
       address: "0x401000",
       comment: "entry comment",
     };
-    const parsed = officialContract(
+    const parsed = toolContract(
       "annotate_native_function",
     ).inputSchema.safeParse(inputWithBoth);
     if (parsed.success) throw new Error("expected invalid input");
@@ -355,7 +256,7 @@ describe("input issue argument guidance suppression", () => {
       address: "0x401000",
       comment: "entry comment",
     };
-    const parsedMissing = officialContract(
+    const parsedMissing = toolContract(
       "annotate_native_function",
     ).inputSchema.safeParse(inputMissingExpected);
     if (parsedMissing.success) throw new Error("expected invalid input");
@@ -649,126 +550,38 @@ describe("union branch diagnostic merging", () => {
   });
 });
 
-const testViewUnionSchema = z.union([
-  z.strictObject({
-    kind: z.literal("page"),
-    collection: z.enum(["sections", "symbols", "modules"]),
-    offset: z.number().int().default(0),
-    limit: z.number().int().default(64),
-  }),
-  z.strictObject({
-    kind: z.literal("javascript"),
-    collection: z.literal("modules"),
-    projection: z.literal("references"),
-    offset: z.number().int().default(0),
-    limit: z.number().int().default(64),
-  }),
-]);
+it("limits cross-kind view guidance to inspect_analysis_view and keeps its public path", () => {
+  const operation = "inspect_analysis_view";
+  const inputSchema = toolContract(operation).inputSchema;
+  const input = {
+    source: { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` },
+    view: { kind: "javascript", collection: "modules", limit: 40, offset: 0 },
+  };
+  const parsed = inputSchema.safeParse(input);
+  const wrapped = z
+    .strictObject({ operation: z.literal(operation), input: inputSchema })
+    .safeParse({ operation, input });
+  if (parsed.success || wrapped.success)
+    throw new Error("Expected the view to require projection");
 
-describe("inspect_analysis_view cross-kind sub-selector guidance", () => {
-  it("guides caller toward kind 'page' when javascript kind uses collection 'modules' without projection", () => {
-    const input = {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: `ev_${"a".repeat(64)}`,
-      },
-      view: {
-        kind: "javascript",
-        collection: "modules",
-        limit: 40,
-        offset: 0,
-      },
-    };
-    const schema = z.strictObject({
-      source: z.unknown(),
-      view: testViewUnionSchema,
-    });
-    const parsed = schema.safeParse(input);
-    if (parsed.success) throw new Error("expected invalid input");
-    const projected = projectInputIssues(
-      parsed.error.issues,
-      input,
-      "inspect_analysis_view",
-    );
-    expect(projected).toContainEqual(
-      expect.objectContaining({
-        path: ["view", "projection"],
-        reason: "invalid_value",
-        expected: ["references"],
-        message: expect.stringMatching(/page.*modules/i),
-      }),
-    );
-  });
-
-  it("omits guidance message when operation is not inspect_analysis_view", () => {
-    const input = {
-      view: {
-        kind: "javascript",
-        collection: "modules",
-        limit: 40,
-        offset: 0,
-      },
-    };
-    const schema = z.strictObject({ view: testViewUnionSchema });
-    const parsed = schema.safeParse(input);
-    if (parsed.success) throw new Error("expected invalid input");
-    const projected = projectInputIssues(
-      parsed.error.issues,
-      input,
-      "other_operation",
-    );
-    expect(projected).toContainEqual(
-      expect.objectContaining({
-        path: ["view", "projection"],
-        reason: "invalid_value",
-        expected: ["references"],
-      }),
-    );
-    expect(
-      projected.find((p) => p.path.join(".") === "view.projection")?.message,
-    ).toBeUndefined();
-  });
-
-  it("attaches guidance when wrapped in analysisOperationInputErrorFromIssues", () => {
-    const input = {
-      source: {
-        kind: "retained-evidence",
-        evidence_id: `ev_${"a".repeat(64)}`,
-      },
-      view: {
-        kind: "javascript",
-        collection: "modules",
-        limit: 40,
-        offset: 0,
-      },
-    };
-    const schema = z.strictObject({
-      operation: z.literal("inspect_analysis_view"),
-      input: z.strictObject({
-        source: z.unknown(),
-        view: testViewUnionSchema,
-      }),
-    });
-    const parsed = schema.safeParse({
-      operation: "inspect_analysis_view",
-      input,
-    });
-    if (parsed.success) throw new Error("expected invalid input");
-    const error = analysisOperationInputErrorFromIssues(
-      "inspect_analysis_view",
-      parsed.error.issues,
-      input,
-      parsed.error,
-    );
-    expect(error.issues).toContainEqual(
-      expect.objectContaining({
-        path: ["view", "projection"],
-        reason: "invalid_value",
-        expected: ["references"],
-        message: expect.stringMatching(/page.*modules/i),
-      }),
-    );
-  });
+  const field = {
+    path: ["view", "projection"],
+    reason: "invalid_value",
+    expected: ["references"],
+  };
+  const guided = { ...field, message: expect.stringMatching(/page.*modules/i) };
+  const direct = projectInputIssues(parsed.error.issues, input, operation);
+  const enveloped = analysisOperationInputErrorFromIssues(
+    operation,
+    wrapped.error.issues,
+    input,
+    wrapped.error,
+  );
+  expect(direct).toContainEqual(guided);
+  expect(enveloped.issues).toEqual(direct);
+  expect(
+    projectInputIssues(parsed.error.issues, input, "other_operation"),
+  ).toContainEqual(field);
 });
 
 describe("discriminated union nested alternatives and budget", () => {
