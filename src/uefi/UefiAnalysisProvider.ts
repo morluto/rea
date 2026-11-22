@@ -305,6 +305,12 @@ export const buildUefiEntryPointScaffolding = (
 ): UefiEntryPointScaffolding => {
   const boundedRawName = ellipsisExcerpt(rawName, 256);
   const safeName = sanitizeCComment(boundedRawName);
+  const boundedTypeName =
+    typeName !== undefined ? ellipsisExcerpt(typeName, 64) : undefined;
+  const safeTypeName =
+    boundedTypeName !== undefined
+      ? sanitizeCComment(boundedTypeName)
+      : undefined;
   const statusType =
     machineWidth === "32"
       ? "uint32_t"
@@ -445,7 +451,7 @@ export const buildUefiEntryPointScaffolding = (
         `void EFIAPI ${identifier}EntryPoint(`,
         ") {",
         `    // Reconstructed EntryPoint scaffolding for unclassified payload ${safeName}`,
-        `    // Unknown ABI: unclassified module with no supported entry ABI${typeName ? ` (type: ${typeName})` : ""}`,
+        `    // Unknown ABI: unclassified module with no supported entry ABI${safeTypeName ? ` (type: ${safeTypeName})` : ""}`,
         `    // Size: ${byteLength} bytes`,
         "}",
       ].join("\n"),
@@ -2612,7 +2618,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const candidateEntries: DirectoryArtifactEntry[] = [];
       let traversalLimitReached = false;
       let hasUnknownCoverage = false;
-      const unknownCoverageFacts: string[] = [];
       let isCoveragePartial = false;
       interface OmittedDirectoryCandidate {
         readonly identityRelPath: string;
@@ -2627,9 +2632,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             if (coverage.status === "unknown") {
               isCoveragePartial = true;
               hasUnknownCoverage = true;
-              for (const lim of coverage.limitations) {
-                unknownCoverageFacts.push(lim);
-              }
             }
             for (const lim of coverage.limitations) {
               if (limitations.length < 50) limitations.push(lim);
@@ -2646,7 +2648,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               reason: `omission:${omission.kind}`,
             });
             if (limitations.length < 50) {
-              limitations.push(`Omitted unreadable path: ${omission.path}`);
+              const safePath = formatMarkdownCodeSpan(omission.path);
+              limitations.push(`Omitted unreadable path: ${safePath}`);
             }
           },
         })) {
@@ -2669,7 +2672,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               reason: "symlink",
             });
             if (limitations.length < 50) {
-              limitations.push(`Omitted symlink entry: ${entry.path}`);
+              const safePath = formatMarkdownCodeSpan(entry.path);
+              limitations.push(`Omitted symlink entry: ${safePath}`);
             }
           }
         }
@@ -3324,10 +3328,6 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
       if (hasUnknownCoverage) {
         dirHash.update("coverage:unknown\n");
-        unknownCoverageFacts.sort();
-        for (const fact of unknownCoverageFacts) {
-          dirHash.update(`coverage_limitation:${fact}\n`);
-        }
       }
 
       dirSha256 =

@@ -6521,3 +6521,106 @@ it("composes primaryError with cleanupError before retaining cancellation in dir
     await provider.close();
   }
 });
+
+it("sanitizes and bounds typeName in unclassified MISC scaffolding", () => {
+  const scaffold = buildUefiEntryPointScaffolding(
+    "MaliciousTypeModule",
+    "mod.bin",
+    1024,
+    "MISC",
+    "freeform\n#error broken\0active",
+    "64",
+  );
+  expect(scaffold.functionDefinition).not.toContain("\n#error");
+  expect(scaffold.functionDefinition).not.toContain("\0");
+  expect(scaffold.functionDefinition).toContain(
+    "freeform #error broken active",
+  );
+});
+
+it("quotes omitted paths with markdown code span in limitations", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-omitted-quote-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const targetFile = join(inDir, "real.efi");
+  await writeFile(targetFile, createMinimalPeBuffer());
+  const linkPath = join(inDir, "[docs](https:evil.example).efi");
+  try {
+    const { symlink: symlinkFs } = await import("node:fs/promises");
+    await symlinkFs(targetFile, linkPath);
+  } catch {
+    // If symlinks not supported, skip
+    return;
+  }
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    const symlinkLim = result.limitations.find((l) =>
+      l.includes("Omitted symlink entry"),
+    );
+    expect(symlinkLim).toBeDefined();
+    // Path should be wrapped in code span
+    expect(symlinkLim).toContain("`[docs](https:evil.example).efi`");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("computes invariant dirHash regardless of host root directory path during unknown coverage", async () => {
+  const dir1 = await createTestTempDirectory("rea-uefi-inv-hash-1-");
+  const dir2 = await createTestTempDirectory("rea-uefi-inv-hash-2-");
+  const in1 = join(dir1, "in");
+  const in2 = join(dir2, "in");
+  const out1 = join(dir1, "out");
+  const out2 = join(dir2, "out");
+  await mkdir(in1, { recursive: true });
+  await mkdir(in2, { recursive: true });
+
+  let callCount = 0;
+  vi.spyOn(DirectoryArtifactReader.prototype, "entries").mockImplementation(
+    async function* (
+      this: DirectoryArtifactReader,
+      _signal?: AbortSignal,
+      options?: Parameters<DirectoryArtifactReader["entries"]>[1],
+    ) {
+      callCount++;
+      if (typeof options === "object" && options !== null) {
+        options.onCoverage?.({
+          status: "unknown",
+          limitations: [
+            `Directory /host/path/${callCount} contains unreadable descendant`,
+          ],
+        });
+      }
+    },
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const res1 = expectOk(
+      await provider.execute(
+        decompileRequest(in1, out1, { include_disassembly: false }),
+      ),
+    );
+    const res2 = expectOk(
+      await provider.execute(
+        decompileRequest(in2, out2, { include_disassembly: false }),
+      ),
+    );
+
+    const hash1 = (res1.value.result as UefiDecompileResult).image_sha256;
+    const hash2 = (res2.value.result as UefiDecompileResult).image_sha256;
+    expect(hash1).toBe(hash2);
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
