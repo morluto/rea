@@ -740,6 +740,7 @@
 * **setup:** consolidate installer consent and plan disclosure checks ([#12869](https://github.com/morluto/rea/issues/12869)) ([234cae0](https://github.com/morluto/rea/commit/234cae0592ca4ef6ef002598a3e39396e1739501))
 * **setup:** consolidate malformed dry-run CLI coverage ([6bc96f3](https://github.com/morluto/rea/commit/6bc96f3f9900dcebd9c502592d325cd495d554ae))
 * **setup:** consolidate manual-client selection coverage ([f718e17](https://github.com/morluto/rea/commit/f718e17caaa8fa73d6a8705833e811a3be85b994))
+* **setup:** consolidate OpenCode dialect and project discovery checks ([#13559](https://github.com/morluto/rea/issues/13559)) ([317974d](https://github.com/morluto/rea/commit/317974d4f4129d8fc2cf7aee6be820d7bc3f6a94))
 * **setup:** consolidate registration status contracts ([#13303](https://github.com/morluto/rea/issues/13303)) ([e9b0f0b](https://github.com/morluto/rea/commit/e9b0f0b68c3f63cfbadd4da8e5ce4554dac28b67))
 * **setup:** consolidate TOML client preservation checks ([#13294](https://github.com/morluto/rea/issues/13294)) ([825afe0](https://github.com/morluto/rea/commit/825afe019c9e35b9e4a44ae0efef338435df752d))
 * **setup:** cover client name resolution and typo suggestions ([fe1f851](https://github.com/morluto/rea/commit/fe1f85105705b272282e96042c93e588c20f1c42))
