@@ -21,6 +21,7 @@ import {
   ccobFixture,
   ptxFixture,
   amdFixture,
+  amdDescriptorNoteFixture,
   amdNoteFixture,
   cubinFixture,
   hipFixture,
@@ -69,6 +70,109 @@ cliTest(
       expect(report.kernels[0]!.parameter_bytes).toBe(12);
       expect(report.coverage.payloads).toBe("complete");
     }
+  },
+);
+
+cliTest(
+  "reports the decoded payload identity of a CUDA 0x2000 LZ4 entry",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-cuda-lz4-"),
+      path = join(root, "application"),
+      ptx = Buffer.from(ptxFixture),
+      bytes = cudaFixture("lz4", [{ kind: 1, target: 80, bytes: ptx }]);
+    await writeFile(path, bytes);
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const evidence = parseEvidence(
+      toolContract("inspect_gpu_code_objects").outputSchema.parse(
+        response.json,
+      ),
+    );
+    const report = gpuCodeObjectsSchema.parse(evidence.normalized_result);
+    expect(report.artifact.sha256).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(report.objects[0]).toMatchObject({
+      kind: "ptx",
+      compression: "lz4",
+      compression_id: "cuda-flags:0x2011",
+      decoded_size: ptx.length,
+      sha256: createHash("sha256").update(ptx).digest("hex"),
+      inspection: "complete",
+    });
+    expect(report.ptx_artifacts.map((row) => row.text)).toEqual([ptxFixture]);
+    expect(report.coverage.payloads).toBe("complete");
+    const { call } = await connectLocalToolsMcp();
+    const reply = await call("inspect_gpu_code_objects", {
+      path,
+      analysis: "kernels",
+      detail: "complete",
+    });
+    expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+    expect(
+      gpuCodeObjectsSchema.parse(
+        parseEvidence(reply.structuredContent).normalized_result,
+      ).objects[0],
+    ).toMatchObject({
+      compression: "lz4",
+      sha256: createHash("sha256").update(ptx).digest("hex"),
+    });
+  },
+);
+
+cliTest(
+  "reports the AMD metadata nesting allowance while retaining a preceding kernel",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-amdgpu-metadata-depth-");
+    const path = join(root, "amdgpu");
+    // A one-entry map whose value is 32 nested single-element MessagePack arrays.
+    const metadata = Buffer.from([
+      0x81,
+      0xa1,
+      0x78,
+      ...Array<number>(32).fill(0x91),
+      0,
+    ]);
+    await writeFile(
+      path,
+      amdFixture(false, amdDescriptorNoteFixture(metadata)),
+    );
+    const response = await cli.run({
+      arguments: [
+        "inspect-gpu-code-objects",
+        path,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(response.exitCode, response.stderr).toBe(0);
+    const report = gpuCodeObjectsSchema.parse(
+      parseEvidence(response.json).normalized_result,
+    );
+    expect(report.objects[0]).toMatchObject({
+      inspection: "capacity",
+      limitations: expect.arrayContaining([
+        "AMDGPU metadata exceeds its 32-level nesting allowance",
+      ]),
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [expect.any(Object)],
+      },
+    });
+    expect(report.kernels.map(({ name }) => name)).toEqual(["add_one"]);
   },
 );
 

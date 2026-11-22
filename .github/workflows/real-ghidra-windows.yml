@@ -50,10 +50,12 @@ jobs:
           if-no-files-found: error
 
   verify:
-    name: Real Ghidra 12.1.4 Windows x64 PE proof
+    name: Real Ghidra 12.2 Windows x64 PE proof
     if: github.ref == 'refs/heads/main'
     needs: native-artifact
     environment: real-ghidra-windows
+    # The fleet label is unchanged. The machine must provide verified Ghidra
+    # 12.2 and a JDK inside that install's declared range (JDK 25+).
     runs-on: [self-hosted, Windows, x64, ghidra-12-1-2]
     timeout-minutes: 20
     steps:

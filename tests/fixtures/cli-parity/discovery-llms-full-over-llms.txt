@@ -15,7 +15,7 @@ Inspect file-wide and block byte entropy without executing the file
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--blockSize` | `unknown` | `4096` | Power-of-two block size from 256 to 65536 bytes |
+| `--block-size` | `unknown` | `4096` | Power-of-two block size from 256 to 65536 bytes |
 | `--offset` | `unknown` | `0` | Window start as a decimal file byte offset |
 | `--length` | `unknown` |  | Window length in bytes; omit to extend through EOF |
 <end>

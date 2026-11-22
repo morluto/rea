@@ -18,18 +18,22 @@ const embedsEvidence = (value: JsonValue): boolean => {
   if (Array.isArray(value)) return value.some(embedsEvidence);
   if (value === null || typeof value !== "object") return false;
   return (
-    evidenceSchema.safeParse(value).success ||
+    (Object.hasOwn(value, "evidence_id") &&
+      evidenceSchema.safeParse(value).success) ||
     Object.values(value).some(embedsEvidence)
   );
 };
 
 describe("advertised input examples", () => {
-  it("shows embedded Evidence as its exact retained reference", () => {
-    const inputSchema = z.strictObject({
-      left: evidenceInputSchema,
-      right: z.array(evidenceInputSchema),
-      label: z.string(),
-    });
+  it("deduplicates retained examples and omits Evidence examples that require inline records", () => {
+    const inputSchema = z.union([
+      z.strictObject({
+        left: evidenceInputSchema,
+        right: z.array(evidenceInputSchema),
+        label: z.string(),
+      }),
+      z.strictObject({ inlineOrText: z.union([evidenceSchema, z.string()]) }),
+    ]);
     expect(
       advertisedInputExamples({
         inputSchema,
@@ -43,27 +47,15 @@ describe("advertised input examples", () => {
             input: { left: retained, right: [retained], label: "a" },
           },
           { title: "Other", input: { left: retained, right: [], label: "b" } },
+          { title: "Inline only", input: { inlineOrText: evidence } },
+          { title: "Literal", input: { inlineOrText: "value" } },
         ],
       }),
     ).toEqual([
       { left: retained, right: [retained], label: "a" },
       { left: retained, right: [], label: "b" },
+      { inlineOrText: "value" },
     ]);
-  });
-
-  it("leaves the advertisement when only inline Evidence is accepted", () => {
-    const inputSchema = z.strictObject({
-      left: z.union([evidenceSchema, z.string()]),
-    });
-    expect(
-      advertisedInputExamples({
-        inputSchema,
-        examples: [
-          { title: "Inline", input: { left: evidence } },
-          { title: "Literal", input: { left: "value" } },
-        ],
-      }),
-    ).toEqual([{ left: "value" }]);
   });
 
   it("advertises only distinct canonical inputs without complete Evidence", () => {

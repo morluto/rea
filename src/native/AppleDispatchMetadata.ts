@@ -47,7 +47,10 @@ import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { pushDispatchCoverage } from "./AppleDispatchCoverage.js";
 import { parsePointerFixupsSteps } from "../domain/apple/appleMachoFixups.js";
-import { BinaryFormatFailure } from "../domain/binaryContainer.js";
+import {
+  BinaryFormatFailure,
+  BinaryReader,
+} from "../domain/binaryContainer.js";
 import { parseMachoLayout } from "../domain/apple/appleMachoSelection.js";
 import {
   selectMachoSlice,
@@ -64,6 +67,8 @@ import { createSwiftClassVtableDecoder } from "./AppleSwiftVtables.js";
 import {
   decodeSwiftNominalTypes,
   createSwiftContextReader,
+  SWIFT_TYPE_RECORD_SECTIONS,
+  type SwiftTypeRecord,
 } from "./AppleSwiftNominalTypes.js";
 import { inspectObjcClassImportBindings } from "./AppleObjcClassImportBindings.js";
 import { invariantViolation } from "../domain/internalInvariant.js";
@@ -100,6 +105,7 @@ export function* decodeAppleDispatchMetadataSteps(
   }
   const layout = parseMachoLayout(bytes, selected.value);
   const { segments, sections, offset } = layout;
+  const metadata = new BinaryReader(bytes, true, "macho");
   const fixups = yield* parsePointerFixupsSteps(
     bytes,
     layout.fixups,
@@ -114,9 +120,10 @@ export function* decodeAppleDispatchMetadataSteps(
     addressesComplete: objcClassImportAddressesComplete,
     maxRecords,
   });
-  const u32 = (address: bigint) => bytes.readUInt32LE(offset(address, 4));
+  const u32 = (address: bigint) => metadata.u32(offset(address, 4));
+  const u64 = (address: bigint) => metadata.word(offset(address, 8), 64);
   const decodePointer = (address: bigint) =>
-    fixups.decode(address, bytes.readBigUInt64LE(offset(address, 8)));
+    fixups.decode(address, u64(address));
   /** In-image target of a raw or rebased pointer; a bind is not an address. */
   const pointer = (address: bigint) => {
     const decodedPointer = decodePointer(address);
@@ -209,8 +216,8 @@ export function* decodeAppleDispatchMetadataSteps(
   };
   const readers = {
     u32,
-    i32: (address: bigint) => bytes.readInt32LE(offset(address, 4)),
-    u64: (address: bigint) => bytes.readBigUInt64LE(offset(address, 8)),
+    i32: (address: bigint) => metadata.i32(offset(address, 4)),
+    u64,
     pointer,
     resolvePointer: decodePointer,
     bound,
@@ -228,7 +235,6 @@ export function* decodeAppleDispatchMetadataSteps(
     objcListScanTruncated,
     objcClassListScanTruncated,
   } = decodeObjcDispatchFacets({
-    bytes,
     sections,
     segments,
     readers,
@@ -237,7 +243,6 @@ export function* decodeAppleDispatchMetadataSteps(
     result,
   });
   const swiftRelative = createSwiftRelativeReader({
-    bytes,
     readers,
     budget,
     result,
@@ -256,9 +261,9 @@ export function* decodeAppleDispatchMetadataSteps(
     budget,
     result,
   });
-  const typeEntries: bigint[] = [];
-  for (const section of sections.filter(
-    ({ name }) => name === "__swift5_types",
+  const typeEntries: SwiftTypeRecord[] = [];
+  for (const section of sections.filter(({ name }) =>
+    SWIFT_TYPE_RECORD_SECTIONS.has(name),
   )) {
     if (section.size % 4 !== 0)
       throw new BinaryFormatFailure(
@@ -266,7 +271,10 @@ export function* decodeAppleDispatchMetadataSteps(
         "Misaligned Swift type section",
       );
     for (let index = 0; index < section.size / 4 && index < maxRecords; index++)
-      typeEntries.push(section.address + BigInt(index * 4));
+      typeEntries.push({
+        address: section.address + BigInt(index * 4),
+        section: section.name,
+      });
     if (section.size / 4 > maxRecords) budget.truncated = true;
   }
   const admit = () => budget.admit();

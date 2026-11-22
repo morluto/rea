@@ -54,11 +54,10 @@ import {
   observeSelectedExecutable,
 } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureReadFailure } from "../../../src/process/capture/ProcessCaptureRead.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-const roots: string[] = [];
 const createExecutable = async (content: string): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-selected-executable-owner-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-selected-executable-owner-");
   const path = join(root, "selected-fixture");
   await writeFile(path, content);
   return path;
@@ -97,9 +96,6 @@ afterEach(async () => {
   injected.abortOnClose = undefined;
   injected.opened = [];
   injected.closed = [];
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
   vi.restoreAllMocks();
 });
 

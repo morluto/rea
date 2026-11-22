@@ -4,6 +4,7 @@ import { visit } from "jsonc-parser";
 import { LosslessNumber } from "lossless-json";
 import { CaptureFormatError } from "./CaptureFormatError.js";
 import { decodeStrictUtf8 } from "../../domain/strictUtf8.js";
+import { WEB_NETWORK_CAPTURE_LIMITS } from "../../domain/webNetworkCapture.js";
 
 type Frame =
   | {
@@ -51,6 +52,10 @@ export const parseCaptureJson = (
 ): unknown => {
   const frames: Frame[] = [];
   const admitNode = captureNodeAdmission(maximumNodes);
+  const fixedDepth = format === "Playwright trace";
+  const maximumDepth = fixedDepth
+    ? WEB_NETWORK_CAPTURE_LIMITS.depth
+    : captureBudgets().depth;
   let result: unknown;
   const valuePointer = (): string => {
     const parent = frames.at(-1);
@@ -66,10 +71,10 @@ export const parseCaptureJson = (
   // container add no level, so empty and scalar-bearing containers agree.
   const admitContainer = (): void => {
     admitNode();
-    if (frames.length >= captureBudgets().depth)
+    if (frames.length >= maximumDepth)
       throw new CaptureFormatError(
-        { name: "nesting-depth", maximum: captureBudgets().depth },
-        `${format} exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
+        { name: "nesting-depth", maximum: maximumDepth },
+        `${format} exceeds ${fixedDepth ? "its fixed JSON nesting allowance" : "max_nesting_depth"} (${String(maximumDepth)} levels).`,
         valuePointer(),
       );
   };
@@ -117,11 +122,23 @@ export const parseCaptureJson = (
       onArrayEnd: () => endContainer("array"),
       onLiteralValue: (value: unknown, offset, length) => {
         admitNode();
-        if (typeof value === "number")
-          append(new LosslessNumber(text.slice(offset, offset + length)));
-        // jsonc-parser 3.3.1 builds an escaped string fragment by fragment,
-        // which V8 keeps as a rope several times larger than its text.
-        // JSON.parse of the same accepted token returns one flat string.
+        if (typeof value === "number") {
+          const literal = text.slice(offset, offset + length);
+          // V8 turns >= 13-character slices into SlicedStrings pointing at `text`;
+          // detach long numeric literals so retained LosslessNumber spellings
+          // cannot pin discarded multi-megabyte JSON source buffers.
+          append(
+            new LosslessNumber(
+              length > 12 ? String(JSON.parse(`"${literal}"`)) : literal,
+            ),
+          );
+        }
+        // jsonc-parser 3.3.1 builds escaped strings as V8 ropes several times
+        // larger than the decoded text and slices unescaped strings (>= 13 chars)
+        // with substring(), producing V8 SlicedStrings pointing at `text`.
+        // JSON.parse of the accepted token solves both: it avoids rope inflation
+        // and allocates a detached flat string so retained short strings cannot
+        // pin oversized omitted payloads via V8 SlicedString parent pointers.
         else if (typeof value === "string")
           append(JSON.parse(text.slice(offset, offset + length)));
         else if (value === null || typeof value === "boolean") append(value);

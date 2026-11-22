@@ -323,6 +323,14 @@ describe("parseDecodedStrings", () => {
     );
   });
 
+  it("ignores foreign namespace string elements", () => {
+    const xml =
+      '<resources><string xmlns="urn:vendor" name="foreign">decoy</string><string name="local">one</string></resources>';
+    expect(parseDecodedStrings(xml)).toEqual(
+      ok({ entries: [{ name: "local", value: "one" }], unparsedCount: 0 }),
+    );
+  });
+
   it("preserves literal U+FFFD and unaffected sibling strings", () => {
     expect(
       parseDecodedStrings(
@@ -450,23 +458,24 @@ describe("string document validity and omission counts", () => {
   });
 });
 
-it.each(["<manifest/>", '<other><string name="a">one</string></other>'])(
-  "keeps a wrong document root separate from an entry count: %s",
-  (xml) => {
-    const parsed = parseDecodedStrings(xml);
-    expect(parsed).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "ParseFailureError",
-        kind: "malformed",
-        failure: {
-          format: "android-string-resources",
-          field: "documentElement",
-        },
+it.each([
+  "<manifest/>",
+  '<other><string name="a">one</string></other>',
+  '<resources xmlns="urn:vendor"><string name="a">one</string></resources>',
+])("keeps a wrong document root separate from an entry count: %s", (xml) => {
+  const parsed = parseDecodedStrings(xml);
+  expect(parsed).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "ParseFailureError",
+      kind: "malformed",
+      failure: {
+        format: "android-string-resources",
+        field: "documentElement",
       },
-    });
-    expect(parsed).not.toHaveProperty("value");
-    if (parsed.ok) throw new Error("Expected document failure");
-    expect(parsed.error).not.toHaveProperty("unparsedCount");
-  },
-);
+    },
+  });
+  expect(parsed).not.toHaveProperty("value");
+  if (parsed.ok) throw new Error("Expected document failure");
+  expect(parsed.error).not.toHaveProperty("unparsedCount");
+});

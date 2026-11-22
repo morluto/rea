@@ -50,36 +50,58 @@ it("degrades a changed candidate to candidate_unreadable", async () => {
     expect(result.value.verification?.reason).toBe("candidate_unreadable");
 });
 
-it("keeps a failed candidate close visible after an integrity or limit refusal", async () => {
-  for (const reason of ["integrity", "limit"] as const) {
+it.each([
+  {
+    refusal: new ArtifactReaderFailure(
+      "integrity",
+      "Candidate changed while read",
+      {
+        integrityCheck: "container-identity",
+      },
+    ),
+    primary: {
+      _tag: "AnalysisArtifactChangedError",
+      path: "/artifacts/prog.debug",
+      integrityCheck: "container-identity",
+    },
+  },
+  {
+    refusal: new ArtifactReaderFailure(
+      "limit",
+      "Candidate exceeded its read budget",
+    ),
+    primary: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "file-size",
+      reportedLimits: {
+        boundary: "candidate_bytes",
+        maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+      },
+      fixedAllowance: {
+        kind: "input",
+        limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
+        unit: "bytes",
+      },
+    },
+  },
+])(
+  "keeps candidate cleanup and the $refusal.reason primary",
+  async ({ refusal, primary }) => {
     const result = await inspect(
       ArtifactReaderFailure.withCleanup(
-        reason === "integrity"
-          ? new ArtifactReaderFailure(reason, "Candidate read refused", {
-              integrityCheck: "container-identity",
-            })
-          : new ArtifactReaderFailure(reason, "Candidate read refused"),
+        refusal,
         ArtifactReaderFailure.cleanupObservation(
           new Error("close failed"),
           "/artifacts/prog.debug",
         ),
       ),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok && reason === "limit")
-      expect(primaryAnalysisError(result.error)).toMatchObject({
-        reportedLimits: {
-          boundary: "candidate_bytes",
-          maximum: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-        },
-        fixedAllowance: {
-          kind: "input",
-          limit: MAX_ELF_DEBUG_CANDIDATE_BYTES,
-          unit: "bytes",
-        },
-      });
-  }
-});
+    if (result.ok) throw new Error("Expected a candidate cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanupResources).toEqual(["/artifacts/prog.debug"]);
+    expect(primaryAnalysisError(result.error)).toMatchObject(primary);
+  },
+);
 
 it("degrades a candidate data-read EIO to candidate_unreadable", async () => {
   const result = await inspect(

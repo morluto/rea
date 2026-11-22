@@ -1,5 +1,8 @@
 import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
-import { parseFailureAnalysisError } from "../../domain/parseFailureAnalysisError.js";
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../../domain/parseFailureAnalysisError.js";
 import { lstat, open } from "node:fs/promises";
 import {
   projectSelectedArtifactFileFailure,
@@ -258,12 +261,11 @@ const SELECTED_BUDGETS = {
   }
 >;
 
-const budgetRemediation = (
-  input: InspectWindowsShortcutInput,
-  boundary: WindowsShortcutSelectedBoundary,
-): string => {
-  const { argument, maximum, unit } = SELECTED_BUDGETS[boundary];
-  const selected = input[argument];
+const budgetRemediation = ({
+  name,
+  maximum: selected,
+}: WindowsShortcutResourceFailure["failure"]["limit"]): string => {
+  const { argument, maximum, unit } = SELECTED_BUDGETS[name];
   const recovery =
     selected >= maximum
       ? `This release has no override above the ${String(maximum)} ${unit} ceiling; select a smaller shortcut.`
@@ -285,17 +287,11 @@ const windowsShortcutFailurePrimary = (
   );
   if (identityFailure !== undefined) return identityFailure;
   if (cause instanceof WindowsShortcutResourceFailure)
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "capacity",
-      `Selected artifact ${input.path}: ${cause.message}`,
-      { boundary: cause.boundary, maximum: cause.maximum },
-      {
-        cause,
-        retryable: false,
-        remediationAction: budgetRemediation(input, cause.boundary),
-      },
-    );
+    return parseLimitConstraint(OPERATION, "capacity", cause, {
+      path: input.path,
+      retryable: false,
+      remediationAction: budgetRemediation(cause.failure.limit),
+    });
   const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
   if (formatFailure !== undefined) return formatFailure;
   if (

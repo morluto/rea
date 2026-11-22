@@ -1,6 +1,7 @@
 import type { Devicetree, InspectDevicetreeInput } from "./devicetree.js";
-import { BinaryFormatFailure } from "../binaryContainer.js";
-import { decodeLimit, ParseFailureError } from "../parseFailure.js";
+import { BinaryFormatFailure, BinaryReader } from "../binaryContainer.js";
+import { readDevicetreeHeader } from "./devicetreeHeader.js";
+import { decodeLimit, type ParseFailureError } from "../parseFailure.js";
 
 /** The ParseFailure format of flattened devicetree blobs. */
 export const DEVICETREE_FORMAT = "devicetree";
@@ -10,14 +11,6 @@ export const DEVICETREE_DECODED_BYTES = 33554432;
 export type DevicetreeLimit =
   | keyof Omit<InspectDevicetreeInput, "path">
   | "decoded_bytes";
-
-const DEVICETREE_LIMITS = new Set<DevicetreeLimit>([
-  "max_file_bytes",
-  "max_nodes",
-  "max_properties",
-  "max_depth",
-  "decoded_bytes",
-]);
 
 export const devicetreeLimitFailure = (
   limit: DevicetreeLimit,
@@ -31,18 +24,6 @@ export const devicetreeLimitFailure = (
     { name: limit, maximum },
   );
 
-export const devicetreeLimitOf = (
-  cause: unknown,
-): { readonly limit: DevicetreeLimit; readonly maximum: number } | undefined =>
-  cause instanceof ParseFailureError &&
-  cause.failure.kind === "limit" &&
-  cause.failure.format === DEVICETREE_FORMAT &&
-  DEVICETREE_LIMITS.has(cause.failure.limit.name as DevicetreeLimit)
-    ? {
-        limit: cause.failure.limit.name as DevicetreeLimit,
-        maximum: cause.failure.limit.maximum,
-      }
-    : undefined;
 const malformed = (message: string): never => {
   throw new BinaryFormatFailure("malformed", message);
 };
@@ -54,94 +35,32 @@ export const parseDevicetree = (
   bytes: Buffer,
   artifact: Devicetree["artifact"],
   input: InspectDevicetreeInput,
-): Devicetree => {
+): { report: Devicetree; structureLimitations: readonly string[] } => {
   if (bytes.length > input.max_file_bytes)
     throw devicetreeLimitFailure("max_file_bytes", input.max_file_bytes);
-  if (bytes.length < 28) malformed("Truncated FDT header");
-  const u32 = (offset: number) => bytes.readUInt32BE(offset);
-  if (u32(0) !== 0xd00dfeed)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      "Not a flattened devicetree blob",
-    );
-  const version = u32(20);
-  if (version !== 16 && version !== 17)
-    throw new BinaryFormatFailure(
-      "unsupported",
-      `FDT version ${version} is unsupported; supported versions are 16 and 17`,
-    );
-  const headerBytes = version === 17 ? 40 : 36;
-  if (bytes.length < headerBytes) malformed("Truncated FDT header");
-  const header: Devicetree["header"] = {
-    magic: u32(0),
-    totalsize: u32(4),
-    off_dt_struct: u32(8),
-    off_dt_strings: u32(12),
-    off_mem_rsvmap: u32(16),
-    version,
-    last_comp_version: u32(24),
-    boot_cpuid_phys: u32(28),
-    size_dt_strings: u32(32),
-    size_dt_struct: version === 17 ? u32(36) : null,
-  };
+  const {
+    header,
+    reservationEnd,
+    structureEnd: structEnd,
+  } = readDevicetreeHeader(bytes);
   const end = header.totalsize;
-  if (
-    end > bytes.length ||
-    end < headerBytes ||
-    header.last_comp_version > version ||
-    header.last_comp_version > 17
-  )
+  if (end > bytes.length)
     malformed("Invalid FDT header size or compatibility version");
+  const reader = new BinaryReader(bytes, false, DEVICETREE_FORMAT);
+  const u32 = (offset: number) => reader.u32(offset);
   let decodedBytes = 0;
   const admit = (size: number) => {
     decodedBytes += size;
     if (decodedBytes > DEVICETREE_DECODED_BYTES)
       throw devicetreeLimitFailure("decoded_bytes", DEVICETREE_DECODED_BYTES);
   };
-  const ranges: { start: number; end: number }[] = [
-    { start: 0, end: headerBytes },
-  ];
-  const range = (start: number, size: number) => {
-    if (size < 0 || (size > 0 && start < headerBytes) || start > end - size)
-      malformed("FDT block outside totalsize");
-    // An empty extent occupies no bytes and cannot overlap another block.
-    if (size === 0) return;
-    const r = { start, end: start + size };
-    if (ranges.some((other) => r.start < other.end && other.start < r.end))
-      malformed("Overlapping FDT blocks");
-    ranges.push(r);
-  };
-  if (header.off_dt_struct % 4 || header.off_mem_rsvmap % 8)
-    malformed("Misaligned FDT block");
-  range(header.off_dt_strings, header.size_dt_strings);
-  // v16 lacks size_dt_struct. Bound the scan by the next declared block or totalsize.
-  const structEnd =
-    header.size_dt_struct === null
-      ? Math.min(
-          end,
-          ...[
-            ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
-            header.off_mem_rsvmap,
-          ].filter((n) => n > header.off_dt_struct),
-        )
-      : header.off_dt_struct + header.size_dt_struct;
-  range(header.off_dt_struct, structEnd - header.off_dt_struct);
   const reservations: Devicetree["reservations"] = [];
   let cursor = header.off_mem_rsvmap;
-  const reservationEnd = Math.min(
-    end,
-    ...[
-      header.off_dt_struct,
-      ...(header.size_dt_strings > 0 ? [header.off_dt_strings] : []),
-    ].filter((n) => n >= cursor),
-  );
-  if (ranges.some((r) => cursor >= r.start && cursor < r.end))
-    malformed("Reservation block overlaps another FDT block");
   for (;;) {
     if (cursor > reservationEnd - 16)
       malformed("Unterminated or overlapping FDT reservation block");
-    const address = bytes.readBigUInt64BE(cursor),
-      size = bytes.readBigUInt64BE(cursor + 8);
+    const address = reader.word(cursor, 64),
+      size = reader.word(cursor + 8, 64);
     cursor += 16;
     if (address === 0n && size === 0n) break;
     if (reservations.length >= input.max_properties)
@@ -153,7 +72,6 @@ export const parseDevicetree = (
       size: hex(size),
     });
   }
-  range(header.off_mem_rsvmap, cursor - header.off_mem_rsvmap);
   const text = (
     start: number,
     stop: number,
@@ -180,6 +98,16 @@ export const parseDevicetree = (
     if (cursor > structEnd - n)
       malformed("Truncated FDT structure token or property");
   };
+  let nonzeroPaddingBytes = 0;
+  let firstNonzeroPadding: number | undefined;
+  const observePadding = (start: number, end: number) => {
+    // Callers admit the aligned extent before observing its padding.
+    for (let offset = start; offset < end; offset++) {
+      if (bytes[offset] === 0) continue;
+      nonzeroPaddingBytes += 1;
+      firstNonzeroPadding ??= offset;
+    }
+  };
   while (cursor < structEnd) {
     need(4);
     const offset = cursor,
@@ -191,8 +119,10 @@ export const parseDevicetree = (
       if (nodes.length >= input.max_nodes)
         throw devicetreeLimitFailure("max_nodes", input.max_nodes);
       const name = text(cursor, structEnd);
-      cursor = align(name.next);
-      need(0);
+      const next = align(name.next);
+      need(next - cursor);
+      observePadding(name.next, next);
+      cursor = next;
       const parent = stack.at(-1);
       if (
         name.value.includes("/") ||
@@ -226,7 +156,11 @@ export const parseDevicetree = (
       const length = u32(cursor),
         nameoff = u32(cursor + 4);
       cursor += 8;
-      need(length);
+      const end = cursor + length;
+      const next = align(end);
+      // Every open node needs an END_NODE token, followed by FDT_END.
+      need(next - cursor + (stack.length + 1) * 4);
+      observePadding(end, next);
       if (++properties > input.max_properties)
         throw devicetreeLimitFailure("max_properties", input.max_properties);
       if (nameoff >= header.size_dt_strings)
@@ -282,7 +216,7 @@ export const parseDevicetree = (
           "remote-endpoint",
           "msi-parent",
         ].includes(name) && length === 4
-          ? [raw.readUInt32BE(0)]
+          ? [u32(cursor)]
           : null;
       const property = {
         name,
@@ -294,8 +228,7 @@ export const parseDevicetree = (
       };
       owner.node.properties.push(property);
       propertyMap?.set(name, property);
-      cursor = align(cursor + length);
-      need(0);
+      cursor = next;
     } else if (token === 9) {
       if (stack.length || nodes.length === 0) malformed("Premature FDT_END");
       if (header.size_dt_struct !== null && cursor !== structEnd)
@@ -313,7 +246,15 @@ export const parseDevicetree = (
     return s?.length === 1 ? (s[0] ?? null) : null;
   };
   const handles = new Map<number, string | null>();
+  // An editor can leave nonzero padding without changing the parsed fields.
+  const structureLimitations =
+    firstNonzeroPadding === undefined
+      ? []
+      : [
+          `FDT structure padding contains ${String(nonzeroPaddingBytes)} nonzero ${nonzeroPaddingBytes === 1 ? "byte" : "bytes"}. The first is at file offset ${String(firstNonzeroPadding)}.`,
+        ];
   const limitations = [
+    ...structureLimitations,
     "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
     "Phandle references cover only single-cell interrupt-parent, remote-endpoint and msi-parent; binding-specific arrays and overlays are not resolved.",
   ];
@@ -418,7 +359,7 @@ export const parseDevicetree = (
         });
       }
     }
-  return {
+  const report: Devicetree = {
     artifact,
     header,
     reservations,
@@ -442,4 +383,5 @@ export const parseDevicetree = (
     },
     limitations,
   };
+  return { report, structureLimitations };
 };

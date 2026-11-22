@@ -19,6 +19,7 @@ export interface AndroidOtaOperationFixture {
   readonly data?: Uint8Array;
   readonly dataOffset?: number;
   readonly dataLength?: number;
+  readonly dataHash?: Uint8Array;
   readonly dstExtents?: readonly AndroidOtaExtentFixture[];
   readonly srcExtents?: readonly AndroidOtaExtentFixture[];
 }
@@ -29,6 +30,9 @@ export interface AndroidOtaPartitionFixture {
   readonly newHash?: Uint8Array;
   readonly oldSize?: number;
   readonly oldHash?: Uint8Array;
+  /** Exact occurrences of the singular message, for protobuf merge controls. */
+  readonly oldInfoFragments?: readonly AndroidOtaPartitionInfoFixture[];
+  readonly newInfoFragments?: readonly AndroidOtaPartitionInfoFixture[];
   readonly version?: string;
   readonly runPostinstall?: boolean;
   readonly postinstallPath?: string;
@@ -37,6 +41,11 @@ export interface AndroidOtaPartitionFixture {
   readonly mergeOperations?: number;
   readonly estimateCowSize?: number;
   readonly omitNewHash?: boolean;
+}
+
+interface AndroidOtaPartitionInfoFixture {
+  readonly size?: number;
+  readonly hash?: Uint8Array;
 }
 
 export interface AndroidOtaGroupFixture {
@@ -67,8 +76,8 @@ export interface AndroidOtaPayloadFixture {
   readonly apex?: readonly AndroidOtaApexFixture[];
   readonly metadataSignature?: Uint8Array;
   readonly payloadSignature?: Uint8Array;
-  readonly signaturesOffset?: number;
-  readonly signaturesSize?: number;
+  readonly signaturesOffset?: number | null;
+  readonly signaturesSize?: number | null;
   readonly truncateTo?: number;
 }
 
@@ -183,6 +192,8 @@ const encodeOperation = (
     encodeExtent(writer, extent);
     writer.join();
   }
+  if (operation.dataHash !== undefined)
+    writer.tag(8, WireType.LengthDelimited).bytes(operation.dataHash);
 };
 
 const encodePartition = (
@@ -198,9 +209,14 @@ const encodePartition = (
     writer.tag(3, WireType.LengthDelimited).string(partition.postinstallPath);
   if (partition.filesystemType !== undefined)
     writer.tag(4, WireType.LengthDelimited).string(partition.filesystemType);
-  if (partition.oldSize !== undefined || partition.oldHash !== undefined) {
+  const oldInfos =
+    partition.oldInfoFragments ??
+    (partition.oldSize !== undefined || partition.oldHash !== undefined
+      ? [{ size: partition.oldSize, hash: partition.oldHash }]
+      : []);
+  for (const info of oldInfos) {
     writer.tag(6, WireType.LengthDelimited).fork();
-    encodePartitionInfo(writer, partition.oldSize, partition.oldHash);
+    encodePartitionInfo(writer, info.size, info.hash);
     writer.join();
   }
   const image = partitionImage(partition, blockSize);
@@ -211,9 +227,14 @@ const encodePartition = (
       (image === undefined
         ? undefined
         : createHash("sha256").update(image).digest()));
-  if (newSize !== undefined || newHash !== undefined) {
+  const newInfos =
+    partition.newInfoFragments ??
+    (newSize !== undefined || newHash !== undefined
+      ? [{ size: newSize, hash: newHash }]
+      : []);
+  for (const info of newInfos) {
     writer.tag(7, WireType.LengthDelimited).fork();
-    encodePartitionInfo(writer, newSize, newHash);
+    encodePartitionInfo(writer, info.size, info.hash);
     writer.join();
   }
   for (const operation of partition.operations) {
@@ -273,14 +294,16 @@ const encodeApex = (
 const encodeManifest = (
   fixture: AndroidOtaPayloadFixture,
   blob: { offset: number; chunks: Uint8Array[] },
-  signaturesOffset: number,
-  signaturesSize: number,
+  signaturesOffset: number | null,
+  signaturesSize: number | null,
 ): Uint8Array => {
   const writer = new BinaryWriter();
   const blockSize = fixture.blockSize ?? ANDROID_OTA_DEFAULT_BLOCK_SIZE;
   writer.tag(3, WireType.Varint).uint32(blockSize);
-  writer.tag(4, WireType.Varint).uint64(signaturesOffset);
-  writer.tag(5, WireType.Varint).uint64(signaturesSize);
+  if (signaturesOffset !== null)
+    writer.tag(4, WireType.Varint).uint64(signaturesOffset);
+  if (signaturesSize !== null)
+    writer.tag(5, WireType.Varint).uint64(signaturesSize);
   if (fixture.minorVersion !== undefined)
     writer.tag(12, WireType.Varint).uint32(fixture.minorVersion);
   for (const partition of fixture.partitions) {
@@ -354,8 +377,14 @@ export const buildAndroidOtaPayload = (
     androidOtaSignatureBlob(Buffer.from("payload-sig"));
   encodeManifest(fixture, layout, 0, payloadSignature.length);
   const data = Buffer.concat(layout.chunks);
-  const signaturesOffset = fixture.signaturesOffset ?? data.length;
-  const signaturesSize = fixture.signaturesSize ?? payloadSignature.length;
+  const signaturesOffset =
+    fixture.signaturesOffset === undefined
+      ? data.length
+      : fixture.signaturesOffset;
+  const signaturesSize =
+    fixture.signaturesSize === undefined
+      ? payloadSignature.length
+      : fixture.signaturesSize;
   const laidOut = { offset: 0, chunks: [] as Uint8Array[] };
   const manifest = encodeManifest(
     fixture,

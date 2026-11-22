@@ -3,7 +3,7 @@ import {
   withCanonicalOutputSchema,
 } from "../../fixtures/canonicalOutputSchema.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
-import { writeFile } from "node:fs/promises";
+import { realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -12,10 +12,11 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import { sha256Hex } from "../../../src/kernel/sha256Hex.js";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { phaseGate } from "../../support/lifecycleHarness.js";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
 import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
 
 import {
@@ -110,6 +111,231 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
     throw new Error("Missing serialized session status");
   expect(JSON.parse(text.text)).toEqual(response.structuredContent);
 });
+
+const createAliasedTargetMcp = async (beforeLookup?: () => Promise<void>) => {
+  const directory = await createTestTempDirectory("rea-session-aliases-");
+  const physical = join(directory, "fixture.com");
+  const bytes = Buffer.from([0xb8, 0, 0x4c, 0xcd, 0x21]);
+  const digest = sha256Hex(bytes);
+  await writeFile(physical, bytes);
+  const canonical = await realpath(physical);
+  const firstAlias = join(directory, "first");
+  const secondAlias = join(directory, "second");
+  await Promise.all([
+    symlink(canonical, firstAlias),
+    symlink(canonical, secondAlias),
+  ]);
+  const starts: string[] = [];
+  const provider = candidate("alpha", starts);
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...provider,
+        createClient: (...args) => {
+          const child = provider.createClient(...args);
+          return {
+            ...child,
+            execute: async (operation, ...parameters) => {
+              if (operation === "address_name") await beforeLookup?.();
+              return child.execute(operation, ...parameters);
+            },
+          };
+        },
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const client = new Client(
+    { name: "target-aliases", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const tools = new Map(
+    (await client.listTools()).tools.map((tool) => [tool.name, tool]),
+  );
+  const call = (name: string, input: Record<string, unknown> = {}) => {
+    const definition = tools.get(name);
+    if (definition === undefined) throw new Error(`Missing tool ${name}`);
+    return client.callTool(
+      { name, arguments: input },
+      {
+        toolDefinition: withCanonicalOutputSchema(definition),
+      },
+    );
+  };
+  const open = (path: string) =>
+    call("open_binary", { path, format: "dos-com" });
+  const current = async () => structured(await call("binary_session")).result;
+  const observation = async (document?: string) =>
+    parseEvidence(
+      structured(
+        await call("address_name", {
+          address: "0x100",
+          ...(document === undefined ? {} : { document }),
+        }),
+      ),
+    );
+
+  const selected = (path: string) => ({
+    path: canonical,
+    sha256: digest,
+    caller_input_path: path,
+  });
+  return {
+    directory,
+    canonical,
+    digest,
+    firstAlias,
+    secondAlias,
+    session,
+    starts,
+    call,
+    open,
+    current,
+    observation,
+    selected,
+  };
+};
+
+it.skipIf(process.platform === "win32")(
+  "keeps caller-selected aliases separate from native session and Evidence identity",
+  async () => {
+    const firstDispatch = phaseGate();
+    const {
+      directory,
+      canonical,
+      digest,
+      firstAlias,
+      secondAlias,
+      session,
+      starts,
+      call,
+      open,
+      current,
+      observation,
+      selected,
+    } = await createAliasedTargetMcp(() => firstDispatch.hold());
+    expect(structured(await open(firstAlias)).result).toMatchObject(
+      selected(firstAlias),
+    );
+    const firstStatus = await current();
+    expect(firstStatus).toMatchObject(selected(firstAlias));
+    const reopening = phaseArrival();
+    const openTarget = session.open.bind(session);
+    const openSpy = vi.spyOn(session, "open").mockImplementation((...args) => {
+      const opened = openTarget(...args);
+      reopening.arrive();
+      return opened;
+    });
+    const inFlight = observation();
+    let secondOpen: Promise<CallToolResult> | undefined;
+    try {
+      await firstDispatch.reached(inFlight, "first-alias analysis dispatch");
+      secondOpen = open(secondAlias);
+      await reopening.reached(secondOpen, "second-alias open queued");
+      expect(await current()).toMatchObject(selected(firstAlias));
+    } finally {
+      firstDispatch.release();
+      await Promise.allSettled([inFlight, secondOpen]);
+      openSpy.mockRestore();
+    }
+    const first = await inFlight;
+    expect(first).toMatchObject({
+      caller_input_path: firstAlias,
+      subject: { local_path: canonical, identity: { sha256: digest } },
+    });
+    if (secondOpen === undefined) throw new Error("Expected an alias reopen");
+    expect(structured(await secondOpen).result).toMatchObject(
+      selected(secondAlias),
+    );
+    const secondStatus = await current();
+    expect(secondStatus).toMatchObject(selected(secondAlias));
+    const firstRun = z
+      .object({ analysis_run: z.object({ run_id: z.string() }) })
+      .parse(firstStatus).analysis_run;
+    expect(secondStatus).toMatchObject({ analysis_run: firstRun });
+    expect(starts).toEqual(["alpha"]);
+    const second = await observation();
+    expect(second).toMatchObject({
+      evidence_id: first.evidence_id,
+      caller_input_path: secondAlias,
+      subject: first.subject,
+    });
+
+    const rejected = await open(join(directory, "missing"));
+    expect(parseMcpToolError(rejected).error.details).toMatchObject({
+      selection_at_failure: selected(secondAlias),
+      target_at_open_completion: selected(secondAlias),
+    });
+    expect(await current()).toMatchObject(selected(secondAlias));
+    expect(
+      structured(await call("get_evidence_bundle", { detail: "complete" }))
+        .result,
+    ).toMatchObject({
+      records: [
+        { evidence_id: first.evidence_id, caller_input_path: firstAlias },
+      ],
+    });
+
+    expect(structured(await open(canonical)).result).not.toHaveProperty(
+      "caller_input_path",
+    );
+    expect(await current()).not.toHaveProperty("caller_input_path");
+    expect(await observation()).not.toHaveProperty("caller_input_path");
+    expect(starts).toEqual(["alpha"]);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "replays a snapshot against the same file through a different selected alias",
+  async () => {
+    const {
+      directory,
+      canonical,
+      firstAlias,
+      secondAlias,
+      call,
+      open,
+      observation,
+      selected,
+    } = await createAliasedTargetMcp();
+    expect((await open(firstAlias)).isError).not.toBe(true);
+    const seeded = await observation(canonical);
+    expect(seeded.caller_input_path).toBe(firstAlias);
+    const snapshotPath = join(directory, "analysis.json");
+    expect(
+      structured(await call("close_binary", { snapshot_path: snapshotPath }))
+        .result,
+    ).toMatchObject({ primitive_entries: 1 });
+    expect(
+      structured(
+        await call("open_binary", {
+          path: secondAlias,
+          format: "dos-com",
+          snapshot_path: snapshotPath,
+        }),
+      ).result,
+    ).toMatchObject(selected(secondAlias));
+    const replay = await observation(canonical);
+    expect(replay).toMatchObject({
+      caller_input_path: secondAlias,
+      subject: seeded.subject,
+      normalized_result: seeded.normalized_result,
+    });
+    expect(replay.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      ]),
+    );
+  },
+);
 
 const expectUnknownProviderKeepsBinding = async (
   mcp: Client,
