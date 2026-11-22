@@ -45,9 +45,11 @@ it("reads independent unsigned, UTF-8 BOM and UTF-16 BOM definitions together", 
       ),
     ]),
   );
-  expect(
-    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-  ).toEqual([
+  const catalog = await readGhidraLanguageCatalog(
+    root,
+    new ArtifactResourceScope(),
+  );
+  expect(catalog.definitions).toEqual([
     { id: "unsigned:LE:32:default", compilerSpecIds: ["default"] },
     { id: "utf8:LE:32:default", compilerSpecIds: ["default"] },
     { id: "utf16:LE:32:default", compilerSpecIds: ["default"] },

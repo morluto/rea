@@ -54,15 +54,16 @@ it("reads an exact-limit definition while skipping its oversized sibling with bo
     );
     return bytes;
   };
-  await writeFile(
-    join(directory, OVERSIZED),
-    definition("huge", LIMIT + 64 * 1024),
-  );
+  const oversizedPath = join(directory, OVERSIZED);
+  await writeFile(oversizedPath, definition("huge", LIMIT + 64 * 1024));
   await writeFile(join(directory, "edge.ldefs"), definition("edge", LIMIT));
 
   expect(
     await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-  ).toEqual([{ id: "edge:LE:32:default", compilerSpecIds: [] }]);
+  ).toEqual({
+    definitions: [{ id: "edge:LE:32:default", compilerSpecIds: [] }],
+    oversizedFiles: [oversizedPath],
+  });
   expect(readBytes.value).toBeLessThanOrEqual(LIMIT + 1);
 });
 
@@ -76,9 +77,13 @@ it("follows a symlinked definition file", async () => {
     '<language_definitions><language id="link:LE:32:default"/></language_definitions>',
   );
   await symlink(source, join(languages, "link.ldefs"));
-  expect(
-    await readGhidraLanguageCatalog(root, new ArtifactResourceScope()),
-  ).toEqual([{ id: "link:LE:32:default", compilerSpecIds: [] }]);
+  const catalog = await readGhidraLanguageCatalog(
+    root,
+    new ArtifactResourceScope(),
+  );
+  expect(catalog.definitions).toEqual([
+    { id: "link:LE:32:default", compilerSpecIds: [] },
+  ]);
 });
 
 it.skipIf(process.platform === "win32")(

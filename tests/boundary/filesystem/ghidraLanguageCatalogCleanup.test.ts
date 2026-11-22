@@ -193,7 +193,10 @@ it.for(["installation roots", "module directories"] as const)(
       gate.release();
       await reading.catch(() => undefined);
     }
-    expect(await readGhidraLanguageCatalog(root, resources)).toEqual([]);
+    expect(await readGhidraLanguageCatalog(root, resources)).toEqual({
+      definitions: [],
+      oversizedFiles: [],
+    });
   },
 );
 
@@ -271,7 +274,8 @@ it("blocks nonempty and empty reads until the caller scope releases the same des
   expect(resources.hasPending).toBe(true);
 
   retained.closeFails = false;
-  expect(await readGhidraLanguageCatalog(nextRoot, resources)).toEqual([
+  const catalog = await readGhidraLanguageCatalog(nextRoot, resources);
+  expect(catalog.definitions).toEqual([
     { id: "x86:LE:32:default", compilerSpecIds: [] },
   ]);
   expect(retained.closeCalls).toBe(4);
@@ -285,9 +289,13 @@ it("keeps one scope's retained close out of another scope", async () => {
   await expect(
     readGhidraLanguageCatalog(await installation("isolated"), failed),
   ).rejects.toBeInstanceOf(ArtifactReaderFailure);
-  expect(
-    await readGhidraLanguageCatalog(await installation("x86"), scope()),
-  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
+  const catalog = await readGhidraLanguageCatalog(
+    await installation("x86"),
+    scope(),
+  );
+  expect(catalog.definitions).toEqual([
+    { id: "x86:LE:32:default", compilerSpecIds: [] },
+  ]);
   expect(failed.hasPending).toBe(true);
 });
 
@@ -398,13 +406,18 @@ it("merges sibling cleanup observations and leases across concurrent definition 
 
   first.closeFails = false;
   second.closeFails = false;
-  expect(
-    await readGhidraLanguageCatalog(await installation("x86"), resources),
-  ).toEqual([{ id: "x86:LE:32:default", compilerSpecIds: [] }]);
+  const recovered = await readGhidraLanguageCatalog(
+    await installation("x86"),
+    resources,
+  );
+  expect(recovered.definitions).toEqual([
+    { id: "x86:LE:32:default", compilerSpecIds: [] },
+  ]);
   expect(first.closeCalls).toBe(2);
   expect(second.closeCalls).toBe(2);
   expect(resources.hasPending).toBe(false);
-  expect(await readGhidraLanguageCatalog(root, resources)).toHaveLength(10);
+  const catalog = await readGhidraLanguageCatalog(root, resources);
+  expect(catalog.definitions).toHaveLength(10);
 });
 
 it("reports the denied definition as primary while owning a sibling close retry", async () => {
