@@ -14,6 +14,7 @@ import {
   writeCaptureFolder,
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { hasReadableProcDescriptor } from "../../fixtures/desktopDconfHost.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { serveCli as serve } from "./cliServeHarness.js";
@@ -250,8 +251,14 @@ it("names a dconf database that changed by the seed but could not be read, so th
       "changed by the seed checkpoint but could not be read",
     ),
   ]);
-  if (process.platform === "linux")
+  if (await hasReadableProcDescriptor())
     expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
+  else {
+    expect(unread[0]).toContain(
+      "Export on Linux with readable /proc file descriptors",
+    );
+    expect(unread[0]).not.toContain("where dconf-cli is installed");
+  }
   expect(
     await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
   ).toContain('DCONF = ""');

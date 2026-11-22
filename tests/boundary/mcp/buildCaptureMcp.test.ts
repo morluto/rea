@@ -29,6 +29,7 @@ import {
   VALID_BUILD_SCREENSHOT,
 } from "../../fixtures/buildScreenshotData.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { hasReadableProcDescriptor } from "../../fixtures/desktopDconfHost.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const files = async (root: string, prefix = ""): Promise<string[]> =>
@@ -324,7 +325,7 @@ it("returns a draft note's read error when only a dconf database REA cannot read
       ),
     },
   };
-  // The draft runs with no dconf on its PATH, so it cannot read the database; the note never gets eggs, so the export refuses the task.
+  // The subprocess has no dconf command on Linux and no descriptor path on other hosts.
   const { client } = await fakes({
     recorded,
     extraContent: [before, after],
@@ -345,8 +346,10 @@ it("returns a draft note's read error when only a dconf database REA cannot read
     {
       code: "unreadable_changes",
       message: expect.any(String),
-      files: [{ file: ".config/dconf/user", role: expect.any(String) }],
-      error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+      files: [{ file: ".config/dconf/user", role: "shared_desktop" }],
+      error: (await hasReadableProcDescriptor())
+        ? "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND"
+        : expect.stringContaining("/proc/"),
     },
   ]);
 });
