@@ -35,7 +35,7 @@ import {
   BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
-  mappedFileOffset,
+  type ElfDynamicSegment,
   type FileMappingIndex,
 } from "../../domain/binaryContainer.js";
 import {
@@ -97,6 +97,7 @@ const EM_ARM = 40;
 interface DynTag {
   readonly value: bigint;
   readonly valueOffset: number;
+  readonly valueAddress: bigint;
 }
 
 interface ArraySlot extends ElfInitializerSlot {
@@ -160,7 +161,7 @@ const isSentinel = (value: bigint, bits: 32 | 64): boolean =>
 /** Read the consumed DT_* tags. The first duplicate wins. A missing DT_NULL leaves coverage unknown. */
 const readDynamicTags = (
   scan: ElfScan,
-  segment: { readonly offset: bigint; readonly size: bigint } | undefined,
+  segment: ElfDynamicSegment | undefined,
   extra: number,
 ): Map<bigint, DynTag> => {
   const tags = new Map<bigint, DynTag>();
@@ -202,9 +203,11 @@ const readDynamicTags = (
       );
       continue;
     }
+    const valueOffset = at + wordOf(scan.bits);
     tags.set(parsed.value.tag, {
       value: parsed.value.value,
-      valueOffset: at + wordOf(scan.bits),
+      valueOffset,
+      valueAddress: segment.virtual_address + BigInt(valueOffset - start),
     });
   }
   if (!terminated)
@@ -240,22 +243,6 @@ const fileOffsetFor = (
 const AMBIGUOUS_MAPPING =
   "An address has ambiguous file mappings (overlapping load segments with different file offsets, or file and zero-fill memory), so its file offset is not reported.";
 
-const vaForFile = (
-  mappings: Parameters<typeof mappedFileOffset>[0],
-  fileOffset: number,
-): bigint | null => {
-  for (const mapping of mappings) {
-    if (
-      fileOffset < mapping.offset ||
-      fileOffset >= mapping.offset + mapping.size
-    )
-      continue;
-    return mapping.address + BigInt(fileOffset - mapping.offset);
-  }
-  return null;
-};
-
-/** Section-name labels, independent of load-address translation. */
 interface ElfSectionIndex {
   /** Name of the smallest SHF_ALLOC section containing `address`; earlier headers win ties. */
   readonly nameAt: (address: bigint) => string | null;
@@ -481,19 +468,22 @@ const directSource = (
   scan: ElfScan,
   tags: ReadonlyMap<bigint, DynTag>,
   index: ElfSectionIndex,
-  mappings: Parameters<typeof mappedFileOffset>[0],
+  locate: (address: bigint) => number | null,
   tag: bigint,
   kind: NativeInitializerKind,
   detail: string,
 ): Source | null => {
   const entry = tags.get(tag);
   if (entry === undefined) return null;
-  const va = vaForFile(mappings, entry.valueOffset);
-  // DT_INIT / DT_FINI store the target, not a slot pointer, so an unmapped field has no slot address.
+  const va =
+    locate(entry.valueAddress) === entry.valueOffset
+      ? entry.valueAddress
+      : null;
+  // The actual file field still supplies the value even when its declared virtual slot is unproven.
   if (va === null)
     note(
       scan,
-      `${detail} value field is not inside a load segment.`,
+      `${detail} value field is not fully file-backed at its declared PT_DYNAMIC address.`,
       "unknown",
     );
   return {
@@ -543,7 +533,6 @@ const collectSources = (
   tags: ReadonlyMap<bigint, DynTag>,
   sections: readonly NativeSection[],
   index: ElfSectionIndex,
-  mappings: Parameters<typeof mappedFileOffset>[0],
   locate: (address: bigint) => number | null,
   namesKnown: boolean,
 ): Source[] => {
@@ -554,7 +543,7 @@ const collectSources = (
     scan,
     tags,
     index,
-    mappings,
+    locate,
     DT_INIT,
     "init",
     "DT_INIT",
@@ -563,7 +552,7 @@ const collectSources = (
     scan,
     tags,
     index,
-    mappings,
+    locate,
     DT_FINI,
     "fini",
     "DT_FINI",
@@ -1030,7 +1019,6 @@ export const readElfInitializers = async (
     tags,
     directory.sections,
     index,
-    image.mappings,
     locate,
     namesKnown,
   );
