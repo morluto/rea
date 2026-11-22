@@ -2731,13 +2731,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
      * by their qualified names, sorted.
      */
     private static ProcedureNameMatch matchProcedureNames(ProcedureEntry entry, ValueMatcher matcher) {
-        boolean primary = spellingMatches(entry.leafName(), entry.value(), matcher);
+        boolean primary = spellingMatches(entry.leafName(), entry.value(), entry.leafIsSuffix(), matcher);
         if (entry.aliases().isEmpty()) {
             return new ProcedureNameMatch(primary, List.of());
         }
         List<String> matchedAliases = null;
         for (ProcedureAlias alias : entry.aliases()) {
-            if (!spellingMatches(alias.leaf(), alias.qualified(), matcher)) continue;
+            if (!spellingMatches(alias.leaf(), alias.qualified(), alias.leafIsSuffix(), matcher)) continue;
             if (alias.qualified().equals(entry.value())) {
                 primary = true;
                 continue;
@@ -2750,9 +2750,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return new ProcedureNameMatch(primary, matchedAliases == null ? List.of() : matchedAliases);
     }
 
-    /** A leaf is the suffix of its qualified spelling, so a literal found in it is found in both. */
-    private static boolean spellingMatches(String leaf, String qualified, ValueMatcher matcher) {
-        return matcher.matches(qualified) || (!leaf.equals(qualified) && matcher.matches(leaf));
+    /** When a leaf ends its qualified spelling, substring matching on qualified already implies leaf coverage. */
+    private static boolean spellingMatches(
+            String leaf,
+            String qualified,
+            boolean leafIsSuffix,
+            ValueMatcher matcher) {
+        if (matcher.matches(qualified)) {
+            return true;
+        }
+        if (leaf.equals(qualified) || (!matcher.requiresLeafCheck() && leafIsSuffix)) {
+            return false;
+        }
+        return matcher.matches(leaf);
     }
 
     private List<NameEntry> names() throws Exception {
@@ -6003,7 +6013,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private static ValueMatcher literalMatcher(String pattern) {
-        return value -> value.contains(pattern);
+        return nonLeafMatcher(value -> value.contains(pattern));
     }
 
     // REA's host owns ECMAScript /iu simple case folding. Across all 1,114,112
@@ -6012,12 +6022,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
     // an ASCII fold, so only source strings containing non-ASCII stay eligible.
     private static ValueMatcher literalCandidateMatcher(String asciiPattern) {
         if (asciiPattern == null) {
-            return value -> {
+            return nonLeafMatcher(value -> {
                 for (int index = 0; index < value.length(); index++) {
                     if (value.charAt(index) > 127) return true;
                 }
                 return false;
-            };
+            });
         }
         int patternLength = asciiPattern.length();
         for (int index = 0; index < patternLength; index++) {
@@ -6026,10 +6036,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
         }
         if (patternLength == 0) {
-            return value -> true;
+            return nonLeafMatcher(value -> true);
         }
         char firstTarget = asciiPattern.charAt(0);
-        return value -> {
+        return nonLeafMatcher(value -> {
             int valueLength = value.length();
             if (valueLength < patternLength) {
                 return false;
@@ -6049,6 +6059,24 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 }
             }
             return false;
+        });
+    }
+
+    private interface StringCheck {
+        boolean test(String value);
+    }
+
+    private static ValueMatcher nonLeafMatcher(StringCheck check) {
+        return new ValueMatcher() {
+            @Override
+            public boolean matches(String value) {
+                return check.test(value);
+            }
+
+            @Override
+            public boolean requiresLeafCheck() {
+                return false;
+            }
         };
     }
 
@@ -6433,6 +6461,10 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private interface ValueMatcher {
         boolean matches(String value);
+
+        default boolean requiresLeafCheck() {
+            return true;
+        }
     }
 
     private interface InventoryFacts {
@@ -6525,16 +6557,33 @@ public final class ReaGhidraBridge extends HeadlessScript {
     }
 
     private record NameEntry(Address address, String value, SymbolFacts facts) {}
-    private record ProcedureAlias(String leaf, String qualified) {}
+    private record ProcedureAlias(String leaf, String qualified, boolean leafIsSuffix) {
+        ProcedureAlias(String leaf, String qualified) {
+            this(leaf, qualified, qualified.endsWith(leaf));
+        }
+    }
     private record ProcedureEntry(
         Function function,
         Address address,
         String value,
         String leafName,
+        boolean leafIsSuffix,
         List<ProcedureAlias> aliases,
         ProcedureFacts facts,
         SymbolFacts symbol
-    ) {}
+    ) {
+        ProcedureEntry(
+            Function function,
+            Address address,
+            String value,
+            String leafName,
+            List<ProcedureAlias> aliases,
+            ProcedureFacts facts,
+            SymbolFacts symbol
+        ) {
+            this(function, address, value, leafName, value.endsWith(leafName), aliases, facts, symbol);
+        }
+    }
     private record StringEntry(Address address, String value, StringFacts facts) {}
     private record AddressNameRequest(String inputAddress, Address address, String name) {}
     private record AddressNameDestination(long namespace, String leaf) {}

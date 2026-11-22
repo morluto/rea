@@ -753,11 +753,51 @@ const JAVA_PROBE_DRIVER = String.raw`
         }
     }
 
+    private static void runSpellingMatch() throws IOException {
+        for (String line : readStdinLines()) {
+            String[] fields = line.split("\\|", -1);
+            boolean requiresLeaf = "leaf".equals(fields[0]);
+            String needle = fields[1];
+            String qualified = fields[2];
+            String leaf = fields[3];
+            String aliasQualified = fields[4];
+            String aliasLeaf = fields[5];
+            int[] calls = new int[1];
+            ValueMatcher matcher = new ValueMatcher() {
+                @Override
+                public boolean matches(String value) {
+                    calls[0]++;
+                    return value.contains(needle);
+                }
+
+                @Override
+                public boolean requiresLeafCheck() {
+                    return requiresLeaf;
+                }
+            };
+            ProcedureEntry entry = new ProcedureEntry(
+                null,
+                null,
+                qualified,
+                leaf,
+                qualified.endsWith(leaf),
+                aliasQualified.isEmpty()
+                    ? List.of()
+                    : List.of(new ProcedureAlias(aliasLeaf, aliasQualified)),
+                new ProcedureFacts(),
+                new SymbolFacts()
+            );
+            ProcedureNameMatch result = matchProcedureNames(entry, matcher);
+            System.out.println(result.primary() + "|" + String.join(",", result.aliases()) + "|" + calls[0]);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         switch (args[0]) {
             case "fold-char" -> runFoldChar();
             case "literal-batch" -> runLiteralBatch();
             case "literal-direct" -> runLiteralDirect();
+            case "spelling-match" -> runSpellingMatch();
             case "write-response" -> runWriteResponse();
             case "surrogate-writer" -> runSurrogateWriterChecks();
             case "write-failures" -> runWriteFailures();
@@ -773,6 +813,11 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     bridgeSource,
     "    private Map<String, Object> procedureIndex() {",
     "    private Function resolveProcedure(String value) throws Exception {",
+  );
+  const matchMethods = extractBridgeSlice(
+    bridgeSource,
+    "    private static ProcedureNameMatch matchProcedureNames(",
+    "    private List<NameEntry> names() throws Exception {",
   );
   const literalMethods = extractBridgeSlice(
     bridgeSource,
@@ -794,6 +839,11 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     "    private record ProcedureAlias(",
     "    private record StringEntry(",
   );
+  const procedureNameMatchRecord = extractBridgeSlice(
+    bridgeSource,
+    "    private record ProcedureNameMatch(",
+    "    private record FunctionAnalysisObservation(",
+  );
   const requestFailureClass = extractRequestFailureSlice(bridgeSource);
   return [
     JAVA_HEADER,
@@ -801,7 +851,9 @@ const buildBridgeProbeSource = (bridgeSource: string): string => {
     JAVA_GHIDRA_STUBS,
     valueMatcherInterface,
     procedureRecords,
+    procedureNameMatchRecord,
     procedureMethods,
+    matchMethods,
     literalMethods,
     responseMethods,
     requestFailureClass,

@@ -409,3 +409,50 @@ describe.skipIf(jdk === undefined)(
     });
   },
 );
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge spellingMatches and ValueMatcher.requiresLeafCheck",
+  () => {
+    it("skips duplicate leaf matching for suffix-verified non-leaf matchers while preserving non-suffix and regex checks", async () => {
+      const cases = [
+        // [mode, needle, qualified, leaf, aliasQualified, aliasLeaf, expected]
+        // Suffixed miss with requiresLeafCheck=false: 1 call (qualified only)
+        ["nonleaf", "missing", "ns::work", "work", "", "", "false||1"],
+        // Suffixed hit with requiresLeafCheck=false: 1 call (qualified hit)
+        ["nonleaf", "work", "ns::work", "work", "", "", "true||1"],
+        // Same spelling miss with requiresLeafCheck=true: still 1 call (leaf.equals(qualified))
+        ["leaf", "missing", "plain", "plain", "", "", "false||1"],
+        // Suffixed miss with requiresLeafCheck=true (regex mode): 2 calls (qualified + leaf)
+        ["leaf", "missing", "ns::work", "work", "", "", "false||2"],
+        // Non-suffix leaf with requiresLeafCheck=false still falls back to leaf (2 calls, true)
+        ["nonleaf", "weird", "ns::work", "weird_leaf", "", "", "true||2"],
+        // Primary miss + suffixed alias miss with requiresLeafCheck=false: 2 calls total
+        [
+          "nonleaf",
+          "missing",
+          "ns::work",
+          "work",
+          "alt::alias",
+          "alias",
+          "false||2",
+        ],
+        // Primary miss + suffixed alias hit with requiresLeafCheck=false: 2 calls total
+        [
+          "nonleaf",
+          "alias",
+          "ns::work",
+          "work",
+          "alt::alias",
+          "alias",
+          "false|alt::alias|2",
+        ],
+      ] as const;
+      const stdout = await runBridgeProbe(
+        requireProbe(),
+        "spelling-match",
+        cases.map((row) => row.slice(0, 6).join("|")).join("\n"),
+      );
+      expect(splitProbeLines(stdout)).toEqual(cases.map((row) => row[6]));
+    });
+  },
+);
