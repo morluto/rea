@@ -329,29 +329,26 @@ const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
 };
 
 describe("PE export name coverage", () => {
-  it("reads a bounded export name across adjacent section mappings", () => {
-    const result = parse(peExportNameAcrossSections());
-    expect(result).toMatchObject({
-      exports: [
-        {
-          name: "BoundaryName",
-          ordinal: 1,
-          address: "0x180002000",
-          forwarder: null,
-        },
-      ],
-      coverage: { status: "complete", examined_entries: 1, exports: 1 },
-      issues: [],
-    });
-  });
-
-  it("ignores conflicting mappings after the export name terminator", () => {
-    const result = parse(peExportNameAcrossSections(0x1409));
-
-    expect(result.exports).toMatchObject([{ name: "BoundaryName" }]);
-    expect(result.issues).toEqual([]);
-    expect(result.coverage.status).toBe("complete");
-  });
+  it.each([
+    ["with no conflicting mapping", undefined],
+    ["with a conflicting mapping after its NUL", 0x1409],
+  ] as const)(
+    "reads an export name across adjacent sections %s",
+    (_, conflict) => {
+      expect(parse(peExportNameAcrossSections(conflict))).toMatchObject({
+        exports: [
+          {
+            name: "BoundaryName",
+            ordinal: 1,
+            address: "0x180002000",
+            forwarder: null,
+          },
+        ],
+        coverage: { status: "complete", examined_entries: 1, exports: 1 },
+        issues: [],
+      });
+    },
+  );
 
   it("rejects conflicting mappings that overlap the export name", () => {
     const result = parse(peExportNameAcrossSections(0x1404));
@@ -386,46 +383,57 @@ describe("PE export name coverage", () => {
   });
 });
 
-describe("PE forwarder directory bounds", () => {
-  it.each([32, 64] as const)(
-    "requires the complete PE%d forwarder string to remain inside the export directory",
-    (bits) => {
-      const bytes = peExportImage({
-        bits,
-        functions: [{ rva: 0x11fc }, { rva: 0x2000 }],
-        names: [{ name: "Kept", index: 1 }],
-      });
-      // The string starts in .edata's declared export range but its NUL is
-      // outside it. The adjacent section bytes remain mapped and readable.
-      bytes.write("DLL.Target\0", 0x5fc, "latin1");
-      const result = parse(bytes);
+const peExportDirectorySizeOffset = (bits: 32 | 64): number =>
+  152 + (bits === 64 ? 112 : 96) + 4;
 
-      expect(result.exports).toMatchObject([{ name: "Kept", ordinal: 2 }]);
-      expect(result.issues).toMatchObject([
-        { code: "malformed_entry", location: "0x11fc" },
-      ]);
-      expect(result.coverage).toMatchObject({
-        status: "partial",
-        examined_entries: 2,
-        exports: 1,
-      });
-    },
-  );
+it.each([32, 64] as const)(
+  "bounds a PE%d forwarder by the directory even when adjacent bytes are readable",
+  (bits) => {
+    const bytes = peExportImage({
+      bits,
+      functions: [{ rva: 0x11f5 }, { rva: 0x2000 }],
+      names: [{ name: "Kept", index: 1 }],
+    });
+    bytes.write("DLL.Target\0", 0x5f5, "latin1");
+    expect(parse(bytes)).toMatchObject({
+      exports: [
+        { name: null, ordinal: 1, forwarder: "DLL.Target" },
+        { name: "Kept", ordinal: 2 },
+      ],
+      coverage: { status: "complete", examined_entries: 2, exports: 2 },
+      issues: [],
+    });
 
-  it.each([32, 64] as const)(
-    "accepts a PE%d forwarder whose NUL is the final export-directory byte",
-    (bits) => {
-      const bytes = peExportImage({ bits, functions: [{ rva: 0x11f5 }] });
-      bytes.write("DLL.Target\0", 0x5f5, "latin1");
+    // The same NUL remains readable but now lies one byte outside the directory.
+    bytes.writeUInt32LE(0x1ff, peExportDirectorySizeOffset(bits));
+    expect(parse(bytes)).toMatchObject({
+      exports: [{ name: "Kept", ordinal: 2 }],
+      issues: [{ code: "malformed_entry", location: "0x11f5" }],
+      coverage: { status: "partial", examined_entries: 2, exports: 1 },
+    });
+  },
+);
 
-      expect(parse(bytes)).toMatchObject({
-        exports: [{ name: null, ordinal: 1, forwarder: "DLL.Target" }],
-        coverage: { status: "complete", exports: 1 },
-        issues: [],
-      });
-    },
-  );
-});
+it.each([32, 64] as const)(
+  "requires the fixed PE%d export table to fit in its declared directory",
+  (bits) => {
+    const bytes = peExportImage({
+      bits,
+      functions: [{ rva: 0x2000 }],
+      names: [{ name: "Kept", index: 0 }],
+    });
+    const sizeOffset = peExportDirectorySizeOffset(bits);
+    bytes.writeUInt32LE(40, sizeOffset);
+    expect(parse(bytes)).toMatchObject({
+      export_directory: { size: 40 },
+      exports: [{ name: "Kept", ordinal: 1 }],
+      coverage: { status: "complete", examined_entries: 1, exports: 1 },
+    });
+
+    bytes.writeUInt32LE(39, sizeOffset);
+    expect(refusal(bytes)).toMatchObject({ failure: { kind: "malformed" } });
+  },
+);
 
 it("requires the declared section to contain the fixed PE export name ordinal table", () => {
   const bytes = peExportImage({

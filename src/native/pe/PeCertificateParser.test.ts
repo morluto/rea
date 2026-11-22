@@ -1148,6 +1148,7 @@ it("accepts only RFC 5280 UTC validity instants", () => {
   // UTCTime 00 is 2000, a leap year; GeneralizedTime carries 2050 onward.
   for (const [tag, time] of [
     [0x17, "000229235959Z"],
+    [0x17, "240229000000Z"],
     [0x18, "20500101000000Z"],
   ] as const)
     expect(
@@ -1259,11 +1260,15 @@ it("decodes UniversalString names as UTF-32BE", () => {
   );
 });
 
-it.each([0xd800, 0xdfff])(
-  "rejects BMPString surrogate code unit %i in certificate names",
-  (codeUnit) => {
-    const content = Buffer.alloc(2);
-    content.writeUInt16BE(codeUnit);
+it.each([
+  { units: [0xd800] },
+  { units: [0xdfff] },
+  { units: [0xd800, 0xdc00] },
+])(
+  "rejects BMPString surrogate code units $units in certificate names",
+  ({ units }) => {
+    const content = Buffer.alloc(units.length * 2);
+    units.forEach((unit, index) => content.writeUInt16BE(unit, index * 2));
     const certificate = readAsn1(
       namedCertificate(
         directoryName(der(0x1e, content)),

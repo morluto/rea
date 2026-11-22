@@ -8,6 +8,7 @@ import {
 import {
   hasPeResourceName,
   locatePeResourcePayloads,
+  readPeResourceLayout,
 } from "./peResourceLayout.js";
 import {
   parsePeResources,
@@ -552,6 +553,21 @@ describe("PE resource ownership boundaries", () => {
     expect(result.coverage).toMatchObject({ status: "complete" });
     expect(result.resources[0]?.payload).toEqual(
       baseline.resources[0]?.payload,
+    );
+  });
+
+  it("maps a payload after an expired section nested in its owner", () => {
+    const fixture = singleResource();
+    const [entry] = fixture.dataOffsets;
+    if (entry === undefined) throw new Error("Expected a resource data entry");
+    const rva = fixture.bytes.readUInt32LE(entry);
+    const size = fixture.bytes.readUInt32LE(entry + 4);
+    const expected = readPeResourceLayout(fixture.bytes).map(rva, size);
+    const bytes = secondSection(fixture, 1, rva - 2, 0);
+
+    expect(readPeResourceLayout(bytes).map(rva, size)).toBe(expected);
+    expect(() => readPeResourceLayout(bytes).map(rva - 2, 1)).toThrow(
+      /overlapping section mappings/iu,
     );
   });
 

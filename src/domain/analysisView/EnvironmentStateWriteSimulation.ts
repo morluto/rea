@@ -1,3 +1,4 @@
+import { ENTRY_BYTES } from "./webNetworkRouteTemplates.js";
 import { CapturedWriteCompletion } from "./environmentStateWriteCompletion.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
@@ -209,9 +210,28 @@ export class EnvironmentStateWriteSimulation {
   /** Entities writes no plan models made, taken when an item read first shows them. */
   readonly #unseen: UnseenEntities;
   readonly #blame: FailedReadBlame;
+  readonly #documentsByTool = new Map<
+    string,
+    WriteSimulationInput["documents"][number]
+  >();
+  readonly #entitiesByType = new Map<string, StateEntity[]>();
+  readonly #laterFieldsByType = new Map<string, ReadonlySet<string>>();
 
   constructor(input: WriteSimulationInput) {
     this.#input = input;
+    for (const document of input.documents) {
+      if (this.#documentsByTool.has(document.tool)) continue;
+      input.io.retain(ENTRY_BYTES);
+      this.#documentsByTool.set(document.tool, document);
+    }
+    for (const entity of input.entities) {
+      const list = this.#entitiesByType.get(entity.type);
+      input.io.retain(ENTRY_BYTES);
+      if (list === undefined) {
+        input.io.retain(ENTRY_BYTES);
+        this.#entitiesByType.set(entity.type, [entity]);
+      } else list.push(entity);
+    }
     this.#writeCompletion = new CapturedWriteCompletion(input.io.retain);
     this.#state = new SimulatedState(input.entities, input.documents);
     this.#unseen = new UnseenEntities(input.entities, {
@@ -424,16 +444,28 @@ export class EnvironmentStateWriteSimulation {
         ),
       unknown: (type, collection, id) =>
         this.#taint.unknown(type, collection, id),
-      initialDocument: (tool) =>
-        this.#input.documents.find((document) => document.tool === tool),
-      startedWith: (type) =>
-        this.#input.entities.filter((entity) => entity.type === type),
-      laterFields: (type) =>
-        laterItemFields(this.#input.views.values(), this.#input.entities, type),
-      pending: (target) =>
-        [...(this.#touched.get(target)?.keys() ?? [])].some(
-          (name) => name !== writer,
-        ),
+      initialDocument: (tool) => this.#documentsByTool.get(tool),
+      startedWith: (type) => this.#entitiesByType.get(type) ?? [],
+      laterFields: (type) => {
+        let cached = this.#laterFieldsByType.get(type);
+        if (cached === undefined) {
+          this.#input.io.retain(ENTRY_BYTES);
+          cached = laterItemFields(
+            this.#input.views.values(),
+            this.#input.entities,
+            type,
+            this.#input.io.retain,
+          );
+          this.#laterFieldsByType.set(type, cached);
+        }
+        return cached;
+      },
+      pending: (target) => {
+        const touched = this.#touched.get(target);
+        if (touched === undefined) return false;
+        for (const name of touched.keys()) if (name !== writer) return true;
+        return false;
+      },
     };
   }
 
@@ -1113,14 +1145,19 @@ export class EnvironmentStateWriteSimulation {
     );
     const writes = this.#pending.filter((write) => members.has(write.target));
     const fields = new Set<string>();
-    for (const [index, { target, before }] of writes.entries()) {
-      if (before === null) continue;
-      const after =
-        writes.slice(index + 1).find((later) => later.target === target)
-          ?.before ?? members.get(target)!;
-      for (const field of Object.keys(after))
-        if (!same(ownMember(before, field), ownMember(after, field)))
-          fields.add(field);
+    const nextBeforeByTarget = new Map<
+      string,
+      (typeof writes)[number]["before"]
+    >();
+    for (let index = writes.length - 1; index >= 0; index -= 1) {
+      const { target, before } = writes[index]!;
+      if (before !== null) {
+        const after = nextBeforeByTarget.get(target) ?? members.get(target)!;
+        for (const field of Object.keys(after))
+          if (!same(ownMember(before, field), ownMember(after, field)))
+            fields.add(field);
+      }
+      nextBeforeByTarget.set(target, before);
     }
     const order = [...members.keys()];
     const refuted = this.#refutedSorts.get(view.type) ?? new Set<string>();

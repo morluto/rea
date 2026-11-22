@@ -174,21 +174,31 @@ export class FirmwareFileAccess {
         },
       ]);
     let inputPath = fullPath;
+    let selectionSha256 = sha256;
     if (selected !== undefined) {
       inputPath = join(root, "selected.bin");
-      await withArtifactRegularFile(
+      selectionSha256 = await withArtifactRegularFile(
         fullPath,
         this.resources,
         signal,
         async ({ handle }) => {
+          const selectionHash = createHash("sha256");
+          const hasher = new Transform({
+            transform(chunk: Buffer, _encoding, callback) {
+              selectionHash.update(chunk);
+              callback(null, chunk);
+            },
+          });
           await pipeline(
             readArtifactFileChunks(handle, {
               start: offset,
               end: offset + length - 1,
               signal,
             }),
+            hasher,
             createWriteStream(inputPath, { flags: "wx", mode: 0o600 }),
           );
+          return selectionHash.digest("hex");
         },
       );
       await chmod(inputPath, 0o400);
@@ -200,8 +210,7 @@ export class FirmwareFileAccess {
       selection: {
         offset,
         length,
-        sha256:
-          selected === undefined ? sha256 : await this.#hash(inputPath, signal),
+        sha256: selectionSha256,
       },
     };
   }

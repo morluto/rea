@@ -45,7 +45,7 @@ import {
   type IdaConfiguration,
 } from "./IdaConfiguration.js";
 import {
-  jsonObjectSchema,
+  ownedJsonObjectSchema,
   jsonValueSchema,
   type JsonValue,
 } from "../domain/jsonValue.js";
@@ -238,7 +238,7 @@ export const decodeIdaToolResult = (
     return parseIdaTextReply(text);
   }
   if (result.structuredContent !== undefined) {
-    const value = jsonObjectSchema.parse(result.structuredContent);
+    const value = ownedJsonObjectSchema.parse(result.structuredContent);
     return Object.keys(value).length === 1 && Object.hasOwn(value, "result")
       ? value.result!
       : value;

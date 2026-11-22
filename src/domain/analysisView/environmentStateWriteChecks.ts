@@ -180,10 +180,16 @@ export class SimulatedState {
         key,
         fields: first.get(key) ?? this.#entities.get(key)!.fields,
       }));
-    for (const [index, { target: key, before: prior }] of ours.entries()) {
-      const fields =
-        ours.slice(index + 1).find((later) => later.target === key)?.before ??
-        this.#entities.get(key)!.fields;
+    const nextBefore: (JsonObject | null | undefined)[] = Array(ours.length);
+    const seenLater = new Map<string, JsonObject | null>();
+    for (let index = ours.length - 1; index >= 0; index -= 1) {
+      const write = ours[index]!;
+      nextBefore[index] = seenLater.get(write.target);
+      seenLater.set(write.target, write.before);
+    }
+    for (let index = 0; index < ours.length; index += 1) {
+      const { target: key, before: prior } = ours[index]!;
+      const fields = nextBefore[index] ?? this.#entities.get(key)!.fields;
       const at = order.findIndex((member) => member.key === key);
       if ((prior === null) !== at < 0) continue;
       if (at >= 0) order.splice(at, 1);

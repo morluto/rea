@@ -239,8 +239,9 @@ export function checkFfsFileIntegrity(
   const length = end - start;
   if (length === 0) return { verdict: "unchecked" } as const;
   let total = header.fileChecksumField;
-  for (const byte of region.buffer.subarray(start, end)) {
-    total = (total + byte) & 0xff;
+  const buffer = region.buffer;
+  for (let i = start; i < end; i += 1) {
+    total = (total + buffer[i]!) & 0xff;
   }
   return total === 0
     ? ({ verdict: "valid" } as const)

@@ -146,7 +146,7 @@ export const projectAndroidInventory = (
       .sort(compareUnicodeCodePoints),
     components,
     unavailable_components: unavailable,
-    runtime_families: runtimeFamilies(all, classified),
+    runtime_families: runtimeFamilies(classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: projectionCoverage(
@@ -164,23 +164,43 @@ export const projectAndroidInventory = (
   );
 };
 
-const classify = (all: readonly Component[]) => ({
-  manifests: all.filter(({ path }) =>
-    /(?:^|\/)AndroidManifest\.xml$/u.test(path),
-  ),
-  resources: all.filter(({ path }) => /(?:^|\/)resources\.arsc$/u.test(path)),
-  dex: all.filter(({ path }) => /(?:^|\/)[^/]+\.dex$/iu.test(path)),
-  jvm_classes: all.filter(({ path }) => /(?:^|\/)[^/]+\.class$/iu.test(path)),
-  native_libraries: all.filter(
-    ({ path, format }) =>
-      format === "elf" || /(?:^|\/)lib\/[^/]+\/[^/]+\.so$/iu.test(path),
-  ),
-  javascript: all.filter(({ format }) => format === "javascript-bundle"),
-  signing: all.filter(({ path }) => isV1SignatureMetadataName(path)),
-});
+const ANDROID_MANIFEST_RE = /(?:^|\/)AndroidManifest\.xml$/u;
+const ANDROID_RESOURCES_RE = /(?:^|\/)resources\.arsc$/u;
+const ANDROID_DEX_RE = /(?:^|\/)[^/]+\.dex$/iu;
+const ANDROID_JVM_CLASS_RE = /(?:^|\/)[^/]+\.class$/iu;
+const ANDROID_NATIVE_LIB_RE = /(?:^|\/)lib\/[^/]+\/[^/]+\.so$/iu;
+
+const classify = (all: readonly Component[]) => {
+  const manifests: Component[] = [];
+  const resources: Component[] = [];
+  const dex: Component[] = [];
+  const jvm_classes: Component[] = [];
+  const native_libraries: Component[] = [];
+  const javascript: Component[] = [];
+  const signing: Component[] = [];
+  for (const component of all) {
+    const { path, format } = component;
+    if (ANDROID_MANIFEST_RE.test(path)) manifests.push(component);
+    if (ANDROID_RESOURCES_RE.test(path)) resources.push(component);
+    if (ANDROID_DEX_RE.test(path)) dex.push(component);
+    if (ANDROID_JVM_CLASS_RE.test(path)) jvm_classes.push(component);
+    if (format === "elf" || ANDROID_NATIVE_LIB_RE.test(path))
+      native_libraries.push(component);
+    if (format === "javascript-bundle") javascript.push(component);
+    if (isV1SignatureMetadataName(path)) signing.push(component);
+  }
+  return {
+    manifests,
+    resources,
+    dex,
+    jvm_classes,
+    native_libraries,
+    javascript,
+    signing,
+  };
+};
 
 const runtimeFamilies = (
-  all: readonly Component[],
   components: AndroidApplicationProjectionResult["components"],
 ) => {
   const families = new Set<
@@ -188,10 +208,9 @@ const runtimeFamilies = (
   >();
   if (components.dex.length > 0) families.add("dalvik-art");
   if (components.jvm_classes.length > 0) families.add("java-kotlin");
-  if (all.some(({ format }) => format === "elf")) families.add("native");
-  if (all.some(({ format }) => format === "javascript-bundle"))
-    families.add("javascript");
-  for (const { path } of components.native_libraries) {
+  if (components.javascript.length > 0) families.add("javascript");
+  for (const { path, format } of components.native_libraries) {
+    if (format === "elf") families.add("native");
     const convention = nativeRuntimeConvention(path);
     if (convention !== null) families.add(convention);
   }

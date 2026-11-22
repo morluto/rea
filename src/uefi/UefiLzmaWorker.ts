@@ -201,17 +201,19 @@ const decodeStreamPayload = (
   }
 };
 
-const serializeReply = (reply: UefiLzmaReply): string => {
+const serializeReply = (
+  reply: UefiLzmaReply,
+): { readonly text: string; readonly ok: boolean } => {
   const encoded = JSON.stringify(reply);
   if (Buffer.byteLength(encoded) <= UEFI_FIRMWARE_LIMITS.diagnosticBytes) {
-    return encoded;
+    return { text: encoded, ok: reply.ok };
   }
   const bounded: UefiLzmaReply = {
     ok: false,
     reason: reply.ok ? "decoder" : reply.reason,
     message: "LZMA reply exceeds the diagnostic budget.",
   };
-  return JSON.stringify(bounded);
+  return { text: JSON.stringify(bounded), ok: false };
 };
 
 class FramedByteReader {
@@ -313,11 +315,10 @@ const runStdioWorker = async (): Promise<void> => {
       request.format,
       request.max_output_bytes,
     );
-    const replyText = serializeReply(reply);
-    const parsedReply = JSON.parse(replyText) as UefiLzmaReply;
+    const serialized = serializeReply(reply);
     const body =
-      parsedReply.ok && decoded !== undefined ? decoded : Buffer.alloc(0);
-    await writeFramed(process.stdout, encodeLzmaFrame(replyText, body));
+      serialized.ok && decoded !== undefined ? decoded : Buffer.alloc(0);
+    await writeFramed(process.stdout, encodeLzmaFrame(serialized.text, body));
   }
 };
 
@@ -355,7 +356,7 @@ const runSingleFileWorker = async (requestPath: string): Promise<void> => {
       message: errorMessage(cause),
     };
   }
-  await writeFile(request.reply_path, serializeReply(reply), {
+  await writeFile(request.reply_path, serializeReply(reply).text, {
     flag: "wx",
     mode: 0o600,
   });

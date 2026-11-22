@@ -98,65 +98,48 @@ const measureJsonPart = (
   readonly escapedBytes: number;
   readonly escapedCodeUnits: number;
 } => {
+  const len = part.length;
   let rawBytes = 0;
   let escapedBytes = 0;
-  let escapedCodeUnits = 0;
-  const length = part.length;
-  for (let i = 0; i < length; i += 1) {
-    const code = part.charCodeAt(i);
+  let escapedCodeUnits = len;
+  for (let index = 0; index < len; index += 1) {
+    const code = part.charCodeAt(index);
     if (code < 0x80) {
       rawBytes += 1;
-      if (
-        code === 0x22 ||
-        code === 0x5c ||
-        code === 0x08 ||
-        code === 0x09 ||
-        code === 0x0a ||
-        code === 0x0c ||
-        code === 0x0d
-      ) {
+      if (code === 34 || code === 92) {
         escapedBytes += 2;
-        escapedCodeUnits += 2;
-      } else if (code < 0x20) {
-        escapedBytes += 6;
-        escapedCodeUnits += 6;
+        escapedCodeUnits += 1;
+      } else if (code < 32) {
+        const extra =
+          code === 8 || code === 9 || code === 10 || code === 12 || code === 13
+            ? 1
+            : 5;
+        escapedBytes += 1 + extra;
+        escapedCodeUnits += extra;
       } else {
         escapedBytes += 1;
-        escapedCodeUnits += 1;
       }
-      continue;
-    }
-    if (code < 0x800) {
+    } else if (code < 0x800) {
       rawBytes += 2;
       escapedBytes += 2;
-      escapedCodeUnits += 1;
-      continue;
-    }
-    if (code >= 0xd800 && code <= 0xdbff) {
-      if (i + 1 < length) {
-        const next = part.charCodeAt(i + 1);
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      if (code <= 0xdbff && index + 1 < len) {
+        const next = part.charCodeAt(index + 1);
         if (next >= 0xdc00 && next <= 0xdfff) {
           rawBytes += 4;
           escapedBytes += 4;
-          escapedCodeUnits += 2;
-          i += 1;
+          index += 1;
           continue;
         }
       }
+      // Unpaired surrogate: UTF-8 emits U+FFFD (3 bytes); JSON.stringify emits \udxxx (6 ASCII bytes / code units).
       rawBytes += 3;
       escapedBytes += 6;
-      escapedCodeUnits += 6;
-      continue;
-    }
-    if (code >= 0xdc00 && code <= 0xdfff) {
+      escapedCodeUnits += 5;
+    } else {
       rawBytes += 3;
-      escapedBytes += 6;
-      escapedCodeUnits += 6;
-      continue;
+      escapedBytes += 3;
     }
-    rawBytes += 3;
-    escapedBytes += 3;
-    escapedCodeUnits += 1;
   }
   return { rawBytes, escapedBytes, escapedCodeUnits };
 };

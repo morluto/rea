@@ -48,21 +48,47 @@ const childElements = (element: Element): Element[] => {
   return children;
 };
 
-const childrenNamed = (element: Element, ...names: string[]): Element[] =>
-  childElements(element).filter(
-    (child) =>
-      (child.namespaceURI ?? "") === (element.namespaceURI ?? "") &&
+const childrenNamed = (element: Element, ...names: string[]): Element[] => {
+  const ns = element.namespaceURI ?? "";
+  const matches: Element[] = [];
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
+      (child.namespaceURI ?? "") === ns &&
       child.localName !== null &&
-      names.includes(child.localName),
-  );
+      names.includes(child.localName)
+    )
+      matches.push(child);
+  }
+  return matches;
+};
 
 const soleNamed = (element: Element, local: string): Element | undefined => {
-  const matches = childrenNamed(element, local);
-  if (matches.length <= 1) return matches[0];
-  throw malformedInput(
-    MAVEN_GRADLE_METADATA_FORMAT,
-    `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
-  );
+  const ns = element.namespaceURI ?? "";
+  let found: Element | undefined;
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  ) {
+    if (
+      isElement(child) &&
+      (child.namespaceURI ?? "") === ns &&
+      child.localName === local
+    ) {
+      if (found !== undefined)
+        throw malformedInput(
+          MAVEN_GRADLE_METADATA_FORMAT,
+          `Maven POM declares <${local}> more than once in one <${element.localName}>.`,
+        );
+      found = child;
+    }
+  }
+  return found;
 };
 
 const MAVEN_POM_NAMESPACE = "http://maven.apache.org/POM/4.0.0";
@@ -90,14 +116,8 @@ const admit = (
   if (required > limit) throw metadataReportLimit(allowance, limit, required);
 };
 
-const nonempty = (value: string | null | undefined): string | null => {
-  if (value === null || value === undefined) return null;
-  const trimmed = value.trim();
-  return trimmed === "" ? null : trimmed;
-};
-
 /** Maven coordinates and property values are text declarations, not XML trees. */
-const mavenText = (element: Element): string => {
+const mavenText = (element: Element): string | null => {
   const parts: string[] = [];
   for (
     let child = element.firstChild;
@@ -113,19 +133,19 @@ const mavenText = (element: Element): string => {
     if (child.nodeType === 3 || child.nodeType === 4)
       parts.push(child.nodeValue ?? "");
   }
-  return parts.join("");
-};
-
-const childText = (element: Element, local: string): string | null => {
-  const child = soleNamed(element, local);
-  if (child === undefined) return null;
-  const text = mavenText(child);
-  // Maven's model reader applies Java String.trim() to these fields.
+  const text = parts.join("");
+  // Maven's model reader applies Java String.trim() to scalar declarations,
+  // including property values. Non-ASCII edge characters remain part of them.
   let start = 0;
   let end = text.length;
   while (start < end && text.charCodeAt(start) <= 0x20) start += 1;
   while (end > start && text.charCodeAt(end - 1) <= 0x20) end -= 1;
   return start === end ? null : text.slice(start, end);
+};
+
+const childText = (element: Element, local: string): string | null => {
+  const child = soleNamed(element, local);
+  return child === undefined ? null : mavenText(child);
 };
 
 /** Keep Gradle JSON spelling for Evidence and exact comparisons. */
@@ -359,7 +379,7 @@ const parsePom = (
           const {
             url: value,
             url_credentials_redacted: value_credentials_redacted,
-          } = redactRecordedTransportUrl(nonempty(mavenText(property)));
+          } = redactRecordedTransportUrl(mavenText(property));
           // Maven property keys are the written qualified names, not XML
           // expanded names: different prefixes remain different keys.
           return { name: property.tagName, value, value_credentials_redacted };

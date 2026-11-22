@@ -2,14 +2,19 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  createFileMappingIndex,
+  hasElfMagic,
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
-  mappedFileOffset,
-  readMappedCString,
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
-import { elfSymbolSize, readElfSymbol } from "../elfSymbol.js";
+import {
+  elfSymbolExportBinding,
+  elfSymbolExportVisibility,
+  elfSymbolSize,
+  readElfSymbol,
+} from "../elfSymbol.js";
 import {
   readElfDirectoryFromBuffer,
   readElfDirectoryFromBufferCooperative,
@@ -38,9 +43,6 @@ import {
 
 type Artifact = NativeExports["artifact"];
 
-const ELF_MAGIC = Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
-const hasElfMagic = (bytes: Buffer): boolean =>
-  bytes.subarray(0, ELF_MAGIC.length).equals(ELF_MAGIC);
 const OPERATION = "inspect_native_exports";
 const SHT_STRTAB = 3;
 const SHT_DYNSYM = 11;
@@ -194,20 +196,26 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
         ...PE_LIMITATIONS,
       ],
     };
+  if (directory.size < PE_EXPORT_DIRECTORY_BYTES)
+    throw new BinaryFormatFailure(
+      "malformed",
+      `PE export directory declares ${String(directory.size)} bytes, below the ${String(PE_EXPORT_DIRECTORY_BYTES)}-byte table`,
+    );
   const reader = new BinaryReader(bytes, true, "pe");
-  const mappings = peDeclaredFileMappings(image);
+  const mappingIndex = createFileMappingIndex(
+    peDeclaredFileMappings(image),
+    image.zero_fills,
+  );
   const map = (rva: number, size: number): number =>
-    mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
+    mappingIndex.offset(base + BigInt(rva), size);
   const cStringBytes = (
     rva: number,
     maximumBytes = MAXIMUM_NAME_BYTES,
   ): Buffer => {
-    const value = readMappedCString(
+    const value = mappingIndex.readCString(
       bytes,
-      mappings,
       base + BigInt(rva),
       maximumBytes,
-      image.zero_fills,
     );
     if (value.length === 0)
       throw new BinaryFormatFailure(
@@ -342,16 +350,6 @@ const ELF_TYPES: Readonly<Record<number, ElfExport["type"]>> = {
   6: "tls",
   10: "ifunc",
 };
-const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
-  1: "global",
-  2: "weak",
-  10: "unique",
-};
-const ELF_VISIBILITIES: Readonly<Record<number, ElfExport["visibility"]>> = {
-  0: "default",
-  3: "protected",
-};
-
 const versionSectionData = (
   reader: BinaryReader,
   sections: readonly NativeSection[],
@@ -869,8 +867,8 @@ export function* parseElfExportsFromDirectorySteps(
         parsedSymbol.error.message,
       );
     const symbol = parsedSymbol.value;
-    const binding = ELF_BINDINGS[symbol.binding];
-    const visibility = ELF_VISIBILITIES[symbol.other & 3];
+    const binding = elfSymbolExportBinding(symbol.binding);
+    const visibility = elfSymbolExportVisibility(symbol.other);
     // Undefined, local and hidden/internal symbols are not exports.
     if (
       binding === undefined ||
