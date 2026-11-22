@@ -178,10 +178,7 @@ function observeFfsFileHeader(
         : null,
     bodyIssue: state === "header-valid" ? "data-not-valid" : null,
     extentIssue,
-    nameGuid: formatGuidLittleEndian(
-      region.buffer.subarray(localBase, localBase + 16),
-      0,
-    ),
+    nameGuid: formatGuidLittleEndian(region.buffer, localBase),
     typeCode: region.buffer[localBase + FFS_HEADER_LAYOUT.typeOffset] ?? 0,
     attributes,
     dataAlignment:
