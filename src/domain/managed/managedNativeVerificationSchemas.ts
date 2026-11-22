@@ -52,7 +52,7 @@ const observedCandidatesSchema = z
   .tuple([nativeSymbolSchema], nativeSymbolSchema)
   .check(z.minLength(1));
 
-export const pinvokeVerificationSchema = z.union([
+export const pinvokeVerificationSchema = z.discriminatedUnion("basis", [
   z.strictObject({
     ...pinvokeVerificationContextShape,
     status: z.literal("verified"),

@@ -1,7 +1,8 @@
 import { createServer, type Socket } from "node:net";
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
+  controlledCleanup,
   phaseArrival,
   phaseGate,
   type PhaseGate,
@@ -21,7 +22,10 @@ import {
 } from "../../../src/domain/browserObservation.js";
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
-import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import {
+  startFakeCdpBrowser,
+  type FakeCdpBrowser,
+} from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 import { waitFor } from "../../support/testWait.js";
 
@@ -177,40 +181,52 @@ describe("CdpBrowserProvider: browser socket eviction and per-call scoping", () 
   });
 
   it("preserves per-operation command_timeout_ms and operation identity on a reused browser socket", async () => {
+    const sent = phaseArrival();
     const browser = await startFakeCdpBrowser({
-      hangOnMethod: "Page.enable",
+      commandDelayMs: ({ method }) => {
+        if (method !== "Page.enable") return undefined;
+        sent.arrive();
+        return 200;
+      },
     });
     trackBrowser(browser);
     const provider = new CdpBrowserProvider();
+    const controller = new AbortController();
+    const endpoint = { cdp_endpoint: browser.browserWebSocketUrl };
+    let inspecting: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
     try {
       const listed = await provider.listTargets(
-        listBrowserTargetsInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-        }),
+        listBrowserTargetsInputSchema.parse(endpoint),
       );
       if (!listed.ok) throw listed.error;
       expect(browser.openedConnectionCount()).toBe(1);
 
-      const timedOut = await provider.inspectPage(
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      inspecting = provider.inspectPage(
         inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
+          ...endpoint,
           target_id: "allowed-page",
           observation_ms: 0,
           command_timeout_ms: 60,
         }),
+        { signal: controller.signal },
       );
-      expect(timedOut).toMatchObject({
+      await sent.reached(inspecting, "Page.enable on reused socket");
+      await vi.advanceTimersByTimeAsync(60);
+      expect(await inspecting).toMatchObject({
         ok: false,
         error: {
           _tag: "BrowserObservationError",
           operation: "inspect_web_page",
           reason: "timeout",
+          userMessage: expect.stringContaining("60 ms command_timeout_ms"),
         },
       });
-      if (timedOut.ok) throw new Error("Expected command timeout");
-      expect(timedOut.error.userMessage).toContain("60 ms command_timeout_ms");
       expect(browser.openedConnectionCount()).toBe(1);
     } finally {
+      controller.abort();
+      vi.useRealTimers();
+      await Promise.allSettled([inspecting]);
       await provider.close();
     }
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
@@ -430,49 +446,62 @@ describe("CdpBrowserProvider: browser socket failures and cleanup", () => {
   });
 });
 
-/** Expect a discovery timeout that projects publicly as a provider timeout. */
-const expectDiscoveryTimeout = async (url: string): Promise<void> => {
-  let failure: unknown;
+const expectDiscoveryTimeout = async (
+  url: string,
+  reached: ReturnType<typeof phaseArrival>,
+): Promise<void> => {
+  const controller = new AbortController();
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const opening = openCdpEndpoint(
+    browserObservationEndpointSchema.parse(url),
+    "list_browser_targets",
+    controller.signal,
+    50,
+  );
   try {
-    await openCdpEndpoint(
-      browserObservationEndpointSchema.parse(url),
-      "list_browser_targets",
-      undefined,
-      50,
-    );
-  } catch (cause: unknown) {
-    failure = cause;
+    await reached.reached(opening, "discovery producer request");
+    await vi.advanceTimersByTimeAsync(50);
+    const failure: unknown = await opening.catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected a typed discovery failure", { cause: failure });
+    expect(failure).toMatchObject({
+      _tag: "BrowserObservationError",
+      operation: "list_browser_targets",
+      reason: "timeout",
+    });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "provider_timeout",
+      category: "timeout",
+    });
+  } finally {
+    controller.abort();
+    vi.useRealTimers();
+    await Promise.allSettled([opening]);
   }
-  expect(failure).toMatchObject({
-    _tag: "BrowserObservationError",
-    reason: "timeout",
-  });
-  if (!(failure instanceof AnalysisError))
-    throw new Error("Expected a typed discovery failure");
-  expect(projectAnalysisError(failure)).toMatchObject({
-    code: "provider_timeout",
-    category: "timeout",
-  });
 };
 
 describe("CdpBrowserProvider: browser socket discovery deadline", () => {
   it("times out a discovery reply that never arrives and closes the socket", async () => {
+    const sent = phaseArrival();
     const browser = await startFakeCdpBrowser({
-      hangOnMethod: "Target.getTargets",
+      commandDelayMs: ({ method }) => {
+        if (method !== "Target.getTargets") return undefined;
+        sent.arrive();
+        return 200;
+      },
     });
     trackBrowser(browser);
-    await expectDiscoveryTimeout(browser.browserWebSocketUrl);
+    await expectDiscoveryTimeout(browser.browserWebSocketUrl, sent);
     await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("times out a WebSocket handshake that never completes", async () => {
     const sockets = new Set<Socket>();
-    // Read the upgrade request but never answer it; reading lets the
-    // client's close be observed here.
+    const sent = phaseArrival();
     const server = createServer((socket) => {
       sockets.add(socket);
       socket.on("close", () => sockets.delete(socket));
-      socket.resume();
+      socket.once("data", () => sent.arrive());
     });
     await new Promise<void>((resolve) =>
       server.listen(0, "127.0.0.1", resolve),
@@ -480,145 +509,118 @@ describe("CdpBrowserProvider: browser socket discovery deadline", () => {
     const address = server.address();
     if (address === null || typeof address === "string")
       throw new Error("Expected a TCP listener address");
-    try {
-      await expectDiscoveryTimeout(
-        `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
-      );
-      await waitFor(() => expect(sockets.size).toBe(0));
-    } finally {
+    onTestFinished(async () => {
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
-    }
+    });
+    await expectDiscoveryTimeout(
+      `ws://127.0.0.1:${String(address.port)}/devtools/browser/stalled`,
+      sent,
+    );
+    await waitFor(() => expect(sockets.size).toBe(0));
   });
 });
 
+const observePeerDuringDetachFailure = async (refuseClose = false) => {
+  const browser = await startFakeCdpBrowser({
+    commandError: ({ method }) =>
+      method === "Target.detachFromTarget"
+        ? { code: -32_000, message: "Detach rejected" }
+        : undefined,
+  });
+  const provider = new CdpBrowserProvider();
+  const cleanup = controlledCleanup({ refused: refuseClose });
+  const originalClose = CdpConnection.prototype.close;
+  const closeSpy = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return cleanup.close(() => originalClose.call(this));
+    });
+  const started = phaseArrival();
+  const controller = new AbortController();
+  const endpoint = { cdp_endpoint: browser.browserWebSocketUrl };
+  const target = { ...endpoint, target_id: "allowed-page" };
+  const observing = provider.observeSession(
+    observeWebSessionInputSchema.parse({ ...target, observation_ms: 15_000 }),
+    {
+      signal: controller.signal,
+      progress: {
+        report: async (update) => {
+          if (update.completed === 1) started.arrive();
+        },
+      },
+    },
+  );
+  onTestFinished(async () => {
+    cleanup.allow();
+    controller.abort();
+    try {
+      await Promise.allSettled([observing]);
+      await provider.close();
+      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+    } finally {
+      closeSpy.mockRestore();
+      await browser.close();
+    }
+  });
+  await started.reached(observing, "peer session observation start");
+  expect(browser.openedConnectionCount()).toBe(1);
+  expect(browser.activeConnectionCount()).toBe(1);
+
+  const inspect = () =>
+    provider.inspectPage(
+      inspectWebPageInputSchema.parse({ ...target, observation_ms: 0 }),
+    );
+  return {
+    browser,
+    cleanup,
+    controller,
+    endpoint,
+    inspect,
+    observing,
+    provider,
+  };
+};
+
 describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () => {
   it("closes a shared browser socket immediately when detach fails alongside an active observation", async () => {
-    const browser = await startFakeCdpBrowser({
-      commandError: ({ method }) =>
-        method === "Target.detachFromTarget"
-          ? { code: -32_000, message: "Detach rejected" }
-          : undefined,
-    });
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const closeSpy = vi.spyOn(CdpConnection.prototype, "close");
-    const observationStart = phaseArrival();
-    const controller = new AbortController();
-    let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
-    try {
-      observing = provider.observeSession(
-        observeWebSessionInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-          target_id: "allowed-page",
-          observation_ms: 15_000,
-        }),
-        {
-          signal: controller.signal,
-          progress: {
-            report: async (update) => {
-              if (update.completed === 1) observationStart.arrive();
-            },
-          },
-        },
-      );
-      await observationStart.reached(
-        observing,
-        "peer session observation start",
-      );
-      expect(browser.openedConnectionCount()).toBe(1);
-      expect(browser.activeConnectionCount()).toBe(1);
-
-      const inspected = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-          target_id: "allowed-page",
-          observation_ms: 0,
-        }),
-      );
-      if (!inspected.ok) throw inspected.error;
-      expect(closeSpy).toHaveBeenCalledTimes(1);
-      expect(browser.openedConnectionCount()).toBe(1);
-      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
-
-      const session = await observing;
-      if (!session.ok) throw session.error;
-      expect(session.value.window.end_reason).toBe("transport_disconnected");
-    } finally {
-      controller.abort(new Error("test teardown"));
-      await observing?.catch(() => undefined);
-      closeSpy.mockRestore();
-      await provider.close();
-    }
+    const { browser, cleanup, inspect, observing } =
+      await observePeerDuringDetachFailure();
+    const inspected = await inspect();
+    if (!inspected.ok) throw inspected.error;
+    expect(cleanup.attempts).toBe(1);
+    expect(browser.openedConnectionCount()).toBe(1);
+    const session = await observing;
+    if (!session.ok) throw session.error;
+    expect(session.value.window.end_reason).toBe("transport_disconnected");
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 
   it("surfaces cleanupIncomplete when forced shared-socket close fails after detach rejection", async () => {
-    const browser = await startFakeCdpBrowser({
-      commandError: ({ method }) =>
-        method === "Target.detachFromTarget"
-          ? { code: -32_000, message: "Detach rejected" }
-          : undefined,
+    const { browser, cleanup, controller, inspect, observing, provider } =
+      await observePeerDuringDetachFailure(true);
+    const inspected = await inspect();
+    if (inspected.ok) throw new Error("Expected incomplete transport cleanup");
+    expect(inspected.error.cleanupIncomplete).toBe(true);
+    const observation = inspected.error.partialObservation;
+    expect(observation).toMatchObject({
+      target: { target_id: "allowed-page" },
     });
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    const originalClose = CdpConnection.prototype.close;
-    let denyClose = false;
-    const closeSpy = vi
-      .spyOn(CdpConnection.prototype, "close")
-      .mockImplementation(function (this: CdpConnection) {
-        return denyClose
-          ? Promise.reject(new Error("controlled shared socket close failure"))
-          : originalClose.call(this);
-      });
-    const observationStart = phaseArrival();
-    const controller = new AbortController();
-    let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
-    try {
-      observing = provider.observeSession(
-        observeWebSessionInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-          target_id: "allowed-page",
-          observation_ms: 15_000,
-        }),
-        {
-          signal: controller.signal,
-          progress: {
-            report: async (update) => {
-              if (update.completed === 1) observationStart.arrive();
-            },
-          },
-        },
-      );
-      await observationStart.reached(
-        observing,
-        "peer session observation start",
-      );
-      denyClose = true;
-      const inspected = await provider.inspectPage(
-        inspectWebPageInputSchema.parse({
-          cdp_endpoint: browser.browserWebSocketUrl,
-          target_id: "allowed-page",
-          observation_ms: 0,
-        }),
-      );
-      if (inspected.ok)
-        throw new Error("Expected incomplete transport cleanup");
-      expect(inspected.error.cleanupIncomplete).toBe(true);
-      expect(inspected.error.partialObservation).toBeDefined();
 
-      controller.abort(new Error("end peer observation"));
-      await observing;
-      denyClose = false;
-      await provider.close();
-      expect(inspected.error.cleanupIncomplete).toBe(false);
-      await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
-    } finally {
-      denyClose = false;
-      controller.abort(new Error("test teardown"));
-      await observing?.catch(() => undefined);
-      closeSpy.mockRestore();
-      await provider.close();
-    }
+    const reason = new Error("end peer observation");
+    controller.abort(reason);
+    const ended = await observing;
+    if (ended.ok) throw new Error("Expected peer cancellation");
+    expect(ended.error.cleanupPrimary?.cause).toBe(reason);
+    expect(ended.error.cleanupIncomplete).toBe(true);
+    expect(browser.activeConnectionCount()).toBe(1);
+
+    cleanup.allow();
+    await provider.close();
+    expect(inspected.error.cleanupIncomplete).toBe(false);
+    expect(ended.error.cleanupIncomplete).toBe(false);
+    expect(inspected.error.partialObservation).toBe(observation);
+    await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
 });
 
@@ -710,182 +712,123 @@ describe("CdpTargetSessionOwner: callback failures and idle protocol eviction", 
 });
 
 it("blocks new admissions while forced shared-socket cleanup fails with an active peer, then recovers cleanly", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandError: ({ method }) =>
-      method === "Target.detachFromTarget"
-        ? { code: -32_000, message: "Detach rejected" }
-        : undefined,
-  });
-  trackBrowser(browser);
-  const provider = new CdpBrowserProvider();
-  const originalClose = CdpConnection.prototype.close;
-  let denyClose = false;
-  const closeSpy = vi
-    .spyOn(CdpConnection.prototype, "close")
-    .mockImplementation(function (this: CdpConnection) {
-      return denyClose
-        ? Promise.reject(new Error("controlled shared socket close failure"))
-        : originalClose.call(this);
-    });
-  const observationStart = phaseArrival();
-  const controller = new AbortController();
-  let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
-  try {
-    observing = provider.observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-        target_id: "allowed-page",
-        observation_ms: 15_000,
-      }),
-      {
-        signal: controller.signal,
-        progress: {
-          report: async (update) => {
-            if (update.completed === 1) observationStart.arrive();
-          },
-        },
-      },
-    );
-    await observationStart.reached(observing, "peer session observation start");
-    expect(browser.openedConnectionCount()).toBe(1);
+  const { browser, cleanup, endpoint, inspect, observing, provider } =
+    await observePeerDuringDetachFailure(true);
+  const failedInspect = await inspect();
+  if (failedInspect.ok)
+    throw new Error("Expected failed forced shared-socket close");
+  expect(failedInspect.error.cleanupIncomplete).toBe(true);
 
-    denyClose = true;
-    const failedInspect = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (failedInspect.ok)
-      throw new Error("Expected failed forced shared-socket close");
-    expect(failedInspect.error.cleanupIncomplete).toBe(true);
-    expect(browser.openedConnectionCount()).toBe(1);
+  const input = listBrowserTargetsInputSchema.parse(endpoint);
+  const blocked = await provider.listTargets(input);
+  if (blocked.ok)
+    throw new Error("Expected admission blocked on failed cleanup");
+  expect(blocked.error.cleanupIncomplete).toBe(true);
+  expect(browser.openedConnectionCount()).toBe(1);
 
-    // Peer observation is still active; Call C must NOT bypass the unresolved close failure.
-    const blocked = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-      }),
-    );
-    if (blocked.ok)
-      throw new Error("Expected admission blocked on failed cleanup");
-    expect(blocked.error.cleanupIncomplete).toBe(true);
-    expect(browser.openedConnectionCount()).toBe(1);
+  cleanup.allow();
+  const recovered = await provider.listTargets(input);
+  if (!recovered.ok) throw recovered.error;
+  expect(failedInspect.error.cleanupIncomplete).toBe(false);
+  expect(blocked.error.cleanupIncomplete).toBe(false);
+  expect(browser.openedConnectionCount()).toBe(2);
 
-    // Allow close retry to succeed while peer observation is still unwinding.
-    denyClose = false;
-    const recovered = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-      }),
-    );
-    if (!recovered.ok) throw recovered.error;
-    expect(failedInspect.error.cleanupIncomplete).toBe(false);
-    expect(blocked.error.cleanupIncomplete).toBe(false);
-    expect(browser.openedConnectionCount()).toBe(2);
-
-    const session = await observing;
-    if (!session.ok) throw session.error;
-    expect(session.value.window.end_reason).toBe("transport_disconnected");
-  } finally {
-    denyClose = false;
-    controller.abort(new Error("test teardown"));
-    await observing?.catch(() => undefined);
-    closeSpy.mockRestore();
-    await provider.close();
-  }
-  await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  const session = await observing;
+  if (!session.ok) throw session.error;
+  expect(session.value.window.end_reason).toBe("transport_disconnected");
 });
 
 it("keeps an admitted shared browser socket alive for concurrent peers when a caller aborts or hits discovery_timeout_ms", async () => {
-  let slowTargetDiscovery = false;
-  let notifySlowDiscoveryStarted: (() => void) | undefined;
+  const timedDiscovery = phaseArrival();
+  const cancelledDiscovery = phaseArrival();
+  const stallDiscoveries: (typeof timedDiscovery)[] = [];
   const browser = await startFakeCdpBrowser({
     commandDelayMs: ({ method }) => {
-      if (!slowTargetDiscovery || method !== "Target.getTargets")
-        return undefined;
-      notifySlowDiscoveryStarted?.();
+      if (method !== "Target.getTargets") return undefined;
+      const arrival = stallDiscoveries.shift();
+      if (arrival === undefined) return undefined;
+      arrival.arrive();
       return 200;
     },
   });
   trackBrowser(browser);
   const provider = new CdpBrowserProvider();
+  const endpoint = { cdp_endpoint: browser.browserWebSocketUrl };
+  const target = { ...endpoint, target_id: "allowed-page" };
   const observationStart = phaseArrival();
   const peerController = new AbortController();
+  const timeoutController = new AbortController();
   const cancelController = new AbortController();
-  let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
-  let cancelling: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
-  try {
-    observing = provider.observeSession(
-      observeWebSessionInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-        target_id: "allowed-page",
-        observation_ms: 400,
-      }),
-      {
-        signal: peerController.signal,
-        progress: {
-          report: async (update) => {
-            if (update.completed === 1) observationStart.arrive();
-          },
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const observing = provider.observeSession(
+    observeWebSessionInputSchema.parse({ ...target, observation_ms: 400 }),
+    {
+      signal: peerController.signal,
+      progress: {
+        report: async (update) => {
+          if (update.completed === 1) observationStart.arrive();
         },
       },
-    );
+    },
+  );
+  let timingOut: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
+  let cancelling: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
+  try {
     await observationStart.reached(observing, "peer session observation start");
-    expect(browser.openedConnectionCount()).toBe(1);
+    stallDiscoveries.push(timedDiscovery, cancelledDiscovery);
 
-    slowTargetDiscovery = true;
-    const timedOut = await provider.inspectPage(
+    timingOut = provider.inspectPage(
       inspectWebPageInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-        target_id: "allowed-page",
+        ...target,
         observation_ms: 0,
         discovery_timeout_ms: 35,
       }),
+      { signal: timeoutController.signal },
     );
-    expect(timedOut).toMatchObject({
+    await timedDiscovery.reached(timingOut, "discovery subject to deadline");
+    await vi.advanceTimersByTimeAsync(35);
+    expect(await timingOut).toMatchObject({
       ok: false,
       error: {
         _tag: "BrowserObservationError",
         operation: "inspect_web_page",
         reason: "timeout",
+        userMessage: expect.stringContaining("35 ms discovery_timeout_ms"),
       },
     });
-    if (timedOut.ok) throw new Error("Expected discovery timeout on Call B");
-    expect(timedOut.error.userMessage).toContain("35 ms discovery_timeout_ms");
     expect(browser.openedConnectionCount()).toBe(1);
     expect(browser.activeConnectionCount()).toBe(1);
 
-    const sharedDiscovery = phaseArrival();
-    notifySlowDiscoveryStarted = () => sharedDiscovery.arrive();
     cancelling = provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: browser.browserWebSocketUrl,
-      }),
+      listBrowserTargetsInputSchema.parse(endpoint),
       { signal: cancelController.signal },
     );
-    await sharedDiscovery.reached(cancelling, "shared socket discovery start");
-    cancelController.abort(new Error("caller cancelled discovery"));
-    expect(await cancelling).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisCancelledError",
-        operation: "list_browser_targets",
-      },
+    await cancelledDiscovery.reached(
+      cancelling,
+      "discovery subject to cancellation",
+    );
+    const reason = new Error("caller cancelled discovery");
+    cancelController.abort(reason);
+    const cancelled = await cancelling;
+    if (cancelled.ok) throw new Error("Expected discovery cancellation");
+    expect(cancelled.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "list_browser_targets",
     });
+    expect(cancelled.error.cause).toBe(reason);
 
-    slowTargetDiscovery = false;
+    await vi.advanceTimersByTimeAsync(400);
     const session = await observing;
     if (!session.ok) throw session.error;
     expect(session.value.window.end_reason).toBe("window_elapsed");
     expect(browser.openedConnectionCount()).toBe(1);
     expect(browser.activeConnectionCount()).toBe(1);
   } finally {
-    slowTargetDiscovery = false;
-    peerController.abort(new Error("test teardown"));
-    cancelController.abort(new Error("test teardown"));
-    await Promise.allSettled([observing, cancelling]);
+    peerController.abort();
+    timeoutController.abort();
+    cancelController.abort();
+    vi.useRealTimers();
+    await Promise.allSettled([observing, timingOut, cancelling]);
     await provider.close();
   }
   await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
@@ -1176,167 +1119,84 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
   await waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
 
-it("reuses one browser socket across equivalent normalized spellings while keeping 127.0.0.1 and [::1] distinct", async () => {
-  const ipv4Browser = await startFakeCdpBrowser();
-  const ipv6Browser = await startFakeCdpBrowser();
-  trackBrowser(ipv4Browser);
-  trackBrowser(ipv6Browser);
-  const port = new URL(ipv4Browser.endpoint).port;
-  const canonicalIpv6Url = `ws://[::1]:${port}/devtools/browser/fake`;
-  const originalConnect = CdpConnection.connect.bind(CdpConnection);
-  const connectUrls: string[] = [];
-  const connectSpy = vi
+it("reuses canonical browser sockets and keeps host and case-sensitive path identities distinct", async () => {
+  const endpoints = [
+    ["127.0.0.1", "127.0.0.1", "idA"],
+    ["[::1]", "[0:0:0:0:0:0:0:1]", "idA"],
+    ["127.0.0.1", "127.0.0.1", "idB"],
+    ["127.0.0.1", "127.0.0.1", "IdA"],
+  ] as const;
+  const routes: {
+    canonical: string;
+    alias: string;
+    browser: FakeCdpBrowser;
+  }[] = [];
+  let port: string | undefined;
+  for (const [host, spelling, id] of endpoints) {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    port ??= new URL(browser.endpoint).port;
+    const path = `/devtools/browser/${id}`;
+    routes.push({
+      canonical: `ws://${host}:${port}${path}`,
+      alias: `WS://${spelling}:0${port}${path}`,
+      browser,
+    });
+  }
+  const wire = new Map(
+    routes.map(({ canonical, browser }) => [
+      canonical,
+      browser.browserWebSocketUrl,
+    ]),
+  );
+  const connect = CdpConnection.connect.bind(CdpConnection);
+  // Route the normalized identities to separate loopback listeners. This also
+  // lets the IPv6 identity be checked on hosts without IPv6 sockets.
+  const dial = vi
     .spyOn(CdpConnection, "connect")
     .mockImplementation((url, ...rest) => {
-      connectUrls.push(url);
-      const wireUrl =
-        url === canonicalIpv6Url ? ipv6Browser.browserWebSocketUrl : url;
-      return originalConnect(wireUrl, ...rest);
+      const target = wire.get(url);
+      if (target === undefined)
+        throw new Error(`Unexpected socket address: ${url}`);
+      return connect(target, ...rest);
     });
+
   const provider = new CdpBrowserProvider();
   try {
-    const ipv6Listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: `WS://[0:0:0:0:0:0:0:1]:0${port}/devtools/browser/fake`,
-      }),
+    for (const { alias, browser } of routes) {
+      const listed = await provider.listTargets(
+        listBrowserTargetsInputSchema.parse({ cdp_endpoint: alias }),
+      );
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets).toContainEqual(
+        expect.objectContaining({
+          target_id: "allowed-page",
+          origin: browser.allowedOrigin,
+        }),
+      );
+    }
+    for (const { canonical, browser } of routes) {
+      const inspected = await provider.inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: canonical,
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!inspected.ok) throw inspected.error;
+      expect(inspected.value.target.origin).toBe(browser.allowedOrigin);
+      expect(browser.openedConnectionCount()).toBe(1);
+      expect(browser.activeConnectionCount()).toBe(1);
+    }
+    expect(dial.mock.calls.map(([url]) => url)).toEqual(
+      routes.map(({ canonical }) => canonical),
     );
-    if (!ipv6Listed.ok) throw ipv6Listed.error;
-    const ipv6Inspected = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: canonicalIpv6Url,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!ipv6Inspected.ok) throw ipv6Inspected.error;
-    expect(ipv6Browser.openedConnectionCount()).toBe(1);
-    expect(ipv4Browser.openedConnectionCount()).toBe(0);
-
-    const ipv4Listed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/fake`,
-      }),
-    );
-    if (!ipv4Listed.ok) throw ipv4Listed.error;
-    const ipv4Screenshot = await provider.captureScreenshot(
-      captureWebScreenshotInputSchema.parse({
-        cdp_endpoint: ipv4Browser.browserWebSocketUrl,
-        target_id: "allowed-page",
-      }),
-    );
-    if (!ipv4Screenshot.ok) throw ipv4Screenshot.error;
-
-    expect(ipv6Browser.openedConnectionCount()).toBe(1);
-    expect(ipv4Browser.openedConnectionCount()).toBe(1);
-    expect(ipv6Browser.activeConnectionCount()).toBe(1);
-    expect(ipv4Browser.activeConnectionCount()).toBe(1);
-    expect(connectUrls).toEqual([
-      canonicalIpv6Url,
-      ipv4Browser.browserWebSocketUrl,
-    ]);
   } finally {
-    connectSpy.mockRestore();
+    dial.mockRestore();
     await provider.close();
   }
   await waitFor(() => {
-    expect(ipv6Browser.activeConnectionCount()).toBe(0);
-    expect(ipv4Browser.activeConnectionCount()).toBe(0);
-  });
-});
-
-it("keeps distinct /devtools/browser/<id> paths on separate browser sockets while reusing each normalized path", async () => {
-  const browserA = await startFakeCdpBrowser();
-  const browserB = await startFakeCdpBrowser();
-  const browserCaseA = await startFakeCdpBrowser();
-  trackBrowser(browserA);
-  trackBrowser(browserB);
-  trackBrowser(browserCaseA);
-  const port = new URL(browserA.endpoint).port;
-  const canonicalIdAUrl = `ws://127.0.0.1:${port}/devtools/browser/idA`;
-  const canonicalIdBUrl = `ws://127.0.0.1:${port}/devtools/browser/idB`;
-  const canonicalCaseIdAUrl = `ws://127.0.0.1:${port}/devtools/browser/IdA`;
-  const routedWireUrls = new Map<string, string>([
-    [canonicalIdAUrl, browserA.browserWebSocketUrl],
-    [canonicalIdBUrl, browserB.browserWebSocketUrl],
-    [canonicalCaseIdAUrl, browserCaseA.browserWebSocketUrl],
-  ]);
-  const originalConnect = CdpConnection.connect.bind(CdpConnection);
-  const connectUrls: string[] = [];
-  const connectSpy = vi
-    .spyOn(CdpConnection, "connect")
-    .mockImplementation((url, ...rest) => {
-      connectUrls.push(url);
-      const wireUrl = routedWireUrls.get(url);
-      if (wireUrl === undefined) {
-        throw new Error(`Unexpected unmapped browser socket URL: ${url}`);
-      }
-      return originalConnect(wireUrl, ...rest);
-    });
-  const provider = new CdpBrowserProvider();
-  try {
-    const firstIdAListed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: canonicalIdAUrl,
-      }),
-    );
-    if (!firstIdAListed.ok) throw firstIdAListed.error;
-
-    const firstIdBListed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: canonicalIdBUrl,
-      }),
-    );
-    if (!firstIdBListed.ok) throw firstIdBListed.error;
-
-    const secondIdAInspected = await provider.inspectPage(
-      inspectWebPageInputSchema.parse({
-        cdp_endpoint: canonicalIdAUrl,
-        target_id: "allowed-page",
-        observation_ms: 0,
-      }),
-    );
-    if (!secondIdAInspected.ok) throw secondIdAInspected.error;
-
-    const leadingZeroIdBListed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/idB`,
-      }),
-    );
-    if (!leadingZeroIdBListed.ok) throw leadingZeroIdBListed.error;
-
-    const caseDistinctListed = await provider.listTargets(
-      listBrowserTargetsInputSchema.parse({
-        cdp_endpoint: canonicalCaseIdAUrl,
-      }),
-    );
-    if (!caseDistinctListed.ok) throw caseDistinctListed.error;
-
-    const caseDistinctScreenshot = await provider.captureScreenshot(
-      captureWebScreenshotInputSchema.parse({
-        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/IdA`,
-        target_id: "allowed-page",
-      }),
-    );
-    if (!caseDistinctScreenshot.ok) throw caseDistinctScreenshot.error;
-
-    expect(browserA.openedConnectionCount()).toBe(1);
-    expect(browserB.openedConnectionCount()).toBe(1);
-    expect(browserCaseA.openedConnectionCount()).toBe(1);
-    expect(browserA.activeConnectionCount()).toBe(1);
-    expect(browserB.activeConnectionCount()).toBe(1);
-    expect(browserCaseA.activeConnectionCount()).toBe(1);
-    expect(connectUrls).toEqual([
-      canonicalIdAUrl,
-      canonicalIdBUrl,
-      canonicalCaseIdAUrl,
-    ]);
-  } finally {
-    connectSpy.mockRestore();
-    await provider.close();
-  }
-  await waitFor(() => {
-    expect(browserA.activeConnectionCount()).toBe(0);
-    expect(browserB.activeConnectionCount()).toBe(0);
-    expect(browserCaseA.activeConnectionCount()).toBe(0);
+    for (const { browser } of routes)
+      expect(browser.activeConnectionCount()).toBe(0);
   });
 });

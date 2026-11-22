@@ -40,25 +40,45 @@ class HeaderJson {
     readonly budget: ModelReportBudget,
   ) {}
   #space(): void {
-    while (" \t\r\n".includes(this.text[this.#position] ?? "x"))
-      this.#position++;
+    const text = this.text;
+    const len = text.length;
+    while (this.#position < len) {
+      const code = text.charCodeAt(this.#position);
+      if (code === 0x20 || code === 0x09 || code === 0x0d || code === 0x0a)
+        this.#position++;
+      else break;
+    }
   }
   #string(): string {
     const start = this.#position++;
-    while (this.#position < this.text.length) {
-      const c = this.text[this.#position++];
-      if (c === "\\") this.#position++;
-      else if (c === '"') {
-        const raw = this.text.slice(start, this.#position);
+    const text = this.text;
+    const len = text.length;
+    while (this.#position < len) {
+      const code = text.charCodeAt(this.#position++);
+      if (code === 0x5c) this.#position++;
+      else if (code === 0x22) {
+        const raw = text.slice(start, this.#position);
         this.budget.charge(6 * raw.length + 2);
         try {
           const value: unknown = parseJsonStringLiteral(raw);
           if (typeof value !== "string")
             return rejectModel("Invalid JSON string");
-          for (const unit of value) {
-            const code = unit.codePointAt(0) ?? 0;
-            if (code >= 0xd800 && code <= 0xdfff)
-              rejectModel("Safetensors JSON contains an unpaired surrogate");
+          // `text` was decoded via strict UTF-8, so only `\u` escapes can
+          // introduce unpaired UTF-16 surrogates.
+          if (raw.includes("\\u")) {
+            for (let i = 0; i < value.length; i++) {
+              const code = value.charCodeAt(i);
+              if (code >= 0xd800 && code <= 0xdbff) {
+                const next = value.charCodeAt(i + 1);
+                if (next >= 0xdc00 && next <= 0xdfff) i++;
+                else
+                  rejectModel(
+                    "Safetensors JSON contains an unpaired surrogate",
+                  );
+              } else if (code >= 0xdc00 && code <= 0xdfff) {
+                rejectModel("Safetensors JSON contains an unpaired surrogate");
+              }
+            }
           }
           return value;
         } catch (cause) {
@@ -124,33 +144,63 @@ class HeaderJson {
         if (next !== ",") rejectModel("Invalid safetensors JSON container");
       }
     }
+    const text = this.text;
+    const len = text.length;
     const start = this.#position;
-    if (this.text[this.#position] === "-") this.#position++;
-    const integerStart = this.#position;
-    if (this.text[this.#position] === "0") this.#position++;
-    else if (/^[1-9]$/u.test(this.text[this.#position] ?? "")) {
+    let isNonNegativeInt = true;
+    if (this.#position < len && text.charCodeAt(this.#position) === 0x2d) {
       this.#position++;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      isNonNegativeInt = false;
+    }
+    const integerStart = this.#position;
+    if (this.#position < len) {
+      const firstDigit = text.charCodeAt(this.#position);
+      if (firstDigit === 0x30) {
+        this.#position++;
+      } else if (firstDigit >= 0x31 && firstDigit <= 0x39) {
+        this.#position++;
+        while (this.#position < len) {
+          const d = text.charCodeAt(this.#position);
+          if (d >= 0x30 && d <= 0x39) this.#position++;
+          else break;
+        }
+      }
     }
     if (this.#position === integerStart)
       return rejectModel("Invalid safetensors JSON value");
-    if (this.text[this.#position] === ".") {
+    if (this.#position < len && text.charCodeAt(this.#position) === 0x2e) {
+      isNonNegativeInt = false;
       this.#position++;
       const fractionStart = this.#position;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
+      while (this.#position < len) {
+        const d = text.charCodeAt(this.#position);
+        if (d >= 0x30 && d <= 0x39) this.#position++;
+        else break;
+      }
       if (this.#position === fractionStart)
         return rejectModel("Invalid safetensors JSON value");
     }
-    if (/[eE]/u.test(this.text[this.#position] ?? "")) {
-      this.#position++;
-      if (/[+-]/u.test(this.text[this.#position] ?? "")) this.#position++;
-      const exponentStart = this.#position;
-      while (/^[0-9]$/u.test(this.text[this.#position] ?? "")) this.#position++;
-      if (this.#position === exponentStart)
-        return rejectModel("Invalid safetensors JSON value");
+    if (this.#position < len) {
+      const exp = text.charCodeAt(this.#position);
+      if (exp === 0x65 || exp === 0x45) {
+        isNonNegativeInt = false;
+        this.#position++;
+        if (this.#position < len) {
+          const sign = text.charCodeAt(this.#position);
+          if (sign === 0x2b || sign === 0x2d) this.#position++;
+        }
+        const exponentStart = this.#position;
+        while (this.#position < len) {
+          const d = text.charCodeAt(this.#position);
+          if (d >= 0x30 && d <= 0x39) this.#position++;
+          else break;
+        }
+        if (this.#position === exponentStart)
+          return rejectModel("Invalid safetensors JSON value");
+      }
     }
-    const numeric = this.text.slice(start, this.#position);
-    if (/^(?:0|[1-9][0-9]*)$/u.test(numeric)) {
+    const numeric = text.slice(start, this.#position);
+    if (isNonNegativeInt) {
       if (numeric.length > 20) return new JsonNumber(numeric);
       const integer = BigInt(numeric);
       if (integer <= 0xffffffffffffffffn) return integer;

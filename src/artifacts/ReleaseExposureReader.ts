@@ -38,7 +38,16 @@ import {
   asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
-import { decodeBinaryPlistText } from "../domain/apple/binaryPlistMaterializer.js";
+import {
+  decodeDeclaredText,
+  decodeMemberText,
+  declaresTextEncoding,
+  getCachedTextDecoder,
+  hasNonUtf8Nul,
+  type MemberText,
+} from "./releaseExposure/memberTextDecoding.js";
+import { nodeShebang } from "./releaseExposure/nodeShebang.js";
+import { hasElfMagic } from "../domain/binaryContainer.js";
 import {
   InternalInvariantError,
   invariantViolation,
@@ -56,7 +65,6 @@ import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
-  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
   cancelledBy,
@@ -75,7 +83,6 @@ import {
   inspectPeCodeViewFromBuffer,
   parsePeRecordStructure,
 } from "../domain/binaryTarget.js";
-import { hasBinaryPlistSignature } from "../domain/apple/appleArchiveFormat.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import type {
   ArtifactAdmissionLimit,
@@ -90,6 +97,8 @@ import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { runOwned } from "../providers/runOwned.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -121,6 +130,7 @@ import {
 } from "../filesystem/RegularFile.js";
 import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
+  hasScheme,
   htmlUrlText,
   stripQueryAndFragment,
 } from "../domain/artifactPathSyntax.js";
@@ -211,11 +221,8 @@ const SCAN_INTERRUPTED =
 const SCAN_CANCELLED =
   "The member scan was cancelled. Members it did not reach are unknown.";
 /** Decoded representation bound for one binary plist text member. */
-const RELEASE_EXPOSURE_PLIST_DECODE_BYTES = 16 * 1024 * 1024;
 /** Bytes of a member that decide how its NULs are read. */
-const MEMBER_ENCODING_HEADER_BYTES = 512;
 /** One header byte in this many being NUL is too many for UTF-8 text. */
-const WIDE_TEXT_NUL_DIVISOR = 8;
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 /** Markup that `htmlArtifactReferences` reads for scripts. SVG can carry them too. */
@@ -257,13 +264,19 @@ const namedMapReference = (
 interface OpenContainer {
   readonly path: string;
   readonly reader: ArtifactReader;
-  entries: readonly ArtifactEntry[] | null;
+  /** An owned reader can still need to verify its carrier before listing or reading. */
+  unverifiedSha256: string | undefined;
+  listing: ContainerListing | null;
+}
+
+interface ContainerListing {
+  readonly entries: readonly ArtifactEntry[];
   /**
    * Entries by container-relative logical path, in listing order. Inventory
    * numbers same-path occurrences in that order, so an occurrence's duplicate
    * ordinal selects its entry no matter which read path reaches it first.
    */
-  readonly byPath: Map<string, ArtifactEntry[]>;
+  readonly byPath: ReadonlyMap<string, readonly ArtifactEntry[]>;
 }
 
 /** Read-only inventory and bounded member scan for one shipped artifact. */
@@ -443,94 +456,69 @@ const consumeInventory = async (
 ): Promise<ReleaseExposureScan> => {
   const containers = new Map<string, OpenContainer>();
   const progress: ScanProgress = {};
-  let result: ReleaseExposureScan | undefined;
-  let failure: unknown;
-  let failed = false;
-  try {
-    result = await scanOccurrences(input, containers, progress);
-  } catch (cause) {
-    failure = cause;
-    failed = true;
+  let completed: ReleaseExposureScan | undefined;
+  const finalized = await runOwned(
+    async () => {
+      try {
+        return ok(await scanOccurrences(input, containers, progress));
+      } catch (cause) {
+        return err(
+          releaseExposureFailure(cause, input.path, input.maxFileBytes),
+        );
+      }
+    },
+    {
+      providerId: RELEASE_EXPOSURE_PROVIDER.id,
+      operation: OPERATION,
+      signal: input.signal,
+      inspectPrimary: (result) => {
+        if (result.ok) completed = result.value;
+      },
+      close: async () => {
+        const [first, ...remaining] = [
+          ...input.siblingCleanup,
+          ...(await releaseContainers(containers, input.resources)),
+        ];
+        if (first !== undefined)
+          throw input.resources.cleanupFailure({ kind: "completed" }, [
+            first,
+            ...remaining,
+          ]);
+      },
+      diagnostics: (scan) => ({ scan: jsonValueSchema.parse(scan) }),
+    },
+  );
+  if (finalized.kind === "completed") return finalized.value;
+  const cleanupIncomplete = finalized.error.cleanupIncomplete;
+  if (cleanupIncomplete || finalized.kind === "cancelled") {
+    const observed = completed ?? progress.assemble?.();
+    if (observed !== undefined)
+      input.visitInterruptedScan?.({
+        ...prependLimitations(observed, [
+          cleanupIncomplete ? SCAN_INTERRUPTED : SCAN_CANCELLED,
+        ]),
+        coverage:
+          completed !== undefined && !cleanupIncomplete
+            ? observed.coverage
+            : "unknown",
+      });
   }
-  const [firstCleanup, ...remainingCleanup] = [
-    ...input.siblingCleanup,
-    ...(await releaseContainers(containers, input.resources)),
-  ];
-  // A cancelled scan keeps what it examined, as one stopped on cleanup does;
-  // the caller still receives the cancellation.
-  const cancelled = failed && wasCancelled(failure);
-  if (
-    firstCleanup !== undefined ||
-    (failed && leftCleanupUnfinished(failure)) ||
-    cancelled
-  )
-    reportInterruptedScan(
-      input,
-      result ?? progress.assemble?.(),
-      cancelled && firstCleanup === undefined && !leftCleanupUnfinished(failure)
-        ? SCAN_CANCELLED
-        : SCAN_INTERRUPTED,
-    );
-  if (firstCleanup !== undefined) {
-    const primary = failed
-      ? releaseExposureFailure(failure, input.path, input.maxFileBytes)
-      : new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-          cause: firstCleanup.cause,
-          diagnostics:
-            result === undefined
-              ? undefined
-              : { scan: jsonValueSchema.parse(result) },
-        });
-    throw projectStableArtifactFailure(
-      input.resources.cleanupFailure({ kind: "completed" }, [
-        firstCleanup,
-        ...remainingCleanup,
-      ]),
-      primary,
-      input.path,
-      RELEASE_EXPOSURE_PROVIDER.id,
+  if (finalized.kind === "completed-cleanup-retained")
+    throw analysisErrorWithCleanupDependencies(
+      new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
+        cause: finalized.error.cause,
+        diagnostics: finalized.error.diagnostics,
+      }),
+      finalized.error,
       OPERATION,
     );
-  }
-  if (failed) throw failure;
-  if (result === undefined)
-    throw invariantViolation("Release exposure scan produced no result.");
-  return result;
+  throw finalized.error;
 };
 
 /** What a failed scan can still assemble once it has somewhere to record facts. */
 interface ScanProgress {
   assemble?: () => ReleaseExposureScan;
 }
-
-const leftCleanupUnfinished = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  if (failure instanceof AnalysisError) return failure.cleanupIncomplete;
-  return (
-    failure instanceof ArtifactReaderFailure && failure.cleanup !== undefined
-  );
-};
-
-const wasCancelled = (cause: unknown): boolean => {
-  const failure = asReadFailure(cause);
-  return (
-    failure instanceof AnalysisCancelledError ||
-    (failure instanceof ArtifactReaderFailure && failure.reason === "cancelled")
-  );
-};
-
-/** Completed findings survive the failure; what was not reached stays unknown. */
-const reportInterruptedScan = (
-  input: ConsumeInput,
-  scan: ReleaseExposureScan | undefined,
-  reason: string,
-): void => {
-  if (scan === undefined) return;
-  input.visitInterruptedScan?.({
-    ...prependLimitations(scan, [reason]),
-    coverage: "unknown",
-  });
-};
 
 /** Hand each package reader to the resource scope so a failed close keeps its path and can be retried. */
 const releaseContainers = async (
@@ -666,6 +654,7 @@ const scanOccurrences = async (
           packageKind,
           containers,
           state,
+          shaOf(occurrence, nodeSha),
         );
       continue;
     }
@@ -1525,7 +1514,7 @@ const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
   } catch (cause) {
     if (!(cause instanceof TypeError)) throw cause;
     return !hasVisibleNonMapPrefix(
-      new TextDecoder(encoding ?? "utf-8").decode(prefix),
+      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
     );
   }
 };
@@ -1815,164 +1804,6 @@ const hasNodeShebang = (prefix: Buffer): boolean =>
  * `${NAME}` the scan cannot resolve, such as `${NODE_BIN}`, may be Node, so
  * it is undefined rather than false.
  */
-const nodeShebang = (prefix: Buffer): boolean | undefined => {
-  if (prefix.toString("latin1", 0, 2) !== "#!") return false;
-  const [line = ""] = prefix.toString("latin1", 2).split("\n", 1);
-  const [, interpreter = "", operands = ""] =
-    /^(\S*)[ \t]*(.*)$/su.exec(line.trim()) ?? [];
-  const program =
-    basename(interpreter) === "env"
-      ? envProgram(operands)
-      : { text: interpreter, expands: false };
-  if (program === undefined) return false;
-  const name = basename(program.text);
-  if (/^node(?:js)?$/u.test(name)) return true;
-  return program.expands && name.includes("${") ? undefined : false;
-};
-
-/** One `env` field, and whether `env -S` expands a `${NAME}` inside it. */
-interface EnvField {
-  readonly text: string;
-  readonly expands: boolean;
-}
-
-/** `env` options whose argument is the next field, as in `-u NODE_OPTIONS`. */
-const ENV_OPTION_WITH_ARGUMENT = new Set([
-  "-u",
-  "--unset",
-  "-C",
-  "--chdir",
-  "-P",
-]);
-
-/**
- * The program an `env` shebang runs: the first field that is neither an
- * option, an option's argument, nor a `NAME=value` setting. `-S` takes the
- * rest of the line as one string and splits it as `env` does, so quoted
- * spaces stay inside their field.
- */
-const envProgram = (operands: string): EnvField | undefined => {
-  const fields: EnvField[] = [];
-  let rest = operands;
-  const next = (): EnvField | undefined => {
-    if (fields.length > 0) return fields.shift();
-    const [, field, after = ""] = /^[ \t]*([^ \t]+)(.*)$/su.exec(rest) ?? [];
-    rest = after;
-    return field === undefined ? undefined : { text: field, expands: false };
-  };
-  for (let entry = next(); entry !== undefined; entry = next()) {
-    const field = entry.text;
-    // Past `--` nothing is an option, but settings still come first.
-    if (field === "--") {
-      for (let word = next(); word !== undefined; word = next())
-        if (!word.text.includes("=")) return word;
-      return undefined;
-    }
-    if (ENV_OPTION_WITH_ARGUMENT.has(field)) {
-      next();
-      continue;
-    }
-    const attached =
-      /^-[0iv]*S(.*)$/su.exec(field)?.[1] ??
-      (field.startsWith("--split-string=")
-        ? field.slice("--split-string=".length)
-        : undefined);
-    if (attached !== undefined) {
-      // The kernel passes the whole line as one operand, so an `-S` read from
-      // the line itself owns everything after it, separators included.
-      const fromLine = fields.length === 0;
-      const words = splitEnvString(fromLine ? attached + rest : attached);
-      if (words === undefined) return undefined;
-      if (fromLine) rest = "";
-      fields.unshift(...words);
-      continue;
-    }
-    if (field.startsWith("-") || field.includes("=")) continue;
-    return entry;
-  }
-  return undefined;
-};
-
-/** Escapes `env -S` accepts outside single quotes, as GNU coreutils reads them. */
-const ENV_SPLIT_ESCAPES: Readonly<Record<string, string>> = {
-  "\\": "\\",
-  "'": "'",
-  '"': '"',
-  "#": "#",
-  $: "$",
-  f: "\f",
-  n: "\n",
-  r: "\r",
-  t: "\t",
-  v: "\v",
-};
-
-/**
- * Split an `env -S` string on its unquoted spaces and tabs. Single quotes keep
- * text literally but for `\\` and `\'`; double quotes and bare text take the
- * escapes above, `\_` separates fields outside quotes and is a space inside
- * them, `\c` ends the string, and a `#` that starts a field begins a comment.
- * `${NAME}` stays as written: it can only change a value, never which field is
- * the program, so its field is marked as expanding. A string `env` itself
- * rejects, such as an unterminated quote or an unknown escape, runs nothing.
- */
-const splitEnvString = (text: string): EnvField[] | undefined => {
-  const fields: EnvField[] = [];
-  let field: string | null = null;
-  let expands = false;
-  let quote: "'" | '"' | null = null;
-  const end = (): void => {
-    if (field !== null) fields.push({ text: field, expands });
-    field = null;
-    expands = false;
-  };
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index] ?? "";
-    if (quote === "'") {
-      const escaped = text[index + 1];
-      if (character === "'") quote = null;
-      else if (character === "\\" && (escaped === "\\" || escaped === "'")) {
-        field += escaped;
-        index += 1;
-      } else field += character;
-      continue;
-    }
-    if (character === "\\") {
-      const escaped = text[index + 1];
-      index += 1;
-      if (escaped === "c") {
-        if (quote !== null) return undefined;
-        break;
-      }
-      if (escaped === "_") {
-        if (quote === null) end();
-        else field += " ";
-        continue;
-      }
-      const value =
-        escaped === undefined ? undefined : ENV_SPLIT_ESCAPES[escaped];
-      if (value === undefined) return undefined;
-      field = (field ?? "") + value;
-      continue;
-    }
-    if (character === "$" && text[index + 1] === "{") expands = true;
-    if (quote === '"') {
-      if (character === '"') quote = null;
-      else field += character;
-      continue;
-    }
-    if (character === " " || character === "\t") end();
-    else if (character === "#" && field === null) break;
-    else if (character === "'" || character === '"') {
-      quote = character;
-      field ??= "";
-    } else field = (field ?? "") + character;
-  }
-  if (quote !== null) return undefined;
-  end();
-  return fields;
-};
-
 /**
  * A name is not a format: a package member called `payload.json` or
  * `payload.js.map` can be a PE or an ASAR, and a script or map declaration
@@ -2211,7 +2042,8 @@ const examineInlineMaps = (
  * examined as ordinary text was not assessed as a map, so coverage is unknown.
  * A `file:` URL names one absolute location rather than a path beside the
  * script, so even a `.map` target stays unassessed until that location is
- * reached. Any other scheme is remote.
+ * reached. Other schemes name external references. A native absolute path
+ * may contain a Windows drive colon.
  */
 const noteLocalMapReference = (
   state: ScanState,
@@ -2232,7 +2064,7 @@ const noteLocalMapReference = (
     }
     return;
   }
-  if (/^[a-z][a-z0-9+.-]+:/iu.test(url)) return;
+  if (!isAbsolute(path) && hasScheme(url)) return;
   if (path.length === 0) return;
   let decoded: string;
   try {
@@ -2435,70 +2267,6 @@ const noteUnreachedTargets = (state: ScanState): void => {
       state.skippedMaps += 1;
 };
 
-/** Text decoded from a member; `complete` is false when part of it went unread. */
-interface MemberText {
-  readonly text: string;
-  readonly complete: boolean;
-}
-
-/**
- * A binary plist that cannot be fully decoded keeps its raw bytes in the scan,
- * for the ASCII strings they show, beside whatever text it did decode, but its
- * other strings were not examined.
- */
-const decodeBinaryPlistMember = (bytes: Buffer): MemberText => {
-  try {
-    const decoded = decodeBinaryPlistText(
-      bytes,
-      RELEASE_EXPOSURE_PLIST_DECODE_BYTES,
-    );
-    return decoded.complete
-      ? decoded
-      : { text: `${decoded.text}\n${bytes.toString("utf8")}`, complete: false };
-  } catch (cause: unknown) {
-    // A broken internal assumption is a REA defect, not an undecodable plist.
-    if (cause instanceof InternalInvariantError) throw cause;
-    return { text: bytes.toString("utf8"), complete: false };
-  }
-};
-
-/**
- * Bytes that name their own text encoding, whose NULs are that encoding's
- * structure rather than a sign of binary data. `decodeMemberText` reads each of
- * these; a probe that admits on NULs alone would drop them unexamined.
- */
-const declaresTextEncoding = (bytes: Buffer): boolean =>
-  byteOrderMarkEncoding(bytes) !== null || hasBinaryPlistSignature(bytes);
-
-/** Retain visible text after a decoding error without calling the read complete. */
-const decodeDeclaredText = (bytes: Buffer, encoding: string): MemberText => {
-  try {
-    return {
-      text: new TextDecoder(encoding, { fatal: true }).decode(bytes),
-      complete: true,
-    };
-  } catch (cause) {
-    if (!(cause instanceof TypeError)) throw cause;
-    return { text: new TextDecoder(encoding).decode(bytes), complete: false };
-  }
-};
-
-/**
- * The text a member's bytes encode, or null when they cannot be read as text.
- * A member's kind says nothing about its encoding: wide text has no byte order
- * mark to explain its NULs, and a scan of it would match nothing and still count
- * as complete. A NUL inside UTF-8 text does not change how the rest of it reads.
- * A binary plist has its own object encoding, so its owner decodes it.
- */
-const decodeMemberText = (bytes: Buffer): MemberText | null => {
-  const encoding = byteOrderMarkEncoding(bytes);
-  if (encoding === "utf-32") return null;
-  if (encoding !== null) return decodeDeclaredText(bytes, encoding);
-  if (hasBinaryPlistSignature(bytes)) return decodeBinaryPlistMember(bytes);
-  if (hasNonUtf8Nul(bytes)) return null;
-  return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
-};
-
 const scanText = (
   state: ScanState,
   member: MemberView,
@@ -2556,11 +2324,13 @@ const examinePackagedBinary = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
+  let probedImage: Extract<MemberRead, { kind: "bytes" }> | null = null;
   if (native !== null) {
     state.packagedNative += 1;
-    await probePackagedImage(state, member, native, context);
+    probedImage = await probePackagedImage(state, member, native, context);
   } else await examineProbedText(state, member, probe, context);
   if (native !== "pe") return true;
+  if (context.signal?.aborted) throw cancelledBy(OPERATION, context.signal);
   if (state.packagedPeReads >= MAX_RELEASE_EXPOSURE_PACKAGED_PE_READS) {
     notePeNotExamined(state, member.location);
     return true;
@@ -2569,7 +2339,8 @@ const examinePackagedBinary = async (
   const image =
     probe.kind === "bytes"
       ? probe
-      : await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES);
+      : (probedImage ??
+        (await member.read(MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES)));
   if (image.kind === "bytes") readPdb(state, image.bytes, member.location);
   else notePeNotExamined(state, member.location);
   return image.kind !== "unread";
@@ -2664,7 +2435,10 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
       if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
       else if (
         state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
-        !state.pdbPathBytes.some(({ image_path }) => image_path === imagePath)
+        !state.pdbPathBytes.some(
+          ({ image_path, bytes_hex }) =>
+            image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
+        )
       )
         state.pdbPathBytes.push({
           image_path: imagePath,
@@ -2955,7 +2729,7 @@ const probePackagedImage = async (
   member: MemberView,
   nativeFormat: NativeFormat,
   context: ScanContext,
-): Promise<void> => {
+): Promise<Extract<MemberRead, { kind: "bytes" }> | null> => {
   const bytesReadBefore = state.memberBytesRead;
   const allowance = context.maxFileBytes - state.packagedProbeBytes;
   const image = allowance > 0 ? await member.read(allowance) : null;
@@ -2970,7 +2744,7 @@ const probePackagedImage = async (
       state,
       `Did not probe ${member.location} for an embedded package.`,
     );
-    return;
+    return null;
   }
   state.packagedProbeBytes += image.bytes.length;
   const probe = await embeddedPackageFormatOfBytes(
@@ -2983,6 +2757,10 @@ const probePackagedImage = async (
   if (probe.kind === "unreadable") noteUnexaminedPackage(state);
   else if (probe.kind === "package")
     noteNestedPackage(state, probe.format, member.location);
+  return nativeFormat === "pe" &&
+    image.bytes.length <= MAX_RELEASE_EXPOSURE_PACKAGED_PE_BYTES
+    ? image
+    : null;
 };
 
 const scanEmbeddedPackage = async (
@@ -3024,6 +2802,7 @@ const scanEmbeddedPackage = async (
     probe.format,
     containers,
     state,
+    state.nativeDigests.get(filePath),
   );
 };
 
@@ -3034,17 +2813,19 @@ const scanUnexpandedContainer = async (
   format: PackageFormat,
   containers: Map<string, OpenContainer>,
   state: ScanState,
+  expectedSha256?: string,
 ): Promise<void> => {
-  let entries: readonly ArtifactEntry[];
+  let listing: ContainerListing;
   try {
     const container = await openContainer(
       containers,
       occurrence.occurrence_id,
       filePath,
       format,
-      input.inventory?.nodes.find(
-        (node) => node.artifact_id === occurrence.artifact_id,
-      )?.sha256,
+      expectedSha256 ??
+        input.inventory?.nodes.find(
+          (node) => node.artifact_id === occurrence.artifact_id,
+        )?.sha256,
       state,
       input.signal,
     );
@@ -3052,13 +2833,8 @@ const scanUnexpandedContainer = async (
       noteUnexaminedPackage(state);
       return;
     }
-    entries = await containerEntries(
-      container,
-      state,
-      input.signal,
-      (entry) => {
-        noteUnlistedEntry(state, entry);
-      },
+    listing = await listContainer(container, state, input.signal, (entry) =>
+      noteUnlistedEntry(state, entry),
     );
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -3066,7 +2842,7 @@ const scanUnexpandedContainer = async (
     pushLimitation(state, `Could not list ${filePath}.`);
     return;
   }
-  for (const entry of entries) {
+  for (const entry of listing.entries) {
     if (input.signal?.aborted) throw cancelledBy(OPERATION, input.signal);
     const location = `${filePath}/${entry.path}`;
     if (hasCompanionName(entry.path)) state.companionPaths.add(location);
@@ -3187,8 +2963,8 @@ const readContainerMember = async (
       input.signal,
     );
     if (container === null) return { kind: "unread" };
-    await containerEntries(container, state, input.signal);
-    const entry = container.byPath.get(entryPath(occurrence, parent))?.[
+    const { byPath } = await listContainer(container, state, input.signal);
+    const entry = byPath.get(entryPath(occurrence, parent))?.[
       ordinals.get(occurrence.occurrence_id) ?? 0
     ];
     if (entry === undefined || entry.kind !== "file") return { kind: "unread" };
@@ -3224,42 +3000,49 @@ const openContainer = async (
   state: ScanState,
   signal: AbortSignal | undefined,
 ): Promise<OpenContainer | null> => {
-  const cached = containers.get(id);
-  if (cached !== undefined) return cached;
-  if (containers.size >= OPEN_CONTAINER_LIMIT) {
-    pushLimitation(
-      state,
-      `Stopped opening package readers after ${String(OPEN_CONTAINER_LIMIT)} containers.`,
-    );
-    return null;
+  let container = containers.get(id);
+  if (container === undefined) {
+    if (containers.size >= OPEN_CONTAINER_LIMIT) {
+      pushLimitation(
+        state,
+        `Stopped opening package readers after ${String(OPEN_CONTAINER_LIMIT)} containers.`,
+      );
+      return null;
+    }
+    if (signal?.aborted) throw cancelledBy(OPERATION, signal);
+    const reader = createArtifactReader(filePath, format, {
+      environment: process.env,
+      unreadableDirectories: "omit",
+      asarHeaderAdmission: state.asarHeaderAdmission,
+    });
+    if (reader === undefined) return null;
+    container = {
+      path: filePath,
+      reader,
+      unverifiedSha256: expectedSha256,
+      listing: null,
+    };
+    containers.set(id, container);
   }
-  if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-  const reader = createArtifactReader(filePath, format, {
-    environment: process.env,
-    unreadableDirectories: "omit",
-    asarHeaderAdmission: state.asarHeaderAdmission,
-  });
-  if (reader === undefined) return null;
-  const container: OpenContainer = {
-    path: filePath,
-    reader,
-    entries: null,
-    byPath: new Map(),
-  };
-  containers.set(id, container);
-  if (expectedSha256 !== undefined)
-    await reader.prepareContainer?.(expectedSha256, signal);
+  if (container.unverifiedSha256 !== undefined) {
+    await container.reader.prepareContainer?.(
+      container.unverifiedSha256,
+      signal,
+    );
+    container.unverifiedSha256 = undefined;
+  }
   return container;
 };
 
-const containerEntries = async (
+const listContainer = async (
   container: OpenContainer,
   state: ScanState,
   signal: AbortSignal | undefined,
   onPastCap?: (entry: ArtifactEntry) => void,
-): Promise<readonly ArtifactEntry[]> => {
-  if (container.entries !== null) return container.entries;
+): Promise<ContainerListing> => {
+  if (container.listing !== null) return container.listing;
   const listed: ArtifactEntry[] = [];
+  const byPath = new Map<string, ArtifactEntry[]>();
   const traversal = new ArtifactTraversalObservation();
   let count = 0;
   let truncated = false;
@@ -3279,16 +3062,17 @@ const containerEntries = async (
     }
     listed.push(entry);
     const key = logicalPathNfc(entry.path).replace(/\/+$/u, "");
-    const sameName = container.byPath.get(key);
-    if (sameName === undefined) container.byPath.set(key, [entry]);
+    const sameName = byPath.get(key);
+    if (sameName === undefined) byPath.set(key, [entry]);
     else sameName.push(entry);
   }
   const coverage = traversal.snapshot();
   if (coverage.status === "unknown") state.coverageUnknown = true;
   for (const limitation of coverage.limitations)
     pushLimitation(state, limitation);
-  container.entries = listed;
-  return listed;
+  const listing = { entries: listed, byPath };
+  container.listing = listing;
+  return listing;
 };
 
 const readEntryBytes = async (
@@ -3416,7 +3200,7 @@ const readSpan = async (
             { integrityCheck: "member-identity" },
           );
         state.memberBytesRead += bytes.length - charged;
-        return Buffer.from(bytes);
+        return bytes;
       },
     );
   } catch (cause) {
@@ -3539,14 +3323,8 @@ const listSiblings = async (
     resource: `directory beside the selected file: ${directory}`,
     handle: owner,
   });
-  if (!listed.ok && listed.error instanceof AnalysisError) {
-    if (attempt.kind === "failed")
-      throw resources.cleanupFailure({ kind: "failed", cause: listed.error }, [
-        attempt,
-      ]);
-    throw listed.error;
-  }
   if (attempt.kind === "failed") siblingCleanup.push(attempt);
+  if (!listed.ok && listed.error instanceof AnalysisError) throw listed.error;
   if (!listed.ok || listed.value) noteIncompleteSiblings(state);
   return entries;
 };
@@ -3795,14 +3573,7 @@ const sniffNativeFormat = (
   bytes: Buffer,
   size: number | null = bytes.length,
 ): NativeFormat | null => {
-  if (
-    bytes.length >= 4 &&
-    bytes[0] === 0x7f &&
-    bytes[1] === 0x45 &&
-    bytes[2] === 0x4c &&
-    bytes[3] === 0x46
-  )
-    return "elf";
+  if (hasElfMagic(bytes)) return "elf";
   if (readMachoHeaderPrefixFacts(bytes).format !== null) return "mach-o";
   const universal = sniffFatFormat(bytes, size);
   if (universal !== null) return universal;
@@ -3819,20 +3590,6 @@ const targetKind = (
   if (format === "asar") return "asar";
   if (NATIVE.has(format) || EXTRACTABLE.has(format)) return "executable";
   return "file";
-};
-
-/**
- * Wide text is valid UTF-8 when its characters are ASCII, so validity alone
- * cannot separate it from UTF-8 holding a NUL. Density can: UTF-16 puts a NUL in
- * every other byte of each ASCII character, and a stray NUL is one byte of many.
- */
-const hasNonUtf8Nul = (bytes: Buffer): boolean => {
-  const header = bytes.subarray(0, MEMBER_ENCODING_HEADER_BYTES);
-  const nuls = header.reduce((count, byte) => count + (byte === 0 ? 1 : 0), 0);
-  return (
-    nuls > 0 &&
-    (nuls * WIDE_TEXT_NUL_DIVISOR >= header.length || !isUtf8(bytes))
-  );
 };
 
 const pushSample = (samples: string[], value: string): void => {

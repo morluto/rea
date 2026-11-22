@@ -264,6 +264,19 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+During review, name the fact or resource whose ownership must agree across
+entry points. Trace where it is established, which consumers rely on it,
+and where fallback, retry, or cleanup can change the outcome. Search for
+other code that derives the same fact or claims the same responsibility.
+Different implementations can still make the same decision independently.
+
+Have the owner carry the result, its source and scope, and any uncertainty.
+Each consumer applies its own policy to those shared facts. Keep proof of
+identity and ownership separate from validity, readiness, and authority to
+act. For an operation that needs fresh evidence, ask the same owner to
+revalidate. For a proposed change, use the owner's rules to evaluate what
+would remain before applying it.
+
 Keep the reader's observation independent of the operation that needs it.
 For example, the Evidence file reader can recognize the shape of an
 analysis snapshot before authenticating it. Import and comparison can
@@ -608,9 +621,13 @@ the application layer.
 CLI commands register through
 [`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
 add the registrar to its family there and its module to `src/cli.ts`. The build
-records which registrar defines each top-level command, and a one-shot command
-loads only that registrar's module graph; help, completions, `--llms` and unknown
-names load the complete CLI. A registrar's command definitions must not depend
+records which registrar defines each top-level command, and running a known
+non-built-in command (including single-command discovery with `--help`, `-h`,
+`--schema`, `--llms`, or `--llms-full`) loads only that registrar's module
+graph. Root discovery, unknown command names, built-in requests (`completions`,
+`mcp` CLI subcommands, shell completion, and other built-in flags outside
+standalone `--version` and retired per-command `--mcp`), and a missing or
+unusable recording load the complete CLI. A registrar's command definitions must not depend
 on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
 that each one registers alone with the definitions the complete CLI gives it.
 Modules that every registrar imports set the startup cost of every command; load
@@ -645,6 +662,47 @@ retained reference only after recording succeeds. An absent writer or a writer
 returning a failure `Result` leaves the partial inline, as does a partial that
 is not valid Evidence. Unexpected recorder exceptions propagate. An `evidence_id`
 member alone does not establish Evidence validity or retention.
+
+### Design hot paths for single-pass work and zero redundant copies
+
+Apply these general patterns when implementing providers, bridges, adapters,
+and shared application workflows so performance is built into the owning
+boundary rather than patched downstream:
+
+- **Validate once at the trust boundary; avoid full-tree deep-clones on owned
+  payloads.** Use `ownedJsonValueSchema` / `ownedJsonObjectSchema` (in-place
+  validation without cloning) for freshly constructed, exclusively owned
+  objects instead of `jsonValueSchema.parse` / `jsonObjectSchema.parse`. Keep
+  cloning only when a downstream consumer mutates or freezes shared input
+  (such as `freezeJsonSnapshot`). When an upstream decoder has already
+  validated a large payload schema (for example `binaryLayoutPayloadSchema` or
+  `recordedCrashPayloadSchema`), validate only the added envelope fields and
+  cross-field invariants rather than re-parsing the full payload tree. Hoist
+  Zod schemas, regular expressions, and constant lookup `Set`s to module scope;
+  never construct `z.object(...)` inside per-record or per-field loops.
+- **Derive classifications, counts, and pruning summaries in a single pass.**
+  Fuse independent `.filter()`, `.some()`, and `.flatMap()` passes over the
+  same inventory or stream into one loop, and count matches with a loop rather
+  than allocating `.filter(...).length` intermediate arrays. Compute tiny
+  derived existence summaries during pass 1 (such as whether any packet uses a
+  protocol or whether any managed directory exists) to short-circuit expensive
+  secondary subprocesses or scans when no matching records exist.
+- **Use hash joins and reuse existing indexes instead of nested-loop scans.**
+  Before calling `.find()`, `.includes()`, or `.indexOf()` inside a loop over
+  another collection, reuse an existing `Map`/`Set` index on the context or
+  build one once outside the loop. In bridges (Java/Python), index tables,
+  procedures, and tokens by address or type path during analysis/loading (using
+  `putIfAbsent` when first-match precedence matters) and gate expensive engine
+  queries (such as SLEIGH p-code or flow resolution) behind cheap control-flow
+  checks.
+- **Bound I/O and cache freshness without breaking cancellation or cleanup
+  contracts.** Prefer single-pass streaming reads/hashes and pass
+  `expectedSize` to `readBoundedFileBytes` for regular files so reads avoid
+  double-allocation copies. When caching external tool digests or PATH probes
+  with `(dev, ino, size, mtimeNs, ctimeNs)` stat verification, bypass the fast
+  path when a caller or test injects a custom `artifactReader`, and never skip
+  a read whose contract requires observing mid-read cancellation or access
+  errors on every call.
 
 Measure the resource before choosing a budget and enforce it before the costly
 step. Account for value alternatives, trace-frame products, retained records,

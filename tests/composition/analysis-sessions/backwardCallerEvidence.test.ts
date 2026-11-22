@@ -116,24 +116,11 @@ it("links backward caller observations into workflow Evidence without a document
           evidence?.operation === "procedure_callers" &&
           evidence.parameters.procedure === "0x1000",
       );
-    expect(caller).toMatchObject({
-      parameters: { procedure: "0x1000" },
-      raw_result: forward,
-    });
-    expect(caller?.raw_result).toMatchObject({
-      forward_observations: {
-        call_references: [
-          {
-            caller_address: "0x2000",
-            source_address: "0x2004",
-            target_address: "0x1000",
-          },
-        ],
-      },
-    });
-    expect(caller?.raw_result).not.toHaveProperty("native_result.instructions");
-    expect(caller?.parameters).not.toHaveProperty("document");
-    expect(workflow.evidence_links).toContain(caller?.evidence_id);
+    if (caller === undefined)
+      throw new Error("Missing linked caller observation");
+    expect(caller.raw_result).toEqual(forward);
+    expect(caller.parameters).not.toHaveProperty("document");
+    expect(workflow.evidence_links).toContain(caller.evidence_id);
   } finally {
     await session.close();
   }

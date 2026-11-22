@@ -18,7 +18,9 @@ import {
   clientConfigurationForWrite,
   mergeClientConfigurationDocuments,
   readClientConfigurationFiles,
+  readEffectiveClientRegistrationConfiguration,
   type ClientConfigurationFileError,
+  type ProjectConfigurationReadOptions,
 } from "./ClientConfigurationFiles.js";
 import { replaceClientRegistrationLauncher } from "./ClientRegistration.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
@@ -139,6 +141,12 @@ export const prepareRegistration = async (
     admitClientConfigurationCandidate(location, layers, candidate, platform),
   );
   assertEffectiveLauncher(client, effective, launcher);
+  await verifyProjectLauncher(client, launcher, platform, path, {
+    candidates: [
+      { path: client.configPath, original: target, replacement: candidate },
+    ],
+    allowMissing: snapshot === undefined,
+  });
   return {
     path,
     client,
@@ -156,6 +164,7 @@ const assertEffectiveLauncher = (
   client: McpRegistrationClient,
   effective: ClientConfigurationDocument | undefined,
   launcher: ClientRegistrationCommand,
+  overridePath?: string,
 ): void => {
   const admitted = admitClientStdioConnection(
     effective === undefined
@@ -173,18 +182,58 @@ const assertEffectiveLauncher = (
   )
     throw new ConfigurationError(
       admitted.ok
-        ? "A higher-priority configuration overrides the selected stdio launcher. Update that source before registering this command."
+        ? `A higher-priority configuration${overridePath === undefined ? "" : ` at ${overridePath}`} overrides the selected stdio launcher. Update that source before registering this command.`
         : admitted.error.cause.message,
       {
         ...(admitted.ok ? {} : { cause: admitted.error.cause }),
         diagnostics: {
           settings_path: client.configPath,
+          ...(overridePath === undefined
+            ? {}
+            : { override_path: overridePath }),
           ...(client.inlineConfiguration === undefined
             ? {}
             : { inline_origin: client.inlineConfiguration.origin }),
         },
       },
     );
+};
+
+const verifyProjectLauncher = async (
+  client: McpRegistrationClient,
+  launcher: ClientRegistrationCommand,
+  platform: NodeJS.Platform,
+  transactionPath: string,
+  proposed?: Pick<ProjectConfigurationReadOptions, "candidates"> & {
+    readonly allowMissing: boolean;
+  },
+): Promise<void> => {
+  const project = client.projectConfiguration;
+  if (project === undefined) return;
+  const { document, launcherConfigPath } = requireAdmittedConfiguration(
+    await readEffectiveClientRegistrationConfiguration(
+      project.userClient,
+      undefined,
+      platform,
+      {
+        projectDirectory: project.directory,
+        writeTarget: {
+          path: client.configPath,
+          transactionPath,
+          allowMissing: proposed?.allowMissing ?? false,
+        },
+        ...(proposed?.candidates === undefined
+          ? {}
+          : { candidates: proposed.candidates }),
+      },
+    ),
+  );
+  assertEffectiveLauncher(
+    client,
+    document,
+    launcher,
+    launcherConfigPath === client.configPath ? undefined : launcherConfigPath,
+  );
 };
 
 /** Re-admit native layers around the caller's identity-verified target snapshot. */
@@ -206,4 +255,5 @@ export const verifyEffectiveRegistration = async (
     mergeClientConfigurationDocuments(layers, platform),
     launcher,
   );
+  await verifyProjectLauncher(client, launcher, platform, prepared.path);
 };

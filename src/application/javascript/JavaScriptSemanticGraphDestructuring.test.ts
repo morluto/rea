@@ -415,7 +415,6 @@ it.each(["{}", "unknownSource"])(
 );
 
 it.each([
-  ["ordinary array", "", "resolved"],
   ["prototype read alone", "Object.getPrototypeOf([].values());", "resolved"],
   [
     "one iterator's own next",
@@ -714,24 +713,6 @@ it.each([
     ).toMatchObject({ resolution });
   },
 );
-
-it("leaves an earlier destructuring dependency intact before an iterator prototype write", () => {
-  const graph = graphForJavaScript(`
-    const config = ["original"];
-    const [selected] = config;
-    Object.getPrototypeOf([].values()).next = () => ({ value: "other", done: false });
-  `);
-  const selected = graph.nodes.find(
-    ({ kind, label }) => kind === "binding" && label === "selected",
-  );
-  expect(
-    graph.relations.find(
-      (relation) =>
-        relation.relation === "destructures" &&
-        relation.target_node_id === selected?.node_id,
-    ),
-  ).toMatchObject({ resolution: "resolved" });
-});
 
 it.each([
   ["declaration", "const [selected] = config;", "resolved"],

@@ -22,7 +22,6 @@ describe("setup with configured but unavailable providers", () => {
     await writeFile(client.configPath, original);
     const environment = { HOPPER_LAUNCHER_PATH: "/custom/Hopper" };
     const doctor = createDoctorHostFixture({
-      validTarget: () => Promise.resolve(false),
       executable: () => Promise.resolve(false),
       clientRegistrations: () =>
         readClientRegistrationStatuses(root, undefined, {

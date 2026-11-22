@@ -1,11 +1,16 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { changedEvidenceSubject } from "../../../tests/fixtures/evidenceSubject.js";
 import { createEvidence } from "../evidence.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "../immutableJson.js";
+import * as webNetworkCapture from "../webNetworkCapture.js";
 import { projectAnalysisView } from "./analysisView.js";
-import { webNetworkCaptureSchema } from "../webNetworkCapture.js";
+import * as protobufCaptureView from "./protobufCaptureView.js";
 
 const capture = async () => {
-  const report = webNetworkCaptureSchema.parse({
+  const report = webNetworkCapture.webNetworkCaptureSchema.parse({
     artifact: { path: "/recordings/a.har", bytes: 100, sha256: "b".repeat(64) },
     decoder: {
       id: "projection-fixture",
@@ -227,4 +232,119 @@ it("omits large values by default, returns requested text inline and preserves p
       limit: 1,
     }).ok,
   ).toBe(false);
+});
+
+it("reuses one frozen capture snapshot across repeated webNetworkCapture and protobuf pages", async () => {
+  const { report, parent } = await capture();
+  const sharedReported = {
+    request: { method: "GET", url: "https://example.test" },
+  };
+  const record0 = report.records[0]!;
+  const multi = webNetworkCapture.webNetworkCaptureSchema.parse({
+    ...report,
+    total_records: 2,
+    records: [
+      { ...record0, ordinal: 0, reported: sharedReported },
+      {
+        ...record0,
+        ordinal: 1,
+        location: { kind: "json-pointer", pointer: "/log/entries/1" },
+        reported: sharedReported,
+      },
+    ],
+  });
+  const sealedSnapshot = freezeJsonSnapshot({
+    ...multi,
+    records: multi.records.map((entry) => ({
+      ...entry,
+      reported: sharedReported,
+    })),
+  });
+  const sealedParent = {
+    ...parent,
+    sealedResult: true,
+    normalizedResult: sealedSnapshot,
+  };
+  const unsealedParent = {
+    ...parent,
+    sealedResult: false,
+    normalizedResult: structuredClone(multi),
+  };
+
+  const parseSpy = vi.spyOn(
+    webNetworkCapture.webNetworkCaptureSchema,
+    "safeParse",
+  );
+  const passedReports: unknown[] = [];
+  const originalProject = protobufCaptureView.projectProtobufCapturePage;
+  const protobufSpy = vi
+    .spyOn(protobufCaptureView, "projectProtobufCapturePage")
+    .mockImplementation((parsedReport, view) => {
+      passedReports.push(parsedReport);
+      return originalProject(parsedReport, view);
+    });
+  try {
+    const summary = projectAnalysisView(sealedParent, { kind: "summary" });
+    const page1 = projectAnalysisView(sealedParent, {
+      kind: "protobuf",
+      collection: "fields",
+      field_numbers: [1, 2],
+      offset: 0,
+      limit: 2,
+    });
+    const page2 = projectAnalysisView(
+      { ...sealedParent },
+      {
+        kind: "protobuf",
+        collection: "fields",
+        field_numbers: [1, 2],
+        offset: 2,
+        limit: 2,
+      },
+    );
+    const preview = projectAnalysisView(sealedParent, {
+      kind: "capture",
+      detail: "preview",
+      offset: 0,
+      limit: 2,
+    });
+    expect(parseSpy).toHaveBeenCalledTimes(1);
+    expect(protobufSpy).toHaveBeenCalledTimes(2);
+    expect(passedReports).toHaveLength(2);
+    expect(isImmutableJsonSnapshot(passedReports[0])).toBe(true);
+    expect(passedReports[1]).toBe(passedReports[0]);
+
+    expect(summary).toEqual(
+      projectAnalysisView(unsealedParent, { kind: "summary" }),
+    );
+    expect(page1).toEqual(
+      projectAnalysisView(unsealedParent, {
+        kind: "protobuf",
+        collection: "fields",
+        field_numbers: [1, 2],
+        offset: 0,
+        limit: 2,
+      }),
+    );
+    expect(page2).toEqual(
+      projectAnalysisView(unsealedParent, {
+        kind: "protobuf",
+        collection: "fields",
+        field_numbers: [1, 2],
+        offset: 2,
+        limit: 2,
+      }),
+    );
+    expect(preview).toEqual(
+      projectAnalysisView(unsealedParent, {
+        kind: "capture",
+        detail: "preview",
+        offset: 0,
+        limit: 2,
+      }),
+    );
+  } finally {
+    parseSpy.mockRestore();
+    protobufSpy.mockRestore();
+  }
 });
