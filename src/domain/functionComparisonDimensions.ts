@@ -401,7 +401,10 @@ const compareReferencedStrings = (
       continue;
     }
     if (leftRows === undefined || rightRows === undefined) {
-      if (leftUnlocated || rightUnlocated)
+      // Only an unlocated row on the missing side could occupy this offset.
+      const missingSideHasUnlocated =
+        leftRows === undefined ? leftUnlocated : rightUnlocated;
+      if (missingSideHasUnlocated)
         limitations.add(
           `Referenced string membership at source offset ${offset} is ambiguous because another source location is unavailable.`,
         );
