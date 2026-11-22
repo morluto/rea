@@ -369,6 +369,7 @@
 * **desktop:** keep TryExec regression independent of ID masking group ([b3dfd53](https://github.com/morluto/rea/commit/b3dfd5305dc254e177d16ce1675a672857b0b391))
 * **desktop:** verify cancellation before releasing the guest ([#12812](https://github.com/morluto/rea/issues/12812)) ([c94f275](https://github.com/morluto/rea/commit/c94f275667e8d9402d34bcddb61abe0393302685))
 * **docs:** isolate README drift cases and remove duplicate checks ([ce52580](https://github.com/morluto/rea/commit/ce5258043c47483d2c8db9a3c0b8f369542bed73))
+* **dotnet:** consolidate malformed metadata and table stream proofs ([#13374](https://github.com/morluto/rea/issues/13374)) ([0c0130c](https://github.com/morluto/rea/commit/0c0130ce509e59869a115477ab38d203bbc780bd))
 * **dotnet:** consolidate managed ExtraData coverage ([#12788](https://github.com/morluto/rea/issues/12788)) ([e8105d6](https://github.com/morluto/rea/commit/e8105d6be9c5b96a0635f09e0eeef9672f112e8f))
 * **dotnet:** consolidate managed PE and field constant contracts ([#13365](https://github.com/morluto/rea/issues/13365)) ([da6f898](https://github.com/morluto/rea/commit/da6f89808dcc9c6f528660426a54cff721cfbf03))
 * **dotnet:** prove scoped member ownership within the caller budget ([#13369](https://github.com/morluto/rea/issues/13369)) ([2e8bdfd](https://github.com/morluto/rea/commit/2e8bdfd808b3de68cbd283b3f4f5510ee728a288))
