@@ -208,16 +208,11 @@ export const traceDylibResolution = async (options: {
       });
       // Each digest must describe the same file whose headers were parsed.
       const digests = new Map<string, string>();
-      await consumeWithOrderedReads(
-        (async function* () {
-          yield* trace.images;
-        })(),
-        MAGIC_READ_CONCURRENCY,
-        ({ path }) => files.sha256(view.hostPath(path), view.identity(path)),
-        async ({ path }, digest) => {
-          digests.set(path, digest);
-        },
-      );
+      for (const { path } of trace.images)
+        digests.set(
+          path,
+          await files.sha256(view.hostPath(path), view.identity(path)),
+        );
       const targetDigest =
         digests.get(target) ??
         (await files.sha256(join(root, target), undefined));
