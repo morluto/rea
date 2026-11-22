@@ -1,11 +1,38 @@
-import { stringify as stringifyToml } from "smol-toml";
+import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import {
   clientConfigurationRecordSchema,
   clientConfigurationValuesEqual,
   isEmptyClientConfigurationText,
-  parseClientToml,
-} from "./ClientConfigurationDocument.js";
+} from "./ClientConfigurationValues.js";
+
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/**
+ * Parse client TOML with TOML 1.0's signed 64-bit integer contract. Integers
+ * beyond JavaScript's safe range stay exact as bigint; values outside Int64,
+ * which Codex rejects, are malformed.
+ */
+export const parseClientToml = (text: string): Record<string, unknown> => {
+  const parsed = parseToml(text, { integersAsBigInt: "asNeeded" });
+  const pending: unknown[] = [parsed];
+  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
+    if (typeof value === "bigint") {
+      if (value < INT64_MIN || value > INT64_MAX)
+        throw new SyntaxError(
+          `Invalid TOML document: integer ${String(value)} is outside the signed 64-bit range`,
+        );
+    } else if (
+      typeof value === "object" &&
+      value !== null &&
+      !(value instanceof Date)
+    )
+      // Large documents can exceed argument limits, so do not spread.
+      for (const nested of Object.values(value)) pending.push(nested);
+  }
+  return parsed;
+};
 
 const TOML_HEX4_PATTERN = /^[0-9A-Fa-f]{4}$/u;
 const TOML_HEX8_PATTERN = /^[0-9A-Fa-f]{8}$/u;
@@ -54,8 +81,8 @@ const decodeBasicEscape = (
   if (escape !== "u" && escape !== "U") return undefined;
   const length = escape === "u" ? 4 : 8;
   const hex = line.slice(slash + 2, slash + 2 + length);
-  if (!new RegExp(`^[0-9A-Fa-f]{${String(length)}}$`, "u").test(hex))
-    return undefined;
+  const pattern = escape === "u" ? TOML_HEX4_PATTERN : TOML_HEX8_PATTERN;
+  if (!pattern.test(hex)) return undefined;
   const code = Number.parseInt(hex, 16);
   if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return undefined;
   return { value: String.fromCodePoint(code), next: slash + 2 + length };

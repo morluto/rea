@@ -1,14 +1,13 @@
 import {
+  parseClientToml,
   serializeCodexConfiguration,
   serializeGrokConfiguration,
 } from "./ClientConfigurationToml.js";
-import { parse as parseToml } from "smol-toml";
 import {
   parseGooseConfigurationYaml,
   stringifyGooseConfigurationYaml,
   editGooseConfigurationYaml,
 } from "./GooseConfigurationYaml.js";
-import { isDeepStrictEqual } from "node:util";
 
 import {
   parseDshCordisDocument,
@@ -38,7 +37,18 @@ import { z } from "zod";
 import { err, ok, type Result } from "../domain/result.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { SetupClient } from "./SupportedClients.js";
-import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import {
+  clientConfigurationRecordSchema,
+  clientConfigurationValuesEqual,
+  isEmptyClientConfigurationText,
+} from "./ClientConfigurationValues.js";
+
+export { parseClientToml } from "./ClientConfigurationToml.js";
+export {
+  clientConfigurationRecordSchema,
+  clientConfigurationValuesEqual,
+  isEmptyClientConfigurationText,
+} from "./ClientConfigurationValues.js";
 
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
@@ -94,36 +104,6 @@ export interface ClientInlineConfiguration {
   readonly parsed: ClientConfigurationDocument;
 }
 
-/** Admit source mappings without Zod's record clone dropping caller keys. */
-export const clientConfigurationRecordSchema = z
-  .custom<Record<string, unknown>>((value) => {
-    if (typeof value !== "object" || value === null) return false;
-    const prototype: unknown = Object.getPrototypeOf(value);
-    return prototype === null || prototype === Object.prototype;
-  })
-  .transform((value) => Object.fromEntries(Object.entries(value)));
-
-/** Compare parsed configuration values without depending on parser prototypes. */
-export const clientConfigurationValuesEqual = (
-  left: unknown,
-  right: unknown,
-): boolean =>
-  isDeepStrictEqual(
-    normalizeConfigurationValue(left),
-    normalizeConfigurationValue(right),
-  );
-
-const normalizeConfigurationValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(normalizeConfigurationValue);
-  if (typeof value !== "object" || value === null || value instanceof Date)
-    return value;
-  return Object.fromEntries(
-    Object.entries(value)
-      .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
-      .map(([key, nested]) => [key, normalizeConfigurationValue(nested)]),
-  );
-};
-
 /** Return the top-level object used for MCP server registrations by a client. */
 export const clientConfigurationServersKey = (
   format: ClientConfigurationFormat,
@@ -148,41 +128,6 @@ export const clientConfigurationServersKey = (
     default:
       return "mcpServers";
   }
-};
-
-/**
- * Whether raw configuration text holds no settings to preserve. Some clients
- * create a zero-byte config file before any server is added.
- */
-export const isEmptyClientConfigurationText = (text: string): boolean =>
-  text.replace(/^\uFEFF/, "").trim() === "";
-
-const INT64_MIN = -(2n ** 63n);
-const INT64_MAX = 2n ** 63n - 1n;
-
-/**
- * Parse client TOML with TOML 1.0's signed 64-bit integer contract. Integers
- * beyond JavaScript's safe range stay exact as bigint; values outside Int64,
- * which Codex rejects, are malformed.
- */
-export const parseClientToml = (text: string): Record<string, unknown> => {
-  const parsed = parseToml(text, { integersAsBigInt: "asNeeded" });
-  const pending: unknown[] = [parsed];
-  for (let value = pending.pop(); value !== undefined; value = pending.pop()) {
-    if (typeof value === "bigint") {
-      if (value < INT64_MIN || value > INT64_MAX)
-        throw new SyntaxError(
-          `Invalid TOML document: integer ${String(value)} is outside the signed 64-bit range`,
-        );
-    } else if (
-      typeof value === "object" &&
-      value !== null &&
-      !(value instanceof Date)
-    )
-      // Large documents can exceed argument limits, so do not spread.
-      for (const nested of Object.values(value)) pending.push(nested);
-  }
-  return parsed;
 };
 
 /**
