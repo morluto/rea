@@ -85,6 +85,7 @@
 * **config:** preserve unknown Harness group ownership ([#13434](https://github.com/morluto/rea/issues/13434)) ([eb3f35e](https://github.com/morluto/rea/commit/eb3f35ea05c7a1657bab40ed5fe35566092e1c88))
 * **cutter/ghidra:** fix Cutter DAG limit rejection, guard Ghidra x86-32 SEH scan, and cache referenced address lookups ([#13478](https://github.com/morluto/rea/issues/13478)) ([ccdc887](https://github.com/morluto/rea/commit/ccdc887dc1b640b151e1cd594201a5406d72b8a2))
 * **cyclonedx:** keep recorded tool references unique ([#13425](https://github.com/morluto/rea/issues/13425)) ([7db00e8](https://github.com/morluto/rea/commit/7db00e8fd6306b880a7f25e5418de5a475761485))
+* **desktop:** avoid suggesting edits from incomparable views ([#13596](https://github.com/morluto/rea/issues/13596)) ([7673ab0](https://github.com/morluto/rea/commit/7673ab03a6cb26f045adcffe803801ee71102cb1))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
 * **desktop:** classify complete filename boundary code points ([d9f2fd3](https://github.com/morluto/rea/commit/d9f2fd365dea6622e90bad56f29b278920e0fee2))
 * **desktop:** distinguish dconf export recovery causes ([#13574](https://github.com/morluto/rea/issues/13574)) ([0ab2603](https://github.com/morluto/rea/commit/0ab26032768b8c10f99b825ba498d4128f7e8d92))
