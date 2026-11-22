@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
-import { jadxBridgeIdentity } from "../../../src/android/JadxRelease.ts";
+import {
+  JADX_RELEASE,
+  jadxBridgeIdentity,
+} from "../../../src/android/JadxRelease.ts";
 
 const packagedBridgeVersion = () => {
   const identity = jadxBridgeIdentity();
@@ -79,7 +82,8 @@ const register = (name, handler) =>
   server.registerTool(name, { inputSchema: z.looseObject({}) }, handler);
 register("rea_jvm_status", () =>
   json({
-    engine_reported_version: mode === "engine-version" ? "0.7.0" : "0.7.1",
+    engine_reported_version:
+      mode === "engine-version" ? "0.7.0" : JADX_RELEASE.version,
     max_heap_bytes:
       mode === "heap-failure" || mode === "other-memory-failure"
         ? 67108864

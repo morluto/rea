@@ -29,7 +29,11 @@ import {
   elfStringTableText,
   observeElfStringTableEntry,
 } from "../../domain/elfStringTable.js";
-import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
+import {
+  ELF_SYMBOL_TRUNCATED_MESSAGE,
+  elfSymbolSize,
+  readElfSymbolAt,
+} from "../../domain/elfSymbol.js";
 import {
   readElfGnuHashSymbolCount,
   readElfHashSymbolCount,
@@ -1705,23 +1709,23 @@ const parseImports = (
       });
     }
   }
+  const versymReader =
+    versymBytes === null
+      ? null
+      : new BinaryReader(versymBytes, reader.little, "elf");
   for (let index = 1; index < symbolCount; index += 1) {
     const at = dynsym.offset + index * entrySize;
-    const parsed = readElfSymbol(
-      bytes.subarray(at, at + entrySize),
-      bits,
-      reader.little,
-    );
-    if (!parsed.ok) {
+    const parsed = readElfSymbolAt(bytes, at, bits, reader.little);
+    if (parsed === null) {
       issues.push({
         code: "malformed_entry",
         location: hex(at),
-        message: parsed.error.message,
+        message: ELF_SYMBOL_TRUNCATED_MESSAGE,
       });
       continue;
     }
-    if (parsed.value.section_index !== 0) continue;
-    if (parsed.value.type === STT_SPARC_REGISTER && SPARC_MACHINES.has(machine))
+    if (parsed.section_index !== 0) continue;
+    if (parsed.type === STT_SPARC_REGISTER && SPARC_MACHINES.has(machine))
       continue;
     charge(
       imports.length + 1,
@@ -1732,18 +1736,16 @@ const parseImports = (
     );
     const name = namedString(
       dynstr,
-      parsed.value.name_offset,
+      parsed.name_offset,
       issues,
       `dynsym[${String(index)}]`,
     );
     let version: ElfDependencyImport["version"] = null;
     if (
-      versymBytes !== null &&
-      (index + 1) * GNU_VERSYM_SLOT_BYTES <= versymBytes.length
+      versymReader !== null &&
+      (index + 1) * GNU_VERSYM_SLOT_BYTES <= versymReader.bytes.length
     ) {
-      const raw = new BinaryReader(versymBytes, reader.little, "elf").u16(
-        index * GNU_VERSYM_SLOT_BYTES,
-      );
+      const raw = versymReader.u16(index * GNU_VERSYM_SLOT_BYTES);
       const versionIndex = raw & 0x7fff;
       const hidden = (raw & 0x8000) !== 0;
       if (versionIndex <= 1)
@@ -1777,8 +1779,8 @@ const parseImports = (
     imports.push({
       index,
       name,
-      binding: bindingName(parsed.value.binding),
-      type: typeName(parsed.value.type),
+      binding: bindingName(parsed.binding),
+      type: typeName(parsed.type),
       version,
     });
   }

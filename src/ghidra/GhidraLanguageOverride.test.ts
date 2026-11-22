@@ -509,3 +509,76 @@ it
     }
   },
 );
+
+describe("Ghidra concurrent language catalog", () => {
+  it("preserves sorted module and entry order across >8 modules with missing language dirs", async () => {
+    const root = await createTestTempDirectory("rea-ghidra-catalog-many-");
+    const expectedIds: string[] = [];
+    for (let index = 24; index >= 0; index -= 1) {
+      const module = `M_${String(index).padStart(2, "0")}`;
+      const modDir = join(root, "Ghidra/Processors", module);
+      if (index % 5 === 0) {
+        await mkdir(modDir, { recursive: true });
+        continue;
+      }
+      const languages = join(modDir, "data/languages");
+      await mkdir(languages, { recursive: true });
+      for (const part of ["b", "a"]) {
+        const id = `${module}_${part}:LE:32:default`;
+        await writeFile(
+          join(languages, `${part}.ldefs`),
+          `<language_definitions><language id="${id}"><compiler id="default"/></language></language_definitions>`,
+        );
+      }
+    }
+    for (let index = 0; index < 25; index += 1) {
+      if (index % 5 === 0) continue;
+      const module = `M_${String(index).padStart(2, "0")}`;
+      expectedIds.push(
+        `${module}_a:LE:32:default`,
+        `${module}_b:LE:32:default`,
+      );
+    }
+    const resources = new ArtifactResourceScope();
+    try {
+      const catalog = await readGhidraLanguageCatalog(root, resources);
+      expect(catalog.map(({ id }) => id)).toEqual(expectedIds);
+    } finally {
+      await resources.close();
+    }
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "rethrows the lowest-index directory failure when multiple concurrent directories fail",
+    async () => {
+      const root = await createTestTempDirectory("rea-ghidra-catalog-order-");
+      const dirs: string[] = [];
+      for (let index = 0; index < 12; index += 1) {
+        const languages = join(
+          root,
+          "Ghidra/Processors",
+          `P_${String(index).padStart(2, "0")}`,
+          "data/languages",
+        );
+        await mkdir(languages, { recursive: true });
+        await writeFile(
+          join(languages, "arch.ldefs"),
+          `<language_definitions><language id="P${index}:LE:32:default"/></language_definitions>`,
+        );
+        dirs.push(languages);
+      }
+      await chmod(dirs[2]!, 0);
+      await chmod(dirs[9]!, 0);
+      const resources = new ArtifactResourceScope();
+      try {
+        await expect(
+          readGhidraLanguageCatalog(root, resources),
+        ).rejects.toMatchObject({ code: "EACCES", path: dirs[2] });
+      } finally {
+        await chmod(dirs[2]!, 0o755);
+        await chmod(dirs[9]!, 0o755);
+        await resources.close();
+      }
+    },
+  );
+});

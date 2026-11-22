@@ -1,3 +1,5 @@
+import { isImmutableJsonSnapshot } from "./immutableJson.js";
+
 /** Exact UTF-16 code units of a JSON string, including escaping and quotes. */
 export const jsonStringCodeUnits = (value: string): number => {
   let length = value.length + 2;
@@ -42,36 +44,126 @@ export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
 
-/** Compare ordinary JSON text in bounded parts, preserving native key order. */
-export const equalJsonText = (left: unknown, right: unknown): boolean => {
-  const a = jsonParts(left);
-  const b = jsonParts(right);
-  let x = a.next();
-  let y = b.next();
-  let i = 0;
-  let j = 0;
-  try {
-    while (!x.done && !y.done) {
-      const length = Math.min(x.value.length - i, y.value.length - j);
-      if (x.value.slice(i, i + length) !== y.value.slice(j, j + length))
-        return false;
-      i += length;
-      j += length;
-      if (i === x.value.length) {
-        x = a.next();
-        i = 0;
-      }
-      if (j === y.value.length) {
-        y = b.next();
-        j = 0;
+const validateRemainingJson = (
+  frames: ContainerFrame[],
+  ancestors: Set<object>,
+  pending?: unknown,
+  hasPending = false,
+): void => {
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      if (typeof pending !== "object" || pending === null) {
+        if (!isValidJsonScalar(pending))
+          throw new TypeError("JSON output requires ordinary JSON values");
+      } else {
+        if (ancestors.has(pending))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!isImmutableJsonSnapshot(pending))
+          frames.push(openContainer(pending, frames.length, ancestors, false));
       }
     }
-    return x.done === true && y.done === true;
-  } finally {
-    a.return(undefined);
-    b.return(undefined);
+    const frame = frames.at(-1);
+    if (frame === undefined) return;
+    const member = nextMember(frame);
+    if (member === undefined) {
+      ancestors.delete(frame.value);
+      frames.pop();
+      continue;
+    }
+    pending = member.item;
+    hasPending = true;
   }
 };
+
+/** Compare ordinary JSON text iteratively, fast-pathing identical immutable subtrees. */
+export const equalJsonText = (left: unknown, right: unknown): boolean => {
+  const ancestorsLeft = new Set<object>();
+  const ancestorsRight = new Set<object>();
+  const leftFrames: ContainerFrame[] = [];
+  const rightFrames: ContainerFrame[] = [];
+  const finishMismatch = (
+    pendingA?: unknown,
+    hasA = false,
+    pendingB?: unknown,
+    hasB = false,
+  ): false => {
+    validateRemainingJson(leftFrames, ancestorsLeft, pendingA, hasA);
+    validateRemainingJson(rightFrames, ancestorsRight, pendingB, hasB);
+    return false;
+  };
+  let pendingLeft = left;
+  let pendingRight = right;
+  let hasPending = true;
+
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      const a = pendingLeft;
+      const b = pendingRight;
+      const objA = typeof a === "object" && a !== null;
+      const objB = typeof b === "object" && b !== null;
+      if (!objA && !objB) {
+        if (!isValidJsonScalar(a) || !isValidJsonScalar(b))
+          throw new TypeError("JSON output requires ordinary JSON values");
+        if (a !== b) return finishMismatch();
+      } else if (objA && objB) {
+        if (ancestorsLeft.has(a) || ancestorsRight.has(b))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!(a === b && isImmutableJsonSnapshot(a))) {
+          const frameA = openContainer(
+            a,
+            leftFrames.length,
+            ancestorsLeft,
+            false,
+          );
+          const frameB = openContainer(
+            b,
+            rightFrames.length,
+            ancestorsRight,
+            false,
+          );
+          leftFrames.push(frameA);
+          rightFrames.push(frameB);
+          if (frameA.array !== frameB.array) return finishMismatch();
+        }
+      } else {
+        return finishMismatch(a, true, b, true);
+      }
+    }
+
+    const frameA = leftFrames.at(-1);
+    const frameB = rightFrames.at(-1);
+    if (frameA === undefined || frameB === undefined) return true;
+    const memberA = nextMember(frameA);
+    const memberB = nextMember(frameB);
+    if (memberA === undefined || memberB === undefined) {
+      if (memberA !== memberB)
+        return finishMismatch(
+          memberA?.item,
+          memberA !== undefined,
+          memberB?.item,
+          memberB !== undefined,
+        );
+      ancestorsLeft.delete(frameA.value);
+      ancestorsRight.delete(frameB.value);
+      leftFrames.pop();
+      rightFrames.pop();
+      continue;
+    }
+    if (memberA.key !== memberB.key)
+      return finishMismatch(memberA.item, true, memberB.item, true);
+    pendingLeft = memberA.item;
+    pendingRight = memberB.item;
+    hasPending = true;
+  }
+};
+
+const isValidJsonScalar = (value: unknown): boolean =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
 
 /** Buffer JSON parts while preserving complete UTF-16 surrogate pairs. */
 export function* bufferedJsonParts(parts: Iterable<string>): Generator<string> {

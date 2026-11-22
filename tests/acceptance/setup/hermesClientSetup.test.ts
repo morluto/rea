@@ -1,5 +1,6 @@
 import {
   access,
+  chmod,
   mkdir,
   readdir,
   readFile,
@@ -643,18 +644,17 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
       const root = join(home, "hermes root");
       await mkdir(root);
       await writeFile(join(root, "active_profile"), name);
+      const config = join(root, "profiles", name, "config.yaml");
+      const deletionDirectory = join(root, "profiles", ".deleted");
+      const tombstone = join(deletionDirectory, name);
+      const original =
+        "model: custom\nmcp_servers: {rea: {command: rea, args: [mcp]}}\n";
       if (name === "deleted" || name === "ghost") {
         await mkdir(join(root, "profiles", name), { recursive: true });
         if (name === "deleted") {
-          await writeFile(
-            join(root, "profiles", name, "config.yaml"),
-            "model: custom\n",
-          );
-          await mkdir(join(root, "profiles", ".deleted"));
-          await writeFile(
-            join(root, "profiles", ".deleted", name),
-            "deleted\n",
-          );
+          await writeFile(config, original);
+          await mkdir(deletionDirectory);
+          await writeFile(tombstone, "deleted\n");
         }
       }
       const run = (args: readonly string[]) =>
@@ -663,13 +663,8 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
           cwd: home,
           environment: { USERPROFILE: home, HERMES_HOME: root },
         });
-      const rejected = await run([
-        "setup",
-        "--client",
-        "hermes",
-        "--yes",
-        "--json",
-      ]);
+      const setup = ["setup", "--client", "hermes", "--yes", "--json"];
+      const rejected = await run(setup);
       expect(rejected.exitCode).not.toBe(0);
       expect(rejected.json).toMatchObject({
         status: "needs_human",
@@ -683,6 +678,49 @@ for (const name of ["missing", "deleted", "ghost", "../escape", "root"]) {
       await expect(access(join(root, "skills"))).rejects.toMatchObject({
         code: "ENOENT",
       });
+      if (
+        name === "deleted" &&
+        process.platform !== "win32" &&
+        process.getuid?.() !== 0
+      ) {
+        await chmod(deletionDirectory, 0o000);
+        try {
+          await expect(access(tombstone)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+          const unavailable = await run(setup);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(unavailable.exitCode).not.toBe(0);
+          expect(unavailable.json).toMatchObject({
+            status: "needs_human",
+            plannedActions: [],
+            appliedActions: [],
+            remediation: expect.stringContaining(tombstone),
+          });
+
+          const removal = await run(["uninstall", "--json"]);
+          expect(await readFile(config, "utf8")).toBe(original);
+          await expect(access(`${config}.rea.backup`)).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+          expect(removal.exitCode).not.toBe(0);
+          expect(removal.json).toMatchObject({
+            status: "failed",
+            items: expect.arrayContaining([
+              expect.objectContaining({
+                name: "hermes",
+                status: "failed",
+                configuration_path: tombstone,
+              }),
+            ]),
+          });
+        } finally {
+          await chmod(deletionDirectory, 0o700);
+        }
+      }
       if (name !== "missing") return;
       const doctor = await run(["doctor", "--client", "hermes", "--json"]);
       expect(doctor.exitCode).not.toBe(0);

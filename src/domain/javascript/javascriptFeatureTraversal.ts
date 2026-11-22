@@ -4,13 +4,10 @@ import type {
 } from "./javascriptApplicationGraphSchemas.js";
 import type { JavaScriptApplicationGraph } from "./javascriptApplicationGraph.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-
-interface AdjacencyEntry {
-  readonly edge: ApplicationEdge;
-  readonly nextNodeId: string;
-  /** In "both", the step goes from a contained node up to its container. */
-  readonly ascends: boolean;
-}
+import {
+  buildFeatureAdjacency,
+  getFeatureGraphIndex,
+} from "./javascriptFeatureGraphIndex.js";
 
 interface Predecessor {
   readonly previousNodeId: string;
@@ -30,8 +27,13 @@ export const traverseApplicationFeature = (
   seedNodeIds: readonly string[],
   direction: "outgoing" | "incoming" | "both",
 ): ApplicationFeatureTraversal => {
-  const nodeById = new Map(graph.nodes.map((node) => [node.node_id, node]));
-  const adjacency = buildAdjacency(graph.edges, direction);
+  const index = getFeatureGraphIndex(graph);
+  const nodeById =
+    index?.nodesById ??
+    new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const adjacency =
+    index?.adjacency(direction) ??
+    buildFeatureAdjacency(graph.edges, direction);
   const visited = new Set(seedNodeIds);
   const retainedEdges = new Map<string, ApplicationEdge>();
   const predecessors = new Map<string, Predecessor>();
@@ -67,55 +69,23 @@ export const traverseApplicationFeature = (
       queue.push(next);
     }
   }
-  return {
-    nodes: [...visited]
-      .map((nodeId) => nodeById.get(nodeId))
-      .filter((node): node is ApplicationNode => node !== undefined)
-      .sort((left, right) =>
-        compareUnicodeCodePoints(left.node_id, right.node_id),
-      ),
-    edges: [...retainedEdges.values()].sort((left, right) =>
+  const nodes: ApplicationNode[] = [];
+  for (const nodeId of visited) {
+    const node = nodeById.get(nodeId);
+    if (node !== undefined) nodes.push(node);
+  }
+  if (nodes.length > 1)
+    nodes.sort((left, right) =>
+      compareUnicodeCodePoints(left.node_id, right.node_id),
+    );
+  const edges = [...retainedEdges.values()];
+  if (edges.length > 1)
+    edges.sort((left, right) =>
       compareUnicodeCodePoints(left.edge_id, right.edge_id),
-    ),
+    );
+  return {
+    nodes,
+    edges,
     predecessors,
   };
-};
-
-const buildAdjacency = (
-  edges: readonly ApplicationEdge[],
-  direction: "outgoing" | "incoming" | "both",
-): ReadonlyMap<string, AdjacencyEntry[]> => {
-  const adjacency = new Map<string, AdjacencyEntry[]>();
-  for (const edge of edges) {
-    if (direction !== "incoming")
-      addAdjacency(adjacency, edge.source_node_id, {
-        edge,
-        nextNodeId: edge.target_node_id,
-        ascends: false,
-      });
-    if (direction !== "outgoing")
-      addAdjacency(adjacency, edge.target_node_id, {
-        edge,
-        nextNodeId: edge.source_node_id,
-        ascends: direction === "both" && edge.relation === "contains",
-      });
-  }
-  for (const entries of adjacency.values())
-    entries.sort((left, right) =>
-      compareUnicodeCodePoints(
-        `${left.edge.edge_id}\0${left.nextNodeId}`,
-        `${right.edge.edge_id}\0${right.nextNodeId}`,
-      ),
-    );
-  return adjacency;
-};
-
-const addAdjacency = (
-  adjacency: Map<string, AdjacencyEntry[]>,
-  nodeId: string,
-  entry: AdjacencyEntry,
-): void => {
-  const entries = adjacency.get(nodeId);
-  if (entries === undefined) adjacency.set(nodeId, [entry]);
-  else entries.push(entry);
 };

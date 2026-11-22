@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createTestArtifactResourceScope } from "../../../fixtures/artifactResourceScope.js";
 import {
   access,
@@ -1356,6 +1357,105 @@ describe("Ghidra GameCube DOL section file", () => {
       expect(spawnProcess).toHaveBeenCalledOnce();
       const sectionPath = join(runtime.path, "gamecube-dol-sections.txt");
       expect(await readFile(sectionPath, "utf8")).toBe(sectionFile);
+    },
+  );
+});
+
+describe("Ghidra checkpoint restore", () => {
+  it("skips auto-analysis and the no-return repair when restoring a packed checkpoint", () => {
+    const arguments_ = ghidraHeadlessArguments({
+      platform: "linux",
+      projectRoot: "/tmp/project",
+      targetPath: "/tmp/target",
+      packedProgramPath: "/tmp/runtime/restored-program.gzf",
+      bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+      descriptorPath: "/tmp/session.json",
+      ghidraLogPath: "/tmp/ghidra.log",
+      scriptLogPath: "/tmp/script.log",
+    });
+    expect(arguments_).toContain("-noanalysis");
+    expect(arguments_).toContain("-import");
+    expect(arguments_).toContain("/tmp/runtime/restored-program.gzf");
+    expect(arguments_).not.toContain(
+      "/package/bridge/ReaGhidraNoReturnFix.java",
+    );
+    expect(arguments_).toContain("/package/bridge/ReaGhidraBridge.java");
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "copies and verifies packed checkpoints in one pass and rejects tampered bytes before spawn",
+    async () => {
+      const parent = await createTestTempDirectory("rea-packed-restore-");
+      const runtime = await createGhidraTestRuntime(parent);
+      runtimes.push(runtime);
+      const javaHome = await createFakeJavaHome(parent);
+      const packedSource = join(parent, "program.gzf");
+      const packedBytes = Buffer.alloc(300 * 1024, 0x47);
+      packedBytes[packedBytes.length - 1] = 0x5a;
+      await writeFile(packedSource, packedBytes);
+      const sha256 = createHash("sha256").update(packedBytes).digest("hex");
+      const spawned: OwnedProviderProcessSpawnOptions[] = [];
+      const launcher = new GhidraHeadlessLauncher({
+        environment: process.env,
+        analyzeHeadlessPath: fixturePath,
+        platform: "linux",
+        configurationDirectoryName: "ghidra_12.1.4_PUBLIC",
+        javaHome,
+        bridgeScriptPath: "/package/bridge/ReaGhidraBridge.java",
+        spawnProcess: async (options) => {
+          spawned.push(options);
+          return fakeSpawnedProcess(options.runId);
+        },
+      });
+      const launched = await launcher.launch(
+        {
+          runtimeRoot: runtime.path,
+          transport: "unix-socket",
+          endpointPath: join(runtime.path, "bridge.sock"),
+          token: "secret-token",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/target",
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+          packedProgram: { path: packedSource, sha256 },
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
+      if (!launched.ok) throw launched.error;
+      try {
+        const restored = join(runtime.path, "restored-program.gzf");
+        expect((await readFile(restored)).equals(packedBytes)).toBe(true);
+        expect((await stat(restored)).mode & 0o777).toBe(0o600);
+        expect(spawned[0]?.arguments).toContain("-noanalysis");
+        expect(spawned[0]?.arguments).not.toContain(
+          "/package/bridge/ReaGhidraNoReturnFix.java",
+        );
+      } finally {
+        await launched.value.cleanup?.();
+      }
+
+      const tamperedRuntime = await createGhidraTestRuntime(parent);
+      runtimes.push(tamperedRuntime);
+      packedBytes[0] = (packedBytes[0] ?? 0) ^ 0xff;
+      await writeFile(packedSource, packedBytes);
+      const tampered = await launcher.launch(
+        {
+          runtimeRoot: tamperedRuntime.path,
+          transport: "unix-socket",
+          endpointPath: join(tamperedRuntime.path, "bridge.sock"),
+          token: "secret-token",
+          runId: "d6fcbb66-e829-4ff6-a535-0035aec63139",
+          targetPath: "/tmp/target",
+          targetSha256: "b".repeat(64),
+          providerVersion: "12.1.4",
+          profileDigest: "a".repeat(64),
+          packedProgram: { path: packedSource, sha256 },
+        },
+        { resourceScope: createTestArtifactResourceScope() },
+      );
+      expect(tampered.ok).toBe(false);
+      expect(spawned).toHaveLength(1);
     },
   );
 });
