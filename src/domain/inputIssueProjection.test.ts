@@ -12,11 +12,26 @@ import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 import { applicationFeatureSeedSchema } from "./javascript/javascriptFeatureTraceSchemas.js";
 import { updateAnalysisSettingsInputSchema } from "../contracts/analysisSettingsContracts.js";
-import { toolContract } from "../contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
+import { searchGuidanceInputSchema } from "../contracts/guidanceContracts.js";
+import { inspectAnalysisViewInputSchema } from "./analysisView/analysisViewRequest.js";
 
 const projectFlattenedIssueGroups = (
   ...args: Parameters<typeof projectInputIssueGroupsWithinBudget>
 ) => projectInputIssueGroupsWithinBudget(...args)?.flat();
+
+const guidanceInputSchema = (operation: string): z.ZodType => {
+  if (operation === "search_guidance") return searchGuidanceInputSchema;
+  const family =
+    operation === "trace_feature"
+      ? ENHANCED_TOOL_CONTRACTS
+      : OFFICIAL_TOOL_CONTRACTS;
+  const contract = family.find(({ name }) => name === operation);
+  if (contract === undefined)
+    throw new Error(`Missing test contract for ${operation}`);
+  return contract.inputSchema;
+};
 
 describe("input issue projection", () => {
   it("builds application input errors with projected and semantic issues", () => {
@@ -193,7 +208,7 @@ describe("input issue argument guidance", () => {
     ] as const;
     for (const { operations, from, to, input, ...extras } of cases) {
       for (const operation of operations) {
-        const parsed = toolContract(operation).inputSchema.safeParse(input);
+        const parsed = guidanceInputSchema(operation).safeParse(input);
         if (parsed.success)
           throw new Error(`Expected ${operation} to reject ${from}`);
         const error = analysisInputErrorFromIssues(
@@ -228,9 +243,8 @@ describe("input issue argument guidance suppression", () => {
       address: "0x401000",
       comment: "entry comment",
     };
-    const parsed = toolContract(
-      "annotate_native_function",
-    ).inputSchema.safeParse(inputWithBoth);
+    const schema = guidanceInputSchema("annotate_native_function");
+    const parsed = schema.safeParse(inputWithBoth);
     if (parsed.success) throw new Error("expected invalid input");
     const error = analysisInputErrorFromIssues(
       "annotate_native_function",
@@ -256,9 +270,7 @@ describe("input issue argument guidance suppression", () => {
       address: "0x401000",
       comment: "entry comment",
     };
-    const parsedMissing = toolContract(
-      "annotate_native_function",
-    ).inputSchema.safeParse(inputMissingExpected);
+    const parsedMissing = schema.safeParse(inputMissingExpected);
     if (parsedMissing.success) throw new Error("expected invalid input");
     const errorMissing = analysisInputErrorFromIssues(
       "annotate_native_function",
@@ -552,7 +564,7 @@ describe("union branch diagnostic merging", () => {
 
 it("limits cross-kind view guidance to inspect_analysis_view and keeps its public path", () => {
   const operation = "inspect_analysis_view";
-  const inputSchema = toolContract(operation).inputSchema;
+  const inputSchema = inspectAnalysisViewInputSchema;
   const input = {
     source: { kind: "retained-evidence", evidence_id: `ev_${"a".repeat(64)}` },
     view: { kind: "javascript", collection: "modules", limit: 40, offset: 0 },

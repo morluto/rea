@@ -105,35 +105,35 @@ export const projectInputIssuesBounded = (
     // exceeds the allowance. Keep exact components of the nearest parent.
     const first = issues[0];
     if (first === undefined) return { issues: output, omittedIssueCount };
-    let message = `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`;
-    const shortened = `${message} The diagnostic reports the nearest parent because the full location exceeds the response budget.`;
-    const path: (string | number)[] = [];
-    let remaining =
-      budgetBytes -
-      jsonValueByteLength({
-        path,
-        reason: "invalid_value",
-        message: shortened,
-      });
+    const issue = {
+      path: [] as (string | number)[],
+      reason: "invalid_value" as const,
+      message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
+    };
+    let remaining = budgetBytes - jsonValueByteLength(issue);
     for (const part of first.path) {
       if (typeof part !== "number" && typeof part !== "string") continue;
-      remaining -= 1 + jsonValueByteLength(part, remaining - 1);
-      if (remaining < 0) {
-        message = shortened;
+      const separator = issue.path.length === 0 ? 0 : 1;
+      const bytes =
+        separator + jsonValueByteLength(part, remaining - separator);
+      if (bytes > remaining) {
+        const explanation =
+          " The diagnostic reports the nearest parent because the full location exceeds the response budget.";
+        const message = issue.message + explanation;
+        remaining -=
+          jsonValueByteLength(message) - jsonValueByteLength(issue.message);
+        while (remaining < 0 && issue.path.length > 0) {
+          const last = issue.path.pop()!;
+          remaining +=
+            jsonValueByteLength(last) + (issue.path.length === 0 ? 0 : 1);
+        }
+        issue.message = message;
         break;
       }
-      path.push(part);
+      remaining -= bytes;
+      issue.path.push(part);
     }
-    return {
-      issues: [
-        {
-          path,
-          reason: "invalid_value",
-          message,
-        },
-      ],
-      omittedIssueCount,
-    };
+    return { issues: [issue], omittedIssueCount };
   }
   return { issues: output, omittedIssueCount: 0 };
 };

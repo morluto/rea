@@ -51,7 +51,7 @@ it("delivers a bounded file validation error through inspect_analysis_view", asy
   expect(Buffer.byteLength(JSON.stringify(many), "utf8")).toBeLessThan(1 << 20);
 
   // Projection may run out of work budget while the exact location still fits.
-  const fittingKey = "argument".repeat(1500);
+  const fittingKey = "a".repeat(65_300);
   const fitting = await inspectFile("fitting-key.json", {
     ...source,
     caller_input_paths: { [fittingKey]: false },
