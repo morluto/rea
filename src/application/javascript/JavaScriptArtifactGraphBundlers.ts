@@ -121,6 +121,7 @@ const addBundlerModuleNodes = (
   input: BundlerModuleProjectionInput,
 ): void => {
   const { file, registration, chunk, coverage, limitations } = input;
+  const entryModuleKeys = new Set(registration.entry_module_keys);
   for (const moduleValue of registration.modules) {
     const module = context.accumulator.addNode({
       kind: "javascript-module",
@@ -139,9 +140,7 @@ const addBundlerModuleNodes = (
             chunk_keys: registration.chunk_keys,
             module_key: moduleValue.module_key,
             factory_require_name: moduleValue.factory_require_name,
-            runtime_entry: registration.entry_module_keys.includes(
-              moduleValue.module_key,
-            ),
+            runtime_entry: entryModuleKeys.has(moduleValue.module_key),
             source_sha256: moduleValue.source_sha256,
             structural_fingerprint_sha256:
               moduleValue.structural_fingerprint_sha256,

@@ -1,7 +1,6 @@
-import { dirname, join } from "node:path";
+import { dirname, join, posix, win32 } from "node:path";
 import {
   vscodeUserDirectory,
-  xdgConfigHomeOrDefault,
   type ClientRootContext,
 } from "./ClientConfigRoots.js";
 import { present } from "./McpRegistrationLocations.js";
@@ -59,17 +58,30 @@ export const observedFiles = async (
 };
 
 /** Kilo's Global.Path.config: xdg-basedir's config home joined with "kilo". */
-export const kiloRoot = ({ root, path }: KiloLocationContext): string =>
-  path(join(xdgConfigHomeOrDefault(root), "kilo"));
+export const kiloRoot = ({ root, path }: KiloLocationContext): string => {
+  const joinPath = root.platform === "win32" ? win32.join : posix.join;
+  const xdg = root.env.XDG_CONFIG_HOME;
+  // Appending a child first can turn an incomplete Windows root into a share.
+  return xdg
+    ? joinPath(path(xdg), "kilo")
+    : joinPath(path(root.home), ".config", "kilo");
+};
 
-/** Kilo's legacy and current home folders, when present. */
-export const kiloHomeDirectories = async ({
+const kiloHomePaths = ({
   root,
   path,
-}: KiloLocationContext): Promise<KiloConfigDirectory[]> => {
+}: KiloLocationContext): readonly string[] => {
+  const home = path(root.home);
+  const joinPath = root.platform === "win32" ? win32.join : posix.join;
+  return [joinPath(home, ".kilocode"), joinPath(home, ".kilo")];
+};
+
+/** Kilo's legacy and current home folders, when present. */
+export const kiloHomeDirectories = async (
+  context: KiloLocationContext,
+): Promise<KiloConfigDirectory[]> => {
   const directories: KiloConfigDirectory[] = [];
-  for (const name of [".kilocode", ".kilo"]) {
-    const directory = path(join(root.home, name));
+  for (const directory of kiloHomePaths(context)) {
     if (await present(directory))
       directories.push({ path: directory, authority: "global" });
   }
@@ -162,9 +174,7 @@ export const kiloDefaultLocation = (
   const root = kiloRoot(context);
   const explicit = kiloExplicitFile(context);
   const custom = kiloExplicitDirectory(context);
-  const homes = [".kilocode", ".kilo"].map((name) =>
-    context.path(join(context.root.home, name)),
-  );
+  const homes = kiloHomePaths(context);
   return {
     configPath: join(root, "kilo.json"),
     configPaths: [

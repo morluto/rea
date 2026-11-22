@@ -40,7 +40,7 @@ import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import {
   analysisSearchPredicate,
   analysisSearchQuerySchema,
-  matchProcedureNames,
+  matchedProcedureAliases,
   type AnalysisSearchQuery,
 } from "../domain/analysisSearch.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
@@ -166,6 +166,53 @@ interface InventoryIndex {
   readonly byAddress: ReadonlyMap<string, KunaInventoryFunction>;
   readonly byName: ReadonlyMap<string, readonly KunaInventoryFunction[]>;
 }
+
+const addIndexedName = (
+  byName: Map<string, KunaInventoryFunction[]>,
+  name: string,
+  entry: KunaInventoryFunction,
+): void => {
+  const named = byName.get(name);
+  if (named === undefined) byName.set(name, [entry]);
+  else named.push(entry);
+};
+
+const indexInventoryEntryNames = (
+  byName: Map<string, KunaInventoryFunction[]>,
+  entry: KunaInventoryFunction,
+): void => {
+  addIndexedName(byName, entry.name, entry);
+  const { aliases } = entry;
+  if (aliases.length === 0) return;
+  if (aliases.length === 1) {
+    const alias = aliases[0]!;
+    if (alias !== entry.name) addIndexedName(byName, alias, entry);
+    return;
+  }
+  if (aliases.length <= 8) {
+    for (let i = 0; i < aliases.length; i += 1) {
+      const alias = aliases[i]!;
+      if (alias === entry.name) continue;
+      let duplicate = false;
+      for (let j = 0; j < i; j += 1) {
+        if (aliases[j] === alias) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate) addIndexedName(byName, alias, entry);
+    }
+    return;
+  }
+  const seen = new Set<string>([entry.name]);
+  for (let i = 0; i < aliases.length; i += 1) {
+    const alias = aliases[i]!;
+    if (!seen.has(alias)) {
+      seen.add(alias);
+      addIndexedName(byName, alias, entry);
+    }
+  }
+};
 
 /**
  * One inventory entry a procedure request selected, with its placement and
@@ -1200,24 +1247,20 @@ export class KunaSessionClient implements AnalysisClient {
     if (query !== undefined) {
       if (query.mode === "regex") {
         // Each distinct spelling is matched once, however many entries share it.
+        // byName already holds every unique primary name and alias in inventory order.
         let names: readonly string[] = [];
         const matched = await this.#queryWork.match({
           operation,
           pattern: query.pattern,
           caseSensitive: query.case_sensitive,
-          values: () =>
-            (names = [
-              ...new Set(
-                inventory.flatMap(({ name, aliases }) => [name, ...aliases]),
-              ),
-            ]),
+          values: () => (names = [...index.value.byName.keys()]),
           signal: options.signal,
           ...regex,
         });
         if (!matched.ok) return matched;
-        const accepted = new Set(
-          matched.value.map((position) => names[position]!),
-        );
+        const accepted = new Set<string>();
+        for (let i = 0; i < matched.value.length; i += 1)
+          accepted.add(names[matched.value[i]!]!);
         matches = (name) => accepted.has(name);
       } else matches = analysisSearchPredicate(query);
     }
@@ -1231,12 +1274,31 @@ export class KunaSessionClient implements AnalysisClient {
     const omitted: KunaDataPlacement[] = [];
     let unclassified = 0;
     for (const entry of inventory) {
-      const row = { address: entry.address, value: entry.name };
-      const selected =
-        matches === undefined
-          ? row
-          : matchProcedureNames(row, entry.aliases, matches);
-      if (selected === undefined) continue;
+      let selected: {
+        readonly address: string;
+        readonly value: string;
+        readonly matched_aliases?: string[];
+      };
+      if (matches === undefined) {
+        selected = { address: entry.address, value: entry.name };
+      } else {
+        const matchedAliases = matchedProcedureAliases(
+          entry.name,
+          entry.aliases,
+          matches,
+        );
+        if (matchedAliases !== undefined) {
+          selected = {
+            address: entry.address,
+            value: entry.name,
+            matched_aliases: matchedAliases,
+          };
+        } else if (matches(entry.name)) {
+          selected = { address: entry.address, value: entry.name };
+        } else {
+          continue;
+        }
+      }
       const placement = data.get(entry);
       if (placement !== undefined) {
         omitted.push(placement);
@@ -2081,11 +2143,7 @@ export class KunaSessionClient implements AnalysisClient {
     const byName = new Map<string, KunaInventoryFunction[]>();
     for (const entry of inventory) {
       byAddress.set(entry.address, entry);
-      for (const name of new Set([entry.name, ...entry.aliases])) {
-        const named = byName.get(name);
-        if (named === undefined) byName.set(name, [entry]);
-        else named.push(entry);
-      }
+      indexInventoryEntryNames(byName, entry);
     }
     this.#inventoryIndex = {
       inventory,

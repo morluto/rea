@@ -115,6 +115,7 @@ import {
   resolveSemanticModuleCallables,
 } from "./javascriptSemanticReturns.js";
 import { collectJavaScriptDerivedSemanticsSteps } from "./javascriptSemanticDerivedAnalysis.js";
+import { collectJavaScriptSemanticObjects } from "./javascriptSemanticObjects.js";
 import {
   evaluateSemanticProvenance,
   clearSemanticValueCaches,
@@ -327,6 +328,12 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
   yield;
   const references = yield* collectSemanticReferencesSteps(file.program, state);
   const parserPartial = recoveredJavaScriptSyntaxErrorCount(file.errors) > 0;
+  const objectOperations = collectJavaScriptSemanticObjects(
+    file.program,
+    state,
+    state.callables,
+  );
+  yield;
   const bindings = immutableSemanticBindings(state);
   yield;
   const callables = collectSemanticReturns(state, parserPartial);
@@ -360,6 +367,7 @@ export function* analyzeParsedJavaScriptSemanticsSteps(
     callables,
     references,
     moduleLinks,
+    objectOperations,
     ...derived,
     coverage: derived.expressionFlowsTruncated
       ? { ...coverage, status: "partial", omittedCount: null }
@@ -2242,6 +2250,7 @@ const bindPattern = (input: BindPatternInput): void => {
         binding.referenceInitializers.push({
           node: initializer,
           projection,
+          patternTarget: pattern,
           ...(input.entryBody === undefined
             ? {}
             : { entryBody: input.entryBody }),
@@ -2429,6 +2438,9 @@ const addBinding = (input: AddBindingInput): void => {
     binding.initializers.push({
       node: initializer,
       projection,
+      ...(projection.length > 0 && t.isIdentifier(definitionNode)
+        ? { patternTarget: definitionNode }
+        : {}),
       ...(iterationSources === undefined ? {} : { iterationSources }),
     });
   if (directOrigin !== undefined)

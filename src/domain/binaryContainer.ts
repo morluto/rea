@@ -243,6 +243,61 @@ export const imageFileMappings = (
     ? container.mappings
     : [container.pe_header_mapping, ...container.mappings];
 
+/** Decode an unsigned 16-bit integer from a caller-validated `[offset, offset + 2)` span. */
+export const readUint16At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! | (bytes[offset + 1]! << 8)
+    : (bytes[offset]! << 8) | bytes[offset + 1]!;
+
+/** Decode a signed 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readInt32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)
+    : (bytes[offset]! << 24) |
+      (bytes[offset + 1]! << 16) |
+      (bytes[offset + 2]! << 8) |
+      bytes[offset + 3]!;
+
+/** Decode an unsigned 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readUint32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number => readInt32At(bytes, offset, little) >>> 0;
+
+/** Decode an unsigned 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readUint64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readUint32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
+
+/** Decode a signed 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readInt64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readInt32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
+
 /** Reader that checks every structural range before decoding numeric fields. */
 export class BinaryReader {
   constructor(
