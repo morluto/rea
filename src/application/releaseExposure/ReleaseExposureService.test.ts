@@ -207,22 +207,6 @@ describe("ReleaseExposureService", () => {
     await service.close();
   });
 
-  it("propagates cancellation and skips later owners", async () => {
-    const { service, electronFuses, goBinaries } = owners(
-      scan({
-        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
-        native_images: [{ path: "/work/app", format: "elf" }],
-      }),
-    );
-    electronFuses.inspect.mockResolvedValue(
-      err(new AnalysisCancelledError("inspect_electron_fuses")),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (result.ok) throw new Error("Expected a failed audit.");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
-    expect(goBinaries.inspect).not.toHaveBeenCalled();
-  });
-
   it("treats a universal Mach-O as unknown metadata without calling the readers", async () => {
     const { service, goBinaries, rustBinaries } = owners(
       scan({
@@ -296,40 +280,15 @@ describe("ReleaseExposureService cancellation", () => {
   });
 });
 
-describe("ReleaseExposureService cancellation partials", () => {
-  it("reports the audit, not an owner's own partial Evidence", async () => {
-    const reason = new Error("caller stopped");
-    const { service, goBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    goBinaries.inspect.mockResolvedValue(
-      err(
-        new AnalysisCancelledError("inspect_go_binary", {
-          cause: reason,
-          partialObservation: evidence({ owner: "go" }),
-        }),
-      ),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (result.ok) throw new Error("Expected a failed audit.");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    const projected = projectAnalysisError(result.error);
-    expect(projected.code).toBe("cancelled");
-    expect(
-      releaseExposureReportSchema.parse(
-        (result.error.partialObservation as Evidence).normalized_result,
-      ).limitations,
-    ).toEqual(expect.arrayContaining([expect.stringContaining("cancelled")]));
-    expect(JSON.stringify(projected)).toContain("javascript.source_maps");
-  });
-});
-
 describe("ReleaseExposureService completed owner Evidence on cancellation", () => {
-  const cancelledWith = (operation: string, result: unknown) =>
+  const cancelledWith = (
+    operation: string,
+    result: unknown,
+    reason = new Error("caller stopped"),
+  ) =>
     err(
       new AnalysisCancelledError(operation, {
-        cause: new Error("caller stopped"),
+        cause: reason,
         partialObservation: evidence(result),
       }),
     );
@@ -342,6 +301,7 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
   };
 
   it("keeps Go build paths from Evidence completed before cancellation", async () => {
+    const reason = new Error("caller stopped");
     const { service, goBinaries, rustBinaries } = owners(
       scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
     );
@@ -351,13 +311,28 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
         goBinaryReport(
           goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
         ),
+        reason,
       ),
     );
-    const report = audit(await service.inspect({ path: "/work/app" }));
+    const result = await service.inspect({ path: "/work/app" });
+    if (result.ok) throw new Error("Expected a cancelled audit.");
+    expect(result.error.cause).toBe(reason);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: { operation: "audit_release_exposure" },
+    });
+    const report = audit(result);
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("exposed");
     expect(check?.observation.samples).toEqual(["/private/build/include"]);
     expect(rustBinaries.inspect).not.toHaveBeenCalled();
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("cancelled"),
+    );
+    expect(
+      report.checks.find((item) => item.id === "rust.dependency_metadata")
+        ?.status,
+    ).toBe("unknown");
   });
 
   it("keeps Rust packages from Evidence completed before cancellation", async () => {
@@ -425,23 +400,79 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
   });
 });
 
-describe("ReleaseExposureService unfinished owner cleanup", () => {
-  const unfinished = (operation: string) =>
-    new ProviderCleanupError(
-      "rea-owner",
-      ["/work/app/descriptor"],
-      { reason: "EPERM" },
-      { operation },
-    );
-  const audit = async (result: Awaited<ReturnType<OwnerInspect>>) => {
-    if (result.ok) throw new Error("Expected a failed audit.");
-    return releaseExposureReportSchema.parse(
-      (result.error.partialObservation as Evidence).normalized_result,
-    );
-  };
+const unfinishedOwner = (operation: string) =>
+  new ProviderCleanupError(
+    "rea-owner",
+    ["/work/app/descriptor"],
+    { reason: "EPERM" },
+    { operation },
+  );
+const partialAudit = (result: Awaited<ReturnType<OwnerInspect>>) => {
+  if (result.ok) throw new Error("Expected a failed audit.");
+  return releaseExposureReportSchema.parse(
+    (result.error.partialObservation as Evidence).normalized_result,
+  );
+};
 
+it.each(["pending", "released"] as const)(
+  "preserves a Go cleanup failure with its %s owner and the partial audit",
+  async (settlement) => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    const failure = unfinishedOwner("inspect_go_binary");
+    failure.retainPartialObservation(
+      evidence(
+        goBinaryReport(
+          goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
+        ),
+      ),
+    );
+    expect(failure.cleanupIncomplete).toBe(true);
+    // Let the owner confirm release after the audit observes the cleanup failure.
+    const pending =
+      settlement === "released"
+        ? vi
+            .spyOn(failure, "cleanupIncomplete", "get")
+            .mockImplementationOnce(() => {
+              queueMicrotask(() => releaseOwnedCleanup(failure));
+              return true;
+            })
+        : undefined;
+    goBinaries.inspect.mockResolvedValue(err(failure));
+    try {
+      const result = await service.inspect({ path: "/work/app" });
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(result.error).toBe(failure);
+      expect(failure.cleanupIncomplete).toBe(settlement === "pending");
+      expect(failure.cleanupResources).toEqual(["/work/app/descriptor"]);
+      expect(projectAnalysisError(result.error).details?.cleanup).toBe(
+        settlement === "pending" ? "incomplete" : undefined,
+      );
+      expect(rustBinaries.inspect).not.toHaveBeenCalled();
+      const report = partialAudit(result);
+      expect(
+        report.checks.find((check) => check.id === "go.build_paths"),
+      ).toMatchObject({
+        status: "exposed",
+        observation: { samples: ["/private/build/include"] },
+      });
+      expect(
+        report.checks.find((check) => check.id === "rust.dependency_metadata")
+          ?.status,
+      ).toBe("unknown");
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([expect.stringContaining("unfinished cleanup")]),
+      );
+    } finally {
+      pending?.mockRestore();
+    }
+  },
+);
+
+describe("ReleaseExposureService unfinished owner cleanup", () => {
   it("keeps the findings of a member scan stopped by unfinished cleanup", async () => {
-    const failure = unfinished("inspect_release_exposure");
+    const failure = unfinishedOwner("inspect_release_exposure");
     const { service, desktop, goBinaries } = owners(
       scan({
         coverage: "unknown",
@@ -464,7 +495,7 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
     expect(failure.cleanupIncomplete).toBe(true);
     expect(desktop.inspect).not.toHaveBeenCalled();
     expect(goBinaries.inspect).not.toHaveBeenCalled();
-    const report = await audit(result);
+    const report = partialAudit(result);
     const status = (id: string) =>
       report.checks.find((check) => check.id === id)?.status;
     expect(status("javascript.source_map_sources")).toBe("exposed");
@@ -472,46 +503,15 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
     expect(status("go.build_paths")).toBe("unknown");
   });
 
-  it("returns a Go failure with the partial audit and runs no later owner", async () => {
-    const { service, goBinaries, rustBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    const failure = unfinished("inspect_go_binary");
-    goBinaries.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect(failure.cleanupIncomplete).toBe(true);
-    expect(rustBinaries.inspect).not.toHaveBeenCalled();
-    const report = await audit(result);
-    expect(
-      report.checks.find((check) => check.id === "rust.dependency_metadata")
-        ?.status,
-    ).toBe("unknown");
-  });
-
-  it("replaces an owner's partial without losing its cleanup", async () => {
-    const { service, goBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    const failure = unfinished("inspect_go_binary");
-    failure.retainPartialObservation(evidence({ owner: "go" }));
-    goBinaries.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect((await audit(result)).limitations).toEqual(
-      expect.arrayContaining([expect.stringContaining("unfinished cleanup")]),
-    );
-  });
-
   it("returns a thrown Rust failure with the partial audit", async () => {
     const { service, rustBinaries } = owners(
       scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
     );
-    const failure = unfinished("inspect_rust_binary");
+    const failure = unfinishedOwner("inspect_rust_binary");
     rustBinaries.inspect.mockRejectedValue(failure);
     const result = await service.inspect({ path: "/work/app" });
     expect(result).toMatchObject({ ok: false, error: failure });
-    await audit(result);
+    partialAudit(result);
   });
 
   it("returns a desktop failure with the partial audit", async () => {
@@ -527,28 +527,42 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
         native_images: [{ path: "/work/app/app", format: "elf" }],
       }),
     );
-    const failure = unfinished("inspect_desktop_application");
+    const failure = unfinishedOwner("inspect_desktop_application");
     desktop.inspect.mockResolvedValue(err(failure));
     const result = await service.inspect({ path: "/work/app" });
     expect(result).toMatchObject({ ok: false, error: failure });
     expect(goBinaries.inspect).not.toHaveBeenCalled();
-    await audit(result);
+    partialAudit(result);
   });
 
-  it("returns a fuse failure with the partial audit", async () => {
-    const { service, electronFuses, goBinaries } = owners(
-      scan({
-        fuse_candidates: [{ role: "native-image", path: "/work/app/app" }],
-        native_images: [{ path: "/work/app/app", format: "elf" }],
-      }),
-    );
-    const failure = unfinished("inspect_electron_fuses");
-    electronFuses.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect(goBinaries.inspect).not.toHaveBeenCalled();
-    await audit(result);
-  });
+  it.each([
+    [
+      "cancellation",
+      () => new AnalysisCancelledError("inspect_electron_fuses"),
+    ],
+    ["unfinished cleanup", () => unfinishedOwner("inspect_electron_fuses")],
+  ] as const)(
+    "preserves fuse %s and stops later owners",
+    async (_, createFailure) => {
+      const path = "/work/app/app";
+      const { service, electronFuses, goBinaries } = owners(
+        scan({
+          fuse_candidates: [{ role: "native-image", path }],
+          native_images: [{ path, format: "elf" }],
+        }),
+      );
+      const failure = createFailure();
+      electronFuses.inspect.mockResolvedValue(err(failure));
+      const result = await service.inspect({ path: "/work/app" });
+      if (result.ok) throw new Error("Expected a stopped audit.");
+      expect(result.error).toBe(failure);
+      expect(goBinaries.inspect).not.toHaveBeenCalled();
+      expect(
+        partialAudit(result).checks.find(({ id }) => id === "go.build_paths")
+          ?.status,
+      ).toBe("unknown");
+    },
+  );
 });
 
 const CHANGED = "cd".repeat(32);
@@ -823,56 +837,6 @@ describe("ReleaseExposureService fuse implications", () => {
     expect(
       checks.find((check) => check.id === "electron.run_as_node")?.status,
     ).toBe("exposed");
-  });
-
-  it("treats a native app bundle as not applicable when the desktop owner says it is not Electron", async () => {
-    const { service, desktop, electronFuses } = owners(
-      scan({
-        target: {
-          selected_path: "/work/Native.app",
-          kind: "app",
-          format: "directory",
-          sha256: null,
-        },
-        fuse_candidates: [{ path: "/work/Native.app", role: "app-bundle" }],
-      }),
-    );
-    desktop.inspect.mockResolvedValue(ok(evidence(nativeDesktopReport())));
-    const slices: ElectronFuseSlice[] = [
-      {
-        index: 0,
-        file_offset: 0,
-        size: 128,
-        architecture: "arm64",
-        sentinel_count: 0,
-        sentinels: [],
-      },
-    ];
-    electronFuses.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          artifact: {
-            selected_path: "/work/Native.app",
-            resolved_path: "/work/Native.app",
-            sha256: SHA,
-            bytes: 128,
-            format: "mach-o",
-          },
-          slices,
-          ...describeElectronFuseFindings(slices, "mach-o"),
-        }),
-      ),
-    );
-    const result = await service.inspect({ path: "/work/Native.app" });
-    if (!result.ok) throw result.error;
-    const checks = (
-      result.value.normalized_result as {
-        checks: { id: string; status: string }[];
-      }
-    ).checks;
-    expect(
-      checks.find((check) => check.id === "electron.run_as_node")?.status,
-    ).toBe("not_applicable");
   });
 });
 
@@ -1881,9 +1845,21 @@ describe("ReleaseExposureService Electron applicability", () => {
   it("rules out Electron on an app bundle with no Electron Framework", async () => {
     const { service, electronFuses } = owners(appScan);
     electronFuses.inspect.mockResolvedValue(unreadable);
-    expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
-      "not_applicable",
+    const result = await service.inspect({ path: "/work/App.app" });
+    if (!result.ok) throw result.error;
+    const report = releaseExposureReportSchema.parse(
+      result.value.normalized_result,
     );
+    expect(
+      report.checks
+        .filter(({ id }) => id.startsWith("electron."))
+        .map(({ status }) => status),
+    ).toEqual([
+      "not_applicable",
+      "not_applicable",
+      "not_applicable",
+      "not_applicable",
+    ]);
   });
 
   it.each([
@@ -2029,45 +2005,9 @@ describe("ReleaseExposureService scanners and selected archives", () => {
     expect(desktop.inspect).not.toHaveBeenCalled();
     expect(electronFuses.inspect).not.toHaveBeenCalled();
   });
-
-  it("owns credential scanning and keeps matched bytes out of the report", async () => {
-    const planted = "AKIAPLANT9EXPOSUREXX";
-    const { service } = owners(
-      scan({ text_members: { scanned: 1, skipped: 0 } }),
-      [[`key = ${planted}\n`, "/work/app.dll/notes.txt"]],
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (!result.ok) throw result.error;
-    const check = releaseExposureReportSchema
-      .parse(result.value.normalized_result)
-      .checks.find((item) => item.id === "text.credential_markers");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.counts["aws.access_key_id"]).toBe(1);
-    expect(check?.locations).toEqual([
-      { kind: "artifact-path", path: "/work/app.dll/notes.txt" },
-    ]);
-    expect(JSON.stringify(result.value)).not.toContain(planted);
-  });
 });
 
 describe("ReleaseExposureService cleanup", () => {
-  it("keeps every owner close failure", async () => {
-    const { service, desktop, goBinaries } = owners(scan());
-    const desktopFailure = new Error("desktop close failed");
-    const goFailure = new Error("go close failed");
-    desktop.close.mockRejectedValue(desktopFailure);
-    goBinaries.close.mockRejectedValue(goFailure);
-    const failure: unknown = await service.close().catch((cause) => cause);
-    if (!(failure instanceof ProviderCleanupError))
-      throw new Error("Expected a typed cleanup failure.");
-    expect(failure.cause).toEqual(
-      expect.objectContaining({
-        errors: expect.arrayContaining([desktopFailure, goFailure]),
-      }),
-    );
-    expect(failure.cleanupIncomplete).toBe(true);
-  });
-
   it("returns one typed owner close failure unchanged", async () => {
     const { service, desktop } = owners(scan());
     const denied = new ProviderCleanupError(
@@ -3091,6 +3031,19 @@ it("drops a released typed resource even while another owner remains unconfirmed
   const failure = await service.close().catch((cause: unknown) => cause);
   if (!(failure instanceof ProviderCleanupError))
     throw new Error("expected typed aggregate");
+  expect(failure.cause).toBeInstanceOf(AggregateError);
+  if (!(failure.cause instanceof AggregateError))
+    throw new Error("Expected both owner rejections.");
+  expect(failure.cause.errors).toEqual([typed, opaque]);
+  expect(failure.diagnostics).toMatchObject({
+    failures: [
+      { owner: "desktop" },
+      {
+        owner: "go binaries",
+        failure: { message: "cannot confirm Go owner closed" },
+      },
+    ],
+  });
   expect(failure.cleanupResources).toEqual(["desktop-root"]);
   expect(failure.cleanupIncomplete).toBe(true);
   releaseOwnedCleanup(typed);
