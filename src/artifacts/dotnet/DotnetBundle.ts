@@ -194,20 +194,15 @@ export const readDotnetBundle = async (
       fail(`Overlapping .NET bundle entries: ${file.path}`);
     end = file.offset + file.storedSize;
   }
-  const filesByOffset = new Map<number, (typeof files)[number][]>();
-  for (const file of files) {
-    if (file.compressedSize !== 0) continue;
-    const bucket = filesByOffset.get(file.offset);
-    if (bucket === undefined) filesByOffset.set(file.offset, [file]);
-    else bucket.push(file);
-  }
   for (const item of configuration) {
     if (item.offset === 0 && item.size === 0) continue;
-    const candidates = filesByOffset.get(item.offset);
     if (
-      candidates === undefined ||
-      !candidates.some(
-        (file) => file.fileType === item.type && file.size === item.size,
+      !files.some(
+        (file) =>
+          file.fileType === item.type &&
+          file.offset === item.offset &&
+          file.size === item.size &&
+          file.compressedSize === 0,
       )
     )
       fail(".NET bundle configuration location disagrees with its file table");
