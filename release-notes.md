@@ -87,6 +87,7 @@
 * **cyclonedx:** keep recorded tool references unique ([#13425](https://github.com/morluto/rea/issues/13425)) ([7db00e8](https://github.com/morluto/rea/commit/7db00e8fd6306b880a7f25e5418de5a475761485))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
 * **desktop:** classify complete filename boundary code points ([d9f2fd3](https://github.com/morluto/rea/commit/d9f2fd365dea6622e90bad56f29b278920e0fee2))
+* **desktop:** distinguish dconf export recovery causes ([#13574](https://github.com/morluto/rea/issues/13574)) ([0ab2603](https://github.com/morluto/rea/commit/0ab26032768b8c10f99b825ba498d4128f7e8d92))
 * **desktop:** explain unavailable dconf descriptor paths ([#13391](https://github.com/morluto/rea/issues/13391)) ([5b2bc6c](https://github.com/morluto/rea/commit/5b2bc6c43d5cbabbce8142bf77137b20ec0a6829))
 * **desktop:** keep automatically named checkpoints distinct ([#13387](https://github.com/morluto/rea/issues/13387)) ([0b62db4](https://github.com/morluto/rea/commit/0b62db4d63a57e0196e1f2bd3b1e7eccb8ac707d))
 * **desktop:** keep every state-reader close failure in the cleanup composite ([10597e1](https://github.com/morluto/rea/commit/10597e10f233bb7ae1306a441e5770880cb2976a)), closes [#11859](https://github.com/morluto/rea/issues/11859)
