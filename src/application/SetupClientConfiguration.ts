@@ -207,6 +207,8 @@ const configureClientDocument = async (
   }
   const original = snapshot?.text;
   let parsed: ClientConfigurationDocument;
+  let seeded: ClientConfigurationDocument;
+  let fallbackServers: Readonly<Record<string, unknown>> = {};
   try {
     parsed = parseClientConfiguration(
       original ??
@@ -232,14 +234,50 @@ const configureClientDocument = async (
         reason: "registration_ownership",
         detail: ownershipBlocker,
       };
+    const fallback = await readZcodeFallbackServers(client, platform, parsed);
+    if (!fallback.ok) {
+      if (fallback.error.kind !== "registration_ownership")
+        throwCleanupFailure(fallback.error);
+      return fallback.error.kind === "registration_ownership"
+        ? {
+            status: "failed",
+            reason: "registration_ownership",
+            detail: fallback.error.detail,
+          }
+        : { status: "failed", reason: "readback" };
+    }
+    const superseded = await readSupersededServers(
+      client,
+      original !== undefined,
+    );
+    if (!superseded.ok) {
+      if (superseded.error.kind !== "registration_ownership")
+        throwCleanupFailure(superseded.error);
+      return superseded.error.kind === "registration_ownership"
+        ? {
+            status: "failed",
+            reason: "registration_ownership",
+            detail: superseded.error.detail,
+          }
+        : { status: "failed", reason: "readback" };
+    }
+    // The seeded candidate carries the legacy sources into the effective
+    // view the desired entry validates against, so a legacy setting paired
+    // with a proposed override passes admission instead of blocking the
+    // migration of an otherwise valid registration.
+    seeded = {
+      ...parsed,
+      servers: { ...superseded.value, ...fallback.value, ...parsed.servers },
+    };
+    fallbackServers = { ...superseded.value, ...fallback.value };
     const policy = await readClientPolicyBlock(
       client,
-      parsed,
+      seeded,
       await clientConfigurationDesired(
         client,
         environment,
         command,
-        parsed,
+        seeded,
         files.value,
         platform,
         launcherEnvironment,
@@ -258,41 +296,11 @@ const configureClientDocument = async (
     void cause;
     return { status: "failed", reason: "readback" };
   }
-  const fallback = await readZcodeFallbackServers(client, platform, parsed);
-  if (!fallback.ok) {
-    if (fallback.error.kind !== "registration_ownership")
-      throwCleanupFailure(fallback.error);
-    return fallback.error.kind === "registration_ownership"
-      ? {
-          status: "failed",
-          reason: "registration_ownership",
-          detail: fallback.error.detail,
-        }
-      : { status: "failed", reason: "readback" };
-  }
-  const superseded = await readSupersededServers(
-    client,
-    original !== undefined,
-  );
-  if (!superseded.ok) {
-    if (superseded.error.kind !== "registration_ownership")
-      throwCleanupFailure(superseded.error);
-    return superseded.error.kind === "registration_ownership"
-      ? {
-          status: "failed",
-          reason: "registration_ownership",
-          detail: superseded.error.detail,
-        }
-      : { status: "failed", reason: "readback" };
-  }
   const desired = await clientConfigurationDesired(
     client,
     environment,
     command,
-    {
-      ...parsed,
-      servers: { ...superseded.value, ...fallback.value, ...parsed.servers },
-    },
+    seeded,
     files.value,
     platform,
     launcherEnvironment,
@@ -321,7 +329,7 @@ const configureClientDocument = async (
     original,
     parsed,
     desired,
-    fallbackServers: { ...superseded.value, ...fallback.value },
+    fallbackServers,
     platform,
   });
 };

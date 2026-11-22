@@ -602,6 +602,49 @@ describe("ggcode legacy tool-family repair", () => {
   });
 });
 
+describe("ggcode legacy override pairing", () => {
+  it("admits a legacy ghidra language paired with a compiler override while seeding", async () => {
+    const home = await createTestTempDirectory("rea-ggcode-");
+    const client = ggcodePath(home, process.platform);
+    if (client?.markerPath === undefined)
+      throw new Error("missing ggcode client");
+    await mkdir(client.markerPath, { recursive: true });
+    await writeFile(
+      join(home, ".ggcode", "ggcode.yaml"),
+      `mcp_servers:
+  - name: rea
+    type: stdio
+    command: rea
+    args: ["mcp"]
+    env:
+      REA_GHIDRA_LANGUAGE_ID: x86:LE:32:default
+`,
+    );
+
+    // The compiler spec requires the language; only the legacy source holds
+    // the language, so admission must see the seeded candidate to pass.
+    expect(
+      (
+        await configureClientConfiguration(
+          client,
+          { REA_GHIDRA_COMPILER_SPEC_ID: "gcc" },
+          command,
+        )
+      ).status,
+    ).toBe("configured");
+    const servers = parse(await readFile(client.configPath, "utf8"));
+    expect(
+      servers.find(({ name }: { name: string }) => name === "rea"),
+    ).toMatchObject({
+      command: command[0],
+      env: {
+        REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+        REA_GHIDRA_COMPILER_SPEC_ID: "gcc",
+      },
+    });
+  });
+});
+
 describe("ggcode standalone parsing guards", () => {
   const ggcodeClient = async () => {
     const home = await createTestTempDirectory("rea-ggcode-");
