@@ -225,11 +225,11 @@ it.each(["idle", "active", "read-failure"])(
       expect(fault.opened[0]?.fd).toBe(-1);
     } finally {
       activeRead?.release();
-      fault.failure = undefined;
       try {
-        await reader.close();
-      } finally {
         await consuming;
+      } finally {
+        fault.failure = undefined;
+        await reader.close();
       }
     }
   },
