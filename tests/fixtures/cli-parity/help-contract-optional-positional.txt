@@ -10,12 +10,15 @@ Arguments:
   address  Procedure name or address. Supply at least one of the positional address or --procedure.
 
 Options:
-  --snapshot <string>                                Load and update a local analysis snapshot
-  --target-format <dos-com|raw-binary|gamecube-dol>  Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection
-  --architecture <6502|x86|x86_64|arm|arm64|m68k>    Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol
-  --entry-point <string>                             Caller-supplied load and entry address (0xhex); required with --target-format raw-binary, optional with gamecube-dol (must equal the DOL header entry)
-  --provider <value>                                 Bind deep analysis to a provider ID or use deterministic auto selection
-  --procedure <string>                               Procedure name or address; use --procedure=<value> for leading dashes. Supply at least one of the positional address or --procedure.
+  --snapshot <string>                                                                         Load and update a local analysis snapshot
+  --target-format <dos-com|raw-binary|gamecube-dol>                                           Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection
+  --architecture <6502|x86|x86_64|arm|arm64|m68k>                                             Caller-supplied CPU family; required with --target-format raw-binary, must be omitted with gamecube-dol
+  --entry-point <string>                                                                      Caller-supplied code entry address (0xhex), also the load address without --base-address; required with --target-format raw-binary unless --architecture-variant is given, optional with gamecube-dol (must equal the DOL header entry)
+  --base-address <string>                                                                     Address of raw file offset 0 (0xhex), separate from --entry-point; only with --architecture-variant
+  --architecture-variant <armv6-m|armv7-m|armv7e-m|armv8-m.base|armv8-m.main|armv8.1-m.main>  ARM M-profile variant of a raw image, decoded in Thumb state; requires --architecture arm and --base-address
+  --vector-table-address <string>                                                             Address of the M-profile vector table (0xhex) when --entry-point is omitted and the table is not at --base-address
+  --provider <value>                                                                          Bind deep analysis to a provider ID or use deterministic auto selection
+  --procedure <string>                                                                        Procedure name or address; use --procedure=<value> for leading dashes. Supply at least one of the positional address or --procedure.
 
 Custom Global Options:
   --timings  Write measured command timing to stderr.
