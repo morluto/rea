@@ -620,3 +620,88 @@ describe("static/runtime correlation citation closure", () => {
     },
   );
 });
+
+describe("unreported artifact paths", () => {
+  const { left, right } = ARTIFACT_COMPARISON_EXAMPLE;
+  // The root is compared unchanged, so the comparison omits it from changes.
+  const unchanged = createEvidence(
+    unknownTarget("derived-from-linked-evidence"),
+    ARTIFACT_COMPARISON_PROVIDER,
+    {
+      predicateType: "rea.artifact-comparison",
+      operation: "compare_artifacts",
+      parameters: {
+        left_evidence_ids: [left.evidence_id],
+        right_evidence_ids: [left.evidence_id],
+      },
+      result: compareArtifacts(left, left),
+      confidence: "derived",
+      authority: "analyst-inference",
+      evidenceLinks: [left.evidence_id],
+    },
+  );
+  const select = (logicalPath: string) => {
+    const input = mapping(processComparison("unchanged"), "both_unchanged");
+    return {
+      ...input,
+      static_comparisons: [unchanged],
+      mappings: input.mappings.map((item) => ({
+        ...item,
+        static: {
+          comparison_evidence_id: unchanged.evidence_id,
+          selector: { kind: "artifact", logical_path: logicalPath },
+        },
+      })),
+    };
+  };
+  const sources = new Map([[left.evidence_id, left]]);
+
+  it("keeps an unchanged path unresolved without its source inventories", () => {
+    expect(
+      artifactComparisonResultSchema.parse(unchanged.normalized_result),
+    ).toMatchObject({ status: "unchanged", changes: [] });
+    const result = correlateStaticAndRuntime(select("."));
+    expect(result).toMatchObject({
+      status: "unknown",
+      correlations: {
+        items: [
+          {
+            static: { status: "unknown", conclusion_kind: "unresolved_branch" },
+            classification: "unresolved_branch",
+          },
+        ],
+      },
+    });
+    expect(result.correlations.items[0]?.limitations.join(" ")).toMatch(
+      /source inventories were unavailable/u,
+    );
+    expect(
+      correlateStaticAndRuntime(select("."), {
+        sourceEvidence: (id) => sources.get(id),
+      }),
+    ).toMatchObject({
+      status: "correlated",
+      correlations: {
+        items: [
+          {
+            static: { status: "unchanged" },
+            observed_pattern: "both_unchanged",
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects source inventories that disagree with the comparison", () => {
+    expect(() =>
+      correlateStaticAndRuntime(select("."), { sourceEvidence: () => right }),
+    ).toThrowError(
+      expect.toSatisfy(
+        (error: { _tag?: unknown; message?: unknown }) =>
+          error._tag === "EvidenceIntegrityError" &&
+          error.message ===
+            "Artifact comparison source inventories disagree with its manifests",
+      ),
+    );
+  });
+});
