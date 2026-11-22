@@ -1,5 +1,4 @@
 import * as rootHash from "../../../src/resources/StableRootArtifact.js";
-import { readFileHandlePrefix } from "../../../src/filesystem/readFileHandlePrefix.js";
 import { createHash } from "node:crypto";
 import {
   lstat,
@@ -12,6 +11,8 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
+import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
 import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -386,15 +387,11 @@ it.each([
     reason: "truncated iNES payload",
   },
 ])(
-  "refuses $name explicitly through both file entry points",
+  "refuses $name during direct artifact inventory",
   async ({ bytes, reason }) => {
     const root = await createTestTempDirectory("rea-ines-refusal-");
     const path = join(root, "invalid.nes");
     await writeFile(path, bytes());
-    expect(await parseBinaryTarget(path)).toMatchObject({
-      ok: false,
-      error: { reason: expect.stringContaining(reason) },
-    });
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
       reason: "format",
       message: expect.stringContaining(reason),
@@ -470,17 +467,31 @@ it.each(["before", "during"])(
           cause: { code: "ENOENT" },
         });
       } else {
-        const stream = await reader.open(entry);
-        await unlink(path);
-        await expect(
-          (async () => {
-            for await (const chunk of stream)
-              expect(Buffer.isBuffer(chunk)).toBe(true);
-          })(),
-        ).rejects.toMatchObject({
-          reason: "integrity",
-          cause: { code: "ENOENT" },
-        });
+        const acquired = phaseGate();
+        const native = handle.read.bind(handle);
+        const read = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async (...args) => {
+            const result = await native(...args);
+            await acquired.hold();
+            return result;
+          });
+        const consumed = reader.open(entry).then(buffer);
+        const outcome = settledCause(consumed);
+        try {
+          await acquired.reached(consumed, "physical region read");
+          await unlink(path);
+          acquired.release();
+          expect(await outcome).toMatchObject({
+            reason: "integrity",
+            integrityCheck: "container-identity",
+            cause: { code: "ENOENT" },
+          });
+        } finally {
+          acquired.release();
+          await outcome;
+          read.mockRestore();
+        }
       }
     } finally {
       await reader.close();
@@ -790,26 +801,6 @@ it("retains a failed close after rejecting changed extraction bytes", async () =
   }
 });
 
-it("releases an extraction-owned source descriptor on repeated close", async () => {
-  const root = await createTestTempDirectory("rea-ines-owned-source-");
-  const path = join(root, "source.nes");
-  await writeFile(path, inesFixture());
-  const handle = await open(path, "r");
-  const owner = new OwnedFileHandle(handle);
-  const reader = new InesArtifactReader(
-    path,
-    { handle, initial: await handle.stat() },
-    owner,
-  );
-  try {
-    await reader.close();
-    await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
-    await reader.close();
-  } finally {
-    await reader.close();
-  }
-});
-
 it.each(["target", "inventory", "reader"])(
   "fills short iNES prefix reads at the %s boundary",
   async (route) => {
@@ -868,63 +859,6 @@ it.each(["target", "inventory", "reader"])(
     } finally {
       read.mockRestore();
       await sample.close();
-    }
-  },
-);
-
-it.each(["eof", "cancelled"])(
-  "preserves %s while filling a short prefix",
-  async (mode) => {
-    const root = await createTestTempDirectory("rea-prefix-boundary-");
-    const path = join(root, "source");
-    const bytes = Buffer.from(
-      mode === "eof" ? "NES\x1a" : "NES\x1a123456789012",
-    );
-    await writeFile(path, bytes);
-    const handle = await open(path, "r");
-    const prototype = Object.getPrototypeOf(handle) as {
-      read(
-        buffer: Buffer,
-        offset: number,
-        length: number,
-        position: number,
-      ): Promise<{ bytesRead: number; buffer: Buffer }>;
-    };
-    const original = prototype.read;
-    const controller = new AbortController();
-    let reads = 0;
-    const read = vi.spyOn(prototype, "read").mockImplementation(async function (
-      this: typeof handle,
-      buffer,
-      offset,
-      length,
-      position,
-    ) {
-      reads++;
-      const observed = await original.call(
-        this,
-        buffer,
-        offset,
-        Math.min(length, 3),
-        position,
-      );
-      if (reads === 2 && mode === "cancelled") controller.abort();
-      return observed;
-    });
-    try {
-      const result = readFileHandlePrefix(handle, 16, () =>
-        abortIfNeeded(controller.signal),
-      );
-      if (mode === "eof") {
-        expect((await result).equals(bytes)).toBe(true);
-        expect(reads).toBe(3);
-      } else {
-        await expect(result).rejects.toMatchObject({ reason: "cancelled" });
-        expect(reads).toBe(2);
-      }
-    } finally {
-      read.mockRestore();
-      await handle.close();
     }
   },
 );

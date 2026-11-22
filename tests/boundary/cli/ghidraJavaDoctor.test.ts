@@ -1,11 +1,12 @@
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
 import { expect } from "vitest";
+import { z } from "zod";
 import { elf, thinMach } from "../../../src/domain/binaryTarget.fixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { observeOwnedProcessGroups } from "../../../src/process/ProcessOwnershipObservation.js";
-import { testWaitDeadline } from "../../support/testWait.js";
+import { testWaitDeadline, waitFor } from "../../support/testWait.js";
 import { resolveProcessScenarioRuntimePaths } from "../../../src/process/capture/ProcessScenarioRuntimeValidation.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 
@@ -146,6 +147,26 @@ setTimeout(() => process.exit(92), ${testWaitDeadline()});
 `,
       { mode: 0o700 },
     );
+    const receipt = z.object({
+      pid: z.number().int().positive(),
+      runId: z.string().min(1),
+    });
+    const readAcknowledgement = async () => {
+      try {
+        return receipt.parse(JSON.parse(await readFile(started, "utf8")));
+      } catch (cause: unknown) {
+        if (
+          cause instanceof Error &&
+          "code" in cause &&
+          cause.code === "ENOENT"
+        )
+          return undefined;
+        throw cause;
+      }
+    };
+    const observeGroup = async ({ pid, runId }: z.infer<typeof receipt>) =>
+      (await observeOwnedProcessGroups(runId, [pid])).get(pid);
+    let identity: z.infer<typeof receipt> | undefined;
     try {
       const result = await cli.run({
         arguments: ["doctor", "--provider", "ghidra", "--json"],
@@ -176,17 +197,17 @@ setTimeout(() => process.exit(92), ${testWaitDeadline()});
       // The POSIX owned-command launcher starts Java as its process-group leader.
       // Read the durable acknowledgement after doctor settles, with the run ID
       // that identifies the owned group even if its leader has already exited.
-      const identity = JSON.parse(await readFile(started, "utf8")) as {
-        pid: number;
-        runId: string;
-      };
-      expect(identity.runId).toEqual(expect.any(String));
-      const observed = await observeOwnedProcessGroups(identity.runId, [
-        identity.pid,
-      ]);
-      expect(observed.get(identity.pid)).toEqual({ state: "empty" });
+      identity = await readAcknowledgement();
+      if (identity === undefined)
+        throw new Error("Selected Java command did not start");
+      expect(await observeGroup(identity)).toEqual({ state: "empty" });
     } finally {
       await writeFile(release, "release");
+      const acknowledged = identity ?? (await readAcknowledgement());
+      if (acknowledged !== undefined)
+        await waitFor(async () => {
+          expect(await observeGroup(acknowledged)).toEqual({ state: "empty" });
+        });
     }
   },
 );

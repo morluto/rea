@@ -57,7 +57,10 @@ import {
   type InterfaceBuilderAnalysis,
 } from "../../domain/apple/interfaceBuilderGraph.js";
 import { projectNibViewHierarchy } from "./NibViewHierarchy.js";
-import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
+import {
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../../domain/jsonValue.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 
 import { decodeXmlPlistText } from "../../domain/propertyListXmlText.js";
@@ -1017,7 +1020,7 @@ const projectNibArchive = (
     unresolvedConnections,
     nonFiniteRealCount,
     negativeZeroRealCount,
-    raw: jsonValueSchema.parse({
+    raw: ownedJsonValueSchema.parse({
       "com.apple.ibtool.document.objects": objects,
       "com.apple.ibtool.document.connections": connections,
       "com.apple.ibtool.document.hierarchy": viewHierarchy.hierarchy ?? [],

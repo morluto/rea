@@ -2,10 +2,9 @@ import {
   BinaryFormatFailure,
   BinaryReader,
   BinaryResourceFailure,
+  createFileMappingIndex,
   isBinaryFormatOrStringLimitFailure,
   type BinaryStringReadLimit,
-  mappedFileOffset,
-  readMappedCString,
 } from "../binaryContainer.js";
 import { architectureForElfMachine } from "./elfImage.js";
 import { readElfStringBytes } from "./elfStringBytes.js";
@@ -195,19 +194,20 @@ const parsePeExports = (bytes: Buffer, artifact: Artifact): NativeExports => {
       ],
     };
   const reader = new BinaryReader(bytes, true, "pe");
-  const mappings = peDeclaredFileMappings(image);
+  const mappingIndex = createFileMappingIndex(
+    peDeclaredFileMappings(image),
+    image.zero_fills,
+  );
   const map = (rva: number, size: number): number =>
-    mappedFileOffset(mappings, base + BigInt(rva), size, image.zero_fills);
+    mappingIndex.offset(base + BigInt(rva), size);
   const cStringBytes = (
     rva: number,
     maximumBytes = MAXIMUM_NAME_BYTES,
   ): Buffer => {
-    const value = readMappedCString(
+    const value = mappingIndex.readCString(
       bytes,
-      mappings,
       base + BigInt(rva),
       maximumBytes,
-      image.zero_fills,
     );
     if (value.length === 0)
       throw new BinaryFormatFailure(

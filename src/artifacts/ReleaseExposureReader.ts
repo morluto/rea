@@ -649,6 +649,7 @@ const scanOccurrences = async (
           packageKind,
           containers,
           state,
+          shaOf(occurrence, nodeSha),
         );
       continue;
     }
@@ -3028,6 +3029,7 @@ const scanUnexpandedContainer = async (
   format: PackageFormat,
   containers: Map<string, OpenContainer>,
   state: ScanState,
+  expectedSha256?: string,
 ): Promise<void> => {
   let listing: ContainerListing;
   try {
@@ -3036,9 +3038,10 @@ const scanUnexpandedContainer = async (
       occurrence.occurrence_id,
       filePath,
       format,
-      input.inventory?.nodes.find(
-        (node) => node.artifact_id === occurrence.artifact_id,
-      )?.sha256,
+      expectedSha256 ??
+        input.inventory?.nodes.find(
+          (node) => node.artifact_id === occurrence.artifact_id,
+        )?.sha256,
       state,
       input.signal,
     );
