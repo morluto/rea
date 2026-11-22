@@ -330,8 +330,13 @@ export const buildInterfaceBuilderAnalysis = (input: {
           attributes: { interface_builder_object_id: item.source_id },
           evidence: evidenceFor(`connection source ${item.source_id}`),
         });
-      const destinationId =
-        item.destination_id === null ? null : objectNodeId(item.destination_id);
+      let destinationId: string | null = null;
+      if (item.destination_id !== null) {
+        const id = objectNodeId(item.destination_id);
+        // A decoded local object can still be omitted by the graph budget.
+        if (objectIds.has(item.destination_id) || nodes.has(id))
+          destinationId = id;
+      }
       if (item.kind === "action") {
         const actionId = graphId("action", [item.id]);
         const selectorId =
@@ -376,25 +381,15 @@ export const buildInterfaceBuilderAnalysis = (input: {
             `selector ${item.label}`,
           );
         }
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            "connection",
-            graphId("action-edge", [item.id, "destination"]),
-            actionId,
-            null,
-            "target_action",
-            `action destination ${item.destination_id ?? "missing"}`,
-            "destination_object_missing_or_external",
-          );
-        else
-          connect(
-            "connection",
-            graphId("action-edge", [item.id, "destination"]),
-            actionId,
-            destinationId,
-            "target_action",
-            `action destination ${item.destination_id}`,
-          );
+        connect(
+          "connection",
+          graphId("action-edge", [item.id, "destination"]),
+          actionId,
+          destinationId,
+          "target_action",
+          `action destination ${item.destination_id ?? "missing"}`,
+          "destination_object_missing_or_external",
+        );
       } else if (item.kind === "outlet") {
         const outletId = graphId("outlet", [item.id]);
         addNode({
@@ -413,45 +408,25 @@ export const buildInterfaceBuilderAnalysis = (input: {
           "contains",
           `outlet source ${item.source_id}`,
         );
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            "connection",
-            graphId("outlet-edge", [item.id, "destination"]),
-            outletId,
-            null,
-            "outlet_to",
-            `outlet ${item.label ?? item.id}`,
-            "destination_object_missing_or_external",
-          );
-        else
-          connect(
-            "connection",
-            graphId("outlet-edge", [item.id, "destination"]),
-            outletId,
-            destinationId,
-            "outlet_to",
-            `outlet ${item.label ?? item.id}`,
-          );
+        connect(
+          "connection",
+          graphId("outlet-edge", [item.id, "destination"]),
+          outletId,
+          destinationId,
+          "outlet_to",
+          `outlet ${item.label ?? item.id}`,
+          "destination_object_missing_or_external",
+        );
       } else if (item.kind === "segue") {
-        if (destinationId === null || !nodes.has(destinationId))
-          connect(
-            "connection",
-            graphId("segue", [index]),
-            sourceId,
-            null,
-            "segue_to",
-            `segue ${item.label ?? item.id}`,
-            "destination_scene_missing",
-          );
-        else
-          connect(
-            "connection",
-            graphId("segue", [index]),
-            sourceId,
-            destinationId,
-            "segue_to",
-            `segue ${item.label ?? item.id}`,
-          );
+        connect(
+          "connection",
+          graphId("segue", [index]),
+          sourceId,
+          destinationId,
+          "segue_to",
+          `segue ${item.label ?? item.id}`,
+          "destination_scene_missing",
+        );
       } else {
         connect(
           "connection",

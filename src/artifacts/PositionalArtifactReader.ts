@@ -65,10 +65,11 @@ export abstract class PositionalArtifactReader<
     path: string,
     label: string,
     admitted?: StableRegularFileDescriptor,
+    sourceLabel = label,
   ) {
     this.#label = label;
     this.#lifecycle = new ArtifactStreamLifecycle(label);
-    this.#source = new ArtifactFileSource(path, label, admitted);
+    this.#source = new ArtifactFileSource(path, sourceLabel, admitted);
   }
 
   /** Read the carrier once and describe its entries. */
@@ -207,6 +208,17 @@ export abstract class PositionalArtifactReader<
     };
   }
 
+  /** Format-specific failure when a member stream ends before its declared byte count. */
+  protected entryEndedEarly(
+    entry: PositionalArtifactEntry,
+  ): ArtifactReaderFailure {
+    return new ArtifactReaderFailure(
+      "integrity",
+      `${this.#label} entry ended early: ${entry.path}`,
+      { integrityCheck: "declared-size" },
+    );
+  }
+
   #entryStream(
     entry: PositionalArtifactEntry,
     lifecycle: ArtifactMemberLifecycle,
@@ -214,12 +226,7 @@ export abstract class PositionalArtifactReader<
     const label = this.#label;
     let bytes = 0;
     const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw new ArtifactReaderFailure(
-          "integrity",
-          `${label} entry ended early: ${entry.path}`,
-          { integrityCheck: "declared-size" },
-        );
+      if (bytes !== entry.declaredSize) throw this.entryEndedEarly(entry);
       await lifecycle.verify((signal) => this.#source.read(signal));
     };
     return new Transform({

@@ -1,4 +1,5 @@
-import { BinaryReader } from "../../domain/binaryContainer.js";
+import { BinaryReader, hasElfMagic } from "../../domain/binaryContainer.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import { LC } from "../../domain/apple/machoLoadCommandCodes.js";
 import {
   hashArtifactRange,
@@ -181,9 +182,9 @@ const findDenoSection = async (
   const fat = readFatHeaderPrefix(prefix);
   if (thin !== null || fat.state === "incomplete" || fat.state === "parsed")
     return collapseRanges(carrier, "mach-o", await locateMachO(carrier));
-  if (prefix.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46])))
+  if (hasElfMagic(prefix))
     return collapseRanges(carrier, "elf", await locateElfNotes(carrier));
-  if (prefix[0] === 0x4d && prefix[1] === 0x5a)
+  if (hasDosMzMagic(prefix))
     return collapseRanges(
       carrier,
       "pe",

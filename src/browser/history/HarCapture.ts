@@ -132,7 +132,68 @@ const projectHar = (
   sensitiveValues: readonly string[],
   scope: "validation" | "container" | "entry",
 ): Projection => {
-  const redact = scope !== "validation";
+  const maxDepth = captureBudgets().depth;
+  if (scope === "validation") {
+    const path: string[] = [];
+    const buildPointer = (): string => {
+      let ptr = "";
+      for (let i = 0; i < path.length; i += 1)
+        ptr = capturePointer(ptr, path[i]!);
+      return ptr;
+    };
+    const visitValidation = (item: unknown, depth: number): JsonValue => {
+      if (depth > maxDepth)
+        throw new CaptureFormatError(
+          { name: "nesting-depth", maximum: maxDepth },
+          `HAR exceeds max_nesting_depth (${String(maxDepth)} levels).`,
+          buildPointer(),
+        );
+      if (item instanceof LosslessNumber) return validationNumber(item.value);
+      if (
+        typeof item === "string" ||
+        item === null ||
+        typeof item === "boolean"
+      )
+        return item;
+      if (Array.isArray(item)) {
+        const out = new Array<JsonValue>(item.length);
+        for (let index = 0; index < item.length; index += 1) {
+          path.push(String(index));
+          out[index] = visitValidation(item[index], depth + 1);
+          path.pop();
+        }
+        return out;
+      }
+      if (captureObject(item)) {
+        const out: Record<string, JsonValue> = {};
+        for (const [key, child] of Object.entries(item)) {
+          path.push(key);
+          const projected = visitValidation(child, depth + 1);
+          path.pop();
+          if (key === "__proto__")
+            Object.defineProperty(out, key, {
+              value: projected,
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            });
+          else out[key] = projected;
+        }
+        return out;
+      }
+      throw new CaptureFormatError(
+        "malformed",
+        "HAR parser returned a non-JSON value.",
+        buildPointer(),
+      );
+    };
+    return {
+      reported: visitValidation(value, 0),
+      numeric_literals: [],
+      binary_fields: [],
+      redactions: [],
+    };
+  }
   const redactor = new CaptureRedaction(
     sensitiveValues,
     scope === "entry" ? value : undefined,
@@ -140,9 +201,7 @@ const projectHar = (
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
   const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
-    // Evidence publishes an unsafe number as null; the schema must still judge it as a number.
-    if (!redact) return validationNumber(item.value);
-    const number = redactor.number(item, pointer, redact);
+    const number = redactor.number(item, pointer);
     if (number === null) return null;
     numeric_literals.push({
       pointer,
@@ -157,10 +216,10 @@ const projectHar = (
     depth: number,
     parent?: Readonly<Record<string, unknown>>,
   ): JsonValue => {
-    if (depth > captureBudgets().depth)
+    if (depth > maxDepth)
       throw new CaptureFormatError(
-        { name: "nesting-depth", maximum: captureBudgets().depth },
-        `HAR exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
+        { name: "nesting-depth", maximum: maxDepth },
+        `HAR exceeds max_nesting_depth (${String(maxDepth)} levels).`,
         pointer,
       );
     if (
@@ -215,15 +274,13 @@ const projectHar = (
           return null;
         }
       }
-      return redact
-        ? redactor.text(
-            item,
-            pointer,
-            scope === "entry"
-              ? redactor.harTransportUrl(pointer, parent)
-              : undefined,
-          )
-        : item;
+      return redactor.text(
+        item,
+        pointer,
+        scope === "entry"
+          ? redactor.harTransportUrl(pointer, parent)
+          : undefined,
+      );
     }
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))
@@ -231,7 +288,7 @@ const projectHar = (
         visit(child, capturePointer(pointer, String(index)), depth + 1),
       );
     if (captureObject(item)) {
-      const checkSensitive = redact && sensitiveValues.length > 0;
+      const checkSensitive = sensitiveValues.length > 0;
       const out: Record<string, JsonValue> = {};
       for (const [key, child] of Object.entries(item)) {
         if (

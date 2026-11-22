@@ -6,10 +6,11 @@ import {
   anatomyNameIs,
   anatomyTailMatches,
   appleBundleSchema,
+  findWithinRoot,
   projectAppleBundleAnatomy,
   isMachOFormat,
   isSidecar,
-  isWithin,
+  isWithinAnyRoot,
   platformsOf,
 } from "./appleBundleAnatomy.js";
 import {
@@ -143,19 +144,15 @@ export const projectAppleInventory = (
     ),
     roots,
   );
-  const uninventoriedImage =
-    rootFormat === "dmg" && inventory.occurrences.length === 1;
   const inventoryComplete = hasCompleteInventoryCoverage(
     inventory,
     "container-entries",
   );
-  const complete = inventoryComplete && !uninventoriedImage;
   const limitations = [
     ...unresolved,
     ...inventory.limitations,
     ...projectionLimitations({
       complete: inventoryComplete,
-      uninventoriedImage,
       roots,
       bundles,
       sidecars: entries.some(({ path }) => isSidecar(path)),
@@ -185,7 +182,7 @@ export const projectAppleInventory = (
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: {
       status:
-        complete &&
+        inventoryComplete &&
         unavailable.all.length === 0 &&
         bridgeProjection.coverage.status === "complete"
           ? ("complete-within-inventory" as const)
@@ -219,9 +216,8 @@ const attributeComponents = <Entry extends { readonly path: string }>(
 ): { readonly all: Entry[]; readonly unattributed: number } => {
   const visible = inventoried.filter(({ path }) => !isSidecar(path));
   if (rootFormat === "ipa") return { all: visible, unattributed: 0 };
-  const all = visible.filter(({ path }) =>
-    roots.some((root) => isWithin(path, root)),
-  );
+  const rootSet = new Set(roots);
+  const all = visible.filter(({ path }) => isWithinAnyRoot(path, rootSet));
   return { all, unattributed: visible.length - all.length };
 };
 
@@ -265,12 +261,15 @@ const classifyComponents = (
   roots: readonly string[],
   bundles: readonly z.infer<typeof appleBundleSchema>[],
 ) => {
-  const frameworkRoots = bundles
-    .filter(({ role }) => role === "framework")
-    .map(({ path }) => path);
-  const withinApp = (path: string): boolean =>
-    roots.some((root) => isWithin(path, root));
-  const lastSegment = (path: string): string => path.split("/").at(-1) ?? "";
+  const rootSet = new Set(roots);
+  const frameworkRootSet = new Set(
+    bundles.filter(({ role }) => role === "framework").map(({ path }) => path),
+  );
+  const withinApp = (path: string): boolean => isWithinAnyRoot(path, rootSet);
+  const lastSegment = (path: string): string => {
+    const slash = path.lastIndexOf("/");
+    return slash < 0 ? path : path.slice(slash + 1);
+  };
   const bundle_metadata: Component[] = [];
   const executables: Component[] = [];
   const frameworks: Component[] = [];
@@ -285,8 +284,7 @@ const classifyComponents = (
     // An unrooted IPA library is listed only under native_libraries.
     if (isMachOFormat(format) && (!nativeLib || withinApp(path)))
       executables.push(component);
-    if (frameworkRoots.some((root) => isWithin(path, root)))
-      frameworks.push(component);
+    if (isWithinAnyRoot(path, frameworkRootSet)) frameworks.push(component);
     if (nativeLib) native_libraries.push(component);
     if (format === "javascript-bundle") javascript.push(component);
     if (
@@ -354,8 +352,8 @@ const identifyBridgeCandidates = (
   native: readonly Component[],
   roots: readonly string[],
 ) => {
-  const owner = (path: string): string | null =>
-    roots.find((root) => isWithin(path, root)) ?? null;
+  const rootSet = new Set(roots);
+  const owner = (path: string): string | null => findWithinRoot(path, rootSet);
   const scriptGroups: { root: string | null; left: Component[] }[] = [];
   for (const script of scripts) {
     const root = owner(script.path);
@@ -400,7 +398,6 @@ const bridgeBasis = (
 
 const projectionLimitations = (facts: {
   readonly complete: boolean;
-  readonly uninventoriedImage: boolean;
   readonly roots: readonly string[];
   readonly bundles: readonly z.infer<typeof appleBundleSchema>[];
   readonly sidecars: boolean;
@@ -411,11 +408,6 @@ const projectionLimitations = (facts: {
 }): string[] => [
   ...(!facts.complete
     ? ["Source inventory coverage is partial; absence is unknown."]
-    : []),
-  ...(facts.uninventoriedImage
-    ? [
-        "The DMG's contents were not inventoried on this host; bundle absence is unknown.",
-      ]
     : []),
   ...(facts.roots.length === 0
     ? [

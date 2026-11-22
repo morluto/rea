@@ -31,21 +31,41 @@ export const declaredElfNoteAlignment = (
 ): ElfNoteAlignment | undefined =>
   declared <= 4n ? 4 : declared === 8n ? 8 : undefined;
 
+const LE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();
+const BE_NOTE_READERS = new WeakMap<Uint8Array, BinaryReader>();
+
+const cachedElfNoteReader = (
+  bytes: Uint8Array,
+  littleEndian: boolean,
+): BinaryReader => {
+  const cache = littleEndian ? LE_NOTE_READERS : BE_NOTE_READERS;
+  let reader = cache.get(bytes);
+  if (reader === undefined) {
+    const buffer = Buffer.isBuffer(bytes)
+      ? bytes
+      : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    reader = new BinaryReader(buffer, littleEndian, "ELF note");
+    cache.set(bytes, reader);
+  }
+  return reader;
+};
+
 /** Fixed ELF note words without interpreting the rest of the table. */
-export const readElfNoteHeader = (bytes: Uint8Array, littleEndian: boolean) => {
-  if (bytes.byteLength < ELF_NOTE_HEADER_BYTES)
+export const readElfNoteHeader = (
+  bytes: Uint8Array,
+  littleEndian: boolean,
+  offset = 0,
+) => {
+  if (offset < 0 || bytes.byteLength - offset < ELF_NOTE_HEADER_BYTES)
     return err({
       kind: "malformed" as const,
       message: "ELF note header is truncated",
     });
-  const prefix = Buffer.isBuffer(bytes)
-    ? bytes
-    : Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const reader = new BinaryReader(prefix, littleEndian, "ELF note");
+  const reader = cachedElfNoteReader(bytes, littleEndian);
   return ok({
-    namesz: reader.u32(0),
-    descsz: reader.u32(4),
-    type: reader.u32(8),
+    namesz: reader.u32(offset),
+    descsz: reader.u32(offset + 4),
+    type: reader.u32(offset + 8),
   });
 };
 
@@ -58,8 +78,9 @@ export const readElfNoteFrame = (
   littleEndian: boolean,
   alignment: ElfNoteAlignment,
   remaining: number,
+  offset = 0,
 ) => {
-  const header = readElfNoteHeader(bytes, littleEndian);
+  const header = readElfNoteHeader(bytes, littleEndian, offset);
   if (!header.ok) return header;
   const { namesz, descsz, type } = header.value;
   const endOfName = ELF_NOTE_HEADER_BYTES + namesz;
@@ -78,8 +99,12 @@ export const readElfNoteFrame = (
 };
 
 /** A short remainder after the last aligned note may be zero padding. */
-export const isElfNotePadding = (bytes: Uint8Array): boolean =>
-  bytes.every((byte) => byte === 0);
+export const isElfNotePadding = (bytes: Uint8Array): boolean => {
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    if (bytes[i] !== 0) return false;
+  }
+  return true;
+};
 
 export type ElfNoteSpan = { readonly offset: number; readonly size: number };
 
