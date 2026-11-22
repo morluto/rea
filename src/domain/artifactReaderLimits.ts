@@ -77,6 +77,16 @@ export const godotReaderLimitsSchema = z.strictObject({
 });
 export type GodotReaderLimits = z.output<typeof godotReaderLimitsSchema>;
 
+export const DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS = {
+  chunk_count: 1_048_576,
+};
+export const androidSparseImageReaderLimitsSchema = z.strictObject({
+  chunk_count: count,
+});
+export type AndroidSparseImageReaderLimits = z.output<
+  typeof androidSparseImageReaderLimitsSchema
+>;
+
 /** Input selections preserve omission; only the producing operation resolves defaults. */
 export const artifactReaderLimitsInputSchema = z.strictObject({
   bun: z
@@ -147,6 +157,15 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
     .describe(
       `Godot directory representation admission; omitted fields use ${JSON.stringify(DEFAULT_GODOT_READER_LIMITS)}. Applies before path allocation and again to retained metadata.`,
     ),
+  android_sparse_image: z
+    .strictObject({
+      chunk_count:
+        androidSparseImageReaderLimitsSchema.shape.chunk_count.exactOptional(),
+    })
+    .exactOptional()
+    .describe(
+      `Android sparse image admission; omitted fields use ${JSON.stringify(DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS)}. The declared total_chunks is admitted before the chunk walk; it bounds walked chunk headers and the retained expansion plan.`,
+    ),
   expanded_bytes: bytes
     .exactOptional()
     .describe(
@@ -156,14 +175,23 @@ export const artifactReaderLimitsInputSchema = z.strictObject({
 export type ArtifactReaderLimitsInput = z.output<
   typeof artifactReaderLimitsInputSchema
 >;
-export const artifactReaderLimitsSchema = z.strictObject({
+const resolvedArtifactReaderLimitsSchema = z.strictObject({
   bun: bunReaderLimitsSchema,
   dotnet_bundle: dotnetBundleReaderLimitsSchema,
   node_sea: nodeSeaReaderLimitsSchema,
   godot: godotReaderLimitsSchema,
+  android_sparse_image: androidSparseImageReaderLimitsSchema,
   expanded_bytes: bytes.exactOptional(),
 });
-export type ArtifactReaderLimits = z.output<typeof artifactReaderLimitsSchema>;
+export type ArtifactReaderLimits = z.output<
+  typeof resolvedArtifactReaderLimitsSchema
+>;
+
+// Earlier Evidence predates sparse-image admission and omits that policy.
+export const artifactReaderLimitsSchema =
+  resolvedArtifactReaderLimitsSchema.extend({
+    android_sparse_image: androidSparseImageReaderLimitsSchema.exactOptional(),
+  });
 
 export const resolveArtifactReaderLimits = (
   selected?: ArtifactReaderLimitsInput,
@@ -175,6 +203,10 @@ export const resolveArtifactReaderLimits = (
   },
   node_sea: { ...DEFAULT_NODE_SEA_READER_LIMITS, ...selected?.node_sea },
   godot: { ...DEFAULT_GODOT_READER_LIMITS, ...selected?.godot },
+  android_sparse_image: {
+    ...DEFAULT_ANDROID_SPARSE_IMAGE_READER_LIMITS,
+    ...selected?.android_sparse_image,
+  },
   ...(selected?.expanded_bytes === undefined
     ? {}
     : { expanded_bytes: selected.expanded_bytes }),

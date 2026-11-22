@@ -392,6 +392,17 @@ rea extract-artifact ./payload.bin --json
 See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
 facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
 
+Inventory an Android sparse image and expand it to one raw partition image
+without `simg2img`:
+
+```sh
+rea inspect-artifact ./system.img --json
+rea extract-artifact ./system.img --json
+```
+
+See [Android sparse images](../guides/firmware/android-sparse-image.md) for chunk
+facts, DONT_CARE handling, unverified checksums and the expansion allowance.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the

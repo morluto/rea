@@ -6,6 +6,7 @@ import {
 } from "../domain/artifactGraph.js";
 import type { EspFlashSelection } from "../domain/firmware/espFlashLocation.js";
 import { ANDROID_OTA_PAYLOAD_LIMITATIONS } from "../domain/firmware/androidOtaPayload.js";
+import { ANDROID_SPARSE_IMAGE_LIMITATIONS } from "../domain/firmware/androidSparseImage.js";
 import { ESP_IMAGE_LIMITATIONS } from "../domain/firmware/espImageFacts.js";
 import {
   ZIP_PACKAGE_FORMATS,
@@ -47,6 +48,7 @@ import { UefiArtifactReader } from "../uefi/UefiArtifactReader.js";
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
 import { NtfsMftArtifactReader } from "./NtfsMftArtifactReader.js";
 import { AndroidOtaPayloadArtifactReader } from "./AndroidOtaPayloadArtifactReader.js";
+import { AndroidSparseImageArtifactReader } from "./AndroidSparseImageArtifactReader.js";
 import { UImageArtifactReader } from "./UImageArtifactReader.js";
 import { UnityFsArtifactReader } from "./UnityFsArtifactReader.js";
 import { WxapkgArtifactReader } from "./WxapkgArtifactReader.js";
@@ -366,6 +368,20 @@ const NON_ZIP_FORMATS = {
     readerLimitation: ANDROID_OTA_PAYLOAD_LIMITATIONS.inventoryScope,
     createReader: (path, options) =>
       new AndroidOtaPayloadArtifactReader(path, sourceOf(options)),
+  }),
+  "android-sparse-image": container("android-sparse-image", {
+    roleContainer: true,
+    retainClassifiedSource: true,
+    extractable: true,
+    absentInventory: "unavailable",
+    readerLimitation: ANDROID_SPARSE_IMAGE_LIMITATIONS.inventoryScope,
+    createReader: (path, options) =>
+      new AndroidSparseImageArtifactReader(
+        path,
+        sourceOf(options),
+        options.readerLimits?.android_sparse_image,
+        options.readerLimits?.expanded_bytes,
+      ),
   }),
   "javascript-bundle": described("javascript-bundle", plain),
   "source-map": described("source-map", plain),

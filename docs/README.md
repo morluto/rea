@@ -103,6 +103,7 @@ The [REA website](https://rea.tools/) has worked examples and product pages.
 
 - [Firmware analysis](guides/firmware/firmware-analysis.md)
 - [Android OTA update payloads](guides/firmware/android-ota-payload.md)
+- [Android sparse images](guides/firmware/android-sparse-image.md)
 - [Flattened devicetree inspection](devicetree.md)
 - [ESP flash images](esp-flash-image.md)
 - [ESP images](esp-image.md)

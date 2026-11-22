@@ -962,6 +962,13 @@ verified. Reconstruct REPLACE, ZERO and REPLACE_ZSTD images only; delta
 operations stay inventoried with unavailable content. See
 [Android OTA update payloads](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-ota-payload.md).
 
+Android sparse images (`system.img`, `vendor.img`, `super.img` with magic
+`0xED26FF3A`) expand to one `image.raw` child without `simg2img`. Header,
+chunk counts and stored checksums are root facts; checksums are not verified
+and DONT_CARE blocks are written as zeros. The expanded child is classified
+again. See
+[Android sparse images](https://github.com/morluto/rea/blob/main/docs/guides/firmware/android-sparse-image.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

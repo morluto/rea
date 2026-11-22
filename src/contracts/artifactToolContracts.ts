@@ -27,7 +27,7 @@ export const artifactInventoryInputSchema = z.strictObject({
   artifact_limits: artifactReaderLimitsInputSchema
     .exactOptional()
     .describe(
-      "Per-call Bun, .NET bundle, Node SEA and Godot producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
+      "Per-call Bun, .NET bundle, Node SEA, Godot and Android sparse image producer admission, plus optional aggregate expanded plaintext work. Omitted fields retain existing defaults; changes apply on the next call without restart. Independent of summary/paging and MCP response limits.",
     ),
 });
 
