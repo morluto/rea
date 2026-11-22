@@ -15,7 +15,10 @@ import {
   clientProjectConfigurationPaths,
   type SetupClient,
 } from "./SupportedClients.js";
-import { clientRegistrationEnvironment } from "./ClientRegistrationEnvironment.js";
+import {
+  ClientRegistrationEnvironmentShapeError,
+  clientRegistrationEnvironment,
+} from "./ClientRegistrationEnvironment.js";
 import type { ArtifactResourceScope } from "../resources/index.js";
 import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
@@ -1157,20 +1160,22 @@ const contributingEnvironmentSource = (
 ): ClientConfigurationSource | undefined => {
   const normalize = (name: string): string =>
     platform === "win32" ? name.toUpperCase() : name;
-  const rejected = new Set(
-    error.settings.flatMap(({ setting }) => {
-      const parts = setting.split(".");
-      return [normalize(setting), normalize(parts.at(-1) ?? setting)];
-    }),
-  );
+  const keys =
+    error instanceof ClientRegistrationEnvironmentShapeError
+      ? error.invalidKeys
+      : error.settings.map(({ setting }) => setting);
+  const rejected = new Set(keys.map(normalize));
+  const invalidMap =
+    error instanceof ClientRegistrationEnvironmentShapeError &&
+    keys.length === 0;
   return declarations.findLast(({ source, entry }) => {
     if (!isRecord(entry) || !Object.hasOwn(entry, source.environmentKey))
       return false;
+    if (invalidMap) return true;
     const environment = entry[source.environmentKey];
     return (
-      rejected.has(normalize(source.environmentKey)) ||
-      (isRecord(environment) &&
-        Object.keys(environment).some((key) => rejected.has(normalize(key))))
+      isRecord(environment) &&
+      Object.keys(environment).some((key) => rejected.has(normalize(key)))
     );
   })?.source;
 };
