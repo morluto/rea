@@ -1,4 +1,3 @@
-import { bufferedJsonParts } from "../domain/jsonSerialization.js";
 import { constants } from "node:buffer";
 import type { Writable } from "node:stream";
 
@@ -577,25 +576,27 @@ export const createCliResultOutput = (
       // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
-      let jsonChunks: string[] | undefined;
       if (format === "json") {
-        jsonChunks = [];
-        for (const part of bufferedJsonParts(
-          jsonOutputParts(tokenValue, format, isTerminalOutput(destination)),
-        )) {
+        for (const part of jsonOutputParts(
+          tokenValue,
+          format,
+          isTerminalOutput(destination),
+        ))
           characters += part.length;
-          if (characters > constants.MAX_STRING_LENGTH) {
-            jsonChunks = undefined;
-            break;
-          }
-          jsonChunks.push(part);
-        }
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
-        const formatted =
-          jsonChunks !== undefined
-            ? jsonChunks.join("")
-            : formatCliOutput(tokenValue, format);
+        let formatted: string;
+        if (format === "json") {
+          // Reuse the writer's exact representation after its capacity admission.
+          // tokenx requires one string; retain only this bounded formatted value.
+          formatted = "";
+          for (const part of jsonOutputParts(
+            tokenValue,
+            format,
+            isTerminalOutput(destination),
+          ))
+            formatted += part;
+        } else formatted = formatCliOutput(tokenValue, format);
         const count = estimateTokenCount(formatted);
         handled = true;
         try {

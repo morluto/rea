@@ -234,6 +234,7 @@ export class JavaScriptAnalysisWorker {
         // budget or a stack trace that overflowed it cannot hide it.
         runtime: "v8",
         onDiagnostic: (event) => this.#observeProcessDiagnostic(event),
+        onMemoryLimit: () => this.#observeMemoryLimit(),
       },
       onInputFailure: (cause) => this.#latchInputFailure(cause),
     });
