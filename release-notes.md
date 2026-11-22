@@ -47,6 +47,7 @@
 * **ci:** check the MCP SDK validator option in its constructor slot ([#13266](https://github.com/morluto/rea/issues/13266)) ([411e78e](https://github.com/morluto/rea/commit/411e78ea64355320c034f40ea0fda6c089255b28))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
+* **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
 * **cli:** report retained MCP registration backups on typed failures ([#13268](https://github.com/morluto/rea/issues/13268)) ([c1a1de9](https://github.com/morluto/rea/commit/c1a1de9bfb385e1ba15519779fd0680bd737ebfd))
 * **desktop:** claim agentenv capture exclusively and survive FIFO write errors ([#12838](https://github.com/morluto/rea/issues/12838)) ([72f8f52](https://github.com/morluto/rea/commit/72f8f521a68722c64e229fa5174b17d1822750de))
 * **desktop:** classify complete filename boundary code points ([d9f2fd3](https://github.com/morluto/rea/commit/d9f2fd365dea6622e90bad56f29b278920e0fee2))
