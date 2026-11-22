@@ -357,12 +357,10 @@ const runExport = async (
   readers: DesktopExportReaders,
   signal: AbortSignal | undefined,
 ) => {
-  const { evidence, capture } = await readDesktopCapture(
-    request.capture,
-    signal,
-  );
+  const source = await readDesktopCapture(request.capture, signal);
+  const { evidence, capture } = source;
   const stateEvidence = await inspectDesktopApplicationState(
-    request.capture,
+    source,
     readers,
     signal,
     { viewPolicy: request.viewPolicy },

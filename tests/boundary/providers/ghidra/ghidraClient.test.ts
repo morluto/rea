@@ -2734,3 +2734,70 @@ describe("GhidraClient reply ceiling", () => {
     });
   });
 });
+
+describe("GhidraClient operation progress heartbeats", () => {
+  it("skips progress reports on fast calls and emits 5s heartbeats until completion or abort", async () => {
+    const fastClient = clientFor(new FixtureLauncher());
+    await expect(fastClient.start()).resolves.toMatchObject({ ok: true });
+    const fastUpdates: ProgressUpdate[] = [];
+    await expect(
+      fastClient.callTool(
+        "list_strings",
+        {},
+        {
+          progress: {
+            report: async (update) => {
+              fastUpdates.push(update);
+            },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(fastUpdates).toEqual([]);
+
+    const launcher = new FixtureLauncher("hang_tools");
+    const client = clientFor(launcher);
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const controller = new AbortController();
+    const updates: ProgressUpdate[] = [];
+    const pending = client.callTool(
+      "analyze_function",
+      { procedure: "0x1000" },
+      {
+        signal: controller.signal,
+        progress: {
+          report: async (update) => {
+            updates.push(update);
+            throw new Error("notification sink unavailable");
+          },
+        },
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(updates).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(updates).toEqual([
+      expect.objectContaining({
+        phase: "ghidra_operation",
+        completed: 0,
+        total: null,
+        message: expect.stringContaining("Waiting for Ghidra analyze_function"),
+      }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updates).toHaveLength(2);
+
+    controller.abort("caller stopped");
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(updates).toHaveLength(2);
+  });
+});

@@ -26,12 +26,13 @@ const goProfilePath = (value: string): string | null =>
 /**
  * One field as Go's `quoted.Split` reads a flag value: a field that begins with
  * `"` or `'` runs to the matching quote, which it drops; any other field runs to
- * whitespace and keeps every quote in it as a literal character.
+ * ASCII space, tab, CR, or LF and keeps every quote in it as a literal
+ * character. Other whitespace can be part of a filesystem name.
  */
-const GO_FLAG_FIELD = /"([^"]*)"|'([^']*)'|[^\s"'][^\s]*/gu;
+const GO_FLAG_FIELD = /"([^"]*)"|'([^']*)'|[^ \t\r\n"'][^ \t\r\n]*/gu;
 /** A path after a flag prefix, whitespace, `=`, or `,`, as in `-isystem/opt/x`. */
 const GO_FLAG_PATH =
-  /(?:^|[\s=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\\s=,]+\\)[^=,]+)/gu;
+  /(?:^|[ \t\r\n=,])(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT]))?((?:\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\{2}[^\\ \t\r\n=,]+\\)[^=,]+)/gu;
 
 /**
  * Settings read by a C compiler, where the flags below take a directory or file.
@@ -44,7 +45,7 @@ const GO_FLAG_PATH =
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?\s*|--sysroot(?:=|\s+|$)|-fprofile-(?:dir|generate|use)=)(.*)$/su;
+  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFLT]|I(?!-$))=?[ \t\r\n]*|--sysroot(?:=|[ \t\r\n]+|$)|-fprofile-(?:dir|generate|use)=)(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take
@@ -156,11 +157,24 @@ const linkerPaths = (
   return { paths, searchPaths, remaining };
 };
 
-/**
- * `-trimpath` takes `prefix=replacement` rewrites separated by `;`, so its
- * rooted value is read by `flagPaths` with that structure kept.
- */
-const GO_PATH_LIST_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+/** Rewrite rules consumed by go tool compile and asm. */
+const GO_TRIMPATH_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+
+/** Match Go's objabi.ApplyRewrites. An empty prefix can never match a path. */
+const trimpathPaths = (value: string): string[] => {
+  const paths: string[] = [];
+  for (const rewrite of value.split(";")) {
+    const arrow = rewrite.lastIndexOf("=>");
+    const prefix = arrow < 0 ? rewrite : rewrite.slice(0, arrow);
+    if (prefix.length === 0) continue;
+    paths.push(prefix);
+    if (arrow < 0) continue;
+    const replacement = filesystemPath(rewrite.slice(arrow + 2));
+    if (replacement !== null) paths.push(replacement);
+  }
+  return paths;
+};
+
 /**
  * `go tool link -r` sets the dynamic linker search path, `dir1:dir2:...`, so
  * it is read entry by entry like a forwarded `-rpath`.
@@ -271,25 +285,18 @@ const goToolOperandPaths = (
   argument: string,
   pathFlag: RegExp | undefined,
   format: NativeImageFormat,
-): { paths: string[]; remaining: string[] } => {
+): string[] => {
   if (
     argument.length === 0 ||
     (pathFlag === GO_LINKER_PATH_FLAG &&
       /^-{1,2}libgcc(?:=|$)/u.test(flag) &&
       argument === "none")
   )
-    return { paths: [], remaining: [] };
-  if (GO_PATH_LIST_FLAG.test(flag))
-    return {
-      paths: filesystemPath(argument) === null ? [argument] : [],
-      remaining: [argument],
-    };
-  return {
-    paths: GO_LINKER_SEARCH_LIST_FLAG.test(flag)
-      ? searchListEntries(argument, format)
-      : [argument],
-    remaining: [],
-  };
+    return [];
+  if (GO_TRIMPATH_FLAG.test(flag)) return trimpathPaths(argument);
+  return GO_LINKER_SEARCH_LIST_FLAG.test(flag)
+    ? searchListEntries(argument, format)
+    : [argument];
 };
 
 /**
@@ -320,9 +327,7 @@ const goSettingPaths = (
         attached.length === 0 && !flag.endsWith("=") && next !== undefined;
       const argument = fromNext ? next : attached;
       if (fromNext) index += 1;
-      const operand = goToolOperandPaths(flag, argument, pathFlag, format);
-      paths.push(...operand.paths);
-      remaining.push(...operand.remaining);
+      paths.push(...goToolOperandPaths(flag, argument, pathFlag, format));
       continue;
     }
     const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);

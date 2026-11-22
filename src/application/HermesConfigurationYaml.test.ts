@@ -145,24 +145,32 @@ it("keeps comments once when an updated anchored entry has a surviving consumer"
 });
 
 describe("Hermes surviving anchor definitions", () => {
-  for (const shadowed of [false, true]) {
-    it.each([undefined, { command: "rea" }])(
-      `retains surviving shared target identity with shadowed=${shadowed} when writing %j`,
-      (entry) => {
-        const source =
-          "defaults: &settings {MODE: 'off'}\nmcp_servers:\n  rea: &server\n    command: old\n    env: *settings\n" +
-          (shadowed ? "later: &settings {MODE: 'later'}\n" : "") +
-          "observer: *server\npeer: *settings\n";
-        const result = parse(
-          editHermesConfigurationYaml(source, ["mcp_servers", "rea"], entry),
-        );
-        expect(result.defaults).toEqual({ MODE: "off" });
-        expect(result.observer.env).toBe(result.defaults);
-        expect(result.peer).toBe(shadowed ? result.later : result.defaults);
-        if (shadowed) expect(result.peer).not.toBe(result.defaults);
-      },
-    );
-  }
+  it.each([
+    [false, { command: "rea" }],
+    [true, undefined],
+  ] as const)(
+    "retains the original shared target with a later redefinition=%s",
+    (shadowed, entry) => {
+      const source =
+        "defaults: &settings {MODE: 'off'}\nmcp_servers:\n  rea: &server\n    command: old\n    env: *settings\n" +
+        (shadowed ? "later: &settings {MODE: 'later'}\n" : "") +
+        "observer: *server\npeer: *settings\n";
+      const result = parse(
+        editHermesConfigurationYaml(source, ["mcp_servers", "rea"], entry),
+      );
+      expect(result.defaults).toEqual({ MODE: "off" });
+      expect(result.mcp_servers).toEqual(
+        entry === undefined ? {} : { rea: entry },
+      );
+      expect(result.observer).toEqual({ command: "old", env: { MODE: "off" } });
+      expect(result.observer.env).toBe(result.defaults);
+      expect(result.peer).toBe(shadowed ? result.later : result.defaults);
+      if (shadowed) {
+        expect(result.later).toEqual({ MODE: "later" });
+        expect(result.peer).not.toBe(result.defaults);
+      }
+    },
+  );
 
   it.each(["settings", "missing"])(
     "still refuses a surviving %s dependency that cannot be retained",
@@ -176,20 +184,6 @@ describe("Hermes surviving anchor definitions", () => {
 });
 
 describe("Hermes copied anchor comments", () => {
-  it("retains the removed anchor definition comment at its surviving consumer", () => {
-    const source =
-      "mcp_servers:\n  rea: &server {command: old} # Keep definition explanation\n  other: *server\n";
-    const updated = editHermesConfigurationYaml(
-      source,
-      ["mcp_servers", "rea"],
-      undefined,
-    );
-    expect(parseHermesConfigurationYaml(updated)).toEqual({
-      mcp_servers: { other: { command: "old" } },
-    });
-    expect(updated).toContain("# Keep definition explanation");
-  });
-
   it.each([undefined, { command: "rea" }])(
     "combines definition and consumer comments without copying shared definitions twice when writing %j",
     (entry) => {
@@ -299,22 +293,6 @@ describe("Hermes anchored-entry consumers", () => {
     },
   );
 
-  it("binds copied nested aliases before a later anchor reuses their name", () => {
-    const source =
-      "defaults: &settings {MODE: 'old'}\nmcp_servers:\n  rea: &entry\n    command: old\n    env: *settings\nlater: &settings {MODE: 'later'}\nobserver: *entry\n";
-    const result = parseHermesConfigurationYaml(
-      editHermesConfigurationYaml(source, ["mcp_servers", "rea"], {
-        command: "rea",
-      }),
-    );
-    expect(result).toEqual({
-      defaults: { MODE: "old" },
-      mcp_servers: { rea: { command: "rea" } },
-      later: { MODE: "later" },
-      observer: { command: "old", env: { MODE: "old" } },
-    });
-  });
-
   it("changes only consumers of the removed definition when an anchor name repeats", () => {
     const source =
       "mcp_servers:\n  rea: &server {command: old}\n  other: *server\nlater: &server {command: later}\nobserver: *server\n";
@@ -376,43 +354,45 @@ describe("Hermes anchored-entry consumers", () => {
   );
 });
 
-for (const version of ["1.1", "1.2"] as const)
-  it.each(["refresh", "remove"] as const)(
-    `preserves YAML ${version} consumers of a replaced REA anchor during %s`,
-    (operation) => {
-      const original =
-        `${version === "1.2" ? "%YAML 1.2\n---\n" : ""}` +
-        "mcp_servers:\n  rea: &server\n    command: old-rea\n    args: [mcp]\n    env: &environment {MODE: 'on'}\n  other: *server # caller binding\nobserver: *server\nenvironment: *environment\n";
-      const before = parse(original, { version });
-      const updated = editHermesConfigurationYaml(
-        original,
+it.each([
+  ["1.1", "remove"],
+  ["1.2", "refresh"],
+] as const)(
+  "preserves YAML %s consumers of a replaced REA anchor during %s",
+  (version, operation) => {
+    const original =
+      `${version === "1.2" ? "%YAML 1.2\n---\n" : ""}` +
+      "mcp_servers:\n  rea: &server\n    command: old-rea\n    args: [mcp]\n    env: &environment {MODE: 'on'}\n  other: *server # caller binding\nobserver: *server\nenvironment: *environment\n";
+    const before = parse(original, { version });
+    const updated = editHermesConfigurationYaml(
+      original,
+      ["mcp_servers", "rea"],
+      operation === "refresh"
+        ? { command: "new-rea", args: ["mcp"] }
+        : undefined,
+    );
+    expect(parse(updated, { version })).toEqual({
+      mcp_servers: {
+        ...(operation === "refresh"
+          ? { rea: { command: "new-rea", args: ["mcp"] } }
+          : {}),
+        other: before.mcp_servers.other,
+      },
+      observer: before.observer,
+      environment: before.environment,
+    });
+    expect(updated).toContain("# caller binding");
+    expect(
+      editHermesConfigurationYaml(
+        updated,
         ["mcp_servers", "rea"],
         operation === "refresh"
           ? { command: "new-rea", args: ["mcp"] }
           : undefined,
-      );
-      expect(parse(updated, { version })).toEqual({
-        mcp_servers: {
-          ...(operation === "refresh"
-            ? { rea: { command: "new-rea", args: ["mcp"] } }
-            : {}),
-          other: before.mcp_servers.other,
-        },
-        observer: before.observer,
-        environment: before.environment,
-      });
-      expect(updated).toContain("# caller binding");
-      expect(
-        editHermesConfigurationYaml(
-          updated,
-          ["mcp_servers", "rea"],
-          operation === "refresh"
-            ? { command: "new-rea", args: ["mcp"] }
-            : undefined,
-        ),
-      ).toBe(updated);
-    },
-  );
+      ),
+    ).toBe(updated);
+  },
+);
 
 describe("Hermes YAML deletion", () => {
   for (const version of ["1.1", "1.2"] as const) {

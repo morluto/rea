@@ -418,7 +418,6 @@ const inspectMethod = async (
       class_name: request.input.class_name,
       method_name: request.input.method_name,
       overload_index: index,
-      smali_fallback: true,
     }),
   );
   if (
@@ -580,8 +579,6 @@ const traceReferences = async (
         ...(methodName === undefined
           ? {}
           : { method_name: methodName, overload_index: index }),
-        limit: 2_147_483_647,
-        resolve_line: false,
       },
     ),
   );

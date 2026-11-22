@@ -29,6 +29,7 @@ export { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 export {
   ArtifactFileCancelled,
   ArtifactFileCleanupFailure,
+  ArtifactFileFailureGroup,
   artifactFileCancellationCause,
   artifactFileCompletion,
   artifactFilePrimaryFacts,

@@ -37,7 +37,10 @@ import {
   type HexRaysCloseReceipt,
   type HexRaysStatus,
 } from "./IdaHexRaysProtocol.js";
-import { idaCompatibilityProfile } from "./IdaConfiguration.js";
+import {
+  idaCompatibilityProfile,
+  idaSupervisorOpenTimeoutGuidance,
+} from "./IdaConfiguration.js";
 import { createIdaDiagnosticRedactor } from "./IdaDiagnosticRedactor.js";
 import { nativeTools } from "./IdaNativeProtocol.js";
 import { readSettledHealth } from "./IdaBusyHealth.js";
@@ -64,6 +67,7 @@ import {
   modernHealthSchema,
   openDatabaseSchema,
   rejectedOpenDatabaseSchema,
+  supervisorOpenTimeoutSeconds,
 } from "./IdaProtocolValues.js";
 import {
   idaFileDigest,
@@ -800,10 +804,30 @@ export class IdaSessionClient implements AnalysisClient {
       init_hexrays: true,
       preferred_session_id: workspace.sessionId,
     });
-    this.#openOutcome = rejectedOpenDatabaseSchema.safeParse(raw).success
-      ? "no_worker"
-      : "reply_received";
+    const rejected = rejectedOpenDatabaseSchema.safeParse(raw);
+    this.#openOutcome = rejected.success ? "no_worker" : "reply_received";
     this.#lifecycle.push(raw);
+    // The supervisor reports any open failure as `{ error }` rather than an
+    // MCP tool error; keep its reason instead of reading it as malformed data.
+    if (rejected.success) {
+      const diagnostic = createIdaDiagnosticRedactor(this.config);
+      const reason = diagnostic.blocks([rejected.data.error]);
+      const rejection = new IdaToolRejection(
+        diagnostic.message("IDA MCP tool failed: ", reason),
+        { diagnostics: { reason } },
+      );
+      const seconds = supervisorOpenTimeoutSeconds(rejected.data.error);
+      if (seconds === undefined) throw rejection;
+      throw new AnalysisTimeoutError("idb_open", seconds * 1000, {
+        cause: rejection,
+        ...idaSupervisorOpenTimeoutGuidance(seconds),
+        diagnostics: {
+          reason,
+          upstream_setting: "IDA_MCP_OPEN_TIMEOUT",
+          upstream_timeout_seconds: seconds,
+        },
+      });
+    }
     const opened = openDatabaseSchema.parse(raw);
     if (!sameIdaHostPath(opened.session.input_path, workspace.inputPath))
       throw new IdaIdentityRefusal(

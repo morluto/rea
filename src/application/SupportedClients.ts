@@ -1032,19 +1032,22 @@ const junieLocation = ({
  * where only an absolute `XDG_CONFIG_HOME` counts.
  */
 const gooseUserConfigPath = ({ home, platform, env }: ClientPathContext) => {
-  const pathApi = platform === "win32" ? win32 : posix;
   const root = env.GOOSE_PATH_ROOT;
-  if (root && pathApi.isAbsolute(root))
-    return pathApi.join(root, "config", "config.yaml");
+  if (root !== undefined && isQualifiedCallerPath(root, platform))
+    return appendCallerPath(root, "config/config.yaml", platform);
   return platform === "win32"
-    ? join(
+    ? win32.join(
         windowsAppDataRoots(home, env).roaming,
         "Block",
         "goose",
         "config",
         "config.yaml",
       )
-    : join(absoluteXdgConfigHome({ home, env }), "goose", "config.yaml");
+    : appendCallerPath(
+        absoluteXdgConfigHome({ home, env }),
+        "goose/config.yaml",
+        platform,
+      );
 };
 
 /**

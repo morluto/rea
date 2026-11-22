@@ -46,6 +46,17 @@ export const srecRecord = (
 const lines = (...records: readonly string[]): string =>
   `${records.join("\n")}\n`;
 
+/** 65,536 physically discontiguous records that merge into one full 16-bit span. */
+export const intelHexInterleavedRuns = (repeatFirst = false): string => {
+  const records: string[] = [];
+  for (const parity of [0, 1])
+    for (let address = parity; address <= 0xffff; address += 2)
+      records.push(intelHexRecord(0, address, [address & 0xff]));
+  if (repeatFirst) records.push(intelHexRecord(0, 0, [0]));
+  records.push(":00000001FF");
+  return `${records.join("\n")}\n`;
+};
+
 /** I32HEX with a gap, a start linear address and EOF. */
 export const INTEL_HEX_I32_GAP = lines(
   ":020000040800F2",
