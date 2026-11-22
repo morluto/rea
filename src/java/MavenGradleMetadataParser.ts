@@ -226,12 +226,14 @@ const mavenExclusionElements = (element: Element): Element[] => {
   return container === undefined ? [] : childrenNamed(container, "exclusion");
 };
 
-const parseMavenDependency = (
+const parseMavenDependency = <
+  Origin extends "dependencies" | "dependencyManagement",
+>(
   element: Element,
-  origin: "dependencies" | "dependencyManagement",
+  origin: Origin,
   index: number,
   unresolved: MavenGradleUnresolvedCollector,
-): MavenGradleDependency => {
+): MavenGradleDependency<Origin> => {
   const group_id = childText(element, "groupId");
   const artifact_id = childText(element, "artifactId");
   const version = childText(element, "version");
@@ -422,14 +424,16 @@ const parsePom = (
   };
 };
 
-const parseGradleDependency = (
+const parseGradleDependency = <
+  Origin extends "variant-dependencies" | "variant-constraints",
+>(
   value: unknown,
-  origin: "variant-dependencies" | "variant-constraints",
+  origin: Origin,
   variant: string | null,
   platform: boolean,
   index: number,
   unresolved: MavenGradleUnresolvedCollector,
-): MavenGradleDependency => {
+): MavenGradleDependency<Origin> => {
   if (!isRecord(value))
     throw malformedInput(
       MAVEN_GRADLE_METADATA_FORMAT,
@@ -553,8 +557,9 @@ const parseGradle = (
       if (isRecord(row))
         exclusions += gradleArray(row.excludes, "excludes").length;
   admit("exclusions", MAVEN_GRADLE_METADATA_EXCLUSIONS, exclusions);
-  const dependencies: MavenGradleDependency[] = [];
-  const dependency_management: MavenGradleDependency[] = [];
+  const dependencies: MavenGradleDependency<"variant-dependencies">[] = [];
+  const dependency_management: MavenGradleDependency<"variant-constraints">[] =
+    [];
   const gradleVariants: NonNullable<MavenGradleMetadata["gradle"]>["variants"] =
     [];
   let nextIndex = 0;

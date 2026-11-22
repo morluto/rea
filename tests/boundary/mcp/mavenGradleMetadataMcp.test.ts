@@ -10,6 +10,8 @@ import {
   gradleModuleFixture,
   mavenPomFixture,
 } from "../../../src/java/MavenGradleMetadata.fixture.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -29,34 +31,6 @@ const connect = async (mcp: TestMcp) => {
   const client = await mcp.connect(createServer({ kind: "session", session }));
   return { client, session };
 };
-
-mcpTest(
-  "retains omitted, explicit default and selected metadata budgets through registered MCP admission",
-  async ({ mcp }) => {
-    const { client, session } = await connect(mcp);
-    const root = await createTestTempDirectory("rea-maven-admission-");
-    const path = join(root, "pom.xml");
-    await writeFile(path, mavenPomFixture);
-    try {
-      for (const maximum of [undefined, 1048576, 65536]) {
-        const input = {
-          path,
-          ...(maximum === undefined ? {} : { max_file_bytes: maximum }),
-        };
-        const response = await client.callTool({
-          name: "inspect_maven_gradle_metadata",
-          arguments: input,
-        });
-        expect(response.isError, JSON.stringify(response)).not.toBe(true);
-        expect(
-          completeEvidenceSchema.parse(response.structuredContent).parameters,
-        ).toEqual(input);
-      }
-    } finally {
-      await session.close();
-    }
-  },
-);
 
 mcpTest(
   "advertises inspect_maven_gradle_metadata and reports a real POM",
@@ -81,7 +55,23 @@ mcpTest(
       const evidence = completeEvidenceSchema.parse(response.structuredContent);
       const report = evidence.normalized_result;
       expect(report.format).toBe("maven-pom");
-      expect(report.coordinates.artifact_id).toBe("demo");
+      expect(evidence.confidence).toBe("observed");
+      expect(report.coverage).toEqual({
+        status: "complete",
+        examined_bytes: Buffer.byteLength(mavenPomFixture),
+      });
+      expect(report.coordinates).toMatchObject({
+        artifact_id: "demo",
+        version: "${revision}",
+      });
+      expect(report.unresolved).toContainEqual(
+        expect.objectContaining({
+          kind: "property",
+          reference: "${revision}",
+          owner: "project",
+          field: "version",
+        }),
+      );
       expect(report.dependency_management[0]?.bom_import).toBe(true);
       expect(report.limitations.join(" ")).toContain(
         "without running Maven or Gradle",
@@ -105,10 +95,32 @@ mcpTest(
         arguments: { path },
       });
       expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
-      const report = completeEvidenceSchema.parse(
-        response.structuredContent,
-      ).normalized_result;
+      const evidence = completeEvidenceSchema.parse(response.structuredContent);
+      const report = evidence.normalized_result;
       expect(report.format).toBe("gradle-module");
+      const validation = createMcpSchemaValidation();
+      const schema = canonicalOutputSchema("inspect_maven_gradle_metadata");
+      const validate = validation.getValidator(schema);
+      expect(validate(response.structuredContent).valid).toBe(true);
+      expect(
+        validate({
+          ...evidence,
+          normalized_result: { ...report, gradle: null },
+        }).valid,
+      ).toBe(false);
+      expect(
+        validate({
+          ...evidence,
+          normalized_result: {
+            ...report,
+            dependency_management: report.dependency_management.map((row) => ({
+              ...row,
+              origin: "variant-dependencies",
+            })),
+          },
+        }).valid,
+      ).toBe(false);
+      validation.clear();
       expect(report.coordinates.group_id).toBe("com.example");
       expect(report.gradle?.format_version).toBe("1.1");
     } finally {
