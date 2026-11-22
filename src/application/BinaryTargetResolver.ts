@@ -721,12 +721,8 @@ const detectDatabaseEngine = async (
   handle: FileHandle,
   signal?: AbortSignal,
 ): Promise<AnalysisDatabaseEngine | null> => {
-  throwIfTargetResolutionCancelled(signal);
-  const magic = Buffer.alloc(4);
-  const observed = await handle.read(magic, 0, magic.length, 0);
-  throwIfTargetResolutionCancelled(signal);
-  if (hasIdaDatabaseSignature(magic.subarray(0, observed.bytesRead)))
-    return "ida";
+  const magic = await readHandleRange(handle, 0, 4, signal);
+  if (hasIdaDatabaseSignature(magic)) return "ida";
   return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
