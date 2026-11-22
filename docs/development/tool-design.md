@@ -207,7 +207,7 @@ does not establish another instance.
   constraints. Report pagination, truncation, cancellation, and partial failure.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  [admission limits and recovery](../reference/limits-and-recovery.md).
 
 ### Compose declared Evidence inputs
 
@@ -263,6 +263,19 @@ Client registration inspections, for example, carry command identity and
 activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
+
+During review, name the fact or resource whose ownership must agree across
+entry points. Trace where it is established, which consumers rely on it,
+and where fallback, retry, or cleanup can change the outcome. Search for
+other code that derives the same fact or claims the same responsibility.
+Different implementations can still make the same decision independently.
+
+Have the owner carry the result, its source and scope, and any uncertainty.
+Each consumer applies its own policy to those shared facts. Keep proof of
+identity and ownership separate from validity, readiness, and authority to
+act. For an operation that needs fresh evidence, ask the same owner to
+revalidate. For a proposed change, use the owner's rules to evaluate what
+would remain before applying it.
 
 Keep the reader's observation independent of the operation that needs it.
 For example, the Evidence file reader can recognize the shape of an

@@ -7,152 +7,149 @@ import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 it.each([
   {
-    name: "invalid UTF-8 property name",
-    body: Buffer.from([123, 34, 255, 34, 58, 116, 114, 117, 101, 125]),
-    property: null,
+    name: "malformed UTF-8",
+    cases: [
+      ["invalid-key", Buffer.from('{"\xff":true}', "latin1"), null],
+      ["invalid-value", Buffer.from('{"k":"\xff"}', "latin1"), null],
+      ["overlong-key", Buffer.from('{"\xc0\xaf":true}', "latin1"), null],
+    ],
   },
   {
-    name: "invalid UTF-8 string value",
-    body: Buffer.from([123, 34, 107, 34, 58, 34, 255, 34, 125]),
-    property: null,
+    name: "valid UTF-8",
+    cases: [
+      ["accented-key", Buffer.from('{"é":true}'), "é"],
+      ["replacement-key", Buffer.from('{"�":true}'), "�"],
+    ],
   },
-  {
-    name: "overlong UTF-8 property name",
-    body: Buffer.from([123, 34, 192, 175, 34, 58, 116, 114, 117, 101, 125]),
-    property: null,
-  },
-  {
-    name: "valid UTF-8 property name",
-    body: Buffer.from('{"é":true}'),
-    property: "é",
-  },
-  {
-    name: "literal replacement-character property name",
-    body: Buffer.from('{"�":true}'),
-    property: "�",
-  },
-])("preserves JSON-shape uncertainty for $name", async ({ body, property }) => {
-  const browser = await startFakeCdpBrowser({
-    eventsBeforeReply: ["Network.enable"],
-    commandEvents(command, origin) {
-      if (command.method !== "Network.enable") return [];
-      const session =
-        command.sessionId === undefined ? {} : { sessionId: command.sessionId };
-      return [false, true].flatMap((hasRequestShape) => {
-        const requestId = hasRequestShape
-          ? "request-and-response"
-          : "response-only";
-        const url = `${origin}/${requestId}`;
-        return [
-          {
-            ...session,
-            method: "Network.requestWillBeSent",
-            params: {
-              requestId,
-              request: {
-                url,
-                method: hasRequestShape ? "POST" : "GET",
-                ...(hasRequestShape
+] as const)(
+  "keeps $name response body facts tied to their request",
+  async ({ cases }) => {
+    const exchanges = cases.flatMap(([id, body, property]) =>
+      [false, true].map((hasRequestShape) => ({
+        requestId: `${id}-${hasRequestShape ? "post" : "get"}`,
+        body,
+        property,
+        hasRequestShape,
+      })),
+    );
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["Network.enable"],
+      commandEvents(command, origin) {
+        if (command.method !== "Network.enable") return [];
+        return exchanges.flatMap(({ requestId, body, hasRequestShape }) => {
+          const url = `${origin}/${requestId}`;
+          return [
+            {
+              sessionId: command.sessionId,
+              method: "Network.requestWillBeSent",
+              params: {
+                requestId,
+                request: hasRequestShape
                   ? {
+                      url,
+                      method: "POST",
                       headers: { "Content-Type": "application/json" },
                       postData: '{"request":true}',
                     }
-                  : {}),
+                  : { url, method: "GET" },
+                initiator: { type: "other" },
               },
-              initiator: { type: "other" },
             },
-          },
-          {
-            ...session,
-            method: "Network.responseReceived",
-            params: {
-              requestId,
-              response: { url, status: 200, mimeType: "application/json" },
-            },
-          },
-          {
-            ...session,
-            method: "Network.loadingFinished",
-            params: { requestId, encodedDataLength: body.length },
-          },
-        ];
-      });
-    },
-    commandResult(command) {
-      return command.method === "Network.getResponseBody"
-        ? { body: body.toString("base64"), base64Encoded: true }
-        : undefined;
-    },
-  });
-  trackBrowser(browser);
-  const result = await new CdpBrowserProvider().inspectPage(
-    inspectWebPageInputSchema.parse({
-      cdp_endpoint: browser.endpoint,
-      allowed_origins: [browser.allowedOrigin],
-      target_id: "allowed-page",
-      observation_ms: 0,
-      include_json_body_shapes: true,
-    }),
-  );
-  if (!result.ok) throw result.error;
-  const requests = result.value.network.requests;
-  expect(requests).toHaveLength(2);
-  for (const request of requests) {
-    const hasRequestShape = request.request_id === "request-and-response";
-    expect(request).toMatchObject({
-      url: `${browser.allowedOrigin}/${request.request_id}`,
-      status: 200,
-      mime_type: "application/json",
-      encoded_data_length: body.length,
-      body_shapes: {
-        status:
-          property === null
-            ? hasRequestShape
-              ? "partial"
-              : "unavailable"
-            : "included",
-        request: hasRequestShape ? expect.any(Object) : null,
-        response:
-          property === null
-            ? null
-            : {
-                root_type: "object",
-                node_count: 2,
-                max_depth_observed: 1,
-                properties: [
-                  {
-                    path: [{ kind: "property", name: property }],
-                    types: ["boolean"],
-                    observations: 1,
-                  },
-                ],
+            {
+              sessionId: command.sessionId,
+              method: "Network.responseReceived",
+              params: {
+                requestId,
+                response: { url, status: 200, mimeType: "application/json" },
               },
+            },
+            {
+              sessionId: command.sessionId,
+              method: "Network.loadingFinished",
+              params: { requestId, encodedDataLength: body.length },
+            },
+          ];
+        });
+      },
+      commandResult(command) {
+        if (command.method !== "Network.getResponseBody") return undefined;
+        const exchange = exchanges.find(
+          ({ requestId }) => requestId === command.params.requestId,
+        );
+        if (exchange === undefined) throw new Error("Unexpected body request");
+        return { body: exchange.body.toString("base64"), base64Encoded: true };
       },
     });
-  }
-  expect(
-    browser.commands.filter(
-      (command) => command.method === "Network.getResponseBody",
-    ),
-  ).toHaveLength(2);
-  if (property === null) {
-    expect(result.value.completeness.unavailable_sections).toContain(
-      "json_body_shapes",
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_json_body_shapes: true,
+      }),
     );
-    expect(result.value.completeness.excluded).toContainEqual({
+    if (!result.ok) throw result.error;
+
+    expect(result.value.network.requests).toEqual(
+      exchanges.map(({ requestId, body, property, hasRequestShape }) =>
+        expect.objectContaining({
+          request_id: requestId,
+          url: `${browser.allowedOrigin}/${requestId}`,
+          status: 200,
+          mime_type: "application/json",
+          encoded_data_length: body.length,
+          body_shapes: {
+            status:
+              property === null
+                ? hasRequestShape
+                  ? "partial"
+                  : "unavailable"
+                : "included",
+            request: hasRequestShape
+              ? expect.objectContaining({ root_type: "object" })
+              : null,
+            response:
+              property === null
+                ? null
+                : {
+                    root_type: "object",
+                    node_count: 2,
+                    max_depth_observed: 1,
+                    properties: [
+                      {
+                        path: [{ kind: "property", name: property }],
+                        types: ["boolean"],
+                        observations: 1,
+                      },
+                    ],
+                  },
+          },
+        }),
+      ),
+    );
+    expect(
+      browser.commands
+        .filter(({ method }) => method === "Network.getResponseBody")
+        .map(({ params }) => params.requestId),
+    ).toEqual(exchanges.map(({ requestId }) => requestId));
+
+    const unavailable = cases.some(([, , property]) => property === null);
+    expect(
+      result.value.completeness.unavailable_sections.includes(
+        "json_body_shapes",
+      ),
+    ).toBe(unavailable);
+    const bodyGap = {
       section: "json_body_shapes",
       reason: "provider_unavailable",
       count: null,
-    });
-  } else {
-    expect(result.value.completeness.unavailable_sections).not.toContain(
-      "json_body_shapes",
-    );
-  }
-  expect(result.value.completeness.excluded).not.toContainEqual(
-    expect.objectContaining({
-      section: "json_body_shapes",
-      reason: "invalid_protocol_value",
-    }),
-  );
-});
+    };
+    expect(
+      result.value.completeness.excluded.filter(
+        ({ section }) => section === "json_body_shapes",
+      ),
+    ).toEqual(unavailable ? [bodyGap] : []);
+  },
+);

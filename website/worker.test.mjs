@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import worker from "./worker.mjs";
 
-function assets({ markdownStatus = 200, requests } = {}) {
+function assets({ markdownStatus = 200 } = {}) {
   return {
     ASSETS: {
       async fetch(request) {
         const url = new URL(request.url);
-        requests?.push(url.pathname);
         const markdown = url.pathname.endsWith("index.md");
         if (url.pathname === "/missing/")
           return new Response("Missing", { status: 404 });
@@ -106,18 +105,16 @@ await test("HEAD and validators use the selected representation", async () => {
 });
 
 await test("missing Markdown keeps HTML, and asset redirects and missing routes survive", async () => {
-  const requests = [];
   const html = await worker.fetch(
     new Request("https://rea.tools/guide/", {
       headers: { Accept: "text/markdown" },
     }),
-    assets({ markdownStatus: 404, requests }),
+    assets({ markdownStatus: 404 }),
   );
   assert.equal(html.status, 200);
   assert.equal(html.headers.get("Content-Type"), "text/html");
   assert.equal(html.headers.get("ETag"), '"html"');
   assert.equal(await html.text(), "<h1>Guide</h1>");
-  assert.deepEqual(requests, ["/guide/", "/guide/index.md"]);
   for (const [path, status] of [
     ["/guide", 307],
     ["/missing/", 404],

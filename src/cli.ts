@@ -16,6 +16,7 @@ import * as setupModule from "./cli/setupCommands.js";
 import * as coreAnalysisModule from "./cli/coreAnalysisCommands.js";
 import * as reverseEngineeringModule from "./cli/reverseEngineeringCommands.js";
 import * as cutterModule from "./cli/cutterCommands.js";
+import * as userConfigModule from "./cli/userConfigCommands.js";
 import * as utilityModule from "./cli/utilityCommands.js";
 import * as binaryDiagnosticsModule from "./cli/binaryDiagnosticsCommands.js";
 import * as wasmModule from "./cli/wasmCommands.js";
@@ -76,6 +77,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   reverseEngineering: reverseEngineeringModule,
   cutter: cutterModule,
   utility: utilityModule,
+  userConfig: userConfigModule,
   binaryDiagnostics: binaryDiagnosticsModule,
   wasm: wasmModule,
   apkSignature: apkSignatureModule,
@@ -140,11 +142,13 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
+  savedDefaults?: ReadonlySet<string>,
 ): CliInstance =>
   createCliShell({
     selectedEnvironment,
     resultOutput,
     fridaInstrumentation,
+    savedDefaults,
     createAnalysis: createDirectAnalysis,
     registrations: CLI_REGISTRATION_ORDER.map((id) => ({
       registration: CLI_COMMAND_REGISTRATIONS[id],

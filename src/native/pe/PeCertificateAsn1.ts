@@ -4,6 +4,7 @@ import {
   Asn1BerReader,
   type Asn1BerNode,
 } from "../../domain/asn1Ber.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
 import { isStrictUtf8 } from "../../domain/strictUtf8.js";
 import { byteToHex } from "../../kernel/byteToHex.js";
 
@@ -151,9 +152,10 @@ const decodeBmpString = (bytes: Buffer, budget: DecodedNameBudget): string => {
   // cons-string chain of about sixteen heap bytes per source byte.
   chargeDecodedName(budget, bytes.length);
   if (bytes.length === 0) return "";
+  const reader = new BinaryReader(bytes, false, "pe-certificate-table");
   const decoded = Buffer.allocUnsafe(bytes.length);
   for (let index = 0; index < bytes.length; index += 2) {
-    const codeUnit = bytes.readUInt16BE(index);
+    const codeUnit = reader.u16(index);
     // BMPString is UCS-2: even a paired UTF-16 surrogate is not a BMP character.
     if (codeUnit >= 0xd800 && codeUnit <= 0xdfff)
       return fail("BMPString holds a surrogate code point.");
@@ -168,10 +170,11 @@ const decodeUtf32Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   // Four source bytes become at most four UTF-16 bytes, so the source length
   // bounds the decoded string before any code point is copied.
   chargeDecodedName(budget, bytes.length);
+  const reader = new BinaryReader(bytes, false, "pe-certificate-table");
   const decoded = Buffer.allocUnsafe(bytes.length);
   let at = 0;
   for (let index = 0; index < bytes.length; index += 4) {
-    const codePoint = bytes.readUInt32BE(index);
+    const codePoint = reader.u32(index);
     if (codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff))
       return fail("UniversalString holds an invalid code point.");
     if (codePoint > 0xffff) {

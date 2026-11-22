@@ -2,6 +2,9 @@ import { createServer } from "node:http";
 import { Client } from "@modelcontextprotocol/client";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { settledCause } from "../../support/lifecycleHarness.js";
+import { testWaitDeadline } from "../../support/testWait.js";
 
 import {
   AnalysisCancelledError,
@@ -309,21 +312,26 @@ it.each(["tools/call", "tools/list"])(
 it.each(["tools/call", "tools/list"])(
   "reconnects after a %s timeout while preserving its typed failure",
   async (method) => {
+    const timeoutMs = 1_000;
     const endpoint = await startEndpoint(200, {
-      discoveryTimeoutMs: 1_000,
-      requestTimeoutMs: 1_000,
+      discoveryTimeoutMs: timeoutMs,
+      requestTimeoutMs: timeoutMs,
     });
     try {
       await endpoint.connection.connect();
+      const signal = AbortSignal.timeout(testWaitDeadline());
+      vi.useFakeTimers({
+        toFake: ["setTimeout", "clearTimeout", "performance"],
+      });
       const received = endpoint.holdNextRequest(method);
       const pending =
         method === "tools/call"
-          ? endpoint.connection.call("open_project", {})
-          : endpoint.connection.listTools();
-      const rejected =
-        expect(pending).rejects.toBeInstanceOf(AnalysisTimeoutError);
-      await received;
-      await rejected;
+          ? endpoint.connection.call("open_project", {}, signal)
+          : endpoint.connection.listTools(signal);
+      const rejected = settledCause(pending);
+      await awaitAcknowledgement(received, pending, method);
+      vi.advanceTimersByTime(timeoutMs);
+      expect(await rejected).toBeInstanceOf(AnalysisTimeoutError);
       expect(endpoint.handshakes()).toBe(1);
       await expect(
         endpoint.connection.call("get_client_information", {}),
@@ -333,6 +341,7 @@ it.each(["tools/call", "tools/list"])(
         endpoint.calls.filter((name) => name === "open_project"),
       ).toHaveLength(method === "tools/call" ? 1 : 0);
     } finally {
+      vi.useRealTimers();
       await endpoint.close();
     }
   },
@@ -358,12 +367,14 @@ it("retains a working connection after an engine refusal or caller cancellation"
         method === "tools/call"
           ? endpoint.connection.call("list_units", {}, cancellation.signal)
           : endpoint.connection.listTools(cancellation.signal);
-      const rejected = expect(pending).rejects.toBeInstanceOf(
-        AnalysisCancelledError,
-      );
-      await received;
-      cancellation.abort();
-      await rejected;
+      const rejected = settledCause(pending);
+      await awaitAcknowledgement(received, pending, method);
+      const reason = new Error(`Cancel ${method}`);
+      cancellation.abort(reason);
+      const failure = await rejected;
+      expect(failure).toBeInstanceOf(AnalysisCancelledError);
+      if (failure instanceof AnalysisCancelledError)
+        expect(failure.cause).toBe(reason);
     }
     await expect(
       endpoint.connection.call("get_client_information", {}),
@@ -375,21 +386,25 @@ it("retains a working connection after an engine refusal or caller cancellation"
 });
 
 it("retains the typed timeout when disposal fails and retries owned cleanup before reconnecting", async () => {
-  const endpoint = await startEndpoint(200, { requestTimeoutMs: 1_000 });
+  const timeoutMs = 1_000;
+  const endpoint = await startEndpoint(200, { requestTimeoutMs: timeoutMs });
   const cleanupFailure = new Error("Client cleanup failed");
   const close = vi.spyOn(Client.prototype, "close");
   try {
     await endpoint.connection.connect();
+    const signal = AbortSignal.timeout(testWaitDeadline());
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
     const catalogReceived = endpoint.holdNextRequest("tools/list");
     const overlapping = endpoint.connection
-      .listTools()
+      .listTools(signal)
       .catch((cause: unknown) => cause);
-    await catalogReceived;
+    await awaitAcknowledgement(catalogReceived, overlapping, "tools/list");
     close.mockRejectedValueOnce(cleanupFailure);
     const received = endpoint.holdNextRequest();
-    const pending = endpoint.connection.call("open_project", {});
-    const rejected = pending.catch((cause: unknown) => cause);
-    await received;
+    const pending = endpoint.connection.call("open_project", {}, signal);
+    const rejected = settledCause(pending);
+    await awaitAcknowledgement(received, pending, "tools/call");
+    vi.advanceTimersByTime(timeoutMs);
     const failure = await rejected;
     expect(failure).toBeInstanceOf(JebMcpCleanupFailure);
     if (!(failure instanceof JebMcpCleanupFailure)) throw failure;
@@ -410,6 +425,7 @@ it("retains the typed timeout when disposal fails and retries owned cleanup befo
     expect(failure.cleanupIncomplete).toBe(false);
     expect(failure.cleanupResources).toEqual([]);
   } finally {
+    vi.useRealTimers();
     close.mockRestore();
     await endpoint.close();
   }

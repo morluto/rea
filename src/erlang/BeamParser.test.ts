@@ -11,7 +11,6 @@ import {
   erlangBeamRowsFixture,
   erlangBeamFixture,
   erlangBeamLegacyAtomsFixture,
-  erlangBeamManyAtomsFixture,
   erlangBeamOtp29Fixture,
 } from "./Beam.fixture.js";
 import { parseErlangBeam } from "./BeamParser.js";
@@ -295,12 +294,27 @@ it("rejects an AtU8 atom name that is not UTF-8", () => {
   ).toThrow(/BEAM atom name is not valid UTF-8/);
 });
 
-it("keeps a latin1 atom byte unchanged", () => {
+it("uses a one-byte length and preserves Latin-1 bytes in legacy Atom", () => {
   const report = parse(
-    erlangBeamChunksFixture([["Atom", Buffer.from([0, 0, 0, 1, 1, 0xff])]]),
+    erlangBeamChunksFixture([
+      ["Atom", Buffer.from([0, 0, 0, 1, 2, 0x61, 0xff])],
+    ]),
   );
-  expect(report.atom_encoding).toBe("latin1");
-  expect(report.module).toBe("ÿ");
+  expect(report).toMatchObject({
+    atom_encoding: "latin1",
+    module: "aÿ",
+    atoms: [{ index: 1, name: "aÿ" }],
+    coverage: { status: "complete" },
+  });
+});
+
+it.each([
+  ["a negative count", [0xff, 0xff, 0xff, 0xff, 0x20, 0x61, 0x62]],
+  ["a compact length", [0, 0, 0, 1, 0x20, 0x61, 0x62]],
+])("rejects %s in legacy Atom", (_name, payload) => {
+  expect(() =>
+    parse(erlangBeamChunksFixture([["Atom", Buffer.from(payload)]])),
+  ).toThrow(expect.objectContaining({ reason: "format" }));
 });
 
 it("rejects combined table rows before allocating them", () => {
@@ -350,25 +364,50 @@ it("rejects combined table rows before allocating them", () => {
 });
 
 it.each([
-  {
-    bytes: erlangBeamManyAtomsFixture(3),
-    limit: { name: "max_atoms", maximum: 1, required: 3 },
+  ["legacy Atom", "Atom", [0, 0, 0, 2], [1, 2]],
+  ["classic AtU8", "AtU8", [0, 0, 0, 2], [1, 2]],
+  ["compact AtU8", "AtU8", [0xff, 0xff, 0xff, 0xfe], [0x10, 0x20]],
+] as const)(
+  "checks only the admitted atom lengths in %s",
+  (_name, chunk, count, [validLength, invalidLength]) => {
+    const fixture = (firstLength: number, lastByte: number) =>
+      erlangBeamChunksFixture([
+        [chunk, Buffer.from([...count, firstLength, 0x61, lastByte])],
+      ]);
+    const input = { ...defaults, max_atoms: 1 };
+    const valid = fixture(validLength, 0);
+    expect(parse(valid).atoms).toEqual([
+      { index: 1, name: "a" },
+      { index: 2, name: "" },
+    ]);
+    for (const bytes of [valid, fixture(validLength, validLength)]) {
+      // The second name is complete or truncated, beyond the admitted prefix.
+      expect(() => parse(bytes, input)).toThrow(
+        expect.objectContaining({
+          failure: expect.objectContaining({
+            kind: "limit",
+            format: "beam",
+            limit: { name: "max_atoms", maximum: 1, required: 2 },
+          }),
+        }),
+      );
+    }
+    // The first name would consume the second entry's required length byte.
+    expect(() => parse(fixture(invalidLength, 0x62), input)).toThrow(
+      expect.objectContaining({ reason: "format" }),
+    );
   },
-  {
-    bytes: erlangBeamFixture(),
-    limit: { name: "max_chunks", maximum: 1 },
-  },
-])("retains the exhausted $limit.name allowance", ({ bytes, limit }) => {
-  const input = inspectErlangBeamInputSchema.parse({
-    path: defaults.path,
-    [limit.name]: limit.maximum,
-  });
-  expect(() => parse(bytes, input)).toThrow(
+);
+
+it("retains the exhausted chunk allowance", () => {
+  expect(() =>
+    parse(erlangBeamFixture(), { ...defaults, max_chunks: 1 }),
+  ).toThrow(
     expect.objectContaining({
       failure: expect.objectContaining({
         kind: "limit",
         format: "beam",
-        limit,
+        limit: { name: "max_chunks", maximum: 1 },
       }),
     }),
   );
