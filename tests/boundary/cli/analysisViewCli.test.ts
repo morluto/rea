@@ -940,6 +940,114 @@ cliTest(
 );
 
 cliTest(
+  "finds direct Evidence referrers in a portable bundle with source filters and stable pages",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-evidence-referrers-cli-");
+    const path = join(root, "evidence.json");
+    const target = analysisViewLayoutEvidence();
+    const absent = createEvidence(
+      unknownTarget("not-observed"),
+      target.provider,
+      {
+        operation: "missing_source",
+        parameters: {},
+        result: {},
+      },
+    );
+    const referrers = ["trace_feature", "find_strings"].map((operation) =>
+      createEvidence(unknownTarget("not-observed"), target.provider, {
+        operation,
+        parameters: {},
+        result: {},
+        evidenceLinks: [
+          target.evidence_id,
+          target.evidence_id,
+          absent.evidence_id,
+        ],
+      }),
+    );
+    await writeFile(
+      path,
+      JSON.stringify(createEvidenceBundle([target, ...referrers])),
+    );
+    const query = async (options: Record<string, unknown>) => {
+      const response = await cli.run({
+        arguments: [
+          "inspect-evidence-bundle",
+          JSON.stringify({ path, detail: "links", ...options }),
+          "--json",
+        ],
+        environment: {
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          XDG_CACHE_HOME: root,
+        },
+      });
+      expect(response.exitCode, response.stderr).toBe(0);
+      return response.json;
+    };
+    const targetFilter = { linked_evidence_id: target.evidence_id };
+    const rows = referrers
+      .map(({ evidence_id }) => ({
+        evidence_id,
+        linked_evidence_id: target.evidence_id,
+        status: "retained",
+      }))
+      .sort((left, right) => (left.evidence_id < right.evidence_id ? -1 : 1));
+    expect(await query(targetFilter)).toMatchObject({
+      ...targetFilter,
+      link_status: "all",
+      links: { total: 2, retained: 2, missing: 0 },
+      rows,
+    });
+    expect(await query({ ...targetFilter, limit: 1 })).toMatchObject({
+      matching_links: 2,
+      next_offset: 1,
+      rows: rows.slice(0, 1),
+    });
+    expect(await query({ ...targetFilter, limit: 1, offset: 1 })).toMatchObject(
+      {
+        matching_links: 2,
+        next_offset: null,
+        rows: rows.slice(1),
+      },
+    );
+    expect(
+      await query({ ...targetFilter, filters: { operation: "trace_feature" } }),
+    ).toMatchObject({
+      matching_records: 1,
+      links: { total: 1 },
+      rows: [expect.any(Object)],
+    });
+    expect(
+      await query({ linked_evidence_id: absent.evidence_id }),
+    ).toMatchObject({
+      links: { total: 2, retained: 0, missing: 2 },
+      rows: referrers.map(() => expect.objectContaining({ status: "missing" })),
+    });
+    const invalid = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, detail: "summary", ...targetFilter }),
+        "--json",
+      ],
+    });
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          expect.objectContaining({
+            path: ["linked_evidence_id"],
+            expected: "detail: links",
+          }),
+        ],
+      },
+    });
+  },
+);
+
+cliTest(
   "formats the full caller-admitted native inventory page as Markdown and JSON",
   async ({ cli }) => {
     const root = await createTestTempDirectory(
