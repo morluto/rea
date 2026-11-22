@@ -170,50 +170,19 @@ export const createArtifactClassificationProbe = (
     suffixBuffer.set(bytes, keep);
     suffixLength = ARTIFACT_CLASSIFICATION_SUFFIX_BYTES;
   };
-  const observeSignatureWindow = (
+  const observeWindow = (
+    current: { readonly offset: number; readonly bytes: Buffer } | undefined,
+    maximum: number,
     offset: number,
     sourceOffset: number,
     sourceBytes: Uint8Array,
-  ): void => {
-    if (!Number.isSafeInteger(offset) || offset < 0) return;
-    const start = Math.max(offset, sourceOffset);
-    const end = Math.min(offset + 4, sourceOffset + sourceBytes.length);
-    if (start >= end) return;
-    const window = Buffer.alloc(4);
-    const previous =
-      mzWindowsHeaderSignature?.offset === offset
-        ? mzWindowsHeaderSignature.bytes
-        : undefined;
-    previous?.copy(window);
-    let observedLength = previous?.length ?? 0;
-    if (start < end && start <= offset + observedLength) {
-      window.set(
-        sourceBytes.subarray(start - sourceOffset, end - sourceOffset),
-        start - offset,
-      );
-      observedLength = Math.max(observedLength, end - offset);
-    }
-    if (observedLength === 0) return;
-    mzWindowsHeaderSignature = {
-      offset,
-      bytes: window.subarray(0, observedLength),
-    };
-  };
-  const observeRecordWindow = (
-    offset: number,
-    sourceOffset: number,
-    sourceBytes: Uint8Array,
-  ): void => {
-    if (!Number.isSafeInteger(offset) || offset < 0) return;
-    const maximum = PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES;
+  ): { readonly offset: number; readonly bytes: Buffer } | undefined => {
+    if (!Number.isSafeInteger(offset) || offset < 0) return current;
     const start = Math.max(offset, sourceOffset);
     const end = Math.min(offset + maximum, sourceOffset + sourceBytes.length);
-    if (start >= end) return;
+    if (start >= end) return current;
     const window = Buffer.alloc(maximum);
-    const previous =
-      mzWindowsHeaderRecord?.offset === offset
-        ? mzWindowsHeaderRecord.bytes
-        : undefined;
+    const previous = current?.offset === offset ? current.bytes : undefined;
     previous?.copy(window);
     let observedLength = previous?.length ?? 0;
     if (start <= offset + observedLength) {
@@ -223,11 +192,34 @@ export const createArtifactClassificationProbe = (
       );
       observedLength = Math.max(observedLength, end - offset);
     }
-    if (observedLength === 0) return;
-    mzWindowsHeaderRecord = {
+    if (observedLength === 0) return current;
+    return { offset, bytes: window.subarray(0, observedLength) };
+  };
+  const observeSignatureWindow = (
+    offset: number,
+    sourceOffset: number,
+    sourceBytes: Uint8Array,
+  ): void => {
+    mzWindowsHeaderSignature = observeWindow(
+      mzWindowsHeaderSignature,
+      4,
       offset,
-      bytes: window.subarray(0, observedLength),
-    };
+      sourceOffset,
+      sourceBytes,
+    );
+  };
+  const observeRecordWindow = (
+    offset: number,
+    sourceOffset: number,
+    sourceBytes: Uint8Array,
+  ): void => {
+    mzWindowsHeaderRecord = observeWindow(
+      mzWindowsHeaderRecord,
+      PE_RECORD_HEADER_BYTES + MAX_PE_OPTIONAL_HEADER_BYTES,
+      offset,
+      sourceOffset,
+      sourceBytes,
+    );
   };
   const retain = (bytes: Uint8Array): void => {
     let offset = 0;

@@ -1,5 +1,6 @@
 import { probeUefiFlashImage } from "../../uefi/UefiFormatProbe.js";
 import { ParseFailureError } from "../../domain/parseFailure.js";
+import { readFileHandleRange } from "../../filesystem/readFileHandleRange.js";
 import {
   artifactOperationCause,
   ArtifactReaderFailure,
@@ -59,7 +60,7 @@ import {
   zipRootPackageFormat,
 } from "../../domain/zipPackageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
-import { BinaryReader } from "../../domain/binaryContainer.js";
+import { BinaryReader, hasXarMagic } from "../../domain/binaryContainer.js";
 import {
   classifyStableRootArtifactHandle,
   type HashResult,
@@ -349,21 +350,11 @@ const classifyRootFormat = async (
           Math.min(position + length, archiveBytes),
         );
     }
-    const bytes = Buffer.alloc(length);
-    let filled = 0;
-    while (filled < length) {
-      abortIfNeeded(signal);
-      const observed = await handle.read(
-        bytes,
-        filled,
-        length - filled,
-        position + filled,
-      );
-      abortIfNeeded(signal);
-      if (observed.bytesRead === 0) break;
-      filled += observed.bytesRead;
-    }
-    return bytes.subarray(0, filled);
+    const bytes = await readFileHandleRange(handle, position, length, () =>
+      abortIfNeeded(signal),
+    );
+    abortIfNeeded(signal);
+    return bytes;
   };
   const locateFlash = (selection: EspFlashSelection, explicit: boolean) =>
     locateEspFlashLayout(archiveBytes, read, selection, {
@@ -394,15 +385,7 @@ const classifyRootFormat = async (
   );
   const lower = classificationPath.toLowerCase();
   if (hasZipSignature(evidence.prefix)) return zipRootPackageFormat(lower);
-  if (
-    lower.endsWith(".pkg") &&
-    evidence.prefix.length >= 4 &&
-    evidence.prefix[0] === 0x78 &&
-    evidence.prefix[1] === 0x61 &&
-    evidence.prefix[2] === 0x72 &&
-    evidence.prefix[3] === 0x21
-  )
-    return "pkg";
+  if (lower.endsWith(".pkg") && hasXarMagic(evidence.prefix)) return "pkg";
   if (
     lower.endsWith(".dmg") &&
     (await hasDiskImageSignature(archiveBytes, read))
@@ -535,23 +518,16 @@ const readRootFatSliceHeaders = async (
     )
       continue;
     const headerLength = Math.min(12, slice.size);
-    const thinHeader = Buffer.alloc(headerLength);
-    let bytesRead = 0;
-    while (bytesRead < thinHeader.length) {
-      abortIfNeeded(signal);
-      const read = await handle.read(
-        thinHeader,
-        bytesRead,
-        thinHeader.length - bytesRead,
-        slice.offset + bytesRead,
-      );
-      abortIfNeeded(signal);
-      if (read.bytesRead === 0) break;
-      bytesRead += read.bytesRead;
-    }
+    const thinHeader = await readFileHandleRange(
+      handle,
+      slice.offset,
+      headerLength,
+      () => abortIfNeeded(signal),
+    );
+    abortIfNeeded(signal);
     sliceHeadersByOffset.set(
       slice.offset,
-      readMachoHeaderPrefixFacts(thinHeader.subarray(0, bytesRead)),
+      readMachoHeaderPrefixFacts(thinHeader),
     );
   }
   return { ...evidence, fatSliceHeaders: { header, sliceHeadersByOffset } };
@@ -614,12 +590,16 @@ const readRootMzWindowsHeaderRecord = async (
       requiredLength() - available,
       fileSize - offset - available,
     );
-    const chunk = Buffer.alloc(length);
-    const read = await handle.read(chunk, 0, length, offset + available);
+    const chunk = await readFileHandleRange(
+      handle,
+      offset + available,
+      length,
+      () => abortIfNeeded(signal),
+      window.subarray(available, available + length),
+    );
     abortIfNeeded(signal);
-    if (read.bytesRead === 0) break;
-    chunk.copy(window, available, 0, read.bytesRead);
-    available += read.bytesRead;
+    if (chunk.length === 0) break;
+    available += chunk.length;
   }
   if (available === 0) return undefined;
   return { offset, bytes: window.subarray(0, available) };

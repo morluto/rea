@@ -10,6 +10,7 @@ import {
 } from "../domain/artifactNameSelection.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { readPeCoffHeader } from "../domain/peCoffHeader.js";
+import { hasXarMagic } from "../domain/binaryContainer.js";
 import {
   regularFileCancellation,
   RegularFileCleanupFailure,
@@ -840,15 +841,7 @@ const detectArtifactFormat = async (
   const named = namedArtifactFormat(lower);
   if (named !== undefined && !claimsExecutableHeader(magic, initial.size))
     return named;
-  if (
-    lower.endsWith(".pkg") &&
-    magic.length >= 4 &&
-    magic[0] === 0x78 &&
-    magic[1] === 0x61 &&
-    magic[2] === 0x72 &&
-    magic[3] === 0x21
-  )
-    return "pkg";
+  if (lower.endsWith(".pkg") && hasXarMagic(magic)) return "pkg";
   if (
     lower.endsWith(".dmg") &&
     (await hasDiskImageSignature(initial.size, readCachedRange))
