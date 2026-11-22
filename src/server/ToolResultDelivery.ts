@@ -163,18 +163,14 @@ const overflowNextStep = (
 export interface ProjectedErrorEncoding {
   readonly budgetBytes: number;
   readonly targetContent: boolean;
-  readonly encoded: ToolResultEncoding;
-  readonly structured: Readonly<Record<string, JsonValue>>;
+  readonly text: string;
 }
 
-const projectedErrorEncodings = new WeakMap<
-  CallToolResult,
-  ProjectedErrorEncoding
->();
+const projectedErrorEncodings = new WeakMap<object, ProjectedErrorEncoding>();
 
 /** Return the `ToolResultDelivery` encoding stamped on this exact error result, if any. */
 export const projectedErrorEncoding = (
-  result: CallToolResult,
+  result: object,
 ): ProjectedErrorEncoding | undefined => projectedErrorEncodings.get(result);
 
 export class ToolResultDelivery {
@@ -489,12 +485,12 @@ export class ToolResultDelivery {
       isError: true,
       ...(targetContent ? { _meta: TARGET_CONTENT_RESULT_META } : {}),
     };
-    projectedErrorEncodings.set(result, {
-      budgetBytes: this.resultBudgetBytes,
-      targetContent,
-      encoded,
-      structured: structuredContent,
-    });
+    if (encoded.ok)
+      projectedErrorEncodings.set(result, {
+        budgetBytes: this.resultBudgetBytes,
+        targetContent,
+        text: encoded.text,
+      });
     return result;
   }
 
