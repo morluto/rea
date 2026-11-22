@@ -1161,7 +1161,8 @@ const jsonUtf16StringBytes = (
           ? 2
           : 6;
     else if (value >= 0xd800 && value <= 0xdbff) {
-      const next = index + 1 < codeUnits ? fields.u16((index + 1) * 2) : 0;
+      const next =
+        index + 1 < codeUnits ? fields.u16(baseOffset + (index + 1) * 2) : 0;
       if (next >= 0xdc00 && next <= 0xdfff) {
         total += 4;
         index++;
