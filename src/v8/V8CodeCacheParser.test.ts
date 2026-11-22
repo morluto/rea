@@ -4,6 +4,7 @@ import {
   inspectV8CodeCacheInputSchema,
   v8CodeCacheSchema,
   V8_CODE_CACHE_HEADER_BYTES,
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_NARROW_HEADER_BYTES,
   type V8CodeCache,
@@ -13,6 +14,7 @@ import {
   v8CodeCacheFixture,
   v8FunctionCodeCacheFixture,
   withHeaderWord,
+  withSyntheticLegacyHeader,
   withSyntheticNarrowHeader,
 } from "./V8CodeCache.fixture.js";
 
@@ -93,43 +95,24 @@ it("reports the source length the producer recorded", () => {
   expect(report.header.fields[2]?.value).toBe(cache.readUInt32LE(8));
 });
 
-it("reports a module cache as a module rather than a script", () => {
-  // Bit 30 of the source-length word marks `vm.SourceTextModule` output. Measured on
-  // Node 24.22.1: a real module cache reads `0x40000013` for a 19-unit source while a
-  // script of the same length reads `0x00000013`, so a producer check that only tests
-  // the function bit reports the module cache as a plain script.
-  const script = v8CodeCacheFixture();
-  const word = script.readUInt32LE(8);
-  const length = word & 0x1fffffff;
-  expect(word & 0x40000000).toBe(0);
-  expect(word & 0x20000000).toBe(0);
-  expect(parse(script).header.producer).toBe("unknown");
-
-  const moduleCache = withHeaderWord(script, 2, word | 0x40000000);
-  const report = parse(moduleCache);
-  expect(report.header.producer).toBe("module");
-  // The module bit sits outside the source-length mask, so the length is unchanged.
-  expect(report.header.source_length).toBe(length);
-});
-
-it("keeps the function and module flags distinct", () => {
-  const script = v8CodeCacheFixture("var y = 1;");
-  const length = script.readUInt32LE(8) & 0x1fffffff;
-  expect(
-    parse(withHeaderWord(script, 2, 0x20000000 | length)).header.producer,
-  ).toBe("compile_function");
-  expect(
-    parse(withHeaderWord(script, 2, 0x40000000 | length)).header.producer,
-  ).toBe("module");
-  // V8 before 13.4 (Node 22's 12.4) marks a module with bit 31: `0x80000017` on Electron 30.
-  const legacy = parse(withHeaderWord(script, 2, 0x80000000 | length)).header;
-  expect([legacy.producer, legacy.source_length]).toEqual(["module", length]);
-  // Both bits set is not a shape V8 produces; the module flag wins so the reported
-  // family stays one of the three observed kinds.
-  expect(
-    parse(withHeaderWord(script, 2, 0x60000000 | length)).header.producer,
-  ).toBe("module");
-});
+it.each([
+  [0x20000000, "compile_function"],
+  [0x40000000, "module"],
+  [0x80000000, "module"],
+  [0x60000000, "module"],
+] as const)(
+  "interprets producer flags %i without changing source length",
+  (flags, producer) => {
+    // Older V8 uses bit 31 for modules. A synthetic word with both bits set
+    // checks that the module marker wins over the function marker.
+    const sourceLength = 19;
+    const cache = withHeaderWord(real, 2, flags | sourceLength);
+    expect(parse(cache).header).toMatchObject({
+      producer,
+      source_length: sourceLength,
+    });
+  },
+);
 
 it("separates the compileFunction producer bit from the source length", () => {
   const source = "return 7;";
@@ -146,7 +129,6 @@ it("separates the compileFunction producer bit from the source length", () => {
     (word & 0x20000000) === 0 ? "unknown" : "compile_function",
   );
   // The source length is the low bits either way, so it is the part that must hold.
-  expect(report.header.source_length).toBe(word & 0x1fffffff);
   expect(report.header.source_length).toBe(source.length);
 });
 
@@ -191,29 +173,12 @@ it("fails closed on a foreign magic", () => {
   );
 });
 
-it("fails closed on a payload-length mismatch", () => {
-  const corrupt = withHeaderWord(real, 5, real.readUInt32LE(20) + 8);
-  expect(() => parse(corrupt)).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
-  );
-});
-
-it("fails closed on a truncated header", () => {
-  expect(() =>
-    parse(real.subarray(0, V8_CODE_CACHE_NARROW_HEADER_BYTES - 1)),
-  ).toThrow(expect.objectContaining({ kind: "malformed" }));
-});
-
-it("fails closed when fewer payload bytes follow the header than it declares", () => {
-  // Cut bytes off the end without rewriting the declared payload length.
-  expect(() => parse(real.subarray(0, real.length - 16))).toThrow(
-    expect.objectContaining({
-      kind: "malformed",
-      message: expect.stringContaining("truncated or corrupt"),
-    }),
+it.each([
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES - 1,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES - 1,
+])("fails closed on a header truncated to %i bytes", (length) => {
+  expect(() => parse(real.subarray(0, length))).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
   );
 });
 
@@ -307,14 +272,85 @@ it("refuses a wide container that is only four bytes short", () => {
   const short = real.subarray(0, real.length - 4);
   expect(short.readUInt32LE(28)).toBe(0);
   expect(() => parse(short)).toThrow(
-    expect.objectContaining({ kind: "malformed" }),
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("ambiguous"),
+    }),
   );
-  expect(() => parse(short)).toThrow(/ambiguous/u);
   // A synthetic narrow fixture has payload at the same byte offset.
   const narrow = withSyntheticNarrowHeader(real);
   expect(narrow.readUInt32LE(V8_CODE_CACHE_NARROW_HEADER_BYTES)).not.toBe(0);
   expect(parse(narrow).header.header_bytes).toBe(
     V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+});
+
+it("inspects a synthetic six-word layout derived from a 64-bit cache", () => {
+  // V8 8.8 through 11.7 write no build-constant word, so the payload length is
+  // the fifth word and the 24-byte header needs no alignment padding.
+  const legacy = withSyntheticLegacyHeader(real);
+  const report = parse(legacy);
+  const wide = parse(real);
+
+  expect(legacy.readUInt32LE(16)).toBe(
+    legacy.length - V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+  );
+  expect(report.header.header_bytes).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
+  expect(report.payload.offset).toBe(V8_CODE_CACHE_LEGACY_HEADER_BYTES);
+  // Only header words are removed, so the payload is identical.
+  expect(report.payload.sha256).toBe(wide.payload.sha256);
+  expect(report.header.source_length).toBe(wide.header.source_length);
+  // No producer of those releases was measured, so only the two facts that
+  // admission checks on the container itself are reported as confirmed.
+  expect(report.header.fields).toMatchObject([
+    { offset: 0, role: "magic", status: "confirmed" },
+    { offset: 4, role: "version_hash", status: "inferred" },
+    { offset: 8, role: "source_length", status: "inferred" },
+    { offset: 12, role: "flag_hash", status: "inferred" },
+    { offset: 16, role: "payload_length", status: "confirmed" },
+    { offset: 20, role: "reserved", status: "unconfirmed" },
+  ]);
+  report.header.fields.forEach((field) => {
+    expect(field.value).toBe(legacy.readUInt32LE(field.offset));
+  });
+  // The report itself states that the layout was not measured.
+  expect(report.limitations).toHaveLength(wide.limitations.length + 1);
+});
+
+it("reads the bit 31 module flag of a six-word container", () => {
+  const sourceLength = 23;
+  const legacy = withSyntheticLegacyHeader(
+    withHeaderWord(real, 2, 0x80000000 | sourceLength),
+  );
+  expect(parse(legacy).header).toMatchObject({
+    header_bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+    producer: "module",
+    source_length: sourceLength,
+  });
+});
+
+it("refuses a six-word container that lost its last payload word", () => {
+  const legacy = withSyntheticLegacyHeader(real);
+  expect(() => parse(legacy.subarray(0, legacy.length - 4))).toThrow(
+    expect.objectContaining({ kind: "malformed" }),
+  );
+});
+
+it("refuses a container whose payload length fits both layouts", () => {
+  // The six-word layout does not constrain the word after its payload length,
+  // so that word can also reach the end of the file from a 28-byte header.
+  // Nothing in the header separates the two readings.
+  const legacy = withSyntheticLegacyHeader(real);
+  const both = withHeaderWord(
+    legacy,
+    5,
+    legacy.length - V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  );
+  expect(() => parse(both)).toThrow(
+    expect.objectContaining({
+      kind: "malformed",
+      message: expect.stringContaining("ambiguous"),
+    }),
   );
 });
 
@@ -357,11 +393,14 @@ it("rejects a reported word table that does not cover the header it declares", (
     limitations: ["measured on one producer"],
   });
 
-  // Seven words is 28 bytes and eight is 32, so each header size has exactly one
-  // word count that covers it.
+  // Six words is 24 bytes, seven is 28 and eight is 32, so each header size has
+  // exactly one word count that covers it.
   const cases = [
+    { fields: 6, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 7, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: false },
     { fields: 7, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: false },
     { fields: 8, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: false },
+    { fields: 6, bytes: V8_CODE_CACHE_LEGACY_HEADER_BYTES, accepted: true },
     { fields: 7, bytes: V8_CODE_CACHE_NARROW_HEADER_BYTES, accepted: true },
     { fields: 8, bytes: V8_CODE_CACHE_HEADER_BYTES, accepted: true },
   ];

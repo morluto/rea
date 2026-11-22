@@ -2,9 +2,9 @@
 
 The homepage section, showcase-index entry, and
 `public/guides/rl-environments/index.html` explain the existing capture, build,
-export, and verification workflow. The short showcase entry links the guide
-and announcement video; the standalone README section retains the setup steps.
-They introduce no new provider or application-support claim.
+export, and verification workflow. The README links to the website guide,
+which includes a Linux desktop example drawn from the
+[desktop build guide](../../docs/desktop-build-computer.md).
 
 The behavior and commands come from the REA
 [quickstart](https://github.com/morluto/rea/blob/447907f2808877d3a7de62c382e256f55d08e5ac/docs/agent-environments-quickstart.md),

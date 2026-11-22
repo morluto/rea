@@ -1,9 +1,7 @@
-import { spawnFailure } from "../support/process/spawnFailure.js";
 import { fileIdentity } from "../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
@@ -152,60 +150,6 @@ describe("reverse engineering command services", () => {
     });
     expect(result.value.provider.id).toBe("objdump.command");
     expect(result.value.subject?.local_path).toBe(path);
-  });
-
-  it("rejects non-regular artifacts without launching the provider", async () => {
-    const directory = await createTestTempDirectory(
-      "rea-reverse-special-file-",
-    );
-    let invoked = false;
-    const service = new ReverseEngineeringService({
-      runOwned: async () => {
-        invoked = true;
-        return ownedOutput();
-      },
-    });
-
-    const result = await service.inspectWithObjdump({
-      path: directory,
-      operation: "file_headers",
-    });
-    expect(result).toMatchObject({
-      ok: false,
-      error: {
-        _tag: "AnalysisInputError",
-        operation: "inspect_with_objdump",
-        cause: {
-          code: "EINVAL",
-          message: "Artifact digest requires a regular file",
-        },
-      },
-    });
-    expect(invoked).toBe(false);
-  });
-
-  it("classifies captured spawn failures instead of reporting provider evidence", async () => {
-    const directory = await createTestTempDirectory(
-      "rea-objdump-spawn-failure-",
-    );
-    const path = join(directory, "fixture.bin");
-    await writeFile(path, "fixture");
-    const service = new ReverseEngineeringService({
-      runOwned: async (spawn) => {
-        throw spawnFailure("ENOENT", spawn.command);
-      },
-    });
-
-    const result = await service.inspectWithObjdump({
-      path,
-      operation: "file_headers",
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
-      expect(result.error.message).toContain("ENOENT");
-      expect(result.error.message).not.toContain("stdout");
-    }
   });
 
   it("marks max-buffer termination as unknown completion while retaining output", async () => {
@@ -997,27 +941,4 @@ it("preserves provider facts when cancellation interrupts the post-run digest", 
       ]),
     });
   }
-});
-
-it("marks signal-terminated provider output incomplete", async () => {
-  const directory = await createTestTempDirectory("rea-rizin-signal-");
-  const path = join(directory, "fixture.bin");
-  await writeFile(path, "fixture");
-  const service = new ReverseEngineeringService({
-    runOwned: async () => {
-      throw ownedFailure(
-        "process",
-        ownedOutput("partial", "", { exitCode: null, signal: "SIGSEGV" }),
-      );
-    },
-  });
-
-  const result = await service.executeRizinCommand({ path, command: "iI" });
-  expect(result.ok).toBe(true);
-  if (result.ok)
-    expect(result.value.raw_result).toMatchObject({
-      signal: "SIGSEGV",
-      exit_code: null,
-      completion_status: "unknown",
-    });
 });

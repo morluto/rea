@@ -980,9 +980,28 @@ const nativeDecompilerCheck = ({
     remediation:
       compatibility?.status === "incompatible"
         ? compatibility.remediation
-        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent. REA does not build or install native tools.`,
+        : `Provide an executable Ghidra/Features/Decompiler/os/${NATIVE_PLATFORMS[platform]?.[architecture] ?? "<platform>"}/${platform === "win32" ? "decompile.exe" : "decompile"}, or its build/os equivalent.${nativeDecompilerBuildHint(platform, architecture)} REA does not build or install native tools.`,
   });
 };
+
+/** The published installation guide; the npm package does not ship `docs/`. */
+const INSTALLATION_GUIDE =
+  "https://github.com/morluto/rea/blob/main/docs/getting-started/installation.md";
+
+/**
+ * Where to get a decompiler that official release archives omit. Ghidra's
+ * official archives ship native binaries only for Windows and Linux x64; the
+ * archive's decompiler source builds the others.
+ */
+const nativeDecompilerBuildHint = (
+  platform: NodeJS.Platform,
+  architecture: NodeJS.Architecture,
+): string =>
+  platform === "darwin" && (architecture === "x64" || architecture === "arm64")
+    ? ` Official Ghidra release archives include no macOS decompiler; build it from the archive's decompiler source as described in ${INSTALLATION_GUIDE}#${architecture === "arm64" ? "macos-arm64-native-decompiler" : "missing-macos-native-decompiler"}.`
+    : platform === "linux" && architecture === "arm64"
+      ? ` Official Ghidra release archives include no Linux arm64 decompiler; build Ghidra's native components for this host as described in ${INSTALLATION_GUIDE}#ghidra.`
+      : "";
 
 /**
  * Whether a JVM os.name value selects the host platform's native OS directory.

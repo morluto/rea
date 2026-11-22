@@ -10,15 +10,14 @@ and maintenance cost. Keep cosmetic polish with useful fixes; confusing or
 incorrect user instructions warrant standalone corrections. Collect other
 cosmetic-only suggestions in an issue rather than separate PRs.
 
-For selected architectural owners and dependency paths, use the
-[architecture map](docs/architecture/architecture.mermaid). It is not a complete directory or
-import inventory. For current provider wiring, start with
+For provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
 Live Frida, Cutter, GDB and Rizin construction also uses shared composition
-factories. For service ownership, availability and catalog declarations, follow
-the [capability composition guide](docs/capability-composition.md).
+factories. Start with [capability declarations](src/composition/capabilityDeclarations.ts)
+for catalog metadata and [service bindings](src/composition/capabilityServices.ts)
+for construction, availability and cleanup.
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -28,9 +27,8 @@ It also checks each top-level `src/` unit against its layer in
 directory must declare one) and against the counted outward, mutual,
 cross-provider and past-entry imports in
 `scripts/lib/module-layers.baseline.json`. Application, composition and the
-adapters import a provider through the entry files it declares in that table
-([decision](docs/adr/architecture/provider-entry-files.md)); a new entry file
-widens the provider's public surface. The baseline may only shrink: a
+adapters import a provider through the entry files it declares in that table.
+A new entry file widens the provider's public surface. The baseline may only shrink: a
 change that removes such imports lowers it with
 `node scripts/verify-module-boundaries.mjs --shrink-layer-baseline`.
 
@@ -56,9 +54,8 @@ compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/development/tool-design.md) and preserve the canonical contracts and generated catalog.
 When adding or changing an admission ceiling, budget, or deadline, follow
-[analysis settings, limits, and recovery](docs/design/limits-and-recovery.md)
-for ownership, operation snapshots, provider integration, and the steps for
-adding a runtime setting.
+[analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md)
+for the steps for adding a runtime setting and documenting recovery.
 
 ## Reporting issues
 
@@ -332,8 +329,7 @@ then rerun the command.
 ## Documentation website
 
 Use the [documentation directory](docs/README.md) and
-[authoring guide](docs/development/documentation.md) for document ownership,
-domain-based feature specifications and architectural decision records.
+[authoring guide](docs/development/documentation.md) for document ownership.
 
 The VitePress site uses the Markdown files in `docs/`. Run `npm run docs:dev`
 for live editing and `npm run docs:preview` to serve an existing build at

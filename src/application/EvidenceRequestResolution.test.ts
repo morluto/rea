@@ -10,11 +10,7 @@ import {
 } from "../domain/evidenceReference.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { readImmutableEvidence } from "../domain/evidenceValidation.js";
-import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import {
-  EvidenceIntegrityError,
-  EvidenceReferenceError,
-} from "../domain/evidenceErrors.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
 import { err } from "../domain/result.js";
 import {
   resolveEvidenceRequest,
@@ -173,13 +169,21 @@ describe("schema-owned Evidence request resolution", () => {
       },
       schema,
     );
-    if (rejected.ok) throw new Error("invalid envelope was admitted");
-    expect(rejected.error).toBeInstanceOf(AnalysisInputError);
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          expect.objectContaining({ path: ["sources"] }),
+          expect.objectContaining({ path: ["limit"] }),
+        ],
+      },
+    });
   });
 });
 
 describe("Evidence request branches and source diagnostics", () => {
-  it("preserves selected union defaults and overwrites without running them twice", () => {
+  it("preserves selected union overwrites and refinements without running them twice", () => {
     let refinements = 0;
     const schema = z
       .union([
@@ -246,65 +250,69 @@ describe("Evidence request branches and source diagnostics", () => {
     });
   });
 
-  it("names the missing reference ID at its nested request path", () => {
+  it("keeps nested reference validation, missing IDs and wrong record identity distinct", () => {
     const schema = z.strictObject({
-      layers: z.array(
-        z.strictObject({
-          source: evidenceInputSchema,
-        }),
-      ),
+      layers: z.array(z.strictObject({ source: evidenceInputSchema })),
     });
-    const result = resolveEvidenceRequest(
+    const path = ["layers", 0, "source"];
+    const input = (source: unknown) => ({ layers: [{ source }] });
+    const invalid = resolveEvidenceRequest(
       "test",
-      {
-        layers: [{ source: { kind: "retained-evidence" } }],
-      },
+      input({ kind: "retained-evidence" }),
       schema,
     );
-    if (result.ok) throw new Error("missing ID was accepted");
-    expect(result.error).toBeInstanceOf(AnalysisInputError);
-    expect(result.error).toMatchObject({
-      issues: [
-        expect.objectContaining({
-          path: ["layers", 0, "source", "evidence_id"],
-        }),
-      ],
+    expect(invalid).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: [...path, "evidence_id"],
+            reason: "missing_argument",
+            expected: "string",
+          },
+        ],
+      },
     });
-  });
 
-  it("retains the exact missing/incorrect identity and its source path", () => {
-    const schema = z.strictObject({ source: evidenceInputSchema });
     for (const referenceScope of [undefined, "retained-closure"] as const) {
       const missing = resolveEvidenceRequest(
         "test",
-        { source: reference },
+        input(reference),
         schema,
         undefined,
         referenceScope === undefined ? {} : { referenceScope },
       );
-      if (missing.ok) throw new Error("missing reference was accepted");
-      expect(missing.error).toBeInstanceOf(EvidenceReferenceError);
-      expect(missing.error).toMatchObject({
-        evidenceId: reference.evidence_id,
-        reason: "missing",
-        actual: null,
-        referenceScope,
-        diagnostics: { input_path: ["source"] },
+      expect(missing).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "EvidenceIntegrityError",
+          evidenceId: reference.evidence_id,
+          reason: "missing",
+          actual: null,
+          referenceScope,
+          diagnostics: { input_path: path },
+        },
       });
     }
+
     const different = { ...reference, evidence_id: `ev_${"f".repeat(64)}` };
     const mismatched = resolveEvidenceRequest(
       "test",
-      { source: different },
+      input(different),
       schema,
       () => evidence,
     );
-    if (mismatched.ok) throw new Error("mismatched record was accepted");
-    expect(mismatched.error).toMatchObject({
-      reason: "identity_mismatch",
-      expected: different.evidence_id,
-      actual: evidence.evidence_id,
-      diagnostics: { input_path: ["source"] },
+    expect(mismatched).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "EvidenceIntegrityError",
+        reason: "identity_mismatch",
+        evidenceId: different.evidence_id,
+        expected: different.evidence_id,
+        actual: evidence.evidence_id,
+        diagnostics: { input_path: path },
+      },
     });
   });
 });
@@ -337,20 +345,24 @@ describe("Evidence request borrowing and cancellation", () => {
     const controller = new AbortController();
     const reason = new Error("cancelled by caller");
     controller.abort(reason);
-    let lookups = 0;
+    const schema = z
+      .strictObject({ source: evidenceInputSchema })
+      .superRefine(() => {
+        throw new Error("Cancelled request reached input parsing");
+      });
     const result = resolveEvidenceRequest(
       "test",
       { source: reference },
-      z.strictObject({ source: evidenceInputSchema }),
+      schema,
       () => {
-        lookups += 1;
-        return evidence;
+        throw new Error("Cancelled request reached source lookup");
       },
       { signal: controller.signal },
     );
-    if (result.ok) throw new Error("cancelled request was admitted");
-    expect(result.error.cause).toBe(reason);
-    expect(lookups).toBe(0);
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
   });
 
   it("observes cancellation raised by the final source owner", () => {

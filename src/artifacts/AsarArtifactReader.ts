@@ -2,6 +2,7 @@ import { appendCallerPath } from "../filesystem/callerPath.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
 import { artifactIntegrityDetails } from "../domain/artifactIntegrity.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { constants, createWriteStream, type Stats } from "node:fs";
 import {
   lstat,
@@ -104,6 +105,8 @@ export class AsarArtifactReader implements ArtifactReader {
         }
       }, signal);
     } catch (cause: unknown) {
+      // A typed analysis failure already owns its public classification.
+      if (cause instanceof AnalysisError) throw cause;
       throw asarFailure(this.path, "inventory", cause);
     }
     for (const facts of paths) {

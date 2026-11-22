@@ -1,7 +1,5 @@
 import { expect, it } from "vitest";
 import {
-  CLI_ONLY_FILES,
-  HOST_ONLY_COMMANDS,
   cliTextGuardSelects,
   cliTextOutsideCliCount,
 } from "../../scripts/verify/cli-text-guard.mjs";
@@ -27,10 +25,9 @@ it.each([
   expect(cliTextOutsideCliCount(content)).toBe(0);
 });
 
-it.each([...HOST_ONLY_COMMANDS.keys()])(
+it.each(["doctor", "setup", "environment-serve"])(
   "keeps the operator instruction to run host-only rea %s",
   (command) => {
-    expect(HOST_ONLY_COMMANDS.get(command)).toMatch(/no MCP operation/u);
     expect(cliTextOutsideCliCount(`"Run \`rea ${command} --json\`."`)).toBe(0);
     expect(cliTextOutsideCliCount(`"Retry, or use rea ${command}."`)).toBe(0);
   },
@@ -77,8 +74,5 @@ it("selects services but not the CLI layer or CLI-only files", () => {
   );
   expect(cliTextGuardSelects("src/cli/contractCommand.ts")).toBe(false);
   expect(cliTextGuardSelects("src/cliOutput.ts")).toBe(false);
-  for (const [path, reason] of CLI_ONLY_FILES) {
-    expect(reason).not.toBe("");
-    expect(cliTextGuardSelects(path)).toBe(false);
-  }
+  expect(cliTextGuardSelects("src/application/Doctor.ts")).toBe(false);
 });

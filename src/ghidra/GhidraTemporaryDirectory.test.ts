@@ -1,13 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { tmpdir } from "node:os";
-import { dirname, resolve } from "node:path";
+import { dirname, parse, resolve, sep } from "node:path";
 import * as fs from "node:fs/promises";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 import { probeGhidraTemporaryDirectory } from "./GhidraTemporaryDirectory.js";
-import { ghidraSessionRoot } from "./GhidraSessionRoot.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -32,20 +31,6 @@ afterEach(async () => {
 });
 
 describe("Ghidra temporary directory probe", () => {
-  it("writes and removes a probe in the session root", async () => {
-    await expect(
-      probeGhidraTemporaryDirectory(resources.owner),
-    ).resolves.toEqual({
-      ok: true,
-      directory,
-    });
-    const path = vi.mocked(fs.unlink).mock.calls[0]?.[0];
-    expect(path).toBeDefined();
-    await expect(fs.access(path!)).rejects.toMatchObject({ code: "ENOENT" });
-    await resources.close();
-    expect(fs.unlink).toHaveBeenCalledTimes(1);
-  });
-
   it("fails closed with the system code when the write is denied", async () => {
     vi.mocked(fs.open).mockRejectedValueOnce(denied("EPERM"));
     const result = await probeGhidraTemporaryDirectory(resources.owner);
@@ -61,7 +46,15 @@ describe("Ghidra temporary directory probe", () => {
   it("probes the Ghidra session root rather than an unusable inherited temp", async () => {
     const dotted = resolve(directory, ".cache", "tmp");
     for (const name of ["TMPDIR", "TMP", "TEMP"]) vi.stubEnv(name, dotted);
-    const expected = ghidraSessionRoot();
+    const { root } = parse(dotted);
+    const elements = dotted.slice(root.length).split(sep);
+    const firstDotted = elements.findIndex((element) =>
+      element.startsWith("."),
+    );
+    const expected =
+      process.platform === "win32"
+        ? resolve(root, ...elements.slice(0, firstDotted))
+        : resolve("/tmp");
     expect(resolve(tmpdir())).toBe(dotted);
     expect(expected).not.toBe(dotted);
     await expect(
@@ -81,7 +74,16 @@ describe("Ghidra temporary directory probe", () => {
   ] as const)(
     "retains cleanup ownership of %s whose removal fails and retries it on close",
     async (_label, stage, writeFails) => {
-      if (writeFails) vi.mocked(fs.open).mockRejectedValueOnce(denied("EIO"));
+      const actual =
+        await vi.importActual<typeof import("node:fs/promises")>(
+          "node:fs/promises",
+        );
+      if (writeFails)
+        vi.mocked(fs.open).mockImplementationOnce(async (...args) => {
+          const file = await actual.open(...args);
+          vi.spyOn(file, "writeFile").mockRejectedValueOnce(denied("EIO"));
+          return file;
+        });
       vi.mocked(fs.unlink)
         .mockRejectedValueOnce(denied("EPERM"))
         .mockRejectedValueOnce(denied("EPERM"));
@@ -91,15 +93,19 @@ describe("Ghidra temporary directory probe", () => {
         stage,
         retainedPath: expect.stringContaining("rea-doctor-probe-"),
       });
-      const retainedPath = result.ok ? undefined : result.retainedPath;
+      if (result.ok || result.retainedPath === undefined)
+        throw new Error("Expected an owned probe awaiting removal");
+      const { retainedPath } = result;
+      await expect(fs.access(retainedPath)).resolves.toBeUndefined();
       await expect(resources.close()).rejects.toThrow();
+      await expect(fs.access(retainedPath)).resolves.toBeUndefined();
+      if (writeFails) await actual.unlink(retainedPath);
       await expect(resources.close()).resolves.toBeUndefined();
       expect(fs.unlink).toHaveBeenCalledTimes(3);
       expect(fs.unlink).toHaveBeenLastCalledWith(retainedPath);
-      if (retainedPath !== undefined)
-        await expect(fs.access(retainedPath)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
+      await expect(fs.access(retainedPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 });
@@ -132,7 +138,7 @@ it.each([
 ])(
   "retains the default probe descriptor through $label",
   async ({ writeFails, closeFails, removeFails }) => {
-    const { open } =
+    const { open, unlink } =
       await vi.importActual<typeof import("node:fs/promises")>(
         "node:fs/promises",
       );
@@ -140,6 +146,7 @@ it.each([
     const closeFailure = denied("EIO");
     let descriptor: Awaited<ReturnType<typeof open>> | undefined;
     let closeAttempts = 0;
+    let writtenBytes: number | undefined;
     const opening = vi
       .mocked(fs.open)
       .mockImplementationOnce(async (path, flags, mode) => {
@@ -157,6 +164,11 @@ it.each([
       });
     if (removeFails)
       vi.mocked(fs.unlink).mockRejectedValueOnce(denied("EPERM"));
+    else if (!writeFails && !closeFails)
+      vi.mocked(fs.unlink).mockImplementationOnce(async (path) => {
+        writtenBytes = (await fs.stat(path)).size;
+        await unlink(path);
+      });
     try {
       const result = await probeGhidraTemporaryDirectory(resources.owner);
       if (writeFails || closeFails) {
@@ -167,11 +179,19 @@ it.each([
         });
         if (removeFails) expect(result).toHaveProperty("retainedPath");
         else expect(result).not.toHaveProperty("retainedPath");
-      } else expect(result).toEqual({ ok: true, directory });
+      } else {
+        expect(result).toEqual({ ok: true, directory });
+        expect(writtenBytes).toBeGreaterThan(0);
+      }
       await resources.close();
       expect(descriptor?.fd).toBe(-1);
       expect(closeAttempts).toBe(closeFails ? 2 : 1);
       expect(fs.unlink).toHaveBeenCalledTimes(removeFails ? 2 : 1);
+      const removed = vi.mocked(fs.unlink).mock.calls[0]?.[0];
+      if (removed === undefined) throw new Error("Expected a probe removal");
+      await expect(fs.access(removed)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     } finally {
       opening.mockRestore();
       if (descriptor !== undefined && descriptor.fd >= 0)

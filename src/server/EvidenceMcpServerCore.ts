@@ -317,8 +317,21 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   /** Install discovery after canonical registrations, before connecting. */
   enableProgressiveCatalog(): void {
     if (this.progressiveCatalog !== undefined) return;
-    const catalog = new ProgressiveToolCatalog(
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers. Its
+    // advertisement still follows the selected input presentation.
+    const adapter = super.registerTool(
+      name,
+      { ...config, ...this.presentInput(name, config) },
+      (input, context) => {
+        context.mcpReq.signal.throwIfAborted();
+        return catalog.discover(input);
+      },
+    );
+    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
       this.registrations,
+      adapter,
       this.catalogIdentity,
       (change) => {
         this.catalogChangeDepth++;
@@ -335,18 +348,6 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       () => this.delivery,
     );
     this.progressiveCatalog = catalog;
-    const { name, ...config } = DISCOVER_TOOLS;
-    // Transport discovery has no target or analysis lifecycle. Domain tools
-    // continue through registerTool and their original named handlers. Its
-    // advertisement still follows the selected input presentation.
-    super.registerTool(
-      name,
-      { ...config, ...this.presentInput(name, config) },
-      (input, context) => {
-        context.mcpReq.signal.throwIfAborted();
-        return catalog.discover(input);
-      },
-    );
   }
 
   override sendToolListChanged(): void {
@@ -444,21 +445,24 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   ): RegisteredTool {
     if (canReferenceInlineEvidence(config.inputSchema))
       this.registerEvidenceReferenceAlternative(name);
-    const presented = this.presentInput(name, config);
-    const registeredConfig = {
-      ...config,
-      ...(presented.description === undefined
-        ? {}
-        : { description: presented.description }),
-      ...(presented.inputSchema === undefined
-        ? {}
-        : {
-            inputSchema: captureInputValidation(
-              name,
-              presented.inputSchema as StandardSchemaWithJSON,
-            ),
-          }),
-    };
+    const advertised = this.advertisesTool(name);
+    const presented = advertised ? this.presentInput(name, config) : config;
+    const registeredConfig = advertised
+      ? {
+          ...config,
+          ...(presented.description === undefined
+            ? {}
+            : { description: presented.description }),
+          ...(presented.inputSchema === undefined
+            ? {}
+            : {
+                inputSchema: captureInputValidation(
+                  name,
+                  presented.inputSchema as StandardSchemaWithJSON,
+                ),
+              }),
+        }
+      : config;
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -497,7 +501,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       registeredConfig as never,
       scoped as never,
     );
-    if (!this.advertisesTool(name)) registered.disable();
+    if (!advertised) registered.disable();
     return registered;
   }
 

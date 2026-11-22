@@ -32,6 +32,14 @@ export const createPefileReadCompatibility = (
       section.raw_size === 0 &&
       section.raw_offset === 0 &&
       section.characteristics === 0;
+    // pefile 2024.8.26 `get_PointerToRawData_adj()` skips the 512-byte rounding below the page
+    // size when the section's `PointerToRawData` equals its `VirtualAddress` — the
+    // `LdrpWx86FormatVirtualImage` layout ntoskrnl-era drivers use, where `SectionAlignment` and
+    // `FileAlignment` are both sub-page and the two values coincide. The gate models
+    // `adjust_PointerToRawData`, so it has to model that exception too, or such an image loses
+    // its hash while both readers are already reading the same bytes.
+    const unroundedRawOffset =
+      image.pe_section_alignment < 0x1000 && section.raw_offset === start;
     const sectionWarnings =
       Number(section.raw_offset + section.raw_size > fileBytes) +
       Number(Math.floor(section.raw_offset / 512) * 512 > fileBytes) +
@@ -45,7 +53,7 @@ export const createPefileReadCompatibility = (
       emptyHeader ||
       sectionWarnings >= 3 ||
       (alignment > 0 && start % alignment !== 0) ||
-      section.raw_offset % 0x200 !== 0 ||
+      (!unroundedRawOffset && section.raw_offset % 0x200 !== 0) ||
       start < previousEnd
     )
       layoutAgrees = false;
