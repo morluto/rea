@@ -35,6 +35,7 @@
 * **apple:** rethrow internal invariant violations while resolving a bundle's program file ([#11392](https://github.com/morluto/rea/issues/11392)) ([6aa3898](https://github.com/morluto/rea/commit/6aa389831792a3d51ff6adb0dfe965c7443d955d))
 * **artifacts:** commit package listings only after traversal ([#13339](https://github.com/morluto/rea/issues/13339)) ([667fa3d](https://github.com/morluto/rea/commit/667fa3d6465cae61ea17162d2aa056e0c8086e64))
 * **artifacts:** keep a ZIP inventory when one member uses an unsupported compression method ([#13026](https://github.com/morluto/rea/issues/13026)) ([f548a62](https://github.com/morluto/rea/commit/f548a62a4f0c6f98f9624f529d6998305139117d))
+* **artifacts:** publish Node SEA metadata only after carrier validation ([#13411](https://github.com/morluto/rea/issues/13411)) ([120980c](https://github.com/morluto/rea/commit/120980cac0bc674584b8480187768cfd70972c08))
 * **artifacts:** verify owned carriers before retrying package reads ([#13343](https://github.com/morluto/rea/issues/13343)) ([d35e142](https://github.com/morluto/rea/commit/d35e1427097919e94f926e67b8068dafa6c02f6b))
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
