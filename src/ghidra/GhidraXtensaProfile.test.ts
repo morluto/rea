@@ -31,7 +31,7 @@ import {
   ghidraXtensaProfileMismatchReason,
 } from "./GhidraXtensaProfile.js";
 
-// Abbreviated from Ghidra 12.1.4 Processors/Xtensa/data/languages/xtensa.ldefs:
+// Abbreviated from Ghidra 12.2 Processors/Xtensa/data/languages/xtensa.ldefs:
 // one compiler specification per language, with id `default` and no `gcc`.
 const XTENSA_LDEFS = `<?xml version="1.0" encoding="UTF-8"?>
 <language_definitions>
@@ -108,7 +108,7 @@ const session = (languageId: string, compilerSpecId: string) => ({
   name: "REA Ghidra bridge" as const,
   run_id: "11111111-1111-4111-8111-111111111111",
   profile_digest: "b".repeat(64),
-  provider: { id: "ghidra" as const, version: "12.1.4" },
+  provider: { id: "ghidra" as const, version: "12.2" },
   read_only: false as const,
   analysis_complete: true,
   analysis_timed_out: false,
@@ -225,7 +225,7 @@ const registerPinCases = () => {
     // The bridge handshake enforces the expectation above after import.
     const expected = {
       runId: "11111111-1111-4111-8111-111111111111",
-      providerVersion: "12.1.4",
+      providerVersion: "12.2",
       profileDigest: "b".repeat(64),
       targetSha256: "a".repeat(64),
       expectedLanguageId: PINNED.languageId,
@@ -449,7 +449,7 @@ const registerProviderCases = () => {
       expect.stringContaining(PINNED.languageId),
     );
     expect(delivered).toContainEqual(
-      expect.stringMatching(/^Measured by REA: .*\bSALT\b.*\bSALTU\b/su),
+      expect.stringMatching(/^Measured by REA\b.*\bSALT\b.*\bSALTU\b/su),
     );
     expect(
       ghidraXtensaLimitations({

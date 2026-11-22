@@ -48,7 +48,7 @@ no-overwrite CLI delivery. It checks the target and project files for changes.
   schemas, the pinned language, snapshots, header-mutated refusals, immutable
   source bytes and owned cleanup. `REA_XTENSA_CC` (for example
   `xtensa-esp32-elf-gcc`) also builds `../c/xtensa.c`; `REA_XTENSA_READELF`
-  selects the reader. It requires BYO Ghidra 12.1.4/JDK 21+.
+  selects the reader. It requires BYO Ghidra 12.2/JDK 25+.
 
 - `ReaComputedCallCoverageProbe.java` decodes source-owned x86-64 calls
   through a writable slot, a register and a direct target, injects only the
