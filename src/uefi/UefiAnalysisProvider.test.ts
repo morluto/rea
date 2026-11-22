@@ -5591,3 +5591,96 @@ it("does not substitute outer container GUID for nested module without GUID", as
     await provider.close();
   }
 });
+
+it("incorporates omitted oversized candidate facts into directory image_sha256 rather than collapsing to empty hash", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-omitted-dirhash-");
+  const inDirA = join(directory, "inA");
+  const inDirB = join(directory, "inB");
+  const inDirEmpty = join(directory, "inEmpty");
+  const outDirA = join(directory, "outA");
+  const outDirB = join(directory, "outB");
+  const outDirEmpty = join(directory, "outEmpty");
+
+  await mkdir(inDirA, { recursive: true });
+  await mkdir(inDirB, { recursive: true });
+  await mkdir(inDirEmpty, { recursive: true });
+
+  const emptyHash = createHash("sha256").update(Buffer.alloc(0)).digest("hex");
+
+  const fhA = await open(join(inDirA, "hugeA.efi"), "w");
+  await fhA.truncate(33 * 1024 * 1024);
+  await fhA.close();
+
+  const fhB = await open(join(inDirB, "hugeB.efi"), "w");
+  await fhB.truncate(33 * 1024 * 1024);
+  await fhB.close();
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const resEmpty = expectOk(
+      await provider.execute(
+        decompileRequest(inDirEmpty, outDirEmpty, {
+          include_disassembly: false,
+        }),
+      ),
+    );
+    const shaEmpty = (resEmpty.value.result as UefiDecompileResult)
+      .image_sha256;
+    expect(shaEmpty).toBe(emptyHash);
+
+    const resA = expectOk(
+      await provider.execute(
+        decompileRequest(inDirA, outDirA, { include_disassembly: false }),
+      ),
+    );
+    const shaA = (resA.value.result as UefiDecompileResult).image_sha256;
+    expect(shaA).not.toBe(emptyHash);
+
+    const resB = expectOk(
+      await provider.execute(
+        decompileRequest(inDirB, outDirB, { include_disassembly: false }),
+      ),
+    );
+    const shaB = (resB.value.result as UefiDecompileResult).image_sha256;
+    expect(shaB).not.toBe(emptyHash);
+    expect(shaA).not.toBe(shaB);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("strips control characters and NULs from README link labels, cell names, and limitations", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-readme-controls-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "test.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "Driver\x00With\x07Controls",
+          payload_file: "test.efi",
+          phase: "DXE",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const readmeContent = await readFile(join(outDir, "README.md"), "utf8");
+    expect(readmeContent).not.toContain("\0");
+    expect(readmeContent).not.toContain("\x07");
+    expect(readmeContent).toContain("Driver With Controls");
+  } finally {
+    await provider.close();
+  }
+});

@@ -442,7 +442,10 @@ const isBufferLimitExceeded = (err: unknown): boolean => {
 };
 
 const formatMarkdownCodeSpan = (text: string): string => {
-  const sanitized = text.replace(/[\r\n]+/g, " ");
+  const sanitized = text
+    .replace(/\0/g, " ")
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/[\r\n]+/g, " ");
   const matches = sanitized.match(/`+/g);
   let maxBackticks = 0;
   if (matches) {
@@ -2148,7 +2151,11 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               "",
               "## Limitations",
               ...effectiveLimitations.map(
-                (l) => `- ${l.replace(/[\r\n]+/g, " ")}`,
+                (l) =>
+                  `- ${l
+                    .replace(/\0/g, " ")
+                    .replace(/[\x00-\x1f\x7f]+/g, " ")
+                    .replace(/[\r\n]+/g, " ")}`,
               ),
             ]
           : []),
@@ -2166,6 +2173,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           );
           const safeLinkName = m.name
             .slice(0, 256)
+            .replace(/\0/g, " ")
+            .replace(/[\x00-\x1f\x7f]+/g, " ")
             .replace(/[\r\n]+/g, " ")
             .replace(/[[\]|`]/g, "_");
           return `| ${m.phase} | ${safeCellName} | ${safeGuid} | ${m.code_bytes} | ${m.disassembly_status} | [${safeLinkName}.c](${m.relative_c_file}) | ${m.relative_asm_file ? `[${safeLinkName}.asm](${m.relative_asm_file})` : "N/A"} |`;
@@ -2797,12 +2806,26 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       }
       const admittedCandidates: AdmittedCandidateModule[] = [];
 
+      interface OmittedDirectoryCandidate {
+        readonly identityRelPath: string;
+        readonly reason: string;
+      }
+      const omittedCandidates: OmittedDirectoryCandidate[] = [];
+
       for (const entry of candidateEntries) {
         checkpoint();
         signal.throwIfAborted();
 
         const size = entry.declaredSize ?? 0;
         if (size > 32 * 1024 * 1024) {
+          const identityRelPath =
+            HOST_PLATFORM.platform === "win32"
+              ? entry.path.replaceAll("\\", "/")
+              : entry.path;
+          omittedCandidates.push({
+            identityRelPath,
+            reason: `oversized:${size}`,
+          });
           if (limitations.length < 50) {
             limitations.push(
               `Candidate file ${entry.path} exceeds maximum module size limit (32 MiB).`,
@@ -2898,6 +2921,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               new AnalysisCleanupLeaseGroup(cleanupErr, leases);
               throw cleanupErr;
             }
+            const identityRelPath =
+              HOST_PLATFORM.platform === "win32"
+                ? entry.path.replaceAll("\\", "/")
+                : entry.path;
+            omittedCandidates.push({
+              identityRelPath,
+              reason: "unreadable",
+            });
             if (limitations.length < 50) {
               limitations.push(
                 `Candidate file ${basename(entry.path)} could not be read: ${errorMessage(sniffErr)}`,
@@ -3048,8 +3079,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         });
       }
 
+      omittedCandidates.sort((a, b) =>
+        a.identityRelPath < b.identityRelPath ? -1 : 1,
+      );
+      for (const omitted of omittedCandidates) {
+        dirHash.update(
+          compositeKey(["omitted", omitted.identityRelPath, omitted.reason]) +
+            "\n",
+        );
+      }
+
       dirSha256 =
-        admittedCandidates.length === 0 && manifestSha256 === null
+        admittedCandidates.length === 0 &&
+        manifestSha256 === null &&
+        omittedCandidates.length === 0
           ? sha256Hex(Buffer.alloc(0))
           : dirHash.digest("hex");
 
