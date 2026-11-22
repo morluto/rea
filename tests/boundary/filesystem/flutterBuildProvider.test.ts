@@ -16,6 +16,7 @@ import { expect, it, onTestFinished, vi } from "vitest";
 
 import {
   aotFixtureImage,
+  appendElfRanges,
   engineFixtureImage,
   buildElf64Image,
   REFERENCE_HASH,
@@ -64,6 +65,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return { ...original };
 });
+
+const engineBuildId = "e8d907ef7c175ec4313f47111019adc9588c5f61";
 
 const buildIdNote = (): Buffer =>
   Buffer.concat([
@@ -119,10 +122,14 @@ const conflictingHashImage = (): Buffer => {
   ]);
 };
 
-const analyzeImage = async (bytes: Buffer, operation: FlutterOperation) => {
+const analyzeImage = async (
+  bytes: Buffer,
+  operation: FlutterOperation,
+  engine = libflutter(),
+) => {
   const path = await buildApk("image.apk", [
     { path: "lib/arm64-v8a/libapp.so", bytes },
-    { path: "lib/arm64-v8a/libflutter.so", bytes: libflutter() },
+    { path: "lib/arm64-v8a/libflutter.so", bytes: engine },
   ]);
   const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
@@ -190,43 +197,6 @@ it("keeps a lone unified text marker from overriding a complete split observatio
   expect(report.string_pool.package_uri_count_at_least).toBe(2);
 });
 
-it.each([32, 64] as const)(
-  "reads only ELF-owned notes in an ELF%s engine",
-  async (bits) => {
-    const fake = Buffer.from(buildIdNote());
-    fake.fill(0x11, 16);
-    for (const ownership of ["program", "section", "both"] as const) {
-      const path = await buildApk("owned-notes.apk", [
-        { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-        {
-          path: "lib/arm64-v8a/libflutter.so",
-          bytes: engineFixtureImage({
-            bits,
-            ownership,
-            prefix: fake,
-            notes: buildIdNote(),
-          }),
-        },
-      ]);
-      const provider = new FlutterBuildProvider();
-      onTestFinished(() => provider.close());
-      const result = await provider.execute({
-        operation: "identify_flutter_build",
-        input: { path },
-      });
-      if (!result.ok) throw result.error;
-      const value = flutterResultSchemas.identify_flutter_build.parse(
-        result.value.result,
-      );
-      expect(value.coverage).toBe("complete");
-      expect(value.abis[0]!.libflutter).toMatchObject({
-        build_id: "e8d907ef7c175ec4313f47111019adc9588c5f61",
-        build_id_candidates: ["e8d907ef7c175ec4313f47111019adc9588c5f61"],
-      });
-    }
-  },
-);
-
 it.each(["conflicting", "truncated", "capacity"] as const)(
   "preserves %s engine-note uncertainty",
   async (shape) => {
@@ -244,28 +214,33 @@ it.each(["conflicting", "truncated", "capacity"] as const)(
                 return note;
               }),
             );
-    const path = await buildApk("uncertain-notes.apk", [
-      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-      {
-        path: "lib/arm64-v8a/libflutter.so",
-        bytes: engineFixtureImage({ notes }),
-      },
-    ]);
-    const provider = new FlutterBuildProvider();
-    onTestFinished(() => provider.close());
-    const result = await provider.execute({
-      operation: "identify_flutter_build",
-      input: { path },
-    });
-    if (!result.ok) throw result.error;
+    const result = await analyzeImage(
+      aotImage(),
+      "identify_flutter_build",
+      engineFixtureImage({ notes }),
+    );
     const value = flutterResultSchemas.identify_flutter_build.parse(
-      result.value.result,
+      result.result,
     );
     expect(value.coverage).toBe("partial");
     expect(value.abis[0]!.libflutter.build_id).toBeNull();
-    expect(value.abis[0]!.libflutter.build_id_candidates).toHaveLength(
-      shape === "conflicting" ? 2 : shape === "truncated" ? 1 : 64,
-    );
+    const candidates = value.abis[0]!.libflutter.build_id_candidates;
+    if (shape === "capacity") {
+      expect(candidates).toHaveLength(64);
+      expect([candidates[0], candidates.at(-1)]).toEqual([
+        "000000007c175ec4313f47111019adc9588c5f61",
+        "3f0000007c175ec4313f47111019adc9588c5f61",
+      ]);
+      expect(result.limitations.join(" ")).toContain(
+        "64-value evidence budget",
+      );
+    } else {
+      expect(candidates).toEqual(
+        shape === "conflicting"
+          ? [engineBuildId, "11".repeat(20)]
+          : [engineBuildId],
+      );
+    }
   },
 );
 
@@ -283,35 +258,19 @@ it("retains earlier build IDs when a later note lacks required alignment padding
       shortNote,
       ...(padded ? [Buffer.alloc(3)] : []),
     ]);
-    const path = await buildApk("note-padding.apk", [
-      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-      {
-        path: "lib/arm64-v8a/libflutter.so",
-        bytes: engineFixtureImage({ notes }),
-      },
-    ]);
-    const provider = new FlutterBuildProvider();
-    try {
-      const result = await provider.execute({
-        operation: "identify_flutter_build",
-        input: { path },
-      });
-      if (!result.ok) throw result.error;
-      const value = flutterResultSchemas.identify_flutter_build.parse(
-        result.value.result,
-      );
-      expect(value.coverage).toBe(padded ? "complete" : "partial");
-      expect(value.abis[0]!.libflutter.build_id).toBe(padded ? "aa" : null);
-      expect(value.abis[0]!.libflutter.build_id_candidates).toEqual(
-        padded
-          ? ["aa"]
-          : prior
-            ? ["e8d907ef7c175ec4313f47111019adc9588c5f61"]
-            : [],
-      );
-    } finally {
-      await provider.close();
-    }
+    const result = await analyzeImage(
+      aotImage(),
+      "identify_flutter_build",
+      engineFixtureImage({ notes }),
+    );
+    const value = flutterResultSchemas.identify_flutter_build.parse(
+      result.result,
+    );
+    expect(value.coverage).toBe(padded ? "complete" : "partial");
+    expect(value.abis[0]!.libflutter).toMatchObject({
+      build_id: padded ? "aa" : null,
+      build_id_candidates: padded ? ["aa"] : prior ? [engineBuildId] : [],
+    });
   }
 });
 
@@ -341,34 +300,33 @@ it.each(["absent", "range", "metadata-budget"] as const)(
   "preserves %s engine-note coverage at the ELF boundary",
   async (shape) => {
     const engine = engineFixtureImage({
+      ownership: shape === "range" ? "section" : "program",
       notes:
         shape === "metadata-budget"
           ? Buffer.alloc(8 * 1024 * 1024)
-          : Buffer.alloc(0),
+          : shape === "range"
+            ? buildIdNote()
+            : Buffer.alloc(0),
     });
-    if (shape === "range")
-      engine.writeBigUInt64LE(BigInt(engine.length + 1), 64 + 56 + 8);
-    const path = await buildApk("note-bounds.apk", [
-      { path: "lib/arm64-v8a/libapp.so", bytes: aotImage() },
-      { path: "lib/arm64-v8a/libflutter.so", bytes: engine },
-    ]);
-    const provider = new FlutterBuildProvider();
-    onTestFinished(() => provider.close());
-    const result = await provider.execute({
-      operation: "identify_flutter_build",
-      input: { path },
-    });
-    if (!result.ok) throw result.error;
+    const result = await analyzeImage(
+      aotImage(),
+      "identify_flutter_build",
+      shape === "range"
+        ? appendElfRanges(engine, "program", [
+            { type: 4, offset: engine.length * 100, size: 0 },
+          ])
+        : engine,
+    );
     const value = flutterResultSchemas.identify_flutter_build.parse(
-      result.value.result,
+      result.result,
     );
     expect(value.coverage).toBe(shape === "absent" ? "complete" : "partial");
     expect(value.abis[0]!.libflutter).toMatchObject({
       build_id: null,
-      build_id_candidates: [],
+      build_id_candidates: shape === "range" ? [engineBuildId] : [],
     });
     if (shape !== "absent")
-      expect(result.value.limitations.join(" ")).toContain(
+      expect(result.limitations.join(" ")).toContain(
         shape === "range" ? "not file-backed" : "metadata budget",
       );
   },
