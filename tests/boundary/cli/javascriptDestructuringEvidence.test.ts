@@ -58,7 +58,7 @@ const aliasedAndComputedReceiverSource = `
   const stop = null;
   const aliased = { stop, value: "present" };
   const { value: beforeAliasedNull, stop: {} = {}, value: afterAliasedNull } = aliased;
-  const computed = { stop: null, value: "present" };
+  const computed = { stop: true ? null : {}, value: "present" };
   const { value: beforeComputedNull, ["stop"]: {}, value: afterComputedNull } = computed;
 `;
 

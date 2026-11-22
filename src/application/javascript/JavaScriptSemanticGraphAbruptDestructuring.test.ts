@@ -32,6 +32,8 @@ it.each([
   ["undefined", "{} = null"],
   ["void 0", "[] = undefined"],
   ["aliasedNull", "{} = {}"],
+  ["true ? null : {}", "{}"],
+  ["undefined", "{} = (false ? {} : null)"],
   ["undefined", "{} = aliasedNull"],
   ["null", "{}", '["bad"]'],
   ["captured", "{}", "bad", "captured = {};"],
@@ -60,6 +62,7 @@ it.each([
 it.each([
   ["const model = { bad: 0, mode: 'one' };", "{}"],
   ["const model = { bad: {}, mode: 'one' };", "{}"],
+  ["const model = { bad: true ? {} : null, mode: 'one' };", "{}"],
   ["const model = { bad: [], mode: 'one' };", "[]"],
   ["const model = { bad: undefined, mode: 'one' };", "{} = {}"],
   ["const model = { bad: 0, mode: 'one' };", "{} = null"],

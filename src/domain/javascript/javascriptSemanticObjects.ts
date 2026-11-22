@@ -196,7 +196,7 @@ const destructuringNullishKind = (
   const { node } = unwrapJavaScriptExpression(expression);
   if (t.isNullLiteral(node)) return "null";
   if (isNullish(node)) return "undefined";
-  if (!t.isIdentifier(node)) return null;
+  if (isKnownDefinedSource(node)) return null;
   const value = evaluateSemanticExpression(node, state);
   return value.status === "literal" && value.value === null ? "null" : null;
 };
@@ -279,7 +279,7 @@ const collectDestructuring = (
       ? unwrapJavaScriptExpression(occurrence.left).node
       : occurrence;
     const plainObjectPath = next.plainObjectPath === true && !hasDefault;
-    // An owned data slot can hold null directly or through a resolved local.
+    // A bounded evaluation can prove the original data slot nullish.
     const nullish =
       selected !== undefined &&
       (t.isObjectPattern(pattern) || t.isArrayPattern(pattern))
