@@ -576,36 +576,26 @@ export const createCliResultOutput = (
       // require a complete formatted string.
       const tokenValue = document;
       let characters = 0;
-      let jsonPartsBuffer: string[] | undefined;
-      if (
-        tokenValue !== undefined &&
-        tokenValue !== null &&
-        typeof tokenValue !== "function" &&
-        typeof tokenValue !== "symbol"
-      ) {
-        if (format === "json") {
-          jsonPartsBuffer = [];
-          for (const part of jsonOutputParts(
-            tokenValue,
-            format,
-            isTerminalOutput(destination),
-          )) {
-            characters += part.length;
-            if (characters > constants.MAX_STRING_LENGTH) {
-              jsonPartsBuffer = undefined;
-              break;
-            }
-            jsonPartsBuffer.push(part);
-          }
-        }
+      if (format === "json") {
+        for (const part of jsonOutputParts(
+          tokenValue,
+          format,
+          isTerminalOutput(destination),
+        ))
+          characters += part.length;
       }
       if (characters <= constants.MAX_STRING_LENGTH) {
         let formatted: string;
         if (format === "json") {
           // Reuse the writer's exact representation after its capacity admission.
           // tokenx requires one string; retain only this bounded formatted value.
-          formatted =
-            jsonPartsBuffer === undefined ? "" : jsonPartsBuffer.join("");
+          formatted = "";
+          for (const part of jsonOutputParts(
+            tokenValue,
+            format,
+            isTerminalOutput(destination),
+          ))
+            formatted += part;
         } else formatted = formatCliOutput(tokenValue, format);
         const count = estimateTokenCount(formatted);
         handled = true;

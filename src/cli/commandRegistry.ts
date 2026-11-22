@@ -123,6 +123,7 @@ export const registerCliCommand = <
     source: registration.source ?? { kind: "host" },
   };
   registry.entries.push(entry);
+  operationCommandIndexes.delete(registry.entries);
   registry.byName.set(name, entry);
 };
 
