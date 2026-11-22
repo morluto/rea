@@ -499,8 +499,47 @@ it("derives V3 AMDGPU processor identity from ELF flags when the note omits it",
   });
   const selected = await inspect(bytes, { targets: ["gfx900"] });
   if (!selected.ok) throw selected.error;
+  expect(selected.value.objects[0]).toMatchObject({
+    payload_target: "gfx900",
+    amd_target_metadata: {
+      note_coverage: "complete",
+      notes: [{ target: null, target_state: "absent" }],
+    },
+  });
   expect(selected.value.kernels).toHaveLength(1);
   expect(selected.value.kernels[0]).toMatchObject({ parameter_bytes: 12 });
+});
+it("distinguishes an invalid MessagePack target from legacy note coverage", async () => {
+  const legacy = Buffer.alloc(20);
+  legacy.writeUInt32LE(4, 0);
+  legacy.writeUInt32LE(4, 4);
+  legacy.writeUInt32LE(10, 8); // YAML rather than MessagePack
+  legacy.write("AMD\0", 12);
+  const declared = "amdgcn-amd-amdhsa--gfx900";
+  for (const [bytes, target, state, limitation] of [
+    [
+      amdFixture(false, undefined, 123),
+      null,
+      "invalid",
+      /target is not a string/u,
+    ],
+    [amdFixture(false, legacy), declared, "declared", /Legacy AMDGPU YAML/u],
+  ] as const) {
+    const result = await inspect(bytes);
+    if (!result.ok) throw result.error;
+    const row = result.value.objects[0]!;
+    expect(row).toMatchObject({
+      target,
+      payload_target: target,
+      amd_target_metadata: {
+        note_coverage: "partial",
+        notes: [{ target, target_state: state }],
+      },
+    });
+    expect(row.limitations.join(" ")).toMatch(limitation);
+    expect(result.value.coverage.payloads).toBe("partial");
+    expect(result.value.kernels.map(({ name }) => name)).toEqual(["add_one"]);
+  }
 });
 it("keeps AMDGPU processor identity unknown when ELF flags are unassigned", async () => {
   const bytes = amdFixture(false, undefined, null);
@@ -577,18 +616,22 @@ it.each([
 it.each(["amdgcn", "amdgpu9.00"])(
   "does not choose between conflicting AMDGPU %s note and ELF processor identities",
   async (triple) => {
-    const bytes = amdFixture(
-      false,
-      undefined,
-      `${triple}-amd-amdhsa--gfx900:xnack+`,
-    );
+    const declared = `${triple}-amd-amdhsa--gfx900:xnack+`;
+    const bytes = amdFixture(false, undefined, declared);
     bytes.writeUInt32LE(0x141, 48); // EF_AMDGPU_MACH gfx1100
     const result = await inspect(bytes);
     if (!result.ok) throw result.error;
     expect(result.value.objects[0]).toMatchObject({
       target: null,
+      payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        flags: "0x00000141",
+        processor: "gfx1100",
+        note_coverage: "complete",
+        notes: [{ target: declared, target_state: "declared" }],
+      },
     });
     expect(result.value.objects[0]!.limitations.join(" ")).toContain(
       "processor flags conflict with target note metadata",
@@ -627,10 +670,10 @@ it.each([
   },
 );
 it("retains kernels from conflicting AMDGPU notes without choosing either note or ELF flags", async () => {
-  const bytes = amdFixture(
-    false,
-    amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100"),
-  );
+  const first = amdNoteFixture();
+  const second = amdNoteFixture(false, "amdgcn-amd-amdhsa--gfx1100");
+  const bytes = amdFixture(false, second);
+  const firstDescriptor = bytes.indexOf(first) + 20;
   const result = await inspect(bytes);
   if (!result.ok) throw result.error;
   expect(result.value.objects).toMatchObject([
@@ -640,6 +683,24 @@ it("retains kernels from conflicting AMDGPU notes without choosing either note o
       payload_target: null,
       target_consistency: "unknown",
       inspection: "partial",
+      amd_target_metadata: {
+        note_coverage: "complete",
+        notes: [
+          {
+            target: "amdgcn-amd-amdhsa--gfx900",
+            target_state: "declared",
+            location: { offset: firstDescriptor, size: first.readUInt32LE(4) },
+          },
+          {
+            target: "amdgcn-amd-amdhsa--gfx1100",
+            target_state: "declared",
+            location: {
+              offset: firstDescriptor + first.length,
+              size: second.readUInt32LE(4),
+            },
+          },
+        ],
+      },
     },
   ]);
   expect(result.value.objects[0]?.limitations).toContainEqual(
