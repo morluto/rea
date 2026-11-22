@@ -1032,35 +1032,6 @@ describe("what a read shows of a write", () => {
     });
   });
 
-  it("confirms no document write a later replacement overwrote", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/settings", { theme: "light", lang: "en" }],
-      [
-        "PATCH",
-        "/api/settings",
-        { theme: "dark", lang: "en" },
-        200,
-        { theme: "dark" },
-      ],
-      [
-        "PUT",
-        "/api/settings",
-        { theme: "blue", lang: "fr" },
-        200,
-        { theme: "blue", lang: "fr" },
-      ],
-      ["GET", "/api/settings", { theme: "blue", lang: "fr" }],
-    ];
-    expect(gated(rows, "patch_settings")).toMatchObject({
-      served: false,
-      checked_record_ordinals: [],
-    });
-    expect(gated(rows, "put_settings")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [3],
-    });
-  });
-
   it("confirms a document write whose path encodes a parent the plain read holds", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/orgs/uid/acme1/settings", { theme: "light", lang: "en" }],
@@ -1083,65 +1054,101 @@ describe("what a read shows of a write", () => {
   });
 });
 
-describe("document writes later writes overwrite", () => {
-  it("confirms no document replacement a later merge overwrote", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/settings", { theme: "light", lang: "en" }],
-      [
-        "PUT",
-        "/api/settings",
-        { theme: "dark", lang: "fr" },
-        200,
-        { theme: "dark", lang: "fr" },
-      ],
-      [
-        "PATCH",
-        "/api/settings",
-        { theme: "blue", lang: "de" },
-        200,
-        { theme: "blue", lang: "de" },
-      ],
-      ["GET", "/api/settings", { theme: "blue", lang: "de" }],
-    ];
-    expect(gated(rows, "put_settings")).toMatchObject({
-      served: false,
-      checked_record_ordinals: [],
-    });
-    expect(gated(rows, "patch_settings")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [3],
-    });
-  });
+describe("document write confirmation after an overwrite", () => {
+  const path = "/api/settings";
+  const read = (state: JsonValue): TimedCaptureRow => ["GET", path, state];
 
-  it("confirms no document merge a later replacement of its object overwrote", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/settings", { prefs: { lang: "en" }, theme: "light" }],
-      [
-        "PATCH",
-        "/api/settings",
-        { prefs: { lang: "fr" }, theme: "light" },
-        200,
-        { prefs: { lang: "fr" } },
+  type DocumentWrite = readonly [
+    method: "PATCH" | "PUT",
+    sent: JsonValue,
+    result: JsonValue,
+  ];
+  it.each<{
+    name: string;
+    initial: JsonValue;
+    writes: readonly [DocumentWrite, DocumentWrite];
+    confirmed: readonly string[];
+  }>([
+    {
+      name: "a root replacement erases an earlier root merge",
+      initial: { theme: "light", lang: "en" },
+      writes: [
+        ["PATCH", { theme: "dark" }, { theme: "dark", lang: "en" }],
+        ["PUT", { lang: "fr" }, { lang: "fr" }],
       ],
-      // The replacement holds `lang`, so it replaces all of `prefs`, which the merge wrote.
-      [
-        "PUT",
-        "/api/settings",
-        { prefs: { lang: "de" }, theme: "light" },
-        200,
-        { lang: "de" },
+      confirmed: ["put_settings"],
+    },
+    {
+      name: "a root merge overwrites every field of an earlier replacement",
+      initial: { theme: "light", lang: "en" },
+      writes: [
+        ["PUT", { theme: "dark", lang: "fr" }, { theme: "dark", lang: "fr" }],
+        ["PATCH", { theme: "blue", lang: "de" }, { theme: "blue", lang: "de" }],
       ],
-      ["GET", "/api/settings", { prefs: { lang: "de" }, theme: "light" }],
-    ];
-    expect(gated(rows, "patch_settings")).toMatchObject({
-      served: false,
-      checked_record_ordinals: [],
-    });
-    expect(gated(rows, "put_settings")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [3],
-    });
-  });
+      confirmed: ["patch_settings"],
+    },
+    {
+      name: "a nested replacement overwrites an earlier merge of that nested object",
+      initial: { prefs: { lang: "en" }, theme: "light" },
+      writes: [
+        [
+          "PATCH",
+          { prefs: { lang: "fr" } },
+          { prefs: { lang: "fr" }, theme: "light" },
+        ],
+        ["PUT", { lang: "de" }, { prefs: { lang: "de" }, theme: "light" }],
+      ],
+      confirmed: ["put_settings"],
+    },
+    {
+      name: "a nested replacement preserves an earlier merge of a sibling",
+      initial: { prefsLabel: "basic", prefs: { lang: "en" } },
+      writes: [
+        [
+          "PATCH",
+          { prefsLabel: "advanced" },
+          { prefsLabel: "advanced", prefs: { lang: "en" } },
+        ],
+        [
+          "PUT",
+          { lang: "fr" },
+          { prefsLabel: "advanced", prefs: { lang: "fr" } },
+        ],
+      ],
+      confirmed: ["patch_settings", "put_settings"],
+    },
+  ])(
+    "confirms only surviving writes when $name",
+    ({ initial, writes, confirmed }) => {
+      const capturedWrites = writes.map(
+        ([method, sent, result]): TimedCaptureRow => [
+          method,
+          path,
+          result,
+          200,
+          sent,
+        ],
+      );
+      const { writes: plans } = environmentStateViewOf(
+        timedCaptureEvidence([
+          read(initial),
+          ...capturedWrites,
+          read(writes[1][2]),
+        ]),
+      );
+      expect(plans.map((plan) => plan.tool).sort()).toEqual([
+        "patch_settings",
+        "put_settings",
+      ]);
+      for (const plan of plans) {
+        const survives = confirmed.includes(plan.tool);
+        expect(plan, plan.tool).toMatchObject({
+          served: survives,
+          checked_record_ordinals: survives ? [3] : [],
+        });
+      }
+    },
+  );
 });
 
 describe("reads named as serving names them", () => {
@@ -1848,36 +1855,6 @@ describe("what a later call must follow", () => {
     });
   });
 
-  it("keeps a document write a later replacement of another member left in place", () => {
-    const rows: TimedCaptureRow[] = [
-      ["GET", "/api/settings", { theme: "light", prefs: { lang: "en" } }],
-      [
-        "PATCH",
-        "/api/settings",
-        { theme: "dark", prefs: { lang: "en" } },
-        200,
-        { theme: "dark" },
-      ],
-      // The replacement holds `lang`, so it replaces `prefs` alone.
-      [
-        "PUT",
-        "/api/settings",
-        { theme: "dark", prefs: { lang: "fr" } },
-        200,
-        { lang: "fr" },
-      ],
-      ["GET", "/api/settings", { theme: "dark", prefs: { lang: "fr" } }],
-    ];
-    expect(gated(rows, "patch_settings")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [3],
-    });
-    expect(gated(rows, "put_settings")).toMatchObject({
-      served: true,
-      checked_record_ordinals: [3],
-    });
-  });
-
   it("applies a later document replacement at the plan's pointer, though it shares no member with the document", () => {
     const rows: TimedCaptureRow[] = [
       ["GET", "/api/settings", { theme: "light", lang: "en" }],
@@ -2343,42 +2320,35 @@ describe("entities an unmodelled write made", () => {
     200,
     { name: "Renamed Book" },
   ];
-  const deletedAfterRead = (before: readonly TimedCaptureRow[]) => [
-    ...BOOK_INIT_ROWS,
-    ...before,
-    ["GET", "/api/books/3", THIRD_BOOK] as TimedCaptureRow,
-    ["DELETE", "/api/books/3", "", 204] as TimedCaptureRow,
-    ["GET", "/api/books/3", BOOK_NOT_FOUND, 404] as TimedCaptureRow,
-  ];
-
-  it("takes a book the state never held only when a write the gate does not model came first", () => {
-    // The rename ends the initial reads, so the third book is no initial one.
-    expect(
-      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
-    ).toMatchObject({ served: true, checked_record_ordinals: [7] });
-    // Only a modelled rename came first, so nothing explains the third book and the delete finds none.
-    expect(
-      gated(deletedAfterRead([RENAME]), "delete_books_by_id"),
-    ).toMatchObject({
-      served: false,
-      checked_record_ordinals: [],
-    });
-  });
-
-  it("takes a book an import may have made though it was redirected or went unanswered", () => {
-    for (const status of [303, 0]) {
-      const unresolved: TimedCaptureRow = [
-        "POST",
-        "/api/imports",
-        { queued: true },
-        status,
-        { source: "csv" },
-      ];
-      expect(
-        gated(deletedAfterRead([RENAME, unresolved]), "delete_books_by_id"),
-      ).toMatchObject({ served: true, checked_record_ordinals: [7] });
-    }
-  });
+  it.each([
+    ["only a modeled rename", undefined, []],
+    ["an accepted import", 202, [7]],
+    ["a redirected import", 303, [7]],
+    ["an unanswered import", 0, [7]],
+  ] as const)(
+    "checks the new book's deletion after %s",
+    (_, status, confirmed) => {
+      const rows: TimedCaptureRow[] = [...BOOK_INIT_ROWS, RENAME];
+      // The rename ends initial collection discovery before the new book appears.
+      if (status !== undefined)
+        rows.push([
+          "POST",
+          "/api/imports",
+          { queued: true },
+          status,
+          { source: "csv" },
+        ]);
+      rows.push(
+        ["GET", "/api/books/3", THIRD_BOOK],
+        ["DELETE", "/api/books/3", "", 204],
+        ["GET", "/api/books/3", BOOK_NOT_FOUND, 404],
+      );
+      expect(gated(rows, "delete_books_by_id")).toMatchObject({
+        served: confirmed.length > 0,
+        checked_record_ordinals: confirmed,
+      });
+    },
+  );
 
   it("counts an entity it takes against the view's allowance", () => {
     let retained = 0;
@@ -2441,9 +2411,6 @@ describe("entities an unmodelled write made", () => {
   });
 
   it("takes back no book a modelled delete removed, so a list showing it again confirms no delete", () => {
-    expect(
-      gated(deletedAfterRead([RENAME, IMPORT]), "delete_books_by_id"),
-    ).toMatchObject({ served: true });
     const rows: TimedCaptureRow[] = [
       ...BOOK_INIT_ROWS,
       ["POST", "/api/books", THIRD_BOOK, 201, { name: "Third Book" }],
