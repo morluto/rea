@@ -479,3 +479,108 @@ describe.skipIf(jdk === undefined)(
     });
   },
 );
+
+describe.skipIf(jdk === undefined)(
+  "ReaGhidraBridge writeStreamingSuccess and inventory writers",
+  () => {
+    it("streams names, procedures, matched procedure aliases, and strings with surrogate escaping", async () => {
+      const stdout = await runBridgeProbe(requireProbe(), "stream-inventory");
+      const lines = splitProbeLines(stdout);
+      expect(lines).toHaveLength(4);
+      const parsed = lines.map((line) => {
+        const wireText = decodeStrictUtf8(
+          Buffer.from(line, "base64"),
+          "preserve",
+        );
+        expect(wireText.endsWith("\n")).toBe(true);
+        return JSON.parse(wireText.trimEnd()) as unknown;
+      });
+      expect(parsed[0]).toEqual({
+        id: 1,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::sym",
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+          },
+        ],
+      });
+      expect(parsed[1]).toEqual({
+        id: 2,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::work",
+            procedure: {
+              external: false,
+              thunk: true,
+              thunk_target: "0x2000",
+            },
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+          },
+          {
+            address: "0x2000",
+            value: "plain",
+            procedure: {
+              external: false,
+              thunk: false,
+              thunk_target: null,
+            },
+          },
+        ],
+      });
+      expect(parsed[2]).toEqual({
+        id: 3,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "ns::work",
+            procedure: {
+              external: false,
+              thunk: true,
+              thunk_target: "0x2000",
+            },
+            symbol: {
+              primary: true,
+              dynamic: false,
+              external: false,
+              type: "Function",
+              source: "USER_DEFINED",
+            },
+            matched_aliases: ["alt::a", "alt::b"],
+          },
+        ],
+      });
+      expect(parsed[3]).toEqual({
+        id: 4,
+        ok: true,
+        result: [
+          {
+            address: "0x1000",
+            value: "hi-\ud800-lo-\udfff-end",
+            string: {
+              encoding: "utf-8",
+              termination: "missing",
+              byte_length: 12,
+            },
+          },
+        ],
+      });
+    });
+  },
+);
