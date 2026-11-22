@@ -1,6 +1,9 @@
-import type { JsonValue } from "../jsonValue.js";
+import {
+  escapeJsonPointerToken,
+  unescapeJsonPointerToken,
+} from "../jsonPointer.js";
+import { equalJsonValues, type JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
-import { sameJson } from "./appTaskChecks.js";
 import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
@@ -18,14 +21,10 @@ import {
   type ListStep,
 } from "./appTaskDraftSteps.js";
 import { numberedInOrder } from "./positionalKeys.js";
-import {
-  elementText,
-  escapeToken,
-  isXmlElement,
-  resolvePointer,
-} from "./viewPointer.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
 import { selectorOf, spellCondition, type Condition } from "./viewSelector.js";
 import { childConditions } from "./selectorCandidates.js";
+import { isRecord } from "../../kernel/isRecord.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -115,7 +114,7 @@ const guardAt = (
       : undefined;
   }
   return typeof before !== "object" &&
-    sameJson(before, after) &&
+    equalJsonValues(before, after) &&
     !isStamp(before) &&
     (typeof before !== "string" || before.length <= context.chars)
     ? valueEqualsCheck(file, pointer, before)
@@ -142,7 +141,7 @@ const sharing = (
 ) => {
   const own = attributesOf(member);
   const selected = new Set(
-    (selectorOf(key.replaceAll("~1", "/").replaceAll("~0", "~")) ?? []).map(
+    (selectorOf(unescapeJsonPointerToken(key)) ?? []).map(
       ({ key: name }) => name,
     ),
   );
@@ -209,27 +208,23 @@ const siblingsOf = (
         pairing.older.keys[partner] !== key ||
         !isXmlElement(element)
         ? []
-        : [{ member: escapeToken(key), element }];
+        : [{ member: escapeJsonPointerToken(key), element }];
     }),
     all,
   };
 };
 
 const attributesOf = ({ attributes }: Record<string, JsonValue>) =>
-  typeof attributes === "object" &&
-  attributes !== null &&
-  !Array.isArray(attributes)
-    ? attributes
-    : {};
+  isRecord(attributes) ? attributes : {};
 
 /** The conditions a sibling's segment selects it by, `@` attributes and `>` children's text. */
 const conditionsOf = (member: string) =>
-  selectorOf(member.replaceAll("~1", "/").replaceAll("~0", "~")) ?? [];
+  selectorOf(unescapeJsonPointerToken(member)) ?? [];
 
 /** The attribute a path into a member reads, as `name` for `attributes/name`. */
 const attributeRead = (rest: readonly string[]) =>
   rest.length === 2 && rest[0] === "attributes"
-    ? (rest[1] ?? "").replaceAll("~1", "/").replaceAll("~0", "~")
+    ? unescapeJsonPointerToken(rest[1] ?? "")
     : undefined;
 
 /** What a guard at a path into a sibling reads at the seed: an attribute's value, or an element's whole text, trimmed. */
@@ -311,7 +306,9 @@ const rekeyed = (
     resolvePointer(view, `${step.list}/${member}`, "xml");
   const end = at(sibling.member, context.ends.final);
   for (const condition of candidates) {
-    const member = escapeToken(`[name=${tag}]${spellCondition(condition)}`);
+    const member = escapeJsonPointerToken(
+      `[name=${tag}]${spellCondition(condition)}`,
+    );
     if (
       at(member, context.ends.baseline) === element &&
       at(member, context.ends.final) === end
@@ -373,12 +370,13 @@ const guardField = (
       !isIdentifyingAttribute(key) &&
       !isStamp(value) &&
       !numberedInOrder(all, String(sibling.element.name), key) &&
-      varies(["attributes", escapeToken(key)])
+      varies(["attributes", escapeJsonPointerToken(key)])
         ? [{ key, value }]
         : [],
     ),
   );
-  if (best !== undefined) return ["attributes", escapeToken(best.key)];
+  if (best !== undefined)
+    return ["attributes", escapeJsonPointerToken(best.key)];
   return own ? rest : undefined;
 };
 
@@ -438,6 +436,7 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
     const { siblings, all } = siblingsOf(context, step);
     const varies = variesAmong(all);
     const guards: Suggestion[] = [];
+    // generation-cap: siblings read while looking for a guard
     for (const sibling of siblings.slice(0, MAX_SIBLINGS_READ)) {
       if (guards.length === MAX_GUARDS_PER_CHECK) break;
       const guard = siblingGuard(
@@ -483,7 +482,10 @@ export const draftGuards = (
         guards.push(guard);
       }
   }
-  return guards
-    .toSorted((left, right) => placed(left) - placed(right))
-    .slice(0, MAX_GUARDS);
+  return (
+    guards
+      .toSorted((left, right) => placed(left) - placed(right))
+      // generation-cap: suggested guards
+      .slice(0, MAX_GUARDS)
+  );
 };

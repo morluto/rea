@@ -3600,12 +3600,9 @@ msgstr "اتصال Ghidra در Windows"
 msgctxt "page:get-started/index.html"
 msgid ""
 "Windows x64 has experimental, read-only support for native x86 and x64 PE "
-"applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
-"12.1.x installation and a 64-bit JDK 21 or newer:"
+"applications and DLLs on fixed local NTFS/ReFS drives. Use an existing "
+"Ghidra 12.2 installation and a 64-bit JDK 25 or newer:"
 msgstr ""
-"Windows x64 پشتیبانی آزمایشی و فقط‌خواندنی از برنامه‌ها و DLLهای بومی x86 "
-"وx64 با قالب PE روی درایوهای ثابت محلی NTFS دارد. از نصب موجود Ghidra 12.1.x"
-" وJDK ‏64 بیتی نسخهٔ 21 یا جدیدتر استفاده کنید:"
 
 #: website/public/get-started/index.html:1182
 msgctxt "page:get-started/index.html"
@@ -5137,10 +5134,8 @@ msgstr "REA برای خواندن برنامه های بومی به یکی از 
 msgctxt "page:guides/native/index.html"
 msgid ""
 "{ph0}Ghidra{ph1} (macOS or Linux; experimental on Windows): free, but needs "
-"an existing Ghidra 12.1.x installation and a 64-bit JDK 21 or newer."
+"an existing Ghidra 12.2 installation and a 64-bit JDK 25 or newer."
 msgstr ""
-"{ph0} Ghidra {ph1} (macOS یا Linux; تجربی در Windows): رایگان, اما نیاز به "
-"Ghidra موجود 12.1.x نصب و 64 بیتی JDK 21 یا جدیدتر."
 
 #. {ph0}: <a href="../../get-started/#native">
 #. {ph1}: </a>
@@ -5644,6 +5639,11 @@ msgstr ""
 msgctxt "page:index.html"
 msgid "Name the operands and check both operator paths."
 msgstr "نام operands و بررسی هر دو مسیر اپراتور."
+
+#: website/public/index.html:524
+msgctxt "page:index.html"
+msgid "An analyst thinking at a computer"
+msgstr "یک تحلیلگر که در کامپیوتر فکر می کند"
 
 #: website/public/index.html:520 website/public/index.html:447
 msgctxt "page:index.html"
@@ -13610,22 +13610,18 @@ msgstr "Ghidra · ابزار تحلیل رایگان و Java را نصب کنی�
 #: website/public/get-started/index.html:1111
 msgctxt "page:get-started/index.html"
 msgid ""
-"Install a 64-bit JDK 21 or newer, including the Java compiler. Choose the "
+"Install a 64-bit JDK 25 or newer, including the Java compiler. Choose the "
 "package matching your computer's architecture."
 msgstr ""
-"یک JDK ‏64 بیتی نسخهٔ 21 یا جدیدتر، شامل کامپایلر Java، نصب کنید. بسته‌ای را"
-" انتخاب کنید که با معماری رایانه‌تان مطابقت دارد."
 
 #. {ph0}: <code>ghidra_…_PUBLIC_….zip</code>
 #: website/public/get-started/index.html:1116
 #, python-brace-format
 msgctxt "page:get-started/index.html"
 msgid ""
-"Download Ghidra 12.1.4 from the release's Assets list and extract the {ph0} "
+"Download Ghidra 12.2 from the release's Assets list and extract the {ph0} "
 "archive. Choose the release archive, not “Source code”."
 msgstr ""
-"Ghidra 12.1.4 را از فهرست Assets نسخه دانلود کنید و بایگانی {ph0} را استخراج"
-" کنید. بایگانی نسخه را انتخاب کنید، نه «Source code»."
 
 #. {ph0}: <code>ghidraRun</code>
 #. {ph1}: <code>ghidraRun.bat</code>
@@ -13640,17 +13636,17 @@ msgstr ""
 "پوشهٔ استخراج‌شده‌ای را پیدا کنید که {ph0} یا {ph1} در آن است. از همان پوشه "
 "برای {ph2} استفاده کنید."
 
-#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=21" >
+#. {ph0}: <a href="https://adoptium.net/temurin/releases/?version=25" >
 #. {ph1}: </a >
 #. {ph2}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.1.4_build"
+#. href="https://github.com/NationalSecurityAgency/ghidra/releases/tag/Ghidra_12.2_build"
 #. >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1127
 #, python-brace-format
 msgctxt "page:get-started/index.html"
-msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.1.4{ph3}"
-msgstr "{ph0}دانلود JDK{ph1} · {ph2}دانلود Ghidra 12.1.4{ph3}"
+msgid "{ph0}Download a JDK{ph1} · {ph2}Download Ghidra 12.2{ph3}"
+msgstr ""
 
 #. {ph0}: <code>java.home</code>
 #. {ph1}: <code>JAVA_HOME</code>
@@ -14237,7 +14233,7 @@ msgid "{ph0}macOS · Apple Silicon{ph1}"
 msgstr "{ph0}macOS · Apple Silicon{ph1}"
 
 #. {ph0}: <a
-#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.1.4_build/GhidraDocs/GettingStarted.md#building-
+#. href="https://github.com/NationalSecurityAgency/ghidra/blob/Ghidra_12.2_build/GhidraDocs/GettingStarted.md#building-
 #. native-components" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1228
@@ -14780,15 +14776,6 @@ msgctxt "page:contributors/index.html"
 msgid "Find a contributor"
 msgstr "جستجوی مشارکت‌کننده"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/graphs/contributors">
-#. {ph1}: </a>
-#. {ph2}: <time datetime="2026-10-15" translate="no">2026-10-15</time>
-#: website/public/contributors/index.html:1114
-#, python-brace-format
-msgctxt "page:contributors/index.html"
-msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
-msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."
-
 #: website/public/contributors/index.html:1119
 msgctxt "page:contributors/index.html"
 msgid "No matching contributors. Try another username."
@@ -14866,6 +14853,50 @@ msgstr "ارزیابی"
 msgctxt "page:guides/index.html"
 msgid "Build an RL environment"
 msgstr "راهنمای ساخت محیط"
+
+#. {ph0}: <a href="#desktop">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:228
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid "{ph0}Build a desktop app environment{ph1}"
+msgstr "{ph0}ساخت محیط برنامهٔ دسکتاپ{ph1}"
+
+#: website/public/guides/rl-environments/index.html:492
+msgctxt "page:guides/rl-environments/index.html"
+msgid "Build a desktop app environment"
+msgstr "ساخت محیط برنامهٔ دسکتاپ"
+
+#: website/public/guides/rl-environments/index.html:493
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"For a Linux desktop app, describe the task you want an agent to practice. "
+"For example, ask it to build a Gnote environment where the agent adds olive "
+"oil to a shopping list. The agent installs the app on a local build "
+"computer, writes the task, exports the environment, and checks it on a fresh"
+" computer using screenshots, the mouse, and the keyboard."
+msgstr ""
+"کاری را که می‌خواهید ایجنت در یک برنامهٔ دسکتاپ لینوکس تمرین کند شرح دهید. "
+"مثلاً بخواهید محیطی برای Gnote بسازد که در آن روغن زیتون را به فهرست خرید "
+"اضافه کند. ایجنت برنامه را روی رایانهٔ ساخت محلی نصب می‌کند، وظیفه را "
+"می‌نویسد، محیط را صادر می‌کند و روی رایانه‌ای تازه با تصویر صفحه، ماوس و "
+"صفحه‌کلید آن را بررسی می‌کند."
+
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/desktop-
+#. build-
+#. computer.md#set-up-a-build-host">
+#. {ph1}: </a>
+#: website/public/guides/rl-environments/index.html:501
+#, python-brace-format
+msgctxt "page:guides/rl-environments/index.html"
+msgid ""
+"The build host needs Linux on amd64 or arm64, Docker, and the pinned "
+"AgentEnv version. Follow the {ph0}desktop build setup guide{ph1} for "
+"installation and readiness checks."
+msgstr ""
+"رایانهٔ ساخت به لینوکس روی amd64 یا arm64، داکر و نسخهٔ تعیین‌شدهٔ AgentEnv "
+"نیاز دارد. برای نصب و بررسی آمادگی، {ph0}راهنمای راه‌اندازی رایانهٔ ساخت "
+"محیط دسکتاپ{ph1} را دنبال کنید."
 
 #: website/public/guides/rl-environments/index.html:111
 msgctxt "page:guides/rl-environments/index.html"
@@ -15463,48 +15494,24 @@ msgctxt "page:index.html"
 msgid "Methods and reconstruction notes."
 msgstr "روش‌ها و یادداشت‌های بازسازی."
 
-#: website/public/blog/index.html:83 website/public/blog/index.html:96
-#: website/public/blog/reverse-engineering-models/index.html:83
-#: website/public/blog/reverse-engineering-models/index.html:96
-#: website/public/blog/touhou-reconstruction/index.html:83
-#: website/public/blog/touhou-reconstruction/index.html:96
-#: website/public/contributors/index.html:83
-#: website/public/contributors/index.html:96
-#: website/public/examples/dino-lab/index.html:83
-#: website/public/examples/dino-lab/index.html:96
-#: website/public/faq/index.html:83 website/public/faq/index.html:96
-#: website/public/first-investigation/index.html:83
-#: website/public/first-investigation/index.html:96
-#: website/public/get-started/index.html:83
-#: website/public/get-started/index.html:96
-#: website/public/guides/browser/index.html:83
-#: website/public/guides/browser/index.html:96
-#: website/public/guides/index.html:83 website/public/guides/index.html:96
-#: website/public/guides/javascript/index.html:83
-#: website/public/guides/javascript/index.html:96
-#: website/public/guides/native/index.html:83
-#: website/public/guides/native/index.html:96
-#: website/public/guides/rl-environments/index.html:83
-#: website/public/guides/rl-environments/index.html:96
-#: website/public/index.html:83 website/public/index.html:96
-#: website/public/showcase/aegis/index.html:83
-#: website/public/showcase/aegis/index.html:96
-#: website/public/showcase/ctf/index.html:83
-#: website/public/showcase/ctf/index.html:96
-#: website/public/showcase/dx-ball/index.html:83
-#: website/public/showcase/dx-ball/index.html:96
-#: website/public/showcase/index.html:83 website/public/showcase/index.html:96
-#: website/public/showcase/notion/index.html:83
-#: website/public/showcase/notion/index.html:96
-#: website/public/showcase/th04/index.html:83
-#: website/public/showcase/th04/index.html:96
+#: website/public/blog/index.html:105 website/public/blog/index.html:118
+#: website/public/blog/reverse-engineering-models/index.html:105
+#: website/public/blog/reverse-engineering-models/index.html:118
+#: website/public/contributors/index.html:105
+#: website/public/contributors/index.html:118
+#: website/public/examples/dino-lab/index.html:105
+#: website/public/examples/dino-lab/index.html:118
+#: website/public/faq/index.html:105 website/public/faq/index.html:118
+#: website/public/first-investigation/index.html:105
+#: website/public/first-investigation/index.html:118
+#: website/public/get-started/index.html:105
+#: website/public/get-started/index.html:118 website/public/index.html:105
+#: website/public/index.html:118
 msgctxt "shared"
-msgid ""
-"REA: Find out how software works. Reverse engineering with your coding "
-"agent."
+msgid "Blue REA lettering beside disassembly, hex data and an agent workflow."
 msgstr ""
-"REA-پیدا کردن چگونه نرم افزار کار می کند. مهندسی معکوس با عامل برنامه نویسی "
-"شما."
+"نوشتهٔ آبی REA در کنار کد دیس‌اسمبل‌شده، داده‌های شانزده‌شانزدهی و گردش کار "
+"یک عامل."
 
 #: website/public/index.html:357
 msgctxt "page:index.html"
@@ -17324,3 +17331,26 @@ msgstr ""
 #~ msgctxt "page:showcase/th04/index.html"
 #~ msgid "{ph0}Angle and velocity · source excerpt{ph1}"
 #~ msgstr ""
+
+#~ msgctxt "page:get-started/index.html"
+#~ msgid ""
+#~ "Windows x64 has experimental, read-only support for native x86 and x64 PE "
+#~ "applications and DLLs on fixed local NTFS drives. Use an existing Ghidra "
+#~ "12.1.x installation and a 64-bit JDK 21 or newer:"
+#~ msgstr ""
+#~ "Windows x64 پشتیبانی آزمایشی و فقط‌خواندنی از برنامه‌ها و DLLهای بومی x86 "
+#~ "وx64 با قالب PE روی درایوهای ثابت محلی NTFS دارد. از نصب موجود Ghidra 12.1.x"
+#~ " وJDK ‏64 بیتی نسخهٔ 21 یا جدیدتر استفاده کنید:"
+
+#, python-brace-format
+#~ msgctxt "page:contributors/index.html"
+#~ msgid "From {ph0}GitHub’s contributor list{ph1} · Updated {ph2}."
+#~ msgstr "از {ph0}فهرست مشارکت‌کنندگان GitHub{ph1} · به‌روزرسانی: {ph2}."
+
+#~ msgctxt "shared"
+#~ msgid ""
+#~ "REA: Find out how software works. Reverse engineering with your coding "
+#~ "agent."
+#~ msgstr ""
+#~ "REA-پیدا کردن چگونه نرم افزار کار می کند. مهندسی معکوس با عامل برنامه نویسی "
+#~ "شما."

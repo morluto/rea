@@ -42,7 +42,9 @@ const sqliteReaders = async (populate: (db: DatabaseSync) => void) => {
   const path = join(scratch, "state.db");
   const db = new DatabaseSync(path);
   try {
-    db.exec("CREATE TABLE healthy(x); INSERT INTO healthy VALUES(1)");
+    db.exec(
+      "CREATE TABLE healthy(x INTEGER PRIMARY KEY); INSERT INTO healthy VALUES(1)",
+    );
     populate(db);
   } finally {
     db.close();
@@ -109,7 +111,7 @@ it("bounds each projected SQLite table and recovers the same complete facts in b
     expect(emitted.view).toEqual(typescript);
     expect(emitted.view.tables.healthy).toEqual({
       columns: ["x"],
-      primary_key: [],
+      primary_key: ["x"],
       rows: [[1]],
       truncated: false,
     });
@@ -171,7 +173,7 @@ print(len(json.dumps(expected, ensure_ascii=False, separators=(",", ":")).encode
   }
 });
 
-it("keeps the native SQLite record limit independent of a larger view allowance", async () => {
+it("keeps SQLite record and worker limits independent of a larger view allowance", async () => {
   // A tiny stored declaration expands beyond the native hex/record allowance.
   const fixture = await sqliteReaders((db) =>
     db.exec(
@@ -180,15 +182,25 @@ it("keeps the native SQLite record limit independent of a larger view allowance"
   );
   const bytes = 32 * 1024 * 1024;
   const emitted = await fixture.emitted(bytes);
-  for (const view of [await fixture.typescript(bytes), emitted.view]) {
-    expect(view).toMatchObject({
-      tables: {
-        healthy: { rows: [[1]] },
-        native_limit: { error: expect.any(String) },
+  const typescript = await fixture.typescript(bytes);
+  const healthy = {
+    columns: ["x"],
+    primary_key: ["x"],
+    rows: [[1]],
+    truncated: false,
+  };
+  expect(typescript).toEqual({
+    tables: {
+      healthy,
+      native_limit: {
+        error: expect.stringContaining(
+          "16 MiB reply budget before hex projection",
+        ),
       },
-    });
-    expect(JSON.stringify(view)).not.toContain("exceeds sqlite_view_bytes");
-  }
+    },
+    tables_truncated: false,
+  });
+  expect(emitted.view).toMatchObject({ tables: { healthy } });
   expect(emitted.view.tables.native_limit).toEqual({
     error: expect.stringContaining("string or blob too big"),
   });
@@ -222,7 +234,9 @@ print(json.dumps({"size": size, "peak": peak, "negative_zero": negative_zero}))
     ),
   ) as { size: number; peak: number; negative_zero: number };
   expect(result.size).toBeGreaterThan(1024);
-  expect(result.negative_zero).toBe(Buffer.byteLength(JSON.stringify("-0")));
+  expect(result.negative_zero).toBe(
+    Buffer.byteLength(JSON.stringify({ real: "-0" })),
+  );
   // Input exists before tracing. Whole-cell quoting previously made a six-MiB
   // string merely to reject this one-KiB allowance.
   expect(result.peak).toBeLessThan(1024 * 1024);

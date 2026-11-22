@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { estimateJavaScriptStaticApplicationProjection } from "../../../src/domain/javascript/javascriptApplicationProjectionResources.js";
-import { analyzeJavaScriptStaticSource } from "../../../src/domain/javascript/javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../fixtures/javascriptStaticAnalysis.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   reconstructJavaScriptFixture,

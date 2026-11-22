@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { analyzeParsedJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptStaticSource } from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 
 const provenance = (source: string, name: string) => {
   const file = parseJavaScriptSource(source, "fixture.cjs");

@@ -1,3 +1,5 @@
+import { ProcessCaptureError } from "../../../src/process/capture/ProcessCaptureError.js";
+import { createTestProcessCaptureResourceScope } from "../../fixtures/processCaptureResourceScope.js";
 import { expect, it, vi } from "vitest";
 
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
@@ -28,17 +30,21 @@ it("prepares ownership inspection before snapshotting or allocating a target run
     throw new Error("snapshot must not run after failed ownership preflight");
   };
 
-  await expect(
-    prepareProcessCapture(
-      processScenarioSchema.parse({
-        executable: "/bin/true",
-        working_directory: "/tmp",
-      }),
-      undefined,
-      captureSnapshot,
-      { prepareOwnershipInspector, createTemporaryRoot, cleanup },
-    ),
-  ).rejects.toBe(failure);
+  const observed: unknown = await prepareProcessCapture(
+    processScenarioSchema.parse({
+      executable: "/bin/true",
+      working_directory: "/tmp",
+    }),
+    undefined,
+    captureSnapshot,
+    { prepareOwnershipInspector, createTemporaryRoot, cleanup },
+    createTestProcessCaptureResourceScope(),
+  ).catch((cause: unknown) => cause);
+  expect(observed).toBeInstanceOf(ProcessCaptureError);
+  if (!(observed instanceof ProcessCaptureError))
+    throw new Error("Expected typed capture preparation failure");
+  expect(observed.reason).toBe("capture_failed");
+  expect(observed.cause).toBe(failure);
 
   expect(prepareOwnershipInspector).toHaveBeenCalledOnce();
   expect(createTemporaryRoot).not.toHaveBeenCalled();
@@ -73,6 +79,7 @@ it("cleans the temporary root when cancellation arrives during identity capture"
         coverage: emptyFilesystemCoverage,
       }),
       host,
+      createTestProcessCaptureResourceScope(),
     ),
   ).rejects.toThrow(/cancelled/u);
   expect(host.captureOwnershipBaseline).toHaveBeenCalledWith(controller.signal);

@@ -10,8 +10,11 @@ This family is present on repository main and in npm 4.1.0. Check the
 connected server's tool list before selecting it.
 
 On Linux, JADX launches an REA-owned process and requires a procps-compatible
-`ps` on REA's `PATH`; see the shared
+system `ps`; see the shared
 [Linux process prerequisite](../../getting-started/installation.md#linux-owned-process-prerequisite).
+
+A/B OTA `payload.bin` files are a separate offline artifact, not a JADX
+package. See [Android OTA update payloads](../firmware/android-ota-payload.md).
 
 ## Optional package delivery
 
@@ -40,7 +43,11 @@ unverified.
 `inspect_android_package` also returns a static inventory of declared
 activities, aliases, services, receivers and providers from the decoded
 manifest. The binary XML decoder preserves component class spelling, including
-`$` in nested classes, without applying JADX class aliases. `declared_name`
+`$` in nested classes, without applying JADX class aliases. The component
+inventory and [Apktool metadata](apktool-resource-analysis.md) read the same
+decoded manifest structure. The document root must be `<manifest>` in no
+namespace, and the package comes from its unqualified `package` attribute.
+A missing or empty attribute leaves the package unknown. `declared_name`
 preserves the decoded source attribute; `name` resolves a
 relative name only when the manifest package is known and the resolved copy
 fits the UTF-8 byte budget. An unresolved package or exhausted name budget
@@ -60,8 +67,7 @@ references are not expanded at this parser boundary. Repeated inherited
 values share one inventory-wide byte budget.
 Provider `android:readPermission` and `android:writePermission` overrides are
 not projected as separate fields; their presence marks the inventory partial
-and is called out in `limitations`. Relative component names are not resolved
-against a manifest package with surrounding whitespace.
+and is called out in `limitations`.
 Class-name segments follow DEX `SimpleName` characters, including a leading
 digit or hyphen, rather than Java source identifier rules. Relative-name
 expansion does not prove class existence, DEX-version compatibility or runtime
@@ -101,10 +107,9 @@ complete decoded manifest. Component, filter, data and metadata `location` value
 use one-based lines/columns and UTF-16 offsets into that manifest. A component's
 `declaration_index` preserves its original declaration ordinal, including gaps.
 
-`declaration_coverage` distinguishes complete, partial and unknown observations.
-Historical Evidence omits newly introduced fields and defaults coverage to
-`unknown`; omission never establishes absence. Current records contain the fields,
-with null for absent or unresolved scalar declarations. The inventory retains at
+`declaration_coverage` distinguishes complete and partial observations. Every
+record contains the declaration fields, with null for absent or unresolved scalar
+declarations. The inventory retains at
 most 32 filters and 64 nested action/category/data/metadata records per component,
 and shares a 1 MiB structured-value copy budget across components. Omitted values
 or unsupported filter constructs mark coverage partial and include a limitation;
@@ -145,7 +150,7 @@ type tokens or establish runtime eligibility.
 ## Supply tools
 
 Use a **full JDK 17 or newer** (including its compiler module) and
-[**jadx-headless-mcp 0.7.1**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar).
+[**jadx-headless-mcp 0.8.0**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar).
 Verify the downloaded JAR's SHA-256 against
 [REA's pinned release metadata](https://github.com/morluto/rea/blob/main/src/android/JadxRelease.ts)
 before using it. The following download and verification commands work for npm
@@ -157,22 +162,22 @@ On macOS or Linux, choose a destination and verify the pinned digest:
 ```sh
 mkdir -p "$HOME/.local/share/rea/android" &&
 cd "$HOME/.local/share/rea/android" &&
-curl -fL -o jadx-headless-mcp-0.7.1-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar &&
+curl -fL -o jadx-headless-mcp-0.8.0-all.jar https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar &&
 if command -v sha256sum >/dev/null; then
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | sha256sum -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | sha256sum -c -
 else
-  echo '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75  jadx-headless-mcp-0.7.1-all.jar' | shasum -a 256 -c -
+  echo '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372  jadx-headless-mcp-0.8.0-all.jar' | shasum -a 256 -c -
 fi &&
-export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/jadx-headless-mcp-0.8.0-all.jar"
 ```
 
 On Windows, run the equivalent in PowerShell:
 
 ```powershell
-$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.7.1-all.jar'
+$jar = Join-Path $HOME '.local\share\rea\android\jadx-headless-mcp-0.8.0-all.jar'
 New-Item -ItemType Directory -Force (Split-Path $jar) | Out-Null
-Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar' -OutFile $jar
-if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
+Invoke-WebRequest -Uri 'https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.8.0/jadx-headless-mcp-0.8.0-all.jar' -OutFile $jar
+if ((Get-FileHash -Algorithm SHA256 $jar).Hash.ToLowerInvariant() -ne '4b9a01c23845c123c217840182d2b5f2c26a7ca20dec3d08810b310fc80a2372') { throw 'JADX JAR SHA-256 does not match REA pinned metadata' }
 $env:REA_JADX_MCP_JAR = $jar
 ```
 
@@ -181,7 +186,7 @@ unmodified engine JAR. REA does not install Java, an Android SDK, JADX, a device
 service or an emulator. Set the path in the shell or MCP server environment:
 
 ```sh
-export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.7.1-all.jar
+export REA_JADX_MCP_JAR=/absolute/path/jadx-headless-mcp-0.8.0-all.jar
 # Optional: select an existing JDK rather than java on PATH.
 export JAVA_HOME=/absolute/path/existing-jdk
 ```
@@ -193,7 +198,7 @@ PowerShell accepts paths containing spaces without additional escaping
 inside these environment values:
 
 ```powershell
-$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.7.1-all.jar'
+$env:REA_JADX_MCP_JAR = 'D:\tools\jadx-headless-mcp-0.8.0-all.jar'
 $env:JAVA_HOME = 'D:\tools\jdk-21'
 rea inspect-android-package 'D:\targets\Example.apk'
 ```
@@ -217,7 +222,7 @@ metadata-bridge records covered macOS arm64/OpenJDK 21 and Windows x64/JDK 21;
 this protocol revision has not been rerun on those hosts or Linux/JDK 25.
 Windows x64 uses an owned Job Object with bidirectional stdio, atomic job
 assignment and kill-on-owner-close. Real Windows verification uses JDK 21 and
-the pinned JADX 0.7.1 JAR; see the real verification lane below.
+the pinned JADX 0.8.0 JAR; see the real verification lane below.
 
 ## Answer an analyst question
 
@@ -305,8 +310,9 @@ overload even when Java code generation renames a method. If the selected Java
 body was omitted, including a method merged into a synthetic bridge, REA returns
 its original smali with the `java_body_unavailable` marker. The marker describes
 missing Java; it does not infer why the method was omitted or name a replacement.
-Unresolved or duplicate disassembly identities fail instead of attributing another
-method's instructions to the selection.
+If disassembly cannot establish one complete block for the selected method, the
+result keeps that method's identity and reports `body_status: "not_available"`
+with a `body_unavailable_reason`. Both `representation` and `source` are null.
 
 Native and abstract methods are identified from access flags
 captured before code generation. They report `body_status: "not_available"`, an
@@ -345,7 +351,9 @@ fails explicitly instead of silently truncating facts. MCP refusal includes
 the retained parent ID. Select complete detail, or inspect one method rather
 than a whole class, when the requested summary does not fit.
 
-The mapping path must be absolute. Selectors still take the observed names, such as
+The mapping path must be absolute. Mapping records accept optional spacing
+around `->` and spaces or tabs between a member type and its name.
+Selectors still take the observed names, such as
 `a.b`, and observed rows are unchanged. The result adds one `mapping` block with
 the file's path, SHA-256 and size, the header values the file reports
 (`compiler`, `compiler_version`, `min_api`, `map_version`, `pg_map_id`,
@@ -410,6 +418,14 @@ original ZIP spelling. Omitted filters include all scoped facts; `[]` matches
 none. Class selection never narrows the global inventory used for table-class
 attribution.
 
+Only libraries inside the selected APK are examined. `native_inventory.manifest_splits`
+reports the root manifest's `android:requiredSplitTypes` and the
+`<application>` `android:isSplitRequired` flag, decoded without loading the APK.
+When the manifest requires splits, or those requirements cannot be read, native
+libraries may live in split APKs that were not examined: `library_inventory` is
+then `partial` with an unknown that says so, and a binding with no candidate is
+`unknown` rather than `unmatched`.
+
 Independent `declarations`, `libraries`, `candidates` and `bindings` collections
 have stable IDs and source ordinals. Candidates retain APK/library digests,
 ABI, function addresses and file offsets. Table candidates also retain section,
@@ -419,8 +435,11 @@ and their relocation sources. JNI exports follow the
 failed escaping does not acquire an invented export match. Tables require
 NUL-terminated [Modified UTF-8 strings](https://docs.oracle.com/en/java/javase/21/docs/specs/jni/types.html#modified-utf-8-strings),
 valid descriptors and executable load mappings. REL, RELA and RELR retain
-separate provenance; unsupported packed relocations and unresolved pointer
-spans stay explicit unknowns.
+separate provenance. RELR accepts standard and older Android dynamic tags. Android APS2-compressed REL/RELA records keep their logical
+`encoding` and add `packing: { format: "aps2", group_entry_index: ... }`;
+`record_file_offset` identifies the shared group header and the index identifies
+the member within it. APS1 and unresolved pointer spans stay explicit unknowns.
+APS2 uses the [shared ELF decode-work allowance](../native/native-initializers.md#paging-and-limits).
 
 A static `JNINativeMethod` entry names no class. Attribute it uniquely only
 when exactly one declaration in the complete recorded native inventory has
@@ -665,9 +684,13 @@ uses native memory. A typed JVM memory allocation failure during APK loading
 reports `resource_constraint` with the observed maximum heap in bytes. Known
 heap failures name `REA_JADX_HEAP_MIB` in remediation; other memory regions
 remain unknown. A healthy doctor configuration check does not establish that
-any particular APK fits. Failures before the bridge can report a typed result
-and upstream errors from other operations retain their existing diagnostics;
-error text alone does not establish memory exhaustion.
+any particular APK fits. If the launcher stops before the bridge answers and
+its retained stderr carries HotSpot's `java.lang.OutOfMemoryError: Java heap
+space` or `GC overhead limit exceeded`, REA reports `resource_constraint` with
+`observed_max_heap_bytes: null`, since no runtime fact measured the heap, and
+the same `REA_JADX_HEAP_MIB` remediation. Other failures before the bridge can
+report a typed result and upstream errors from other operations retain their
+existing diagnostics; error text alone does not establish memory exhaustion.
 
 Independent REA instances have independent queues. Whole
 operations have a **120-second** execution deadline by default, starting after
@@ -688,7 +711,7 @@ bounds each upstream call. Timeout recovery reports the effective milliseconds
 and range, with `details.limit` identifying the runtime setting. An invalid
 provider-local launch value can also be repaired by a runtime override; reset
 exposes that invalid launch value again. See the
-[settings design](../../design/limits-and-recovery.md#invalid-launch-configuration).
+[analysis settings and recovery](../../reference/limits-and-recovery.md#invalid-launch-configuration).
 A passing JADX configuration check in `rea doctor` reports its launch-derived
 `operation_timeout_ms`; it does not inspect another running server's overrides. Explicit
 cancellation still ends the operation immediately, and partial observations
@@ -732,7 +755,7 @@ Download the explicit public fixtures once; this installs no tools:
 
 ```sh
 npm run fixtures:android
-export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.7.1-all.jar"
+export REA_JADX_MCP_JAR="$PWD/_reference/apk-integration/jadx-headless-mcp-0.8.0-all.jar"
 export REA_ANDROID_TEST_APK="$PWD/_reference/apk-integration/ApiDemos-debug.apk"
 npm run verify:android
 ```
@@ -771,5 +794,4 @@ means the producer did not establish instruction coverage. Using-node totals
 and coverage do not imply complete instruction evidence.
 `direct_invokes_coverage` reports counts of using nodes with complete, partial,
 or unknown positions, plus the number of retained instruction sites. This
-aggregate makes position truncation visible without scanning every caller;
-older retained Evidence may omit it, which means the aggregate was unexamined.
+aggregate makes position truncation visible without scanning every caller.

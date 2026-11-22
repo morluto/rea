@@ -552,7 +552,8 @@ The rules both evaluators follow:
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
-  `/`; on an array a segment may be a selector, below. Key files read as
+  `/`. Other `~` sequences are rejected, including within a selector. On an
+  array a segment may be a selector, below. Key files read as
   `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
   `/groups/GROUP/KEY`; XML as `{"root": {"name", "attributes", "children"}}`;
   SQLite as `{"tables": {"TABLE": {"columns", "rows"}}}`; a zip archive as
@@ -618,6 +619,10 @@ to 60 seconds and accepts 1 to 300. A failed command, timeout, malformed
 answer or missing marked output reports a reader error; it does not establish
 that the document lacks the expected value. Correct the command or its output and retry; increase
 `timeout_s` within its accepted range when the reader needs longer.
+
+A source inspection failure, such as an inaccessible parent or a symlink loop,
+also reports a reader error and leaves affected checks undecided. Only a missing
+source or a source that is not a regular file is reported as absent.
 
 Export runs readers on both retained ends, using the seed bytes as the bundle
 actually ships them. The witness and exported verifier run them in the

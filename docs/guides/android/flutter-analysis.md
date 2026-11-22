@@ -57,17 +57,14 @@ server; older servers keep the complete request after schema discovery.
   sections, which carry the `f5f5dcdc` magic — the parsed header kind and
   length (the stored length excludes the four magic bytes). Data headers
   whose declared snapshot length does not fit their symbol retain their
-  observed fields and report partial coverage. Complete structural coverage
-  currently requires kind 3, the FullAOT value in the supported
-  [Dart 2.14 layout](https://github.com/dart-lang/sdk/blob/2.14.0/runtime/vm/snapshot.h).
-  Kind numbers vary across Dart releases; other values are preserved with
-  partial coverage, without guessing their interpretation.
-  Unified `_kDartSnapshotData` / `_kDartSnapshotText` exports are a different
-  unsupported profile. The [upstream VM-isolate removal](https://github.com/dart-lang/sdk/commit/d36adbacafee01d9852cf8e960cf2d8654d91e7e)
-  changes both the source layout and the FullAOT kind value. REA reports the
-  observed export names and library identity with a typed unsupported-profile
-  refusal when only unified exports are available; it does not alias one header
-  into two independent sources.
+  observed fields and report partial coverage. `libapp.snapshot_profile`
+  identifies `legacy-split` for the kind 3 FullAOT layout in Dart 2.14 or
+  `unified` for the kind 2 FullAOT layout from the VM-isolate removal. It is
+  `null` when the data headers leave the profile unresolved. Older Evidence
+  can omit the field. Independent, conflicting profiles retain their source
+  exports and hashes with partial coverage and an unselected string pool.
+  [Dart 2.14 header](https://github.com/dart-lang/sdk/blob/2.14.0/runtime/vm/snapshot.h)
+  · [Dart SDK unified layout change](https://github.com/dart-lang/sdk/commit/d36adbacafee01d9852cf8e960cf2d8654d91e7e)
   Address resolution examines every overlapping `PT_LOAD` interpretation,
   including partial overlaps. Equivalent mappings are coalesced; conflicting
   mappings leave affected symbols unresolved and qualify coverage. Dynamic
@@ -75,10 +72,11 @@ server; older servers keep the complete request after schema discovery.
   A payload without exported snapshot symbols is refused rather
   than guessed at.
 - **The snapshot hash** from the header at the start of each exported data
-  symbol. Complete hash coverage requires a valid header from both the VM
-  and isolate; duplicate records inside one symbol cannot stand in for the
-  other's header. Aliased or overlapping data symbols report partial coverage.
-- **A string-pool projection from the isolate data section**: distinct
+  symbol. The split profile needs independent VM and isolate headers. The
+  unified profile needs one header, and aliases published at the same
+  role's file range count as one source.
+- **A string-pool projection from the selected data section** uses the split
+  isolate data or unified snapshot data. It includes distinct
   `package:` source URIs (the app's own and its dependencies' Dart files —
   a dependency inventory), `dart:` SDK URIs (which SDK libraries the app
   uses), and identifier-shaped tokens, each bounded with counts and
@@ -95,13 +93,13 @@ server; older servers keep the complete request after schema discovery.
   negative answer reports complete coverage: absence is an answer.
 - **`snapshot_hash`** is the Dart build hash observed 20 bytes after the
   snapshot magic (`f5 f5 dc dc`) inside `libapp.so`. Identification scans
-  byte patterns; AOT inspection reads the exported VM and isolate headers.
+  byte patterns, while AOT inspection reads headers at the exported data boundaries.
   `snapshot_hash_sources` counts the valid records observed by the chosen
   operation, and when they **disagree** the distinct values are
   kept in `snapshot_hash_candidates` with `snapshot_hash: null` and
   `coverage: "partial"` rather than silently picking one.
   Identification can retain a single byte-scanned hash from a unified payload;
-  its partial status does not establish truncation or support for that profile.
+  its partial status describes the byte scan's coverage.
 - **`elf_header_valid`** checks the supported little-endian ELF32/ELF64
   header, table entry widths, and full table extents against the library's
   actual byte length. Truncated, malformed, or unsupported headers report
@@ -247,12 +245,9 @@ rea inspect-dart-aot app.apk --pool-policy '{"contains":"package:","uri_limit":2
 ```
 
 The equivalent MCP input is `pool_policy: {contains: "package:", uri_limit: 2048}`.
-This recovers all bounded package-URI observations in the measured Gallery and
-LocalSend APKs. Check the result's limits and coverage for other targets; long
-runs and unsupported snapshot layouts remain separate limitations. The
-[calibration report](../../verification/flutter-budget-calibration.md)
-keeps the default at 500 because increasing every complete overview also delivers
-more strings when they are unnecessary. Use `detail: "summary"` for the MCP
+Check the result's limits and coverage; long runs and unsupported snapshot
+layouts remain separate limitations. The default is 500; raising it can deliver
+more strings than a complete overview needs. Use `detail: "summary"` for the MCP
 identity/count task described above.
 
 These controls do not raise APK, ELF, library or response budgets, deserialize

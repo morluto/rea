@@ -63,12 +63,13 @@ function* logicalPropertyLines(content: string): Generator<string> {
       content[physicalEnd] !== "\r"
     )
       physicalEnd += 1;
-    let line = content.slice(physicalStart, physicalEnd);
+    const raw = content.slice(physicalStart, physicalEnd);
     let leading = 0;
-    while (isPropertyWhitespace(line[leading])) leading += 1;
+    while (isPropertyWhitespace(raw[leading])) leading += 1;
+    const line = raw.slice(leading);
+    // Java treats a comment marker as such until a logical line has data.
     const comment =
-      !continuing && (line[leading] === "#" || line[leading] === "!");
-    if (continuing) line = line.slice(leading);
+      logical.length === 0 && (line[0] === "#" || line[0] === "!");
     let continued = false;
     if (!comment) {
       let slashes = 0;

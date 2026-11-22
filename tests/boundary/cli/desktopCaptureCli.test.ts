@@ -15,7 +15,94 @@ import {
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
 import { serveCli as serve } from "./cliServeHarness.js";
+
+cliTest.skipIf(process.platform !== "linux")(
+  "exports an env-terminated Electron-style launch that native env can execute",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("desktop-env-export-");
+    const program = join(root, "notes");
+    await writeFile(
+      program,
+      `#!${process.execPath}\nconsole.log(JSON.stringify({argv:process.argv.slice(2),sentinel:process.env.REA_TEST_ENV}));\n`,
+      { mode: 0o755 },
+    );
+    const recorded = seedEndCapture();
+    const argv = [
+      "/usr/bin/env",
+      "--",
+      "REA_TEST_ENV=selected",
+      program,
+      "--title=sample",
+    ];
+    const folder = await writeCaptureFolder(
+      {
+        ...recorded,
+        application: {
+          ...recorded.application,
+          argv,
+          executable: {
+            path: program,
+            resolved_path: program,
+            electron_markers: ["fuse-sentinel"],
+          },
+        },
+      },
+      undefined,
+      [EDITED_NOTE],
+    );
+    const bundle = join(root, "bundle");
+    const result = await cli.run({
+      arguments: [
+        "export-desktop-application",
+        folder,
+        bundle,
+        "--seed-checkpoint",
+        "seed",
+        "--end-checkpoint",
+        "end",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stdout).toBe(0);
+    const evidence = parseEvidence(result.json);
+    expect(evidence.parameters).toMatchObject({
+      seed_checkpoint: "seed",
+      end_checkpoint: "end",
+    });
+    const module = await readFile(
+      join(bundle, "envs/notes/notes_app.py"),
+      "utf8",
+    );
+    // Read the emitted Launch literal without importing agentenv or executing app hooks.
+    const raw: unknown = JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-I",
+          "-c",
+          'import ast,json,sys\ntree=ast.parse(sys.stdin.read())\nlaunch=next(n for n in ast.walk(tree) if isinstance(n,ast.Call) and isinstance(n.func,ast.Name) and n.func.id=="Launch")\nprint(json.dumps(ast.literal_eval(next(k.value for k in launch.keywords if k.arg=="command"))))',
+        ],
+        { input: module, encoding: "utf8" },
+      ),
+    );
+    if (
+      !Array.isArray(raw) ||
+      raw.length === 0 ||
+      !raw.every((value): value is string => typeof value === "string")
+    )
+      throw new Error("Expected an emitted launch argument vector");
+    const output = execFileSync(raw[0]!, raw.slice(1), {
+      env: { PATH: "/usr/bin:/bin", HOME: root },
+      encoding: "utf8",
+    });
+    expect(JSON.parse(output)).toEqual({
+      argv: ["--no-sandbox", "--title=sample"],
+      sentinel: "selected",
+    });
+  },
+);
 
 it("exports and drafts between the checkpoints the command names", async () => {
   const capture = await writeCaptureFolder(seedEndCapture(), undefined, [
@@ -54,11 +141,12 @@ it("exports and drafts between the checkpoints the command names", async () => {
   expect(
     parseEvidence(JSON.parse(drafted.stdout)).normalized_result,
   ).toMatchObject({ checkpoints: { baseline: "seed", final: "end" } });
+  expect(refused.exitCode).toBe(1);
   expect(JSON.parse(refused.stdout)).toMatchObject({
     code: "invalid_request",
     details: {
       operation: "describe_desktop_application_task",
-      issues: [{ path: ["end_checkpoint"] }],
+      issues: [{ path: ["end_checkpoint"], reason: "invalid_value" }],
     },
   });
 });
@@ -157,8 +245,13 @@ it("names a dconf database that changed by the seed but could not be read, so th
   // At baseline the database did not exist yet, so nothing was lost.
   const before = await exportAt("baseline", "baseline");
 
-  expect(unread).toHaveLength(1);
-  expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
+  expect(unread).toEqual([
+    expect.stringContaining(
+      "changed by the seed checkpoint but could not be read",
+    ),
+  ]);
+  if (process.platform === "linux")
+    expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
   expect(
     await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
   ).toContain('DCONF = ""');

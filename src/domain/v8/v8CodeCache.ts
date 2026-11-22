@@ -12,8 +12,25 @@ const offset = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
  * process; it matches the pinned CPython pyc reader's 64 MiB ceiling.
  */
 export const MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES = 67108864;
-/** Hard ceiling on the V8 code cache container header this reader accepts. */
+/** The 28-byte word area after alignment to an eight-byte pointer. */
 export const V8_CODE_CACHE_HEADER_BYTES = 32;
+/** The same word area with four-byte pointer alignment. */
+export const V8_CODE_CACHE_NARROW_HEADER_BYTES = 28;
+/**
+ * The six-word area V8 8.8 through 11.7 write. It has no read-only snapshot
+ * checksum word, and 24 bytes need no pointer-alignment padding.
+ */
+export const V8_CODE_CACHE_LEGACY_HEADER_BYTES = 24;
+/** Every container header size admitted by the pinned layouts. */
+export const V8_CODE_CACHE_HEADER_SIZES: readonly number[] = [
+  V8_CODE_CACHE_LEGACY_HEADER_BYTES,
+  V8_CODE_CACHE_NARROW_HEADER_BYTES,
+  V8_CODE_CACHE_HEADER_BYTES,
+];
+/** Shortest admitted header, so no selected file is smaller than this. */
+export const V8_CODE_CACHE_MIN_HEADER_BYTES = Math.min(
+  ...V8_CODE_CACHE_HEADER_SIZES,
+);
 /**
  * V8 stamps every serialized code cache with `0xC0DE0000 ^ ExternalReferenceTable::kSize`.
  * Only the high half is stable across builds, so the low half is a build fingerprint and
@@ -40,6 +57,15 @@ export const V8_CODE_CACHE_COMPILE_FUNCTION_BIT = 0x20000000;
  * `0x1fffffff`, so this bit and the function bit are both outside it.
  */
 export const V8_CODE_CACHE_MODULE_BIT = 0x40000000;
+/**
+ * Bit 31 of the source-length word marks a module cache written by V8 before 13.4.
+ *
+ * Those builds compute the word as `source_length | kModuleFlagMask` with
+ * `kModuleFlagMask = 1 << 31` (`SerializedCodeData::SourceHash`); 13.4 moved the flag to
+ * bit 30. Measured on Electron 30.1.2 (V8 12.4.254.20): a 23-unit module source reads
+ * `0x80000017`. Node 22 runs V8 12.4, so its module caches carry this bit.
+ */
+export const V8_CODE_CACHE_LEGACY_MODULE_BIT = 0x80000000;
 /** Source length occupies the low bits of that word. */
 export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
@@ -105,8 +131,8 @@ const headerSchema = z.strictObject({
   magic: uint,
   /** High half of the magic, the only part stable across V8 builds. */
   magic_build_stable: uint,
-  /** Every header word, in container order. */
-  fields: z.array(headerFieldSchema).length(8),
+  /** Every header word this container carries, in container order. */
+  fields: z.array(headerFieldSchema).min(6).max(8),
   /** Bytes this reader treats as header before the payload begins. */
   header_bytes: uint,
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
@@ -169,11 +195,23 @@ export const v8CodeCacheSchema = z
     limitations: z.array(z.string().min(1)).min(1),
   })
   .superRefine((report, context) => {
-    if (report.header.header_bytes !== V8_CODE_CACHE_HEADER_BYTES)
+    if (!V8_CODE_CACHE_HEADER_SIZES.includes(report.header.header_bytes))
       context.addIssue({
         code: "custom",
         path: ["header", "header_bytes"],
-        message: "This reader only accepts its pinned container header size.",
+        message:
+          "This reader only accepts the container header sizes it admits.",
+      });
+    // The word table describes the container's own header, so it cannot disagree with it.
+    if (
+      report.header.fields.length * 4 !== report.header.header_bytes ||
+      report.header.fields.some(({ offset }, index) => offset !== index * 4)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["header", "fields"],
+        message:
+          "The reported words must cover the declared header in byte order.",
       });
     if (report.header.magic_build_stable !== V8_CODE_CACHE_MAGIC_HIGH)
       context.addIssue({
@@ -181,6 +219,12 @@ export const v8CodeCacheSchema = z
         path: ["header", "magic_build_stable"],
         message:
           "The admitted magic must carry the stable V8 code cache high half.",
+      });
+    if (report.payload.offset !== report.header.header_bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["payload", "offset"],
+        message: "The payload must start at the end of the declared header.",
       });
     if (report.payload.offset + report.payload.bytes !== report.artifact.bytes)
       context.addIssue({
@@ -195,6 +239,12 @@ export const v8CodeCacheSchema = z
         path: ["coverage", "strings"],
         message:
           "Observation coverage disagrees with the listed embedded strings.",
+      });
+    if (report.coverage.scanned_bytes !== report.payload.bytes)
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "scanned_bytes"],
+        message: "Complete coverage must examine every declared payload byte.",
       });
     report.embedded_strings.forEach((observation, index) => {
       if (observation.retained_bytes > observation.bytes)

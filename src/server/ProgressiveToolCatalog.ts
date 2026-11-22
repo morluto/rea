@@ -12,18 +12,32 @@ import {
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
   type CatalogIdentity,
-} from "../catalogDiscovery.js";
+} from "../contracts/catalog/catalogDiscovery.js";
+
+type CatalogListing = { registered: RegisteredTool; description: string };
+const catalogListing = (registered: RegisteredTool): CatalogListing => ({
+  registered,
+  description: (registered.description ?? "").slice(0, 240),
+});
 
 /** Per-connection visibility; canonical SDK handles retain validation and authority. */
 export class ProgressiveToolCatalog {
   readonly identity: CatalogIdentity;
+  /** In-scope domain tools; the adapter is never a search result or reset. */
   private readonly tools: ReadonlyMap<
     string,
-    { registered: RegisteredTool; description: string; search: string }
+    CatalogListing & { search: string }
   >;
+  /** Exact names and counts also cover the always-advertised adapter. */
+  private readonly inventory: ReadonlyMap<string, CatalogListing>;
+  private readonly inputSchemas = new WeakMap<
+    RegisteredTool,
+    Record<string, unknown>
+  >();
 
   constructor(
     registrations: ReadonlyMap<string, RegisteredTool>,
+    adapter: RegisteredTool,
     identity: CatalogIdentity,
     private readonly batchChanges: (change: () => void) => void,
     private readonly delivery: () => ToolResultDelivery,
@@ -37,13 +51,16 @@ export class ProgressiveToolCatalog {
         .map(([name, registered]) => [
           name,
           {
-            registered,
-            description: (registered.description ?? "").slice(0, 240),
+            ...catalogListing(registered),
             search:
               `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
           },
         ]),
     );
+    this.inventory = new Map<string, CatalogListing>([
+      ...this.tools,
+      [DISCOVER_TOOLS.name, catalogListing(adapter)],
+    ]);
     this.reset();
   }
 
@@ -57,10 +74,47 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
+    let schema = this.inputSchemas.get(registered);
+    if (schema === undefined) {
+      schema = (registered.inputSchema?.["~standard"].jsonSchema.input({
+        target: "draft-2020-12",
+      }) as Record<string, unknown> | undefined) ?? { type: "object" };
+      this.inputSchemas.set(registered, schema);
+    }
+    return schema;
+  }
+
+  private rankMatches(query: string | undefined): readonly string[] {
+    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+    const ranked: { readonly name: string; readonly score: number }[] = [];
+    for (const [name, tool] of this.tools) {
+      let matchesAll = true;
+      for (let i = 0; i < words.length; i++) {
+        if (!tool.search.includes(words[i]!)) {
+          matchesAll = false;
+          break;
+        }
+      }
+      if (!matchesAll) continue;
+      let score = 0;
+      for (let i = 0; i < words.length; i++) {
+        if (name.includes(words[i]!)) score += 1;
+      }
+      ranked.push({ name, score });
+    }
+    ranked.sort(
+      (left, right) =>
+        right.score - left.score ||
+        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+    );
+    return ranked.map((entry) => entry.name);
+  }
+
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
     const names =
       input.names === undefined ? undefined : [...new Set(input.names)];
-    const unknown = names?.filter((name) => !this.tools.has(name)) ?? [];
+    const unknown = names?.filter((name) => !this.inventory.has(name)) ?? [];
     if (unknown.length > 0)
       return this.delivery().toErrorToolResult(
         new AnalysisInputError(
@@ -80,34 +134,24 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
-    const matches =
-      names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+    const matches = names ?? this.rankMatches(input.query);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
-    const selected = page.map((name) => ({ name, ...this.tools.get(name)! }));
+    const selected = page.map((name) => ({
+      name,
+      ...this.inventory.get(name)!,
+    }));
+    let loadedCount = 0;
+    for (const { registered } of this.inventory.values()) {
+      if (registered.enabled) loadedCount += 1;
+    }
+    for (let i = 0; i < selected.length; i++) {
+      if (!selected[i]!.registered.enabled) loadedCount += 1;
+    }
     const result: z.infer<typeof DISCOVER_TOOLS.outputSchema> = {
       profile: "hot-cold",
-      inventory_count: this.tools.size + 1,
-      loaded_count:
-        1 +
-        [...this.tools.values()].filter(({ registered }) => registered.enabled)
-          .length +
-        selected.filter(({ registered }) => !registered.enabled).length,
+      inventory_count: this.inventory.size,
+      loaded_count: loadedCount,
       total_matches: matches.length,
       next_offset:
         names === undefined && input.offset + page.length < matches.length
@@ -116,13 +160,13 @@ export class ProgressiveToolCatalog {
       tools: selected.map(({ name, description, registered }) => ({
         name,
         description,
-        input_schema: registered.inputSchema?.["~standard"].jsonSchema.input({
-          target: "draft-2020-12",
-        }) ?? { type: "object" },
+        input_schema: this.inputSchemaFor(registered),
       })),
       next_step:
         selected.length === 0
-          ? "No matches. Try fewer or different task keywords, or browse without query."
+          ? matches.length === 0
+            ? "No matches. Try fewer or different task keywords, or browse without query."
+            : "No remaining matches at this offset. Use offset 0 to restart this query, or select an earlier offset."
           : "Call the returned tool by its original name using input_schema. Your client must refresh tools/list first; if it cannot, reconnect with REA_MCP_TOOL_CATALOG_PROFILE=full.",
     };
     // This reply borrows read-only SDK schema projections for synchronous
@@ -143,7 +187,7 @@ export class ProgressiveToolCatalog {
           },
           {
             remediationAction:
-              "Reduce limit or request fewer exact names, then retry. For one oversized input contract, reconnect with REA_MCP_INPUT_SCHEMA_PROFILE=compact.",
+              "Reduce limit or request fewer exact names, then retry.",
           },
         ),
         false,

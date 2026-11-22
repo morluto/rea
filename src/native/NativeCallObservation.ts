@@ -1,8 +1,8 @@
 import { nativeCallCaptureLimits } from "../domain/native/nativeCallCaptureLimits.js";
 import {
   AnalysisCapabilityUnavailableError,
-  AnalysisCancelledError,
   AnalysisInputError,
+  cancelledBy,
 } from "../domain/analysisErrorCore.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
@@ -21,7 +21,7 @@ import {
   nativeCallTargetFailure,
   verifyNativeCallTarget,
 } from "./NativeCallTarget.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   nativeCallPartialObservationSchema,
@@ -32,7 +32,7 @@ import type { NativeCallTrace, NativeCallTracer } from "./LldbCallTracer.js";
 const OPERATION = "observe_native_calls";
 
 /** What every call observation leaves unobserved or approximated. */
-export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
+const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "Only entries are observed; return values, floating-point and stack-passed arguments are not captured.",
   "Registers are the raw integer argument registers at entry. For Objective-C methods the first two hold the receiver and the selector.",
   "Receiver classes come from LLDB's Objective-C runtime reader without running target code; they are null for class methods and for receivers LLDB cannot classify.",
@@ -42,7 +42,7 @@ export const NATIVE_CALL_OBSERVATION_LIMITATIONS = [
   "The observation window is checked about once a second, and recording pauses the process at every entry, which slows it.",
 ] as const;
 
-export const NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION =
+const NATIVE_CALL_BREAKPOINT_LOCATION_LIST_INCOMPLETE_LIMITATION =
   "The breakpoint location list is incomplete; location_count gives the full matching count.";
 const breakpointLocationBudgetLimitation = (bytes: number): string =>
   `Resolved breakpoint locations exceeded capture_limits.breakpoint_location_bytes (${String(bytes)} bytes); omitted locations are counted in location_count. This metadata limit does not change the process outcome. Select a larger budget before a new authorized observation; earlier omitted facts cannot be recovered.`;
@@ -70,10 +70,7 @@ export const observeNativeCalls = async (
     return await resources.run(async () => {
       const selected = await verifyNativeCallTarget(target, resources, signal);
       if (!selected.ok) return selected;
-      if (signal?.aborted)
-        return err(
-          new AnalysisCancelledError(OPERATION, { cause: signal.reason }),
-        );
+      if (signal?.aborted) return err(cancelledBy(OPERATION, signal));
       try {
         const traced = await tracer.trace(
           {
@@ -87,8 +84,7 @@ export const observeNativeCalls = async (
         if (!traced.ok) return traced;
         return signal?.aborted
           ? err(
-              new AnalysisCancelledError(OPERATION, {
-                cause: signal.reason,
+              cancelledBy(OPERATION, signal, {
                 partialObservation: projectPartialNativeCalls(
                   target,
                   parsed.data,
@@ -142,7 +138,9 @@ const nativeCallFacts = (
         ? traceFrameBudget
         : `${traceByteBudget} or ${traceFrameBudget}`;
   const breakpointLocationLimit = run.breakpoint_locations_truncated === true;
+  const unattributedStops = run.unattributed_breakpoint_stops;
   const partial =
+    unattributedStops > 0 ||
     eventLimit ||
     resourceLimit ||
     breakpointLocationLimit ||
@@ -200,6 +198,9 @@ const nativeCallFacts = (
       ...(breakpointLocationLimit
         ? { breakpoint_locations_truncated: true }
         : {}),
+      ...(unattributedStops > 0
+        ? { unattributed_breakpoint_stops: unattributedStops }
+        : {}),
       unresolved_breakpoints: unresolved,
     },
     limitations: [
@@ -228,6 +229,11 @@ const nativeCallFacts = (
       ...(run.outcome === "stop-limit"
         ? [
             `Observation stopped at capture_limits.other_stops (${String(limits.other_stops)} signal or exception stops); ${terminationSummary}. Select a larger budget before a new authorized observation; earlier omitted stops cannot be recovered.`,
+          ]
+        : []),
+      ...(unattributedStops > 0
+        ? [
+            `${String(unattributedStops)} stop(s) in process.other_stops were breakpoint traps or stops on a requested breakpoint location that REA could not attribute to a recorded hit, so calls may be missing from events.`,
           ]
         : []),
       ...(unresolved.length === 0

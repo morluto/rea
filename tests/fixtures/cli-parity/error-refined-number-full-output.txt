@@ -1,0 +1,7 @@
+$ rea inspect-byte-entropy <workspace>/sample.bin --block-size 100 --json --full-output
+exit: 1
+--- stdout
+{"ok":false,"error":{"code":"VALIDATION_ERROR","message":"REA could not read the command arguments. Check the named argument and its expected type, then try again.","fieldErrors":[{"code":"too_small","missing":false,"path":"blockSize","expected":"","received":"","message":"Too small: expected number to be >=256"},{"code":"custom","missing":false,"path":"blockSize","expected":"","received":"","message":"Block size must be a power of two."}]},"meta":{"command":"inspect-byte-entropy","duration":"<ms>ms"}}
+<end>
+--- stderr
+<end>

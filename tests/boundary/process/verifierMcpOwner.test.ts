@@ -8,13 +8,17 @@ import {
   VerifierStdioTransport,
 } from "../../../scripts/lib/verifier-mcp-owner.mjs";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 it.each(["initialize", "discovery"])(
   "closes the real MCP child when %s fails before ownership transfers",
   async (mode) => {
     const workspace = await createTestTempDirectory("rea-verifier-mcp-owner-");
     const marker = join(workspace, "exit.txt");
-    const client = new Client({ name: "verifier-owner-test", version: "1" });
+    const client = new Client(
+      { name: "verifier-owner-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const transport = new VerifierStdioTransport({
       command: process.execPath,
       args: [

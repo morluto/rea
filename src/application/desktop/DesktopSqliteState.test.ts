@@ -1,12 +1,12 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
 import { describe, expect, it } from "vitest";
 
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../../domain/analysisErrorCore.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { createEvidence } from "../../domain/evidence.js";
 import { err, ok } from "../../domain/result.js";
+import type { SqliteDatabase } from "../../domain/sqlite/sqliteDatabase.js";
+import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import { readSqliteStateView } from "./DesktopSqliteState.js";
 
 const OPERATION = "inspect_sqlite_database";
@@ -33,16 +33,22 @@ const table = (name: string) => ({
   ],
 });
 
-/** A SQLite report with two tables, and one row of the selected table. */
-const report = (selected: string | undefined) => ({
+type Rows = NonNullable<SqliteDatabase["rows"]>["values"];
+
+const report = (
+  selected: string | undefined,
+  values: Rows,
+  tables: string[],
+): SqliteDatabase => ({
   artifact: { path: "/staged/state.db", sha256: "a".repeat(64), bytes: 4096 },
   wal: null,
   engine: { name: "SQLite", version: "3.50.2" },
+  worker_timeout_ms: 30_000,
   database_encoding: "UTF-8",
   schema: {
     scope: "database",
     completeness: "complete",
-    tables: [table("notes"), table("broken")],
+    tables: tables.map(table),
     indexes: [],
     views: [],
     triggers: [],
@@ -53,9 +59,9 @@ const report = (selected: string | undefined) => ({
       : {
           table: selected,
           columns: ["id"],
-          values: [[{ type: "integer", value: "1" }]],
+          values,
           row_limit: 500,
-          returned_rows: 1,
+          returned_rows: values.length,
           truncated: false,
           order: "unspecified",
           row_offset: 0,
@@ -64,20 +70,22 @@ const report = (selected: string | undefined) => ({
   limitations: [],
 });
 
-/** A SQLite service whose table reads fail where `failure` says so. */
-const service = (failure: (table: string) => AnalysisError | undefined) => ({
+const service = (values: Rows, failure?: AnalysisError) => ({
   inspect: async (input: unknown) => {
     const selected = (input as { readonly table?: string }).table;
-    const refused = selected === undefined ? undefined : failure(selected);
-    if (refused !== undefined) return err(refused);
+    if (selected === "broken" && failure !== undefined) return err(failure);
     return ok(
       createEvidence(
-        undefined,
+        unknownTarget("not-observed"),
         { id: "sqlite", name: "SQLite", version: "1" },
         {
           operation: OPERATION,
           parameters: {},
-          result: report(selected),
+          result: report(
+            selected,
+            values,
+            failure === undefined ? ["notes"] : ["notes", "broken"],
+          ),
           confidence: "observed",
         },
       ),
@@ -86,25 +94,54 @@ const service = (failure: (table: string) => AnalysisError | undefined) => ({
 });
 
 describe("readSqliteStateView", () => {
-  it("keeps the tables that read and records the error of one that did not", async () => {
-    const read = await readSqliteStateView(
-      service((name) =>
-        name === "broken"
-          ? new AnalysisOutputError(OPERATION, "table unreadable")
-          : undefined,
+  it("distinguishes special REAL values from text when comparing captured rows", async () => {
+    const values = ["Infinity", "-Infinity", "-0"] as const;
+    const real = await readSqliteStateView(
+      service(values.map((value) => [{ type: "real", value }])),
+      "/staged/state.db",
+    );
+    const text = await readSqliteStateView(
+      service(
+        values.map((value) => [
+          {
+            type: "text",
+            value,
+            bytes_hex: Buffer.from(value).toString("hex"),
+            encoding: "UTF-8",
+          },
+        ]),
       ),
       "/staged/state.db",
     );
-
-    expect(read).toMatchObject({
+    expect(real).toMatchObject({
       ok: true,
       view: {
         tables: {
-          notes: { primary_key: ["id"], rows: [[1]], truncated: false },
-          broken: { error: expect.stringContaining("table unreadable") },
+          notes: {
+            rows: [
+              [{ real: "Infinity" }],
+              [{ real: "-Infinity" }],
+              [{ real: "-0" }],
+            ],
+          },
         },
-        tables_truncated: false,
       },
+    });
+    expect(text).toMatchObject({
+      ok: true,
+      view: {
+        tables: {
+          notes: {
+            rows: [["Infinity"], ["-Infinity"], ["-0"]],
+          },
+        },
+      },
+    });
+    if (!real.ok || !text.ok) throw new Error("Expected readable SQLite views");
+    expect(diffStateViews("sqlite", real.view, text.view)).toMatchObject({
+      added_count: 3,
+      removed_count: 3,
+      complete: true,
     });
   });
 
@@ -115,7 +152,7 @@ describe("readSqliteStateView", () => {
 
     await expect(
       readSqliteStateView(
-        service((name) => (name === "broken" ? cancelled : undefined)),
+        service([[{ type: "integer", value: "1" }]], cancelled),
         "/staged/state.db",
       ),
     ).rejects.toBe(cancelled);

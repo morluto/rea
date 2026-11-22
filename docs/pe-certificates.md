@@ -40,9 +40,22 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
-Each signer reports `unsigned_attribute_oids`: null means the field was absent,
-and an array lists the types when present. Older retained Evidence may omit the
-field. Unsigned attribute contents, including nested signatures and timestamp
+Each name attribute reports `rdn_index`, the zero-based position of its relative
+distinguished name (RDN) in the encoded name. Attributes in the same RDN share
+an index. Older retained Evidence may omit the index.
+
+A distinguished name's `text` joins those attributes in encoded order.
+Attributes in one RDN are joined with `+`
+(`commonName=A+organizationName=B`). Separate RDNs are joined with `, `
+(`commonName=A, organizationName=B`). The separators follow
+[RFC 4514](https://www.rfc-editor.org/rfc/rfc4514) multi-valued RDN notation.
+Encoded order is kept, and values are copied as decoded, without RFC 4514
+escaping or RDN reversal, so a name of only single-valued RDNs still places
+`, ` between attributes.
+
+Each signer reports `unsigned_attribute_oids`: null means the signer has no
+unsigned attributes, and an array lists their types. Evidence that omits the
+field (written before REA 6.9.0) is refused; recreate the observation. Unsigned attribute contents, including nested signatures and timestamp
 tokens, are not decoded; their presence makes coverage partial and adds a
 limitation. Certificate and signer counts refer to the outer SignedData.
 
@@ -51,13 +64,24 @@ image is unsigned in every catalog or overlay sense.
 
 ## Limits and failures
 
+Confirmed DOS-only MZ files and declared NE, LE, or LX signatures are outside
+this PE32/PE32+ workflow and return `unsupported_target` with target-selection
+recovery. A recognized non-PE signature does not need a PE COFF header to be
+classified. Unrecognized signatures and truncated PE headers remain malformed
+input. `inspect-pe-resources` uses the same header admission and classifications.
+
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 eight `WIN_CERTIFICATE` entries are examined by default. Malformed PE headers,
 truncated certificate entries, and PKCS#7 that is not structurally signedData
-fail without partial success. A security directory that ends in fewer than
-eight header bytes, including zeros, is a truncated `WIN_CERTIFICATE` and
-fails the same way. SignedData must contain at least one `SignerInfo`, and
-each `SignerInfo` must carry a non-empty signature value. Each embedded X.509
+fail without partial success. A security directory that ends before an entry's
+next eight-byte boundary, or leaves fewer than eight header bytes including
+zeros, is truncated and fails the same way. The
+[PE format specification](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#the-attribute-certificate-table-image-only)
+requires the sum of the rounded entry lengths to equal the directory size.
+The reader checks the next entry's header and rounded extent before applying
+`max_entries`. Only a framed entry can exhaust the count budget.
+SignedData must contain at least one `SignerInfo`, and each `SignerInfo` must
+carry a non-empty signature value. Each embedded X.509
 certificate must include `subjectPublicKeyInfo` and `signatureValue`.
 Certificate issuer/subject and signer issuer names require nonempty RDN sets
 and exactly two fields (type and value) in each attribute, as defined in
@@ -65,7 +89,9 @@ and exactly two fields (type and value) in each attribute, as defined in
 Malformed name structures fail before their text is reported. Decoded
 certificate name text, serials, validity spellings, and subject key identifiers
 share a 64 KiB budget per PKCS#7 payload, and each payload decodes at most
-16,384 ASN.1 values. Exhausting either fixed allowance returns a nonretryable
+16,384 ASN.1 values nested at most 64 levels deep. Dual-signed Windows binaries
+embed a nested signature and its RFC 3161 timestamp in unsigned attributes, and
+each embedding adds eight levels. Exhausting a fixed allowance returns a nonretryable
 `resource_constraint` error naming it, not an invalid-input error; this release
 has no runtime override, and `max_file_bytes` and `max_entries` do not raise
 it. Unsupported certificate name

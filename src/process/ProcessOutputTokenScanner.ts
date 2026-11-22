@@ -10,7 +10,35 @@ export interface ProviderProcessOutputToken {
   /** True when the line's right edge is cut or its end has not been observed. */
   readonly trailingContextIncomplete?: true;
 }
-export const PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES = 1024;
+
+/** Immutable raw byte snapshot of a confirmed token before UTF-8 decoding. */
+export interface RawProcessOutputToken {
+  readonly offset: number;
+  readonly prefix: Buffer | undefined;
+  readonly suffix: Buffer;
+  readonly truncated: boolean;
+  readonly trailingContextIncomplete: boolean;
+}
+
+/** Decode an immutable raw token snapshot into its UTF-8 projection. */
+export const materializeProcessOutputToken = (
+  raw: RawProcessOutputToken,
+): ProviderProcessOutputToken => {
+  const bytes =
+    raw.prefix === undefined
+      ? raw.suffix
+      : Buffer.concat([raw.prefix, raw.suffix]);
+  return {
+    offset: raw.offset,
+    line: bytes.toString("utf8"),
+    ...(!isUtf8(bytes) ? { invalidUtf8: true as const } : {}),
+    truncated: raw.truncated,
+    ...(raw.trailingContextIncomplete
+      ? { trailingContextIncomplete: true as const }
+      : {}),
+  };
+};
+const PROCESS_OUTPUT_TOKEN_CONTEXT_BYTES = 1024;
 const NEWLINE = 0x0a;
 const isWordByte = (byte: number): boolean =>
   (byte >= 0x30 && byte <= 0x39) ||
@@ -74,29 +102,32 @@ export class ProcessOutputTokenScanner {
     this.#pending = undefined;
     if (this.#latest !== undefined) this.#latest.open = false;
   }
-  latestWithin(
+  /** Capture event-time bytes and truncation flags without UTF-8 decoding. */
+  snapshotLatestWithin(
     start: number,
     end: number,
-  ): ProviderProcessOutputToken | undefined {
+  ): RawProcessOutputToken | undefined {
     const latest = this.#latest;
     if (latest === undefined || latest.offset < start || latest.offset >= end)
       return undefined;
     // Omit a prefix crossing the checkpoint in full: neither its old cause
     // text nor a credential fragment cut on the left belongs to this scope.
     const prefixInRange = latest.offset - latest.prefix.length >= start;
-    const bytes = Buffer.concat([
-      ...(prefixInRange ? [latest.prefix] : []),
-      latest.suffix,
-    ]);
     return {
       offset: latest.offset,
-      line: bytes.toString("utf8"),
-      ...(!isUtf8(bytes) ? { invalidUtf8: true as const } : {}),
+      prefix: prefixInRange ? latest.prefix : undefined,
+      suffix: latest.suffix,
       truncated: latest.prefixCut || latest.suffixCut || !prefixInRange,
-      ...(latest.suffixCut || latest.open
-        ? { trailingContextIncomplete: true as const }
-        : {}),
+      trailingContextIncomplete: latest.suffixCut || latest.open,
     };
+  }
+
+  latestWithin(
+    start: number,
+    end: number,
+  ): ProviderProcessOutputToken | undefined {
+    const raw = this.snapshotLatestWithin(start, end);
+    return raw === undefined ? undefined : materializeProcessOutputToken(raw);
   }
   #record(searched: Buffer, index: number, searchedStart: number): Match {
     const lineStart =

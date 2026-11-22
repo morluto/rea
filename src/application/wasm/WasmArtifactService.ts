@@ -1,11 +1,12 @@
 import type { AnalysisSettingsReader } from "../../domain/analysisSettings.js";
+import { selectedAnalysisSetting } from "../../domain/analysisSettingDefinitions.js";
 import { constants as bufferConstants } from "node:buffer";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
 import {
   analysisExecutionEnvelopeForAdmission,
   createAnalysisExecutionEvidence,
 } from "../../domain/analysisObservation.js";
-import type { WasmArtifactPort } from "./WasmArtifactPort.js";
+import type { WasmArtifactPort } from "../../ports/wasm/WasmArtifactPort.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
@@ -73,28 +74,35 @@ export class WasmArtifactService {
             },
             {
               retryable: false,
-              remediationAction: `Raise max_artifact_paths to at least ${String(input.value[field].length)} (maximum ${String(MAX_WASM_ARTIFACT_PATHS)}), or use --max-artifact-paths on the CLI; then retry the same selection. The value applies on the next inspection without restart. File and command byte budgets remain independent.`,
+              remediationAction: `Raise max_artifact_paths to at least ${String(input.value[field].length)} (maximum ${String(MAX_WASM_ARTIFACT_PATHS)}); then retry the same selection. The value applies on the next inspection without restart. File and command byte budgets remain independent.`,
+              limit: {
+                control_kind: "parameter",
+                parameter: "max_artifact_paths",
+                effective_value: maximumPaths,
+                unit: "count",
+                minimum: 1,
+                maximum: MAX_WASM_ARTIFACT_PATHS,
+                default_value: DEFAULT_WASM_ARTIFACT_PATHS,
+                applies_at: "next_call",
+              },
             },
           ),
         );
     }
-    const timeout =
-      input.value.command_timeout_ms ??
-      this.settings?.().overrides["wasm.command_timeout_ms"] ??
-      DEFAULT_WASM_COMMAND_TIMEOUT_MS;
+    const timeout = selectedAnalysisSetting(
+      input.value.command_timeout_ms,
+      this.settings?.().overrides["wasm.command_timeout_ms"],
+      DEFAULT_WASM_COMMAND_TIMEOUT_MS,
+    );
     const inspected = await this.provider.inspect(input.value, {
       ...options,
-      commandTimeoutMs: timeout,
+      commandTimeoutMs: timeout.value,
+      commandTimeoutSource: timeout.source,
     });
     if (!inspected.ok) return inspected;
     const execution = inspected.value;
     const admission = requireAuthenticationHeadroom(
-      analysisExecutionEnvelopeForAdmission(
-        OPERATION,
-        input.value,
-        execution,
-        "observed",
-      ),
+      analysisExecutionEnvelopeForAdmission(OPERATION, input.value, execution),
       {
         operation: OPERATION,
         path: input.value.path,
@@ -108,7 +116,7 @@ export class WasmArtifactService {
       !report.success ||
       report.data.artifact.path !== input.value.path ||
       execution.subject.path !== input.value.path ||
-      report.data.tool_profile.timeout_ms !== timeout ||
+      report.data.tool_profile.timeout_ms !== timeout.value ||
       report.data.tool_profile.output_budget_bytes !==
         wasmResourceLimits(input.value).outputBytes ||
       !wasmArtifactMatchesSubject(report.data.artifact, execution.subject) ||

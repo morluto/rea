@@ -3,6 +3,11 @@ import { z } from "zod";
 import type { JsonValue } from "../jsonValue.js";
 import { gunzip, isGzip } from "./gzipDocument.js";
 import { decodeStateText, jsonStringChunks } from "./stateFormats.js";
+import {
+  explicitTextSpellings,
+  explicitUtf16Spellings,
+  lowercasePercentEscapes,
+} from "../explicitSensitiveValues.js";
 
 /** A secret's handle: the name of one file in the build host's secrets folder. */
 export const buildSecretHandleSchema = z
@@ -50,62 +55,43 @@ export const secretValueRefusal = (
   return undefined;
 };
 
-/** The characters of the base64 encoding of `bytes` that depend on them alone, when they start `offset` bytes into a longer encoding. */
-const base64Stable = (bytes: Buffer, offset: number): string => {
-  const encoded = Buffer.concat([Buffer.alloc(offset), bytes]).toString(
-    "base64",
-  );
-  return encoded.slice(
-    Math.ceil((8 * offset) / 6),
-    Math.floor((8 * (offset + bytes.length)) / 6),
-  );
-};
-
-const jsonEscaped = (text: string) => JSON.stringify(text).slice(1, -1);
+const jsonEscaped = (text: string): string =>
+  explicitTextSpellings(text, ["json-escaped"])[0] ?? text;
 const xmlEscaped = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;");
 
-/** The value's spellings as text: as it is, escaped in XML and in JSON once or twice, in hex, in base64 at each alignment and in URL and form encoding. */
+/** The value's spellings as text: as it is, escaped in XML and in JSON once or twice, in hex, in base64 at each alignment and in URL and form encoding with either escape case. */
 const textSpellings = (value: string): readonly string[] => {
-  const bytes = Buffer.from(value, "utf8");
-  const hex = bytes.toString("hex");
-  const base64 = [0, 1, 2].map((offset) => base64Stable(bytes, offset));
-  const url = encodeURIComponent(value);
-  const form = new URLSearchParams([["value", value]])
-    .toString()
-    .slice("value=".length);
+  const escapedXml = xmlEscaped(value);
   const xml = [
     value,
-    xmlEscaped(value),
-    xmlEscaped(value).replaceAll('"', "&quot;"),
+    ...[escapedXml, escapedXml.replaceAll(">", "&gt;")].flatMap((text) => [
+      text,
+      text.replaceAll('"', "&quot;"),
+    ]),
   ];
+  const percent = explicitTextSpellings(value, [
+    "uri-component",
+    "uri-plus-space",
+    "form",
+  ]);
   return [
     ...new Set([
       ...xml,
       ...xml.map(jsonEscaped),
       ...xml.map((text) => jsonEscaped(jsonEscaped(text))),
-      hex,
-      hex.toUpperCase(),
-      ...base64,
-      ...base64.map((text) => text.replaceAll("+", "-").replaceAll("/", "_")),
-      url,
-      url.replaceAll("%20", "+"),
-      url.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase()),
-      form,
-      form.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase()),
+      ...explicitTextSpellings(value, ["hex", "base64"]),
+      ...percent,
+      ...percent.map(lowercasePercentEscapes),
     ]),
   ];
 };
 
 /** The byte spellings a scan looks for: each text spelling in UTF-8, and the value in UTF-16 of either byte order. */
-const byteSpellings = (value: string): readonly Buffer[] => {
-  const utf16 = Buffer.from(value, "utf16le");
-  return [
-    ...textSpellings(value).map((text) => Buffer.from(text, "utf8")),
-    utf16,
-    Buffer.from(utf16).swap16(),
-  ];
-};
+const byteSpellings = (value: string): readonly Buffer[] => [
+  ...textSpellings(value).map((text) => Buffer.from(text, "utf8")),
+  ...explicitUtf16Spellings(value),
+];
 
 const holds = (bytes: Uint8Array, spellings: readonly Buffer[]): boolean => {
   const haystack = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);

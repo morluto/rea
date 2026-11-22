@@ -3,8 +3,23 @@ export const jsonStringByteLength = (
   value: string,
   budget = Number.POSITIVE_INFINITY,
 ): number => {
+  // Unescaped text has its native UTF-8 length. Stop before surrogate code
+  // units so the bounded loop continues to distinguish pairs from lone units.
+  let index = 0;
   let bytes = 2;
-  for (let index = 0; index < value.length && bytes <= budget; index++) {
+  if (value.length >= 1024 && value.length + 2 <= budget) {
+    const prefixEnd =
+      /["\\\u0000-\u001f\ud800-\udfff]/.exec(value)?.index ?? value.length;
+    const prefixBytes = Buffer.byteLength(
+      prefixEnd === value.length ? value : value.slice(0, prefixEnd),
+      "utf8",
+    );
+    if (prefixBytes + 2 <= budget) {
+      index = prefixEnd;
+      bytes = prefixBytes + 2;
+    }
+  }
+  for (; index < value.length && bytes <= budget; index++) {
     const unit = value.charCodeAt(index);
     if (unit === 0x22 || unit === 0x5c) bytes += 2;
     else if (unit < 0x20)

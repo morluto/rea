@@ -5,6 +5,7 @@
  * hands every certificate to the shared certificate owner.
  */
 import { inflateRawSync } from "node:zlib";
+import { hostRangeErrorKind } from "../domain/parseFailure.js";
 
 import type { ApkSignatureResult } from "../domain/apkSignature/apkSignatureReport.js";
 import {
@@ -105,7 +106,7 @@ export const decodeV1Signer = (
       data = inflateRawSync(stored.value.data, { maxOutputLength: limit });
     } catch (cause: unknown) {
       return fail(
-        cause instanceof RangeError
+        hostRangeErrorKind(cause) === "host-capacity"
           ? `signature block inflates past the ${String(limit)}-byte bound`
           : "signature block deflate stream is damaged",
       );
@@ -139,6 +140,14 @@ export const v1SignerNotes = (signers: readonly DecodedV1Signer[]): string[] =>
     )
       ? [
           `${entry.block.name}: a SignerInfo names its certificate by subjectKeyIdentifier, which apksig does not resolve (it matches issuerAndSerialNumber only), so apksig's v1 verification fails for this block. The certificate it names is reported as declared, and v1_signers_match_block_signers treats this signer as unknown.`,
+        ]
+      : []),
+    ...(decoded.ok &&
+    decoded.value.signerInfos.some(
+      (info) => info.certificateIssue === "ambiguous-identifier",
+    )
+      ? [
+          `${entry.block.name}: multiple distinct certificates match one SignerInfo identifier; its certificate identity is unknown and all carried certificates are retained.`,
         ]
       : []),
     ...(decoded.ok && decoded.value.trailingBytes > 0

@@ -1,8 +1,5 @@
-import { z } from "zod";
-
-import { jsonValueSchema } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
-import type { TaskCheckOutcome, TaskFileView } from "./appTaskChecks.js";
+import type { TaskCheckOutcome } from "./appTaskChecks.js";
 import type { ComputerAction } from "./computerActions.js";
 
 /**
@@ -219,42 +216,4 @@ export const admitWitnessStage = (
       "Before checking after_reset, reset the app with act_on_build_computer action reset, and change nothing after it.",
     );
   return ok(log.total);
-};
-
-const fileViewSchema = z.looseObject({
-  format: z.string().nullable(),
-  view: jsonValueSchema.nullable(),
-  error: z.string().nullish(),
-});
-const statePartSchema = z.looseObject({
-  kind: z.literal("data"),
-  data: z.looseObject({ state: z.record(z.string(), fileViewSchema) }),
-});
-
-/**
- * The typed views an exported app's `data/get` returns beside its files,
- * keyed by home path: the shape the task checks read.
- */
-export const appStateViews = (
-  parts: readonly unknown[],
-): Result<ReadonlyMap<string, TaskFileView>, string> => {
-  for (const part of parts) {
-    const parsed = statePartSchema.safeParse(part);
-    if (parsed.success)
-      return ok(
-        new Map(
-          Object.entries(parsed.data.data.state).map(([path, entry]) => [
-            path,
-            {
-              format: entry.format,
-              view: entry.view,
-              error: entry.error ?? null,
-            },
-          ]),
-        ),
-      );
-  }
-  return err(
-    "The app's data/get returned no state views; witness a bundle exported by REA, whose app serves them.",
-  );
 };

@@ -15,7 +15,7 @@ javascript-application-graph javascript-application-workflows javascript-artifac
 javascript-recovery javascript-runtime-observation javascript-runtime-reconciliation
 jeb-analysis managed-code-analysis mcp-contracts mcp-prompts migration-6.2
 native-investigation packet-captures pcap-analysis process-capture raw-binary reconstruction-obligation-ledgers
-reconstruction-readiness recorded-crashes releasing roadmap signal-recordings sqlite-databases
+reconstruction-readiness recorded-crashes releasing signal-recordings sqlite-databases
 testing tool-design wasm-artifacts web-network-captures web-runtime web-source-location
 website-module-trace website-script-export windows-ghidra-p0
 binary-hardening desktop-application-capture desktop-application-export desktop-application-state
@@ -24,7 +24,7 @@ design/limits-and-recovery
 `
   .trim()
   .split(/\s+/u);
-assert.equal(routes.length, 67);
+assert.equal(routes.length, 66);
 assert.equal(new Set(routes).size, routes.length);
 
 const documentation = resolve(
@@ -36,7 +36,7 @@ const checked = new Set();
 let internalTargets = 0;
 let sourceLinks = 0;
 // Legacy public routes remain an independent baseline; all generated pages also
-// participate so newly authored directories/specifications cannot escape checks.
+// participate so newly authored guides cannot escape checks.
 for (const route of routes) {
   const html = await readFile(resolve(output, route + ".html"), "utf8");
   const edit = physicalEditSource(html, route);
@@ -53,12 +53,29 @@ while (directories.length > 0) {
       htmlPages.push(path);
   }
 }
-for (const page of htmlPages.sort()) {
+htmlPages.sort();
+const READ_CONCURRENCY = 32;
+/** @type {Map<string, string>} */
+const htmlByPath = new Map();
+let nextPageIndex = 0;
+await Promise.all(
+  Array.from(
+    { length: Math.min(READ_CONCURRENCY, htmlPages.length) },
+    async () => {
+      while (nextPageIndex < htmlPages.length) {
+        const page = htmlPages[nextPageIndex++];
+        htmlByPath.set(page, await readFile(page, "utf8"));
+      }
+    },
+  ),
+);
+for (const page of htmlPages) {
   const route = page
     .slice(output.length + 1)
     .split(sep)
     .join("/");
-  const html = await readFile(page, "utf8");
+  const html = htmlByPath.get(page);
+  assert.ok(html !== undefined, route + ": missing cached HTML page");
   // The configured home layout and generated 404 render no edit action.
   // Their outgoing links still participate in the same all-page scan.
   if (route !== "404.html" && route !== "index.html") {
@@ -90,15 +107,18 @@ for (const page of htmlPages.sort()) {
       physical.startsWith(output + sep),
       destination + ": published path escaped site output",
     );
-    assert.ok(
-      (await stat(physical)).isFile(),
-      route + ": broken rendered target " + destination,
-    );
+    const cachedTargetHtml = htmlByPath.get(physical);
+    if (cachedTargetHtml === undefined) {
+      assert.ok(
+        (await stat(physical)).isFile(),
+        route + ": broken rendered target " + destination,
+      );
+    }
     if (url.hash && target.endsWith(".html")) {
       const fragment = decodeURIComponent(url.hash.slice(1));
-      const page = await readFile(physical, "utf8");
+      const targetHtml = cachedTargetHtml ?? (await readFile(physical, "utf8"));
       assert.ok(
-        page.includes('id="' + fragment + '"'),
+        targetHtml.includes('id="' + fragment + '"'),
         route + ": missing rendered anchor " + destination,
       );
     }

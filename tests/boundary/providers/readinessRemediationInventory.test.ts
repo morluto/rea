@@ -1,7 +1,8 @@
+import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 
-import type { CapabilityDescriptor } from "../../../src/application/AnalysisProvider.js";
+import type { CapabilityDescriptor } from "../../../src/ports/AnalysisProvider.js";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../src/application/binary/BinarySessionStatus.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
@@ -69,7 +70,7 @@ it.skipIf(process.platform === "win32").each([
       REA_KUNA_COMMAND: "/audit/not-invoked/kuna",
       [setting]: value,
     };
-    const owner = readKunaConfiguration(environment);
+    const owner = readKunaConfiguration(environment, HOST_PLATFORM.platform);
     if (owner.ok) throw new Error(`${setting}=${value} must be refused`);
     expect(owner.error.remediation).toContain(setting);
     expect(owner.error.remediation).not.toBe(owner.error.reason);

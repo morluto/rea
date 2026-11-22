@@ -6,11 +6,8 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
-import {
-  EVM_PRLIMIT_COMMAND_DEFAULT,
-  evmLimiterAvailability,
-} from "../../../src/evm/EvmoleInterfaceProvider.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { evmLimiterAvailability } from "../../../src/evm/EvmoleInterfaceProvider.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
 const linux = { platform: "linux" as const, arch: "x64" };
 const status = { open: false, capabilities: [] };
@@ -36,11 +33,11 @@ it("probes the default limiter with executable and regular-file checks", async (
 
   expect(availability).toMatchObject({
     status: "available",
-    diagnostics: { limiter_path: EVM_PRLIMIT_COMMAND_DEFAULT },
+    diagnostics: { limiter_path: "/usr/bin/prlimit" },
   });
   expect(calls).toEqual([
-    ["access", EVM_PRLIMIT_COMMAND_DEFAULT, 1],
-    ["stat", EVM_PRLIMIT_COMMAND_DEFAULT],
+    ["access", "/usr/bin/prlimit", 1],
+    ["stat", "/usr/bin/prlimit"],
   ]);
 });
 
@@ -185,39 +182,31 @@ it("rechecks on each observation so inventory follows the selected executable's 
 });
 
 it("yields the event loop while the filesystem owner probe is pending", async () => {
-  let release!: () => void;
-  const pendingAccess = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let accessStarted!: () => void;
-  const started = new Promise<void>((resolve) => {
-    accessStarted = resolve;
-  });
+  const filesystemAccess = phaseGate();
   const probe = evmLimiterAvailability(
     {},
     {
       ...linux,
       fs: {
         access: async () => {
-          accessStarted();
-          await pendingAccess;
+          await filesystemAccess.hold();
         },
         stat: async () => ({ isFile: () => true }),
       },
     },
   );
   await withVerifierCleanup(async () => {
-    await awaitAcknowledgement(started, probe, "filesystem access");
+    await filesystemAccess.reached(probe, "filesystem access");
     let timerRan = false;
     setImmediate(() => {
       timerRan = true;
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(timerRan).toBe(true);
-    release();
+    filesystemAccess.release();
     expect(await probe).toMatchObject({ status: "available" });
   }, [
-    release,
+    filesystemAccess.release,
     async () => {
       await probe;
     },
@@ -227,14 +216,7 @@ it("yields the event loop while the filesystem owner probe is pending", async ()
 it.each(["access", "stat"] as const)(
   "preserves cancellation while the %s filesystem probe is pending",
   async (stage) => {
-    let release!: () => void;
-    const pendingProbe = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let probeStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      probeStarted = resolve;
-    });
+    const filesystemProbe = phaseGate();
     const controller = new AbortController();
     const abortReason = { source: "caller-stop" };
     const probe = evmLimiterAvailability(
@@ -245,14 +227,12 @@ it.each(["access", "stat"] as const)(
         fs: {
           access: async () => {
             if (stage !== "access") return;
-            probeStarted();
-            await pendingProbe;
+            await filesystemProbe.hold();
           },
           stat: async () => {
             if (stage === "access")
               throw new Error("stat must not run after access cancellation");
-            probeStarted();
-            await pendingProbe;
+            await filesystemProbe.hold();
             return { isFile: () => true };
           },
         },
@@ -260,15 +240,15 @@ it.each(["access", "stat"] as const)(
     );
 
     await withVerifierCleanup(async () => {
-      await awaitAcknowledgement(started, probe, `${stage} filesystem probe`);
+      await filesystemProbe.reached(probe, `${stage} filesystem probe`);
       controller.abort(abortReason);
-      release();
+      filesystemProbe.release();
       const error = await probe.catch((cause: unknown) => cause);
       expect(error).toBeInstanceOf(AnalysisCancelledError);
       expect(error).toMatchObject({ operation: "binary_session" });
       expect((error as AnalysisCancelledError).cause).toBe(abortReason);
     }, [
-      release,
+      filesystemProbe.release,
       async () => {
         await probe.catch(() => undefined);
       },

@@ -104,6 +104,26 @@ it("rejects duplicate frame identities even when protocol stacks are empty", asy
   ).rejects.toMatchObject({ _tag: "AnalysisProtocolError" });
 });
 
+it("marks a TC response partial without losing its observed DNS answer", async () => {
+  const layers = dnsResponseLayers("api.example", "203.0.113.5");
+  const bytes = Buffer.from(layers.dns_raw[0] as string, "hex");
+  bytes.writeUInt16BE(0x8380, 2);
+  layers.dns_raw[0] = bytes.toString("hex");
+  const result = await parseTsharkJsonOutput(capture([layers]));
+  expect(result.dnsQueries).toEqual([
+    {
+      query: "api.example",
+      query_labels_hex: ["617069", "6578616d706c65"],
+      response_addresses: ["203.0.113.5"],
+      response_address_count: 1,
+    },
+  ]);
+  expect(result.partial).toBe(true);
+  expect(result.dnsLimitations).toContain(
+    "DNS message declares truncation (TC); captured records are incomplete",
+  );
+});
+
 it("binds interleaved DNS answers to each response packet", async () => {
   const result = await parseTsharkJsonOutput(
     capture([
@@ -298,6 +318,29 @@ it("refuses dense JSON before its expanded graph exceeds the decoding budget", a
     parseTsharkJsonOutput(`[${"{},".repeat(600_000)}{}]`),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: {
+      name: "The tshark JSON expansion allowance",
+      limit: 128 * 1024 ** 2,
+      unit: "bytes",
+    },
+  });
+});
+
+it("refuses packet facts above the retained-fact budget with its value", async () => {
+  // Each distinct endpoint charges 192 bytes plus twice its length, so 80,000
+  // short endpoints (about 2 MiB of JSON) exceed the 16 MiB budget.
+  const sources = Array.from({ length: 80_000 }, (_, index) =>
+    String(index).padStart(16, "0"),
+  );
+  await expect(
+    parseTsharkJsonOutput(capture([{ "ip.src": sources }])),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: {
+      name: "The packet-inventory retained-fact allowance",
+      limit: 16 * 1024 ** 2,
+      unit: "bytes",
+    },
   });
 });
 
@@ -408,6 +451,7 @@ it("shares the decoded-graph allowance across base and DNS acquisitions", async 
     parseTsharkJsonOutput(base, undefined, dns),
   ).rejects.toMatchObject({
     _tag: "AnalysisResourceConstraintError",
+    fixedAllowance: { limit: 128 * 1024 ** 2, unit: "bytes" },
   });
 });
 

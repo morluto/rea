@@ -1,13 +1,13 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
 
 import {
   DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   HOPPER_DEMO_DIALOG_TIMEOUT_SETTING,
   isHopperStartupFailureCode,
-  MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS,
   type HopperStartupDiagnostic,
-} from "../domain/hopperStartupFailure.js";
+} from "./HopperStartupFailure.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
 export const LINUX_PRIVATE_DISPLAY_DIAGNOSTIC_PREFIX = "REA_X11_DIAGNOSTIC=";
@@ -42,7 +42,7 @@ const dialogTimeoutSchema = z
     value: z.string().max(128),
     source: z.literal("setting"),
     minimum_ms: z.literal(MINIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
-    maximum_ms: z.literal(MAXIMUM_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
+    maximum_ms: z.literal(MAX_NODE_TIMER_DELAY_MS),
     default_ms: z.literal(DEFAULT_HOPPER_DEMO_DIALOG_TIMEOUT_MS),
   })
   .strict();

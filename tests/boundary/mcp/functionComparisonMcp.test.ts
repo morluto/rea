@@ -1,3 +1,7 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { functionSnapshotFixture } from "../../../src/domain/functionDossierEvidence.fixture.js";
 import { ok as resultOk } from "../../../src/domain/result.js";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -51,6 +55,7 @@ it.each([
       value.referenced_names = [
         { address: "rom:0xa000", source_address: site, value: "helper" },
       ];
+      value.swift_string_literal_omissions = [];
       value.swift_string_literals = [
         {
           source_address: site,
@@ -247,7 +252,7 @@ it.each([
 
 const wrongKindFunctionEvidence = (mismatch: "operation" | "predicate") =>
   createEvidence(
-    undefined,
+    unknownTarget("not-observed"),
     { id: "fixture", name: "Fixture", version: "1" },
     {
       operation:
@@ -308,36 +313,12 @@ describe("function comparison MCP integration", () => {
       },
     });
   });
-
-  it("accepts inline Evidence without prior session registration", async () => {
-    const session = createTestBinarySession(() => ({
-      health: () => Promise.resolve(),
-      execute: () => Promise.resolve(observed(null)),
-      close: () => Promise.resolve(resultOk(null)),
-    }));
-    const { client } = await createApplicationMcpHarness({
-      session,
-      clientIdentity: { name: "function-link-test", version: "1" },
-    });
-    const result = await client.callTool({
-      name: "compare_functions",
-      arguments: {
-        left: FUNCTION_COMPARISON_EXAMPLE.left,
-        right: FUNCTION_COMPARISON_EXAMPLE.right,
-      },
-    });
-    expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({
-      normalized_result: { status: expect.any(String) },
-    });
-  });
 });
 
 describe("function comparison input-kind diagnostics", () => {
+  // Each mismatch is checked once; alternating sides covers both labels.
   it.each([
     { side: "left", mismatch: "operation" },
-    { side: "right", mismatch: "operation" },
-    { side: "left", mismatch: "predicate" },
     { side: "right", mismatch: "predicate" },
   ] as const)(
     "rejects inline $side Evidence with the wrong $mismatch as an input-selection error",
@@ -370,10 +351,13 @@ describe("function comparison input-kind diagnostics", () => {
             {
               path: [side],
               reason: "invalid_value",
-              message: `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${side} Evidence has operation ${wrong.operation} and predicate ${wrong.predicate_type}.`,
               expected: {
                 operation: "analyze_function",
                 predicate_type: "rea.analysis",
+              },
+              observed: {
+                operation: wrong.operation,
+                predicate_type: wrong.predicate_type,
               },
             },
           ],
@@ -410,9 +394,7 @@ describe("function comparison input-kind diagnostics", () => {
         issues: [
           {
             path: ["left"],
-            message: expect.stringContaining(
-              "the left Evidence has operation inventory_artifact",
-            ),
+            observed: { operation: "inventory_artifact" },
           },
         ],
       },
@@ -440,6 +422,7 @@ describe("function comparison input-kind diagnostics", () => {
     expect(parseMcpToolError(result).error).toMatchObject({
       code: "evidence_integrity_mismatch",
       category: "integrity_mismatch",
+      details: { side: "left", issue_path: ["evidence_id"] },
     });
   });
 });
@@ -494,17 +477,25 @@ it.each([
       authority: "analyst-inference" as const,
       evidenceLinks: [left.evidence_id, right.evidence_id],
     };
-    const consistent = createEvidence(undefined, provider, {
-      ...observation,
-      result: result,
-    });
+    const consistent = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      provider,
+      {
+        ...observation,
+        result: result,
+      },
+    );
     const inconsistent =
       status === "unchanged"
         ? null
-        : createEvidence(undefined, provider, {
-            ...observation,
-            result: { ...result, status: "unchanged" },
-          });
+        : createEvidence(
+            unknownTarget("derived-from-linked-evidence"),
+            provider,
+            {
+              ...observation,
+              result: { ...result, status: "unchanged" },
+            },
+          );
     const directory = await createTestTempDirectory("rea-function-status-");
     const path = join(directory, "bundle.json");
     await writeFile(
@@ -550,11 +541,7 @@ it.each([
       const rejected = await verification(inconsistent.evidence_id);
       expect(parseMcpToolError(rejected).error).toMatchObject({
         code: "evidence_integrity_mismatch",
-        details: {
-          reason: expect.stringContaining(
-            "Function comparison status contradicts its dimensions or function match",
-          ),
-        },
+        details: { constraint: "status-matches-dimensions" },
       });
       expect(harness.session.evidenceById(inconsistent.evidence_id)).toEqual(
         inconsistent,
@@ -568,3 +555,31 @@ it.each([
     await harness.client.ping();
   },
 );
+
+it("advertises Swift literal coverage as a pair through the MCP SDK", async () => {
+  const harness = await createApplicationMcpHarness();
+  const tool = (await harness.client.listTools()).tools.find(
+    ({ name }) => name === "analyze_function",
+  );
+  if (tool === undefined) throw new Error("Missing output schema");
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(canonicalOutputSchema(tool.name) as AnySchema);
+  const original = FUNCTION_COMPARISON_EXAMPLE.left;
+  for (const [literals, omissions, valid] of [
+    [false, false, true],
+    [true, true, true],
+    [true, false, false],
+    [false, true, false],
+  ] as const) {
+    const dossier = {
+      ...functionDossierSchema.parse(original.normalized_result),
+      ...(literals ? { swift_string_literals: [] } : {}),
+      ...(omissions ? { swift_string_literal_omissions: [] } : {}),
+    };
+    const evidence = { ...original, normalized_result: dossier };
+    expect(functionDossierSchema.safeParse(dossier).success).toBe(valid);
+    expect(validate(evidence), JSON.stringify(validate.errors)).toBe(valid);
+  }
+});

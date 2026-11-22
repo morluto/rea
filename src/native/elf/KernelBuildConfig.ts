@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { crc32, inflateRaw } from "node:zlib";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import { assertArtifactReadActive } from "../../resources/index.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 import {
   KERNEL_BUILD_CONFIG_CODECS,
   KERNEL_BUILD_CONFIG_NUMBER,
@@ -12,6 +12,8 @@ import {
   type KernelBuildConfigEntry,
 } from "../../domain/native/kernelBuildConfig.js";
 import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+import { BinaryReader } from "../../domain/binaryContainer.js";
+import { strictUtf8Decoder } from "../../domain/strictUtf8.js";
 
 type Report = KernelBuildConfig;
 type Entry = KernelBuildConfigEntry;
@@ -85,14 +87,18 @@ const sha256 = async (
   return hash.digest("hex");
 };
 
-/** A caller-selected budget refused the image; `knob` names it as a typed fact. */
-export class KernelBuildConfigBudgetFailure extends ArtifactReaderFailure {
-  constructor(
-    readonly knob: KernelBuildConfigBudgetKnob,
-    limit: number,
-  ) {
-    super("limit", `Kernel build config exceeds ${knob} (${String(limit)}).`, {
-      boundary: "capacity",
+/** A caller-selected parser budget refused the image. */
+export class KernelBuildConfigBudgetFailure extends ParseFailureError<"limit"> {
+  declare readonly failure: ParseFailureError<"limit">["failure"] & {
+    readonly limit: { readonly name: KernelBuildConfigBudgetKnob };
+  };
+
+  constructor(knob: KernelBuildConfigBudgetKnob, maximum: number) {
+    super({
+      kind: "limit",
+      format: "kernel-build-config",
+      detail: `Kernel build config exceeds ${knob} (${String(maximum)}).`,
+      limit: { name: knob, maximum },
     });
   }
 }
@@ -147,9 +153,10 @@ const FCOMMENT = 0x10;
  * `invalid` when it is not deflate, sets reserved flags, or fails its FHCRC.
  */
 const gzipHeaderEnd = (
-  bytes: Buffer,
+  reader: BinaryReader,
   start: number,
 ): number | "invalid" | null => {
+  const { bytes } = reader;
   if (start + 10 > bytes.length) return null;
   if (bytes[start + 2] !== CM_DEFLATE) return "invalid";
   const flags = bytes[start + 3] ?? 0;
@@ -157,7 +164,7 @@ const gzipHeaderEnd = (
   let cursor = start + 10;
   if ((flags & FEXTRA) !== 0) {
     if (cursor + 2 > bytes.length) return null;
-    cursor += 2 + bytes.readUInt16LE(cursor);
+    cursor += 2 + reader.u16(cursor);
   }
   for (const flag of [FNAME, FCOMMENT]) {
     if ((flags & flag) === 0) continue;
@@ -168,10 +175,7 @@ const gzipHeaderEnd = (
   if ((flags & FHCRC) === 0) return cursor > bytes.length ? null : cursor;
   if (cursor + 2 > bytes.length) return null;
   // FHCRC is the low 16 bits of the CRC-32 of every header byte before it.
-  if (
-    bytes.readUInt16LE(cursor) !==
-    (crc32(bytes.subarray(start, cursor)) & 0xffff)
-  )
+  if (reader.u16(cursor) !== (crc32(bytes.subarray(start, cursor)) & 0xffff))
     return "invalid";
   return cursor + 2;
 };
@@ -204,7 +208,8 @@ const inflateGzipMember = async (
   maxOutput: number,
   signal: AbortSignal | undefined,
 ): Promise<GzipMember> => {
-  const body = gzipHeaderEnd(bytes, start);
+  const reader = new BinaryReader(bytes, true, "gzip");
+  const body = gzipHeaderEnd(reader, start);
   if (body === null) return { kind: "truncated", spent: 0 };
   if (body === "invalid") return { kind: "invalid", spent: 0 };
   let output: Buffer;
@@ -227,14 +232,14 @@ const inflateGzipMember = async (
   if (trailer + 8 > bytes.length)
     return { kind: "truncated", spent: output.length };
   if (
-    bytes.readUInt32LE(trailer) !== crc32(output) ||
-    bytes.readUInt32LE(trailer + 4) !== output.length >>> 0
+    reader.u32(trailer) !== crc32(output) ||
+    reader.u32(trailer + 4) !== output.length >>> 0
   )
     return { kind: "corrupt", end: trailer + 8, inflated: output.length };
   return { kind: "member", output, end: trailer + 8 };
 };
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
+const decoder = strictUtf8Decoder("strip-signature");
 /** C0 controls other than tab, LF and CR, plus DEL. */
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
@@ -263,10 +268,6 @@ const decodeText = async (
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
 
-/** Line terminators other than LF that a `.config` value may not contain. */
-const isLineBreak = (char: number): boolean =>
-  char === 0x0d || char === 0x2028 || char === 0x2029;
-
 /**
  * Decoded `"..."` value whose only escapes are `\"` and `\\`. The line is
  * validated in place first, yielding once per TURN_STRIDE characters, so the
@@ -287,7 +288,9 @@ const unquote = async (
       await yieldTurn(signal);
     }
     const char = raw.charCodeAt(index);
-    if (char === QUOTE || isLineBreak(char)) return null;
+    // Kconfig writes Unicode separators literally inside quoted strings.
+    // LF already frames records; CR remains disallowed in a value.
+    if (char === QUOTE || char === 0x0d) return null;
     if (char !== BACKSLASH) continue;
     const next = raw.charCodeAt(index + 1);
     if (index + 1 >= end || (next !== QUOTE && next !== BACKSLASH)) return null;
@@ -449,6 +452,12 @@ const findConfig = async (
     const limit = Math.min(maxOutput, remaining);
     const member = await inflateGzipMember(bytes, gzipAt, limit, signal);
     if (member.kind === "limit") {
+      // Without an end marker, the stopped inflate cannot establish an
+      // oversized config. No later candidate can be framed either.
+      if (closing < 0) {
+        truncated = true;
+        break;
+      }
       if (limit < maxOutput) return "exhausted";
       // A member past max_config_bytes may be a decoy, so a later framed
       // config can still win; the budget failure is raised only if none does.
@@ -530,8 +539,8 @@ const parseBannerText = (
   let compiler: string | null = null;
   if (rest.startsWith(" (")) {
     const close = rest.indexOf(")");
-    if (close > 2) {
-      builder = rest.slice(2, close);
+    if (close >= 2) {
+      builder = rest.slice(2, close) || null;
       rest = rest.slice(close + 1);
     }
   }
@@ -557,10 +566,57 @@ const absentBanner = (status: "absent" | "unknown"): Report["banner"] => ({
 const isPrintable = (value: number): boolean => value >= 0x20 && value <= 0x7e;
 
 /**
+ * Text up to and including `#` when the banner's `UTS_VERSION` lacks a build
+ * number or a timestamp, otherwise null. Since Linux 6.1, kbuild compiles
+ * `init/version.o` with a temporary `UTS_VERSION` that leaves both empty
+ * unless `KBUILD_BUILD_VERSION` or `KBUILD_BUILD_TIMESTAMP` is set, so that
+ * object's weak `linux_banner` has a space right after `#` or at its end. The
+ * banner the kernel prints comes from `init/version-timestamp.o` in the final
+ * link: the same text up to `#`, then the build number and timestamp.
+ */
+const kbuildPlaceholderPrefix = (text: string): string | null => {
+  const marked = text.lastIndexOf(") #");
+  if (marked < 0) return null;
+  return text.startsWith(" ", marked + 3) || text.endsWith(" ")
+    ? text.slice(0, marked + 3)
+    : null;
+};
+
+/**
+ * First `Linux version <digit>...` banner in the printable run that ends at
+ * `end`. Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
+ */
+const bannerInRun = (
+  bytes: Buffer,
+  at: number,
+  end: number,
+): {
+  readonly hit: number;
+  readonly text: string;
+  readonly parsed: NonNullable<ReturnType<typeof parseBannerText>>;
+} | null => {
+  const run = bytes.subarray(0, end);
+  for (
+    let hit = run.indexOf(BANNER_PREFIX, Math.max(at, end - BANNER_TEXT_BYTES));
+    hit >= 0;
+    hit = run.indexOf(BANNER_PREFIX, hit + 1)
+  ) {
+    const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
+    if (first < 0x30 || first > 0x39) continue;
+    const text = bytes.toString("latin1", hit, end);
+    const parsed = parseBannerText(text);
+    if (parsed !== null) return { hit, text, parsed };
+  }
+  return null;
+};
+
+/**
  * First printable, NUL- or newline-terminated `Linux version <digit>...`
- * string of at most BANNER_TEXT_BYTES. Every hit inside one printable run
- * shares that run's terminator, so each run is scanned once and the search
- * resumes after it: the scan is linear in the searched bytes.
+ * string of at most BANNER_TEXT_BYTES. A kbuild placeholder banner is
+ * replaced by a later banner that repeats its text up to `#` and is not a
+ * placeholder itself; without one, the placeholder is reported. Every hit inside one
+ * printable run shares that run's terminator, so each run is scanned once and
+ * the search resumes after it: the scan is linear in the searched bytes.
  */
 const findBanner = async (
   bytes: Buffer,
@@ -569,10 +625,14 @@ const findBanner = async (
 ): Promise<Report["banner"]> => {
   let from = 0;
   let turnAt = TURN_STRIDE;
+  let placeholder: {
+    readonly banner: Report["banner"];
+    readonly prefix: string;
+  } | null = null;
   for (;;) {
     assertArtifactReadActive(signal);
     const at = await findNext(bytes, BANNER_PREFIX, from, signal);
-    if (at < 0) return absentBanner("absent");
+    if (at < 0) return placeholder?.banner ?? absentBanner("absent");
     let end = at + BANNER_PREFIX.length;
     while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
       end += 1;
@@ -585,31 +645,23 @@ const findBanner = async (
     from = end + 1;
     if (end >= bytes.length || (bytes[end] !== 0 && bytes[end] !== 0x0a))
       continue;
-    // Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
-    const run = bytes.subarray(0, end);
-    for (
-      let hit = run.indexOf(
-        BANNER_PREFIX,
-        Math.max(at, end - BANNER_TEXT_BYTES),
-      );
-      hit >= 0;
-      hit = run.indexOf(BANNER_PREFIX, hit + 1)
-    ) {
-      const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
-      if (first < 0x30 || first > 0x39) continue;
-      const text = bytes.toString("latin1", hit, end);
-      const parsed = parseBannerText(text);
-      if (parsed === null) continue;
-      return {
-        status: "present",
-        text,
-        version: parsed.version,
-        builder: parsed.builder,
-        compiler: parsed.compiler,
-        location: located(space, hit, end - hit),
-        trust: UNTRUSTED,
-      };
-    }
+    const found = bannerInRun(bytes, at, end);
+    if (found === null) continue;
+    const banner: Report["banner"] = {
+      status: "present",
+      text: found.text,
+      version: found.parsed.version,
+      builder: found.parsed.builder,
+      compiler: found.parsed.compiler,
+      location: located(space, found.hit, end - found.hit),
+      trust: UNTRUSTED,
+    };
+    const prefix = kbuildPlaceholderPrefix(found.text);
+    if (placeholder === null) {
+      if (prefix === null) return banner;
+      placeholder = { banner, prefix };
+    } else if (prefix === null && found.text.startsWith(placeholder.prefix))
+      return banner;
   }
 };
 
@@ -723,7 +775,6 @@ const reportFromSearch = async (
                 ...blobRanges(found, search.space),
               }
             : acceptedConfig(found, input, search.space);
-  const complete = found === "absent" || config.status === "present";
   const banner = await findBanner(search.bytes, search.space, signal);
   return {
     artifact,
@@ -733,7 +784,14 @@ const reportFromSearch = async (
     banner,
     config,
     coverage: {
-      status: complete ? "complete" : "incomplete",
+      status:
+        found === "absent" || config.status === "present"
+          ? "complete"
+          : // A member cut by the searched bytes, or candidates the budget
+            // left uninflated, is a known gap; a malformed config is unreadable.
+            found === "truncated" || found === "exhausted"
+            ? "partial"
+            : "unknown",
       examined_bytes: search.bytes.length,
       examined_entries: config.option_count,
     },
@@ -776,12 +834,13 @@ const readBzImage = (
   | { kind: "payload"; payload: BzImagePayload } => {
   if (bytes.length < 0x206 || bytes.toString("latin1", 0x202, 0x206) !== "HdrS")
     return { kind: "none" };
-  if (bytes.length < 0x250 || bytes.readUInt16LE(0x206) < 0x0208)
+  const reader = new BinaryReader(bytes, true, "bzImage");
+  if (bytes.length < 0x250 || reader.u16(0x206) < 0x0208)
     return { kind: "unavailable" };
   const setupSects = bytes[0x1f1] === 0 ? 4 : (bytes[0x1f1] ?? 4);
   const payload = {
-    offset: (setupSects + 1) * 512 + bytes.readUInt32LE(0x248),
-    bytes: bytes.readUInt32LE(0x24c),
+    offset: (setupSects + 1) * 512 + reader.u32(0x248),
+    bytes: reader.u32(0x24c),
   };
   if (payload.bytes === 0) return { kind: "unavailable" };
   return payload.offset > bytes.length ||
@@ -811,7 +870,12 @@ const closedReport = (
       : null,
   banner: absentBanner("unknown"),
   config: emptyConfig(input, status, reason),
-  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  // Nothing was searched, so whether a config exists cannot be determined.
+  coverage: {
+    status: status === "incomplete" ? "unknown" : status,
+    examined_bytes: 0,
+    examined_entries: 0,
+  },
   limitations: [...baseLimitations(), limitation],
 });
 

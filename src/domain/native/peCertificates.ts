@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -66,6 +67,8 @@ const distinguishedNameSchema = z.strictObject({
       oid: z.string(),
       oid_name: z.string().nullable(),
       value: z.string(),
+      // Older retained Evidence omitted RDN grouping.
+      rdn_index: uint.optional(),
     }),
   ),
 });
@@ -97,9 +100,8 @@ const signerInfoSchema = z.strictObject({
     .regex(/^[0-9a-f]*$/)
     .nullable(),
   authenticated_attributes: z.boolean(),
-  // Optional for Evidence recorded before unsigned attributes were observed.
-  // Null means the field was absent; an array means it was present.
-  unsigned_attribute_oids: z.array(z.string()).nullable().optional(),
+  // Null means the signer has no unsigned attributes; an array lists them.
+  unsigned_attribute_oids: z.array(z.string()).nullable(),
 });
 
 const pkcs7Schema = z.strictObject({
@@ -142,7 +144,7 @@ export const peCertificatesSchema = z.strictObject({
     .nullable(),
   entries: z.array(certificateEntrySchema),
   coverage: z.strictObject({
-    status: z.enum(["complete", "partial"]),
+    status: knownCoverageStatusSchema,
     examined_entries: uint,
     certificates: uint,
   }),

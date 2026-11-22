@@ -1,8 +1,10 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 
-import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactFileCleanupFailure } from "../artifacts/ArtifactFileOperation.js";
+import {
+  AnalysisCleanupLease,
+  ArtifactFileCleanupFailure,
+} from "../resources/index.js";
 import {
   PACKAGE_FILE_FIELDS,
   packageFileMismatch,
@@ -19,8 +21,13 @@ import {
   observeStableFile,
   stableFileHashCause,
 } from "../filesystem/StableFileHash.js";
-import { isHostFile, isRefusedRead } from "./HostFileRead.js";
-import type { QueryRunner } from "./HostQuery.js";
+import {
+  hostReadFailure,
+  hostFileKind,
+  isRefusedRead,
+} from "./HostFileRead.js";
+import { queryUtf8Text, type QueryRunner } from "./HostQuery.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 type PackageFileFacts = Pick<
   DesktopPackage,
@@ -55,11 +62,12 @@ const hashPackageFile = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure && lease !== undefined)
       throw new ArtifactFileCleanupFailure(cause, lease);
-    signal?.throwIfAborted();
+    const failure = hostReadFailure(cause);
+    if (failure !== cause) throw failure;
     const read = stableFileHashCause(cause);
     if (!(cause instanceof StableFileHashFailure) || !isRefusedRead(read))
       throw cause;
-    return `${path} could not be read: ${read instanceof Error ? read.message : String(read)}`;
+    return `${path} could not be read: ${errorMessage(read)}`;
   }
 };
 
@@ -86,23 +94,32 @@ export const inspectPackageFile = async (
     return refused(
       `dpkg reports no installed version of the application (${installed.kind}${installed.name === null ? "" : ` ${installed.name}`}), so ${path} was not matched against it`,
     );
-  if (!(await isHostFile(path)))
-    return refused(`${path} is not a regular file`);
+  const regularFile = await hostFileKind(path);
+  if (regularFile === null)
+    return refused(
+      `${path} could not be checked, so it was not read as a file`,
+    );
+  if (!regularFile) return refused(`${path} is not a regular file`);
   // dpkg-deb and the hash read the file apart; its identity must hold across both.
   const before = await stat(path).catch(() => undefined);
   if (before === undefined) return refused(`${path} could not be read`);
-  const outcome = await runQuery(
+  const outcome = await queryUtf8Text(
+    runQuery,
     "dpkg-deb",
     ["--field", path, ...PACKAGE_FILE_FIELDS],
     signal,
   );
-  if (outcome === "missing")
+  if (outcome.kind === "missing")
     return refused(
       `dpkg-deb is not installed, so the control fields of ${path} were not read`,
     );
-  if (outcome === "failed" || outcome.exitCode !== 0)
+  if (outcome.kind === "undecodable")
+    return refused(
+      `dpkg-deb returned invalid UTF-8 in the control fields of ${path}`,
+    );
+  if (outcome.kind !== "read")
     return refused(`dpkg-deb could not read ${path} as a Debian package`);
-  const fields = parseDpkgDebFields(outcome.stdout);
+  const fields = parseDpkgDebFields(outcome.text);
   if (fields === undefined)
     return refused(
       `dpkg-deb did not report the Package, Version and Architecture of ${path}`,

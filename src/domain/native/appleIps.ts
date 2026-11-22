@@ -1,5 +1,6 @@
 import type { FileSnapshotPartialObservation } from "../fileSnapshotObservation.js";
 import { z } from "zod";
+import { knownCoverageStatusSchema } from "../coverage.js";
 
 import { digestSchema } from "../digests.js";
 import { absoluteLocalPathStringSchema } from "../localPath.js";
@@ -113,7 +114,7 @@ export const inspectAppleIpsInputSchema = z.strictObject({
   join_path: absoluteLocalPathStringSchema
     .optional()
     .describe(
-      "Optional Mach-O executable or dSYM whose slice LC_UUID matches report images; unsigned images never join",
+      "Optional Mach-O executable or dSYM matched by slice LC_UUID and architecture; shared-cache images remain unjoined",
     ),
   max_join_bytes: z
     .number()
@@ -197,6 +198,7 @@ const frameSchema = z.strictObject({
     .describe(
       "Recorded byte offset of the address from the start of recorded_symbol.",
     ),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const threadSchema = z.strictObject({
@@ -208,6 +210,7 @@ const threadSchema = z.strictObject({
   frames: z.array(frameSchema),
   state_flavor: z.string().nullable(),
   registers: z.array(registerSchema),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const imageSchema = z.strictObject({
@@ -221,6 +224,7 @@ const imageSchema = z.strictObject({
   uuid_unknown: z.boolean(),
   name: z.string().nullable(),
   path: z.string().nullable(),
+  unlisted_keys: z.array(z.string()).optional(),
 });
 
 const classificationMatchSchema = z.strictObject({
@@ -261,7 +265,7 @@ const typeMismatchSchema = z.strictObject({
 });
 
 const coverageSchema = z.strictObject({
-  status: z.enum(["complete", "partial"]),
+  status: knownCoverageStatusSchema,
   reason: z.string().min(1).nullable(),
   threads: uint,
   frames: uint,

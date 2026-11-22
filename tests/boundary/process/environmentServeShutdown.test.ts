@@ -17,8 +17,6 @@ import { rawHttpRequest } from "../../support/http/rawRequest.js";
 import { startListeningProcess } from "../../support/mcp/streamableHttpProcess.js";
 import { processTest } from "../../support/process/processFixture.js";
 
-const SHUTDOWN_TIMEOUT_MS = 90_000;
-
 /** How each case is served and what its stopped document reports about the state. */
 const MODES = [
   {
@@ -114,7 +112,6 @@ describe("rea environment-serve shutdown", () => {
           code: "ECONNREFUSED",
         });
       },
-      SHUTDOWN_TIMEOUT_MS,
     );
 });
 
@@ -230,7 +227,6 @@ syncBuiltinESMExports();
           });
           expect(stderr).not.toContain("MCP transport listening");
         },
-        SHUTDOWN_TIMEOUT_MS,
       );
     }
   },

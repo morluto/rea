@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
@@ -21,11 +21,13 @@ import {
   inspectClientConfiguration,
 } from "../../../src/application/SetupClientConfiguration.js";
 import {
+  runUninstall,
   systemUninstallHost,
   type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
+import { supportedClientRegistrationProfile } from "../../fixtures/clientRegistrationProfile.js";
 
 it
   .skipIf(process.platform === "win32")
@@ -75,6 +77,7 @@ it.skipIf(process.platform === "win32")(
 
     const client = {
       name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
       format: "json",
       configPath: existing,
     } as const;
@@ -99,39 +102,28 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
-const failedVerificationFileSystem = (
-  failure: "verification" | "recovery",
-): UninstallFileSystem => {
-  return {
-    readText: (path) => readFile(path, "utf8"),
-    copy: (source, destination) =>
-      copyFile(source, destination, fsConstants.COPYFILE_EXCL),
-    publishConfiguration: async (path, contents, original) => {
-      const publication = await ClientConfigurationPublication.write(
-        path,
-        contents,
-        original,
-      );
-      publication.assertCurrent = async () => {
-        throw new Error("verification failed");
-      };
-      if (failure === "recovery")
-        publication.restore = async () => {
-          throw new Error("restore failed");
-        };
-      return publication;
-    },
-    stat: (path) => lstat(path),
-    realpath: (path) => realpath(path),
-    remove: (path) => rm(path, { recursive: true }),
-  };
+const uninstallFileSystem: UninstallFileSystem = {
+  readText: (path) => readFile(path, "utf8"),
+  copy: (source, destination) =>
+    copyFile(source, destination, fsConstants.COPYFILE_EXCL),
+  publishConfiguration: (path, contents, original) =>
+    ClientConfigurationPublication.write(path, contents, original),
+  stat: (path) => lstat(path),
+  realpath: (path) => realpath(path),
+  remove: (path) => rm(path, { recursive: true }),
 };
 
 describe("uninstall backups after edits made since setup", () => {
   const editedSinceSetup = async (prefix: string) => {
     const root = await createTestTempDirectory(prefix);
-    const configPath = join(root, "config.json");
-    const client = { name: "cursor", format: "json", configPath } as const;
+    const configPath = join(root, ".cursor", "mcp.json");
+    await mkdir(dirname(configPath), { recursive: true });
+    const client = {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    } as const;
     const beforeSetup = '{"keep":"before setup"}\n';
     await writeFile(configPath, beforeSetup);
     expect(
@@ -175,44 +167,51 @@ describe("uninstall backups after edits made since setup", () => {
   });
 
   it.each([
-    [
-      "verification",
-      (path: string) =>
-        `Configuration could not be updated. The original was restored and its backup at ${path} was retained. Repair the configuration or restore that backup, then rerun uninstall.`,
-    ],
-    [
-      "recovery",
-      (path: string) =>
-        `Configuration could not be updated or restored. Restore the backup at ${path} manually, then rerun uninstall.`,
-    ],
+    ["publication", "manually"],
+    ["verification", "original was restored"],
+    ["recovery", "manually"],
   ] as const)(
-    "names the backup holding the pre-uninstall bytes when %s fails",
-    async (failure, message) => {
-      const {
-        root,
-        configPath,
-        client,
-        beforeSetup,
-        beforeUninstall,
-        recoveryPath,
-      } = await editedSinceSetup("rea-uninstall-current-backup-failure-");
-      expect(
-        await systemUninstallHost(
-          root,
-          failedVerificationFileSystem(failure),
-        ).removeClient(client),
-      ).toEqual({
-        name: "cursor",
+    "reports the exact pre-uninstall backup after %s failure",
+    async (stage, guidance) => {
+      const { root, configPath, beforeSetup, beforeUninstall, recoveryPath } =
+        await editedSinceSetup("rea-uninstall-current-backup-failure-");
+      const fault = new Error("test-only publication fault");
+      const fail = async () => {
+        throw fault;
+      };
+      const fileSystem: UninstallFileSystem = {
+        ...uninstallFileSystem,
+        publishConfiguration: async (path, contents, original) => {
+          if (stage === "publication") throw fault;
+          const publication = await uninstallFileSystem.publishConfiguration(
+            path,
+            contents,
+            original,
+          );
+          publication.assertCurrent = fail;
+          if (stage === "recovery") publication.restore = fail;
+          return publication;
+        },
+      };
+      const result = await runUninstall(
+        false,
+        systemUninstallHost(root, fileSystem, { HOME: root }),
+      );
+      const failed = result.items.find(({ name }) => name === "cursor");
+      expect(result.status).toBe("failed");
+      expect(failed).toMatchObject({
         status: "failed",
-        detail: message(recoveryPath),
+        configuration_path: configPath,
       });
-      if (failure === "verification")
-        expect(await readFile(configPath, "utf8")).toBe(beforeUninstall);
-      else
+      expect(failed?.detail).toContain(recoveryPath);
+      expect(failed?.detail).toContain(guidance);
+      expect(failed?.detail).not.toContain(fault.message);
+      if (stage === "recovery")
         expect(JSON.parse(await readFile(configPath, "utf8"))).toEqual({
           keep: "edited after setup",
           mcpServers: {},
         });
+      else expect(await readFile(configPath, "utf8")).toBe(beforeUninstall);
       expect(await readFile(`${configPath}.rea.backup`, "utf8")).toBe(
         beforeSetup,
       );
@@ -247,7 +246,7 @@ describe("uninstall backups after edits made since setup", () => {
         await editedSinceSetup("rea-uninstall-current-backup-unverified-");
       let writes = 0;
       const result = await systemUninstallHost(root, {
-        ...failedVerificationFileSystem("verification"),
+        ...uninstallFileSystem,
         copy,
         publishConfiguration: async () => {
           writes += 1;
@@ -274,7 +273,12 @@ it("accepts a literal UTF-8 replacement character without changing its value", a
   ]);
   await writeFile(configPath, original);
   const result = await configureClientConfiguration(
-    { name: "cursor", format: "json", configPath },
+    {
+      name: "cursor",
+      registrationProfile: supportedClientRegistrationProfile("cursor"),
+      format: "json",
+      configPath,
+    },
     {},
     ["rea", "mcp"],
   );
@@ -290,7 +294,12 @@ it("previews and creates a current recovery backup while preserving the first ba
   const configPath = join(root, "config.json");
   const firstOriginal = '{"keep":"first"}\n';
   const currentOriginal = '{"keep":"current"}\n';
-  const client = { name: "cursor", format: "json", configPath } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
   await writeFile(configPath, currentOriginal);
   await writeFile(`${configPath}.rea.backup`, firstOriginal);
 
@@ -316,7 +325,12 @@ it("blocks configuration when the planned content-addressed backup is occupied",
   const configPath = join(root, "config.json");
   const firstOriginal = '{"keep":"first"}\n';
   const currentOriginal = '{"keep":"current"}\n';
-  const client = { name: "cursor", format: "json", configPath } as const;
+  const client = {
+    name: "cursor",
+    registrationProfile: supportedClientRegistrationProfile("cursor"),
+    format: "json",
+    configPath,
+  } as const;
   await writeFile(configPath, currentOriginal);
   await writeFile(`${configPath}.rea.backup`, firstOriginal);
   const recoveryPath = `${configPath}.rea.backup.${createHash("sha256")
@@ -353,6 +367,9 @@ describe("client configuration write failures", () => {
         expect(
           await configure({
             name: format === "toml" ? "codex" : "cursor",
+            registrationProfile: supportedClientRegistrationProfile(
+              format === "toml" ? "codex" : "cursor",
+            ),
             format,
             configPath: join(root, `config.${format}`),
           }),
@@ -379,7 +396,12 @@ describe("TOML client configuration comparison", () => {
     const configPath = join(root, "config.toml");
     const original = `unrelated = ${value}\n[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "rea-agents@6.1.0", "mcp"]\nstartup_timeout_sec = ${value}\n`;
     await writeFile(configPath, original);
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     expect(
       await configureClientConfiguration(client, {}, ["rea", "mcp"]),
     ).toEqual({
@@ -471,7 +493,12 @@ describe("Codex configuration text preservation", () => {
     async ({ original, preserved }) => {
       const root = await createTestTempDirectory("rea-codex-preserve-");
       const configPath = join(root, "config.toml");
-      const client = { name: "codex", format: "toml", configPath } as const;
+      const client = {
+        name: "codex",
+        registrationProfile: supportedClientRegistrationProfile("codex"),
+        format: "toml",
+        configPath,
+      } as const;
       await writeFile(configPath, original);
 
       expect(
@@ -503,7 +530,12 @@ describe("Codex configuration text preservation", () => {
   it("retains the first backup after uninstall and a later setup", async () => {
     const root = await createTestTempDirectory("rea-codex-backup-");
     const configPath = join(root, "config.toml");
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     const original = 'notify = ["a", "b"]\n';
     await writeFile(configPath, original);
     await configureClientConfiguration(client, {}, ["rea", "mcp"]);
@@ -518,7 +550,12 @@ describe("Codex configuration text preservation", () => {
   it("refuses malformed Codex TOML unchanged without creating a backup", async () => {
     const root = await createTestTempDirectory("rea-codex-malformed-");
     const configPath = join(root, "config.toml");
-    const client = { name: "codex", format: "toml", configPath } as const;
+    const client = {
+      name: "codex",
+      registrationProfile: supportedClientRegistrationProfile("codex"),
+      format: "toml",
+      configPath,
+    } as const;
     const original =
       "# Keep this explanation.\n[mcp_servers.rea]\ncommand = [broken\n";
     await writeFile(configPath, original);
@@ -553,6 +590,7 @@ it
         (
           await host.removeClient({
             name: "cursor",
+            registrationProfile: supportedClientRegistrationProfile("cursor"),
             format: "json",
             configPath,
           })

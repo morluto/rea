@@ -1,13 +1,14 @@
 import { z } from "zod";
+import { coverageStatusSchema } from "../coverage.js";
 
 import { evidenceSchema, providerSchema } from "../evidence.js";
 import { javascriptApplicationGraphSchema } from "./javascriptApplicationGraph.js";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
+import { nonEmptyTextSchema } from "../textSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const nodeIdSchema = prefixedDigestSchema("jag_node");
 const edgeIdSchema = prefixedDigestSchema("jag_edge");
-const boundedTextSchema = z.string().min(1);
 
 /** Matching mode for a literal seed: string seeds default to containment. */
 export const featureSeedMatchMode = (seed: {
@@ -19,7 +20,7 @@ export const featureSeedMatchMode = (seed: {
 const apiSeedSchema = z.union([
   z.strictObject({
     kind: z.literal("api"),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
   }),
@@ -34,7 +35,7 @@ const apiSeedSchema = z.union([
 const apiPathSeedSchema = z.union([
   z.strictObject({
     kind: z.literal("api"),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
     entry_path: z.array(z.string()).min(1),
@@ -63,7 +64,7 @@ export const applicationFeatureSeedSchema = z.union([
       "module",
       "native-export",
     ]),
-    value: boundedTextSchema,
+    value: nonEmptyTextSchema,
     match: z.enum(["exact", "contains"]).nullable().default(null),
     case_sensitive: z.boolean().default(false),
   }),
@@ -144,7 +145,7 @@ const nativeHandoffSchema = z.strictObject({
   artifact_sha256: digestSchema,
   artifact_path: z.string().min(1).nullable(),
   export_node_ids: z.array(nodeIdSchema),
-  requested_exports: z.array(boundedTextSchema),
+  requested_exports: z.array(z.string()),
   status: z.enum(["evidence-linked", "requires-provider-analysis"]),
   providers: z.array(providerSchema),
   evidence_ids: z.array(evidenceIdSchema),
@@ -170,12 +171,7 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
   semantic_discovery: z
     .strictObject({
       source_graph_id: prefixedDigestSchema("jsrg"),
-      source_coverage: z.enum([
-        "complete",
-        "partial",
-        "unknown",
-        "unavailable",
-      ]),
+      source_coverage: z.enum([...coverageStatusSchema.options, "unavailable"]),
       total: z.int().nonnegative(),
       offset: z.int().nonnegative(),
       limit: z.int().positive(),
@@ -212,15 +208,13 @@ export const applicationFeatureTraceResultSchema = z.strictObject({
   coverage: z.strictObject({
     status: z.enum(["complete-within-source", "partial", "no-match"]),
     source_graph_status: z.enum([
-      "complete",
-      "partial",
-      "unknown",
+      ...coverageStatusSchema.options,
       "unavailable",
     ]),
     total_seed_matches: z.int().min(0),
   }),
   evidence_links: z.array(evidenceIdSchema).min(1),
-  limitations: z.array(boundedTextSchema),
+  limitations: z.array(nonEmptyTextSchema),
 });
 
 export type TraceApplicationFeatureInput = z.infer<

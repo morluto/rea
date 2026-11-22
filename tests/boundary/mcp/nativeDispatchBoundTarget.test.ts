@@ -10,6 +10,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { localToolsMcpEnvironment } from "../../fixtures/localToolsMcp.js";
 import { objcRecordBudgetMacho } from "../../fixtures/objcRecordBudgetMacho.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 type Replacement = "missing" | "directory" | "loop" | "unreadable";
 
@@ -36,7 +37,10 @@ const inspectReplacements = async (replacements: readonly Replacement[]) => {
     env[key] = directory;
     await mkdir(directory);
   }
-  const client = new Client({ name: "dispatch-bound-target", version: "1" });
+  const client = new Client(
+    { name: "dispatch-bound-target", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [resolve("scripts/rea.mjs"), "mcp"],
@@ -123,14 +127,13 @@ describe.skipIf(process.platform !== "darwin")(
   () => {
     it("reports missing, directory and symlink-loop replacements as artifact changes and recovers in the same session", async () => {
       await inspectReplacements(["missing", "directory", "loop"]);
-    }, 30_000);
+    });
 
     it.skipIf(process.getuid?.() === 0)(
       "keeps permission denial distinct and recovers after restoring read access",
       async () => {
         await inspectReplacements(["unreadable"]);
       },
-      30_000,
     );
   },
 );

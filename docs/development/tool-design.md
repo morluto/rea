@@ -200,12 +200,14 @@ does not establish another instance.
   and qualify negative and shortest-path claims by discovery scope. Missing
   relationship coverage remains `unknown`. Computed candidates and unestablished incoming targets qualify directional discovery; they do not by themselves mean that recorded edges were omitted.
 - Declare process, filesystem, network, UI, and mutation effects truthfully;
-  enforce the requested target and lifecycle.
+  enforce the requested target and lifecycle. A private temporary copy is a
+  filesystem write even when the selected artifact remains untouched. Derive
+  overlapping tool and provider effect declarations from the same fact.
 - Add limits only for real format, protocol, authority, or measured resource
   constraints. Report pagination, truncation, cancellation, and partial failure.
   An assumed agent budget is insufficient justification for a limit. Name the
   ceiling and its recovery as described in
-  [admission limits and recovery](../design/limits-and-recovery.md).
+  [admission limits and recovery](../reference/limits-and-recovery.md).
 
 ### Compose declared Evidence inputs
 
@@ -262,6 +264,107 @@ activation independently of readiness. An owned registration may be disabled
 or stale; unresolved ownership remains unknown. Consumers use those facts
 instead of reclassifying the raw command.
 
+During review, name the fact or resource whose ownership must agree across
+entry points. Trace where it is established, which consumers rely on it,
+and where fallback, retry, or cleanup can change the outcome. Search for
+other code that derives the same fact or claims the same responsibility.
+Different implementations can still make the same decision independently.
+
+Have the owner carry the result, its source and scope, and any uncertainty.
+Each consumer applies its own policy to those shared facts. Keep proof of
+identity and ownership separate from validity, readiness, and authority to
+act. For an operation that needs fresh evidence, ask the same owner to
+revalidate. For a proposed change, use the owner's rules to evaluate what
+would remain before applying it.
+
+Keep the reader's observation independent of the operation that needs it.
+For example, the Evidence file reader can recognize the shape of an
+analysis snapshot before authenticating it. Import and comparison can
+recommend different next steps while reporting the same observed kind.
+The reader also retains disagreements in the input. If two observed header
+fields conflict, carry that uncertainty forward before projecting the fields
+into a single value. A command launcher likewise needs the parser's token
+boundaries so an option value cannot select a transport mode.
+
+When one operation can show partial results and another requires a complete
+document, share the grammar and give each operation an explicit policy for
+handling diagnostics. Preserve source spelling and offset units alongside any
+normalized lookup value. Use the stored name when a package format requires
+an exact member path. Verify both operations with the same authored inputs and
+independently specified expectations. See [boundary regressions](testing.md#boundary-regressions).
+
+For example, APT one-line sources can spell a suite as `"stable"` and a
+component as `main%2Cextra`. With APT 2.8.4, those words select suite
+`stable` and component `main,extra`. The source reader owns the word
+decoding. Capture retains the authored spelling and uses the effective
+identity to match the observed index. Replay uses that same identity
+when deciding what it can write to a deb822 declaration.
+
+Test an accepted pair and a refusal. The quoted suite and escaped
+component should select the same index as their deb822 equivalents.
+A one-line component written as `"main extra"` should be withheld from
+replay because deb822 would read it as two components. Check the captured
+facts and the emitted or withheld declaration. Pin the reference reader
+version and record which steps ran. The [offline APT reproduction](https://github.com/morluto/rea/issues/12694)
+checked source and index identity without installing or deploying the app.
+
+Keep format recognition, validation, and the operation's decision separate.
+A recognizable PTX header can identify a candidate even when its text is
+invalid or only a prefix was examined. Derive effective fields and completeness
+from the validated extent. Likewise, retain fields for tolerant Desktop Entry
+inspection while carrying group diagnostics to application-ID lookup, where
+an invalid entry cannot establish that the application is hidden.
+
+When Evidence includes a source digest, bind it to the admitted bytes used
+by the parser and any converter. A pathname identifies a selection whose
+contents can change between reads. If a native command needs a file, give it
+the same owned byte snapshot used for the digest. Keep the Evidence subject
+and selected source distinct when they identify different artifacts.
+
+Give each nested parser the admitted extent of its containing record.
+Check a child's declared encoded range against that extent before applying
+its decoding allowance. If the format declares more fields or rows after the
+child, leave room for their minimum required framing. When the range cannot
+fit, report the format failure even if the decoded size would also exceed a
+budget. Keep encoded ranges separate from declared decoded lengths so an
+expansion limit can preserve the source range and any independently readable
+siblings.
+Retain the source offset and the reason when a field is malformed or its
+encoding is unsupported. A stream may need more bytes to complete a frame.
+A completed artifact with the same missing bytes has truncated data. Carry
+that distinction into coverage and preserve any independently observed facts.
+
+When consumers in different runtimes receive raw input independently, reuse
+the same reader where the runtime is available. If separate implementations
+are needed, prefer generating them from one authored set of parsing rules.
+For example, desktop capture and an offline AppImage installer need the same
+rules to locate the executable after an `env` prefix. The installer also needs
+the executable's source span so it can replace that token while preserving the
+rest of the entry. Use shared fixtures with explicit expected results to check
+the common interpretation through both entry points.
+
+Owned provider commands follow the same rule. `providerOutcomeOf` in
+`src/process/ProviderOutcome.ts` reads what the supervisor observed (launch
+refusal, cancellation, deadline, output or memory limit, resource signal, exit
+status with the owner's stop state, or stream failure) together with the
+retained output and whether it was truncated. `classifyProviderOutcome` maps
+that outcome to a typed error once; a provider supplies only its settings,
+recovery text and a dialect for what an exit or launch refusal means.
+`classifyProviderFailure` in `src/providers/classifyProviderFailure.ts` is the
+one entry for a raw failure: typed analysis errors pass through, command
+outcomes go to `classifyProviderOutcome`, selected-file failures go to the
+shared stable-artifact projections, and only what none of them recognises
+reaches the provider's `unclassified` report. A provider supplies a dialect,
+not a classifier. A phase that armed its own deadline throws that deadline's
+timeout where it observes the abort; for a read its signal cancelled, it
+supplies the timeout as the dialect's `interruption`, so classification never
+rereads a cancellation's reason as a timeout. A provider whose cleanup report
+has its own shape supplies `readCleanup` or `commandCleanup`; otherwise the
+unresolved cleanup is attached to the reported failure. The
+`rea/provider-failure-classifier` lint rule keeps new
+`(cause: unknown) => AnalysisError` functions out of `src/` except in that
+owner; existing ones are counted in a baseline that may only shrink.
+
 A completed read can establish byte identity even when decoding or format
 validation fails. State which representation a digest identifies, such as file
 bytes, Fetch response-body bytes, or UTF-8 text. Preserve admitted source values
@@ -286,6 +389,35 @@ corresponding objects.
 Complete traversal or inventory does not make unavailable values equal. A
 partial aggregate fingerprint difference cannot establish modification when
 omissions alone explain it; independently proven differences still survive.
+
+A byte-format parser reports failure with `ParseFailureError` from
+`src/domain/parseFailure.ts`: `malformed`, `truncated`, `unsupported`, or
+`limit`, with the format and, when known, the offset and field. Read bounded
+fields through `BinaryReader` (`src/domain/binaryContainer.ts`), which
+raises that failure instead of a bare `RangeError`. Providers project the
+failure with `parseFailureAnalysisError` rather than their own `instanceof`
+ladder. The producing reader identifies the named limit and effective maximum.
+Use those facts for the public refusal and recovery. When decoding stops before
+the reader can measure the final allowance, report the bound that actually
+stopped it.
+
+For retained managed metadata rows, use `metadataRowCursor` in
+`src/domain/managed/managedMetadataHeaps.ts`. Its column reads use
+`BinaryReader` within the admitted row and preserve managed issue offsets and
+per-row budget accounting.
+
+Do not use `RangeError` as a failure channel: a stack overflow, a host string
+or buffer limit, and an unchecked read past the end of a buffer are all
+`RangeError`s. `hostRangeErrorKind` is the one interpreter of a host
+`RangeError`, and `parseFailureFromCause` admits only a reported parse failure
+as evidence about the input. Readers report bounds failures at the read site;
+host error codes alone cannot distinguish a read from a write or allocation.
+`scripts/verify/architecture-guards.mjs` counts the remaining raw `Buffer` and
+`DataView` reads, plain `Error` throws in parser folders, plain `JSON.parse`
+of parser input, and direct `instanceof RangeError` checks against their
+per-guard baselines in `scripts/verify/baselines/`. A
+file may not exceed its count; after removing copies, run
+`node scripts/verify/architecture-guards.mjs --shrink-baselines`.
 
 Keep format recognition separate from provider admission. A recognizable header
 can supply useful observations while later structure remains unresolved or a
@@ -358,7 +490,9 @@ In multi-stage work, retain each completed, admitted observation before awaiting
 the next stage. Later reads, validation, cancellation, or finalization can fail
 without erasing those facts. Carry them through typed failure outcomes with
 explicit coverage of unperformed work; do not construct a successful result for
-stages that never ran.
+stages that never ran. For concurrent reads, the batch owner settles every
+admitted peer before reporting a failure. Retain completed observations together with each
+failed request's physical, cancellation and cleanup facts.
 
 - Keep target admission, provider readiness, active work, observed process exit,
   and resource release separate. A valid process handle, successful launcher,
@@ -398,12 +532,13 @@ stages that never ran.
   primary failure and let incomplete cleanup retain its own classification.
   Preserve the caller's abort reason as the typed cancellation error's cause,
   including when cancellation is observed only after provider completion.
-  Shared command owners must retain the observed cancellation reason separately
-  from physical failures and cleanup ownership. Carry that fact through failure
-  wrapping so adapters can preserve the exact reason without interpreting it.
-  ZIP member streams retain the exact signal reason; hdiutil wrappers consume
-  the command owner's typed cancellation record and keep physical command
-  failures separate, even if a host error is named `AbortError`.
+  The producing boundary records cancellation separately from physical failures
+  and cleanup ownership. A caller's abort reason is opaque: its value, error
+  type, name or cause chain cannot establish failure origin or cleanup authority.
+  Consumers use the owner's parsed facts. An established command timeout keeps
+  its timeout or refusal policy when preparation records a cancellation.
+  Failure wrapping and operation rebinding preserve these facts and already
+  classified secondary failures.
   Client cancellation alone does not prove native work stopped.
   For atomic publication, document the cancellation cutoff and preserve any
   committed output's publication receipt.
@@ -421,7 +556,9 @@ stages that never ran.
   original failure and completed observations. Later failure composition must
   report only resources whose cleanup remains unresolved. Carry cleanup
   capabilities explicitly in typed outcomes so consumers can bind returned errors
-  to exact owners without reparsing diagnostic cause chains.
+  to exact owners without reparsing diagnostic cause chains. A cleanup-status
+  observer does not replace a callable close capability retained by the caller's
+  scope.
   Bind every caller-visible retry error and aggregate, including an error already
   produced by the provider. An aggregate remains incomplete until all owners it
   reports are released; releasing one child cannot clear another child's status.
@@ -434,7 +571,12 @@ stages that never ran.
   remain attached to their owning envelope while cleanup is pending and after
   confirmed release. CLI adapters should reuse
   [`finishAnalysisCommand`](https://github.com/morluto/rea/blob/main/src/cli/finishAnalysisCommand.ts) where its contract
-  applies rather than duplicate close/finally handling.
+  applies rather than duplicate close/finally handling. It projects
+  [`runOwned`](https://github.com/morluto/rea/blob/main/src/providers/runOwned.ts),
+  which owns this precedence for owned work: a recorded failure stays primary,
+  cancellation before commit keeps the completed value as a partial
+  observation, cancellation after commit keeps the value, and unconfirmed
+  cleanup reports `cleanup_incomplete` while keeping the completed value.
 - Give descriptor-backed reads an owner before opening the file. A rejected
   close must retain the exact handle and preserve any earlier failure.
   Carry [`openRegularFile`](https://github.com/morluto/rea/blob/main/src/filesystem/RegularFile.ts)'s
@@ -474,7 +616,22 @@ through the producing owner and affected CLI/MCP consumers.
 ## Implement and evaluate
 
 Put provider wire-protocol parsing in adapters and shared CLI/MCP workflows in
-the application layer. Reusable format declarations may live in pure domain
+the application layer.
+
+CLI commands register through
+[`cliCommandRegistrations.ts`](https://github.com/morluto/rea/blob/main/src/cli/cliCommandRegistrations.ts):
+add the registrar to its family there and its module to `src/cli.ts`. The build
+records which registrar defines each top-level command, and running a known
+non-built-in command (including single-command discovery with `--help`, `-h`,
+`--schema`, `--llms`, or `--llms-full`) loads only that registrar's module
+graph. Root discovery, unknown command names, built-in requests (`completions`,
+`mcp` CLI subcommands, shell completion, and other built-in flags outside
+standalone `--version` and retired per-command `--mcp`), and a missing or
+unusable recording load the complete CLI. A registrar's command definitions must not depend
+on other registrars, and `tests/boundary/cli/cliLazyRegistration.test.ts` checks
+that each one registers alone with the definitions the complete CLI gives it.
+Modules that every registrar imports set the startup cost of every command; load
+optional heavy services where a command needs them. Reusable format declarations may live in pure domain
 owners: [`peOptionalHeader.ts`](https://github.com/morluto/rea/blob/main/src/domain/peOptionalHeader.ts)
 decodes PE structure, while consumers retain machine admission, directory-address
 interpretation, and file/mapping bounds. Share Evidence provenance, unknown
@@ -548,6 +705,25 @@ Zod's tuple projection omits implicit length bounds and Draft 2020-12 `items`,
 which some clients require even alongside `prefixItems`. Tuples with a rest
 schema also need explicit minimum lengths. Check parser/schema parity for empty,
 short, overlong, and malformed values in both input and output projections.
+
+A CLI command for a tool contract is described by `describeContractCommand` in
+[`contractCliDescription.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCliDescription.ts)
+and rendered for the CLI framework by `registerContractCommand` in
+[`contractCommand.ts`](https://github.com/morluto/rea/blob/main/src/cli/contractCommand.ts).
+A contract with `cli: true` names its own command, the kebab-case spelling of
+its name; the CLI command inventory in `catalogIdentity.ts` is derived from
+those declarations, and the projection omits `command` for it. `CLI_COMMANDS`
+holds only the commands no contract names.
+The projection names only what the CLI spells differently: positionals,
+caller-relative path fields, option renames and short flags, CLI help wording,
+omitted optional fields with a reason, Evidence delivery options, and whether the contract's cross-field
+rules refuse at argv parsing or at the service's contract parse. A delivery
+`view` is JSON text decoded when the command runs; the contract input then
+admits the view with its `detail` before any target is opened, including a
+`detail`-discriminated union input. Field schemas and decimal argv tokens are
+derived, and
+`tests/boundary/cli/cliContractCommandParity.test.ts` checks that each projected
+command admits what its contract admits.
 
 CLI translations must reuse the canonical semantic fields, enum membership and
 list bounds. Document transport differences such as relative path spelling and

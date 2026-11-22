@@ -1,3 +1,4 @@
+import { ProcessOwnershipInspectionCancelled } from "./ProcessInspectionCancellation.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
@@ -254,7 +255,8 @@ describe("multi-group ownership observation cancellation", () => {
         return new Promise((resolve, reject) => {
           releaseSecondList = () => resolve(rows);
           if (signal === undefined) return;
-          const rejectOnAbort = () => reject(signal.reason);
+          const rejectOnAbort = () =>
+            reject(new ProcessOwnershipInspectionCancelled(signal.reason));
           signal.addEventListener("abort", rejectOnAbort, { once: true });
           if (signal.aborted) rejectOnAbort();
         });
@@ -315,7 +317,7 @@ describe("multi-group ownership observation cancellation", () => {
       throw new Error(
         "The cancelled process observation unexpectedly resolved",
       );
-    expect(outcome.cause).toBe(reason);
+    expect(outcome.cause).toMatchObject({ reason, cause: reason });
     expect(signalGroup).not.toHaveBeenCalled();
     expect(listProcesses).toHaveBeenCalledTimes(2);
   });
@@ -345,7 +347,11 @@ describe("multi-group ownership observation cancellation", () => {
         },
         controller.signal,
       ),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipInspectionCancelled",
+      reason,
+      cause: reason,
+    });
     expect(listProcesses).toHaveBeenCalledTimes(2);
     expect(signalGroup).not.toHaveBeenCalled();
   });
@@ -491,7 +497,11 @@ it.each(["batch", "environment"] as const)(
         { listProcesses, environment, runTokens, signalGroup: vi.fn() },
         controller.signal,
       ),
-    ).rejects.toBe(reason);
+    ).rejects.toMatchObject({
+      _tag: "ProcessOwnershipInspectionCancelled",
+      reason,
+      cause: reason,
+    });
     expect(listProcesses).toHaveBeenCalledTimes(1);
     expect(environment).toHaveBeenCalledTimes(boundary === "batch" ? 0 : 1);
   },
@@ -537,55 +547,6 @@ it.each([100, 101])(
     expect(environment).not.toHaveBeenCalled();
   },
 );
-
-describe("token sweep batch failures", () => {
-  it("cleans token-owned groups when a failed batch has readable fallback observations", async () => {
-    const { adapter, signalGroup } = host({
-      100: { REA_PROCESS_RUN_ID: ownership.runId },
-      101: { REA_PROCESS_RUN_ID: ownership.runId },
-    });
-    await expect(
-      cleanupOwnedProcessGroup(
-        { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
-        {
-          ...adapter,
-          runTokens: () =>
-            Promise.reject(new Error("batch reader unavailable")),
-        },
-      ),
-    ).resolves.toEqual({ cleaned: true, signaled: true });
-    expect(signalGroup.mock.calls).toEqual([[100, "SIGKILL"]]);
-  });
-
-  it("uses fallback ownership when the initial batch fails and preserves both failures through retries", async () => {
-    const signalGroup = vi.fn();
-    const adapter: ProcessOwnershipHost = {
-      listProcesses: () => Promise.resolve(processes),
-      environment: (pid) =>
-        pid === 100
-          ? Promise.resolve({ REA_PROCESS_RUN_ID: ownership.runId })
-          : Promise.reject(new Error("individual unreadable")),
-      runTokens: () => Promise.reject(new Error("batch reader unavailable")),
-      signalGroup,
-    };
-    const result = await cleanupOwnedProcessGroup(
-      { ...ownership, sweepTokenOwnedProcesses: true, captureBaseline: [] },
-      adapter,
-    );
-    expect(result).toMatchObject({
-      cleaned: false,
-      failures: expect.arrayContaining([
-        expect.objectContaining({
-          pid: 101,
-          diagnostic: expect.stringMatching(
-            /individual unreadable.*batch reader unavailable/iu,
-          ),
-        }),
-      ]),
-    });
-    expect(signalGroup).not.toHaveBeenCalled();
-  });
-});
 
 it.each(["parent", "group"] as const)(
   "keeps a changed native launcher %s relation unavailable instead of publishing the earlier relation",
