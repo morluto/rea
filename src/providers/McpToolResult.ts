@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { safeParseJson } from "../domain/safeJson.js";
 
@@ -44,5 +44,5 @@ export const decodeMcpJsonText = (
   if (!parsed.ok) return err({ reason: "malformed_json", cause: parsed.cause });
   // A parsed JSON value must satisfy the same admission rules as structured
   // evidence; a validation failure is not a reason to treat it as text.
-  return ok(jsonValueSchema.parse(parsed.value));
+  return ok(ownedJsonValueSchema.parse(parsed.value));
 };

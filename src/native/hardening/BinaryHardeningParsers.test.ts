@@ -1230,18 +1230,20 @@ it("cites a non-ASCII import name by its source bytes", () => {
   expect(bytes.subarray(at, at + 7).toString("latin1")).toBe(name);
 });
 
-it("treats the __chk_fail handler import as a FORTIFY sign", () => {
-  const bytes = elfHardeningFixture({
-    fortify: true,
-    fortifyName: "__chk_fail",
-  });
-  const image = readElfHardening(bytes);
-  const row = findRow(image.rows, "fortify");
-  expect(row).toMatchObject({ state: "enabled", location: { bytes: 10 } });
-  expect(row.basis).toContain("__chk_fail");
-  const at = row.location?.offset ?? 0;
-  expect(bytes.subarray(at, at + 10).toString("latin1")).toBe("__chk_fail");
-});
+it.each(["__chk", "__chk_fail"])(
+  "recognizes the %s import as a FORTIFY sign",
+  (name) => {
+    const bytes = elfHardeningFixture({ fortify: true, fortifyName: name });
+    const row = findRow(readElfHardening(bytes).rows, "fortify");
+    expect(row).toMatchObject({
+      state: "enabled",
+      location: { bytes: name.length },
+    });
+    expect(row.basis).toContain(name);
+    const at = row.location?.offset ?? 0;
+    expect(bytes.subarray(at, at + name.length).toString("latin1")).toBe(name);
+  },
+);
 
 it("keeps malformed name offsets malformed in both formats", async () => {
   await expect(

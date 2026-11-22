@@ -1,3 +1,4 @@
+import { isManagedUserStringLoad } from "../domain/managed/managedMemberInstructionFacts.js";
 import {
   admitManagedProjection,
   managedDecodeBudget,
@@ -365,7 +366,8 @@ export const inspectManagedMembersBytes = (
     // retain their cores; only missing edge targets need the recovery pass.
     if (selected !== null)
       for (const { tokenInstructions } of methods.methods)
-        for (const { reference } of tokenInstructions) {
+        for (const { opcode, reference } of tokenInstructions) {
+          if (isManagedUserStringLoad(opcode)) continue;
           if (needsCore(reference)) referenced.set(reference.token, reference);
           else if (
             reference.table === 0x2b &&
@@ -433,14 +435,15 @@ export const inspectManagedMembersBytes = (
     );
     appendManagedParseIssues(issues, targets.issues);
     const incompleteMembers =
-      [...fields.fields, ...memberRefs.refs].some(
+      fields.fields.some(
+        (member) => member.signature.parse_status !== "decoded",
+      ) ||
+      memberRefs.refs.some(
         (member) => member.signature.parse_status !== "decoded",
       ) ||
       resolvedMethods.some(
-        (method) => method.signature.parse_status !== "decoded",
-      ) ||
-      resolvedMethods.some(
         (method) =>
+          method.signature.parse_status !== "decoded" ||
           method.body.status === "partial" ||
           method.body.status === "malformed",
       );

@@ -7,7 +7,7 @@ import {
 import { HOST_PLATFORM } from "../platform/HostPlatform.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -245,81 +245,23 @@ const pathsOverlap = (first: string, second: string): boolean => {
 
 const COPY_BUFFER_BYTES = 256 * 1024;
 
-const copyProjectWithScope = async (
-  source: string,
-  destinationRoot: string,
-  projectName: string,
-  resources: ArtifactResourceScope,
-  options: {
-    readonly sourcePath: string;
-    readonly expectedSha256: string | undefined;
-    readonly signal: AbortSignal | undefined;
-  },
-): Promise<void> => {
-  const { sourcePath, expectedSha256, signal } = options;
-  const hash = expectedSha256 === undefined ? undefined : createHash("sha256");
-  const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
-  await visitProject(
-    source,
-    projectName,
-    async (path, directory) => {
-      if (hash !== undefined)
-        hash.update(
-          JSON.stringify([
-            path.split(sep).join("/"),
-            directory ? "directory" : "file",
-          ]) + "\n",
-        );
-      const destination = join(destinationRoot, path);
-      if (directory) {
-        await mkdir(destination, { mode: 0o700 });
-        assertArtifactReadActive(signal);
-        return;
-      }
-      await copyGhidraRegularFile(join(source, path), destination, resources, {
-        signal,
-        buffer,
-        ...(hash === undefined
-          ? {}
-          : {
-              hash,
-              onOpenedSource: (initialSize) => {
-                hash.update(`${String(initialSize)}\n`);
-              },
-            }),
-      });
-      assertArtifactReadActive(signal);
-    },
-    signal,
-  );
-  if (hash !== undefined && hash.digest("hex") !== expectedSha256)
-    // A digest mismatch shows only that the project differs from its
-    // committed profile, not when it changed relative to this copy.
-    throw new AnalysisArtifactChangedError(
-      "open_binary",
-      sourcePath,
-      GHIDRA_PROJECT_PROFILE_MISMATCH,
-    );
-};
-
-/** Never open the caller project itself. Copy only the selected pair, then revalidate its committed content. */
+/** Copy the selected pair through owned descriptors and match its committed content. */
 export const copyExistingGhidraProject = async (
   sourcePath: string,
   destinationRoot: string,
-  options: {
+  {
+    signal,
+    projectName,
+    expectedSha256,
+    resources,
+  }: {
     readonly signal?: AbortSignal | undefined;
-    readonly projectName?: string | undefined;
-    readonly expectedSha256?: string | undefined;
-    readonly resources?: ArtifactResourceScope | undefined;
-  } = {},
+    readonly projectName: string;
+    readonly expectedSha256: string;
+    readonly resources: ArtifactResourceScope;
+  },
 ): Promise<void> => {
   return projectFileOperation(sourcePath, "open_binary", async () => {
-    const {
-      signal,
-      projectName = "rea-project",
-      expectedSha256,
-      resources,
-    } = options;
     assertArtifactReadActive(signal);
     const source = await realpath(sourcePath).catch(absentProjectEntry);
     const runtime =
@@ -339,39 +281,45 @@ export const copyExistingGhidraProject = async (
         `Existing Ghidra project directory does not exist: ${sourcePath}`,
       );
     await validateProject(source, projectName);
-    if (expectedSha256 !== undefined && resources === undefined)
-      throw selectionFailure(
-        "Existing project verification requires an owned resource scope.",
-      );
-    if (resources !== undefined) {
-      await copyProjectWithScope(
-        source,
-        destinationRoot,
-        projectName,
-        resources,
-        {
-          sourcePath,
-          expectedSha256,
-          signal,
-        },
-      );
-      return;
-    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
     await visitProject(
       source,
       projectName,
       async (path, directory) => {
+        hash.update(
+          JSON.stringify([
+            path.split(sep).join("/"),
+            directory ? "directory" : "file",
+          ]) + "\n",
+        );
         const destination = join(destinationRoot, path);
         if (directory) await mkdir(destination, { mode: 0o700 });
         else
-          await cp(join(source, path), destination, {
-            dereference: true,
-            errorOnExist: true,
-            force: false,
-          });
+          await copyGhidraRegularFile(
+            join(source, path),
+            destination,
+            resources,
+            {
+              signal,
+              buffer,
+              hash,
+              onOpenedSource: (initialSize) => {
+                hash.update(`${String(initialSize)}\n`);
+              },
+            },
+          );
         assertArtifactReadActive(signal);
       },
       signal,
     );
+    if (hash.digest("hex") !== expectedSha256)
+      // A digest mismatch shows only that the project differs from its
+      // committed profile, not when it changed relative to this copy.
+      throw new AnalysisArtifactChangedError(
+        "open_binary",
+        sourcePath,
+        GHIDRA_PROJECT_PROFILE_MISMATCH,
+      );
   });
 };

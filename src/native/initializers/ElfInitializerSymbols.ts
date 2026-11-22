@@ -251,15 +251,14 @@ export const loadElfSymbolIndex = (
 ): ElfSymbolIndex => {
   const tables = new Map<number, readonly ElfInitializerSymbol[]>();
   const extendedTables = new ElfSymbolSectionIndexTables(sections);
-  type RankedName = {
-    readonly name: InitializerSymbolName;
-    readonly func: boolean;
-  };
-  const ranked = new Map<bigint, RankedName>();
-  const inSection = new Map<string, RankedName>();
+  const defined = new Map<bigint, InitializerSymbolName>();
+  const definedFunc = new Set<bigint>();
+  const definedInSection = new Map<string, InitializerSymbolName>();
+  const inSectionFunc = new Set<string>();
   let truncated = false;
   const rank = <K>(
-    map: Map<K, RankedName>,
+    map: Map<K, InitializerSymbolName>,
+    funcs: Set<K>,
     key: K,
     name: InitializerSymbolName,
     func: boolean,
@@ -268,10 +267,13 @@ export const loadElfSymbolIndex = (
     if (
       previous === undefined ||
       (typeof name === "string" &&
-        (previous.name === withheldInitializerSymbolName ||
-          (!previous.func && func)))
-    )
-      map.set(key, { name, func });
+        (previous === withheldInitializerSymbolName ||
+          (!funcs.has(key) && func)))
+    ) {
+      map.set(key, name);
+      if (func) funcs.add(key);
+      else funcs.delete(key);
+    }
   };
   const consider = (symbol: ElfInitializerSymbol): void => {
     if (
@@ -287,10 +289,11 @@ export const loadElfSymbolIndex = (
     )
       return;
     const func = symbol.type === STT_FUNC;
-    rank(ranked, symbol.value, symbol.name, func);
+    rank(defined, definedFunc, symbol.value, symbol.name, func);
     if (symbol.section.kind === "section")
       rank(
-        inSection,
+        definedInSection,
+        inSectionFunc,
         sectionSymbolKey(symbol.section.index, symbol.value),
         symbol.name,
         func,
@@ -336,10 +339,8 @@ export const loadElfSymbolIndex = (
     for (const symbol of table.symbols) consider(symbol);
   });
   return {
-    defined: new Map([...ranked].map(([address, row]) => [address, row.name])),
-    definedInSection: new Map(
-      [...inSection].map(([key, row]) => [key, row.name]),
-    ),
+    defined,
+    definedInSection,
     tables,
     incomplete: truncated || unreadable,
   };

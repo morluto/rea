@@ -90,8 +90,20 @@ export const FAKE_HOPPER_REPLIES = Object.freeze({
     native_value_flow: null,
     limitations: [],
   }),
-  search_strings: () => [],
-  search_procedures: () => [],
+  search_strings: (params = {}) =>
+    typeof params.pattern === "string" &&
+    (params.case_sensitive === true
+      ? "fixture".includes(params.pattern)
+      : "fixture".includes(params.pattern.toLowerCase()))
+      ? [{ address: "0x1000", value: "fixture" }]
+      : [],
+  search_procedures: (params = {}) =>
+    typeof params.pattern === "string" &&
+    (params.case_sensitive === true
+      ? "fixture".includes(params.pattern)
+      : "fixture".includes(params.pattern.toLowerCase()))
+      ? [{ address: "0x1000", value: "fixture" }]
+      : [],
   xrefs: () => ["0x1000"],
   resolve_containing_procedure: (params = {}) => ({
     query_address:

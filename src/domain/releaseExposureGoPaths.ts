@@ -157,11 +157,24 @@ const linkerPaths = (
   return { paths, searchPaths, remaining };
 };
 
-/**
- * `-trimpath` takes `prefix=replacement` rewrites separated by `;`, so its
- * rooted value is read by `flagPaths` with that structure kept.
- */
-const GO_PATH_LIST_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+/** Rewrite rules consumed by go tool compile and asm. */
+const GO_TRIMPATH_FLAG = /^-{1,2}trimpath(?:=|\s+|$)/u;
+
+/** Match Go's objabi.ApplyRewrites. An empty prefix can never match a path. */
+const trimpathPaths = (value: string): string[] => {
+  const paths: string[] = [];
+  for (const rewrite of value.split(";")) {
+    const arrow = rewrite.lastIndexOf("=>");
+    const prefix = arrow < 0 ? rewrite : rewrite.slice(0, arrow);
+    if (prefix.length === 0) continue;
+    paths.push(prefix);
+    if (arrow < 0) continue;
+    const replacement = filesystemPath(rewrite.slice(arrow + 2));
+    if (replacement !== null) paths.push(replacement);
+  }
+  return paths;
+};
+
 /**
  * `go tool link -r` sets the dynamic linker search path, `dir1:dir2:...`, so
  * it is read entry by entry like a forwarded `-rpath`.
@@ -272,25 +285,18 @@ const goToolOperandPaths = (
   argument: string,
   pathFlag: RegExp | undefined,
   format: NativeImageFormat,
-): { paths: string[]; remaining: string[] } => {
+): string[] => {
   if (
     argument.length === 0 ||
     (pathFlag === GO_LINKER_PATH_FLAG &&
       /^-{1,2}libgcc(?:=|$)/u.test(flag) &&
       argument === "none")
   )
-    return { paths: [], remaining: [] };
-  if (GO_PATH_LIST_FLAG.test(flag))
-    return {
-      paths: filesystemPath(argument) === null ? [argument] : [],
-      remaining: [argument],
-    };
-  return {
-    paths: GO_LINKER_SEARCH_LIST_FLAG.test(flag)
-      ? searchListEntries(argument, format)
-      : [argument],
-    remaining: [],
-  };
+    return [];
+  if (GO_TRIMPATH_FLAG.test(flag)) return trimpathPaths(argument);
+  return GO_LINKER_SEARCH_LIST_FLAG.test(flag)
+    ? searchListEntries(argument, format)
+    : [argument];
 };
 
 /**
@@ -321,9 +327,7 @@ const goSettingPaths = (
         attached.length === 0 && !flag.endsWith("=") && next !== undefined;
       const argument = fromNext ? next : attached;
       if (fromNext) index += 1;
-      const operand = goToolOperandPaths(flag, argument, pathFlag, format);
-      paths.push(...operand.paths);
-      remaining.push(...operand.remaining);
+      paths.push(...goToolOperandPaths(flag, argument, pathFlag, format));
       continue;
     }
     const externalFlags = GO_EXTERNAL_LINKER_FLAGS.exec(flag);

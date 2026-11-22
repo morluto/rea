@@ -628,8 +628,10 @@ Every capture requires `truncation_details`, with separate accounting for:
   remain available and issued reads settle before final coverage is returned.
 
 The aggregate `truncated` flag summarizes these observations. Comparisons retain
-results for unaffected dimensions and mark affected dimensions unknown; an
-incomplete capture cannot locate the first divergence across all dimensions.
+results for unaffected dimensions. If the hash budget omits a file's digest,
+different retained digests for another path still mark the filesystem dimension
+`changed`. Incomplete captures leave the first divergence across all dimensions
+unknown.
 Trace assertions use coverage for the sources they select, so an assertion
 about complete raw terminal output need not fail because rendered snapshots
 were omitted. A trace difference applies to the dimensions identified by its
