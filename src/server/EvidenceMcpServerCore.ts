@@ -57,6 +57,7 @@ import { createEvidence } from "../domain/evidence.js";
 import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
+  projectedErrorEncoding,
   type ToolResultDelivery,
 } from "./ToolResultDelivery.js";
 import { toolReturnsTargetContent } from "../contracts/toolEffects.js";
@@ -905,12 +906,22 @@ class ErrorEvidenceTransport implements Transport {
     const targetContent =
       carriesTargetContentMarker(message.result) ||
       (tool !== undefined && toolReturnsTargetContent(tool));
+    // Reuse ToolResultDelivery's own encoding when budget and provenance match
+    // instead of re-validating and re-serializing every structured tool error.
+    const preencoded = projectedErrorEncoding(message.result);
+    const matchesPreencoded =
+      preencoded !== undefined &&
+      preencoded.budgetBytes === budget &&
+      preencoded.targetContent === targetContent;
+    if (matchesPreencoded && preencoded.encoded.ok) return message;
     // SDK validation failures have no structured carrier. Size their existing
     // text-only result without serializing the complete JSON-RPC message.
     const isStructured = message.result.structuredContent !== undefined;
-    const structured = isStructured
-      ? ownedJsonObjectSchema.parse(message.result.structuredContent)
-      : undefined;
+    const structured = matchesPreencoded
+      ? preencoded.structured
+      : isStructured
+        ? ownedJsonObjectSchema.parse(message.result.structuredContent)
+        : undefined;
     const sdkResultWithMarker =
       !isStructured &&
       targetContent &&
@@ -926,8 +937,9 @@ class ErrorEvidenceTransport implements Transport {
     const sdkDiagnostic = !isStructured
       ? message.result.content.find((item) => item.type === "text")?.text
       : undefined;
-    let encoded =
-      structured !== undefined
+    let encoded = matchesPreencoded
+      ? preencoded.encoded
+      : structured !== undefined
         ? encodeToolResult(structured, budget, "error-text", targetContent)
         : measureMcpResultWithinBudget(sdkResultWithMarker, budget);
     const normalized = encoded.ok
