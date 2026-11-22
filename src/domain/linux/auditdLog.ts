@@ -148,6 +148,8 @@ class AuditdLogScanner {
   readonly #malformed: AuditRecordDiagnostic[] = [];
   #outOfOrderCount = 0;
   #duplicateCount = 0;
+  /** Every retained event seen out of sequence, not just the sampled ones. */
+  #interleavedEventCount = 0;
   /** Records past the retained window, whose identity is not joined. */
   #skippedRecordCount = 0;
   /** Lexicographically ordered event identity; a smaller one is out of order. */
@@ -231,9 +233,7 @@ class AuditdLogScanner {
         ),
         out_of_order_record_count: this.#outOfOrderCount,
         duplicate_record_count: this.#duplicateCount,
-        interleaved_event_count: this.#sampleOrder.filter(
-          (key) => this.#events.get(key)!.interleaved,
-        ).length,
+        interleaved_event_count: this.#interleavedEventCount,
         events,
         omitted_events:
           this.#windowEventCount + this.#beyondWindowEventCount - events.length,
@@ -331,8 +331,10 @@ class AuditdLogScanner {
       return;
     }
 
-    if (existing !== undefined && this.#lastEventKey !== key)
+    if (existing !== undefined && this.#lastEventKey !== key) {
+      if (!existing.interleaved) this.#interleavedEventCount += 1;
       existing.interleaved = true;
+    }
     const event =
       existing ??
       ({

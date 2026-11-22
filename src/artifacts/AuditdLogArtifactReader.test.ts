@@ -153,6 +153,23 @@ it("reports interleaved and out-of-order records instead of reordering them", as
   expect(metadata.out_of_order_record_count).toBe(1);
 });
 
+it("counts an interleaved event whose later record is past the display sample", async () => {
+  const lines = Array.from({ length: 32 }, (_, index) =>
+    record("SYSCALL", 1700000000, 100, index + 1, "success=yes"),
+  );
+  lines.push(
+    record("SYSCALL", 1700000000, 200, 40, "success=yes"),
+    record("SYSCALL", 1700000000, 300, 41, "success=yes"),
+    record("EXECVE", 1700000000, 200, 40, "argc=1"),
+  );
+  const metadata = await metadataOf(lines.join("\n"));
+  expect(metadata.event_count).toBe(34);
+  expect(metadata.events).toHaveLength(32);
+  expect(metadata.omitted_events).toBe(2);
+  expect(metadata.events.some((event) => event.interleaved)).toBe(false);
+  expect(metadata.interleaved_event_count).toBe(1);
+});
+
 it("keeps malformed lines as diagnostics without dropping valid events", async () => {
   const metadata = await metadataOf(
     [
