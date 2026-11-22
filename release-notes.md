@@ -34,6 +34,7 @@
 * **artifacts:** keep a ZIP inventory when one member uses an unsupported compression method ([#13026](https://github.com/morluto/rea/issues/13026)) ([f548a62](https://github.com/morluto/rea/commit/f548a62a4f0c6f98f9624f529d6998305139117d))
 * **asar:** preserve lazy listing configuration errors ([#12854](https://github.com/morluto/rea/issues/12854)) ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
 * **asar:** preserve typed inventory configuration errors ([aa5d1a8](https://github.com/morluto/rea/commit/aa5d1a82815d4e446a975c9d43c1d653a5971474))
+* **audit:** preserve non-ASCII whitespace in Go build paths ([#13340](https://github.com/morluto/rea/issues/13340)) ([2691758](https://github.com/morluto/rea/commit/26917581d63ba53345ef70fe02cdc14486b2888a))
 * **binary:** clear snapshot cache when a failed switch cannot restore ([667a005](https://github.com/morluto/rea/commit/667a0054d63a068a32b7028de237d598241ece5b))
 * **binary:** keep an imported snapshot when the first open fails ([a963184](https://github.com/morluto/rea/commit/a9631842825574c025fa4482affb79f20336cc8c))
 * **browser:** bound mitmproxy replies by the inherited file limit ([465ae4d](https://github.com/morluto/rea/commit/465ae4d1d5ddbfb72b21f099d50495b174b52ee5))
