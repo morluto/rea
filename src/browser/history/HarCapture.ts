@@ -194,7 +194,6 @@ const projectHar = (
       redactions: [],
     };
   }
-  const redact = true;
   const redactor = new CaptureRedaction(
     sensitiveValues,
     scope === "entry" ? value : undefined,
@@ -202,7 +201,7 @@ const projectHar = (
   const numeric_literals: Projection["numeric_literals"] = [];
   const binary_fields: Projection["binary_fields"] = [];
   const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
-    const number = redactor.number(item, pointer, redact);
+    const number = redactor.number(item, pointer);
     if (number === null) return null;
     numeric_literals.push({
       pointer,
@@ -275,15 +274,13 @@ const projectHar = (
           return null;
         }
       }
-      return redact
-        ? redactor.text(
-            item,
-            pointer,
-            scope === "entry"
-              ? redactor.harTransportUrl(pointer, parent)
-              : undefined,
-          )
-        : item;
+      return redactor.text(
+        item,
+        pointer,
+        scope === "entry"
+          ? redactor.harTransportUrl(pointer, parent)
+          : undefined,
+      );
     }
     if (item === null || typeof item === "boolean") return item;
     if (Array.isArray(item))
@@ -291,7 +288,7 @@ const projectHar = (
         visit(child, capturePointer(pointer, String(index)), depth + 1),
       );
     if (captureObject(item)) {
-      const checkSensitive = redact && sensitiveValues.length > 0;
+      const checkSensitive = sensitiveValues.length > 0;
       const out: Record<string, JsonValue> = {};
       for (const [key, child] of Object.entries(item)) {
         if (
