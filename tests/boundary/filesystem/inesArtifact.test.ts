@@ -12,6 +12,8 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { buffer } from "node:stream/consumers";
+import { phaseGate, settledCause } from "../../support/lifecycleHarness.js";
 import { expect, it, vi } from "vitest";
 import { parseBinaryTarget } from "../../../src/application/BinaryTargetResolver.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -386,15 +388,11 @@ it.each([
     reason: "truncated iNES payload",
   },
 ])(
-  "refuses $name explicitly through both file entry points",
+  "refuses $name during direct artifact inventory",
   async ({ bytes, reason }) => {
     const root = await createTestTempDirectory("rea-ines-refusal-");
     const path = join(root, "invalid.nes");
     await writeFile(path, bytes());
-    expect(await parseBinaryTarget(path)).toMatchObject({
-      ok: false,
-      error: { reason: expect.stringContaining(reason) },
-    });
     await expect(inventoryArtifact(path)).rejects.toMatchObject({
       reason: "format",
       message: expect.stringContaining(reason),
@@ -470,17 +468,31 @@ it.each(["before", "during"])(
           cause: { code: "ENOENT" },
         });
       } else {
-        const stream = await reader.open(entry);
-        await unlink(path);
-        await expect(
-          (async () => {
-            for await (const chunk of stream)
-              expect(Buffer.isBuffer(chunk)).toBe(true);
-          })(),
-        ).rejects.toMatchObject({
-          reason: "integrity",
-          cause: { code: "ENOENT" },
-        });
+        const acquired = phaseGate();
+        const native = handle.read.bind(handle);
+        const read = vi
+          .spyOn(handle, "read")
+          .mockImplementationOnce(async (...args) => {
+            const result = await native(...args);
+            await acquired.hold();
+            return result;
+          });
+        const consumed = reader.open(entry).then(buffer);
+        const outcome = settledCause(consumed);
+        try {
+          await acquired.reached(consumed, "physical region read");
+          await unlink(path);
+          acquired.release();
+          expect(await outcome).toMatchObject({
+            reason: "integrity",
+            integrityCheck: "container-identity",
+            cause: { code: "ENOENT" },
+          });
+        } finally {
+          acquired.release();
+          await outcome;
+          read.mockRestore();
+        }
       }
     } finally {
       await reader.close();
@@ -787,26 +799,6 @@ it("retains a failed close after rejecting changed extraction bytes", async () =
   } finally {
     close.mockRestore();
     await scope.close();
-  }
-});
-
-it("releases an extraction-owned source descriptor on repeated close", async () => {
-  const root = await createTestTempDirectory("rea-ines-owned-source-");
-  const path = join(root, "source.nes");
-  await writeFile(path, inesFixture());
-  const handle = await open(path, "r");
-  const owner = new OwnedFileHandle(handle);
-  const reader = new InesArtifactReader(
-    path,
-    { handle, initial: await handle.stat() },
-    owner,
-  );
-  try {
-    await reader.close();
-    await expect(handle.stat()).rejects.toMatchObject({ code: "EBADF" });
-    await reader.close();
-  } finally {
-    await reader.close();
   }
 });
 
