@@ -4,6 +4,7 @@ import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 
 import {
+  ArtifactFileFailureGroup,
   ArtifactReaderFailure,
   type ArtifactResourceScope,
   artifactPrimaryCleanupLeases,
@@ -127,7 +128,7 @@ const mergeCatalogFailures = (
             ...siblingLeases.flatMap((leases) => leases ?? []),
           ]),
         ];
-  return ArtifactReaderFailure.withCleanup(
+  return new ArtifactFileFailureGroup(
     primary,
     {
       reason: siblingCleanups.map(({ cleanup }) => cleanup!.reason).join("; "),
@@ -137,7 +138,6 @@ const mergeCatalogFailures = (
         ),
       ],
     },
-    undefined,
     cleanupLeases,
   );
 };

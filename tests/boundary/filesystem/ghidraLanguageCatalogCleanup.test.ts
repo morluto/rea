@@ -7,6 +7,9 @@ import {
   ArtifactResourceScope,
 } from "../../../src/resources/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
+import { ghidraFileDialect } from "../../../src/ghidra/GhidraFileArtifacts.js";
+import { classifyProviderFailure } from "../../../src/providers/classifyProviderFailure.js";
 import { readGhidraLanguageCatalog } from "../../../src/ghidra/GhidraLanguageCatalog.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -16,6 +19,7 @@ interface FileControl {
   synchronizedClose: boolean;
   invalidateOnFailure: boolean;
   readFails: boolean;
+  openDenied: boolean;
   invalidated: boolean;
   closeCalls: number;
   opens: number;
@@ -52,8 +56,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
+      const path = String(args[0]);
+      const control = controls.get(basename(path));
+      if (control?.openDenied) {
+        // Guarantee the other worker has reached its real descriptor close.
+        await barrier.arrive();
+        throw Object.assign(new Error("definition open denied"), {
+          code: "EACCES",
+          path,
+        });
+      }
       const real = await actual.open(...args);
-      const control = controls.get(basename(String(args[0])));
       if (control === undefined) return real;
       control.opens += 1;
       let released = false;
@@ -96,6 +109,7 @@ const control = (name: string, overrides: Partial<FileControl> = {}) => {
     synchronizedClose: false,
     invalidateOnFailure: false,
     readFails: false,
+    openDenied: false,
     invalidated: false,
     closeCalls: 0,
     opens: 0,
@@ -313,4 +327,50 @@ it("merges sibling cleanup observations and leases across concurrent definition 
   expect(second.closeCalls).toBe(2);
   expect(resources.hasPending).toBe(false);
   expect(await readGhidraLanguageCatalog(root, resources)).toHaveLength(10);
+});
+
+it("reports the denied definition as primary while owning a sibling close retry", async () => {
+  const resources = scope();
+  const root = await installation("denied");
+  const siblingDirectory = join(root, "Ghidra/Processors/stuck/data/languages");
+  await mkdir(siblingDirectory, { recursive: true });
+  await writeFile(
+    join(siblingDirectory, "stuck.ldefs"),
+    "<language_definitions/>",
+  );
+  control("denied.ldefs", { openDenied: true });
+  const stuck = control("stuck.ldefs", {
+    closeFails: true,
+    synchronizedClose: true,
+  });
+  barrier.reset(2);
+
+  const cause = await readGhidraLanguageCatalog(root, resources).catch(
+    (cause: unknown) => cause,
+  );
+  const failure = classifyProviderFailure(
+    cause,
+    ghidraFileDialect("resolve_analysis_profile"),
+  );
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: [join(siblingDirectory, "stuck.ldefs")],
+      diagnostics: {
+        primary_error: {
+          code: "access_denied",
+          details: {
+            path: join(
+              root,
+              "Ghidra/Processors/denied/data/languages/denied.ldefs",
+            ),
+          },
+        },
+      },
+    },
+  });
+  stuck.closeFails = false;
+  await resources.close();
+  expect(stuck.closeCalls).toBe(2);
+  expect(failure.cleanupIncomplete).toBe(false);
 });

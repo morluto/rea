@@ -15,6 +15,7 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  detachedEvidenceSchema,
   evidenceFileTarget,
   evidenceSchema,
   immutableEvidence,
@@ -63,6 +64,11 @@ export const evidenceBundleSchema = z.strictObject({
   captures: z.array(captureManifestSchema),
   unknowns: z.array(residualUnknownSchema),
   records: z.array(evidenceSchema),
+});
+
+/** Strict bundle parser that detaches sealed JSON payloads for mutable caller exports. */
+export const detachedEvidenceBundleSchema = evidenceBundleSchema.extend({
+  records: z.array(detachedEvidenceSchema),
 });
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
@@ -714,13 +720,19 @@ const rejectDependencyCycles = (
   }
 };
 
-/** Encode a validated bundle as byte-stable RFC 8785 canonical JSON. */
-export const serializeEvidenceBundle = (bundle: EvidenceBundle): string => {
-  const serialized = canonicalize(parseEvidenceBundle(bundle));
+/** Encode an already-authenticated bundle as byte-stable RFC 8785 canonical JSON. */
+export const serializeValidatedEvidenceBundle = (
+  bundle: EvidenceBundle,
+): string => {
+  const serialized = canonicalize(bundle);
   if (serialized === undefined)
     throw new TypeError("Evidence bundle canonicalization failed");
   return serialized;
 };
+
+/** Encode a validated bundle as byte-stable RFC 8785 canonical JSON. */
+export const serializeEvidenceBundle = (bundle: EvidenceBundle): string =>
+  serializeValidatedEvidenceBundle(parseEvidenceBundle(bundle));
 
 const uniqueSorted = <Value>(values: readonly Value[]): Value[] => {
   const unique = new Map<string, Value>();

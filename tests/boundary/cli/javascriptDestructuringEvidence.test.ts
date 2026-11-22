@@ -43,6 +43,16 @@ const abruptObjectPatternSource = `
   box.sibling[0] = "later";
 `;
 
+const nullishReceiverSource = `
+  const record = { stop: null, value: "present" };
+  const { value: reachedBeforeNullish, stop: {}, value: unreachedAfterNullish } = record;
+`;
+
+const nullishDefaultSource = `
+  const record = { stop: undefined, value: "present" };
+  const { value: reachedBeforeDefault, stop: {} = null, value: unreachedAfterDefault } = record;
+`;
+
 const firstDefaultSource = `
   const defined = [0, ["one"]];
   const [used = (defined[1][0] = "dormant"), [inactiveDefaultElement]] = defined;
@@ -100,6 +110,8 @@ const additionalFixtures = [
   ["iterator-close.js", iteratorCloseSource],
   ["array-prototype-alias.js", arrayPrototypeAliasSource],
   ["abrupt-object-pattern.js", abruptObjectPatternSource],
+  ["nullish-receiver.js", nullishReceiverSource],
+  ["nullish-default.js", nullishDefaultSource],
   ["first-default.js", firstDefaultSource],
   ["immutable-target.js", immutableTargetSource],
   ["class-name-target.js", classNameTargetSource],
@@ -135,6 +147,10 @@ const expectedDependencies = [
   ["siblingObjectElement", ["sibling", "0"]],
   ["projectedNumericInnerElement", ["pairs", "0", "0"]],
   ["unreachedSibling", ["sibling", "0"], "candidate"],
+  ["reachedBeforeNullish", ["value"]],
+  ["unreachedAfterNullish", ["value"], "candidate"],
+  ["reachedBeforeDefault", ["value"]],
+  ["unreachedAfterDefault", ["value"], "candidate"],
   ["innerElement", ["0", "0"]],
   ["siblingInnerElement", ["1", "0"]],
   ["inactiveDefaultElement", ["1", "0"]],
@@ -175,6 +191,10 @@ const tracedBindings = [
   "siblingObjectElement",
   "projectedNumericInnerElement",
   "unreachedSibling",
+  "reachedBeforeNullish",
+  "unreachedAfterNullish",
+  "reachedBeforeDefault",
+  "unreachedAfterDefault",
   "innerElement",
   "siblingInnerElement",
   "inactiveDefaultElement",
