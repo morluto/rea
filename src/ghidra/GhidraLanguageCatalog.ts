@@ -1,5 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { malformedInput, ParseFailureError } from "../domain/parseFailure.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 
@@ -29,7 +31,7 @@ const LANGUAGE_ROOTS = ["Ghidra/Processors", "Ghidra/Extensions"] as const;
 const CATALOG_CONCURRENCY = 8;
 
 /** Parse the `<language>` elements of one `.ldefs` document. */
-export const parseGhidraLanguageDefinitions = (
+const parseGhidraLanguageDefinitions = (
   text: string,
 ): readonly GhidraLanguageDefinition[] => {
   const definitions: GhidraLanguageDefinition[] = [];
@@ -41,7 +43,10 @@ export const parseGhidraLanguageDefinitions = (
   const document = parsed.value;
   const root = document.documentElement;
   if (root?.tagName !== "language_definitions")
-    throw new SyntaxError("Expected Ghidra language_definitions XML root");
+    throw malformedInput(
+      "ghidra-language-definition",
+      "Expected Ghidra language_definitions XML root",
+    );
   for (const language of Array.from(root.getElementsByTagName("language"))) {
     if (language.parentNode !== root) continue;
     const id = language.getAttribute("id");
@@ -101,9 +106,17 @@ const readLanguageDefinitionFile = (
       });
       // The XML byte owner validates encoding and declaration before syntax
       // parsing; a literal U+FFFD cannot diagnose invalid source bytes.
-      return bytes === undefined
-        ? []
-        : parseGhidraLanguageDefinitions(decodeXmlPlistText(bytes));
+      if (bytes === undefined) return [];
+      try {
+        return parseGhidraLanguageDefinitions(decodeXmlPlistText(bytes));
+      } catch (cause: unknown) {
+        if (!(cause instanceof ParseFailureError)) throw cause;
+        throw new GhidraAdmissionError(
+          "language_definition_invalid",
+          { path, parse_kind: cause.kind, parse_message: cause.message },
+          { cause },
+        );
+      }
     },
     "follow",
   );
