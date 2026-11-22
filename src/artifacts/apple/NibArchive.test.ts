@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { decodeNibArchive } from "./NibArchive.js";
+import { InterfaceBuilderDecodeBudget } from "./InterfaceBuilderDecodeBudget.js";
 import { encodeNibArchiveFixture as encodeArchive } from "./NibArchive.fixture.js";
-import { InterfaceBuilderDecodeBudgetExceeded } from "./InterfaceBuilderDecodeBudget.js";
+import { ParseFailureError } from "../../domain/parseFailure.js";
 
 const archiveWithOverlappingObjectRanges = (objectCount: number): Buffer => {
   const objectRecords = Buffer.alloc(objectCount * 3);
@@ -177,12 +178,110 @@ describe("NIBArchive decoder", () => {
     } catch (cause: unknown) {
       thrown = cause;
     }
-    expect(thrown).toBeInstanceOf(InterfaceBuilderDecodeBudgetExceeded);
+    expect(thrown).toBeInstanceOf(ParseFailureError);
     expect(thrown).toHaveProperty(
-      "message",
-      expect.stringMatching(/projected field ranges/u),
+      "failure",
+      expect.objectContaining({
+        kind: "limit",
+        format: "nib-archive",
+        detail: expect.stringMatching(/projected field ranges/u),
+        limit: { name: "aggregate-decode-bytes", maximum: expect.any(Number) },
+      }),
     );
   });
+});
+
+it.each([
+  { table: "object", countOffset: 18 },
+  { table: "key", countOffset: 26 },
+  { table: "value", countOffset: 34 },
+  { table: "class", countOffset: 42 },
+])(
+  "refuses an impossible $table table before charging the decode budget",
+  ({ countOffset }) => {
+    const budget = new InterfaceBuilderDecodeBudget(95);
+    const valid = encodeArchive({
+      classes: ["NSObject"],
+      objects: [{ classIndex: 0, values: { x: true } }],
+    });
+    const truncated = Buffer.from(valid);
+    truncated.writeUInt32LE(32, countOffset);
+    expect(() => decodeNibArchive(truncated, budget)).toThrow(
+      expect.objectContaining({
+        kind: "truncated",
+        failure: expect.objectContaining({ format: "nib-archive" }),
+      }),
+    );
+    expect(budget.usedBytes).toBe(0);
+    expect(() => decodeNibArchive(valid, budget)).toThrow(
+      expect.objectContaining({
+        kind: "limit",
+        failure: expect.objectContaining({ format: "nib-archive" }),
+      }),
+    );
+  },
+);
+
+it.each([
+  { label: "fixed width", value: null, editAt: 1, byte: 2 },
+  { label: "data length", value: "x", editAt: 2, byte: 0xff },
+  { label: "type tag", value: null, editAt: 1, byte: 0xfe },
+])(
+  "classifies an invalid NIBArchive $label before charging for the value",
+  ({ label, value, editAt, byte }) => {
+    const valid = encodeArchive({
+      classes: ["NSObject"],
+      objects: [{ classIndex: 0, values: { x: value } }],
+    });
+    const invalid = Buffer.from(valid);
+    invalid[invalid.readUInt32LE(38) + editAt] = byte;
+    expect(() =>
+      decodeNibArchive(valid, new InterfaceBuilderDecodeBudget(300)),
+    ).toThrow(expect.objectContaining({ kind: "limit" }));
+    expect(() =>
+      decodeNibArchive(invalid, new InterfaceBuilderDecodeBudget(300)),
+    ).toThrow(
+      expect.objectContaining({
+        kind: label === "type tag" ? "unsupported" : "truncated",
+      }),
+    );
+  },
+);
+
+it.each([
+  { table: "key", tableOffset: 30, length: 0x83, maximum: 310 },
+  { table: "class", tableOffset: 46, length: 0x84, maximum: 378 },
+])(
+  "checks that a NIBArchive $table leaves room for the next row",
+  ({ tableOffset, length, maximum }) => {
+    const valid = encodeArchive({
+      classes: ["A", "B"],
+      objects: [{ classIndex: 0, values: { x: null, y: null } }],
+    });
+    const invalid = Buffer.from(valid);
+    invalid[invalid.readUInt32LE(tableOffset)] = length;
+    expect(() =>
+      decodeNibArchive(valid, new InterfaceBuilderDecodeBudget(maximum)),
+    ).toThrow(expect.objectContaining({ kind: "limit" }));
+    expect(() =>
+      decodeNibArchive(invalid, new InterfaceBuilderDecodeBudget(maximum)),
+    ).toThrow(expect.objectContaining({ kind: "truncated" }));
+  },
+);
+
+it("checks that a NIBArchive value leaves room for the next row", () => {
+  const valid = encodeArchive({
+    classes: ["NSObject"],
+    objects: [{ classIndex: 0, values: { x: null, y: null } }],
+  });
+  const invalid = Buffer.from(valid);
+  invalid[invalid.readUInt32LE(38) + 1] = 1;
+  expect(() =>
+    decodeNibArchive(valid, new InterfaceBuilderDecodeBudget(430)),
+  ).toThrow(expect.objectContaining({ kind: "limit" }));
+  expect(() =>
+    decodeNibArchive(invalid, new InterfaceBuilderDecodeBudget(430)),
+  ).toThrow(expect.objectContaining({ kind: "truncated" }));
 });
 
 it("retains repeated serialized collection fields in source order", () => {
@@ -206,4 +305,35 @@ it("retains repeated serialized collection fields in source order", () => {
   expect(decoded.objects[0]?.repeated_values).toEqual({
     UINibEncoderEmptyKey: [{ $nib_object_ref: 2 }, { $nib_object_ref: 1 }],
   });
+});
+
+it("classifies NIBArchive input faults through ParseFailure", () => {
+  const valid = encodeArchive({
+    classes: ["NSObject"],
+    objects: [{ classIndex: 0, values: { child: { ref: 4 } } }],
+  });
+  const failureOf = (bytes: Buffer): unknown => {
+    try {
+      decodeNibArchive(bytes);
+    } catch (cause: unknown) {
+      return cause;
+    }
+    throw new Error("Expected the NIBArchive to be refused");
+  };
+  const newerVersion = Buffer.from(valid);
+  newerVersion.writeUInt32LE(2, 10);
+  expect(failureOf(newerVersion)).toMatchObject({
+    failure: {
+      kind: "unsupported",
+      format: "nib-archive",
+      undecodedContent: true,
+    },
+  });
+  expect(failureOf(valid)).toBeInstanceOf(ParseFailureError);
+  expect(failureOf(valid)).toMatchObject({ kind: "malformed" });
+  expect(failureOf(valid.subarray(0, valid.length - 1))).toMatchObject({
+    kind: "truncated",
+  });
+  // Intact magic with a header cut short is missing bytes, not bad bytes.
+  expect(failureOf(valid.subarray(0, 20))).toMatchObject({ kind: "truncated" });
 });

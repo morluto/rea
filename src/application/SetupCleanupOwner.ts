@@ -1,14 +1,14 @@
 import {
   AnalysisCleanupLease,
   AnalysisCleanupLeaseGroup,
-} from "../artifacts/AnalysisCleanupLease.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   AnalysisError,
   type AnalysisCleanupObservation,
 } from "../domain/analysisErrorBase.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
-import { bindRegularFileCleanup } from "./RegularFileRead.js";
+import { bindRegularFileCleanup } from "../process/RegularFileRead.js";
 
 interface SetupCleanupTask {
   readonly rejectedPrefix?: string;
@@ -32,14 +32,7 @@ export const setupCleanupError = (
   cause: unknown,
   observation = ArtifactReaderFailure.cleanupObservation(cause, []),
 ): AnalysisError => {
-  if (
-    cause instanceof AnalysisError &&
-    (cause.cleanupIncomplete ||
-      cause.hasCleanupOwner ||
-      cause.cleanup !== undefined ||
-      cause instanceof ProviderCleanupError)
-  )
-    return cause;
+  if (cause instanceof AnalysisError && cause.carriesCleanup) return cause;
   const error = setupCleanupReport(cause, observation);
   bindRegularFileCleanup(cause, error);
   return error;

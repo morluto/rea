@@ -91,7 +91,7 @@ it.each(["mutable", "shallow-frozen"])(
   },
 );
 
-it("never treats sealing as format validity or caches a refused layout", () => {
+it("does not treat an invalid sealed layout as valid on repeated reads", () => {
   const value = report();
   value.sections[0]!.index = 10;
   freezeJsonSnapshot(value);

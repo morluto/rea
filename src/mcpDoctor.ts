@@ -1,21 +1,17 @@
 import { Client, SdkError, SdkErrorCode } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { Help } from "incur";
+import { OwnedMcpClient } from "./process/OwnedMcpClient.js";
+import { formatCommandHelp } from "./cli/help.js";
+import { readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 
-import { createCatalogIdentity } from "./catalogIdentity.js";
 import { jsonLinesErrorRecord } from "./cli/jsonLines.js";
 import {
   CLI_DOCUMENT_OUTPUT_FORMATS,
   missingCliOutputValueMessage,
   renderCliDocument,
 } from "./cliOutput.js";
-import {
-  compactPresentationForMcpInputSchemaProfile,
-  parseMcpInputSchemaProfile,
-} from "./config/mcpInputSchemaProfile.js";
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { parseMcpToolCatalogProfile } from "./config/mcpToolCatalogProfile.js";
@@ -23,10 +19,18 @@ import {
   DISCOVER_TOOLS,
   HOT_TOOL_NAMES,
   progressiveCatalogIdentity,
-} from "./catalogDiscovery.js";
-import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { promptsForToolFamilies } from "./contracts/promptToolFamilyScope.js";
+} from "./contracts/catalog/catalogDiscovery.js";
+import {
+  RECORDED_CATALOG_DIGEST_PROFILES,
+  type CatalogIdentitySnapshot,
+} from "./contracts/catalog/recordedCatalogDigests.js";
+import {
+  RECORDED_MCP_CATALOG_SHA256,
+  type RecordedMcpCatalog,
+} from "./recordedMcpCatalog.js";
+import type { McpDoctorCatalogExpectation } from "./contracts/catalog/mcpDoctorCatalog.js";
 import { err, ok } from "./domain/result.js";
+import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import {
   parseMcpStartupBudgets,
@@ -35,8 +39,13 @@ import {
 import {
   MCP_STARTUP_POLICY,
   mcpDoctorDeadlineRecovery,
-} from "./mcpStartupPolicy.js";
+} from "./config/mcpStartupPolicy.js";
 import { MCP_DOCTOR_ALIAS, MCP_DOCTOR_OPTIONS } from "./mcpDoctorOptions.js";
+import { OwnedMcpStdioTransport } from "./process/OwnedMcpStdioTransport.js";
+import { isRecord } from "./kernel/isRecord.js";
+import { sha256Hex } from "./kernel/sha256Hex.js";
+import { resolveMcpOutputSchemaProfile } from "./contracts/mcpSchemaPresentation.js";
+import { errorMessage } from "./kernel/errorMessage.js";
 
 const OUTPUT_FORMATS = CLI_DOCUMENT_OUTPUT_FORMATS;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -51,14 +60,12 @@ const HELP_FLAGS: ReadonlySet<string> = new Set(["--help", "-h"]);
 
 /**
  * Answer an advertised help request without starting a diagnostic session.
- * Global options are hidden because this dispatcher entry accepts only the
- * options above; the hint says so explicitly instead of implying full
- * Incur parity.
+ * Global options are omitted because this dispatcher entry accepts only the
+ * options above; the hint says so explicitly.
  */
 const renderMcpDoctorHelp = (): string =>
-  Help.formatCommand(MCP_DOCTOR_COMMAND, {
+  formatCommandHelp(MCP_DOCTOR_COMMAND, {
     description: MCP_DOCTOR_DESCRIPTION,
-    hideGlobalOptions: true,
     options: MCP_DOCTOR_OPTIONS,
     alias: MCP_DOCTOR_ALIAS,
     hint: `${MCP_DOCTOR_SCOPE} This entry accepts only the options above.`,
@@ -110,7 +117,9 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         stderr_truncated: false,
       },
     };
-  const expectation = doctorExpectationForEnvironment(options.environment);
+  const expectation = await doctorExpectationForEnvironment(
+    options.environment,
+  );
   const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
@@ -120,15 +129,25 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     Math.max(1, Math.ceil(deadline - performance.now())),
   );
   const stderr = captureStderr();
-  const transport = new OwnedStdioClientTransport({
-    command: options.command,
-    args: [...options.args],
-    cwd: options.cwd,
-    env: targetFreeEnvironment(options.environment),
-    stderr: "pipe",
-  });
-  transport.stderr?.on("data", stderr.append);
-  const client = new Client({ name: "rea-mcp-doctor", version: "1" });
+  const transport = new DoctorStdioTransport(
+    {
+      command: options.command,
+      arguments: [...options.args],
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      // The caller supplies the complete base. Use the process owner's
+      // platform-aware overlay to remove target selection before launching.
+      hostEnvironment: options.environment,
+      env: {
+        HOPPER_TARGET_PATH: undefined,
+        HOPPER_TARGET_KIND: undefined,
+        HOPPER_LOADER_ARGS_JSON: undefined,
+      },
+      // A server can start its own providers in separate process groups.
+      sweepTokenOwnedProcesses: true,
+    },
+    stderr.append,
+  );
+  const client = new OwnedMcpClient({ name: "rea-mcp-doctor", version: "1" });
   let result: ProductionMcpDoctorResult;
   let cleanupFailure: { readonly cause: unknown } | undefined;
   try {
@@ -161,25 +180,13 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
     };
   } finally {
     clearTimeout(timer);
+    // The owned transport is the only cleanup owner; Client.close would only
+    // delegate to it. An interrupted connect can also clear the client's
+    // transport reference before its startup child is closed.
     try {
-      await client.close();
-    } catch (cause: unknown) {
-      cleanupFailure = { cause };
-    }
-    try {
-      // An interrupted connect can clear the client's transport reference
-      // before its startup child is closed. The transport retains that child.
       await transport.close();
     } catch (cause: unknown) {
-      cleanupFailure = {
-        cause:
-          cleanupFailure === undefined || cleanupFailure.cause === cause
-            ? cause
-            : new AggregateError(
-                [cleanupFailure.cause, cause],
-                `MCP client and transport cleanup failed: ${errorMessage(cleanupFailure.cause)}; ${errorMessage(cause)}`,
-              ),
-      };
+      cleanupFailure = { cause };
     }
   }
   if (cleanupFailure !== undefined)
@@ -191,10 +198,12 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "cleanup",
           ok: false,
-          detail: `MCP stdio cleanup failed: ${errorMessage(cleanupFailure.cause)}`,
+          detail: cleanupFailureDetail(cleanupFailure.cause),
         },
       ],
     };
+  // This reporter keeps the documented stderr prefix, including a withheld
+  // partial character; the transport's own retention serves cleanup errors.
   return { ...result, diagnostics: stderr.value() };
 };
 
@@ -213,26 +222,31 @@ type ProductionMcpDoctorResult =
       readonly checks: readonly McpDoctorCheck[];
     };
 
-/** Join SDK-triggered and caller-triggered close calls for the same child. */
-class OwnedStdioClientTransport extends StdioClientTransport {
-  #closePromise: Promise<void> | undefined;
-
-  override close(): Promise<void> {
-    this.#closePromise ??= super.close();
-    return this.#closePromise;
+/** The doctor's bounded stdio session, owning the process family it starts. */
+class DoctorStdioTransport extends OwnedMcpStdioTransport {
+  constructor(
+    options: ConstructorParameters<typeof OwnedMcpStdioTransport>[0],
+    onStderr: (chunk: unknown) => void,
+  ) {
+    super(options, {
+      provider: "mcp-doctor",
+      operation: "mcp_doctor",
+      label: "MCP doctor",
+      maxFrameBytes: 8 * 1024 * 1024,
+      maxOperationBytes: 32 * 1024 * 1024,
+      // Retain only stderr, with the byte budget the report promises.
+      maxDiagnosticBytes: {
+        stdout: 0,
+        stderr: MCP_STARTUP_POLICY.doctorStderrBytes,
+      },
+      onStderr,
+    });
   }
 }
 
 /** A valid scope can intentionally omit the target-free session request. */
 const MCP_DOCTOR_SESSION_SCOPE_DETAIL =
   "binary_session is outside the selected tool families; include the session family for request-flow and identity checks";
-
-/** Doctor expectations derived from the same environment the child inherits. */
-interface DoctorCatalogExpectation {
-  readonly catalog: ReturnType<typeof createCatalogIdentity>;
-  readonly expectedToolNames: readonly string[];
-  readonly expectedPromptNames: readonly string[];
-}
 
 const listPromptsWhenAdvertised = (
   client: Client,
@@ -246,7 +260,7 @@ const inspectProductionMcpSession = async (
   client: Client,
   deadline: number,
   signal: AbortSignal,
-  expectation: DoctorCatalogExpectation,
+  expectation: McpDoctorCatalogExpectation,
   budget: McpPhaseBudget,
 ) => {
   const request = requestOptions(deadline, signal);
@@ -259,18 +273,23 @@ const inspectProductionMcpSession = async (
     promptsRequest,
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
+  // The reply is checked against the canonical output contract, not the
+  // listing: the default output profile omits output schemas and `compact`
+  // widens them, so the listed schema cannot establish a valid reply.
+  const toolDefinition = {
+    ...(sessionTool ?? {
+      name: "binary_session",
+      inputSchema: { type: "object" as const },
+    }),
+    outputSchema: expectation.binarySessionOutputSchema,
+  };
   // A scope without the session family cannot serve request flow at all;
   // every other case still probes the call so the report names the real cause.
   const requestFlow = expectation.expectedToolNames.includes("binary_session")
     ? await client
         .callTool(
           { name: "binary_session", arguments: {} },
-          {
-            ...requestOptions(deadline, signal),
-            ...(sessionTool === undefined
-              ? {}
-              : { toolDefinition: sessionTool }),
-          },
+          { ...requestOptions(deadline, signal), toolDefinition },
         )
         .then(ok, (cause: unknown) =>
           err({
@@ -315,7 +334,10 @@ const inspectProductionMcpSession = async (
       ok:
         observedIdentity.packageVersion === PRODUCT_IDENTITY.packageVersion &&
         observedIdentity.catalogDigest === catalog.digests.combined_sha256,
-      detail: `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`,
+      // Identity is carried by the request-flow reply; without one it is unobserved, not missing.
+      detail: requestFlow.ok
+        ? `package=${observedIdentity.packageVersion ?? "missing"}; catalog=${observedIdentity.catalogDigest ?? "missing"}`
+        : `identity not observed: ${requestFlow.error.detail}`,
     },
     {
       name: "request-flow",
@@ -365,11 +387,12 @@ export const runProductionMcpDoctorCli = async (
   if (!parsed.ok) {
     if (parsed.help)
       return { output: `${renderMcpDoctorHelp()}\n`, exitCode: 0 };
+    const failure = parsed.fullOutput
+      ? { ok: false, error: parsed.error }
+      : parsed.error;
     return {
       output: renderCliDocument(
-        parsed.format === "jsonl"
-          ? jsonLinesErrorRecord({ code: parsed.code, message: parsed.message })
-          : { code: parsed.code, message: parsed.message },
+        parsed.format === "jsonl" ? jsonLinesErrorRecord(failure) : failure,
         parsed.format,
         input.stdoutIsTerminal,
       ),
@@ -464,11 +487,11 @@ const parseIdentityToolResult = (
   };
 };
 
-/**
- * Parsed `rea mcp doctor` arguments, including a help request. The `help`
- * variant is the only success-independent early return; every other accepted
- * flag is an output selector declared in `MCP_DOCTOR_OPTIONS`.
- */
+interface McpDoctorArgumentError {
+  readonly code: "MISSING_OUTPUT_VALUE" | "VALIDATION_ERROR";
+  readonly message: string;
+}
+
 type McpDoctorArguments =
   | {
       readonly ok: true;
@@ -480,82 +503,56 @@ type McpDoctorArguments =
       readonly ok: false;
       readonly help: false;
       readonly format: OutputFormat;
-      readonly code: "MISSING_OUTPUT_VALUE" | "VALIDATION_ERROR";
-      readonly message: string;
+      readonly fullOutput: boolean;
+      readonly error: McpDoctorArgumentError;
     };
 
 const parseOutputArguments = (
   arguments_: readonly string[],
 ): McpDoctorArguments => {
-  // Help wins over output selection and validation errors, but only when it
-  // appears in option position. A token consumed as `--format`'s value is
-  // not a flag, so `--format --help` reports an invalid format instead of
-  // masking the typo with usage.
-  if (hasHelpInOptionPosition(arguments_)) return { ok: false, help: true };
+  // Keep the first error while collecting output choices. Help wins when
+  // encountered in option position, outside a consumed format value.
   let format: OutputFormat = "toon";
   let fullOutput = false;
+  let error: McpDoctorArgumentError | undefined;
   for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
+    const argument = arguments_[index]!;
     if (argument === "--json") {
       format = "json";
       continue;
     }
-    const inline = argument?.startsWith("--format=")
+    const inline = argument.startsWith("--format=")
       ? argument.slice("--format=".length)
       : undefined;
     if (argument === "--format" || inline !== undefined) {
       const candidate = inline ?? arguments_[index + 1];
       if (inline === undefined) index += 1;
       if (candidate === undefined || candidate === "")
-        return {
-          ok: false,
-          help: false,
-          format,
+        error ??= {
           code: "MISSING_OUTPUT_VALUE",
           message: missingCliOutputValueMessage("--format"),
         };
-      if (!isOutputFormat(candidate))
-        return {
-          ok: false,
-          help: false,
-          format,
+      else if (isOutputFormat(candidate)) format = candidate;
+      else
+        error ??= {
           code: "VALIDATION_ERROR",
           message: `Invalid output format: ${candidate}`,
         };
-      format = candidate;
       continue;
     }
     if (argument === "--full-output") {
       fullOutput = true;
       continue;
     }
-    if (HELP_FLAGS.has(argument ?? "")) return { ok: false, help: true };
-    return {
-      ok: false,
-      help: false,
-      format,
+    if (HELP_FLAGS.has(argument)) return { ok: false, help: true };
+    error ??= {
       code: "VALIDATION_ERROR",
-      message: `Unknown mcp doctor option: ${argument ?? "missing"}`,
+      message: `Unknown mcp doctor option: ${argument}`,
     };
   }
+  if (error !== undefined)
+    return { ok: false, help: false, format, fullOutput, error };
   return { ok: true, format, fullOutput };
-};
-
-/**
- * Report whether `--help`/`-h` appears in option position. Tokens consumed
- * as `--format`'s value are skipped so `--format --help` stays an invalid
- * format error instead of silently becoming a help request.
- */
-const hasHelpInOptionPosition = (arguments_: readonly string[]): boolean => {
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--format") {
-      index += 1;
-      continue;
-    }
-    if (HELP_FLAGS.has(argument ?? "")) return true;
-  }
-  return false;
 };
 
 const isOutputFormat = (value: string | undefined): value is OutputFormat =>
@@ -566,31 +563,42 @@ const requestOptions = (deadline: number, signal: AbortSignal) => ({
   timeout: Math.max(1, Math.ceil(deadline - performance.now())),
 });
 
-const targetFreeEnvironment = (
-  environment: Readonly<Record<string, string | undefined>>,
-): Record<string, string> => {
-  const result = Object.fromEntries(
-    Object.entries(environment).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-  for (const name of [
-    "HOPPER_TARGET_PATH",
-    "HOPPER_TARGET_KIND",
-    "HOPPER_LOADER_ARGS_JSON",
-  ])
-    delete result[name];
-  return result;
+let cachedVerifiedCatalog: RecordedMcpCatalog | null | undefined;
+
+const readVerifiedRecordedMcpCatalog = (): RecordedMcpCatalog | undefined => {
+  if (cachedVerifiedCatalog !== undefined)
+    return cachedVerifiedCatalog ?? undefined;
+  if (RECORDED_MCP_CATALOG_SHA256 === undefined) {
+    cachedVerifiedCatalog = null;
+    return undefined;
+  }
+  try {
+    const bytes = readFileSync(new URL("./mcp-catalog.json", import.meta.url));
+    if (sha256Hex(bytes) !== RECORDED_MCP_CATALOG_SHA256) {
+      cachedVerifiedCatalog = null;
+      return undefined;
+    }
+    const parsed: unknown = JSON.parse(bytes.toString("utf8"));
+    if (!isRecord(parsed) || parsed.version !== 1) {
+      cachedVerifiedCatalog = null;
+      return undefined;
+    }
+    cachedVerifiedCatalog = parsed as unknown as RecordedMcpCatalog;
+    return cachedVerifiedCatalog;
+  } catch {
+    cachedVerifiedCatalog = null;
+    return undefined;
+  }
 };
 
-const doctorExpectationForEnvironment = (
+const doctorExpectationForEnvironment = async (
   environment: Readonly<Record<string, string | undefined>>,
-): DoctorCatalogExpectation => {
-  const inputProfile = parseMcpInputSchemaProfile(
-    environment.REA_MCP_INPUT_SCHEMA_PROFILE,
-  );
+): Promise<McpDoctorCatalogExpectation> => {
   const outputProfile = parseMcpOutputSchemaProfile(
     environment.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+  );
+  const resolvedOutputProfile = resolveMcpOutputSchemaProfile(
+    outputProfile.ok ? outputProfile.value : undefined,
   );
   // An invalid selection fails child startup, which the transport check
   // reports with the server's diagnostics; expect the complete catalog so a
@@ -600,34 +608,50 @@ const doctorExpectationForEnvironment = (
     families.ok && families.value !== undefined
       ? new Set(families.value)
       : undefined;
-  const contracts = contractsForToolFamilies(selection);
-  const promptContracts = promptsForToolFamilies(selection);
   const catalogProfile = parseMcpToolCatalogProfile(
     environment.REA_MCP_TOOL_CATALOG_PROFILE,
   );
   const progressive = catalogProfile.ok && catalogProfile.value === "hot-cold";
-  const catalog = createCatalogIdentity({
-    compactPresentation: compactPresentationForMcpInputSchemaProfile(
-      inputProfile.ok ? inputProfile.value : undefined,
-    ),
-    contracts,
-    outputSchemaProfile: outputProfile.ok
-      ? (outputProfile.value ?? "full")
-      : "full",
-    promptContracts,
-  });
-  return {
-    catalog: progressive ? progressiveCatalogIdentity(catalog) : catalog,
-    expectedToolNames: progressive
-      ? [
-          ...contracts
-            .map(({ name }) => name)
-            .filter((name) => HOT_TOOL_NAMES.has(name)),
-          DISCOVER_TOOLS.name,
-        ]
-      : contracts.map(({ name }) => name),
-    expectedPromptNames: promptContracts.map(({ name }) => name),
-  };
+  if (
+    selection === undefined &&
+    RECORDED_CATALOG_DIGEST_PROFILES !== undefined
+  ) {
+    const recorded = readVerifiedRecordedMcpCatalog();
+    const sessionTool = recorded?.tools.find(
+      ({ name }) => name === "binary_session",
+    );
+    if (
+      recorded !== undefined &&
+      sessionTool !== undefined &&
+      isRecord(sessionTool.outputSchema)
+    ) {
+      const baseCatalog: CatalogIdentitySnapshot = {
+        counts: recorded.identity.counts,
+        digests: RECORDED_CATALOG_DIGEST_PROFILES[resolvedOutputProfile],
+      };
+      const toolNames = recorded.tools.map(({ name }) => name);
+      return {
+        catalog: progressive
+          ? progressiveCatalogIdentity(baseCatalog)
+          : baseCatalog,
+        expectedToolNames: progressive
+          ? [
+              ...toolNames.filter((name) => HOT_TOOL_NAMES.has(name)),
+              DISCOVER_TOOLS.name,
+            ]
+          : toolNames,
+        expectedPromptNames: recorded.prompts.map(({ name }) => name),
+        binarySessionOutputSchema: sessionTool.outputSchema,
+      };
+    }
+  }
+  const { buildLiveMcpDoctorExpectation } =
+    await import("./contracts/catalog/mcpDoctorCatalog.js");
+  return buildLiveMcpDoctorExpectation(
+    selection,
+    resolvedOutputProfile,
+    progressive,
+  );
 };
 
 const captureStderr = () => {
@@ -659,11 +683,19 @@ const captureStderr = () => {
   };
 };
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
+/** Report the transport's typed cleanup reason and the resources it retains. */
+const cleanupFailureDetail = (cause: unknown): string => {
+  const detail = `MCP stdio cleanup failed: ${errorMessage(cause)}`;
+  if (!(cause instanceof AnalysisError) || !cause.cleanupIncomplete)
+    return detail;
+  const reason = cause.diagnostics?.reason;
+  return [
+    typeof reason === "string" ? `${detail} (${reason})` : detail,
+    ...(cause.cleanupResources.length === 0
+      ? []
+      : [`retained resources: ${cause.cleanupResources.join(", ")}`]),
+  ].join("; ");
+};
 
 /**
  * Name the applied doctor deadline when an owned abort or SDK request timeout

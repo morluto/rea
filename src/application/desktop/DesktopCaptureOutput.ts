@@ -10,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../resources/index.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 

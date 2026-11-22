@@ -10,9 +10,11 @@ import re
 import shutil
 from string import Formatter
 from tempfile import TemporaryDirectory
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import quote, unquote, urlunsplit
 
 import polib
+
+from website_references import local_reference
 
 
 VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
@@ -109,13 +111,13 @@ def language_markup(root, relative, code="en", available=None):
     choices, alternates = [], []
     for item in inventory:
         target = ("" if item["code"] == "en" else item["code"] + "/") + route
-        href = escape(base + target, quote=True)
+        href = base + target
         active = ' aria-current="true"' if item["code"] == code else ""
         fallback = " · English" if item["code"] not in available else ""
         choices.append(f'<a href="{href}" lang="{item["code"]}" dir="{item["dir"]}" data-language="{item["code"]}"{active}>{escape(item["name"])}{fallback}</a>')
         if item["code"] in available:
-            alternates.append(f'<!-- prettier-ignore -->\n<link rel="alternate" hreflang="{item["code"]}" href="{SITE_ORIGIN}/{quote(target, safe="/")}" />')
-    alternates.append(f'<!-- prettier-ignore -->\n<link rel="alternate" hreflang="x-default" href="{SITE_ORIGIN}/{quote(route, safe="/")}" />')
+            alternates.append(f'<!-- prettier-ignore -->\n<link rel="alternate" hreflang="{item["code"]}" href="{SITE_ORIGIN}/{target}" />')
+    alternates.append(f'<!-- prettier-ignore -->\n<link rel="alternate" hreflang="x-default" href="{SITE_ORIGIN}/{route}" />')
     selector = '<details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>' + escape(current["name"]) + '</span></summary><nav aria-label="' + escape(current["name"], quote=True) + '">' + "".join(choices) + "</nav></details>"
     return selector, "\n".join(alternates)
 
@@ -270,6 +272,7 @@ def prose_units(source, path):
 
 def attribute_units(source, path):
     """Extract accessibility labels and authored metadata without translating URLs."""
+    from website import DEFAULT_IMAGE_ALT
     units = []
     document = Document(source)
     for node in document.nodes:
@@ -282,7 +285,7 @@ def attribute_units(source, path):
             text = node.attrs.get(name)
             if text and translatable(text):
                 context = "shared" if "<!-- website:header:start -->" in source[:node.start] and "<!-- website:header:end -->" not in source[:node.start] else "page:" + path
-                if name == "content" and node.attrs.get("name") != "description":
+                if text == DEFAULT_IMAGE_ALT and name == "content":
                     context = "shared"
                 units.append((context, text, {}, node, name))
     return units
@@ -313,8 +316,8 @@ def read_runtime(root, page=None):
     scripts = set()
     for node in Document(page.read_text(encoding="utf-8")).nodes:
         if node.tag == "script" and node.attrs.get("src"):
-            reference = urlsplit(node.attrs["src"])
-            if not reference.scheme and not reference.netloc:
+            reference = local_reference(node.attrs["src"])
+            if reference is not None:
                 scripts.add((page.parent / unquote(reference.path)).resolve().relative_to(site.resolve()).as_posix())
     return list(dict.fromkeys(text for script, text, _, _ in units if script in scripts))
 
@@ -476,17 +479,17 @@ def render_prose(source, relative, messages):
     return apply_edits(source, edits)
 
 
-def relative_reference(reference, source_path, output_path, site, available, code, figures, language_link=False):
+def relative_reference(reference, source_path, output_path, site, available, code, figures):
     """Resolve links once, keeping assets shared and reading links in the selected edition."""
-    parsed = urlsplit(reference)
-    if parsed.scheme or parsed.netloc or not parsed.path:
+    parsed = local_reference(reference)
+    if parsed is None:
         return reference
     target = (source_path.parent / unquote(parsed.path)).resolve()
     if not target.is_relative_to(site.resolve()):
         raise ValueError(f"Reference leaves the website: {reference}")
     relative = target.relative_to(site.resolve())
     lookup = relative / "index.html" if target.is_dir() else relative
-    if not language_link and lookup.as_posix() in available and code != "en":
+    if lookup.as_posix() in available and code != "en":
         relative = Path(code) / relative
     if relative.as_posix() in figures and code != "en":
         relative = Path("assets/localized") / code / relative.relative_to("assets")
@@ -526,6 +529,8 @@ def render_page(root, source_path, language, messages, available, figures, page_
     canonical = page_url(site, output_path)
     replacements = []
     for node in Document(source).nodes:
+        if "data-language" in node.attrs:
+            continue  # The shared language markup is rebuilt for the output route.
         raw = source[node.start:node.open_end]
         if node.tag == "html":
             raw = replace_attribute(raw, "lang", code)
@@ -545,7 +550,7 @@ def render_page(root, source_path, language, messages, available, figures, page_
             if node.tag == "link" and node.attrs.get("rel") == "canonical":
                 value = canonical
             else:
-                value = relative_reference(reference, source_path, output_path, site, available, code, figures, "data-language" in node.attrs)
+                value = relative_reference(reference, source_path, output_path, site, available, code, figures)
             raw = replace_attribute(raw, attribute, value)
         if raw != source[node.start:node.open_end]:
             replacements.append((node.start, node.open_end, raw))
@@ -555,10 +560,13 @@ def render_page(root, source_path, language, messages, available, figures, page_
     payload = json.dumps(runtime, ensure_ascii=False).replace("<", "\\u003c").replace("&", "\\u0026")
     # Only Korean editions request the font stylesheet; English fallbacks keep
     # their system fonts. The variable face also supplies the site's 650 weight.
-    font_stylesheet = (
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&amp;display=swap" />\n  '
-        if code == "ko" else ""
-    )
+    font_stylesheet = ""
+    if code == "ko":
+        href = "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100..900&amp;display=swap"
+        font_stylesheet = (
+            f"""<link rel="preload" as="style" fetchpriority="low" href="{href}" onload="this.onload=null;this.rel='stylesheet'" />"""
+            f'<noscript><link rel="stylesheet" href="{href}" /></noscript>\n  '
+        )
     source = source.replace("</head>", f'{font_stylesheet}<script id="website-messages" type="application/json">{payload}</script>\n  </head>')
     return source
 
@@ -572,9 +580,9 @@ def required_messages(root, path, template):
     required.update((unit[0], unit[1]) for unit in attribute_units(source, relative))
     required.update(("runtime", text) for text in read_runtime(root, path))
     for node in Document(source).nodes:
-        reference = node.attrs.get("src")
-        if reference and not urlsplit(reference).scheme:
-            target = (path.parent / unquote(urlsplit(reference).path)).resolve()
+        reference = local_reference(node.attrs.get("src") or "")
+        if reference is not None:
+            target = (path.parent / unquote(reference.path)).resolve()
             if target.parent == (site / "assets/figures").resolve():
                 required.update((entry.msgctxt, entry.msgid) for entry in template if entry.msgctxt == "figure:" + target.name)
     return required
@@ -591,10 +599,12 @@ def render_fallback(root, path, language, page_languages, messages):
     edits = []
     canonical = page_url(site, output_path)
     for node in Document(source).nodes:
+        if "data-language" in node.attrs:
+            continue  # The shared language markup is rebuilt for the output route.
         raw = source[node.start:node.open_end]
         for attribute in ("href", "src"):
             if attribute in node.attrs:
-                value = canonical if node.tag == "link" and node.attrs.get("rel") == "canonical" else relative_reference(node.attrs[attribute], path, output_path, site, set(), code, set(), "data-language" in node.attrs)
+                value = canonical if node.tag == "link" and node.attrs.get("rel") == "canonical" else relative_reference(node.attrs[attribute], path, output_path, site, set(), code, set())
                 raw = replace_attribute(raw, attribute, value)
         if node.tag == "meta" and node.attrs.get("property") == "og:url":
             raw = replace_attribute(raw, "content", canonical)

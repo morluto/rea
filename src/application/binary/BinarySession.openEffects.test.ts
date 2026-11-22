@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 
-import type { AnalysisProvider } from "../AnalysisProvider.js";
+import type { AnalysisProvider } from "../../ports/AnalysisProvider.js";
 import { BinarySession } from "./BinarySession.js";
-import { toolSessionEffects } from "../../contracts/toolEffects.js";
+import { SESSION_TOOL_CONTRACTS } from "../../contracts/sessionToolContracts.js";
 import { ok } from "../../domain/result.js";
 import { observed } from "../../../tests/fixtures/analysisExecution.js";
 import {
@@ -94,7 +94,10 @@ it.each([
       await expect(readFile(checkpointPath, "utf8")).rejects.toMatchObject({
         code: "ENOENT",
       });
-    expect(toolSessionEffects(operation)).toMatchObject({
+    expect(
+      SESSION_TOOL_CONTRACTS.find(({ name }) => name === operation)
+        ?.sessionEffects,
+    ).toMatchObject({
       writesFilesystem: true,
       mayDiscardData: true,
     });

@@ -1,11 +1,25 @@
-import { mkdir, rename, writeFile, type FileHandle } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
+import {
+  mkdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const controls = vi.hoisted(() => ({
   wrapDirectory: undefined as
-    | ((handle: { close(): Promise<void>; readonly path: string }) => void)
+    | ((handle: {
+        close(): Promise<void>;
+        read(): Promise<Dirent | null>;
+        readonly path: string;
+      }) => void)
     | undefined,
   wrapFile: undefined as
     | ((handle: { close(): Promise<void>; readonly fd: number }) => void)
@@ -29,9 +43,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   };
 });
 
-import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
-import { DirectoryArtifactReader } from "../../../src/artifacts/DirectoryArtifactReader.js";
+import { ArtifactReaderFailure } from "../../../src/resources/ArtifactReader.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { DirectoryArtifactReader } from "../../../src/resources/index.js";
 
 const makeFixture = async () => {
   const root = await createTestTempDirectory("rea-directory-owner-");
@@ -247,3 +261,68 @@ describe("DirectoryArtifactReader file handle ownership", () => {
     }
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "revalidates directory containment after a skipped special entry before inspecting the next entry",
+  async () => {
+    const parent = await createTestTempDirectory(
+      "rea-directory-skipped-escape-",
+    );
+    const root = join(parent, "selected");
+    const outside = join(parent, "outside");
+    const sub = join(root, "sub");
+    await mkdir(sub, { recursive: true });
+    await mkdir(outside, { recursive: true });
+    await promisify(execFile)("mkfifo", [join(sub, "a.pipe")], {
+      timeout: 2_000,
+    });
+    await writeFile(join(sub, "z.txt"), "inside\n");
+    await writeFile(join(outside, "z.txt"), "escaped\n");
+
+    controls.wrapDirectory = (handle) => {
+      if (!handle.path.endsWith("/sub")) return;
+      const read = handle.read.bind(handle);
+      const queued: Dirent[] = [];
+      let loaded = false;
+      let reads = 0;
+      handle.read = async () => {
+        if (!loaded) {
+          for (;;) {
+            const entry = await read();
+            if (entry === null) break;
+            queued.push(entry);
+          }
+          queued.sort((left, right) =>
+            String(left.name).localeCompare(String(right.name)),
+          );
+          loaded = true;
+        }
+        const next = queued[reads] ?? null;
+        reads += 1;
+        if (reads === 2) {
+          await rm(sub, { recursive: true, force: true });
+          await symlink(outside, sub, "dir");
+        }
+        return next;
+      };
+    };
+
+    const omissions: string[] = [];
+    const reader = new DirectoryArtifactReader(root);
+    try {
+      await expect(async () => {
+        for await (const entry of reader.entries(undefined, {
+          onOmission: ({ path }) => omissions.push(path),
+        })) {
+          expect(entry.path).not.toBe("sub/z.txt");
+        }
+      }).rejects.toMatchObject({
+        reason: "path",
+        message: "Directory traversal escaped or changed its artifact root",
+      });
+      expect(omissions).toEqual(["sub/a.pipe"]);
+    } finally {
+      await reader.close();
+    }
+  },
+);

@@ -10,12 +10,13 @@ import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import {
   AdbInputSnapshotFailure,
   snapshotAdbInput,
 } from "../../../src/adb/AdbInputSnapshot.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -27,7 +28,7 @@ it("retains and retries a source handle that fails close during admission", asyn
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
     );
-  const parent = await mkdtemp(join(tmpdir(), "rea-adb-snapshot-test-"));
+  const parent = await createTestTempDirectory("rea-adb-snapshot-test-");
   const root = await PrivateRuntimeRoot.create({ parent });
   const resources = new ArtifactResourceScope();
   const sourcePath = join(parent, "selected.apk");
@@ -75,6 +76,5 @@ it("retains and retries a source handle that fails close during admission", asyn
     if (source !== undefined && source.fd !== -1) await source.close();
     vi.restoreAllMocks();
     await root.close();
-    await rm(parent, { recursive: true, force: true });
   }
 });

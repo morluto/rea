@@ -6,7 +6,7 @@ import { expect, it } from "vitest";
 import {
   analyzeJavaScriptStaticSource,
   analyzeParsedJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+} from "../../../tests/fixtures/javascriptStaticAnalysis.js";
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";

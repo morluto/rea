@@ -312,8 +312,8 @@ def main():
             checks['pcap_cited_subjects_match_artifact'] = bool(cited) and all(
                 isinstance(record, dict)
                 and isinstance(record.get('subject'), dict)
-                and isinstance(record['subject'].get('digest'), dict)
-                and record['subject']['digest'].get('sha256') == reference['artifact_sha256']
+                and isinstance(record['subject'].get('identity'), dict)
+                and record['subject']['identity'].get('sha256') == reference['artifact_sha256']
                 and record['subject'].get('local_path') == reference['capture']['target']['path']
                 for record in cited
             )

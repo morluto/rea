@@ -1,17 +1,17 @@
 import { z } from "zod";
 
-import type { ExecutionOptions } from "../application/AnalysisProvider.js";
+import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
-import {
-  AnalysisCancelledError,
-  AnalysisOutputError,
-} from "../domain/analysisErrorCore.js";
-import { nativeInventoryRowsSchemas } from "../domain/native/nativeInventory.js";
-import { HopperRemoteError } from "../domain/hopperErrors.js";
+import { cancelledBy, OwnerCancellation } from "../domain/analysisErrorCore.js";
+import { HopperRemoteError } from "./HopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 import type { HopperClient } from "./HopperClient.js";
+import {
+  HopperReplyContractError,
+  type HopperReply,
+} from "./HopperReplyContracts.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
   type RegexMatchingDeadline,
@@ -28,6 +28,20 @@ const inputSchema = z.strictObject({
   mode: z.literal("regex"),
 });
 /** Match collected native facts off Hopper's API thread, with cancellable lifetime. */
+/** The client capability regex search needs: one validated inventory read. */
+export interface HopperInventoryReader {
+  callTool(
+    method: "list_strings" | "list_procedures",
+    arguments_: Readonly<Record<string, JsonValue>>,
+    options: Parameters<HopperClient["callTool"]>[2],
+  ): Promise<
+    Result<
+      HopperReply<"list_strings"> | HopperReply<"list_procedures">,
+      AnalysisError
+    >
+  >;
+}
+
 export class HopperRegexSearch {
   readonly #active = new Map<
     AbortController,
@@ -35,7 +49,7 @@ export class HopperRegexSearch {
   >();
 
   constructor(
-    private readonly client: Pick<HopperClient, "callTool">,
+    private readonly client: HopperInventoryReader,
     private readonly deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
     private readonly heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
   ) {}
@@ -55,16 +69,17 @@ export class HopperRegexSearch {
       signal,
     });
     this.#active.set(controller, pending);
-    void pending.then(
-      () => this.#active.delete(controller),
-      () => this.#active.delete(controller),
-    );
+    const remove = (): void => {
+      this.#active.delete(controller);
+    };
+    void pending.then(remove, remove);
     return pending;
   }
 
   /** Abort matching workers before their provider session closes. */
   async close(): Promise<void> {
-    for (const controller of this.#active.keys()) controller.abort();
+    for (const controller of this.#active.keys())
+      controller.abort(OwnerCancellation.ownerClosed);
     await Promise.all(this.#active.values());
   }
 
@@ -100,34 +115,28 @@ export class HopperRegexSearch {
             },
           }),
     };
-    const inventory = await this.client.callTool(
-      operation === "search_strings" ? "list_strings" : "list_procedures",
+    const inventoryArguments =
       input.data.document === undefined
         ? {}
-        : { document: input.data.document },
-      inventoryOptions,
+        : { document: input.data.document };
+    const inventory = await this.client.callTool(
+      operation === "search_strings" ? "list_strings" : "list_procedures",
+      inventoryArguments,
+      { ...inventoryOptions, operation },
     );
     if (!inventory.ok)
       return err(
-        analysisClientFailureForOperation(inventory.error, "hopper", operation),
+        inventory.error instanceof HopperReplyContractError
+          ? inventory.error
+          : analysisClientFailureForOperation(
+              inventory.error,
+              "hopper",
+              operation,
+            ),
       );
-    const rows = inventory.value;
-    const schema =
-      operation === "search_strings"
-        ? nativeInventoryRowsSchemas.strings
-        : nativeInventoryRowsSchemas.names;
-    const parsed = schema.safeParse(rows);
-    if (!parsed.success || !Array.isArray(rows))
-      return err(
-        new AnalysisOutputError(
-          operation,
-          "Hopper search inventory is malformed",
-        ),
-      );
+    const rows: readonly { readonly value: string }[] = inventory.value;
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     await options.progress
       ?.report({
         phase: "hopper_regex",
@@ -137,23 +146,19 @@ export class HopperRegexSearch {
       })
       .catch(() => undefined);
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const matched = await matchRegexValues({
       operation,
       pattern: input.data.pattern,
       caseSensitive: input.data.case_sensitive,
-      values: parsed.data.map((item) => item.value),
+      values: rows.map((item) => item.value),
       signal: options.signal,
       deadline: this.deadline,
       heapRequest: this.heapRequest,
     });
     if (!matched.ok) return matched;
     if (options.signal?.aborted)
-      return err(
-        new AnalysisCancelledError(operation, { cause: options.signal.reason }),
-      );
+      return err(cancelledBy(operation, options.signal));
     const selected = new Set(matched.value);
     return ok(rows.filter((_, index) => selected.has(index)));
   }

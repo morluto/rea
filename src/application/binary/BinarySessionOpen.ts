@@ -1,5 +1,5 @@
 import type { EspFlashSelection } from "../../domain/firmware/espFlashLocation.js";
-import type { ExecutableFormatHint } from "../../domain/dosCom.js";
+import type { TargetFormatHint } from "../../domain/targetFormats.js";
 import type {
   BinaryArchitecture,
   BinaryTarget,
@@ -15,7 +15,7 @@ import {
   type AnalysisSnapshot,
 } from "../../domain/analysisSnapshot.js";
 import { parseBinaryTarget } from "../BinaryTargetResolver.js";
-import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import type { ArtifactResourceScope } from "../../resources/index.js";
 import {
   EvidenceIntegrityError,
   AnalysisSnapshotMismatchError,
@@ -37,7 +37,7 @@ export type AnalysisSnapshotLoader = () => Promise<
 export interface BinarySessionOpenOptions {
   readonly signal?: AbortSignal;
   readonly targetKind?: BinaryTarget["kind"];
-  readonly formatHint?: ExecutableFormatHint;
+  readonly formatHint?: TargetFormatHint;
   readonly architecture?: BinaryArchitecture;
   readonly entryPoint?: string;
   /** Inputs for format=esp-flash-image. */

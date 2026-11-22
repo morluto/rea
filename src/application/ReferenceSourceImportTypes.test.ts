@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  projectReferenceSourceImportError,
   referenceSourceImportAnalysisError,
   type ReferenceSourceImportError,
 } from "./ReferenceSourceImportTypes.js";
-import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../domain/analysisErrorProjectionSchema.js";
 import type { ReferenceSourceRead } from "../reference/ReferenceSourceReaderTypes.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
@@ -20,11 +19,13 @@ describe("reference-source import error projection", () => {
       parse: "execution_failure",
     } as const;
     for (const [code, category] of Object.entries(expectedCategories)) {
-      const projected = projectReferenceSourceImportError({
-        tag: "reference-source-import",
-        code: code as ReferenceSourceImportError["code"],
-        message: "EIO while reading /selected/source/src/main.ts",
-      });
+      const projected = projectAnalysisError(
+        referenceSourceImportAnalysisError({
+          tag: "reference-source-import",
+          code: code as ReferenceSourceImportError["code"],
+          message: "EIO while reading /selected/source/src/main.ts",
+        }),
+      );
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
         true,
       );

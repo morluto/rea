@@ -1,8 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import { rizinDebugMcpServer } from "../../fixtures/debuggerMcp.js";
 import { expect, it } from "vitest";
 
-import { registerRizinDebugTools } from "../../../src/server/registerRizinDebugTools.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
@@ -11,6 +10,7 @@ import {
   createRizinTestManager,
   rizinTestInferiorTty,
 } from "../providers/RizinTestInferiorTty.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 const test = it.skipIf(process.platform === "win32");
 
@@ -49,14 +49,11 @@ test.each([
         spawnProcess: injected.spawnProcess,
       },
     );
-    const server = new McpServer({ name: "rizin-partial-test", version: "1" });
-    registerRizinDebugTools(
-      server,
-      manager,
-      silentLogger,
-      createToolResultDelivery(undefined),
+    const server = rizinDebugMcpServer("rizin-partial-test", manager);
+    const client = new Client(
+      { name: "rizin-partial-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
     );
-    const client = new Client({ name: "rizin-partial-test", version: "1" });
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -65,7 +62,7 @@ test.each([
       const startReply = await client.callTool({
         name: "start_rizin_debug_session",
         arguments: {
-          path: "fixture.bin",
+          path: "/tmp/fixture.bin",
           inferior_tty: await rizinTestInferiorTty(),
         },
       });
@@ -196,7 +193,7 @@ test.each([
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -251,7 +248,7 @@ test("rejects an unfinished unsolicited frame before command dispatch", async ()
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -284,7 +281,7 @@ test.each(["_", "__REA_", "marker-prefix"])(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -320,7 +317,7 @@ test("retains partial bytes and uncertainty when exited output never closes", as
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -366,7 +363,7 @@ test.each(["cancel", "overflow", "cancel-overflow"] as const)(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -419,7 +416,7 @@ test.each(["before-wait", "during-wait"])(
     );
     try {
       const started = await manager.start({
-        path: "fixture.bin",
+        path: "/tmp/fixture.bin",
         inferior_tty: await rizinTestInferiorTty(),
       });
       if (!started.ok) throw started.error;
@@ -462,7 +459,7 @@ test("marks output discarded by the byte queue limit during exit drainage", asyn
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;
@@ -514,7 +511,7 @@ test("publishes the bounded prefix when an oversized frame has no terminator", a
   );
   try {
     const started = await manager.start({
-      path: "fixture.bin",
+      path: "/tmp/fixture.bin",
       inferior_tty: await rizinTestInferiorTty(),
     });
     if (!started.ok) throw started.error;

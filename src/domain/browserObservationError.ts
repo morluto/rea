@@ -8,6 +8,7 @@ import {
   type AnalysisErrorOptions,
 } from "./analysisErrorBase.js";
 import { AnalysisCancelledError } from "./analysisErrorCore.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Describe browser cleanup failure without discarding its resource evidence. */
 export const browserCleanupObservation = (
@@ -16,7 +17,7 @@ export const browserCleanupObservation = (
   cause instanceof AnalysisError && cause.cleanup !== undefined
     ? cause.cleanup
     : {
-        reason: cause instanceof Error ? cause.message : String(cause),
+        reason: errorMessage(cause),
         resources:
           cause instanceof AnalysisError && cause.cleanupResources.length > 0
             ? cause.cleanupResources
@@ -26,7 +27,6 @@ export const browserCleanupObservation = (
 /** A bounded passive browser observation failed at its CDP boundary. */
 export class BrowserObservationError extends AnalysisError {
   readonly _tag = "BrowserObservationError";
-  override cleanupIncomplete: boolean;
   override readonly userCategory: "cancelled" | undefined;
   override readonly userMessage: string | undefined;
   /** Producer-supplied explanation; undefined selects the operation default. */
@@ -46,8 +46,9 @@ export class BrowserObservationError extends AnalysisError {
     this.userMessage =
       options?.detail ?? observationFailureMessage(operation, reason);
     this.remediationAction = options?.remediationAction;
-    this.cleanupIncomplete =
-      this.cleanup !== undefined || reason === "cleanup_failed";
+    this.markCleanupIncomplete(
+      this.cleanup !== undefined || reason === "cleanup_failed",
+    );
     this.setCleanupResources(
       this.cleanup?.resources ??
         (reason === "cleanup_failed" ? ["browser_transport"] : []),

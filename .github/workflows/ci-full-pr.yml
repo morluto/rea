@@ -2,7 +2,6 @@ name: Full PR qualification
 
 on:
   pull_request:
-    branches: [main, "release/*"]
     types: [labeled]
 
 permissions:

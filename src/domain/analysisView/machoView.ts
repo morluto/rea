@@ -4,10 +4,7 @@ import type { AnalysisError } from "../analysisErrorBase.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { isMachOFormat } from "../binaryTargetTypes.js";
 import { machoSliceEncryptionViewSchema } from "../apple/machoEncryption.js";
-import {
-  inspectMachoSchema,
-  retainedInspectMachoSchema,
-} from "../native/nativeInspection.js";
+import { inspectMachoSchema } from "../native/nativeInspection.js";
 import { err, ok, type Result } from "../result.js";
 import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
@@ -20,6 +17,7 @@ import {
   completeWithinViewCoverage,
   pageViewCoverage,
 } from "./analysisViewCoverage.js";
+import { evidenceFileTarget, evidenceSubjectTarget } from "../evidence.js";
 
 const MACHO_COLLECTIONS = [
   "entrypoints",
@@ -91,15 +89,16 @@ export const machoSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
-type MachoReport = z.output<typeof retainedInspectMachoSchema>;
+type MachoReport = z.output<typeof inspectMachoSchema>;
 
 /** Admit a well-formed report whose recorded subject, if any, is a Mach-O. */
 const parseMachoReport = (
   parent: AnalysisViewParent,
 ): Result<MachoReport, AnalysisError> => {
-  const parsed = parseAnalysisViewResult(retainedInspectMachoSchema, parent);
+  const parsed = parseAnalysisViewResult(inspectMachoSchema, parent);
   if (!parsed.ok) return parsed;
-  if (parent.subject != null && !isMachOFormat(parent.subject.format))
+  const file = evidenceFileTarget(parent);
+  if (file !== undefined && !isMachOFormat(file.format))
     return err(
       analysisViewInputError([
         {
@@ -178,24 +177,22 @@ export const projectMachoView = (
   const incomplete = MACHO_COLLECTIONS.filter(
     (name) => !report[name].exhaustive,
   );
+  const subject = evidenceSubjectTarget(parent.subject);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_macho" as const,
     parent_digest: parent.evidenceId.slice(3),
     artifact:
-      parent.subject == null
+      subject === undefined
         ? { path: "", sha256: null }
-        : {
-            path: parent.subject.local_path,
-            sha256: parent.subject.digest.sha256,
-          },
+        : { path: subject.path, sha256: subject.sha256 },
     unknowns: [
       ...(incomplete.length === 0
         ? []
         : [
             `Inspection did not establish exhaustive ${incomplete.join(", ")}; page exhaustion does not establish absence of unreturned rows.`,
           ]),
-      ...(parent.subject == null
+      ...(evidenceFileTarget(parent) === undefined
         ? [
             "The parent has no recorded subject, so the inspected artifact path and SHA-256 are unknown.",
           ]
@@ -213,7 +210,7 @@ export const projectMachoView = (
       ...shared,
       limitations,
       summary,
-      coverage: completeWithinViewCoverage(returned, returned),
+      coverage: completeWithinViewCoverage(returned),
     });
   }
   const source =

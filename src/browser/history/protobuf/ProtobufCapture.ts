@@ -1,3 +1,4 @@
+import { unescapeJsonPointerToken } from "../../../domain/jsonPointer.js";
 import { captureBudgets } from "../CaptureBudgets.js";
 import { isAbsolute } from "node:path";
 import { CaptureFormatError } from "../CaptureFormatError.js";
@@ -5,14 +6,15 @@ import {
   CaptureRedaction,
   isCaptureCredentialHeaderBytes,
 } from "../CaptureRedaction.js";
-import { createHash } from "node:crypto";
-import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
-import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
+import {
+  readStableArtifact,
+  completedStableArtifactObservation,
+  type ArtifactResourceScope,
+} from "../../../resources/index.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
 } from "../CaptureFailures.js";
-import type { ArtifactResourceScope } from "../../../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
@@ -37,6 +39,7 @@ import {
   type PreparedProtobufBody,
 } from "./ProtobufFraming.js";
 import type { ProtobufDecoding } from "../../../domain/protobufWire.js";
+import { sha256Hex } from "../../../kernel/sha256Hex.js";
 
 const object = (
   value: JsonValue | undefined,
@@ -63,10 +66,7 @@ const excludeBody = (
           sha256: null,
         },
   );
-  const parts = pointer
-    .split("/")
-    .slice(1)
-    .map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+  const parts = pointer.split("/").slice(1).map(unescapeJsonPointerToken);
   let parent: JsonValue | undefined = record.reported;
   for (const part of parts.slice(0, -1)) {
     if (
@@ -182,6 +182,9 @@ const protobufMediaType = (
   });
 };
 
+const declaredFraming = (profile: ProtobufMimeAdmission) =>
+  profile.ok ? profile.value.framing : profile.error.declaredFraming;
+
 /** Format-aware owner of body metadata; callers never reinterpret producer JSON. */
 const bodyMetadata = (
   record: WebNetworkCaptureRecord,
@@ -209,7 +212,7 @@ const bodyMetadata = (
   if (message === undefined) return undefined;
   const headers = new Map<string, string | undefined>();
   let headerProfile = protobufMediaType(undefined);
-  let headerDeclaredFraming: ProtobufDecoding["framing"] | undefined;
+  const declaredFramings = new Set<ProtobufDecoding["framing"]>();
   let headerNamesKnown = Array.isArray(message.headers);
   if (Array.isArray(message.headers)) {
     for (const [index, item] of message.headers.entries()) {
@@ -237,9 +240,8 @@ const bodyMetadata = (
         const previous = headers.get(key);
         if (key === "content-type") {
           const nextProfile = protobufMediaType(knownValue);
-          const nextDeclaredFraming = nextProfile.ok
-            ? nextProfile.value.framing
-            : nextProfile.error.declaredFraming;
+          const framing = declaredFraming(nextProfile);
+          if (framing !== undefined) declaredFramings.add(framing);
           const agrees =
             previous !== undefined &&
             knownValue !== undefined &&
@@ -247,10 +249,6 @@ const bodyMetadata = (
             nextProfile.ok &&
             headerProfile.value.key === nextProfile.value.key;
           const first = !headers.has(key);
-          headerDeclaredFraming =
-            first || headerDeclaredFraming === nextDeclaredFraming
-              ? nextDeclaredFraming
-              : undefined;
           headers.set(key, first ? knownValue : agrees ? previous : undefined);
           headerProfile = first
             ? nextProfile
@@ -287,17 +285,14 @@ const bodyMetadata = (
     )?.mimeType;
     const contentType = typeof mimeType === "string" ? mimeType : undefined;
     const profile = protobufMediaType(contentType);
-    // An independent header still identifies transport sanitization, not the
-    // excluded producer MIME field's automatic interpretation.
+    // HAR MIME owns interpretation; all reported transport declarations can
+    // identify credential fields in the selected source bytes.
+    const framing = declaredFraming(profile);
+    if (framing !== undefined) declaredFramings.add(framing);
     return {
       contentType,
       mimeProfile: profile,
-      declaredFraming:
-        contentType === undefined
-          ? headerDeclaredFraming
-          : profile.ok
-            ? profile.value.framing
-            : profile.error.declaredFraming,
+      declaredFramings,
       contentTypeKnown: contentType !== undefined,
       httpIdentityKnown: true,
       httpCodingKnown: true,
@@ -308,7 +303,7 @@ const bodyMetadata = (
   return {
     contentType: header,
     mimeProfile: headerProfile,
-    declaredFraming: headerDeclaredFraming,
+    declaredFramings,
     contentTypeKnown:
       header !== undefined ||
       (headerNamesKnown && !headers.has("content-type")),
@@ -347,6 +342,48 @@ export interface PreparedProtobufCapture {
   readonly incomplete: boolean;
 }
 
+const preflightBody = async (
+  body: Buffer,
+  {
+    selected,
+    declared,
+  }: {
+    selected: ProtobufDecoding["framing"] | undefined;
+    declared: ReadonlySet<ProtobufDecoding["framing"]>;
+  },
+  redactions: CaptureRedaction,
+  signal?: AbortSignal,
+) => {
+  const framings =
+    selected === undefined ? declared : new Set([selected, ...declared]);
+  const exclusions = {
+    decoded: (data: Uint8Array) =>
+      redactions.sensitiveBytes(
+        Buffer.from(data.buffer, data.byteOffset, data.byteLength),
+      ),
+    header: isCaptureCredentialHeaderBytes,
+  };
+  let interpretation: PreparedProtobufBody | undefined;
+  let credentialsChecked = true;
+  for (const framing of framings) {
+    const prepared = await prepareProtobufBody(
+      body,
+      framing,
+      exclusions,
+      signal,
+    );
+    if (prepared.excluded !== undefined)
+      return {
+        interpretation: undefined,
+        credentialsChecked: true,
+        excluded: prepared.excluded,
+      };
+    if (framing === selected) interpretation = prepared;
+    credentialsChecked &&= prepared.credentialsChecked;
+  }
+  return { interpretation, credentialsChecked, excluded: undefined };
+};
+
 /** Sanitize every selected body before any schema acquisition or field-expansion failure.
  * Until this stage completes, the caller must not publish the original source as partial Evidence.
  */
@@ -366,6 +403,9 @@ export const prepareCaptureProtobuf = async (
   const records: { record: WebNetworkCaptureRecord; bodies: PreparedBody[] }[] =
     [];
   const options = input.protobuf;
+  const explicitFraming =
+    options?.framing === "auto" ? undefined : options?.framing;
+  const automaticSelected = explicitFraming === undefined;
   const pointers =
     options?.body_pointers === undefined
       ? undefined
@@ -383,7 +423,7 @@ export const prepareCaptureProtobuf = async (
     );
     for (const field of record.binary_fields) {
       await work.checkpoint();
-      if (pointers !== undefined && !pointers.has(field.pointer)) continue;
+      const interpret = pointers?.has(field.pointer) ?? true;
       const metadata = bodyMetadata(
         record,
         field.pointer,
@@ -393,44 +433,44 @@ export const prepareCaptureProtobuf = async (
       // Framing overrides interpret bodies; header and extension bytes remain their own facts.
       if (metadata === undefined) continue;
       if (field.state !== "retained") {
-        incomplete = true;
+        incomplete ||= interpret;
         continue;
       }
-      const { contentType, mimeProfile, declaredFraming } = metadata;
+      const { contentType, mimeProfile, declaredFramings } = metadata;
       const automatic = mimeProfile.ok ? mimeProfile.value.framing : undefined;
-      const automaticSelected =
-        options?.framing === undefined || options.framing === "auto";
-      if (!mimeProfile.ok) {
+      if (interpret && !mimeProfile.ok) {
         if (automaticSelected) incomplete = true;
         record.limitations.push(mimeProfile.error.issue);
       }
-      if (automaticSelected && !metadata.contentTypeKnown && field.bytes > 0) {
+      if (
+        interpret &&
+        automaticSelected &&
+        !metadata.contentTypeKnown &&
+        field.bytes > 0
+      ) {
         incomplete = true;
         record.limitations.push(
           "Selected body's MIME metadata is excluded, conflicting or unavailable, so automatic protobuf framing applicability is unknown; its retained bytes were not interpreted. Select explicit framing to decode them.",
         );
       }
-      const framing =
-        options?.framing === undefined || options.framing === "auto"
-          ? (automatic ?? declaredFraming)
-          : options.framing;
-      if (framing === undefined) {
-        continue;
-      }
+      // A body filter scopes wire analysis. Every body that remains in the
+      // retained records still needs its source-declared transport checks.
+      const framing = interpret
+        ? (explicitFraming ??
+          (metadata.contentTypeKnown ? automatic : undefined))
+        : undefined;
+      if (framing === undefined && declaredFramings.size === 0) continue;
       if (
         field.bytes > captureBudgets().inputBytes ||
         field.content_base64.length >
           Math.ceil(captureBudgets().inputBytes / 3) * 4
       )
         throw new CaptureFormatError(
-          "limit",
+          { name: "protobuf-body", maximum: captureBudgets().inputBytes },
           `Protobuf body exceeds max_input_bytes (${String(captureBudgets().inputBytes)} bytes)`,
         );
       const body = Buffer.from(field.content_base64, "base64");
-      if (
-        body.length !== field.bytes ||
-        createHash("sha256").update(body).digest("hex") !== field.sha256
-      )
+      if (body.length !== field.bytes || sha256Hex(body) !== field.sha256)
         throw new AnalysisInputError("inspect_web_network_capture", undefined, [
           {
             path: ["capture_path"],
@@ -439,38 +479,21 @@ export const prepareCaptureProtobuf = async (
               "Retained protobuf bytes contradict their source descriptor",
           },
         ]);
-      const exclusions = {
-        decoded: (data: Uint8Array) =>
-          redactions.sensitiveBytes(
-            Buffer.from(data.buffer, data.byteOffset, data.byteLength),
-          ),
-        header: isCaptureCredentialHeaderBytes,
-      };
-      const prepared = await prepareProtobufBody(
-        body,
-        framing,
-        exclusions,
-        signal,
-      );
-      // Caller overrides do not turn off exclusions for the transport declared by the source.
-      const declared =
-        prepared.excluded === undefined &&
-        declaredFraming !== undefined &&
-        declaredFraming !== framing
-          ? await prepareProtobufBody(body, declaredFraming, exclusions, signal)
-          : prepared;
-      const excluded = prepared.excluded ?? declared.excluded;
+      const { interpretation, credentialsChecked, excluded } =
+        await preflightBody(
+          body,
+          { selected: framing, declared: declaredFramings },
+          redactions,
+          signal,
+        );
       if (excluded !== undefined) {
         excludeBody(record, field.pointer, excluded);
         binaryByPointer.delete(field.pointer);
-        incomplete = true;
+        incomplete ||= interpret;
         continue;
       }
       // Analysis eligibility never bypasses the independent source exclusions.
-      if (
-        !metadata.httpCodingKnown &&
-        (!prepared.credentialsChecked || !declared.credentialsChecked)
-      )
+      if (!metadata.httpCodingKnown && !credentialsChecked)
         throw new AnalysisCapabilityUnavailableError(
           input.format,
           "inspect_web_network_capture",
@@ -481,6 +504,7 @@ export const prepareCaptureProtobuf = async (
               "Use a capture with available HTTP coding metadata, or select records whose transport can be inspected. Unchecked source bytes were not published.",
           },
         );
+      if (!interpret) continue;
       if (!metadata.httpIdentityKnown) {
         incomplete = true;
         record.limitations.push(
@@ -488,9 +512,14 @@ export const prepareCaptureProtobuf = async (
         );
         continue;
       }
-      if (automaticSelected && (!mimeProfile.ok || !metadata.contentTypeKnown))
-        continue;
-      bodies.push({ field, body, contentType, framing, prepared });
+      if (framing !== undefined && interpretation !== undefined)
+        bodies.push({
+          field,
+          body,
+          contentType,
+          framing,
+          prepared: interpretation,
+        });
     }
   }
   return { records, incomplete };
