@@ -199,12 +199,13 @@ it("forwards method, URL, headers and the request body as a web Request", async 
 });
 
 it("streams response chunks as the handler produces them", async () => {
+  let bodyless: boolean | undefined;
   let release: () => void = () => undefined;
   const gate = new Promise<void>((resolve) => {
     release = resolve;
   });
   const origin = await serve((request) => {
-    expect(request.body).toBeNull();
+    bodyless = request.body === null;
     return new Response(
       new ReadableStream({
         async start(controller) {
@@ -231,6 +232,7 @@ it("streams response chunks as the handler produces them", async () => {
     rest += decoder.decode(value);
   }
   expect(rest).toContain("data: 2");
+  expect(bodyless).toBe(true);
 });
 
 it("aborts the web Request and cancels its response body when the client leaves", async () => {
