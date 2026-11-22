@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import {
   cp,
   mkdir,
@@ -32,9 +33,13 @@ function run(
   input: unknown = plan,
   environment: NodeJS.ProcessEnv = {},
 ) {
-  const result = spawnSync(process.execPath, [script, mode], {
+  const planPath = join(root, "ci-build-plan-input.json");
+  writeFileSync(
+    planPath,
+    typeof input === "string" ? input : JSON.stringify(input),
+  );
+  const result = spawnSync(process.execPath, [script, mode, planPath], {
     cwd: root,
-    input: typeof input === "string" ? input : JSON.stringify(input),
     encoding: "utf8",
     env: { ...process.env, BUILD_CACHE_PREFIX: prefix, ...environment },
   });

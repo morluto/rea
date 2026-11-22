@@ -537,7 +537,7 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   expect(stage).toBeGreaterThan(prepare);
   expect(upload).toBeGreaterThan(stage);
   expect(buildSteps[stage]?.run).toContain(
-    "node scripts/ci/portable-build-cache.mjs snapshot < .cache/ci-build-plan.json",
+    "node scripts/ci/portable-build-cache.mjs snapshot .cache/ci-build-plan.json",
   );
   expect(buildSteps[stage]?.if).toBeUndefined();
   expect(buildSteps[stage]?.shell).toBe("bash");
@@ -614,8 +614,12 @@ it("binds provider build reuse to the current run while keeping standalone dispa
   });
   expect(download?.if).toBe("inputs.build_cache_artifact != ''");
   expect(download?.["continue-on-error"]).not.toBe(true);
-  expect(action.runs.steps.find((step) => step.id === "plan")?.run).toContain(
-    'node scripts/ci/portable-build-cache.mjs key >> "$GITHUB_OUTPUT"',
+  const planRun = action.runs.steps.find((step) => step.id === "plan")?.run;
+  expect(planRun).toContain(
+    "npm run --silent test:prepare -- --dry=json > .cache/ci-build-plan.json",
+  );
+  expect(planRun).toContain(
+    'node scripts/ci/portable-build-cache.mjs key .cache/ci-build-plan.json >> "$GITHUB_OUTPUT"',
   );
   for (const step of action.runs.steps.filter(
     (step) => step.id === "plan" || step.uses?.startsWith("actions/cache"),
