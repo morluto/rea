@@ -1,3 +1,5 @@
+import { isImmutableJsonSnapshot } from "./immutableJson.js";
+
 /** Exact UTF-16 code units of a JSON string, including escaping and quotes. */
 export const jsonStringCodeUnits = (value: string): number => {
   let length = value.length + 2;
@@ -42,36 +44,82 @@ export function* canonicalJsonParts(value: unknown): Generator<string> {
   yield* encodeValue(value, false, true);
 }
 
-/** Compare ordinary JSON text in bounded parts, preserving native key order. */
+/** Compare ordinary JSON text iteratively, fast-pathing identical immutable subtrees. */
 export const equalJsonText = (left: unknown, right: unknown): boolean => {
-  const a = jsonParts(left);
-  const b = jsonParts(right);
-  let x = a.next();
-  let y = b.next();
-  let i = 0;
-  let j = 0;
-  try {
-    while (!x.done && !y.done) {
-      const length = Math.min(x.value.length - i, y.value.length - j);
-      if (x.value.slice(i, i + length) !== y.value.slice(j, j + length))
+  const ancestorsLeft = new Set<object>();
+  const ancestorsRight = new Set<object>();
+  const stack: {
+    readonly left: ContainerFrame;
+    readonly right: ContainerFrame;
+  }[] = [];
+  let pendingLeft = left;
+  let pendingRight = right;
+  let hasPending = true;
+
+  while (true) {
+    if (hasPending) {
+      hasPending = false;
+      const a = pendingLeft;
+      const b = pendingRight;
+      const objA = typeof a === "object" && a !== null;
+      const objB = typeof b === "object" && b !== null;
+      if (!objA && !objB) {
+        if (!isValidJsonScalar(a) || !isValidJsonScalar(b))
+          throw new TypeError("JSON output requires ordinary JSON values");
+        if (a !== b) return false;
+      } else if (objA && objB) {
+        if (ancestorsLeft.has(a) || ancestorsRight.has(b))
+          throw new TypeError("JSON output contains a circular reference");
+        if (!(a === b && isImmutableJsonSnapshot(a))) {
+          const frameA = openContainer(a, stack.length, ancestorsLeft, false);
+          const frameB = openContainer(b, stack.length, ancestorsRight, false);
+          if (frameA.array !== frameB.array) return false;
+          stack.push({ left: frameA, right: frameB });
+        }
+      } else {
+        if (objA) openContainer(a, stack.length, ancestorsLeft, false);
+        else if (!isValidJsonScalar(a))
+          throw new TypeError("JSON output requires ordinary JSON values");
+        if (objB) openContainer(b, stack.length, ancestorsRight, false);
+        else if (!isValidJsonScalar(b))
+          throw new TypeError("JSON output requires ordinary JSON values");
         return false;
-      i += length;
-      j += length;
-      if (i === x.value.length) {
-        x = a.next();
-        i = 0;
-      }
-      if (j === y.value.length) {
-        y = b.next();
-        j = 0;
       }
     }
-    return x.done === true && y.done === true;
-  } finally {
-    a.return(undefined);
-    b.return(undefined);
+
+    const pair = stack.at(-1);
+    if (pair === undefined) return true;
+    const memberA = nextMember(pair.left);
+    const memberB = nextMember(pair.right);
+    if (memberA === undefined || memberB === undefined) {
+      if (memberA !== memberB) {
+        // Validate the extra array element if an array ended on only one side.
+        const extra = memberA ?? memberB;
+        if (
+          extra !== undefined &&
+          (typeof extra.item !== "object" || extra.item === null) &&
+          !isValidJsonScalar(extra.item)
+        )
+          throw new TypeError("JSON output requires ordinary JSON values");
+        return false;
+      }
+      ancestorsLeft.delete(pair.left.value);
+      ancestorsRight.delete(pair.right.value);
+      stack.pop();
+      continue;
+    }
+    if (memberA.key !== memberB.key) return false;
+    pendingLeft = memberA.item;
+    pendingRight = memberB.item;
+    hasPending = true;
   }
 };
+
+const isValidJsonScalar = (value: unknown): boolean =>
+  value === null ||
+  typeof value === "string" ||
+  typeof value === "boolean" ||
+  (typeof value === "number" && Number.isFinite(value));
 
 /** Buffer JSON parts while preserving complete UTF-16 surrogate pairs. */
 export function* bufferedJsonParts(parts: Iterable<string>): Generator<string> {

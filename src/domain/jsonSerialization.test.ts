@@ -149,4 +149,30 @@ describe("JSON text equality without whole-document strings", () => {
       JSON.stringify(left) === JSON.stringify(right),
     );
   });
+
+  it("matches native JSON equality and rejection semantics across identical references and invalid values", async () => {
+    const { freezeJsonSnapshot } = await import("./immutableJson.js");
+    const frozen = freezeJsonSnapshot({
+      nested: [1, { label: "ok", flags: [true, false, null] }],
+    });
+    const clone = structuredClone(frozen);
+    expect(equalJsonText(frozen, frozen)).toBe(true);
+    expect(equalJsonText(frozen, clone)).toBe(true);
+    expect(equalJsonText({ x: 1, y: {} }, { x: 1, y: [] })).toBe(false);
+    expect(equalJsonText([1], [1, 2])).toBe(false);
+    expect(() => equalJsonText([1, undefined], [1, 2])).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText({ v: Number.NaN }, { v: Number.NaN })).toThrow(
+      "ordinary JSON values",
+    );
+    expect(() => equalJsonText("x", new Date(0))).toThrow(
+      "ordinary JSON objects",
+    );
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    expect(() => equalJsonText(circular, circular)).toThrow(
+      "circular reference",
+    );
+  });
 });
