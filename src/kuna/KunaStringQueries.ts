@@ -78,22 +78,24 @@ export class KunaStringQueries {
           query.pattern,
           query.case_sensitive,
         );
-        const candidates =
+        const prefilter =
           requiredLiteral === undefined
-            ? available
-            : (() => {
-                const prefilter = analysisSearchPredicate({
-                  pattern: requiredLiteral,
-                  mode: "literal",
-                  case_sensitive: query.case_sensitive,
-                });
-                return available.filter((item) => prefilter(item.value));
-              })();
+            ? undefined
+            : analysisSearchPredicate({
+                pattern: requiredLiteral,
+                mode: "literal",
+                case_sensitive: query.case_sensitive,
+              });
+        let candidates = available;
         const matched = await this.work.match({
           operation,
           pattern: query.pattern,
           caseSensitive: query.case_sensitive,
-          values: () => candidates.map((item) => item.value),
+          values: () => {
+            if (prefilter !== undefined)
+              candidates = available.filter((item) => prefilter(item.value));
+            return candidates.map((item) => item.value);
+          },
           signal,
           ...regex,
         });
