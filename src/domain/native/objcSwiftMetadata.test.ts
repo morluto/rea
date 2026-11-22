@@ -354,36 +354,65 @@ it("requires the Swift ABI type-reference kind on every conformance", () => {
 });
 
 describe("dispatch implementation composite-key ordering parity", () => {
-  it("orders quotes, punctuation, null addresses, and categories identically regardless of inventory order", () => {
+  it("orders quotes, backslashes, punctuation, null addresses, categories, and code points per the composite-key contract regardless of inventory order", () => {
     const entries = [
       { address: "0x1000", name: '-[Class"A sel:]' },
       { address: "0x1000", name: "-[Class!A sel:]" },
       { address: "0x1000", name: "-[ClassA(Cat) sel:]" },
+      { address: "0x1000", name: "-[ClassA sel:]" },
       { address: "0x2000", name: "-[ClassA sel:]" },
       { address: "", name: "-[ClassA sel:]" },
       { address: "0x1000", name: "-[Class\\A sel:]" },
+      { address: "0x1000", name: "+[ClassA sel:]" },
+      { address: "0x1000", name: "-[ClassA alt:]" },
+      { address: "0x1000", name: "-[Class\uE000 sel:]" },
+      { address: "0x1000", name: "-[Class\u{10000} sel:]" },
     ];
+    // Canonical order of compositeKey([class_name, selector, method_type, implementation_address ?? "", category ?? null])
+    // under compareUnicodeCodePoints:
+    // - "!" (0x21) precedes "A" (0x41)
+    // - selector "alt:" precedes "sel:"; method_type "class" precedes "instance"
+    // - missing address normalizes to "" (closing quote 0x22 < "0" 0x30)
+    // - quoted category "\"Cat\"" (0x22) precedes null (0x6e "n") at the same address
+    // - JSON escapes "\"" -> "\\\"" (0x5c, 0x22) and "\\" -> "\\\\" (0x5c, 0x5c), placing both after "A" (0x41)
+    // - BMP U+E000 precedes supplementary U+10000 (not UTF-16 lead surrogate 0xD800)
+    const expected = [
+      ["Class!A", "sel:", "instance", "0x1000", null],
+      ["ClassA", "alt:", "instance", "0x1000", null],
+      ["ClassA", "sel:", "class", "0x1000", null],
+      ["ClassA", "sel:", "instance", null, null],
+      ["ClassA", "sel:", "instance", "0x1000", "Cat"],
+      ["ClassA", "sel:", "instance", "0x1000", null],
+      ["ClassA", "sel:", "instance", "0x2000", null],
+      ['Class"A', "sel:", "instance", "0x1000", null],
+      ["Class\\A", "sel:", "instance", "0x1000", null],
+      ["Class\uE000", "sel:", "instance", "0x1000", null],
+      ["Class\u{10000}", "sel:", "instance", "0x1000", null],
+    ];
+    const project = (
+      metadata: ReturnType<typeof inspectNativeDispatchMetadata>,
+    ) =>
+      metadata.objc_dispatch_implementations.map(
+        ({
+          class_name,
+          selector,
+          method_type,
+          implementation_address,
+          category,
+        }) => [
+          class_name,
+          selector,
+          method_type,
+          implementation_address,
+          category ?? null,
+        ],
+      );
     const forward = inspectNativeDispatchMetadata(entries, entries.length);
     const reversed = inspectNativeDispatchMetadata(
       [...entries].reverse(),
       entries.length,
     );
-    expect(
-      reversed.objc_dispatch_implementations.map(
-        ({ class_name, category, implementation_address }) => [
-          class_name,
-          category ?? null,
-          implementation_address,
-        ],
-      ),
-    ).toEqual(
-      forward.objc_dispatch_implementations.map(
-        ({ class_name, category, implementation_address }) => [
-          class_name,
-          category ?? null,
-          implementation_address,
-        ],
-      ),
-    );
+    expect(project(forward)).toEqual(expected);
+    expect(project(reversed)).toEqual(expected);
   });
 });
