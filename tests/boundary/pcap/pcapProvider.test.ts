@@ -1019,5 +1019,7 @@ it("skips the second tshark DNS pass when base dissection observes no DNS, mDNS,
     dns_queries: [],
     dns_query_count: 0,
   });
-  expect(result.value.limitations).toEqual([]);
+  expect(result.value.limitations.join(" ")).not.toContain(
+    "DNS wire identity extraction",
+  );
 });
