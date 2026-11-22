@@ -2,8 +2,15 @@ import { BinaryReader } from "../../domain/binaryContainer.js";
 import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
 import { assertArtifactReadActive } from "../../resources/index.js";
-import { readElfRelocationEntry } from "../../domain/elfRelocation.js";
-import { elfSymbolSize, readElfSymbol } from "../../domain/elfSymbol.js";
+import {
+  ELF_RELOCATION_TRUNCATED_MESSAGE,
+  readElfRelocationEntryAt,
+} from "../../domain/elfRelocation.js";
+import {
+  ELF_SYMBOL_TRUNCATED_MESSAGE,
+  elfSymbolSize,
+  readElfSymbolAt,
+} from "../../domain/elfSymbol.js";
 import {
   ELF_SHN_XINDEX,
   ElfSymbolSectionIndexTables,
@@ -20,7 +27,7 @@ import {
   elfAbsoluteRelocationType,
   elfCopyRelocationType,
   elfRelativeRelocationType,
-  elfRelocationWidth,
+  elfRelocationWidthLookup,
 } from "../../domain/native/elfPointerRelocations.js";
 import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import type { InitializerNotes } from "./initializerNotes.js";
@@ -184,18 +191,14 @@ const readTable = (
   let extendedBytes: Buffer | null | undefined;
   for (let index = 0; index < count; index += 1) {
     const at = start + index * width;
-    const parsed = readElfSymbol(
-      facts.bytes.subarray(at, at + width),
-      facts.bits,
-      facts.little,
-    );
-    if (!parsed.ok) {
-      notes.add(parsed.error.message);
+    const parsed = readElfSymbolAt(facts.bytes, at, facts.bits, facts.little);
+    if (parsed === null) {
+      notes.add(ELF_SYMBOL_TRUNCATED_MESSAGE);
       break;
     }
-    const named = stringAt(strings, parsed.value.name_offset, notes);
+    const named = stringAt(strings, parsed.name_offset, notes);
     nameMissing ||= named.missing;
-    const rawSection = parsed.value.section_index;
+    const rawSection = parsed.section_index;
     if (rawSection === ELF_SHN_XINDEX) {
       if (extendedBytes === undefined) {
         const companion = extendedTables.tableFor(section.index, declared);
@@ -227,10 +230,10 @@ const readTable = (
     sectionMissing ||= !resolved.ok;
     symbols.push({
       name: named.name,
-      value: parsed.value.value,
+      value: parsed.value,
       section: resolved.ok ? resolved.value : null,
-      type: parsed.value.type,
-      size: parsed.value.size,
+      type: parsed.type,
+      size: parsed.size,
     });
   }
   return {
@@ -438,17 +441,6 @@ interface SectionRelocInput extends ImageFacts {
   readonly signal?: AbortSignal | undefined;
 }
 
-/** Decode one REL or RELA record through the encoding-specific overload. */
-const readRelocationRecord = (
-  bytes: Buffer,
-  bits: 32 | 64,
-  little: boolean,
-  encoding: "rel" | "rela",
-) =>
-  encoding === "rela"
-    ? readElfRelocationEntry(bytes, bits, little, "rela")
-    : readElfRelocationEntry(bytes, bits, little, "rel");
-
 const encodingOf = (type: number): "rel" | "rela" | null =>
   type === 4 ? "rela" : type === 9 ? "rel" : null;
 
@@ -553,6 +545,7 @@ export const sectionRelocations = async (
     return target?.type === 0 ? undefined : target;
   };
   const word = wordOf(input.bits);
+  const wordBigInt = BigInt(word);
   const reader = new BinaryReader(input.bytes, input.little, "elf");
   let complete = true;
   const skip = (section: NativeSection): void => {
@@ -566,6 +559,7 @@ export const sectionRelocations = async (
   let budget = SECTION_RELOCATION_RECORD_SCAN;
   const relative = elfRelativeRelocationType(input.machine, input.bits);
   const copy = elfCopyRelocationType(input.machine, input.bits);
+  const relocationWidths = elfRelocationWidthLookup(input.machine, input.bits);
   // Slot visits grow with each COPY span, so the spans together are limited to
   // the file size, as in the dynamic walk.
   let copyAllowance = input.bytes.length;
@@ -614,6 +608,11 @@ export const sectionRelocations = async (
     const symbols = input.tables.get(section.link);
     const target = targetSection(section);
     const wanted = wantedBy(section);
+    const minWantedVa = wanted[0]?.va;
+    const maxWantedEnd =
+      wanted.length === 0
+        ? undefined
+        : wanted[wanted.length - 1]!.va + wordBigInt;
     if (input.relocatable && target === undefined) {
       input.notes.add(
         "A relocation section names a target section that does not exist, so its records were not applied.",
@@ -636,40 +635,44 @@ export const sectionRelocations = async (
         assertArtifactReadActive(input.signal);
       }
       const at = start + index * width;
-      const parsed = readRelocationRecord(
-        input.bytes.subarray(at, at + width),
+      const parsed = readElfRelocationEntryAt(
+        input.bytes,
+        at,
         input.bits,
         input.little,
         encoding,
       );
-      if (!parsed.ok) {
-        input.notes.add(parsed.error.message);
+      if (parsed === null) {
+        input.notes.add(ELF_RELOCATION_TRUNCATED_MESSAGE);
         skip(section);
         break;
       }
       const copied =
-        !input.relocatable && parsed.value.type === copy
-          ? copySpan(section, symbols, parsed.value.symbolIndex)
+        !input.relocatable && parsed.type === copy
+          ? copySpan(section, symbols, parsed.symbolIndex)
           : null;
       // Bytes the record is known to write: a sized COPY's symbol, one word
       // for RELATIVE, or the fixed width of another decoded kind.
       const extent =
         copied ??
-        (parsed.value.type === relative
+        (parsed.type === relative
           ? word
-          : elfRelocationWidth(input.machine, parsed.value.type, input.bits));
+          : parsed.type === 0
+            ? 0
+            : relocationWidths?.get(parsed.type));
       // An unknown type is assumed to write a whole word, so it still marks what it may touch.
       const span = extent ?? word;
       if (span === 0) continue;
-      const written = parsed.value.offset + (target?.address ?? 0n);
-      if (recordTarget(input, target, parsed.value.offset, 1) === null) {
+      const spanBigInt = span === word ? wordBigInt : BigInt(span);
+      const written = parsed.offset + (target?.address ?? 0n);
+      if (recordTarget(input, target, parsed.offset, 1) === null) {
         // A linked image's write to memory without file bytes, such as COPY
         // into .bss, cannot change a slot outside its known extent.
         const reached = wanted[firstOverlap(wanted, written, word)];
         if (
           input.relocatable ||
           extent === undefined ||
-          (reached !== undefined && reached.va < written + BigInt(span))
+          (reached !== undefined && reached.va < written + spanBigInt)
         )
           skip(section);
         continue;
@@ -677,7 +680,7 @@ export const sectionRelocations = async (
       const writtenFileOffset = recordTarget(
         input,
         target,
-        parsed.value.offset,
+        parsed.offset,
         span,
       );
       const fullWrite = writtenFileOffset !== null;
@@ -687,13 +690,20 @@ export const sectionRelocations = async (
           "A section relocation extends beyond its target mapping; affected slots are unresolved.",
         );
       }
+      if (
+        minWantedVa === undefined ||
+        maxWantedEnd === undefined ||
+        written >= maxWantedEnd ||
+        written + spanBigInt <= minWantedVa
+      )
+        continue;
       for (
         let next = firstOverlap(wanted, written, word);
         next < wanted.length;
         next += 1
       ) {
         const slot = wanted[next];
-        if (slot === undefined || slot.va >= written + BigInt(span)) break;
+        if (slot === undefined || slot.va >= written + spanBigInt) break;
         const key = elfInitializerSlotKey(slot, input.relocatable);
         if (clobbered.has(key)) continue;
         if (
@@ -706,10 +716,7 @@ export const sectionRelocations = async (
             encoding === "rel"
               ? readInitializerWord(reader, writtenFileOffset, input.bits)
               : null;
-          found.set(
-            key,
-            relocationFromEntry(input, parsed.value, symbols, inplace),
-          );
+          found.set(key, relocationFromEntry(input, parsed, symbols, inplace));
           continue;
         }
         found.delete(key);
