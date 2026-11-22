@@ -18,6 +18,7 @@ import {
   ubiLayoutVolumePebs,
   findUbiSmallerGridHeader,
   ubiPebHeadersErased,
+  ubiSmallerGridFit,
   ubiSmallerGridOffsets,
   ubiSmallerPebSizeHoldsLebs,
   ubiSpacingConflict,
@@ -51,10 +52,7 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
   const next = findUbiEcHeader(bytes.subarray(start), start, first.value);
   const spacing =
     next === null ? null : ubiSpacingCheckRange(next, bytes.length);
-  const measured = ubiGeometry(
-    first.value,
-    next,
-    bytes.length,
+  const spacingConflict = (ruledOut?: ReadonlySet<number>) =>
     spacing === null || next === null
       ? null
       : findUbiSpacingConflict(
@@ -62,9 +60,18 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
           spacing.start,
           first.value,
           next,
-        ),
-  );
-  if (!measured.ok) return measured;
+          ruledOut,
+        );
+  const conflict = spacingConflict();
+  const failed = (error: UbiImageParseError) => ({
+    ok: false as const,
+    error:
+      conflict === null || next === null
+        ? error
+        : ubiSpacingConflict(next, conflict),
+  });
+  const measured = ubiGeometry(first.value, next, bytes.length, null);
+  if (!measured.ok) return failed(measured.error);
   const { pebSize, pebCount, headerReadBytes, dataOffset } = measured.value;
   const pebs: UbiPeb[] = [];
   for (let index = 0; index < pebCount; index += 1) {
@@ -74,20 +81,11 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
       index,
       measured.value,
     );
-    if (!peb.ok) return peb;
+    if (!peb.ok) return failed(peb.error);
     pebs.push(peb.value);
   }
-  const header = findUbiSmallerGridHeader(
-    bytes,
-    0,
-    first.value,
-    measured.value,
-    ubiSmallerGridOffsets(measured.value),
-  );
-  if (header !== null)
-    return { ok: false, error: ubiSpacingConflict(pebSize, header) };
   const geometry = checkUbiPebs(measured.value, pebs);
-  if (!geometry.ok) return geometry;
+  if (!geometry.ok) return failed(geometry.error);
   const verifiedCopies = new Set(
     ubiCopiesToVerify(pebs).filter((index) => {
       const peb = pebs[index]!;
@@ -109,6 +107,23 @@ const parse = (bytes: Buffer): Result<UbiImage, UbiImageParseError> => {
         );
   const [left, right] = ubiLayoutVolumePebs(pebs, verifiedCopies);
   const tableCopies = [copy(left), copy(right)] as const;
+  const fit = ubiSmallerGridFit(measured.value, pebs, tableCopies);
+  if (conflict !== null && next !== null) {
+    const real = fit.ruledOut.has(conflict % next)
+      ? spacingConflict(fit.ruledOut)
+      : conflict;
+    if (real !== null)
+      return { ok: false, error: ubiSpacingConflict(next, real) };
+  }
+  const header = findUbiSmallerGridHeader(
+    bytes,
+    0,
+    first.value,
+    measured.value,
+    fit.plausible,
+  );
+  if (header !== null)
+    return { ok: false, error: ubiSpacingConflict(pebSize, header) };
   for (const smaller of ubiSmallerPebSizes(measured.value)) {
     let fits = ubiSmallerPebSizeHoldsLebs(
       measured.value,
@@ -1293,6 +1308,84 @@ it("accepts an eraseblock size whose static LEB cannot fit the smaller one", () 
       tables,
     ),
   ).toBe(false);
+});
+
+describe("erase-counter headers inside static LEB payload", () => {
+  // 128 KiB eraseblocks with full 126976-byte static LEBs: no smaller
+  // eraseblock holds such a LEB, so a valid EC header on a smaller grid
+  // inside the payload, as a nested UBI image writes, is data.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const nestedHeader = ubiImage([{ kind: "free" }], wide).subarray(0, 64);
+  /** LEBs 0..5 of one volume; `headers` maps a LEB to payload header offsets. */
+  const nestedImage = (
+    type: "dynamic" | "static",
+    headers: ReadonlyMap<number, number>,
+  ) => {
+    const records: UbiFixtureVolumeRecord[] = [
+      { id: 0, name: "nested", type, reservedPebs: 6 },
+    ];
+    return ubiImage(
+      [
+        ...ubiLayoutPebs(records, wide),
+        ...Array.from({ length: 6 }, (_, lnum): UbiFixturePeb => {
+          const data = Buffer.alloc(lebBytes, 0x40 + lnum);
+          const at = headers.get(lnum);
+          if (at !== undefined) nestedHeader.copy(data, at);
+          return {
+            kind: "leb",
+            volId: 0,
+            lnum,
+            data,
+            sqnum: BigInt(lnum + 2),
+            ...(type === "static" ? { volType: "static", usedEbs: 6 } : {}),
+          };
+        }),
+      ],
+      wide,
+    );
+  };
+  // LEB 0 sits in PEB 2, inside the spacing check; LEB 5 in PEB 7 beyond it.
+  const inSpacingCheck = new Map([[0, 64 * 1024 - wide.dataOffset]]);
+  const beyondSpacingCheck = new Map([[5, 32 * 1024 - wide.dataOffset]]);
+
+  it.each([
+    ["inside the spacing check", inSpacingCheck],
+    ["beyond the spacing check", beyondSpacingCheck],
+  ])("accepts a header %s that no smaller LEB could hold", (_case, at) => {
+    const parsed = parse(nestedImage("static", at));
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        geometry: { pebSize: wide.pebSize, pebCount: 8 },
+        volumes: [{ extractRefusal: null, dataBytes: 6 * lebBytes }],
+      },
+    });
+  });
+
+  it.each([
+    ["inside the spacing check", inSpacingCheck, 2 * 128 * 1024 + 64 * 1024],
+    [
+      "beyond the spacing check",
+      beyondSpacingCheck,
+      7 * 128 * 1024 + 32 * 1024,
+    ],
+  ])(
+    "still refuses a header %s when a smaller LEB fits",
+    (_case, at, offset) => {
+      // Dynamic LEBs declare no data size, so a smaller size stays possible.
+      expect(parse(nestedImage("dynamic", at))).toMatchObject({
+        ok: false,
+        error: {
+          kind: "malformed",
+          failure: { offset },
+          message: expect.stringContaining(
+            "contradicts the 131072-byte eraseblock size",
+          ),
+        },
+      });
+    },
+  );
 });
 
 it("keeps erase-counter facts of an eraseblock whose VID header is corrupt", () => {

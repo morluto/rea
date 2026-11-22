@@ -271,20 +271,21 @@ export const findUbiEcHeader = (
  * The first aligned offset in `chunk` holding a valid erase-counter header
  * that is not on the `pebSize` grid, or null. Such a header means eraseblocks
  * between the first two headers were skipped and `pebSize` is a multiple of
- * the real size.
+ * the real size. `ruledOut` (from `ubiRuledOutGridOffsets`) holds the
+ * positions inside an eraseblock that only smaller sizes the image's LEBs
+ * rule out would begin at; a header there is payload, not a conflict.
  */
 export const findUbiSpacingConflict = (
   chunk: Uint8Array,
   chunkOffset: number,
   first: UbiEcHeader,
   pebSize: number,
+  ruledOut: ReadonlySet<number> = new Set(),
 ): number | null =>
-  findEcHeaderWhere(
-    chunk,
-    chunkOffset,
-    first,
-    (offset) => offset % pebSize !== 0,
-  );
+  findEcHeaderWhere(chunk, chunkOffset, first, (offset) => {
+    const within = offset % pebSize;
+    return within !== 0 && !ruledOut.has(within);
+  });
 
 /** The file range searched by `findUbiSpacingConflict` for a measured size. */
 export const ubiSpacingCheckRange = (
@@ -419,12 +420,13 @@ export const ubiPebHeadersErased = (
   );
 
 /**
- * Offsets inside one measured eraseblock where an eraseblock of any smaller
+ * Offsets inside one measured eraseblock where an eraseblock of a smaller
  * candidate size would begin: multiples of every size on the 512-byte grid
- * that divides the measured size and still leaves a LEB.
+ * that divides the measured size, still leaves a LEB, and passes `admit`.
  */
 export const ubiSmallerGridOffsets = (
   geometry: UbiGeometry,
+  admit: (smallerPebSize: number) => boolean = () => true,
 ): ReadonlySet<number> => {
   const offsets = new Set<number>();
   for (
@@ -433,6 +435,7 @@ export const ubiSmallerGridOffsets = (
     size += UBI_PEB_ALIGNMENT
   ) {
     if (geometry.pebSize % size !== 0 || size <= geometry.dataOffset) continue;
+    if (!admit(size)) continue;
     for (let offset = size; offset < geometry.pebSize; offset += size)
       offsets.add(offset);
   }
@@ -501,6 +504,31 @@ export const ubiSmallerPebSizeHoldsLebs = (
     ],
     smaller,
   ).ok;
+};
+
+/**
+ * Smaller-grid offsets that `ubiSmallerPebSizeHoldsLebs` admits, and those
+ * only sizes it rules out would begin at. A header at a ruled-out position
+ * lies in LEB data no smaller eraseblock could hold, such as a nested UBI
+ * image inside a static volume, so it does not contradict the measured size.
+ */
+export const ubiSmallerGridFit = (
+  geometry: UbiGeometry,
+  pebs: readonly UbiPeb[],
+  tableCopies: readonly [Uint8Array | null, Uint8Array | null],
+): {
+  readonly plausible: ReadonlySet<number>;
+  readonly ruledOut: ReadonlySet<number>;
+} => {
+  const plausible = ubiSmallerGridOffsets(geometry, (size) =>
+    ubiSmallerPebSizeHoldsLebs(geometry, pebs, size, tableCopies),
+  );
+  const ruledOut = new Set(
+    [...ubiSmallerGridOffsets(geometry)].filter(
+      (offset) => !plausible.has(offset),
+    ),
+  );
+  return { plausible, ruledOut };
 };
 
 /**

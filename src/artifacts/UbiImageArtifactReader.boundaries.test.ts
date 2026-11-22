@@ -304,3 +304,39 @@ it("refuses a header on a smaller eraseblock grid beyond the spacing check", asy
     await reader.close();
   }
 });
+
+it("reads a static volume whose payload holds EC headers no smaller LEB could hold", async () => {
+  // A nested UBI image in full 126976-byte static LEBs puts valid headers on
+  // the 64 KiB grid inside and the 32 KiB grid beyond the spacing check.
+  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const nestedHeader = ubiImage([{ kind: "free" }], wide).subarray(0, 64);
+  const records = [
+    { id: 0, name: "nested", type: "static" as const, reservedPebs: 6 },
+  ];
+  const lebs = Array.from({ length: 6 }, (_, lnum) => {
+    const data = Buffer.alloc(lebBytes, 0x40 + lnum);
+    if (lnum === 0) nestedHeader.copy(data, 64 * 1024 - wide.dataOffset);
+    if (lnum === 5) nestedHeader.copy(data, 32 * 1024 - wide.dataOffset);
+    return {
+      kind: "leb" as const,
+      volId: 0,
+      lnum,
+      data,
+      sqnum: BigInt(lnum + 2),
+      volType: "static" as const,
+      usedEbs: 6,
+    };
+  });
+  const reader = new UbiImageArtifactReader(
+    await fixture(ubiImage([...ubiLayoutPebs(records, wide), ...lebs], wide)),
+  );
+  try {
+    const [volume] = await entries(reader);
+    expect(volume).toMatchObject({ declaredSize: 6 * lebBytes });
+    const bytes = await buffer(await reader.open(volume!));
+    expect(bytes.equals(Buffer.concat(lebs.map((leb) => leb.data)))).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});

@@ -39,7 +39,11 @@ header position on that smaller grid between measured PEBs is erased and every
 mapped LEB's `data_size` plus `data_pad` fits the smaller LEB, so the bytes
 equally describe smaller PEBs with erased ones between. A valid EC header
 anywhere in the image where a PEB of any such smaller size would begin shows
-that PEBs were skipped and also refuses it. The LEB size is the PEB size minus `data_offset`.
+that PEBs were skipped and also refuses it. Both header checks set aside a
+position that only smaller sizes would begin at whose LEB cannot hold a mapped
+LEB's `data_size` plus `data_pad`, or under which no volume table copy stays
+valid: no smaller PEB starts there, so the header is LEB data, such as a nested
+UBI image inside a static volume. The LEB size is the PEB size minus `data_offset`.
 
 Root `format_metadata` (kind `ubi-image`) records `peb_size`, `leb_size`,
 `vid_header_offset`, `data_offset`, `image_seq`, the PEB count and how many
@@ -105,7 +109,8 @@ Other VID `data_crc` values are not verified (`data_crc_verified: false`).
 
 Inventory reads 64 bytes at offset 0, the PEB-size search window, and the
 first `vid_hdr_offset + 64` bytes of each PEB, the four PEBs after the
-first to check the PEB size, the whole image once in 64 KiB chunks for EC
+first to check the PEB size (twice when its first off-grid header turns
+out to be LEB data), the whole image once in 64 KiB chunks for EC
 headers where a smaller PEB would begin (when a smaller size is possible), the
 first `vid_hdr_offset + 64` bytes at each smaller-grid header position until
 one is written, the data of wear-leveling copies that compete
