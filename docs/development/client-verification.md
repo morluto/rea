@@ -107,8 +107,10 @@ lanes require an installed native client. Select its executable with
 They configure disposable profiles through the public REA CLI, preserve caller
 settings and backups, and exercise real stdio MCP calls and skill loading. The
 `call` mode checks complete catalog discovery and actual JavaScript Evidence;
-pass `-- chat` to check plain chat with REA enabled. Qwen also reads the full
-result that its client offloads, and Pi exercises default codemode execution.
+pass `-- chat` to check plain chat with REA enabled. When Qwen saves the installed
+skill's tool output, the fixture uses native `read_file` pages and verifies the
+complete body and reported digest before analysis. It also reads offloaded REA
+Evidence. Pi exercises default codemode execution.
 Use `REA_VERIFY_RUNTIME_ROOT` to select a production-only installed REA package.
 Receipts retain client versions, result digests, host coverage and owned-process
 cleanup. These lanes use a deterministic loopback model and do not prove live

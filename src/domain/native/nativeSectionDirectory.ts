@@ -221,6 +221,7 @@ export function* readElfSectionDirectory(
           header_offset,
           offset: program.offset,
           size: program.fileSize,
+          virtual_address: program.virtualAddress,
         });
       else if (type === ELF_PT_NOTE)
         programDeclarations.push({ type: ELF_PT_NOTE, ...span });

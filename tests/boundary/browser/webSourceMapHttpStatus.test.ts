@@ -7,29 +7,40 @@ import { fetchWebSourceMaps } from "../../../src/browser/WebSourceMapFetcher.js"
 import { fetchWebSourceMapsOk } from "../../fixtures/fetchWebSourceMapsOk.js";
 import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
 
-it("follows only redirect statuses and releases discarded HTTP response bodies", async () => {
+it("follows only redirect statuses and requires a complete map response", async () => {
   const redirects = [301, 302, 303, 307, 308];
-  const otherStatuses = [300, 304, 305, 306, 400];
+  const otherStatuses = [206, 300, 304, 305, 306, 400];
   const statuses = [...otherStatuses, ...redirects];
+  const mapBody = JSON.stringify({
+    version: 3,
+    names: [],
+    sources: ["original.js"],
+    mappings: "AAAA",
+  });
   const calls: string[] = [];
   const closedBodies: string[] = [];
   const server = createServer((request, response) => {
     const path = request.url ?? "";
     calls.push(path);
     if (path.startsWith("/delivered/")) {
-      response.writeHead(200, { "content-type": "application/json" }).end(
-        JSON.stringify({
-          version: 3,
-          names: [],
-          sources: ["original.js"],
-          mappings: "AAAA",
-        }),
-      );
+      response
+        .writeHead(200, { "content-type": "application/json" })
+        .end(mapBody);
       return;
     }
     const status = Number(path.slice(1));
     if (!statuses.includes(status)) {
       response.writeHead(404).end();
+      return;
+    }
+    if (status === 206) {
+      const bytes = Buffer.byteLength(mapBody);
+      response
+        .writeHead(status, {
+          "content-type": "application/json",
+          "content-range": `bytes 0-${bytes - 1}/${bytes + 1}`,
+        })
+        .end(mapBody);
       return;
     }
     response.writeHead(status, { location: `/delivered/${status}.map` });
@@ -63,12 +74,13 @@ it("follows only redirect statuses and releases discarded HTTP response bodies",
       requested: statuses.length,
       processed: statuses.length,
     });
-    expect(calls.sort()).toEqual(
-      [
-        ...statuses.map((status) => `/${status}`),
-        ...redirects.map((status) => `/delivered/${status}.map`),
-      ].sort(),
-    );
+    expect(calls).toEqual([
+      ...otherStatuses.map((status) => `/${status}`),
+      ...redirects.flatMap((status) => [
+        `/${status}`,
+        `/delivered/${status}.map`,
+      ]),
+    ]);
     const byScript = new Map(
       result.items.map((item) => [item.script_key, item]),
     );
@@ -78,13 +90,20 @@ it("follows only redirect statuses and releases discarded HTTP response bodies",
         declared_url: `${origin}/${status}`,
         effective_url: `${origin}/delivered/${status}.map`,
       });
-    for (const status of otherStatuses)
-      expect(byScript.get(`script-${status}`), `HTTP ${status}`).toMatchObject({
+    for (const status of otherStatuses) {
+      const result = byScript.get(`script-${status}`);
+      expect(result, `HTTP ${status}`).toMatchObject({
         status: "fetch_failed",
         declared_url: `${origin}/${status}`,
         effective_url: `${origin}/${status}`,
-        limitation: `Source-map server returned HTTP ${status}.`,
+        artifact: null,
+        limitation:
+          status === 206
+            ? "Source-map server returned HTTP 206 (Partial Content). A complete map response is required."
+            : `Source-map server returned HTTP ${status}.`,
       });
+      expect(result).not.toHaveProperty("response_identity");
+    }
     await expect.poll(() => closedBodies.toSorted()).toEqual(["/302", "/400"]);
   } finally {
     server.closeAllConnections();

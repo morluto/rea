@@ -325,23 +325,30 @@ export const parsePeImports = async (
   let pefileThunkReads = 0;
   let pefileTruncatedDescriptor: number | null = null;
   const pefileTableWalk = (rva: number, entries: number | null): number => {
+    if (entries !== null) {
+      const remaining = PEFILE_MAX_IMPORT_SYMBOLS + 1 - pefileThunkReads;
+      if (remaining <= 0) return 0;
+      const steps = Math.min(entries + 1, remaining);
+      pefileThunkReads += steps;
+      return Math.min(entries, remaining);
+    }
     const width = bits === 64 ? 8 : 4;
     let processed = 0;
     for (let index = 0; ; index++) {
       if (pefileThunkReads > PEFILE_MAX_IMPORT_SYMBOLS) break;
       pefileThunkReads += 1;
-      if (entries !== null) {
-        if (index === entries) break;
-      } else {
-        let word: bigint;
-        try {
-          word = reader.word(map(rva + index * width, width), bits);
-        } catch (cause) {
-          if (!(cause instanceof BinaryFormatFailure)) throw cause;
-          break;
-        }
-        if (word === 0n) break;
+      let offset: number;
+      try {
+        offset = map(rva + index * width, width);
+      } catch (cause) {
+        if (!(cause instanceof BinaryFormatFailure)) throw cause;
+        break;
       }
+      const zero =
+        width === 4
+          ? reader.u32(offset) === 0
+          : reader.u32(offset) === 0 && reader.u32(offset + 4) === 0;
+      if (zero) break;
       processed += 1;
     }
     return processed;

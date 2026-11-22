@@ -188,10 +188,11 @@ export type ImageSection = {
     }
 );
 
-/** Declared PT_DYNAMIC file extent, before consumer-specific admission. */
+/** Declared PT_DYNAMIC location, before consumer-specific admission. */
 export interface ElfDynamicSegment {
   readonly offset: bigint;
   readonly size: bigint;
+  readonly virtual_address: bigint;
 }
 
 /** Native container facts, without language metadata search policy. */
@@ -242,6 +243,61 @@ export const imageFileMappings = (
   container.pe_header_mapping === undefined
     ? container.mappings
     : [container.pe_header_mapping, ...container.mappings];
+
+/** Decode an unsigned 16-bit integer from a caller-validated `[offset, offset + 2)` span. */
+export const readUint16At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! | (bytes[offset + 1]! << 8)
+    : (bytes[offset]! << 8) | bytes[offset + 1]!;
+
+/** Decode a signed 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readInt32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number =>
+  little
+    ? bytes[offset]! |
+      (bytes[offset + 1]! << 8) |
+      (bytes[offset + 2]! << 16) |
+      (bytes[offset + 3]! << 24)
+    : (bytes[offset]! << 24) |
+      (bytes[offset + 1]! << 16) |
+      (bytes[offset + 2]! << 8) |
+      bytes[offset + 3]!;
+
+/** Decode an unsigned 32-bit integer from a caller-validated `[offset, offset + 4)` span. */
+export const readUint32At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): number => readInt32At(bytes, offset, little) >>> 0;
+
+/** Decode an unsigned 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readUint64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readUint32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
+
+/** Decode a signed 64-bit integer from a caller-validated `[offset, offset + 8)` span. */
+export const readInt64At = (
+  bytes: Uint8Array,
+  offset: number,
+  little: boolean,
+): bigint => {
+  const lo = readUint32At(bytes, little ? offset : offset + 4, little);
+  const hi = readInt32At(bytes, little ? offset + 4 : offset, little);
+  return (BigInt(hi) << 32n) | BigInt(lo);
+};
 
 /** Reader that checks every structural range before decoding numeric fields. */
 export class BinaryReader {
@@ -598,6 +654,31 @@ export const createFileMappingIndex = (
       );
     return Number(address + translation);
   };
+  const prefix = (
+    address: bigint,
+    maximumBytes: number,
+  ): FileMapping | null => {
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) return null;
+    const interval = lastAtOrBelow(boundaries, address);
+    const translation = translations[interval];
+    if (typeof translation !== "bigint") return null;
+    const zeroFill = lastAtOrBelow(zeroFilled.starts, address);
+    if (zeroFill >= 0 && (zeroFilled.reach[zeroFill] as bigint) > address)
+      return null;
+    const mappingEnd = runEnd[interval] as bigint;
+    const zeroFillStart = zeroFilled.starts[zeroFill + 1];
+    const backingEnd =
+      zeroFillStart !== undefined && zeroFillStart < mappingEnd
+        ? zeroFillStart
+        : mappingEnd;
+    const limit = address + BigInt(maximumBytes);
+    const end = backingEnd < limit ? backingEnd : limit;
+    return {
+      address,
+      offset: Number(address + translation),
+      size: Number(end - address),
+    };
+  };
   const access: MappedStringAccess = {
     offset,
     mappingAt: (address) => {
@@ -612,6 +693,7 @@ export const createFileMappingIndex = (
   };
   return {
     offset,
+    prefix,
     readCString: (bytes, address, maximumBytes) =>
       readMappedString(bytes, access, address, maximumBytes),
   };
@@ -620,6 +702,11 @@ export const createFileMappingIndex = (
 /** One immutable image's indexed mappings and bounded string access. */
 export interface FileMappingIndex {
   readonly offset: (address: bigint, size: number) => number;
+  /** Longest file-backed prefix up to the requested length with one translation. */
+  readonly prefix: (
+    address: bigint,
+    maximumBytes: number,
+  ) => FileMapping | null;
   readonly readCString: (
     bytes: Buffer,
     address: bigint,

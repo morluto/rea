@@ -479,6 +479,31 @@ it("hashes snapshot section ranges in the same pass as the whole-file digest", a
   });
 });
 
+it("reads bounded positional ranges of the snapshot without capturing the file", async () => {
+  const client = clientFor(new FixtureLauncher());
+  const started = await client.start();
+  if (!started.ok) throw started.error;
+  onTestFinished(async () => {
+    await client.close();
+  });
+  const bytes = readFileSync(fixturePath);
+  const result = await client.readTargetSnapshotRanges(async (range, size) => ({
+    size,
+    head: Buffer.from(await range(0, 4)),
+    middle: Buffer.from(await range(2, 3)),
+    pastEnd: Buffer.from(await range(bytes.length - 2, 16)),
+  }));
+  expect(result).toEqual({
+    ok: true,
+    value: {
+      size: bytes.length,
+      head: bytes.subarray(0, 4),
+      middle: bytes.subarray(2, 5),
+      pastEnd: bytes.subarray(bytes.length - 2),
+    },
+  });
+});
+
 it("reports snapshot descriptor cleanup immediately and resolves its exact error on retry", async () => {
   const client = clientFor(new FixtureLauncher());
   const started = await client.start();
@@ -2732,5 +2757,72 @@ describe("GhidraClient reply ceiling", () => {
         },
       },
     });
+  });
+});
+
+describe("GhidraClient operation progress heartbeats", () => {
+  it("skips progress reports on fast calls and emits 5s heartbeats until completion or abort", async () => {
+    const fastClient = clientFor(new FixtureLauncher());
+    await expect(fastClient.start()).resolves.toMatchObject({ ok: true });
+    const fastUpdates: ProgressUpdate[] = [];
+    await expect(
+      fastClient.callTool(
+        "list_strings",
+        {},
+        {
+          progress: {
+            report: async (update) => {
+              fastUpdates.push(update);
+            },
+          },
+        },
+      ),
+    ).resolves.toMatchObject({ ok: true });
+    expect(fastUpdates).toEqual([]);
+
+    const launcher = new FixtureLauncher("hang_tools");
+    const client = clientFor(launcher);
+    await expect(client.start()).resolves.toMatchObject({ ok: true });
+
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const controller = new AbortController();
+    const updates: ProgressUpdate[] = [];
+    const pending = client.callTool(
+      "analyze_function",
+      { procedure: "0x1000" },
+      {
+        signal: controller.signal,
+        progress: {
+          report: async (update) => {
+            updates.push(update);
+            throw new Error("notification sink unavailable");
+          },
+        },
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(updates).toEqual([]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(updates).toEqual([
+      expect.objectContaining({
+        phase: "ghidra_operation",
+        completed: 0,
+        total: null,
+        message: expect.stringContaining("Waiting for Ghidra analyze_function"),
+      }),
+    ]);
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(updates).toHaveLength(2);
+
+    controller.abort("caller stopped");
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { kind: "cancelled" },
+    });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(updates).toHaveLength(2);
   });
 });

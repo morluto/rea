@@ -19,9 +19,9 @@ import type { Result } from "../domain/result.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import {
   MCP_TRANSPORT_EVIDENCE_DISCOVERY,
-  MCP_TRANSPORT_EVIDENCE_EXPORT,
   MCP_TRANSPORT_EVIDENCE_LINKS,
   MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
 } from "../domain/analysisErrorPresentation.js";
 import {
   nodeStringCeilingRecovery,
@@ -91,11 +91,10 @@ interface OverflowNextStep {
 
 const evidenceBundleOverflowStep = (value: JsonValue): OverflowNextStep => {
   const projection = evidenceBundleProjection(value);
-  // A summary already used detail: summary; export writes outside one frame.
   if (projection === "evidence-bundle-summary")
     return {
-      text: MCP_TRANSPORT_EVIDENCE_EXPORT,
-      operation: "export_evidence_bundle",
+      text: MCP_TRANSPORT_EVIDENCE_SUMMARY,
+      operation: "get_evidence_bundle",
     };
   return {
     text:
@@ -422,24 +421,34 @@ export class ToolResultDelivery {
       "error-text",
       targetContent,
     );
-    let candidateProjection = projected;
-    while (!encoded.ok) {
-      const limit = encoded;
-      const candidates = [...unretainedEvidenceCandidates(candidateProjection)]
-        .map((candidate) => ({
-          candidate,
-          size: errorTextWireBytes(candidate.value, this.resultBudgetBytes),
-        }))
-        .sort((left, right) => right.size - left.size);
-      let next: AnalysisErrorProjection | undefined;
-      for (const { candidate } of candidates) {
+    if (!encoded.ok) {
+      let candidateProjection = projected;
+      const rawCandidates = [
+        ...unretainedEvidenceCandidates(candidateProjection),
+      ];
+      const remaining =
+        rawCandidates.length <= 1
+          ? rawCandidates
+          : rawCandidates
+              .map((candidate) => ({
+                candidate,
+                size: errorTextWireBytes(
+                  candidate.value,
+                  this.resultBudgetBytes,
+                ),
+              }))
+              .sort((left, right) => right.size - left.size)
+              .map(({ candidate }) => candidate);
+      let index = 0;
+      while (!encoded.ok && index < remaining.length) {
         const compact = omitUnretainedEvidenceFromError(
           candidateProjection,
-          limit,
-          candidate,
+          encoded,
+          remaining[index]!,
         );
+        index += 1;
         if (compact === undefined) continue;
-        next ??= compact;
+        candidateProjection = compact;
         const content = { error: compact };
         const compactEncoded = encodeToolResult(
           content,
@@ -453,9 +462,6 @@ export class ToolResultDelivery {
           break;
         }
       }
-      if (encoded.ok) break;
-      if (next === undefined) break;
-      candidateProjection = next;
     }
     // The transport retains an oversized projected error before replacing it
     // with a recoverable delivery constraint, using this same budget.

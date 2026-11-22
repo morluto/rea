@@ -1,3 +1,4 @@
+import { isImmutableJsonSnapshot } from "../immutableJson.js";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { uniqueSorted } from "../canonicalOrdering.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
@@ -18,11 +19,12 @@ import {
   type TraceApplicationFeatureInput,
 } from "./javascriptFeatureTraceSchemas.js";
 import {
-  findApplicationFeatureSeeds,
+  findApplicationFeatureSeedsInGraph,
   normalizeFeatureSeedText,
   type ApplicationFeatureSeedMatch,
 } from "./javascriptFeatureSeed.js";
 import type { JavaScriptSemanticGraph } from "./javascriptSemanticGraph.js";
+import type { JavaScriptSemanticGraphNode } from "./javascriptSemanticGraphSchemas.js";
 import { semanticCallLiteralValues } from "./javascriptSemanticCallLiterals.js";
 import {
   traverseApplicationFeature,
@@ -45,8 +47,8 @@ export interface ApplicationFeatureTraceProjectionInput {
 export const traceApplicationFeature = (
   input: ApplicationFeatureTraceProjectionInput,
 ): ApplicationFeatureTraceResult => {
-  const seedMatches = findApplicationFeatureSeeds(
-    input.graph.nodes,
+  const seedMatches = findApplicationFeatureSeedsInGraph(
+    input.graph,
     input.seed,
   );
   if (seedMatches.length === 0) return noMatchResult(input);
@@ -57,15 +59,19 @@ export const traceApplicationFeature = (
   );
   const graph = traceGraph(input, seedMatches, traversal);
   const paths = terminalPaths(traversal, seedMatches);
-  const nativeHandoffs = buildJavaScriptNativeHandoffs(
-    input.graph,
-    new Set(
-      traversal.nodes
-        .filter(({ kind }) => kind === "native-addon")
-        .map(({ node_id }) => node_id),
-    ),
-    input.nativeEvidence,
+  const nativeAddonIds = new Set(
+    traversal.nodes
+      .filter(({ kind }) => kind === "native-addon")
+      .map(({ node_id }) => node_id),
   );
+  const nativeHandoffs =
+    nativeAddonIds.size === 0
+      ? []
+      : buildJavaScriptNativeHandoffs(
+          input.graph,
+          nativeAddonIds,
+          input.nativeEvidence,
+        );
   const evidenceLinks = uniqueSorted([
     input.sourceEvidenceId,
     ...nativeHandoffs.flatMap(({ evidence_ids: ids }) => ids),
@@ -148,6 +154,99 @@ const noMatchResult = (
   });
 };
 
+type SemanticDiscoveryMatch = NonNullable<
+  ApplicationFeatureTraceResult["semantic_discovery"]
+>["matches"][number];
+
+interface IndexedSemanticNodeLabels {
+  readonly match: SemanticDiscoveryMatch;
+  readonly rawTexts: readonly string[];
+}
+
+interface SemanticLabelCaseCache {
+  readonly normalizedEntries: readonly {
+    readonly match: SemanticDiscoveryMatch;
+    readonly texts: readonly string[];
+  }[];
+  readonly byExact: ReadonlyMap<string, readonly SemanticDiscoveryMatch[]>;
+}
+
+interface SemanticLabelIndex {
+  readonly entries: readonly IndexedSemanticNodeLabels[];
+  sensitive?: SemanticLabelCaseCache;
+  insensitive?: SemanticLabelCaseCache;
+}
+
+const semanticLabelIndexes = new WeakMap<
+  JavaScriptSemanticGraph,
+  SemanticLabelIndex
+>();
+
+const extractNodeLabelTexts = (node: JavaScriptSemanticGraphNode): string[] => {
+  const texts: string[] = [];
+  if (node.label !== null) texts.push(node.label);
+  for (const literal of semanticCallLiteralValues(node))
+    if (typeof literal === "string") texts.push(literal);
+  return texts;
+};
+
+const getSemanticLabelIndex = (
+  graph: JavaScriptSemanticGraph,
+): SemanticLabelIndex | undefined => {
+  if (!isImmutableJsonSnapshot(graph)) return undefined;
+  let index = semanticLabelIndexes.get(graph);
+  if (index === undefined) {
+    const entries: IndexedSemanticNodeLabels[] = [];
+    for (const node of graph.nodes) {
+      const rawTexts = extractNodeLabelTexts(node);
+      if (rawTexts.length === 0) continue;
+      entries.push({
+        match: {
+          node_id: node.node_id,
+          kind: node.kind,
+          trace_seed: { kind: "semantic-node", node_id: node.node_id },
+        },
+        rawTexts,
+      });
+    }
+    index = { entries };
+    semanticLabelIndexes.set(graph, index);
+  }
+  return index;
+};
+
+const getSemanticLabelCaseCache = (
+  index: SemanticLabelIndex,
+  caseSensitive: boolean,
+): SemanticLabelCaseCache => {
+  const existing = caseSensitive ? index.sensitive : index.insensitive;
+  if (existing !== undefined) return existing;
+  const normalizedEntries: {
+    readonly match: SemanticDiscoveryMatch;
+    readonly texts: readonly string[];
+  }[] = [];
+  const byExact = new Map<string, SemanticDiscoveryMatch[]>();
+  for (const entry of index.entries) {
+    const texts: string[] = [];
+    const seenTexts = new Set<string>();
+    for (const raw of entry.rawTexts) {
+      const normalized = normalizeFeatureSeedText(raw, caseSensitive);
+      texts.push(normalized);
+      if (!seenTexts.has(normalized)) {
+        seenTexts.add(normalized);
+        const bucket = byExact.get(normalized);
+        if (bucket === undefined) byExact.set(normalized, [entry.match]);
+        else bucket.push(entry.match);
+      }
+    }
+    normalizedEntries.push({ match: entry.match, texts });
+  }
+  const built: SemanticLabelCaseCache = { normalizedEntries, byExact };
+  if (caseSensitive) index.sensitive = built;
+  else index.insensitive = built;
+  return built;
+};
+
 /** Semantic discovery is independent of the application graph traversal. */
 const discoverSemanticLabels = (
   input: ApplicationFeatureTraceProjectionInput,
@@ -159,30 +258,51 @@ const discoverSemanticLabels = (
   const query = normalizeFeatureSeedText(seed.value, seed.case_sensitive);
   const mode = featureSeedMatchMode(seed);
   const { offset, limit } = input.semanticPage ?? { offset: 0, limit: 64 };
-  const matches: NonNullable<
-    ApplicationFeatureTraceResult["semantic_discovery"]
-  >["matches"] = [];
+  const indexed = getSemanticLabelIndex(graph);
+  if (indexed !== undefined) {
+    const cache = getSemanticLabelCaseCache(indexed, seed.case_sensitive);
+    if (mode === "exact") {
+      const all = cache.byExact.get(query) ?? [];
+      const matches = all.slice(offset, offset + limit);
+      return {
+        source_graph_id: graph.graph_id,
+        source_coverage: graph.coverage.status,
+        total: all.length,
+        offset,
+        limit,
+        next_offset:
+          offset + matches.length < all.length ? offset + matches.length : null,
+        matches,
+      };
+    }
+    const matches: SemanticDiscoveryMatch[] = [];
+    let total = 0;
+    for (const entry of cache.normalizedEntries) {
+      if (!entry.texts.some((value) => value.includes(query))) continue;
+      if (total >= offset && matches.length < limit) matches.push(entry.match);
+      total += 1;
+    }
+    return {
+      source_graph_id: graph.graph_id,
+      source_coverage: graph.coverage.status,
+      total,
+      offset,
+      limit,
+      next_offset:
+        offset + matches.length < total ? offset + matches.length : null,
+      matches,
+    };
+  }
+  const matches: SemanticDiscoveryMatch[] = [];
   let total = 0;
   for (const node of graph.nodes) {
-    const { label, node_id, kind } = node;
-    const values = [
-      ...(label === null ? [] : [label]),
-      ...semanticCallLiteralValues(node).filter(
-        (value): value is string => typeof value === "string",
-      ),
-    ];
-    if (
-      !values.some((entry) => {
-        const value = normalizeFeatureSeedText(entry, seed.case_sensitive);
-        return mode === "exact" ? value === query : value.includes(query);
-      })
-    )
+    if (!nodeMatchesSemanticLabel(node, query, mode, seed.case_sensitive))
       continue;
     if (total >= offset && matches.length < limit)
       matches.push({
-        node_id,
-        kind,
-        trace_seed: { kind: "semantic-node", node_id },
+        node_id: node.node_id,
+        kind: node.kind,
+        trace_seed: { kind: "semantic-node", node_id: node.node_id },
       });
     total += 1;
   }
@@ -196,6 +316,26 @@ const discoverSemanticLabels = (
       offset + matches.length < total ? offset + matches.length : null,
     matches,
   };
+};
+
+const nodeMatchesSemanticLabel = (
+  node: JavaScriptSemanticGraphNode,
+  query: string,
+  mode: "exact" | "contains",
+  caseSensitive: boolean,
+): boolean => {
+  if (node.label !== null) {
+    const normalized = normalizeFeatureSeedText(node.label, caseSensitive);
+    if (mode === "exact" ? normalized === query : normalized.includes(query))
+      return true;
+  }
+  for (const literal of semanticCallLiteralValues(node)) {
+    if (typeof literal !== "string") continue;
+    const normalized = normalizeFeatureSeedText(literal, caseSensitive);
+    if (mode === "exact" ? normalized === query : normalized.includes(query))
+      return true;
+  }
+  return false;
 };
 
 const traceGraph = (
@@ -297,17 +437,24 @@ const factSummary = (
   nodes: readonly ApplicationNode[],
   edges: readonly ApplicationEdge[],
 ) => {
-  const states = [
-    ...nodes.flatMap(({ observations }) =>
-      observations.map(({ evidence }) => evidence.state),
-    ),
-    ...edges.map(({ evidence }) => evidence.state),
-  ];
+  let observed = 0;
+  let inferred = 0;
+  let unknown = 0;
+  let unavailable = 0;
+  const countState = (state: ApplicationEdge["evidence"]["state"]): void => {
+    if (state === "observed") observed += 1;
+    else if (state === "inferred") inferred += 1;
+    else if (state === "unknown") unknown += 1;
+    else unavailable += 1;
+  };
+  for (const { observations } of nodes)
+    for (const { evidence } of observations) countState(evidence.state);
+  for (const { evidence } of edges) countState(evidence.state);
   return {
-    observed_facts: states.filter((state) => state === "observed").length,
-    inferred_facts: states.filter((state) => state === "inferred").length,
-    unknown_facts: states.filter((state) => state === "unknown").length,
-    unavailable_facts: states.filter((state) => state === "unavailable").length,
+    observed_facts: observed,
+    inferred_facts: inferred,
+    unknown_facts: unknown,
+    unavailable_facts: unavailable,
   };
 };
 

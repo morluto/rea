@@ -11,20 +11,22 @@ import {
   readFileHandleChunks,
 } from "../../../src/filesystem/readFileHandleChunks.js";
 
-it.each(["complete", "fail"])(
+it.each(["EOF", "last byte of range", "failure"] as const)(
   "settles the pending descriptor read before cancellation: %s",
   async (outcome) => {
     const descriptorRead = phaseGate<
       void,
       { bytesRead: number; buffer: Buffer }
     >();
-    const read = vi.fn(() =>
-      descriptorRead.hold(),
-    ) as unknown as FileHandle["read"];
+    const read = vi.fn((target: Buffer) => {
+      target.fill(0x61);
+      return descriptorRead.hold();
+    }) as unknown as FileHandle["read"];
     const controller = new AbortController();
+    const range = outcome === "last byte of range";
     const source = readFileHandleChunks(
       { read },
-      { signal: controller.signal },
+      { signal: controller.signal, ...(range ? { end: 0 } : {}) },
     );
     let settled = false;
     const result = buffer(source)
@@ -39,10 +41,16 @@ it.each(["complete", "fail"])(
       expect(settled).toBe(false);
       expect(source.destroyed).toBe(false);
       const failure = new Error("controlled native read failure");
-      if (outcome === "fail") descriptorRead.reject(failure);
-      else descriptorRead.release({ bytesRead: 0, buffer: Buffer.alloc(0) });
+      if (outcome === "failure") descriptorRead.reject(failure);
+      else {
+        const bytesRead = range ? 1 : 0;
+        descriptorRead.release({
+          bytesRead,
+          buffer: Buffer.alloc(bytesRead, 0x61),
+        });
+      }
       const error = await result;
-      if (outcome === "fail") expect(error).toBe(failure);
+      if (outcome === "failure") expect(error).toBe(failure);
       else {
         expect(error).toBeInstanceOf(FileReadCancelled);
         if (error instanceof FileReadCancelled) expect(error.reason).toBeNull();

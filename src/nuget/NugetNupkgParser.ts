@@ -473,24 +473,6 @@ const parseNuspecDocument = (
   };
 };
 
-/**
- * Collect the distinct members the manifest targets resolve to, stopping at
- * the second. Many package-controlled targets can each hit one large
- * case-folded bucket, so the matches are never materialized together.
- */
-export const distinctTargetMatches = <T>(
-  targets: readonly string[],
-  match: (target: string) => readonly T[],
-): T[] => {
-  const found = new Set<T>();
-  for (const target of targets)
-    for (const member of match(target)) {
-      found.add(member);
-      if (found.size > 1) return [...found];
-    }
-  return [...found];
-};
-
 /** OPC part-name equivalence folds ASCII case only. */
 const opcPartNameKey = (name: string): string =>
   name.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
@@ -505,32 +487,29 @@ const findNuspec = (
     | undefined;
   readonly source: "opc-relationship" | "root-nuspec" | undefined;
 } => {
-  // Keep every ZIP occurrence in its OPC equivalence bucket. An exact
-  // spelling cannot resolve two occurrences with equivalent part names.
-  // Index once: every target is then a constant-time lookup, however many
-  // relationships the package declares.
-  const partNames = new Map<string, (typeof files)[number][]>();
-  for (const file of files) {
-    const key = opcPartNameKey(file.name);
-    const members = partNames.get(key);
-    if (members === undefined) partNames.set(key, [file]);
-    else members.push(file);
-  }
   if (relsXml !== undefined) {
     const targets = opcManifestTargets(relsXml, limitations);
-    const resolved = distinctTargetMatches(
-      targets.map((target) => target.lookup),
-      (target) => partNames.get(opcPartNameKey(target)) ?? [],
+    const targetKeys = new Set(
+      targets.map(({ lookup }) => opcPartNameKey(lookup)),
     );
-    if (resolved.length > 1) {
-      limitations.push(
-        "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
-      );
-      return { member: undefined, source: undefined };
+    let member: (typeof files)[number] | undefined;
+    if (targetKeys.size > 0) {
+      // Visit each physical occurrence once. Aliases of one part agree, but
+      // even an exact target cannot choose between two equivalent members.
+      for (const file of files) {
+        if (!targetKeys.has(opcPartNameKey(file.name))) continue;
+        if (member !== undefined) {
+          limitations.push(
+            "OPC manifest relationships resolve to more than one .nuspec ZIP member; identity was not decoded.",
+          );
+          return { member: undefined, source: undefined };
+        }
+        member = file;
+      }
     }
-    if (resolved.length === 1) {
-      const member = resolved[0]!;
-      if (!targets.some((target) => target.lookup === member.name))
+    if (member !== undefined) {
+      const name = member.name;
+      if (!targets.some((target) => target.lookup === name))
         limitations.push(
           "The OPC manifest relationship matched a .nuspec member by case-insensitive ZIP name.",
         );

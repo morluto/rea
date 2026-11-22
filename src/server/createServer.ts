@@ -267,6 +267,10 @@ export const createServer = (
             options.availabilityPolicy,
             {
               ...capabilities.availability,
+              observeOptionalFeatures: () =>
+                server.advertisesFamily("artifact")
+                  ? capabilities.observeOptionalFeatures()
+                  : {},
               optionalProviderLoadFailures:
                 options.optionalProviderLoadFailures,
             },

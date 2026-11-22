@@ -36,6 +36,7 @@ _HEX_ADDRESS = re.compile(r"^0x[0-9a-f]+$", re.IGNORECASE)
 # one consistent list. REA finishes each enumeration before starting another,
 # so the lease retains only the most recent snapshot.
 _rea_pages = globals().setdefault("_rea_pages", {})
+_rea_imports_cache = globals().setdefault("_rea_imports_cache", {})
 
 
 def _hex(ea):
@@ -83,10 +84,25 @@ def health():
 
 def list_funcs(queries):
     offset, count = queries["offset"], queries["count"]
-    total = ida_funcs.get_func_qty()
-    end = min(offset + count, total)
-    data = [_function(ida_funcs.getn_func(i)) for i in range(offset, end)]
-    return [{"data": data, "next_offset": end if end < total else None}]
+    pattern = queries.get("filter")
+    if pattern is None:
+        total = ida_funcs.get_func_qty()
+        end = min(offset + count, total)
+        data = [_function(ida_funcs.getn_func(i)) for i in range(offset, end)]
+        return [{"data": data, "next_offset": end if end < total else None}]
+
+    def build():
+        matcher = re.compile(pattern)
+        result = []
+        for i in range(ida_funcs.get_func_qty()):
+            fn = _function(ida_funcs.getn_func(i))
+            if matcher.search(fn["name"]):
+                result.append(fn)
+        return result
+
+    matches = _snapshot(("funcs", pattern), offset, build)
+    end = min(offset + count, len(matches))
+    return [{"data": matches[offset:end], "next_offset": end if end < len(matches) else None}]
 
 
 def _lookup(query):
@@ -117,6 +133,18 @@ def find_regex(pattern, offset, limit):
     matches = _snapshot(("strings", pattern), offset, build)
     end = min(offset + limit, len(matches))
     return {"matches": matches[offset:end], "cursor": _cursor(end, len(matches))}
+
+
+def string_at(addr):
+    ea = _address(addr)
+    if ea is None:
+        return {"matches": [], "cursor": {"done": True}}
+    matches = [
+        {"addr": _hex(item.ea), "string": str(item)}
+        for item in idautils.Strings()
+        if item.ea == ea
+    ]
+    return {"matches": matches, "cursor": {"done": True}}
 
 
 def decompile(addr, offset, max_lines):
@@ -191,6 +219,9 @@ def disasm(addr, offset, max_instructions):
 
 
 def _imports():
+    cached = _rea_imports_cache.get("imports")
+    if cached is not None:
+        return cached
     found = {}
 
     def record(ea, name, ordinal):
@@ -199,6 +230,7 @@ def _imports():
 
     for index in range(ida_nalt.get_import_module_qty()):
         ida_nalt.enum_import_names(index, record)
+    _rea_imports_cache["imports"] = found
     return found
 
 
@@ -237,12 +269,12 @@ def _function_entry_targets(f):
 
 def callees(addrs, limit):
     rows = []
+    imports = None
     for addr in addrs:
         f = _entry(addr)
         if f is None:
             rows.append({"callees": None, "error": "Not a function"})
             continue
-        imports = _imports()
         found = {}
         for to in _call_targets(f):
             if to in found:
@@ -254,6 +286,8 @@ def callees(addrs, limit):
             else:
                 # Imports, pointer slots and code outside every function stay
                 # visible by address instead of being dropped.
+                if imports is None:
+                    imports = _imports()
                 name = imports.get(to) or ida_name.get_name(to) or _hex(to)
                 found[to] = {"addr": _hex(to), "name": name, "type": "external"}
         items = [found[to] for to in sorted(found)]
@@ -323,6 +357,7 @@ _REA_QUERIES = {
     "list_funcs": list_funcs,
     "lookup_funcs": lookup_funcs,
     "find_regex": find_regex,
+    "string_at": string_at,
     "decompile": decompile,
     "disasm": disasm,
     "callees": callees,

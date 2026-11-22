@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
+import { bundleExecutableProvenanceSchema } from "../apple/bundleExecutableProvenance.js";
 import { digestSchema } from "../digests.js";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
@@ -171,6 +172,7 @@ const buildMetadataSchema = z.object({
 });
 
 export const inspectMachoSchema = z.object({
+  bundle_provenance: bundleExecutableProvenanceSchema.exactOptional(),
   format: z.enum(["mach-o", "mach-o-universal"]),
   /** Exact lipo slice selected for inspection and its offset in the input container. */
   selected_architecture: z.object({
@@ -218,6 +220,7 @@ export const inspectMachoSchema = z.object({
 });
 
 export const inspectSignatureSchema = z.object({
+  bundle_provenance: bundleExecutableProvenanceSchema.exactOptional(),
   signed: z.boolean(),
   identifier: z.string().nullable(),
   team_identifier: z.string().nullable(),

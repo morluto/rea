@@ -456,13 +456,14 @@ const targetFrom = (
     readonly written: string;
   },
 ): { readonly collection: string; readonly id: string } => {
+  const live = matchingTarget(
+    path,
+    () => state.ofType(type).map((entity) => entity.collection),
+    (collection, id) => state.entity(type, collection, id) !== undefined,
+  );
+  if (live !== undefined) return live;
   const removed = state.removedTargets(type);
   return (
-    matchingTarget(
-      path,
-      () => state.ofType(type).map((entity) => entity.collection),
-      (collection, id) => state.entity(type, collection, id) !== undefined,
-    ) ??
     matchingTarget(
       path,
       () => removed.map((target) => target.collection),
