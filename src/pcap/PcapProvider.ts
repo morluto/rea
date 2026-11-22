@@ -65,7 +65,7 @@ import {
 } from "./PcapCommand.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { createPcapEvidence } from "../domain/pcap/pcapEvidence.js";
 import { preparePcapNativeBound } from "./PcapNativeBound.js";
 import { PcapSnapshot } from "./PcapSnapshot.js";
@@ -128,7 +128,7 @@ const pcapPartialEvidence = (
   createPcapEvidence(request, {
     subject: { path, format: "file", sha256: identity.sha256 },
     provider,
-    result: jsonValueSchema.parse(result),
+    result: ownedJsonValueSchema.parse(result),
     rawResult: null,
     limitations,
     locations: [{ kind: "artifact-path", path }],
@@ -1137,7 +1137,9 @@ export class PcapProvider {
     let fields = prepared.fallback;
     let dnsDissected: typeof dissected | undefined;
     let dnsLimitation: string | undefined;
-    if (dissected.cleanup === undefined) {
+    if (!prepared.hasDnsProtocol) {
+      // Base pass observed no DNS/mDNS/LLMNR frames or fields; skip the second tshark pass.
+    } else if (dissected.cleanup === undefined) {
       try {
         dnsDissected = await this.run(
           "inspect_pcap_capture",
