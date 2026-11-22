@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADVERTISED_INPUT_SCHEMA_MAX_BYTES,
   advertisedInputDialectViolations,
+  hasAdvertisedInputDialectViolation,
 } from "./advertisedDialect.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
 import { inlineWithinBudget, stripAnnotations } from "./compactJsonSchema.js";
@@ -1128,6 +1129,45 @@ describe("on-the-fly annotation stripping parity", () => {
         references: new JsonSchemaReferences(schema),
       });
       expect(actual).toEqual(expected);
+    }
+  });
+});
+
+describe("hasAdvertisedInputDialectViolation", () => {
+  it("agrees with advertisedInputDialectViolations across synthetic and failing cases", () => {
+    const cases: Record<string, unknown>[] = [
+      { type: "object", properties: { name: { type: "string" } } },
+      { type: "string" },
+      { type: "object", oneOf: [{ type: "object" }] },
+      {
+        type: "object",
+        properties: { bad: { type: "string", pattern: "[a-" } },
+      },
+      { type: "object", properties: { bad: { type: "array" } } },
+      {
+        type: "object",
+        properties: { bad: { type: "string", enum: [] } },
+      },
+      {
+        type: "object",
+        properties: { "1bad": { type: "string" } },
+      },
+      {
+        type: "object",
+        properties: {
+          ok: {
+            anyOf: [{ type: "string" }, { type: "null" }],
+          },
+        },
+      },
+    ];
+    for (const schema of cases) {
+      const expected =
+        advertisedInputDialectViolations({
+          name: "tool_name",
+          inputSchema: schema,
+        }).length > 0;
+      expect(hasAdvertisedInputDialectViolation(schema)).toBe(expected);
     }
   });
 });

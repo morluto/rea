@@ -134,7 +134,11 @@ import { toolContract } from "../contracts/toolContracts.js";
 import { redactExplicitFailure } from "../domain/explicitSensitiveFailure.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../domain/result.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  jsonValueSchema,
+  ownedJsonValueSchema,
+  type JsonValue,
+} from "../domain/jsonValue.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -448,7 +452,7 @@ const viewInputSourceSchema = z.looseObject({
 const analysisViewOverflowSource = (input: unknown): JsonValue | undefined => {
   const parsed = viewInputSourceSchema.safeParse(input);
   return parsed.success && parsed.data.source.kind !== "inline"
-    ? jsonValueSchema.parse(parsed.data.source)
+    ? ownedJsonValueSchema.parse(parsed.data.source)
     : undefined;
 };
 

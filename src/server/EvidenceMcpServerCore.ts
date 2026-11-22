@@ -37,7 +37,11 @@ import {
   type AdvertisedToolPresentation,
 } from "../contracts/advertisedTool.js";
 import type { createCatalogIdentity } from "../contracts/catalog/catalogIdentity.js";
-import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
+import {
+  hasGuaranteedObjectOutputRoot,
+  omitAdvertisedOutputJsonSchema,
+  transformAdvertisedInputJsonSchema,
+} from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
   AnalysisInputError,
@@ -50,7 +54,7 @@ import { projectAnalysisErrorWithoutPartialObservation } from "../domain/analysi
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import {
   mcpResponseOverflowProjection,
   type ToolResultDelivery,
@@ -447,6 +451,12 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
       this.registerEvidenceReferenceAlternative(name);
     const advertised = this.advertisesTool(name);
     const presented = advertised ? this.presentInput(name, config) : config;
+    const outputSchema =
+      this.presentation.output === undefined &&
+      config.outputSchema !== undefined &&
+      hasGuaranteedObjectOutputRoot(config.outputSchema)
+        ? omitAdvertisedOutputJsonSchema(config.outputSchema)
+        : config.outputSchema;
     const registeredConfig = advertised
       ? {
           ...config,
@@ -461,8 +471,11 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
                   presented.inputSchema as StandardSchemaWithJSON,
                 ),
               }),
+          ...(outputSchema === undefined ? {} : { outputSchema }),
         }
-      : config;
+      : outputSchema === undefined
+        ? config
+        : { ...config, outputSchema };
     const scoped = async (input: never, context: never) => {
       const request = currentMcpToolRequest();
       request?.beginHandler();
@@ -883,7 +896,7 @@ class ErrorEvidenceTransport implements Transport {
     // text-only result without serializing the complete JSON-RPC message.
     const isStructured = message.result.structuredContent !== undefined;
     const structured = isStructured
-      ? jsonObjectSchema.parse(message.result.structuredContent)
+      ? ownedJsonObjectSchema.parse(message.result.structuredContent)
       : undefined;
     const sdkResultWithMarker =
       !isStructured &&
@@ -924,7 +937,7 @@ class ErrorEvidenceTransport implements Transport {
       encoded =
         normalized.result.content.length === 0
           ? encodeToolResult(
-              jsonObjectSchema.parse(structuredContent),
+              ownedJsonObjectSchema.parse(structuredContent),
               budget,
               "error-text",
               targetContent,
@@ -936,7 +949,7 @@ class ErrorEvidenceTransport implements Transport {
     }
     if (encoded.ok) return message;
     const operation = tool ?? "mcp_tool_error";
-    const originalResult = jsonObjectSchema.parse(message.result);
+    const originalResult = ownedJsonObjectSchema.parse(message.result);
     const retainedResult = structured ?? originalResult;
     const originalError = isStructured
       ? analysisErrorProjectionSchema.safeParse(structured?.["error"])
