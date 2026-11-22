@@ -425,6 +425,53 @@ await writeFile("out/" + name + ".bin", bytes.subarray(0, (name === "seed" ? ${h
 }
 
 it.skipIf(process.platform === "win32").each([
+  { producer: 0, consumer: 0 },
+  { producer: 17, consumer: 0 },
+  { producer: 0, consumer: 23 },
+  { producer: 17, consumer: 23 },
+  { producer: 0, consumer: 134 },
+])(
+  "reports plan diagnostics without masking failures (producer=$producer, consumer=$consumer)",
+  async ({ producer, consumer }) => {
+    const { root, planCommand, execute } = await workflowFixture(96);
+    if (consumer !== 0)
+      await writeFile(
+        join(root, "scripts/ci/portable-build-cache.mjs"),
+        `import { text } from "node:stream/consumers";
+await text(process.stdin);
+${consumer === 134 ? "process.abort()" : `process.exit(${consumer})`};
+`,
+      );
+    // Stub only the producer. Exercise the actual action shell and a real Node
+    // consumer, including SIGABRT, without leaving a core in the test workspace.
+    const diagnostics = execute(
+      `{
+ulimit -c 0
+ImageOS=fixture-os
+ImageVersion=fixture-version
+npm() { printf '%s' '${JSON.stringify(plan)}'; return ${producer}; }
+${planCommand}
+} 2>&1`,
+      consumer || producer,
+    );
+    expect(diagnostics).toContain(`"node":"${process.versions.node}"`);
+    expect(diagnostics).toContain("Runner image: fixture-os (fixture-version)");
+    expect(diagnostics).toContain(
+      `Portable build plan exit statuses: producer=${producer} consumer=${consumer}`,
+    );
+    const actionOutput = await readFile(
+      join(root, ".turbo/action-output"),
+      "utf8",
+    );
+    if (consumer === 0) {
+      expect(actionOutput).toBe(run(root, "key").stdout);
+    } else {
+      expect(actionOutput).toBe("");
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32").each([
   { historyKiB: 96, evictAll: false },
   { historyKiB: 192, evictAll: false },
   { historyKiB: 96, evictAll: true },

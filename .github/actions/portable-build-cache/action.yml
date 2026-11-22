@@ -23,8 +23,27 @@ runs:
       env:
         BUILD_CACHE_PREFIX: rea-portable-build-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.npmrc', '.nvmrc', 'package-lock.json') }}
       run: |
+        node -p 'JSON.stringify(process.versions)' >&2
+        printf 'Runner image: %s (%s)\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}" >&2
+        if [[ -r /proc/sys/kernel/core_pattern ]]; then
+          printf 'Core dump pattern: ' >&2
+          cat /proc/sys/kernel/core_pattern >&2
+          printf 'Core dump soft limit: ' >&2
+          ulimit -c >&2
+        fi
+        # Keep both statuses before any other command overwrites PIPESTATUS.
+        # Disable errexit only for the pipeline so diagnostics survive an abort.
+        set +e
         npm run --silent test:prepare -- --dry=json |
           node scripts/ci/portable-build-cache.mjs key >> "$GITHUB_OUTPUT"
+        statuses=("${PIPESTATUS[@]}")
+        set -e
+        printf 'Portable build plan exit statuses: producer=%s consumer=%s\n' "${statuses[0]}" "${statuses[1]}" >&2
+        # Match pipefail: the rightmost failing command determines the result.
+        if (( statuses[1] != 0 )); then
+          exit "${statuses[1]}"
+        fi
+        exit "${statuses[0]}"
     - name: Restore portable build outputs
       if: inputs.build_cache_artifact == '' && inputs.save != 'true'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
