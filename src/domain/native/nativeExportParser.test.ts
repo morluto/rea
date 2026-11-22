@@ -293,6 +293,39 @@ it.each(["requirements", "definitions"] as const)(
   },
 );
 
+it("ends an exhausted ELF name cache scope after one diagnostic", () => {
+  const suffix = "v".repeat(65_533);
+  const requirements = Array.from({ length: 43 }, (_, index) => ({
+    index: index + 2,
+    name: `${String(index).padStart(2, "0")}${suffix}`,
+  }));
+  const lastName = requirements.at(-1)!.name;
+  const result = parse(
+    elfExportImage({
+      symbols: [{ name: "kept", version: 2 }],
+      versionRequirements: [
+        ...requirements,
+        { index: 45, name: lastName },
+        { index: 46, name: lastName },
+      ],
+    }),
+  );
+  expect(result).toMatchObject({
+    exports: [{ name: "kept", version: { index: 2, name: null } }],
+    coverage: { status: "partial", examined_entries: 1, exports: 1 },
+    issues: [
+      {
+        code: "version_unresolved",
+        message: expect.stringContaining("16 MiB cache allowance"),
+      },
+      {
+        code: "version_unresolved",
+        message: expect.stringContaining("Version index 2"),
+      },
+    ],
+  });
+});
+
 const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   const bytes = Buffer.concat([
     peExportImage({

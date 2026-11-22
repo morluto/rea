@@ -514,10 +514,11 @@ function* readVersionNames(
     try {
       decoded = readName(strings, offset);
     } catch (cause) {
+      if (!isBinaryFormatOrStringLimitFailure(cause)) throw cause;
       issues.push({
         code: "version_unresolved",
         location: hex(location),
-        message: `${label}: ${failureMessage(cause)}`,
+        message: `${label}: ${cause.message}`,
       });
       decoded = null;
     }
@@ -677,11 +678,12 @@ function* readVersionNames(
             }
           }
         } catch (cause) {
+          if (!(cause instanceof BinaryFormatFailure)) throw cause;
           // Auxiliary records do not choose the next definition or its index.
           issues.push({
             code: "version_unresolved",
             location: hex(verdef.offset + BigInt(offset)),
-            message: `Version definitions: ${failureMessage(cause)}`,
+            message: `Version definitions: ${cause.message}`,
           });
         }
         if (index + 1 < verdef.info) {
