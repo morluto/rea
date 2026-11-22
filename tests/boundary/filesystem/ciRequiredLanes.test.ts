@@ -9,6 +9,7 @@ import { executeWorkflowFixture } from "../../support/workflowGit.js";
 const workflow = async (filename = "ci.yml") =>
   z
     .object({
+      on: z.record(z.string(), z.unknown()),
       jobs: z.record(
         z.string(),
         z
@@ -724,6 +725,19 @@ it("leaves cancellation ownership with CI so child lanes cannot cancel another t
     ).toBeUndefined();
   }
 });
+
+it.each([
+  ["ci.yml", null],
+  ["ci-full-pr.yml", { types: ["labeled"] }],
+  ["pr-title.yml", { types: ["opened", "synchronize", "reopened", "edited"] }],
+] as const)(
+  "admits PRs targeting stack branches in %s",
+  async (file, trigger) => {
+    const { on } = await workflow(file);
+    expect(on.pull_request).toEqual(trigger);
+    if (file === "ci.yml") expect(on.push).toEqual({ branches: ["main"] });
+  },
+);
 
 it("keeps fast feedback separate from complete qualification and release proof", async () => {
   const ci = z

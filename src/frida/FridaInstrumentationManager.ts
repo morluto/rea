@@ -1617,6 +1617,40 @@ const sanitizeError = (
     ),
   ).value;
 
+/**
+ * Frida reports a refused ptrace seize with this prefix. Only that request
+ * is recognized: the reason carries no errno, so it does not say whether the
+ * host lacks ptrace support or permissions refused this target, and discovery
+ * can succeed where injection is refused.
+ */
+const PTRACE_SEIZE_REFUSAL = /^Unable to perform ptrace seize\b/i;
+
+/**
+ * Guidance for the Frida failures whose generic "choose another target"
+ * remediation would send the operator the wrong way.
+ */
+const providerFailureGuidance = (
+  reason: string,
+  remote: boolean,
+): {
+  readonly userMessage?: string;
+  readonly remediationAction?: string;
+} => {
+  if (remote && reason === "Unable to connect to remote frida-server")
+    return {
+      remediationAction:
+        "Confirm the selected Frida server is reachable and its connection options are correct, then retry.",
+    };
+  if (PTRACE_SEIZE_REFUSAL.test(reason))
+    return {
+      userMessage:
+        "Frida could not start tracing the target because its ptrace seize request was refused.",
+      remediationAction:
+        "The operating system refused Frida's PTRACE_SEIZE request (see details.reason). Either the host does not implement it, as emulated environments such as PRoot-Distro on Android do, so no target can be injected although device and process discovery still succeed, or ptrace permissions refused this target alone. If other targets fail the same way, run REA on a host with native ptrace support, or select a Frida server running on one with the remote options. Otherwise check the ptrace permissions that apply to this target. Then retry.",
+    };
+  return {};
+};
+
 const providerError = (
   operation: string,
   cause: unknown,
@@ -1686,14 +1720,9 @@ const providerError = (
   return new AnalysisCapabilityUnavailableError("frida", operation, reason, {
     cause: remote === undefined ? cause : new Error(reason),
     diagnostics,
-    ...(selector?.remote === undefined ||
-    cleanupReason !== undefined ||
-    reason !== "Unable to connect to remote frida-server"
+    ...(cleanupReason !== undefined
       ? {}
-      : {
-          remediationAction:
-            "Confirm the selected Frida server is reachable and its connection options are correct, then retry.",
-        }),
+      : providerFailureGuidance(reason, selector?.remote !== undefined)),
     ...(cleanupReason === undefined
       ? {}
       : {

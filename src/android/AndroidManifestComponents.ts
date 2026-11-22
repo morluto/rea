@@ -78,7 +78,7 @@ const containsUnresolvedToken = (value: string): boolean =>
  * dot or a name without any dot is relative to the package, while a dotted
  * name is already fully qualified.
  */
-export const resolveAndroidComponentName = (
+const resolveAndroidComponentName = (
   packageName: string | null,
   declared: string,
 ): string => {

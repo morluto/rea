@@ -25,52 +25,20 @@ const SHOW_VERSION_REPLIES = {
   '-interpreter-exec console "show version"': "^done",
 };
 
-/** A fake GDB that models a session running `show version`. */
-const gdbSettingsFixture = (directory: string) => `#!${process.execPath}
-${fakeGdbStartupPreamble}
-${fakeGdbModeledReplies(join(directory, "unmodeled"), SHOW_VERSION_REPLIES)}
-process.stdout.write("(gdb)\\n");
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", chunk => {
- input += chunk;
- for (;;) {
-  const end = input.indexOf("\\n"); if (end < 0) break;
-  const line = input.slice(0,end); input = input.slice(end+1);
-  const match = /^(\\d+)/.exec(line);
-  if (match) answerModeled(match[1], line.slice(match[1].length));
- }
-});`;
-
-/** A fake GDB that answers the auto-load setting with `reply`. */
-const autoLoadReplyFixture = (
+const gdbFixture = (
   directory: string,
-  reply: string,
+  replies: Readonly<Record<string, string>> = SHOW_VERSION_REPLIES,
 ) => `#!${process.execPath}
 ${fakeGdbStartupPreamble}
-${fakeGdbModeledReplies(join(directory, "unmodeled"))}
+${fakeGdbModeledReplies(join(directory, "unmodeled"), replies)}
 process.stdout.write("(gdb)\\n");
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const boundary = input.indexOf("\\n");
-    if (boundary < 0) break;
-    const line = input.slice(0, boundary);
-    input = input.slice(boundary + 1);
-    const match = /^(\\d+)(.*)/.exec(line);
-    if (match?.[2] === "-gdb-set auto-load off") process.stdout.write(match[1] + "${reply}\\n");
-    else if (match) answerModeled(match[1], line.slice(match[1].length));
+process.stdin.on("data", chunk => {
+  for (const line of chunk.split("\\n")) {
+    const match = /^(\\d+)(.*)$/.exec(line);
+    if (match) answerModeled(match[1], match[2]);
   }
 });
 `;
-
-const debuggerDeadlineOverride = {
-  setting: "debugger.command_deadline_ms",
-  action: "set",
-  value: 5000,
-} as const;
 
 describe("persistent debugger session managers", () => {
   let directory: string | undefined;
@@ -92,27 +60,7 @@ describe("persistent debugger session managers", () => {
   it("runs a correlated GDB MI command, reports status, and closes its owned process", async () => {
     directory = await mkdtemp(join(tmpdir(), "rea-gdb-manager-"));
     const provider = join(directory, "fake-gdb.mjs");
-    await writeFile(
-      provider,
-      `#!${process.execPath}
-${fakeGdbStartupPreamble}
-${fakeGdbModeledReplies(join(directory, "unmodeled"), SHOW_VERSION_REPLIES)}
-process.stdout.write("(gdb)\\n");
-let input = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (chunk) => {
-  input += chunk;
-  for (;;) {
-    const boundary = input.indexOf("\\n");
-    if (boundary < 0) break;
-    const line = input.slice(0, boundary);
-    input = input.slice(boundary + 1);
-    const match = /^(\\d+)/.exec(line);
-    if (match) answerModeled(match[1], line.slice(match[1].length));
-  }
-});
-`,
-    );
+    await writeFile(provider, gdbFixture(directory));
     await chmod(provider, 0o700);
     const manager = new GdbSessionManager({
       spawnProcess: fixtureOwner.spawnProcess,
@@ -145,75 +93,88 @@ process.stdin.on("data", (chunk) => {
     expect(manager.status(started.value.session_id)).toBeUndefined();
   });
 
-  it.each([
-    ["debugger.command_deadline_ms", "REA_DEBUGGER_COMMAND_DEADLINE_MS", 5000],
-    [
-      "debugger.max_command_output_bytes",
-      "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
-      4096,
-    ],
-  ] as const)(
-    "restores a GDB session after resetting invalid %s",
-    async (setting, environmentName, value) => {
-      directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
-      const provider = join(directory, "fake-gdb.mjs");
-      await writeFile(provider, gdbSettingsFixture(directory));
-      await chmod(provider, 0o700);
-      const environment = {
-        REA_GDB_COMMAND: provider,
-        [environmentName]: "invalid",
-        REA_DEBUGGER_MAX_PENDING_COMMANDS: "1",
-      };
-      const settings = new AnalysisSettings(environment);
-      const set = () =>
-        settings.update({ changes: [{ setting, action: "set", value }] });
-      expect(set().ok).toBe(true);
-      if (setting === "debugger.max_command_output_bytes")
-        expect(
-          settings.update({ changes: [debuggerDeadlineOverride] }).ok,
-        ).toBe(true);
-      const manager = new GdbSessionManager({
-        spawnProcess: fixtureOwner.spawnProcess,
-        platform: "linux",
-        environment,
-      });
-      managers.push(manager);
-      const started = await settings.run(() => manager.start());
-      if (!started.ok) throw started.error;
-      const execute = () =>
-        settings.run(() =>
-          manager.execute(started.value.session_id, "show version"),
-        );
-      expect((await execute()).ok).toBe(true);
+  it("recovers GDB commands after either runtime cap is reset to an invalid seed", async () => {
+    directory = await mkdtemp(join(tmpdir(), "rea-gdb-setting-"));
+    const provider = join(directory, "fake-gdb.mjs");
+    await writeFile(provider, gdbFixture(directory));
+    await chmod(provider, 0o700);
+    const environment = {
+      REA_GDB_COMMAND: provider,
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "invalid",
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "invalid",
+      REA_DEBUGGER_MAX_PENDING_COMMANDS: "1",
+    };
+    const deadline = {
+      setting: "debugger.command_deadline_ms",
+      seed: "REA_DEBUGGER_COMMAND_DEADLINE_MS",
+      value: 5000,
+    };
+    const output = {
+      setting: "debugger.max_command_output_bytes",
+      seed: "REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES",
+      value: 4096,
+    };
+    const settings = new AnalysisSettings(environment);
+    const set = ({ setting, value }: typeof deadline) =>
+      expect(
+        settings.update({ changes: [{ setting, action: "set", value }] }).ok,
+      ).toBe(true);
+    const reset = ({ setting }: typeof deadline) =>
       expect(
         settings.update({ changes: [{ setting, action: "reset" }] }).ok,
       ).toBe(true);
-      expect(await execute()).toMatchObject({
+    set(deadline);
+    const manager = new GdbSessionManager({
+      spawnProcess: fixtureOwner.spawnProcess,
+      platform: "linux",
+      environment,
+    });
+    managers.push(manager);
+    const started = await settings.run(() => manager.start());
+    if (!started.ok) throw started.error;
+    const { session_id: sessionId } = started.value;
+    const execute = (command: string) =>
+      settings.run(() => manager.execute(sessionId, command));
+    const expectRefusedCommand = async (seed: string) =>
+      expect(await execute("refused")).toMatchObject({
         ok: false,
-        error: { _tag: "ConfigurationError" },
+        error: { _tag: "ConfigurationError", settings: [{ setting: seed }] },
       });
-      expect(set().ok).toBe(true);
-      expect((await execute()).ok).toBe(true);
-      expect(
-        (await settings.run(() => manager.close(started.value.session_id))).ok,
-      ).toBe(true);
-    },
-  );
+    await expectRefusedCommand(output.seed);
+    set(output);
+    for (const cap of [deadline, output]) {
+      reset(cap);
+      await expectRefusedCommand(cap.seed);
+      set(cap);
+      const retried = await execute("show version");
+      if (!retried.ok) throw retried.error;
+      expect(retried.value.result.mi).toMatch(/^\d+\^done/u);
+    }
+
+    reset(output);
+    expect(await settings.run(() => manager.close(sessionId))).toMatchObject({
+      ok: true,
+      value: { target_state: "none_observed" },
+    });
+  });
 
   // A malformed ^done is not a success record: the typed MI parser refuses it
   // where a ^done prefix match would have accepted the setting.
   it.each([
-    ["rejects", String.raw`^error,msg=\"rejected\"`],
-    [
-      "answers with a malformed ^done for",
-      String.raw`^done,msg=\"unterminated`,
-    ],
+    ["rejects", '^error,msg="rejected"'],
+    ["answers with a malformed ^done for", '^done,msg="unterminated'],
   ])(
     "does not start GDB when it %s the required auto-load setting",
     async (_label, reply) => {
       directory = await mkdtemp(join(tmpdir(), "rea-gdb-autoload-"));
       const provider = join(directory, "fake-gdb-reject.mjs");
-      await writeFile(provider, autoLoadReplyFixture(directory, reply));
+      await writeFile(
+        provider,
+        gdbFixture(directory, {
+          ...SHOW_VERSION_REPLIES,
+          "-gdb-set auto-load off": reply,
+        }),
+      );
       await chmod(provider, 0o700);
       const manager = new GdbSessionManager({
         spawnProcess: fixtureOwner.spawnProcess,
@@ -224,46 +185,21 @@ process.stdin.on("data", (chunk) => {
 
       const started = await manager.start();
 
-      expect(started.ok).toBe(false);
-      if (!started.ok)
-        expect(JSON.stringify(started.error)).toContain(
-          "automatic-loading disable command",
-        );
+      expect(started).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisCapabilityUnavailableError",
+          operation: "start_gdb_session",
+          message: expect.stringContaining("automatic-loading disable command"),
+          partialObservation: {
+            raw_result: {
+              records: expect.arrayContaining([expect.stringContaining(reply)]),
+            },
+          },
+        },
+      });
     },
   );
-});
-
-it("starts GDB without applying an invalid console output limit", async () => {
-  const owner = createGdbFixtureOwner();
-  const directory = await mkdtemp(join(tmpdir(), "rea-gdb-start-output-"));
-  const provider = join(directory, "fake-gdb.mjs");
-  await writeFile(provider, gdbSettingsFixture(directory));
-  await chmod(provider, 0o700);
-  const environment = {
-    REA_GDB_COMMAND: provider,
-    REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "invalid",
-  };
-  const manager = new GdbSessionManager({
-    spawnProcess: owner.spawnProcess,
-    platform: "linux",
-    environment,
-  });
-  try {
-    const started = await manager.start();
-    if (!started.ok) throw started.error;
-    expect(
-      await manager.execute(started.value.session_id, "show version"),
-    ).toMatchObject({ ok: false, error: { _tag: "ConfigurationError" } });
-    expect(await manager.close(started.value.session_id)).toMatchObject({
-      ok: true,
-      value: { target_state: "none_observed" },
-    });
-    await expectNoUnmodeledGdbCommands(join(directory, "unmodeled"));
-  } finally {
-    await owner.cleanup([manager], () =>
-      rm(directory, { recursive: true, force: true }),
-    );
-  }
 });
 
 it.each([

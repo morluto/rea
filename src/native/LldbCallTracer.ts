@@ -69,7 +69,10 @@ import {
 } from "../providers/NativeCommandRunner.js";
 import { projectPartialNativeCalls } from "./NativeCallObservation.js";
 import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
-import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { runOwned } from "../providers/runOwned.js";
 import {
@@ -617,18 +620,15 @@ export class LldbCallTracer implements NativeCallTracer {
     }
     if (unresolved.length === 0) return undefined;
     if (unresolved.length === 1) return unresolved[0];
-    return new ProviderCleanupError(
+    return providerCleanupErrorFromFailures(
       PROVIDER,
-      [...new Set(unresolved.flatMap((marker) => marker.cleanupResources))],
-      { reason: "LLDB resolver cleanup remains incomplete" },
+      unresolved,
+      "LLDB resolver cleanup remains incomplete",
       {
         operation: OPERATION,
-        cause: new AggregateError(
-          unresolved,
-          "LLDB resolver cleanup remains incomplete",
-        ),
+        message: "LLDB resolver cleanup remains incomplete",
       },
-    ).bindCleanupDependencies(unresolved);
+    );
   }
 
   async #run(

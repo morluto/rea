@@ -11,7 +11,6 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
-import { firmwareSignalLimitError } from "./FirmwareFailures.js";
 import { FirmwareFileAccess } from "./FirmwareFiles.js";
 import {
   resolveFirmwareCommand,
@@ -333,12 +332,13 @@ const signalledLauncher = (
   };
   stdout.once("end", close);
   stderr.once("end", close);
-  setTimeout(() => {
-    stdout.end(output.stdout);
-    stderr.end(output.stderr);
-  }, 15);
-  return () =>
-    Promise.resolve({
+  return async () => {
+    // Queue output after runFirmwareCommand attaches the supervisor.
+    setImmediate(() => {
+      stdout.end(output.stdout);
+      stderr.end(output.stderr);
+    });
+    return {
       process: child,
       ownership: {
         runId: "rea-firmware-signal",
@@ -346,7 +346,8 @@ const signalledLauncher = (
         processGroupId: 4242,
       },
       cleanup: () => Promise.resolve({ cleaned: true, signaled: false }),
-    });
+    };
+  };
 };
 
 const analysisDeadline = (signal: AbortSignal) => ({
@@ -356,7 +357,7 @@ const analysisDeadline = (signal: AbortSignal) => ({
   expiresAtMs: performance.now() + 30_000,
 });
 
-it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
+test("projects the fixed CPU limit and captured output when firmware stops on SIGXCPU", async () => {
   const analysis = new AbortController();
   const failure: unknown = await runFirmwareCommand({
     resources: createTestArtifactResourceScope(),
@@ -371,33 +372,37 @@ it("keeps captured tool output when firmware stops on SIGXCPU", async () => {
     signal: analysis.signal,
     deadline: analysisDeadline(analysis.signal),
     launcher: signalledLauncher("SIGXCPU", {
-      stdout: "partial scan\n",
+      stdout: "scan ✓\n",
       stderr: "cpu limit\n",
     }),
     retainCleanup: vi.fn(),
   }).catch((cause: unknown) => cause);
-  expect(failure).toMatchObject({
-    _tag: "AnalysisResourceConstraintError",
-    resource: "cpu",
-    capturedOutput: {
-      stdout: "partial scan\n",
-      stderr: "cpu limit\n",
-      signal: "SIGXCPU",
-      exit_code: null,
-      truncated: false,
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure).toMatchObject({ retryable: false });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "cpu",
+      reported_limits: { cpu_seconds: FIRMWARE_LIMITS.cpuSeconds },
+      captured_output: {
+        stdout: "scan ✓\n",
+        stderr: "cpu limit\n",
+        stdout_bytes: 9,
+        stderr_bytes: 10,
+        signal: "SIGXCPU",
+        exit_code: null,
+        truncated: false,
+      },
     },
   });
-  if (!(failure instanceof AnalysisError))
-    throw new Error("Expected a firmware resource constraint");
-  expect(projectAnalysisError(failure).details?.captured_output).toMatchObject({
-    stdout: "partial scan\n",
-    stderr: "cpu limit\n",
-    signal: "SIGXCPU",
-  });
+  const action = projectAnalysisError(failure).remediation.action;
+  expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+  expect(action).toContain("no runtime override");
+  expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
 });
 
 const sixteenMiB = 16 * 1024 * 1024;
-it.each([
+test.each([
   {
     inherited: Number.MAX_SAFE_INTEGER,
     limit: sixteenMiB + 1,
@@ -421,27 +426,38 @@ it.each([
       environment: process.env,
       signal: analysis.signal,
       deadline: analysisDeadline(analysis.signal),
-      launcher: signalledLauncher("SIGXFSZ", { stdout: "", stderr: "" }),
+      launcher: signalledLauncher("SIGXFSZ", {
+        stdout: "staging\n",
+        stderr: "file limit\n",
+      }),
       outputBudget: { root, bytes: sixteenMiB, entries: 10 },
       retainCleanup: vi.fn(),
     }).catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "file-size",
-      reportedLimits: { file_size_bytes: limit },
-      retryable: false,
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure).toMatchObject({ retryable: false });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "file-size",
+        reported_limits: { file_size_bytes: limit },
+        captured_output: {
+          stdout: "staging\n",
+          stderr: "file limit\n",
+          stdout_bytes: 8,
+          stderr_bytes: 11,
+          signal: "SIGXFSZ",
+          exit_code: null,
+          truncated: false,
+        },
+      },
     });
-    // Compare with the recovery owner instead of its wording; the two branches
-    // must differ for the comparison to pin the selected one.
-    const recovery = (fileSizeAdjustable: boolean) =>
-      firmwareSignalLimitError(
-        "extract_firmware",
-        "SIGXFSZ",
-        limit,
-        fileSizeAdjustable,
-      )?.remediationAction;
-    expect(recovery(true)).not.toBe(recovery(false));
-    expect(failure).toHaveProperty("remediationAction", recovery(adjustable));
+    const action = projectAnalysisError(failure).remediation.action;
+    expect(action).toContain(`${limit} bytes`);
+    expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+    expect(action.includes("Increase max_output_bytes")).toBe(adjustable);
+    expect(action).toContain(
+      adjustable ? "one byte above max_output_bytes" : "no runtime override",
+    );
   },
 );
 
@@ -608,7 +624,18 @@ test.each([
           stderr: "producer diagnostics\n",
         },
       });
-      expect(projectAnalysisError(failure).code).toBe("execution_failure");
+      const projected = projectAnalysisError(failure);
+      expect(projected.code).toBe("execution_failure");
+      const action = projected.remediation.action;
+      expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+      expect(action).toContain(
+        `address-space allowance is ${FIRMWARE_LIMITS.addressSpaceBytes} bytes`,
+      );
+      expect(action).toContain(
+        `file-size allowance is ${FIRMWARE_LIMITS.reportBytes + 1} bytes`,
+      );
+      expect(action).toContain("no runtime override");
+      expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
     }
   },
 );

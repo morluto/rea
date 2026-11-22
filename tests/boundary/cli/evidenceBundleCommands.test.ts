@@ -1,9 +1,6 @@
 import { unknownTarget } from "../../../src/domain/targetIdentity.js";
-import {
-  EVIDENCE_FORMAT_REVISION,
-  RECREATE_EVIDENCE_GUIDANCE,
-} from "../../../src/domain/evidenceFormat.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.js";
 import { PRE_66_NULL_COVERAGE_EVIDENCE } from "../../../src/domain/evidenceLegacy.fixture.js";
 import {
   access,
@@ -498,39 +495,33 @@ cliTest(
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-legacy-coverage-identity-");
     const path = join(root, "legacy.json");
-    const record = PRE_66_NULL_COVERAGE_EVIDENCE;
-    // A current-format bundle carrying an earlier record is refused by the
-    // record's own format marker, before its ID is checked.
-    const bundle = {
-      evidence_format: EVIDENCE_FORMAT_REVISION,
-      artifacts: [],
-      providers: [record.provider],
-      environments: [],
-      scenarios: [],
-      captures: [],
-      unknowns: [],
-      records: [record],
+    await writeFile(
+      path,
+      JSON.stringify({
+        ...createEvidenceBundle([]),
+        records: [PRE_66_NULL_COVERAGE_EVIDENCE],
+      }),
+    );
+    const refusal = {
+      code: "evidence_integrity_mismatch",
+      retryable: false,
+      message: expect.stringContaining(
+        "Evidence record predates format revision",
+      ),
     };
-    await writeFile(path, JSON.stringify(bundle));
     const imported = await cli.run({
       arguments: ["evidence-import", path, "--json"],
     });
     expect(imported.exitCode).toBe(1);
-    expect(imported.json).toMatchObject({
-      code: "evidence_integrity_mismatch",
-      retryable: false,
-      message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-    });
     const call = await cli.sharedMcpCall?.();
     if (call === undefined) throw new Error("Expected shared MCP session");
     const response = await call("import_evidence_bundle", { path });
     expect(response.isError).toBe(true);
-    expect(parseMcpToolError(response)).toMatchObject({
-      error: {
-        code: "evidence_integrity_mismatch",
-        retryable: false,
+    for (const error of [imported.json, parseMcpToolError(response).error]) {
+      expect(error).toMatchObject(refusal);
+      expect(error).toMatchObject({
         message: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE),
-      },
-    });
+      });
+    }
   },
 );

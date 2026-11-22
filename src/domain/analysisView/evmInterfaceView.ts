@@ -12,7 +12,7 @@ import {
   type SolcArtifact,
 } from "../evm/solcArtifact.js";
 import { err, ok, type Result } from "../result.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import {
   ownedView,
@@ -108,6 +108,8 @@ export const evmSummarySchema = z.strictObject({
   limitations: evmInterfaceSchema.shape.limitations,
 });
 
+const readEvmInterface = createAnalysisViewResultReader(evmInterfaceSchema);
+
 /** Select already authenticated producer facts; no interpreter or provider is invoked. */
 export const projectEvmInterfaceView = (
   parent: AnalysisViewParent,
@@ -126,7 +128,7 @@ export const projectEvmInterfaceView = (
         },
       ]),
     );
-  const parsed = parseAnalysisViewResult(evmInterfaceSchema, parent);
+  const parsed = readEvmInterface(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = evidenceFileTarget(parent);

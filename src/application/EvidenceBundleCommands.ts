@@ -266,6 +266,7 @@ export const inspectEvidenceBundleCommand = async (
     readonly offset?: number | undefined;
     readonly limit?: number | undefined;
     readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly linked_evidence_id?: string | undefined;
     readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,

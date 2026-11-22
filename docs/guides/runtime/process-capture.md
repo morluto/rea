@@ -456,6 +456,8 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+The target is the session leader of the capture PTY. When that leader exits, the terminal delivers SIGHUP to processes that are still in its foreground process group, as `script -c` and `ssh -t` do. A child that should outlive the target has to leave the group, for example with `setsid`, or ignore SIGHUP. This hangup comes from the terminal, not from REA's owned-process cleanup, and the capture result does not record it.
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
@@ -521,7 +523,9 @@ absent when no finalization was attempted:
   exited.
   An `unverified` attempt may carry a `reason` string naming why: an unavailable
   identity and its reason, an inspection or signal error, or delivery that did
-  not settle within the bound (1000 ms). An attempt recorded `unverified` after
+  not settle within the fixed bound (1000 ms). That bound is implementation
+  policy with no runtime override, and a larger `finalization_ms` does not
+  extend it. An attempt recorded `unverified` after
   that bound can still complete later; it stays identity-checked, and its late
   result is not added to the record.
 - `elapsed_ms` is when REA observed the exit, relative to the start of

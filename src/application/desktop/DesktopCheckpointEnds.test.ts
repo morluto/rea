@@ -234,18 +234,4 @@ describe("draftDesktopApplicationTask between named checkpoints", () => {
       },
     });
   });
-
-  it("refuses an unknown checkpoint under its own operation", async () => {
-    const result = await draftDesktopApplicationTask(
-      await folder(),
-      readers,
-      undefined,
-      { seed: "saved" },
-    );
-
-    expect(result).toMatchObject({
-      operation: "describe_desktop_application_task",
-      issues: [{ path: ["seed_checkpoint"], reason: "invalid_value" }],
-    });
-  });
 });

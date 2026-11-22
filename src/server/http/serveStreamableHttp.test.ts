@@ -1,10 +1,11 @@
+import { once } from "node:events";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/server";
 import { Agent, request as httpRequest } from "node:http";
-import { connect as connectTcp, createServer } from "node:net";
+import { connect as connectTcp, createServer, type Socket } from "node:net";
 import pino from "pino";
 import { afterEach, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -29,7 +30,7 @@ import { mcpAllowedHostsTextSchema } from "../../config/mcpHttpEndpoint.js";
 import { classifyCliEntrypoint } from "../../cliBuiltinArguments.js";
 import { validateMcpHttpCommand } from "../../main/mcpHttpArguments.js";
 import { RequestTrackingMcpServer } from "../RequestTrackingMcpServer.js";
-import { waitFor } from "../../../tests/support/testWait.js";
+import { testWaitDeadline, waitFor } from "../../../tests/support/testWait.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import {
   CallerAbort,
@@ -118,7 +119,7 @@ const echo = async (client: Client, text: string): Promise<unknown> => {
   return result.content;
 };
 
-/** One keep-alive request; reports whether the server closed the socket after the reply. */
+/** Return the socket that actually carried a complete reply. */
 const keepAliveRequest = (
   agent: Agent,
   url: URL,
@@ -130,7 +131,7 @@ const keepAliveRequest = (
 ): Promise<{
   status: number;
   headers: Record<string, string | string[] | undefined>;
-  socketClosed: boolean;
+  socket: Socket;
 }> =>
   new Promise((resolve, reject) => {
     const request = httpRequest(
@@ -138,29 +139,27 @@ const keepAliveRequest = (
       { method: options.method, headers: { ...options.headers }, agent },
       (response) => {
         const socket = response.socket;
-        let closed = false;
-        socket?.once("close", () => {
-          closed = true;
-        });
         response.resume();
-        response.once("end", () => {
-          // Give a closing server one turn to end the socket after the reply.
-          setTimeout(
-            () =>
-              resolve({
-                status: response.statusCode ?? 0,
-                headers: response.headers,
-                socketClosed: closed || (socket?.destroyed ?? false),
-              }),
-            50,
-          );
-        });
+        response.once("end", () =>
+          resolve({
+            status: response.statusCode ?? 0,
+            headers: response.headers,
+            socket,
+          }),
+        );
         response.once("error", reject);
       },
     );
     request.once("error", reject);
     request.end(options.body);
   });
+
+const waitForSocketClose = async (socket: Socket) => {
+  if (!socket.destroyed)
+    await once(socket, "close", {
+      signal: AbortSignal.timeout(testWaitDeadline()),
+    });
+};
 
 /** A new client's initialize as the bridge hands it to the slot: no session id yet. */
 const initializeRequest = (): Request =>
@@ -493,38 +492,46 @@ it("retries unfinished cleanup after a close stage fails instead of replaying th
   });
 });
 
-it("leaves a sessionless POST without the streamable headers or with a foreign Origin to refusal, keeping the session", async () => {
+it("refuses inadmissible sessionless initialize requests without replacing the live session", async () => {
   const { served } = await start();
   const { client } = await connect(served.url);
   const url = new URL(served.url);
   const body = await initializeRequest().text();
-  const host = `127.0.0.1:${url.port}`;
-  const plain = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host,
-      "content-type": "text/plain",
-      accept: "application/json, text/event-stream",
-    },
-    body,
-  });
-  expect(plain.status).toBeGreaterThanOrEqual(400);
-  expect(plain.status).toBeLessThan(500);
-  const foreign = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host,
-      origin: "http://attacker.example",
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body,
-  });
-  expect(foreign.status).toBe(403);
-  expect(await echo(client, "still here")).toEqual([
-    { type: "text", text: "still here" },
-  ]);
-  await client.close();
+  const refusals: ReadonlyArray<Readonly<Record<string, string>>> = [
+    { "content-type": "text/plain" },
+    { "content-type": "application/json-patch+json" },
+    { accept: "application/json-patch+json, text/event-streaming" },
+    { accept: "application/json;q=0, text/event-stream" },
+    { accept: 'application/json;note=", text/event-stream;x=1"' },
+    { accept: "Application/JSON, Text/Event-Stream" },
+    { origin: "http://foreign.example" },
+  ];
+  try {
+    for (const headers of refusals) {
+      const refused = await rawHttpRequest(url, {
+        method: "POST",
+        headers: {
+          host: url.host,
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...headers,
+        },
+        body,
+      });
+      if (headers.origin !== undefined) expect(refused.status).toBe(403);
+      else {
+        expect(refused.status, JSON.stringify(headers)).toBeGreaterThanOrEqual(
+          400,
+        );
+        expect(refused.status, JSON.stringify(headers)).toBeLessThan(500);
+      }
+    }
+    expect(await echo(client, "still here")).toEqual([
+      { type: "text", text: "still here" },
+    ]);
+  } finally {
+    await client.close();
+  }
 });
 
 it("accepts a same-origin browser Origin carrying the bound port on the MCP endpoint and on routes", async () => {
@@ -567,48 +574,6 @@ it("announces the bound URL even when the log level hides info lines", async () 
       url: served.url,
     }),
   );
-});
-
-it("does not let a JSON-suffixed media type replace the session", async () => {
-  const { served } = await start();
-  const { client } = await connect(served.url);
-  const url = new URL(served.url);
-  const patch = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host: `127.0.0.1:${url.port}`,
-      "content-type": "application/json-patch+json",
-      accept: "application/json, text/event-stream",
-    },
-    body: await initializeRequest().text(),
-  });
-  expect(patch.status).toBeGreaterThanOrEqual(400);
-  expect(patch.status).toBeLessThan(500);
-  expect(await echo(client, "unchanged")).toEqual([
-    { type: "text", text: "unchanged" },
-  ]);
-  await client.close();
-});
-
-it("releases the listener when the server factory fails after the port is bound", async () => {
-  const port = await listenEphemeral();
-  const logs: string[] = [];
-  const logger = pino({ level: "debug" }, { write: (line) => logs.push(line) });
-  const seen: string[] = [];
-  const failing = serveStreamableHttp({
-    host: "127.0.0.1",
-    port,
-    logger,
-    createMcpServer: () => {
-      throw new Error("provider unavailable");
-    },
-  });
-  await expect(failing).rejects.toThrow("provider unavailable");
-  for (const line of logs) seen.push((JSON.parse(line) as { msg: string }).msg);
-  expect(seen).not.toContain("MCP transport listening");
-  await expect(start({ port })).resolves.toMatchObject({
-    served: { close: expect.any(Function) },
-  });
 });
 
 it("classifies loopback from the bound address and lists the configured name beside it", () => {
@@ -683,27 +648,6 @@ it("leaves the instance to its owner when closeInstance is false", async () => {
   expect(instanceCloses).toBe(1);
 });
 
-it("requires exact Accept media ranges before a sessionless POST may replace the session", async () => {
-  const { served } = await start();
-  const { client } = await connect(served.url);
-  const url = new URL(served.url);
-  const lookalike = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host: `127.0.0.1:${url.port}`,
-      "content-type": "application/json",
-      accept: "application/json-patch+json, text/event-streaming",
-    },
-    body: await initializeRequest().text(),
-  });
-  expect(lookalike.status).toBeGreaterThanOrEqual(400);
-  expect(lookalike.status).toBeLessThan(500);
-  expect(await echo(client, "still mine")).toEqual([
-    { type: "text", text: "still mine" },
-  ]);
-  await client.close();
-});
-
 it("keeps the live session when the new client left before its initialize was probed", async () => {
   const slot = new McpSessionSlot(
     createEchoServer(() => undefined),
@@ -752,20 +696,22 @@ it("keeps a session whose transport shutdown failed so the next close retries it
   }
 });
 
-it("runs the instance's shutdown hook exactly once when the slot closes without a live session", async () => {
-  let hooks = 0;
-  const slot = new McpSessionSlot(
-    createEchoServer(() => {
-      hooks += 1;
-    }),
-    undefined,
-  );
-  await slot.close();
-  await slot.close();
-  expect(hooks).toBe(1);
-  const { served, shutdownHooks } = await start();
+it("retries the instance hook without a live session and closes it once successfully", async () => {
+  const failure = new Error("hook failed once");
+  const hook = vi.fn(() => {
+    if (hook.mock.calls.length === 1) throw failure;
+  });
+  const { served } = await start({
+    createMcpServer: () => createEchoServer(hook),
+  });
+
+  await expect(served.close()).rejects.toBe(failure);
+  await expect(rawHttpRequest(new URL(served.url))).rejects.toMatchObject({
+    code: "ECONNREFUSED",
+  });
+  await expect(served.close()).resolves.toBeUndefined();
   await served.close();
-  expect(shutdownHooks()).toBe(1);
+  expect(hook).toHaveBeenCalledTimes(2);
 });
 
 it("answers an oversized sessionless POST promptly instead of stalling on the probe", async () => {
@@ -810,7 +756,7 @@ it("closes the connection after a reply sent before the request body was read, o
     });
     expect(unread.status).toBe(404);
     expect(unread.headers.connection).toBe("close");
-    expect(unread.socketClosed).toBe(true);
+    await waitForSocketClose(unread.socket);
     // Node's parser refuses a chunked GET body itself; a declared Content-Length reaches the bridge.
     const bodyOnGet = await keepAliveRequest(agent, new URL("/nowhere", url), {
       method: "GET",
@@ -819,13 +765,17 @@ it("closes the connection after a reply sent before the request body was read, o
     });
     expect(bodyOnGet.status).toBe(404);
     expect(bodyOnGet.headers.connection).toBe("close");
-    expect(bodyOnGet.socketClosed).toBe(true);
+    await waitForSocketClose(bodyOnGet.socket);
     const bodiless = await keepAliveRequest(agent, new URL("/nowhere", url), {
       method: "GET",
     });
     expect(bodiless.status).toBe(404);
     expect(bodiless.headers.connection).not.toBe("close");
-    expect(bodiless.socketClosed).toBe(false);
+    const repeated = await keepAliveRequest(agent, new URL("/nowhere", url), {
+      method: "GET",
+    });
+    expect(repeated.status).toBe(404);
+    expect(repeated.socket).toBe(bodiless.socket);
   } finally {
     agent.destroy();
   }
@@ -931,69 +881,43 @@ it("refuses raw fragments without changing an encoded query value", async () => 
   });
 });
 
-it.each([1, 2])(
-  "refuses a %i-message initialize batch without replacing a session",
-  async (size) => {
-    const { served } = await start();
-    const { client } = await connect(served.url);
-    const url = new URL(served.url);
-    const single = JSON.parse(await initializeRequest().text()) as unknown;
-    const batch = await rawHttpRequest(url, {
+it("refuses initialize batches before the first session and during a live session", async () => {
+  const { served } = await start();
+  const url = new URL(served.url);
+  const initialize: unknown = JSON.parse(await initializeRequest().text());
+  const assertRefused = async (messages: readonly unknown[]) => {
+    const refused = await rawHttpRequest(url, {
       method: "POST",
       headers: {
-        host: `127.0.0.1:${url.port}`,
         "content-type": "application/json",
         accept: "application/json, text/event-stream",
       },
-      body: JSON.stringify(
-        size === 1
-          ? [single]
-          : [single, { jsonrpc: "2.0", method: "notifications/initialized" }],
-      ),
+      body: JSON.stringify(messages),
     });
-    expect(batch.status).toBeGreaterThanOrEqual(400);
-    expect(batch.status).toBeLessThan(500);
+    expect(refused.status).toBe(400);
+    expect(JSON.parse(refused.body)).toMatchObject({
+      id: null,
+      error: {
+        code: -32600,
+        message: "Initialize must be a single JSON-RPC object, not a batch",
+      },
+    });
+  };
+
+  await assertRefused([initialize]);
+  const { client } = await connect(served.url);
+  try {
+    await assertRefused([initialize]);
+    await assertRefused([
+      initialize,
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+    ]);
     expect(await echo(client, "not evicted")).toEqual([
       { type: "text", text: "not evicted" },
     ]);
+  } finally {
     await client.close();
-  },
-);
-
-it("refuses an initialize batch before opening the first session", async () => {
-  const { served } = await start();
-  const url = new URL(served.url);
-  const single = JSON.parse(await initializeRequest().text()) as unknown;
-  const response = await rawHttpRequest(url, {
-    method: "POST",
-    headers: {
-      host: `127.0.0.1:${url.port}`,
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify([single]),
-  });
-  expect(response.status).toBe(400);
-  const { client } = await connect(served.url);
-  expect(await echo(client, "valid initialization")).toEqual([
-    { type: "text", text: "valid initialization" },
-  ]);
-  await client.close();
-});
-
-it("retries a shutdown hook that threw instead of marking it complete", async () => {
-  let attempts = 0;
-  const slot = new McpSessionSlot(
-    createEchoServer(() => {
-      attempts += 1;
-      if (attempts === 1) throw new Error("hook failed once");
-    }),
-    undefined,
-  );
-  await expect(slot.close()).rejects.toThrow("hook failed once");
-  await expect(slot.close()).resolves.toBeUndefined();
-  await slot.close();
-  expect(attempts).toBe(2);
+  }
 });
 
 it("closes the connection when a route read only part of the body and keeps it after a full read", async () => {
@@ -1030,7 +954,7 @@ it("closes the connection when a route read only part of the body and keeps it a
     });
     expect(partial.status).toBe(200);
     expect(partial.headers.connection).toBe("close");
-    expect(partial.socketClosed).toBe(true);
+    await waitForSocketClose(partial.socket);
     const whole = await keepAliveRequest(agent, new URL("/whole", url), {
       method: "POST",
       headers: {
@@ -1041,37 +965,16 @@ it("closes the connection when a route read only part of the body and keeps it a
     });
     expect(whole.status).toBe(200);
     expect(whole.headers.connection).not.toBe("close");
-    expect(whole.socketClosed).toBe(false);
+    const repeated = await keepAliveRequest(agent, new URL("/whole", url), {
+      method: "POST",
+      headers: { "content-length": "1" },
+      body: "x",
+    });
+    expect(repeated.status).toBe(200);
+    expect(repeated.socket).toBe(whole.socket);
   } finally {
     agent.destroy();
   }
-});
-
-it("does not let a zero-quality, quoted or SDK-refused Accept qualify a session takeover", async () => {
-  const { served } = await start();
-  const { client } = await connect(served.url);
-  const url = new URL(served.url);
-  // The second header holds one range: the comma and `text/event-stream` sit inside a quoted parameter.
-  // The third is valid HTTP, but the SDK matches media types with case and would answer 406.
-  for (const accept of [
-    "application/json;q=0, text/event-stream",
-    'application/json;note=", text/event-stream;x=1"',
-    "Application/JSON, Text/Event-Stream",
-  ]) {
-    const refused = await rawHttpRequest(url, {
-      method: "POST",
-      headers: {
-        host: `127.0.0.1:${url.port}`,
-        "content-type": "application/json",
-        accept,
-      },
-      body: await initializeRequest().text(),
-    });
-    expect(refused.status).toBeGreaterThanOrEqual(400);
-    expect(refused.status).toBeLessThan(500);
-  }
-  expect(await echo(client, "kept")).toEqual([{ type: "text", text: "kept" }]);
-  await client.close();
 });
 
 it.each(["replacement", "DELETE"])(
@@ -1160,15 +1063,25 @@ it.each(["replacement", "DELETE"])(
 it.each(["ready", "failure"] as const)(
   "keeps plain routes unavailable while the factory is pending before %s",
   async (outcome) => {
-    const reserved = await start();
-    const url = new URL(reserved.served.url);
-    await reserved.served.close();
+    const port = await listenEphemeral();
+    const url = new URL(`http://127.0.0.1:${port}/mcp`);
+    const announcements: string[] = [];
+    const logger = pino(
+      {},
+      {
+        write(line) {
+          if (line.includes("MCP transport listening"))
+            announcements.push(line);
+        },
+      },
+    );
     const factoryStart = phaseGate();
     const failure = new Error("provider unavailable");
     const handled = vi.fn(() => new Response("ready"));
     const starting = serveStreamableHttp({
       host: "127.0.0.1",
-      port: Number(url.port),
+      port,
+      logger,
       createMcpServer: async () => {
         await factoryStart.hold();
         if (outcome === "failure") throw failure;
@@ -1181,14 +1094,18 @@ it.each(["ready", "failure"] as const)(
       await factoryStart.reached(starting, "factory start");
       expect((await fetch(new URL("/pending", url))).status).toBe(503);
       expect(handled).not.toHaveBeenCalled();
+      expect(announcements).toEqual([]);
       factoryStart.release();
       if (outcome === "failure") {
         await expect(starting).rejects.toBe(failure);
         await expect(rawHttpRequest(url)).rejects.toMatchObject({
           code: "ECONNREFUSED",
         });
+        expect(announcements).toEqual([]);
+        await start({ port });
       } else {
         await starting;
+        expect(announcements).toHaveLength(1);
         expect((await fetch(new URL("/pending", url))).status).toBe(200);
         expect(handled).toHaveBeenCalledTimes(1);
       }
@@ -1457,31 +1374,6 @@ it("retains plain-response admission until asynchronous cancellation settles", a
   } finally {
     streamCancel.release();
     await response.body?.cancel();
-  }
-});
-
-it("supports sequential keep-alive requests on the same connection", async () => {
-  const { served } = await start({
-    routes: [
-      { method: "GET", path: "/health", handle: () => new Response("ok") },
-    ],
-  });
-  const agent = new Agent({ keepAlive: true, maxSockets: 1 });
-  const connections = new Set<unknown>();
-  agent.on("free", (socket: unknown) => connections.add(socket));
-  try {
-    for (let i = 0; i < 2; i += 1) {
-      const result = await keepAliveRequest(
-        agent,
-        new URL("/health", served.url),
-        { method: "GET" },
-      );
-      expect(result.status).toBe(200);
-      expect(result.socketClosed).toBe(false);
-      expect(connections.size).toBe(1);
-    }
-  } finally {
-    agent.destroy();
   }
 });
 

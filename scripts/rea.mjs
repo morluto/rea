@@ -101,6 +101,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   try {
     await runOneShotCli(args, {
       environment: process.env,
+      persistentUserConfig: true,
       runtime: {
         packageName: packageJson.name,
         packageVersion: packageJson.version,

@@ -6,7 +6,6 @@ import {
   nativeDisassemblySchema,
   nativeCalleesSchema,
   nativeXrefsSchema,
-  nativeLiteralSearchPattern,
 } from "./IdaNativeProtocol.js";
 import {
   analysisSearchPredicate,
@@ -44,6 +43,7 @@ import type { EvidenceLocation } from "../domain/evidence.js";
 import {
   idaAddressSchema,
   idaFunctionSchema,
+  idaLiteralSearchPattern,
   idaStringsPageSchema,
   modernCalleesSchema,
   modernDecompileSchema,
@@ -64,6 +64,8 @@ export interface IdaRawObservation {
   readonly tool: string;
   readonly arguments: Readonly<Record<string, JsonValue>>;
   readonly result: JsonValue;
+  /** Engine output the upstream reported beside the result, when nonempty. */
+  readonly output?: { readonly stdout: string; readonly stderr: string };
 }
 
 const unknownBody = {
@@ -118,6 +120,11 @@ export class IdaOperationRunner {
       readonly surveyAvailable?: boolean;
       /** The program identity REA admitted, reported by `list_documents`. */
       readonly admittedDocument?: string;
+      /** Answers modern reads through another upstream tool and reports that actual observation. */
+      readonly invoke?: (
+        tool: string,
+        args: Readonly<Record<string, JsonValue>>,
+      ) => Promise<IdaRawObservation>;
     } = {},
   ) {}
 
@@ -129,13 +136,20 @@ export class IdaOperationRunner {
       throw cancelledBy(tool, this.options.signal);
     const scoped =
       this.database === undefined ? args : { ...args, database: this.database };
-    const result = await this.connection.call(tool, scoped, {
-      signal: this.options.signal,
-    });
-    this.raw.push({ tool, arguments: scoped, result });
+    const observation =
+      this.options.invoke === undefined
+        ? {
+            tool,
+            arguments: scoped,
+            result: await this.connection.call(tool, scoped, {
+              signal: this.options.signal,
+            }),
+          }
+        : await this.options.invoke(tool, scoped);
+    this.raw.push(observation);
     if (this.options.signal?.aborted)
       throw cancelledBy(tool, this.options.signal);
-    return result;
+    return observation.result;
   }
 
   async functions(): Promise<IdaFunction[]> {
@@ -297,7 +311,7 @@ export class IdaOperationRunner {
   }
 
   async strings(
-    nativePattern?: string,
+    candidatePattern?: string,
   ): Promise<{ address: string; value: string }[]> {
     if (this.protocol === "native")
       this.limitations.push(IDA_NATIVE_STRING_LIMITATION);
@@ -308,9 +322,8 @@ export class IdaOperationRunner {
       const page = idaStringsPageSchema.parse(
         await this.call("find_regex", {
           pattern:
-            this.protocol === "native"
-              ? (nativePattern ?? "[\\s\\S]*")
-              : "(?s).*",
+            candidatePattern ??
+            (this.protocol === "native" ? "[\\s\\S]*" : "(?s).*"),
           offset,
           limit: 100,
         }),
@@ -576,11 +589,11 @@ export class IdaOperationRunner {
         query === undefined && parameters.address !== undefined
           ? idaAddressSchema.parse(parameters.address)
           : undefined;
-      const nativePattern =
-        this.protocol === "native" && query?.mode === "literal"
-          ? nativeLiteralSearchPattern(query.pattern, query.case_sensitive)
+      const candidatePattern =
+        query?.mode === "literal"
+          ? idaLiteralSearchPattern(query.pattern, query.case_sensitive)
           : undefined;
-      const items = await this.strings(nativePattern);
+      const items = await this.strings(candidatePattern);
       return query !== undefined
         ? this.searchItems(operation, items, query)
         : selectedAddress === undefined
