@@ -36,48 +36,56 @@ export class XmlPlistDataError extends ParseFailureError<
 
 const BASE64_DIGITS =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-const C_WHITESPACE = new Set([" ", "\t", "\n", "\v", "\f", "\r"]);
-
-/** Interpret each completed quartet once per pass, including CF's padding resets. */
-const visitDataQuartets = (
-  text: string,
-  visit: (value: number, byteCount: 1 | 2 | 3) => void,
-): Result<void, XmlPlistDataError> => {
-  let quartet = 0;
-  let digits = 0;
-  let padding = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    if (text.charCodeAt(index) >= 128)
-      return err(new XmlPlistDataError("non-ascii", index));
-    const character = text[index]!;
-    if (character === "=") padding += 1;
-    else if (!C_WHITESPACE.has(character)) padding = 0;
-    const digit = character === "=" ? 0 : BASE64_DIGITS.indexOf(character);
-    if (digit < 0) continue;
-    quartet = ((quartet << 6) | digit) & 0xffffff;
-    digits += 1;
-    if (digits % 4 === 0)
-      visit(quartet, padding >= 2 ? 1 : padding === 1 ? 2 : 3);
-  }
-  return ok(undefined);
-};
+const CODE_OTHER = -1;
+const CODE_WHITESPACE = -2;
+const CODE_PAD = -3;
+const BASE64_ASCII_TABLE = (() => {
+  const table = new Int8Array(128).fill(CODE_OTHER);
+  for (let index = 0; index < BASE64_DIGITS.length; index += 1)
+    table[BASE64_DIGITS.charCodeAt(index)] = index;
+  table[0x20] = CODE_WHITESPACE; // ' '
+  table[0x09] = CODE_WHITESPACE; // '\t'
+  table[0x0a] = CODE_WHITESPACE; // '\n'
+  table[0x0b] = CODE_WHITESPACE; // '\v'
+  table[0x0c] = CODE_WHITESPACE; // '\f'
+  table[0x0d] = CODE_WHITESPACE; // '\r'
+  table[0x3d] = CODE_PAD; // '='
+  return table;
+})();
 
 /** CFPropertyList reads raw ASCII, skips nonalphabet bytes and emits complete quartets. */
 export const decodeXmlPlistData = (
   text: string,
 ): Result<Uint8Array, XmlPlistDataError> => {
-  let length = 0;
-  const counted = visitDataQuartets(text, (_value, byteCount) => {
-    length += byteCount;
-  });
-  if (!counted.ok) return counted;
-  // Count actual output before allocation, including padding in every quartet.
-  const bytes = new Uint8Array(length);
+  const bytes = new Uint8Array(Math.floor((text.length * 3) / 4));
   let offset = 0;
-  const decoded = visitDataQuartets(text, (value, byteCount) => {
-    bytes[offset++] = value >> 16;
-    if (byteCount >= 2) bytes[offset++] = value >> 8;
-    if (byteCount === 3) bytes[offset++] = value;
-  });
-  return decoded.ok ? ok(bytes) : decoded;
+  let quartet = 0;
+  let digits = 0;
+  let padding = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    if (code >= 128) return err(new XmlPlistDataError("non-ascii", index));
+    const entry = BASE64_ASCII_TABLE[code]!;
+    let digit: number;
+    if (entry === CODE_PAD) {
+      padding += 1;
+      digit = 0;
+    } else if (entry === CODE_WHITESPACE) {
+      continue;
+    } else if (entry === CODE_OTHER) {
+      padding = 0;
+      continue;
+    } else {
+      padding = 0;
+      digit = entry;
+    }
+    quartet = ((quartet << 6) | digit) & 0xffffff;
+    digits += 1;
+    if ((digits & 3) === 0) {
+      bytes[offset++] = quartet >> 16;
+      if (padding < 2) bytes[offset++] = quartet >> 8;
+      if (padding === 0) bytes[offset++] = quartet;
+    }
+  }
+  return ok(offset === bytes.length ? bytes : bytes.subarray(0, offset));
 };

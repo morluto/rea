@@ -363,28 +363,27 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
-  const moduleRelation = (symbol: NativeSymbol) =>
-    moduleCompatibility(
+  let exact: NativeSymbol | undefined;
+  let exactUnknownModule: NativeSymbol | undefined;
+  let firstUnknownModule: NativeSymbol | undefined;
+  let decorated: NativeSymbol | undefined;
+  for (const symbol of candidates) {
+    const relation = moduleCompatibility(
       managed.import_scope_name,
       symbol,
       modulePlatformsByEvidenceId.get(symbol.evidence_id) ?? null,
     );
-  const exact = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "match",
-  );
-  const exactUnknownModule = candidates.find(
-    (symbol) =>
-      managed.import_name === lookupSymbolName(symbol) &&
-      moduleRelation(symbol) === "unknown",
-  );
-  const unknownModule =
-    exactUnknownModule ??
-    candidates.find((symbol) => moduleRelation(symbol) === "unknown");
-  const decorated = candidates.find(
-    (symbol) => moduleRelation(symbol) === "match",
-  );
+    const isExactName = managed.import_name === lookupSymbolName(symbol);
+    if (relation === "match") {
+      if (isExactName && exact === undefined) exact = symbol;
+      if (decorated === undefined) decorated = symbol;
+    } else if (relation === "unknown") {
+      if (isExactName && exactUnknownModule === undefined)
+        exactUnknownModule = symbol;
+      if (firstUnknownModule === undefined) firstUnknownModule = symbol;
+    }
+  }
+  const unknownModule = exactUnknownModule ?? firstUnknownModule;
   const selected = exact ?? decorated ?? first;
   if (exact !== undefined)
     return {
