@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { machoWithPropertyAttributes } from "../../tests/fixtures/objcPropertyMacho.js";
 import { objcRecordBudgetMacho } from "../../tests/fixtures/objcRecordBudgetMacho.js";
 import { decodeAppleDispatchMetadata } from "./AppleDispatchMetadata.fixture.js";
+import { decodeObjcDispatchFacets } from "./AppleObjcDispatchFacets.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 
 /** The slice-selection refusal an admitted decode reports as REA's inconsistency. */
@@ -3082,5 +3083,140 @@ describe("Objective-C category class property applicability", () => {
         "category_class_properties_not_decoded at 0x100000b70",
       ),
     });
+  });
+});
+
+describe("Objective-C class method owner index parity", () => {
+  it("projects instance and class methods accurately across multiple classes without cross-class leakage", () => {
+    const result: Parameters<typeof decodeObjcDispatchFacets>[0]["result"] = {
+      objc_classes: [],
+      objc_protocols: [],
+      objc_categories: [],
+      swift_decls: [],
+      objc_ivars: [],
+      objc_protocol_records: [],
+      objc_dispatch_implementations: [],
+      swift_conformances: [],
+      swift_dispatch_slots: [],
+      swift_symbols: [],
+      relative_pointers: [],
+      coverage: [],
+      db_save_result: null,
+    };
+    const classNames = ["Alpha", "Beta", "Alpha"]; // includes duplicate class name edge case
+    const segments = [
+      {
+        address: 0x1000000n,
+        size: 0x100000n,
+        offset: 0,
+        executable: true,
+      },
+    ];
+    const sections = [
+      {
+        name: "__objc_classlist",
+        address: 0x20000n,
+        size: classNames.length * 8,
+      },
+    ];
+    const readers: Parameters<typeof decodeObjcDispatchFacets>[0]["readers"] = {
+      pointer: (addr) => {
+        if (addr >= 0x20000n && addr < 0x20000n + BigInt(classNames.length * 8))
+          return 0x100000n + BigInt(Number((addr - 0x20000n) / 8n) * 256);
+        if (addr >= 0x100000n && addr < 0x101000n) {
+          const off = Number(addr - 0x100000n) % 256;
+          const baseAddr = addr - BigInt(off);
+          if (off === 0) return baseAddr + 128n;
+          if (off === 32) return baseAddr + 0x100000n;
+          if (off === 160) return baseAddr + 128n + 0x100000n;
+          return 0n;
+        }
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const rel = Number(addr - 0x200000n) % 256;
+          const baseAddr = addr - BigInt(rel);
+          if (rel === 24 || rel === 152) return baseAddr;
+          if (rel === 32) return baseAddr - 0x100000n + 0x200000n;
+          if (rel === 160) return baseAddr + 128n - 0x100000n + 0x200000n;
+          return 0n;
+        }
+        if (addr >= 0x300000n && addr < 0x301000n) {
+          const off = Number(addr & 0x7fn);
+          if (off === 8) return addr + 0x400000n;
+          if (off === 24) return 0x1000000n + (addr & 0xfffn);
+        }
+        return 0n;
+      },
+      u32: (addr) => {
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const rel = Number(addr - 0x200000n) % 256;
+          return rel === 0 || rel === 128 ? 2 : 0;
+        }
+        if (addr >= 0x300000n && addr < 0x301000n) {
+          const off = Number(addr & 0x7fn);
+          if (off === 0) return 24;
+          if (off === 4) return 1;
+        }
+        return 0;
+      },
+      u64: () => 0n,
+      i32: () => 0,
+      resolvePointer: () => ({ kind: "raw", target: 0n }),
+      bound: () => undefined,
+      string: (addr) => {
+        if (addr >= 0x200000n && addr < 0x201000n) {
+          const idx = Math.floor(Number(addr - 0x200000n) / 256);
+          return classNames[idx]!;
+        }
+        const meta = (Number(addr - 0x700000n) & 0x80) !== 0;
+        const idx = Math.floor(Number(addr - 0x700000n) / 256);
+        return `${classNames[idx]!}_${meta ? "cls" : "inst"}_${idx}`;
+      },
+      location: (addr) => ({
+        address: `0x${addr.toString(16)}`,
+        file_offset: 0,
+      }),
+      evidence: (addr, description) => [
+        {
+          kind: "binary_metadata",
+          description,
+          location: { address: `0x${addr.toString(16)}`, file_offset: 0 },
+          artifact_path: "/fixture",
+          artifact_sha256: "0".repeat(64),
+        },
+      ],
+      offset: () => 0,
+    };
+    let budget = 1000;
+    decodeObjcDispatchFacets({
+      sections,
+      segments,
+      readers,
+      budget: {
+        truncated: false,
+        admit: () => budget-- > 0,
+        isFull: () => budget <= 0,
+        markTruncated: () => {},
+      },
+      maxListSlots: 100,
+      result,
+    });
+    expect(result.objc_classes).toHaveLength(6);
+    expect(result.objc_classes[0]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_inst_0",
+    ]);
+    expect(result.objc_classes[1]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_cls_0",
+    ]);
+    expect(result.objc_classes[2]!.methods.map((m) => m.selector)).toEqual([
+      "Beta_inst_1",
+    ]);
+    expect(result.objc_classes[3]!.methods.map((m) => m.selector)).toEqual([
+      "Beta_cls_1",
+    ]);
+    // Duplicate class name sees prior entries for same (class_name, method_type), matching filter parity.
+    expect(result.objc_classes[4]!.methods.map((m) => m.selector)).toEqual([
+      "Alpha_inst_0",
+      "Alpha_inst_2",
+    ]);
   });
 });
