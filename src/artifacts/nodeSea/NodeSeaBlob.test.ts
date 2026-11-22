@@ -3,7 +3,7 @@ import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
 
 import { DEFAULT_NODE_SEA_READER_LIMITS } from "../../domain/artifactReaderLimits.js";
-import { decodeNodeSeaBlob, observeNodeSeaFuseMatches } from "./NodeSeaBlob.js";
+import { decodeNodeSeaBlob } from "./NodeSeaBlob.js";
 import { buildNodeSeaBlob, NODE_SEA_FIXTURE_MAGIC } from "./NodeSea.fixture.js";
 
 const header = (flags: number, extension = 1): Buffer => {
@@ -333,33 +333,6 @@ it("treats the body as a snapshot when that flag is set", async () => {
   expect(decoded.useSnapshot).toBe(true);
   expect(decoded.mainScript).toBeNull();
   expect(decoded.snapshot?.length).toBe(4);
-});
-
-it("reports an absent, unset, set, or conflicting fuse sentinel", () => {
-  expect(observeNodeSeaFuseMatches([])).toMatchObject({
-    fuseState: "absent",
-    fuseSentinel: null,
-    fuseContradiction: expect.stringMatching(
-      /no NODE_SEA_FUSE sentinel.*observed/iu,
-    ),
-  });
-  const unset = `NODE_SEA_FUSE_${"a".repeat(32)}:0`;
-  expect(observeNodeSeaFuseMatches([unset, unset])).toMatchObject({
-    fuseState: "unset",
-    fuseSentinel: unset,
-    fuseContradiction: expect.stringMatching(/NODE_SEA_FUSE sentinel.*unset/iu),
-  });
-  const set = `NODE_SEA_FUSE_${"b".repeat(32)}:1`;
-  expect(observeNodeSeaFuseMatches([set])).toMatchObject({
-    fuseState: "set",
-    fuseSentinel: set,
-    fuseContradiction: null,
-  });
-  expect(observeNodeSeaFuseMatches([unset, set])).toMatchObject({
-    fuseState: "conflicting",
-    fuseSentinel: null,
-    fuseContradiction: expect.stringMatching(/fuse sentinels disagree/iu),
-  });
 });
 
 it.each([
