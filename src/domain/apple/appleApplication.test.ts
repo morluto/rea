@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactOccurrence } from "../artifactGraph.js";
+import type {
+  ArtifactInventoryCoverage,
+  ArtifactOccurrence,
+} from "../artifactGraph.js";
 
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { projectAppleInventory } from "./appleApplication.js";
@@ -31,6 +34,10 @@ const inventoryEvidence = (
   rootFormat: RootFormat,
   subjectName: string,
   entries: readonly FixtureEntry[],
+  source: { coverage: ArtifactInventoryCoverage; limitations: string[] } = {
+    coverage: { scope: "container-entries", status: "complete" },
+    limitations: [],
+  },
 ): Evidence => {
   const rootSha = sha(`${rootFormat}:${subjectName}`);
   const rootId = artifactId(rootSha);
@@ -161,8 +168,7 @@ const inventoryEvidence = (
         edges: [],
         provenance: [],
         integrity_contradictions: [],
-        coverage: { scope: "container-entries", status: "complete" },
-        limitations: [],
+        ...source,
       },
     },
   );
@@ -392,6 +398,48 @@ describe("Apple bundle directory identity", () => {
   });
 });
 
+it.each([
+  [
+    "container-entries",
+    "complete",
+    "complete-within-inventory",
+    "hdiutil verify found no stored checksum in this disk image, so its integrity was not verified; the root SHA-256 identifies the inventoried bytes.",
+  ],
+  [
+    "container-entries",
+    "unknown",
+    "partial",
+    "DMG root hash is observed; child inventory requires a native macOS adapter.",
+  ],
+  [
+    "root",
+    "complete",
+    "partial",
+    "Inventory covers root bytes only; child container entries were not examined.",
+  ],
+] as const)(
+  "uses declared %s / %s DMG coverage even when only the root is present",
+  (scope, status, expected, sourceLimitation) => {
+    const result = project(
+      inventoryEvidence("dmg", "Fixture.dmg", [], {
+        coverage: { scope, status },
+        limitations: [sourceLimitation],
+      }),
+    );
+    expect(result).toMatchObject({
+      coverage: { status: expected, inventory_complete: true },
+      application_roots: [],
+      bundles: [],
+    });
+    expect(result.limitations).toContain(sourceLimitation);
+    expect(
+      result.limitations.includes(
+        "Source inventory coverage is partial; absence is unknown.",
+      ),
+    ).toBe(expected === "partial");
+  },
+);
+
 describe("Apple bundle layouts and containers", () => {
   it("follows versioned frameworks without resolving Versions/Current", () => {
     const framework = "Fixture.app/Contents/Frameworks/Core.framework";
@@ -483,17 +531,6 @@ describe("Apple bundle layouts and containers", () => {
     ]);
     expect(result.limitations).toContainEqual(
       expect.stringContaining("AppleDouble sidecar entries"),
-    );
-  });
-
-  it("reports a DMG without inventoried contents as partial", () => {
-    const result = project(inventoryEvidence("dmg", "Fixture.dmg", []));
-    expect(result.coverage).toEqual({
-      status: "partial",
-      inventory_complete: true,
-    });
-    expect(result.limitations).toContainEqual(
-      expect.stringMatching(/DMG.*not inventoried.*absence is unknown/i),
     );
   });
 
