@@ -1188,12 +1188,11 @@ export class FlutterBuildProvider {
           FLUTTER_ALLOWANCES.libraryRead,
         ),
       );
-    const imagePath = join(snapshot.root, "libapp.so");
     const imageHash = createHash("sha256");
-    const imageWriter = this.ownResource(
-      snapshot.root,
-      new OwnedFileHandle(await openFile(imagePath, "wx")),
-    );
+    // Allocate exactly the budget-checked size upfront so streamed ZIP chunks
+    // land directly in memory without a temp-file write + read-back cycle.
+    const image = Buffer.alloc(declared + 1);
+    let imageLength = 0;
     {
       const stream = openEntrySafely(
         reader,
@@ -1219,35 +1218,17 @@ export class FlutterBuildProvider {
             ),
           );
         imageHash.update(view);
-        await imageWriter.handle.writeFile(view);
+        if (imageLength < image.length) {
+          const copyCount = Math.min(
+            view.byteLength,
+            image.length - imageLength,
+          );
+          view.copy(image, imageLength, 0, copyCount);
+          imageLength += copyCount;
+        }
       }
     }
-    await this.releaseResource(snapshot.root, imageWriter);
     const imageSha256 = imageHash.digest("hex");
-    // Allocate exactly the budget-checked size before reading, so the
-    // buffer cannot exceed the declared library size plus one byte.
-    const image = Buffer.alloc(declared + 1);
-    let imageLength = 0;
-    {
-      const file = this.ownResource(
-        snapshot.root,
-        new OwnedFileHandle(await openFile(imagePath, "r")),
-      );
-      while (imageLength < image.length) {
-        if (signal?.aborted === true)
-          return err(cancelledBy("inspect_dart_aot", signal));
-        const result = await file.handle.read(
-          image,
-          imageLength,
-          image.length - imageLength,
-          null,
-        );
-        assertArtifactReadActive(signal);
-        if (result.bytesRead === 0) break;
-        imageLength += result.bytesRead;
-      }
-      await this.releaseResource(snapshot.root, file);
-    }
     assertArtifactReadActive(signal);
     const bounded = image.subarray(0, imageLength);
     const snapshotFacts = await observeDartSnapshot(bounded, signal);
