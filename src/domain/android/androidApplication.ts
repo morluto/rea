@@ -146,7 +146,7 @@ export const projectAndroidInventory = (
       .sort(compareUnicodeCodePoints),
     components,
     unavailable_components: unavailable,
-    runtime_families: runtimeFamilies(all, classified),
+    runtime_families: runtimeFamilies(classified),
     bridge_candidates: bridgeProjection.candidates,
     bridge_candidate_coverage: bridgeProjection.coverage,
     coverage: projectionCoverage(
@@ -201,7 +201,6 @@ const classify = (all: readonly Component[]) => {
 };
 
 const runtimeFamilies = (
-  _all: readonly Component[],
   components: AndroidApplicationProjectionResult["components"],
 ) => {
   const families = new Set<
