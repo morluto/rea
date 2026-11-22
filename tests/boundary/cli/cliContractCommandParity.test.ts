@@ -1597,6 +1597,36 @@ describe("JSON-document contract commands", () => {
   });
 });
 
+it.each([
+  [
+    "checked optional",
+    z
+      .string()
+      .optional()
+      .refine((value) => value !== undefined),
+    true,
+  ],
+  ["invalid prefault", z.string().min(2).prefault("x"), false],
+] as const)(
+  "projects document omission using object parsing for %s",
+  (_kind, field, acceptsOmission) => {
+    const inputSchema = z.object({ detail: field });
+    expect(inputSchema.safeParse({}).success).toBe(acceptsOmission);
+    const describe = () =>
+      describeContractDocumentCommand(
+        { name: "probe", inputSchema },
+        {
+          command: "probe",
+          description: "Probe",
+          document: "Probe JSON",
+          omit: { detail: "never" },
+        },
+      );
+    if (acceptsOmission) expect(describe).not.toThrow();
+    else expect(describe).toThrow("probe.detail is not an optional field");
+  },
+);
+
 describe("JSON-document delivery options", () => {
   const contract = {
     name: "probe",

@@ -71,6 +71,42 @@ const arrayRow = z.array(
 );
 const encodingSchema = z.enum(["UTF-8", "UTF-16le", "UTF-16be"]);
 const cellByteLengths = z.array(z.bigint().nonnegative());
+type ArrayRowValue = z.output<typeof arrayRow>[number];
+
+const parseCellByteLengthsFast = (raw: unknown): bigint[] => {
+  if (Array.isArray(raw)) {
+    let valid = true;
+    for (let index = 0; index < raw.length; index += 1) {
+      const value = raw[index];
+      if (typeof value !== "bigint" || value < 0n) {
+        valid = false;
+        break;
+      }
+    }
+    if (valid) return raw as bigint[];
+  }
+  return cellByteLengths.parse(raw);
+};
+
+const parseArrayRowFast = (raw: unknown): ArrayRowValue[] => {
+  if (Array.isArray(raw)) {
+    let valid = true;
+    for (let index = 0; index < raw.length; index += 1) {
+      const value = raw[index];
+      if (
+        value !== null &&
+        typeof value !== "bigint" &&
+        typeof value !== "string" &&
+        !(typeof value === "number" && !Number.isNaN(value))
+      ) {
+        valid = false;
+        break;
+      }
+    }
+    if (valid) return raw as ArrayRowValue[];
+  }
+  return arrayRow.parse(raw);
+};
 type DatabaseEncoding = z.output<typeof encodingSchema>;
 type Inspection = Pick<
   SqliteDatabase,
@@ -1034,11 +1070,11 @@ const readRows = (
     );
     lengths.setReturnArrays(true);
     for (const raw of lengths.iterate(limit, offset))
-      budget.beforeProjection(cellByteLengths.parse(raw));
+      budget.beforeProjection(parseCellByteLengthsFast(raw));
     const statement = db.prepare(`SELECT ${projection} FROM ${window}`);
     statement.setReturnArrays(true);
     for (const raw of statement.iterate(limit, offset)) {
-      const rawRow = arrayRow.parse(raw);
+      const rawRow = parseArrayRowFast(raw);
       // Hex expansion already belongs to the retained-output budget, before decoding/copying cells.
       budget.beforeDecode(rawRow);
       const values = rawRow.map((value) => cell(value, encoding));

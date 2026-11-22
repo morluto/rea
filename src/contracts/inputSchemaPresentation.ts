@@ -137,13 +137,16 @@ const sharedRequiredProperties = (
   branches: readonly Readonly<Record<string, unknown>>[],
 ): readonly string[] => {
   const [first = [], ...others] = branches.map(requiredProperties);
-  return first.filter((name) => others.every((names) => names.includes(name)));
+  if (first.length === 0 || others.length === 0) return first;
+  const otherSets = others.map((names) => new Set(names));
+  return first.filter((name) => otherSets.every((names) => names.has(name)));
 };
 
 const inputGroup = (branch: Readonly<Record<string, unknown>>): string => {
   const required = requiredProperties(branch);
+  const requiredSet = new Set(required);
   const optional = Object.keys(branch.properties ?? {})
-    .filter((name) => !required.includes(name))
+    .filter((name) => !requiredSet.has(name))
     .map((name) => `[${name}]`);
   return [...required, ...optional].join(" + ");
 };

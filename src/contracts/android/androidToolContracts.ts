@@ -7,15 +7,15 @@ import {
   androidJniInspectionInputSchema,
 } from "../../domain/android/androidAnalysis.js";
 import {
-  androidPackageSummaryViewResultSchema,
-  androidManifestViewResultSchema,
-  androidComponentsViewResultSchema,
-  androidComponentSummaryViewResultSchema,
   androidClassSummaryViewResultSchema,
-  androidMethodSummaryViewResultSchema,
-  androidJniSummaryViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidComponentsViewResultSchema,
   androidJniPageViewResultSchema,
-} from "../../domain/analysisView/analysisViewResult.js";
+  androidJniSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
+} from "../../domain/analysisView/summarySchemas/androidSummarySchemas.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata, toolEffects } from "../toolEffects.js";

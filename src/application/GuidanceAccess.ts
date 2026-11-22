@@ -1,4 +1,5 @@
 import { boundedList, type BoundedList } from "../domain/boundedList.js";
+import { stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { z } from "zod";
 import {
@@ -38,7 +39,84 @@ const MAX_GUIDE_BUNDLE_BYTES = 4_194_304;
 interface GuidanceBundle {
   readonly digest: string;
   readonly sections: readonly GuideSection[];
+  readonly sectionsByGuide: ReadonlyMap<
+    string,
+    ReadonlyMap<number, GuideSection>
+  >;
 }
+
+interface GuideFileStatStamp {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+const PACKAGED_GUIDE_PATHS: readonly string[] = MANAGED_SKILL_FILES.map(
+  (relativePath) =>
+    fileURLToPath(new URL(`${SKILL_ROOT}${relativePath}`, import.meta.url)),
+);
+
+let cachedPackagedBundle:
+  | {
+      readonly stamps: readonly GuideFileStatStamp[];
+      readonly bundle: GuidanceBundle;
+    }
+  | undefined;
+
+const statPackagedGuides = async (): Promise<
+  readonly GuideFileStatStamp[] | undefined
+> => {
+  try {
+    const stats = await Promise.all(
+      PACKAGED_GUIDE_PATHS.map((filePath) => stat(filePath, { bigint: true })),
+    );
+    const stamps: GuideFileStatStamp[] = [];
+    for (const info of stats) {
+      if (!info.isFile()) return undefined;
+      stamps.push({
+        dev: info.dev,
+        ino: info.ino,
+        size: info.size,
+        mtimeNs: info.mtimeNs,
+        ctimeNs: info.ctimeNs,
+      });
+    }
+    return stamps;
+  } catch {
+    return undefined;
+  }
+};
+
+const sameGuideStamps = (
+  left: readonly GuideFileStatStamp[],
+  right: readonly GuideFileStatStamp[],
+): boolean =>
+  left.length === right.length &&
+  left.every(
+    (item, index) =>
+      item.dev === right[index]!.dev &&
+      item.ino === right[index]!.ino &&
+      item.size === right[index]!.size &&
+      item.mtimeNs === right[index]!.mtimeNs &&
+      item.ctimeNs === right[index]!.ctimeNs,
+  );
+
+const indexSectionsByGuide = (
+  sections: readonly GuideSection[],
+): ReadonlyMap<string, ReadonlyMap<number, GuideSection>> => {
+  const byGuide = new Map<string, Map<number, GuideSection>>();
+  for (const section of sections) {
+    let byOrdinal = byGuide.get(section.guide);
+    if (byOrdinal === undefined) {
+      byOrdinal = new Map<number, GuideSection>();
+      byGuide.set(section.guide, byOrdinal);
+    }
+    byOrdinal.set(section.ordinal, section);
+  }
+  return byGuide;
+};
 
 const readPackagedGuide = (
   relativePath: string,
@@ -84,7 +162,17 @@ const readBundle = async (
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
   operation: string,
+  usePackagedCache: boolean,
 ): Promise<GuidanceBundleRead> => {
+  const preReadStamps = usePackagedCache
+    ? await statPackagedGuides()
+    : undefined;
+  if (
+    preReadStamps !== undefined &&
+    cachedPackagedBundle !== undefined &&
+    sameGuideStamps(preReadStamps, cachedPackagedBundle.stamps)
+  )
+    return { kind: "available", bundle: cachedPackagedBundle.bundle };
   const files = new Map<string, string>();
   let bundleBytes = 0;
   try {
@@ -124,7 +212,20 @@ const readBundle = async (
       message:
         "Installed REA guidance exceeds the 4,096-section or 25,165,824 expanded UTF-16-code-unit index allowance; no partial index was used.",
     };
-  return { kind: "available", bundle: { digest, sections } };
+  const bundle: GuidanceBundle = {
+    digest,
+    sections,
+    sectionsByGuide: indexSectionsByGuide(sections),
+  };
+  if (preReadStamps !== undefined) {
+    const postReadStamps = await statPackagedGuides();
+    if (
+      postReadStamps !== undefined &&
+      sameGuideStamps(preReadStamps, postReadStamps)
+    )
+      cachedPackagedBundle = { stamps: postReadStamps, bundle };
+  }
+  return { kind: "available", bundle };
 };
 
 const words = (text: string): string[] => [
@@ -245,7 +346,12 @@ export const searchGuidanceWithReader = (
   resources: ArtifactResourceScope,
 ): Promise<GuidanceResult<SearchGuidanceOutput>> =>
   runGuidanceOperation(resources, "search_guidance", (child) =>
-    searchGuidanceInScope(input, (path) => readGuide(path, child), child),
+    searchGuidanceInScope(
+      input,
+      (path) => readGuide(path, child),
+      child,
+      readGuide === readPackagedGuide,
+    ),
   );
 
 export const readGuidanceSectionWithReader = (
@@ -254,7 +360,12 @@ export const readGuidanceSectionWithReader = (
   resources: ArtifactResourceScope,
 ): Promise<GuidanceResult<ReadGuidanceSectionOutput>> =>
   runGuidanceOperation(resources, "read_guidance_section", (child) =>
-    readGuidanceSectionInScope(input, (path) => readGuide(path, child), child),
+    readGuidanceSectionInScope(
+      input,
+      (path) => readGuide(path, child),
+      child,
+      readGuide === readPackagedGuide,
+    ),
   );
 
 const invalidInput = (
@@ -276,6 +387,7 @@ const searchGuidanceInScope = async (
   input: unknown,
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
+  usePackagedCache: boolean,
 ): Promise<
   Result<SearchGuidanceOutput, AnalysisInputError | ProviderCleanupError>
 > => {
@@ -303,7 +415,12 @@ const searchGuidanceInScope = async (
         message: "The continuation token belongs to a different query",
       },
     ]);
-  const loaded = await readBundle(readGuide, resources, "search_guidance");
+  const loaded = await readBundle(
+    readGuide,
+    resources,
+    "search_guidance",
+    usePackagedCache,
+  );
   if (loaded.kind === "cleanup") return err(loaded.error);
   if (loaded.kind === "unavailable")
     return ok(
@@ -578,6 +695,7 @@ const readGuidanceSectionInScope = async (
   input: unknown,
   readGuide: (relativePath: string) => Promise<string>,
   resources: ArtifactResourceScope,
+  usePackagedCache: boolean,
 ): Promise<
   Result<ReadGuidanceSectionOutput, AnalysisInputError | ProviderCleanupError>
 > => {
@@ -597,6 +715,7 @@ const readGuidanceSectionInScope = async (
     readGuide,
     resources,
     "read_guidance_section",
+    usePackagedCache,
   );
   if (loaded.kind === "cleanup") return err(loaded.error);
   if (loaded.kind === "unavailable")
@@ -619,12 +738,13 @@ const readGuidanceSectionInScope = async (
           "The installed guidance changed since this locator was issued. Search again for a current locator.",
       }),
     );
-  const section = bundle.sections.find(
-    (candidate) =>
-      candidate.guide === identity.guide &&
-      candidate.ordinal === identity.ordinal &&
-      sha256Hex(candidate.content) === identity.section,
-  );
+  const candidate = bundle.sectionsByGuide
+    .get(identity.guide)
+    ?.get(identity.ordinal);
+  const section =
+    candidate !== undefined && sha256Hex(candidate.content) === identity.section
+      ? candidate
+      : undefined;
   if (section === undefined)
     return ok(
       readGuidanceSectionOutputSchema.parse({

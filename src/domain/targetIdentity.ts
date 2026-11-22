@@ -183,7 +183,10 @@ export const sessionTargetIdentitySchema = z.strictObject({
   kind: z.literal("session"),
   session_kind: debuggerSessionKindSchema,
   id: z.string().min(1),
-  target: z.union([fileTargetIdentitySchema, unknownTargetIdentitySchema]),
+  target: z.discriminatedUnion("kind", [
+    fileTargetIdentitySchema,
+    unknownTargetIdentitySchema,
+  ]),
 });
 
 /** A debugger session REA minted, bound to the target it launched. */
@@ -212,7 +215,7 @@ export type NonFileTargetIdentity = Exclude<TargetIdentity, FileTargetIdentity>;
  * facts can commit to. A session identity nests its target, so a persistence
  * format validates it with its own file declaration.
  */
-export const nonFileTargetIdentitySchema = z.union([
+export const nonFileTargetIdentitySchema = z.discriminatedUnion("kind", [
   unknownTargetIdentitySchema,
   urlTargetIdentitySchema,
   processTargetIdentitySchema,

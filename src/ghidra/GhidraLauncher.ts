@@ -223,8 +223,8 @@ const ghidraLaunchCommandOutput = (
 export interface GhidraExistingProject {
   /** Directory holding the selected .gpr marker and .rep data directory. */
   readonly projectPath: string;
-  readonly projectName?: string;
-  readonly sha256?: string;
+  readonly projectName: string;
+  readonly sha256: string;
   /** Imported program name selected with -process. */
   readonly programName: string;
 }

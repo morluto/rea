@@ -396,6 +396,7 @@ export const writeAnswer = (
         readonly id: string;
         readonly sent?: readonly string[];
       }
+    | { readonly body: JsonValue }
     | ((
         recorded: JsonValue | undefined,
       ) => Result<JsonValue | undefined, string>),
@@ -417,6 +418,8 @@ export const writeAnswer = (
     )?.exact === true;
   if (plan.response.shape === "recorded")
     return ok({ ...replayAnswer(serving.source, exchange, exact), state });
+  if (typeof rendered !== "function" && "body" in rendered)
+    return stateAnswer(serving, { exchange, exact }, rendered.body, state);
   const recorded = recordedJson(exchange);
   const body =
     typeof rendered === "function"
@@ -840,20 +843,11 @@ const answerDocument = (
     view: "document-write",
     path: held.path,
   } as const;
-  const answer =
+  const rendered =
     plan.response?.shape === "entity"
-      ? (() => {
-          const exchange = serving.source.exchanges.get(plan.response.ordinal);
-          return exchange === undefined
-            ? err(refused(tool, `Tool ${tool.name} has no recorded response.`))
-            : stateAnswer(
-                serving,
-                { exchange, exact: true },
-                written.value,
-                state,
-              );
-        })()
-      : writeAnswer(serving, request, { fields: undefined, id: "" }, state);
+      ? { body: written.value }
+      : { fields: undefined, id: "" };
+  const answer = writeAnswer(serving, request, rendered, state);
   if (!answer.ok) return answer;
   const set = serving.store.setDocument(held.tool, written.value);
   if (!set.ok) return set;

@@ -111,8 +111,9 @@ const checkpointNow = (
   observations: SessionObservations,
   name: string,
   trigger: CheckpointTrigger,
+  atMs = observations.now(),
 ): Promise<void> =>
-  plan.checkpoint(name, trigger, observations.now(), {
+  plan.checkpoint(name, trigger, atMs, {
     openedFiles: new Set(observations.openedFiles.keys()),
     titles: [...observations.windows.values()]
       .filter((window) => window.application)
@@ -135,9 +136,16 @@ const requestCheckpoint = async (
     });
     return;
   }
-  const chosen = name ?? `checkpoint-${String(observations.now())}`;
+  const atMs = observations.now();
+  let chosen = name;
+  if (chosen === undefined) {
+    const base = `checkpoint-${String(atMs)}`;
+    chosen = base;
+    for (let suffix = 2; taken.has(chosen); suffix += 1)
+      chosen = `${base}-${String(suffix)}`;
+  }
   taken.add(chosen);
-  await checkpointNow(plan, observations, chosen, "request");
+  await checkpointNow(plan, observations, chosen, "request", atMs);
 };
 
 /**

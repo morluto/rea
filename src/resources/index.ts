@@ -116,6 +116,7 @@ export type {
   StableArtifactFileSystem,
   StableArtifactSnapshot,
   StableArtifactStream,
+  StableArtifactStreamOptions,
 } from "./readStableArtifact.js";
 export {
   ArtifactPathRegistry,

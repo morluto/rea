@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
 import { ArtifactResourceScope } from "../resources/index.js";
 import { ANALYSIS_VIEW_PROVIDER } from "../domain/investigationProviders.js";
 import { inspectEvidenceBundleCommand } from "../application/EvidenceBundleCommands.js";
@@ -101,14 +100,17 @@ export const registerAnalysisViewCommands = (
       const resources = new ArtifactResourceScope();
       const bundlePath = cliOptions.evidenceBundle;
       const result = await finishAnalysisCommand(
-        () =>
-          inspectAnalysisView(document, undefined, {
+        async () => {
+          const { inspectAnalysisView } =
+            await import("../application/analysisView/AnalysisViewService.js");
+          return inspectAnalysisView(document, undefined, {
             signal,
             resources,
             ...(bundlePath === undefined
               ? {}
               : { evidenceBundlePath: bundlePath }),
-          }),
+          });
+        },
         resources,
         ANALYSIS_VIEW_PROVIDER.id,
         operation,

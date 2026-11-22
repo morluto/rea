@@ -4,7 +4,7 @@ import {
   ArtifactResourceRetryFailure,
 } from "../resources/index.js";
 import {
-  hashStableFile,
+  observeStableFileIdentity,
   stableFileHashCause,
   type StableFileHashOptions,
 } from "../filesystem/StableFileHash.js";
@@ -15,7 +15,12 @@ import {
   withOwnedRegularFile,
 } from "../filesystem/OwnedRegularFile.js";
 
-import { assertRegularFileActive } from "../filesystem/RegularFile.js";
+import { stat } from "node:fs/promises";
+import {
+  assertRegularFileActive,
+  sameRegularFileState,
+  type RegularFileState,
+} from "../filesystem/RegularFile.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 
 import type {
@@ -337,17 +342,37 @@ const readMachoMagic = (
       }),
   );
 
-const sha256File = (
+const verifiedLauncherDigests = new Map<
+  string,
+  { readonly state: RegularFileState; readonly sha256: string }
+>();
+
+const sha256File = async (
   path: string,
   resources: RetainedResourceScope,
   signal: AbortSignal | undefined,
-): Promise<Result<string, AnalysisError>> =>
-  readHopperProfileFile(
+): Promise<Result<string, AnalysisError>> => {
+  const cached = verifiedLauncherDigests.get(path);
+  if (cached !== undefined) {
+    const current = await stat(path).catch(() => undefined);
+    if (
+      signal?.aborted !== true &&
+      current !== undefined &&
+      sameRegularFileState(cached.state, current)
+    )
+      return ok(cached.sha256);
+  }
+  const hashed = await readHopperProfileFile(
     { path, kind: "launcher" },
     resources,
     signal,
-    async (options) => (await hashStableFile(path, options)).sha256,
+    (options) => observeStableFileIdentity(path, options),
   );
+  if (!hashed.ok) return hashed;
+  const { state, sha256 } = hashed.value;
+  verifiedLauncherDigests.set(path, { state, sha256 });
+  return ok(sha256);
+};
 
 /** Both profile reads retain the exact descriptor through final close and retry. */
 const readHopperProfileFile = async <Value>(
