@@ -6,6 +6,7 @@ import {
   type ParseFailureError,
 } from "../parseFailure.js";
 import { err, ok, type Result } from "../result.js";
+import { BinaryReader } from "../binaryContainer.js";
 
 /** Little-endian magic `0xED26FF3A` from AOSP `sparse_format.h`. */
 export const ANDROID_SPARSE_MAGIC = 0xed26ff3a;
@@ -133,7 +134,7 @@ export interface AndroidSparseImage {
   readonly counts: AndroidSparseChunkCounts;
   /** Expanded output bytes covered by each chunk type. CRC32 covers none. */
   readonly coveredBytes: Omit<AndroidSparseChunkCounts, "crc32">;
-  /** The first 16 FILL patterns as hex; `counts.fill` counts them all. */
+  /** The first 16 distinct FILL patterns as hex; `counts.fill` counts every FILL chunk. */
   readonly fillPatterns: readonly string[];
   /** The first 16 CRC32 chunks; `counts.crc32` counts them all. */
   readonly crc32Chunks: readonly {
@@ -171,17 +172,19 @@ const truncated = (
 export const androidSparseUnsupportedMajor = (major: number): string =>
   `Android sparse image major version ${String(major)} is unsupported; this reader supports version 1 only`;
 
-const u16le = (bytes: Uint8Array, at: number): number =>
-  (bytes[at] ?? 0) | ((bytes[at + 1] ?? 0) << 8);
-
-const u32le = (bytes: Uint8Array, at: number): number =>
-  (u16le(bytes, at) + (u16le(bytes, at + 2) << 16)) >>> 0;
+/** Little-endian field reader; callers check each structure's length first. */
+const fields = (bytes: Uint8Array): BinaryReader =>
+  new BinaryReader(
+    Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+    true,
+    FORMAT,
+  );
 
 const hexBytes = (bytes: Uint8Array): string =>
   Buffer.from(bytes.subarray(0, UNDECODED_HEX_BYTES)).toString("hex");
 
 export const hasAndroidSparseImageMagic = (prefix: Uint8Array): boolean =>
-  prefix.length >= 4 && u32le(prefix, 0) === ANDROID_SPARSE_MAGIC;
+  prefix.length >= 4 && fields(prefix).u32(0) === ANDROID_SPARSE_MAGIC;
 
 /** Recognize magic `0xED26FF3A`. Major version 1 is supported; any other readable major is refused. */
 export const recognizeAndroidSparseImage = (
@@ -189,7 +192,7 @@ export const recognizeAndroidSparseImage = (
 ): AndroidSparseImageRecognition | undefined => {
   if (!hasAndroidSparseImageMagic(prefix)) return undefined;
   if (prefix.length < 6) return { state: "recognized" };
-  const major = u16le(prefix, 4);
+  const major = fields(prefix).u16(4);
   return major === ANDROID_SPARSE_MAJOR_VERSION
     ? { state: "recognized" }
     : {
@@ -242,13 +245,14 @@ export const parseAndroidSparseFileHeader = (
     bytes.length < ANDROID_SPARSE_FILE_HEADER_BYTES
   )
     return err(truncated("sparse header is truncated", 0, "sparse_header"));
-  const minorVersion = u16le(bytes, 6);
-  const fileHeaderSize = u16le(bytes, 8);
-  const chunkHeaderSize = u16le(bytes, 10);
-  const blockSize = u32le(bytes, 12);
-  const totalBlocks = u32le(bytes, 16);
-  const totalChunks = u32le(bytes, 20);
-  const imageChecksum = u32le(bytes, 24);
+  const reader = fields(bytes);
+  const minorVersion = reader.u16(6);
+  const fileHeaderSize = reader.u16(8);
+  const chunkHeaderSize = reader.u16(10);
+  const blockSize = reader.u32(12);
+  const totalBlocks = reader.u32(16);
+  const totalChunks = reader.u32(20);
+  const imageChecksum = reader.u32(24);
   if (fileHeaderSize < ANDROID_SPARSE_FILE_HEADER_BYTES)
     return err(
       malformed(
@@ -365,9 +369,10 @@ export const parseAndroidSparseChunk = (
         "chunk_header",
       ),
     );
-  const type = u16le(bytes, 0);
-  const chunkBlocks = u32le(bytes, 4);
-  const totalSize = u32le(bytes, 8);
+  const reader = fields(bytes);
+  const type = reader.u16(0);
+  const chunkBlocks = reader.u32(4);
+  const totalSize = reader.u32(8);
   if (
     type !== ANDROID_SPARSE_CHUNK_RAW &&
     type !== ANDROID_SPARSE_CHUNK_FILL &&
@@ -490,7 +495,7 @@ export const parseAndroidSparseChunk = (
     ...base,
     kind: "crc32",
     outputBytes: 0,
-    value: u32le(bytes, header.chunkHeaderSize),
+    value: reader.u32(header.chunkHeaderSize),
   });
 };
 
@@ -519,7 +524,7 @@ export const parseAndroidSparseImage = (
 
 /**
  * Collect sparse-image facts one walked chunk at a time. Only the expansion
- * runs, counts, and the first listed FILL patterns and CRC32 values are kept.
+ * runs, counts, the first distinct FILL patterns and the first CRC32 values are kept.
  */
 export class AndroidSparseImageAccumulator {
   readonly #header: AndroidSparseHeader;
@@ -529,7 +534,8 @@ export class AndroidSparseImageAccumulator {
   #end: number;
   readonly #counts = { raw: 0, fill: 0, dontCare: 0, crc32: 0 };
   readonly #covered = { raw: 0, fill: 0, dontCare: 0 };
-  readonly #fillPatterns: string[] = [];
+  readonly #fillPatterns = new Set<string>();
+  #fillPatternsOmitted = false;
   readonly #crc32Chunks: { fileOffset: number; value: number }[] = [];
   readonly #runs: AndroidSparseRun[] = [];
 
@@ -560,8 +566,12 @@ export class AndroidSparseImageAccumulator {
     } else if (chunk.kind === "fill") {
       this.#counts.fill += 1;
       this.#covered.fill += chunk.outputBytes;
-      if (this.#fillPatterns.length < ANDROID_SPARSE_LISTED_CHUNKS)
-        this.#fillPatterns.push(Buffer.from(chunk.pattern).toString("hex"));
+      const pattern = Buffer.from(chunk.pattern).toString("hex");
+      if (!this.#fillPatterns.has(pattern)) {
+        if (this.#fillPatterns.size < ANDROID_SPARSE_LISTED_CHUNKS)
+          this.#fillPatterns.add(pattern);
+        else this.#fillPatternsOmitted = true;
+      }
       if (chunk.outputBytes > 0)
         this.#runs.push({
           kind: "fill",
@@ -629,9 +639,9 @@ export class AndroidSparseImageAccumulator {
       limitations.push(ANDROID_SPARSE_IMAGE_LIMITATIONS.chunkHeaderExtra);
     if (counts.dontCare > 0)
       limitations.push(ANDROID_SPARSE_IMAGE_LIMITATIONS.dontCare);
-    if (counts.fill > fillPatterns.length)
+    if (this.#fillPatternsOmitted)
       limitations.push(
-        `Fill patterns after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} were counted and not listed.`,
+        `Fill patterns after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} distinct values were omitted.`,
       );
     if (counts.crc32 > crc32Chunks.length)
       limitations.push(

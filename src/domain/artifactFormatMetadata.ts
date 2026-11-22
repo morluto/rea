@@ -915,8 +915,8 @@ const androidSparseChunkCountsSchema = z.strictObject({
 
 /**
  * Android sparse image header and chunk-table facts. The stored image checksum
- * and CRC32 chunk values are recorded, not verified. Fill patterns and CRC32
- * chunks list the first 16 of their counts.
+ * and CRC32 chunk values are recorded, not verified. Fill patterns list the
+ * first 16 distinct values and CRC32 chunks the first 16 chunks.
  */
 export const androidSparseImageMetadataSchema = z.strictObject({
   kind: z.literal("android-sparse-image"),

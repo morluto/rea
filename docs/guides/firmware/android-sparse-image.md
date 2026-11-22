@@ -28,9 +28,10 @@ Root `format_metadata` (kind `android-sparse-image`) records the header:
 
 Every chunk header is walked. `chunk_counts` counts RAW, FILL, DONT_CARE and
 CRC32 chunks, and `covered_bytes` gives the expanded bytes RAW, FILL and
-DONT_CARE chunks produce. `fill_patterns` lists the first 16 FILL patterns as
-hex, and `crc32_chunks` lists the file offset and stored value of the first
-16 CRC32 chunks. A limitation says when more were counted than listed.
+DONT_CARE chunks produce. `fill_patterns` lists the first 16 distinct FILL
+patterns as hex, and `crc32_chunks` lists the file offset and stored value of
+the first 16 CRC32 chunks. A limitation says when a further distinct pattern or
+CRC32 chunk was counted but not listed.
 
 A header or chunk header larger than the 28-byte and 12-byte version 1.0
 structures keeps the known fields. `undecoded_file_header_bytes`,

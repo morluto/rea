@@ -121,10 +121,59 @@ it("lists the first fill patterns and CRC32 chunks and counts the rest", () => {
   expect(parsed.value.crc32Chunks).toHaveLength(ANDROID_SPARSE_LISTED_CHUNKS);
   expect(parsed.value.limitations).toEqual(
     expect.arrayContaining([
-      `Fill patterns after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} were counted and not listed.`,
+      `Fill patterns after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} distinct values were omitted.`,
       `CRC32 chunks after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} were counted and not listed.`,
     ]),
   );
+});
+
+it("lists distinct fill patterns and reports omission only for a dropped new pattern", () => {
+  const fill = (byte: number) => ({
+    type: "fill" as const,
+    blocks: 1,
+    pattern: Buffer.from([byte, byte, byte, byte]),
+  });
+  const fillLimitation = `Fill patterns after the first ${String(ANDROID_SPARSE_LISTED_CHUNKS)} distinct values were omitted.`;
+  const repeated = parseAndroidSparseImage(
+    buildAndroidSparseImage({
+      blockSize: 4,
+      chunks: [
+        ...Array.from({ length: ANDROID_SPARSE_LISTED_CHUNKS }, () =>
+          fill(0xaa),
+        ),
+        fill(0xbb),
+      ],
+    }),
+  );
+  if (!repeated.ok) throw repeated.error;
+  expect(repeated.value.counts.fill).toBe(ANDROID_SPARSE_LISTED_CHUNKS + 1);
+  expect(repeated.value.fillPatterns).toEqual(["aaaaaaaa", "bbbbbbbb"]);
+  expect(repeated.value.limitations).not.toContain(fillLimitation);
+
+  // A repeat of a listed pattern after the cap is not an omission.
+  const distinct = Array.from(
+    { length: ANDROID_SPARSE_LISTED_CHUNKS },
+    (_, i) => fill(i),
+  );
+  const full = parseAndroidSparseImage(
+    buildAndroidSparseImage({ blockSize: 4, chunks: [...distinct, fill(0)] }),
+  );
+  if (!full.ok) throw full.error;
+  expect(full.value.counts.fill).toBe(ANDROID_SPARSE_LISTED_CHUNKS + 1);
+  expect(full.value.fillPatterns).toHaveLength(ANDROID_SPARSE_LISTED_CHUNKS);
+  expect(full.value.limitations).not.toContain(fillLimitation);
+
+  const dropped = parseAndroidSparseImage(
+    buildAndroidSparseImage({
+      blockSize: 4,
+      chunks: [...distinct, fill(0xee), fill(0)],
+    }),
+  );
+  if (!dropped.ok) throw dropped.error;
+  expect(dropped.value.fillPatterns).toEqual(
+    distinct.map(({ pattern }) => pattern.toString("hex")),
+  );
+  expect(dropped.value.limitations).toContain(fillLimitation);
 });
 
 it.each([

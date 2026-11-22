@@ -1,6 +1,6 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import type { FileHandle } from "node:fs/promises";
-import { Readable } from "node:stream";
+import type { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import { readArtifactFileBytes } from "./ArtifactFileRange.js";
@@ -25,6 +25,7 @@ import {
   checkedArtifactMemberStream,
   ownArtifactStream,
 } from "./OwnedArtifactStream.js";
+import { cancellableArtifactChunks } from "./OwnedAsyncArtifactStream.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import type { AndroidSparseImageMetadata } from "../domain/artifactFormatMetadata.js";
@@ -157,7 +158,8 @@ export class AndroidSparseImageArtifactReader implements ArtifactReader {
       const { handle, initial } = await this.#source.read(signal);
       this.#assertOpen(signal);
       const lifecycle = this.#lifecycle.member(signal);
-      const source = Readable.from(
+      // The expansion retires itself on cancellation even while backpressured.
+      const source = cancellableArtifactChunks(
         expandRuns(
           handle,
           initial.size,
@@ -165,7 +167,10 @@ export class AndroidSparseImageArtifactReader implements ArtifactReader {
           lifecycle.signal,
           lifecycle.cancellationFailure,
         ),
-        { objectMode: false },
+        {
+          signal: lifecycle.signal,
+          cancellationFailure: lifecycle.cancellationFailure,
+        },
       );
       const output = checkedArtifactMemberStream(
         stored,

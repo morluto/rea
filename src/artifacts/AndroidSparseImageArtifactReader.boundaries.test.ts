@@ -1,7 +1,9 @@
 import { artifactPreparationRecoveryCases } from "../../tests/fixtures/artifactReaderLifecycle.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { Readable } from "node:stream";
 import { buffer } from "node:stream/consumers";
+import { setImmediate } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -482,6 +484,64 @@ it("cancels a long DONT_CARE expansion with the caller's reason", async () => {
     await reader.close();
   }
 });
+
+it.each([
+  {
+    name: "close",
+    retire: async (
+      reader: AndroidSparseImageArtifactReader,
+      _controller: AbortController,
+    ) => {
+      await reader.close();
+    },
+    failure: { reason: "unavailable" },
+  },
+  {
+    name: "caller cancellation",
+    retire: (
+      _reader: AndroidSparseImageArtifactReader,
+      controller: AbortController,
+    ) => {
+      controller.abort(new Error("stop undrained expansion"));
+      return Promise.resolve();
+    },
+    failure: { reason: "cancelled" },
+  },
+])(
+  "retires an undrained expansion above the high-water mark on $name",
+  { timeout: 5_000 },
+  async ({ retire, failure }) => {
+    // 1 MiB of DONT_CARE output stalls Readable.from under backpressure.
+    const reader = new AndroidSparseImageArtifactReader(
+      await fixture(
+        buildAndroidSparseImage({
+          blockSize: 4096,
+          chunks: [{ type: "dont-care", blocks: 256 }],
+        }),
+      ),
+    );
+    const controller = new AbortController();
+    let stream: Readable | undefined;
+    try {
+      const [entry] = await entries(reader);
+      stream = await reader.open(entry!, controller.signal);
+      await setImmediate();
+      await setImmediate();
+      expect(stream.readableLength).toBeGreaterThanOrEqual(
+        stream.readableHighWaterMark,
+      );
+      const closed = new Promise<unknown>((resolve) => {
+        stream!.once("close", () => resolve(stream!.errored));
+      });
+      await retire(reader, controller);
+      expect(await closed).toMatchObject(failure);
+      await reader.close();
+    } finally {
+      stream?.destroy();
+      await reader.close();
+    }
+  },
+);
 
 it("refuses to open an entry it did not produce", async () => {
   const reader = new AndroidSparseImageArtifactReader(
