@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import {
-  computeBlockEntropy,
+  createBlockEntropyCalculator,
   countByteValues,
   entropyFromCounts,
   inspectByteEntropyInputSchema,
@@ -9,6 +9,9 @@ import {
 } from "./byteEntropy.js";
 
 it("computes known Shannon answers including partial and empty blocks", () => {
+  const computeBlockEntropy = createBlockEntropyCalculator(
+    wholeFileByteCounts(),
+  );
   expect(computeBlockEntropy(new Uint8Array(4096))).toBe(0);
   expect(
     computeBlockEntropy(Uint8Array.from({ length: 256 }, (_, i) => i)),

@@ -22,7 +22,7 @@ import {
 } from "../../domain/evidence.js";
 import {
   byteEntropySchema,
-  computeBlockEntropy,
+  createBlockEntropyCalculator,
   entropyFromCounts,
   countByteValues,
   wholeFileByteCounts,
@@ -262,6 +262,7 @@ export class ByteEntropyService {
           // size divides this buffer, so only the window's final block is short.
           const buffer = Buffer.alloc(65_536);
           const counts = wholeFileByteCounts();
+          const computeBlockEntropy = createBlockEntropyCalculator(counts);
           const hash = createHash("sha256");
           let position = 0;
           while (position < size) {
@@ -284,8 +285,7 @@ export class ByteEntropyService {
             }
             const bytes = buffer.subarray(0, filled);
             hash.update(bytes);
-            countByteValues(bytes, counts);
-            if (selected)
+            if (selected) {
               for (
                 let offset = 0;
                 offset < filled;
@@ -298,6 +298,9 @@ export class ByteEntropyService {
                   entropy: computeBlockEntropy(block),
                 });
               }
+            } else {
+              countByteValues(bytes, counts);
+            }
             position += filled;
           }
           if (
