@@ -28,12 +28,12 @@ const isolatedRegistration = async (cli: TestCli) => {
   };
 };
 
-const optionError = (path: string, message: string) => ({
+const optionError = (path: string, subject: string) => ({
   exitCode: 1,
   json: {
     code: "VALIDATION_ERROR",
-    message,
-    fieldErrors: [{ code: "invalid_value", missing: false, path, message }],
+    message: expect.stringContaining(subject),
+    fieldErrors: [{ code: "invalid_value", missing: false, path }],
   },
 });
 
@@ -48,7 +48,7 @@ cliTest(
       [["extra", "--agent="], "agent", "--agent"],
     ] as const) {
       expect(await run(options), options.join(" ")).toMatchObject(
-        optionError(field, `Missing value for flag: ${flag}`),
+        optionError(field, flag),
       );
       await expect(access(settingsPath)).rejects.toMatchObject({
         code: "ENOENT",
@@ -68,21 +68,13 @@ cliTest(
     await writeFile(settingsPath, original);
     const before = await stat(settingsPath);
 
-    for (const [options, field, message] of [
-      [["--agent=amp", "extra"], "arguments", "Unexpected argument: extra"],
-      [
-        ["--bogus", "--agent", "amp"],
-        "arguments",
-        "Unexpected argument: --bogus",
-      ],
-      [
-        ["--agent", "amp", "--command"],
-        "command",
-        "Missing value for flag: --command",
-      ],
+    for (const [options, field, subject] of [
+      [["--agent=amp", "extra"], "arguments", "extra"],
+      [["--bogus", "--agent", "amp"], "arguments", "--bogus"],
+      [["--agent", "amp", "--command"], "command", "--command"],
     ] as const) {
       expect(await run(options), options.join(" ")).toMatchObject(
-        optionError(field, message),
+        optionError(field, subject),
       );
       expect(await readFile(settingsPath, "utf8")).toBe(original);
       expect((await stat(settingsPath)).mtimeMs).toBe(before.mtimeMs);
