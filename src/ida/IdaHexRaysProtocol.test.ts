@@ -438,9 +438,14 @@ describe("Hex-Rays IDA MCP session", () => {
         true,
       );
       expect(
-        reads.every(({ args }) =>
-          String(args.code).startsWith('"""Read-only REA queries'),
-        ),
+        String(reads[0]?.args.code).startsWith('"""Read-only REA queries'),
+      ).toBe(true);
+      expect(
+        reads
+          .slice(1)
+          .every(({ args }) =>
+            String(args.code).startsWith("# rea-bridge\n_rea_query("),
+          ),
       ).toBe(true);
       expect(result.value.rawResult).toMatchObject({ worker_backend: backend });
       const raw = result.value.rawResult as {
@@ -610,4 +615,78 @@ describe("Hex-Rays unleased database inventory", () => {
       ).toHaveLength(1);
     },
   );
+});
+
+describe("Hex-Rays query bridge bootstrap and predicate pushdown", () => {
+  it("bootstraps hexrays_queries.py once per lease and re-bootstraps if _rea_query is lost", async () => {
+    const codes: string[] = [];
+    let failNextCompact = false;
+    const connection: IdaMcpConnection = {
+      connect: async () => [],
+      serverInfo: () => null,
+      close: async () => undefined,
+      detach: () => undefined,
+      call: async (_name, args) => {
+        const code = String(args.code);
+        codes.push(code);
+        if (failNextCompact && code.startsWith("# rea-bridge\n")) {
+          failNextCompact = false;
+          throw new IdaToolRejection(
+            "NameError: name '_rea_query' is not defined",
+          );
+        }
+        return { result: null, stdout: "", stderr: "" };
+      },
+    };
+    await runHexRaysQuery(connection, "lease-1", "server_health", {}, 1000);
+    await runHexRaysQuery(connection, "lease-1", "server_health", {}, 1000);
+    expect(codes).toHaveLength(2);
+    expect(codes[0]?.length).toBeGreaterThan(1000);
+    expect(codes[1]).toBe('# rea-bridge\n_rea_query("server_health", "{}")');
+
+    failNextCompact = true;
+    await runHexRaysQuery(connection, "lease-1", "server_health", {}, 1000);
+    expect(codes).toHaveLength(4);
+    expect(codes[2]).toBe('# rea-bridge\n_rea_query("server_health", "{}")');
+    expect(codes[3]?.length).toBeGreaterThan(1000);
+  });
+
+  it("pushes exact string address lookup and procedure search filters into the Hex-Rays bridge", async () => {
+    const { producer, client } = await fixture();
+    const byAddress = await client.execute("list_strings", {
+      address: "0x3000",
+    });
+    expect(byAddress.ok).toBe(true);
+    if (!byAddress.ok) throw new Error("expected string_at success");
+    expect(byAddress.value.result).toEqual([
+      { address: "0x3000", value: "a.b\nC" },
+    ]);
+    expect(
+      producer.reads.calls.some(
+        ({ name, args }) => name === "string_at" && args.addr === "0x3000",
+      ),
+    ).toBe(true);
+    expect(producer.reads.calls.some(({ name }) => name === "find_regex")).toBe(
+      false,
+    );
+
+    const procSearch = await client.execute("search_procedures", {
+      pattern: "main",
+      mode: "literal",
+      case_sensitive: true,
+    });
+    expect(procSearch.ok).toBe(true);
+    expect(
+      producer.reads.calls.some(
+        ({ name, args }) =>
+          name === "list_funcs" &&
+          typeof args.queries === "object" &&
+          args.queries !== null &&
+          !Array.isArray(args.queries) &&
+          "filter" in args.queries &&
+          args.queries.count === 1000,
+      ),
+    ).toBe(true);
+    await client.close();
+  });
 });
