@@ -292,6 +292,7 @@
 * **elf:** fuse initializer section scans into one pass and eliminate symbol-map cloning ([#13476](https://github.com/morluto/rea/issues/13476)) ([366dbc2](https://github.com/morluto/rea/commit/366dbc20bf9e4dd02282c19939cee6c16a6a62f0))
 * **entropy:** count bytes by index into an integer table ([5d3276d](https://github.com/morluto/rea/commit/5d3276d14c162b559a500189096a733692212bfc))
 * **entropy:** count bytes through one shared loop ([d777c3c](https://github.com/morluto/rea/commit/d777c3c55f90421a35a7a032336c6f4f1c21dd17))
+* **entropy:** count selected bytes once and honor admission cancellation ([#13660](https://github.com/morluto/rea/issues/13660)) ([9d64f92](https://github.com/morluto/rea/commit/9d64f92f16afab7c4ac7e6cc217c7f4b196ace7e))
 * **environment:** defer tombstone scans until held lookup misses ([#13404](https://github.com/morluto/rea/issues/13404)) ([9119533](https://github.com/morluto/rea/commit/91195338d07d4bb7398afa29fc1a8550f555827d))
 * **evidence:** eliminate redundant bundle re-validation, cloning, and nested generator yields ([#13257](https://github.com/morluto/rea/issues/13257)) ([9e379c9](https://github.com/morluto/rea/commit/9e379c958951ed245ba6bdadd9ed56bd1f2b5857))
 * **evidence:** reuse parsed source inventories across correlation mappings ([a486423](https://github.com/morluto/rea/commit/a486423e0e9e933c78875eadf33d85e15e1efb77))
