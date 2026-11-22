@@ -44,6 +44,7 @@ import {
   detachedJsonValueSchema,
   jsonObjectSchema,
   jsonValueSchema,
+  ownedJsonObjectSchema,
   type JsonValue,
 } from "./jsonValue.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
@@ -357,7 +358,7 @@ const snapshotContentDigest = (
     "limitations" | "locations" | "subject" | "relationship_coverage"
   >,
 ): string => {
-  const metadata = jsonObjectSchema.parse({
+  const metadata = ownedJsonObjectSchema.parse({
     limitations: execution.limitations,
     locations: execution.locations,
     subject: subjectContent(execution.subject),
@@ -378,7 +379,7 @@ const subjectContent = (subject: Evidence["subject"]) => ({
 
 const evidenceContentDigest = (evidence: Evidence): string => {
   return contentDigest({
-    ...jsonObjectSchema.parse(evidenceContentMetadata(evidence)),
+    ...ownedJsonObjectSchema.parse(evidenceContentMetadata(evidence)),
     normalized_result: evidence.normalized_result,
     raw_result: evidence.raw_result,
   });
@@ -425,13 +426,15 @@ const snapshotExecutionProjection = (
     subject: execution.subject,
   });
 
-const canonicalJson = (value: unknown): string => {
-  const json = jsonValueSchema.parse(value);
-  const encoded = canonicalize(json);
+const canonicalJsonValidated = (value: unknown): string => {
+  const encoded = canonicalize(value);
   if (encoded === undefined)
     throw new TypeError("RFC 8785 canonicalization rejected snapshot data");
   return encoded;
 };
+
+const canonicalJson = (value: unknown): string =>
+  canonicalJsonValidated(jsonValueSchema.parse(value));
 
 /** The persisted snapshot target of an open binary: its target identity and kind. */
 export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
@@ -567,6 +570,8 @@ export const snapshotEvidenceForQuery = (
     (candidate) => candidate.query_id === queryId,
   );
   if (entry === undefined && workflowEntry === undefined) return undefined;
+  let expectedEntryKey: string | undefined;
+  let expectedWorkflowKey: string | undefined;
   let evidence: Evidence | undefined;
   for (const record of snapshot.evidence_bundle.records) {
     if (
@@ -576,14 +581,28 @@ export const snapshotEvidenceForQuery = (
         committedProvidersEqual(record.provider, provider) &&
         record.analysis_profile !== null &&
         analysisProfilesEqual(record.analysis_profile, evidenceProfile) &&
-        canonicalJson(record.parameters) === encodedParameters &&
-        ((entry !== undefined &&
-          evidenceMatchesEntry(record, entry, snapshot)) ||
-          (workflowEntry !== undefined &&
-            evidenceMatchesWorkflowEntry(record, workflowEntry, snapshot)))
+        canonicalJson(record.parameters) === encodedParameters
       )
     )
       continue;
+    let recordKey: string | undefined;
+    const getRecordKey = (): string =>
+      (recordKey ??= compositeKey([
+        evidenceQueryKey(record),
+        evidenceContentDigest(record),
+      ]));
+    const matchesEntry =
+      entry !== undefined &&
+      isCorrespondingEvidence(record, snapshot) &&
+      getRecordKey() ===
+        (expectedEntryKey ??= entryEvidenceKey(entry, snapshot.binding));
+    const matchesWorkflow =
+      !matchesEntry &&
+      workflowEntry !== undefined &&
+      isWorkflowEvidence(record, snapshot, workflowEntry) &&
+      getRecordKey() ===
+        (expectedWorkflowKey ??= workflowEntryEvidenceKey(workflowEntry));
+    if (!matchesEntry && !matchesWorkflow) continue;
     // Entries bind the result, not every part of the Evidence commitment
     // (for example, upstream links). Do not choose provenance by ID sort order.
     if (evidence !== undefined && evidence.evidence_id !== record.evidence_id)
@@ -1015,4 +1034,4 @@ const evidenceContentMetadata = (evidence: Evidence) => {
 
 /** Serialize a validated snapshot with byte-stable canonical entry ordering. */
 export const serializeAnalysisSnapshot = (snapshot: AnalysisSnapshot): string =>
-  `${canonicalJson(authenticateSnapshot(snapshot, false).parsed)}\n`;
+  `${canonicalJsonValidated(authenticateSnapshot(snapshot, false).parsed)}\n`;

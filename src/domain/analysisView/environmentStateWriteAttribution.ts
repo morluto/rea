@@ -360,12 +360,21 @@ export const shownWrites = (
   const confirmed: string[] = [];
   const unseen = new Map<string, Set<string>>();
   for (const name of read.exercised) {
-    const on = read.keys.filter((key) => touched.get(key)?.has(name));
-    const seen = on.filter((key) => effects.shows(name, key, read.fields));
-    for (const key of on)
-      if (!seen.includes(key))
-        unseen.set(key, (unseen.get(key) ?? new Set()).add(name));
-    if (seen.length > 0) confirmed.push(name);
+    let showed = false;
+    for (const key of read.keys) {
+      if (!touched.get(key)?.has(name)) continue;
+      if (effects.shows(name, key, read.fields)) {
+        showed = true;
+      } else {
+        let bucket = unseen.get(key);
+        if (bucket === undefined) {
+          bucket = new Set<string>();
+          unseen.set(key, bucket);
+        }
+        bucket.add(name);
+      }
+    }
+    if (showed) confirmed.push(name);
   }
   return { confirmed, unseen };
 };
