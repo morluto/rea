@@ -390,7 +390,12 @@ export const buildUefiEntryPointScaffolding = (
     };
   }
 
-  if (normType === undefined && phase === "MISC") {
+  const isSupportedDxeEntryType =
+    normType === "driver" ||
+    normType === "application" ||
+    normType === "combined-smm-dxe";
+
+  if (phase === "MISC" && !isSupportedDxeEntryType) {
     return {
       typedefs: [],
       prototype: `void EFIAPI ${identifier}EntryPoint(void);`,
@@ -398,7 +403,7 @@ export const buildUefiEntryPointScaffolding = (
         `void EFIAPI ${identifier}EntryPoint(`,
         ") {",
         `    // Reconstructed EntryPoint scaffolding for unclassified payload ${safeName}`,
-        `    // Unknown ABI: unclassified module with no phase directory or manifest type`,
+        `    // Unknown ABI: unclassified module with no supported entry ABI${typeName ? ` (type: ${typeName})` : ""}`,
         `    // Size: ${byteLength} bytes`,
         "}",
       ].join("\n"),
@@ -2553,6 +2558,8 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       let manifestEntry: DirectoryArtifactEntry | undefined;
       const candidateEntries: DirectoryArtifactEntry[] = [];
       let traversalLimitReached = false;
+      let hasUnknownCoverage = false;
+      const unknownCoverageFacts: string[] = [];
       let isCoveragePartial = false;
       interface OmittedDirectoryCandidate {
         readonly identityRelPath: string;
@@ -2566,6 +2573,10 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           onCoverage: (coverage) => {
             if (coverage.status === "unknown") {
               isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              for (const lim of coverage.limitations) {
+                unknownCoverageFacts.push(lim);
+              }
             }
             for (const lim of coverage.limitations) {
               if (limitations.length < 50) limitations.push(lim);
@@ -3216,12 +3227,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       if (traversalLimitReached) {
         dirHash.update("omitted:directory_traversal_limit\n");
       }
+      if (hasUnknownCoverage) {
+        dirHash.update("coverage:unknown\n");
+        unknownCoverageFacts.sort();
+        for (const fact of unknownCoverageFacts) {
+          dirHash.update(`coverage_limitation:${fact}\n`);
+        }
+      }
 
       dirSha256 =
         admittedCandidates.length === 0 &&
         manifestSha256 === null &&
         omittedCandidates.length === 0 &&
-        !traversalLimitReached
+        !traversalLimitReached &&
+        !hasUnknownCoverage
           ? sha256Hex(Buffer.alloc(0))
           : dirHash.digest("hex");
 

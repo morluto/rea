@@ -6280,3 +6280,89 @@ it("preserves inner cancellation partial observation when outer directory reader
     await provider.close();
   }
 });
+
+it("keeps unclassified MISC module ABI-neutral when type is freeform or raw", () => {
+  const freeformScaffold = buildUefiEntryPointScaffolding(
+    "FreeformModule",
+    "freeform.bin",
+    1024,
+    "MISC",
+    "freeform",
+    "64",
+  );
+  expect(freeformScaffold.prototype).toBe(
+    "void EFIAPI FreeformModuleEntryPoint(void);",
+  );
+  expect(freeformScaffold.functionDefinition).toContain(
+    "void EFIAPI FreeformModuleEntryPoint(",
+  );
+  expect(freeformScaffold.functionDefinition).toContain("Unknown ABI");
+  expect(freeformScaffold.typedefs).toEqual([]);
+
+  const rawScaffold = buildUefiEntryPointScaffolding(
+    "RawModule",
+    "raw.bin",
+    512,
+    "MISC",
+    "raw",
+    "64",
+  );
+  expect(rawScaffold.prototype).toBe("void EFIAPI RawModuleEntryPoint(void);");
+  expect(rawScaffold.typedefs).toEqual([]);
+
+  const driverScaffold = buildUefiEntryPointScaffolding(
+    "DriverModule",
+    "driver.bin",
+    2048,
+    "MISC",
+    "driver",
+    "64",
+  );
+  expect(driverScaffold.prototype).toContain("EFI_HANDLE ImageHandle");
+});
+
+it("hashes unknown directory-name coverage facts into dirHash instead of empty-directory hash", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-unknown-cov-hash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  vi.spyOn(DirectoryArtifactReader.prototype, "entries").mockImplementation(
+    async function* (
+      this: DirectoryArtifactReader,
+      _signal?: AbortSignal,
+      options?: Parameters<DirectoryArtifactReader["entries"]>[1],
+    ) {
+      if (typeof options === "object" && options !== null) {
+        options.onCoverage?.({
+          status: "unknown",
+          limitations: [
+            "Directory contains 1 entry name(s) that are not valid UTF-8",
+          ],
+        });
+      }
+    },
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = await provider.execute(
+      decompileRequest(inDir, outDir, { include_disassembly: false }),
+    );
+
+    expect(executed.ok).toBe(true);
+    if (!executed.ok) return;
+
+    const res = executed.value.result as UefiDecompileResult;
+    const emptySha =
+      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    expect(res.image_sha256).not.toBe(emptySha);
+    expect(res.coverage).toBe("partial");
+    expect(res.limitations).toContain(
+      "Directory contains 1 entry name(s) that are not valid UTF-8",
+    );
+  } finally {
+    vi.restoreAllMocks();
+    await provider.close();
+  }
+});
