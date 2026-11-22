@@ -439,38 +439,28 @@ export class ToolResultDelivery {
               }))
               .sort((left, right) => right.size - left.size)
               .map(({ candidate }) => candidate);
-      while (!encoded.ok && remaining.length > 0) {
-        const limit = encoded;
-        let next: AnalysisErrorProjection | undefined;
-        let nextIndex = -1;
-        for (const [index, candidate] of remaining.entries()) {
-          const compact = omitUnretainedEvidenceFromError(
-            candidateProjection,
-            limit,
-            candidate,
-          );
-          if (compact === undefined) continue;
-          if (next === undefined) {
-            next = compact;
-            nextIndex = index;
-          }
-          const content = { error: compact };
-          const compactEncoded = encodeToolResult(
-            content,
-            this.resultBudgetBytes,
-            "error-text",
-            targetContent,
-          );
-          if (compactEncoded.ok) {
-            structuredContent = content;
-            encoded = compactEncoded;
-            break;
-          }
+      let index = 0;
+      while (!encoded.ok && index < remaining.length) {
+        const compact = omitUnretainedEvidenceFromError(
+          candidateProjection,
+          encoded,
+          remaining[index]!,
+        );
+        index += 1;
+        if (compact === undefined) continue;
+        candidateProjection = compact;
+        const content = { error: compact };
+        const compactEncoded = encodeToolResult(
+          content,
+          this.resultBudgetBytes,
+          "error-text",
+          targetContent,
+        );
+        if (compactEncoded.ok) {
+          structuredContent = content;
+          encoded = compactEncoded;
+          break;
         }
-        if (encoded.ok) break;
-        if (next === undefined) break;
-        candidateProjection = next;
-        remaining.splice(nextIndex, 1);
       }
     }
     // The transport retains an oversized projected error before replacing it

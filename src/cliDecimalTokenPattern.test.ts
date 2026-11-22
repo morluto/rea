@@ -3,6 +3,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 import { expect, it } from "vitest";
 
+import { decimalTokenPattern } from "./cli/decimalTokenPattern.js";
 import { cliDecimalField } from "./cli/options.js";
 
 it("keeps advertised decimal bounds aligned across decimal-width transitions", () => {
@@ -100,5 +101,53 @@ it("keeps a positive floor when the domain has no ceiling", () => {
         );
     }
     expect(validate("")).toBe(false);
+  }
+});
+
+it("derives decimal token bounds matching z.toJSONSchema across ZodNumber shapes", () => {
+  const domains = [
+    z.number(),
+    z.number().int(),
+    z.int32(),
+    z.uint32(),
+    z.number().min(5).max(10),
+    z.number().gt(0).lt(100),
+    z.number().positive(),
+    z.number().nonnegative(),
+    z.number().min(1.5).max(9.5),
+    z.number().gt(1.5).lt(9.5),
+    z.number().max(-1),
+    z.number().min(10).max(5),
+  ] as const;
+  for (const domain of domains) {
+    const schema = z.toJSONSchema(domain);
+    const expectedMin = Math.max(
+      0,
+      Math.ceil(schema.minimum ?? 0),
+      typeof schema.exclusiveMinimum === "number"
+        ? Math.floor(schema.exclusiveMinimum) + 1
+        : 0,
+    );
+    const expectedMax = Math.min(
+      Math.floor(schema.maximum ?? Infinity),
+      typeof schema.exclusiveMaximum === "number"
+        ? Math.ceil(schema.exclusiveMaximum) - 1
+        : Infinity,
+    );
+    const regex = new RegExp(decimalTokenPattern(domain), "u");
+    if (expectedMin > expectedMax) {
+      expect(regex.test("0")).toBe(false);
+      expect(regex.test("5")).toBe(false);
+      continue;
+    }
+    if (Number.isSafeInteger(expectedMin)) {
+      expect(regex.test(String(expectedMin))).toBe(true);
+      if (expectedMin > 0)
+        expect(regex.test(String(expectedMin - 1))).toBe(false);
+    }
+    if (Number.isSafeInteger(expectedMax)) {
+      expect(regex.test(String(expectedMax))).toBe(true);
+      expect(regex.test(String(expectedMax + 1))).toBe(false);
+    }
   }
 });
