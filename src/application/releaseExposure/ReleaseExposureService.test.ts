@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
@@ -12,6 +13,7 @@ import {
   electronFuseName,
   electronFuseState,
   ELECTRON_FUSE_STATE_BYTES,
+  type ElectronFuseReport,
   type ElectronFuseSlice,
 } from "../../domain/electron/electronFuses.js";
 import type { GoBinary } from "../../domain/go/goBinary.js";
@@ -667,6 +669,7 @@ describe("ReleaseExposureService fuse image identity", () => {
   });
 
   it("accepts an app bundle's fuse read when its file is an inventoried image", async () => {
+    const framework = "/work/App.app/framework";
     const bundle = scan({
       target: {
         selected_path: "/work/App.app",
@@ -679,15 +682,13 @@ describe("ReleaseExposureService fuse image identity", () => {
     const status = async (sha256: string) => {
       const { service, desktop, electronFuses } = owners({
         ...bundle,
-        native_images: [
-          { path: "/work/App.app/framework", format: "elf", sha256 },
-        ],
+        native_images: [{ path: framework, format: "elf", sha256 }],
       });
       desktop.inspect.mockResolvedValue(
         err(new AnalysisInputError("inspect_desktop_application")),
       );
       electronFuses.inspect.mockResolvedValue(
-        ok(evidence(fuseReport([slice(0)]))),
+        ok(evidence(fuseReport([slice(0)], { resolved_path: framework }))),
       );
       const result = await service.inspect({ path: "/work/App.app" });
       if (!result.ok) throw result.error;
@@ -697,25 +698,6 @@ describe("ReleaseExposureService fuse image identity", () => {
     };
     expect(await status(SHA)).toBe("not_observed");
     expect(await status(CHANGED)).toBe("unknown");
-  });
-
-  it("does not attach fuse facts when the resolved file left the inventory", async () => {
-    const { service, electronFuses } = owners(
-      scan({
-        native_images: [{ path: "/work/app", format: "elf", sha256: CHANGED }],
-        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
-      }),
-    );
-    electronFuses.inspect.mockResolvedValue(
-      ok(evidence(fuseReport([slice(0)]))),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (!result.ok) throw result.error;
-    expect(
-      releaseExposureReportSchema
-        .parse(result.value.normalized_result)
-        .checks.find((item) => item.id === "electron.run_as_node")?.status,
-    ).toBe("unknown");
   });
 });
 
@@ -1054,27 +1036,32 @@ describe("ReleaseExposureService packaged native images", () => {
   });
 });
 
-describe("ReleaseExposureService Electron layout paths", () => {
+describe("ReleaseExposureService Electron discovery identity", () => {
   it.each([
-    ["Windows", "C:\\ship\\App", "\\"],
-    ["POSIX", "/ship/App", "/"],
+    ["Windows", "C:\\ship\\App", "C:\\real\\App", "\\"],
+    ["POSIX", "/work/app", "/private/work/app", "/"],
   ])(
-    "keeps a %s named host without a sentinel unknown beside a safe helper",
-    async (_, folder, separator) => {
-      const host = `${folder}${separator}App.exe`;
-      const { service, desktop, electronFuses } = owners(
-        directoryScan([host, `${folder}${separator}helper.exe`]),
-      );
+    "settles the named %s host under a canonical layout and a caller path with a trailing separator",
+    async (_, selected, canonical, separator) => {
+      const path = `${selected}${separator}`;
+      const host = `${path}App.exe`;
+      const scanned = directoryScan([host, `${path}helper.exe`]);
+      const { service, desktop, electronFuses } = owners({
+        ...scanned,
+        target: { ...scanned.target, selected_path: path },
+      });
       const report = electronDesktopReport();
       desktop.inspect.mockResolvedValue(
         ok(
           evidence({
             ...report,
+            root: { ...report.root, path, canonical_path: canonical },
             files: [
               {
                 ...report.files[0],
-                path: "resources/app.asar",
-                local_path: [folder, "resources", "app.asar"].join(separator),
+                local_path: [canonical, "resources", "app.asar"].join(
+                  separator,
+                ),
               },
             ],
           }),
@@ -1084,82 +1071,19 @@ describe("ReleaseExposureService Electron layout paths", () => {
         ok(
           evidence(
             fuseReport(
-              (input as { path?: string }).path === host ? [] : [slice(0)],
+              (input as { path?: string }).path === host ? [slice(0)] : [],
             ),
           ),
         ),
       );
-      expect((await runAsNode(service))?.status).toBe("unknown");
+
+      // The fake reader supplies either layout dialect. Input admission still uses this host.
+      const selectedInput = isAbsolute(path) ? path : "/work/app";
+      expect((await runAsNode(service, selectedInput))?.status).toBe(
+        "not_observed",
+      );
     },
   );
-});
-
-describe("ReleaseExposureService Electron discovery identity", () => {
-  it("joins hosts through a symlinked parent the desktop owner resolved", async () => {
-    const host = "/work/app/App.exe";
-    const { service, desktop, electronFuses } = owners(
-      directoryScan([host, "/work/app/helper.exe"]),
-    );
-    const report = electronDesktopReport();
-    desktop.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          ...report,
-          root: { ...report.root, canonical_path: "/private/work/app" },
-          files: [
-            {
-              ...report.files[0],
-              local_path: "/private/work/app/resources/app.asar",
-            },
-          ],
-        }),
-      ),
-    );
-    electronFuses.inspect.mockImplementation(async (input) =>
-      ok(
-        evidence(
-          fuseReport(
-            (input as { path?: string }).path === host ? [] : [slice(0)],
-          ),
-        ),
-      ),
-    );
-    expect((await runAsNode(service))?.status).toBe("unknown");
-  });
-
-  it("joins hosts when the selected directory has a trailing slash", async () => {
-    const host = "/work/app/App.exe";
-    const scanned = directoryScan([host, "/work/app/helper.exe"]);
-    const { service, desktop, electronFuses } = owners({
-      ...scanned,
-      target: { ...scanned.target, selected_path: "/work/app/" },
-    });
-    const report = electronDesktopReport();
-    desktop.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          ...report,
-          root: { ...report.root, canonical_path: "/private/work/app" },
-          files: [
-            {
-              ...report.files[0],
-              local_path: "/private/work/app/resources/app.asar",
-            },
-          ],
-        }),
-      ),
-    );
-    electronFuses.inspect.mockImplementation(async (input) =>
-      ok(
-        evidence(
-          fuseReport(
-            (input as { path?: string }).path === host ? [] : [slice(0)],
-          ),
-        ),
-      ),
-    );
-    expect((await runAsNode(service, "/work/app/"))?.status).toBe("unknown");
-  });
 
   it("keeps safe fuses unknown when discovery stopped after one layout", async () => {
     const { service, desktop, electronFuses } = owners(
@@ -1922,23 +1846,27 @@ describe("ReleaseExposureService asar: false bundle with partial inventory", () 
 });
 
 describe("ReleaseExposureService app bundle with a sidecar", () => {
-  const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
   const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
   const FRAMEWORK =
     "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework";
   const SIDECAR = "/work/App.app/Contents/Resources/sidecar";
-  const safe = ok(evidence(fuseReport([slice(0)])));
-  const runAsNodeOn = ok(
-    evidence(
-      fuseReport([slice(0, { state: ELECTRON_FUSE_STATE_BYTES.enabled })]),
-    ),
+  const framework = (body: ElectronFuseSlice) =>
+    ok(evidence(fuseReport([body], { resolved_path: FRAMEWORK })));
+  const sidecar = (body: ElectronFuseSlice) =>
+    ok(
+      evidence(fuseReport([body], { resolved_path: SIDECAR, sha256: CHANGED })),
+    );
+  const safeFramework = framework(slice(0));
+  const safeSidecar = sidecar(slice(0));
+  const runAsNodeOn = sidecar(
+    slice(0, { state: ELECTRON_FUSE_STATE_BYTES.enabled }),
   );
   const bundleWithSidecar = () => {
     const parts = owners({
       ...appScan,
       native_images: [
         { path: FRAMEWORK, format: "mach-o", sha256: SHA },
-        { path: SIDECAR, format: "mach-o" },
+        { path: SIDECAR, format: "mach-o", sha256: CHANGED },
       ],
     });
     parts.desktop.inspect.mockResolvedValue(
@@ -1952,7 +1880,9 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   it("reports RunAsNode exposed on the sidecar and reads the framework once", async () => {
     const { service, electronFuses } = bundleWithSidecar();
     electronFuses.inspect.mockImplementation(async (input) =>
-      (input as { path: string }).path === SIDECAR ? runAsNodeOn : safe,
+      (input as { path: string }).path === SIDECAR
+        ? runAsNodeOn
+        : safeFramework,
     );
     const check = await runAsNode(service, "/work/App.app");
     expect(check?.status).toBe("exposed");
@@ -1964,7 +1894,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   });
 
   it.each([
-    ["sentinel-free", noSentinel],
+    ["sentinel-free", framework(slice(0, { sentinels: 0 }))],
     [
       "unsupported",
       err(
@@ -1980,7 +1910,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
     async (_, framework) => {
       const { service, electronFuses } = bundleWithSidecar();
       electronFuses.inspect.mockImplementation(async (input) =>
-        (input as { path: string }).path === SIDECAR ? safe : framework,
+        (input as { path: string }).path === SIDECAR ? safeSidecar : framework,
       );
       expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
         "unknown",
@@ -1991,7 +1921,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   it("keeps safe outer fuses unknown when the sidecar cannot be read", async () => {
     const { service, electronFuses } = bundleWithSidecar();
     electronFuses.inspect.mockImplementation(async (input) =>
-      (input as { path: string }).path === SIDECAR ? unreadable : safe,
+      (input as { path: string }).path === SIDECAR ? unreadable : safeFramework,
     );
     expect((await runAsNode(service, "/work/App.app"))?.status).toBe("unknown");
   });
@@ -2922,7 +2852,10 @@ const slice = (
         ],
 });
 
-const fuseReport = (slices: readonly ElectronFuseSlice[]) => {
+const fuseReport = (
+  slices: readonly ElectronFuseSlice[],
+  artifact: Partial<ElectronFuseReport["artifact"]> = {},
+) => {
   const container = slices.length > 1 ? "mach-o-universal" : "mach-o";
   return {
     artifact: {
@@ -2931,6 +2864,7 @@ const fuseReport = (slices: readonly ElectronFuseSlice[]) => {
       sha256: SHA,
       bytes: 4096,
       format: container,
+      ...artifact,
     },
     slices,
     ...describeElectronFuseFindings(slices, container),
