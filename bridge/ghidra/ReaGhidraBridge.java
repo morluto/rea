@@ -6362,6 +6362,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static void writeStreamingSuccess(BufferedWriter writer, int id, StreamingResult result)
             throws IOException {
         JsonWriter out = GSON.newJsonWriter(new SurrogateEscapingWriter(writer));
+        out.setSerializeNulls(true);
         out.beginObject();
         out.name("id").value(id);
         out.name("ok").value(true);

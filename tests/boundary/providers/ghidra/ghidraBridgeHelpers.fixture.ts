@@ -214,16 +214,35 @@ const JAVA_GSON_STUBS = String.raw`
         private final Writer out;
         private final Gson gson;
         private final List<Boolean> containerNeedsComma = new ArrayList<>();
-        private boolean pendingName;
+        private String deferredName;
+        private boolean serializeNulls;
 
         JsonWriter(Writer out, Gson gson) {
             this.out = out;
             this.gson = gson;
         }
 
+        void setSerializeNulls(boolean serializeNulls) {
+            this.serializeNulls = serializeNulls;
+        }
+
+        private void writeDeferredName() throws IOException {
+            if (deferredName != null) {
+                int top = containerNeedsComma.size() - 1;
+                if (containerNeedsComma.get(top)) {
+                    out.write(',');
+                } else {
+                    containerNeedsComma.set(top, true);
+                }
+                gson.writeString(out, deferredName);
+                out.write(':');
+                deferredName = null;
+            }
+        }
+
         private void beforeValue() throws IOException {
-            if (pendingName) {
-                pendingName = false;
+            if (deferredName != null) {
+                writeDeferredName();
                 return;
             }
             if (!containerNeedsComma.isEmpty()) {
@@ -263,15 +282,7 @@ const JAVA_GSON_STUBS = String.raw`
         }
 
         JsonWriter name(String name) throws IOException {
-            int top = containerNeedsComma.size() - 1;
-            if (containerNeedsComma.get(top)) {
-                out.write(',');
-            } else {
-                containerNeedsComma.set(top, true);
-            }
-            gson.writeString(out, name);
-            out.write(':');
-            pendingName = true;
+            deferredName = name;
             return this;
         }
 
@@ -295,7 +306,16 @@ const JAVA_GSON_STUBS = String.raw`
         }
 
         JsonWriter nullValue() throws IOException {
-            beforeValue();
+            if (deferredName != null) {
+                if (serializeNulls) {
+                    writeDeferredName();
+                } else {
+                    deferredName = null;
+                    return this;
+                }
+            } else {
+                beforeValue();
+            }
             out.write("null");
             return this;
         }
