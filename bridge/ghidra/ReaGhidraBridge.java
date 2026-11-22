@@ -36,6 +36,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -2944,21 +2945,15 @@ public final class ReaGhidraBridge extends HeadlessScript {
         AddressFactory addressFactory = currentProgram.getAddressFactory();
         TreeMap<Address, Function> candidates = new TreeMap<>();
 
-        List<String> candidateLeafNames = new ArrayList<>(4);
-        candidateLeafNames.add(value);
-        int separator = value.lastIndexOf("::");
-        if (separator >= 0 && separator + 2 < value.length()) {
-            candidateLeafNames.add(value.substring(separator + 2));
-        }
-        int baseCount = candidateLeafNames.size();
-        for (int index = 0; index < baseCount; index++) {
-            String name = candidateLeafNames.get(index);
-            while (name.startsWith("thunk_")) {
-                name = name.substring("thunk_".length());
-                if (!name.isEmpty()) {
-                    candidateLeafNames.add(name);
-                }
-            }
+        // Ghidra leaf names can contain "::" (for example namespace "ns" + leaf
+        // "other::work" -> "ns::other::work"). Try every "::" suffix because
+        // SymbolTable.getSymbols(name) indexes leaf spellings rather than full paths.
+        Set<String> candidateLeafNames = new LinkedHashSet<>();
+        addProcedureLookupCandidate(candidateLeafNames, value);
+        int separator = value.indexOf("::");
+        while (separator >= 0 && separator + 2 < value.length()) {
+            addProcedureLookupCandidate(candidateLeafNames, value.substring(separator + 2));
+            separator = value.indexOf("::", separator + 1);
         }
 
         for (String candidateName : candidateLeafNames) {
@@ -2985,6 +2980,19 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
         }
         return matches;
+    }
+
+    private static void addProcedureLookupCandidate(Set<String> candidates, String candidate) {
+        if (!candidate.isEmpty()) {
+            candidates.add(candidate);
+        }
+        String stripped = candidate;
+        while (stripped.startsWith("thunk_")) {
+            stripped = stripped.substring("thunk_".length());
+            if (!stripped.isEmpty()) {
+                candidates.add(stripped);
+            }
+        }
     }
 
     private void addCandidateFunctionAndThunks(
