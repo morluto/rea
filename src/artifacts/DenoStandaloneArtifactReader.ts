@@ -1,9 +1,10 @@
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { setImmediate } from "node:timers/promises";
 
 import type { StableRegularFileDescriptor } from "../filesystem/RegularFile.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
 import { artifactExpansionBudgetBytes } from "../domain/artifactExpansionBudget.js";
 import type {
   DenoStandaloneEntryMetadata,
@@ -25,7 +26,11 @@ import {
   normalizeArtifactPath,
   ArtifactFileSource,
 } from "../resources/index.js";
-import { ownArtifactStream } from "./OwnedArtifactStream.js";
+import {
+  ArtifactStreamLifecycle,
+  checkedArtifactMemberStream,
+  ownArtifactStream,
+} from "./OwnedArtifactStream.js";
 import type { DenoStandaloneAdmission } from "./deno/DenoStandaloneAdmission.js";
 import {
   denoFormatFailure,
@@ -69,12 +74,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   readonly format = "deno-standalone" as const;
   readonly #scope = new ArtifactResourceScope();
   #entries = new Map<string, ArtifactEntry>();
-  readonly #streams = new Set<Readable>();
+  readonly #lifecycle = new ArtifactStreamLifecycle("Deno compile");
   readonly #source: ArtifactFileSource;
   #admission: DenoStandaloneAdmission | undefined;
   readonly #preparation = new ArtifactPreparation();
   #header: DenoStandaloneMetadata | undefined;
-  #closing = false;
 
   constructor(
     private readonly path: string,
@@ -145,24 +149,27 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
       this.#assertOpen(signal);
       if (stored.byteOffset === null || stored.declaredSize === null)
         throw denoFormatFailure("member has no physical byte range");
-      const cancellationFailure = (reason: unknown): ArtifactReaderFailure =>
-        new ArtifactReaderFailure("cancelled", "Deno compile read cancelled", {
-          cause: reason,
-        });
+      const lifecycle = this.#lifecycle.member(signal);
+      const { signal: streamSignal, cancellationFailure } = lifecycle;
       const source =
         stored.declaredSize === 0
           ? Readable.from([])
           : readFileHandleChunks(handle, {
               start: stored.byteOffset,
               end: stored.byteOffset + stored.declaredSize - 1,
-              signal,
+              signal: streamSignal,
               cancellationFailure,
             });
-      const output = this.#memberStream(stored, signal);
+      const output = checkedArtifactMemberStream(
+        stored,
+        "Deno compile",
+        denoFormatFailure,
+        () =>
+          lifecycle.verify((signal) => this.#source.readSelectedPath(signal)),
+      );
       ownArtifactStream(source, output, {
         scope: this.#scope,
-        streams: this.#streams,
-        signal,
+        signal: streamSignal,
         cancellationFailure,
         label: "Deno compile",
       });
@@ -171,11 +178,7 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
   }
 
   async close(): Promise<void> {
-    this.#closing = true;
-    for (const stream of this.#streams)
-      stream.destroy(
-        new ArtifactReaderFailure("unavailable", "Deno compile reader closed"),
-      );
+    this.#lifecycle.close();
     await this.#scope.close();
     await this.#source.close();
     this.#entries.clear();
@@ -190,38 +193,11 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
 
   #assertOpen(signal?: AbortSignal): void {
     assertArtifactReadActive(signal);
-    if (this.#closing)
+    if (this.#lifecycle.closed)
       throw new ArtifactReaderFailure(
         "unavailable",
         "Deno compile reader is closed",
       );
-  }
-
-  #memberStream(entry: ArtifactEntry, signal?: AbortSignal): Transform {
-    let bytes = 0;
-    const check = async (): Promise<void> => {
-      if (bytes !== entry.declaredSize)
-        throw denoFormatFailure(`member ended early: ${entry.path}`);
-      await this.#source.readSelectedPath(signal);
-      this.#assertOpen(signal);
-    };
-    return new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        bytes += chunk.length;
-        callback(null, chunk);
-      },
-      flush(callback) {
-        void check().then(
-          () => callback(),
-          (cause: unknown) =>
-            callback(
-              cause instanceof Error
-                ? cause
-                : new Error("Deno compile read failed", { cause }),
-            ),
-        );
-      },
-    });
   }
 
   async #prepare(signal?: AbortSignal): Promise<void> {
@@ -240,21 +216,13 @@ export class DenoStandaloneArtifactReader implements ArtifactReader {
     const section = await parseDenoSection(
       location.length,
       async (offset, length) => {
-        const bytes = Buffer.alloc(length);
-        let filled = 0;
-        while (filled < length) {
-          assertArtifactReadActive(signal);
-          const read = await source.handle.read(
-            bytes,
-            filled,
-            length - filled,
-            location.offset + offset + filled,
-          );
-          assertArtifactReadActive(signal);
-          if (read.bytesRead === 0)
-            throw denoFormatFailure("section read was short");
-          filled += read.bytesRead;
-        }
+        const bytes = await readFileHandleRange(
+          source.handle,
+          location.offset + offset,
+          length,
+          () => assertArtifactReadActive(signal),
+        );
+        assertArtifactReadActive(signal);
         return bytes;
       },
       signal,
@@ -512,8 +480,7 @@ const remoteDestination = (
   module: DenoRemoteModule,
 ): RemoteDestination => {
   const fallback = `deno-remote/${String(module.index)}`;
-  // A listed remote table has every specifier. Missing text is unsupported.
-  const text = section.specifierText?.get(module.specifierId) ?? null;
+  const text = section.specifierText.get(module.specifierId) ?? null;
   if (text === null)
     return {
       path: fallback,

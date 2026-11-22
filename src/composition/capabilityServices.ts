@@ -1,3 +1,6 @@
+import { UefiAnalysisService } from "../application/uefi/UefiAnalysisService.js";
+import type { UefiAnalysisPort } from "../ports/uefi/UefiAnalysisPort.js";
+import { createUefiAnalysisProvider } from "./uefi.js";
 import type { OptionalProviderLoadFailures } from "../ports/OptionalObservationProviders.js";
 import {
   locateWiresharkTool,
@@ -5,7 +8,10 @@ import {
 } from "../pcap/PcapConfiguration.js";
 import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
 import { CapabilityScope } from "../application/CapabilityScope.js";
-import type { CapabilityAvailabilityFacts } from "../application/CapabilityAvailability.js";
+import type {
+  CapabilityAvailabilityFacts,
+  OptionalAvailabilityFeatures,
+} from "../application/CapabilityAvailability.js";
 import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclarationId,
@@ -148,6 +154,7 @@ export interface CapabilityServiceOptions {
   readonly mavenGradleMetadata?: MavenGradleMetadataService;
   readonly electronFuses?: ElectronFuseService;
   readonly recordedCrash?: RecordedCrashService;
+  readonly uefiAnalysis?: UefiAnalysisPort;
   readonly firmwareAnalysis?: FirmwareAnalysisPort;
   readonly javascriptRecovery?: JavaScriptRecoveryPort;
   readonly webModuleTrace?: WebModuleTraceService;
@@ -482,6 +489,12 @@ const modules = {
       },
     }),
   ),
+  uefiAnalysis: service(
+    ({ options }) =>
+      new UefiAnalysisService(
+        options.uefiAnalysis ?? createUefiAnalysisProvider(),
+      ),
+  ),
   gdbSessions: capability(
     ({ providerEnvironment, platform }) =>
       createGdbSessionManager(providerEnvironment, { platform }),
@@ -548,11 +561,12 @@ const modules = {
           tsharkHostSupported(platform),
         ),
       },
-      optionalFeatures: {
+      // Probe PATH only when `binary_session` queries default availability.
+      observeOptionalFeatures: () => ({
         packetCaptureEnabled:
           options.packetCapture !== undefined ||
           (tsharkHostSupported(platform) && tsharkLocatable(environment)),
-      },
+      }),
     }),
   ),
   signalRecording: service(
@@ -690,6 +704,8 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
   const probes: NonNullable<CapabilityAvailabilityFacts["probes"]> = {};
   const failureObservers: (() => OptionalProviderLoadFailures)[] = [];
   const commandFailureObservers: (() => CommandProviderLaunchFailures)[] = [];
+  const optionalFeatureObservers: (() => Partial<OptionalAvailabilityFeatures>)[] =
+    [];
   const availability = { hostUnsupported, optionalFeatures };
   // This is a key-preserving map of a source-owned typed declaration, not an
   // external value parser or a generic operation dispatcher.
@@ -714,6 +730,9 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
         instance.availability?.observeCommandProviderFailures;
       if (observeCommandFailure !== undefined)
         commandFailureObservers.push(observeCommandFailure);
+      const observeOptional = instance.availability?.observeOptionalFeatures;
+      if (observeOptional !== undefined)
+        optionalFeatureObservers.push(observeOptional);
       return [
         id,
         instance.ownership === "host"
@@ -730,6 +749,11 @@ export const createCapabilityServices = (context: CapabilityHostContext) => {
       Object.assign({}, ...failureObservers.map((observe) => observe())),
     observeCommandProviderFailures: (): CommandProviderLaunchFailures =>
       Object.assign({}, ...commandFailureObservers.map((observe) => observe())),
+    observeOptionalFeatures: (): Partial<OptionalAvailabilityFeatures> =>
+      Object.assign(
+        {},
+        ...optionalFeatureObservers.map((observe) => observe()),
+      ),
     createManagedBinarySession: async () => {
       const { createManagedBinarySession } = await import("./binary.js");
       return createManagedBinarySession();

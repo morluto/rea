@@ -36,6 +36,15 @@ export interface LimitRef {
   readonly required?: number | bigint;
 }
 
+/** JSON-safe public facts for the named limit a parser exhausted. */
+export const reportedParseLimit = ({ name, maximum, required }: LimitRef) => ({
+  boundary: name,
+  maximum,
+  ...(required === undefined
+    ? {}
+    : { required: typeof required === "bigint" ? String(required) : required }),
+});
+
 /** A parse outcome the parser established, carried with its facts. */
 export type ParseFailure = ParseFailureFacts &
   (

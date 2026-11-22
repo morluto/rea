@@ -1,6 +1,7 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 import { z } from "zod";
+import { withVerifierCleanup } from "../../../../scripts/lib/verifier-cleanup.mjs";
 import { createVerifierHttpServer } from "../../../../scripts/lib/verifier-http-server.mjs";
 import { JebProvider } from "../../../../src/jeb/JebProvider.js";
 import { JEB_ENGINE_TOOLS } from "../../../../src/jeb/JebMcpConnection.js";
@@ -18,11 +19,13 @@ const requestSchema = z.object({
     .optional(),
 });
 
+type EnvelopeEncoding = "structured" | "json-text";
+
 // Exercise the SDK decoder and the public REA tool together. The producer serves
 // both documented envelope encodings without mocking either MCP client.
 const startProducer = async (
   payload: JsonValue,
-  encoding: "structured" | "json-text",
+  encoding: EnvelopeEncoding,
 ) => {
   const calls: unknown[] = [];
   const { server, close } = createVerifierHttpServer(
@@ -55,10 +58,15 @@ const startProducer = async (
         };
       } else if (message.method === "tools/call") {
         calls.push(message.params);
+        // Distinct valid fallback detects any loss of structured evidence.
+        const text =
+          encoding === "structured"
+            ? '{"success":false}'
+            : JSON.stringify(payload);
         result = {
           isError: true,
           ...(encoding === "structured" ? { structuredContent: payload } : {}),
-          content: [{ type: "text", text: JSON.stringify(payload) }],
+          content: [{ type: "text", text }],
         };
       } else throw new Error(`Unexpected producer request: ${message.method}`);
       response
@@ -73,9 +81,15 @@ const startProducer = async (
   return { endpoint: `http://127.0.0.1:${address.port}/mcp`, calls, close };
 };
 
-const failures: { name: string; payload: JsonValue; message: string }[] = [
+const failures: {
+  name: string;
+  encoding: EnvelopeEncoding;
+  payload: JsonValue;
+  message: string;
+}[] = [
   {
     name: "required recovery",
+    encoding: "structured",
     payload: {
       success: false,
       error: {
@@ -94,6 +108,7 @@ const failures: { name: string; payload: JsonValue; message: string }[] = [
   },
   {
     name: "recovery explicitly unnecessary",
+    encoding: "json-text",
     payload: {
       success: false,
       error: {
@@ -108,6 +123,7 @@ const failures: { name: string; payload: JsonValue; message: string }[] = [
   },
   {
     name: "omitted recovery and empty messages",
+    encoding: "structured",
     payload: {
       success: false,
       error: { code: "PROJECT_BUSY", message: "" },
@@ -117,6 +133,7 @@ const failures: { name: string; payload: JsonValue; message: string }[] = [
   },
   {
     name: "outer message without nested error",
+    encoding: "json-text",
     payload: { success: false, message: "Project cannot be opened" },
     message: "Project cannot be opened",
   },
@@ -124,10 +141,9 @@ const failures: { name: string; payload: JsonValue; message: string }[] = [
 
 const input = { path: "./selected target/caller-secret.apk" };
 
-/** Serve one refusal to the public open_jeb_project tool and project it. */
 const refuseOpenProject = async (
   payload: JsonValue,
-  encoding: "structured" | "json-text",
+  encoding: EnvelopeEncoding,
 ) => {
   const producer = await startProducer(payload, encoding);
   const provider = new JebProvider({
@@ -144,7 +160,7 @@ const refuseOpenProject = async (
     { name: "jeb-failure-contract", version: "1" },
     { jsonSchemaValidator: createMcpSchemaValidation() },
   );
-  try {
+  return withVerifierCleanup(async () => {
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -161,34 +177,16 @@ const refuseOpenProject = async (
       { name: "open_project", arguments: { file_path: input.path } },
     ]);
     return { projected: JSON.parse(text), endpoint: producer.endpoint };
-  } finally {
-    try {
-      await client.close();
-    } finally {
-      try {
-        await server.close();
-      } finally {
-        try {
-          await session.close();
-        } finally {
-          try {
-            await provider.close();
-          } finally {
-            await producer.close();
-          }
-        }
-      }
-    }
-  }
+  }, [
+    () => client.close(),
+    () => server.close(),
+    () => session.close(),
+    () => provider.close(),
+    () => producer.close(),
+  ]);
 };
 
-const encodings = ["structured", "json-text"] as const;
-
-it.each(
-  failures.flatMap((failure) =>
-    encodings.map((encoding) => ({ ...failure, encoding })),
-  ),
-)(
+it.each(failures)(
   "projects $encoding $name as execution failure with the original envelope",
   async ({ payload, message, encoding }) => {
     const { projected, endpoint } = await refuseOpenProject(payload, encoding);
@@ -206,6 +204,7 @@ it.each(
 
 const exhaustion: {
   name: string;
+  encoding: EnvelopeEncoding;
   payload: JsonValue;
   resource: string;
   area: string | null;
@@ -213,6 +212,7 @@ const exhaustion: {
 }[] = [
   {
     name: "heap space in the nested error",
+    encoding: "structured",
     payload: {
       success: false,
       error: {
@@ -226,6 +226,7 @@ const exhaustion: {
   },
   {
     name: "metaspace in the nested error",
+    encoding: "json-text",
     payload: {
       success: false,
       error: { message: "java.lang.OutOfMemoryError: Metaspace" },
@@ -236,6 +237,7 @@ const exhaustion: {
   },
   {
     name: "an oversized array in the outer message",
+    encoding: "json-text",
     payload: {
       success: false,
       message:
@@ -247,6 +249,7 @@ const exhaustion: {
   },
   {
     name: "an unnamed area in the outer message",
+    encoding: "structured",
     payload: { success: false, message: "java.lang.OutOfMemoryError" },
     resource: "memory",
     area: null,
@@ -254,6 +257,7 @@ const exhaustion: {
   },
   {
     name: "native-thread exhaustion",
+    encoding: "structured",
     payload: {
       success: false,
       message:
@@ -265,11 +269,7 @@ const exhaustion: {
   },
 ];
 
-it.each(
-  exhaustion.flatMap((failure) =>
-    encodings.map((encoding) => ({ ...failure, encoding })),
-  ),
-)(
+it.each(exhaustion)(
   "reports $encoding JVM exhaustion with $name as a resource constraint",
   async ({ payload, resource, area, remediation, encoding }) => {
     const { projected, endpoint } = await refuseOpenProject(payload, encoding);

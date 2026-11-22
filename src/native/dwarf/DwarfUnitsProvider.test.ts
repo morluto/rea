@@ -1,7 +1,9 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { scheduler } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
 import {
+  AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
@@ -54,6 +56,55 @@ const inspect = async (
     await provider.close();
   }
 };
+
+const manyProductiveFrames = (count: number): Buffer => {
+  const frame = Buffer.from([
+    0x28, 0xb5, 0x2f, 0xfd, 0x20, 0x01, 0x09, 0x00, 0x00, 0x61,
+  ]);
+  const bytes = Buffer.alloc(frame.length * count);
+  for (let index = 0; index < count; index += 1)
+    frame.copy(bytes, index * frame.length);
+  return bytes;
+};
+
+it("cancels a many-frame compressed DWARF section", async () => {
+  const plain = Buffer.alloc(32, 0x61);
+  const header = elfCompressedBody(plain, "zstd").subarray(0, 24);
+  const image = elfDebugImage(
+    { info: Buffer.concat([header, manyProductiveFrames(32)]) },
+    { infoFlags: 0x800n },
+  );
+  const root = await createTestTempDirectory("rea-dwarf-zstd-cancel-");
+  const path = join(root, "image");
+  await writeFile(path, image);
+  const reason = new Error("stop dwarf frames");
+  const controller = new AbortController();
+  const yieldImpl = scheduler.yield.bind(scheduler);
+  let yields = 0;
+  const spy = vi.spyOn(scheduler, "yield").mockImplementation(async () => {
+    yields += 1;
+    await yieldImpl();
+    if (yields === 1) controller.abort(reason);
+  });
+  const provider = new DwarfUnitsProvider();
+  try {
+    const result = await provider.inspect(
+      inspectDwarfUnitsInputSchema.parse({ path }),
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      operation: "inspect_dwarf_units",
+      cause: reason,
+    });
+  } finally {
+    spy.mockRestore();
+    await provider.close();
+  }
+});
 
 it("reads a little-endian ELF unit and refuses architecture on a thin file", async () => {
   const named = namedUnit({ name: "main.c", dwoName: "main.dwo" });
@@ -379,7 +430,7 @@ it("does not inflate a duplicate section and caps decompressed bytes across role
     expect(aggregate.error).toBeInstanceOf(AnalysisResourceConstraintError);
 });
 
-it("charges failed decompression attempts against the shared allowance", () => {
+it("charges failed decompression attempts against the shared allowance", async () => {
   const allowance = 1024 * 1024;
   const bytes = Buffer.alloc(allowance);
   for (const gnu of [false, true]) {
@@ -393,13 +444,13 @@ it("charges failed decompression attempts against the shared allowance", () => {
         flags: gnu ? 0n : 0x800n,
       })),
     });
-    expect(() => locateDwarfSections(image, allowance)).toThrow(
+    await expect(locateDwarfSections(image, allowance)).rejects.toThrow(
       DwarfSectionAllowanceFailure,
     );
   }
 });
 
-it("charges valid empty streams against the shared allowance", () => {
+it("charges valid empty streams against the shared allowance", async () => {
   const empty = elfCompressedBody(Buffer.alloc(0), "zlib");
   const blocks = Buffer.alloc(5 * 2048);
   for (let at = 0; at < blocks.length; at += 5)
@@ -417,12 +468,12 @@ it("charges valid empty streams against the shared allowance", () => {
       flags: 0x800n,
     })),
   });
-  expect(() => locateDwarfSections(image, payloadLength * 2)).toThrow(
+  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
     DwarfSectionAllowanceFailure,
   );
 });
 
-it("charges zero-output streams with bad checksums against the shared allowance", () => {
+it("charges zero-output streams with bad checksums against the shared allowance", async () => {
   const empty = elfCompressedBody(Buffer.alloc(0), "zlib");
   // Insert non-final empty stored blocks after the ELF and zlib headers.
   const blocks = Buffer.alloc(5 * 2048);
@@ -442,7 +493,7 @@ it("charges zero-output streams with bad checksums against the shared allowance"
       flags: 0x800n,
     })),
   });
-  expect(() => locateDwarfSections(image, payloadLength * 2)).toThrow(
+  await expect(locateDwarfSections(image, payloadLength * 2)).rejects.toThrow(
     DwarfSectionAllowanceFailure,
   );
 });

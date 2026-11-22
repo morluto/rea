@@ -13,13 +13,7 @@ import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 
 import { copyScriptsWithImports } from "../../support/scriptImportClosure.js";
-
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
-  );
-});
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const runVerifier = async (
   settings: {
@@ -30,8 +24,7 @@ const runVerifier = async (
     pull?: "error" | "throw";
   } = {},
 ) => {
-  const root = await mkdtemp(join(tmpdir(), "rea-adb-verifier-test-"));
-  roots.push(root);
+  const root = await createTestTempDirectory("rea-adb-verifier-test-");
   await mkdir(join(root, "dist", "application", "adb"), { recursive: true });
   await mkdir(join(root, "dist", "composition"), { recursive: true });
   await copyScriptsWithImports(["scripts/verify-adb.mjs"], root);

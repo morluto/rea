@@ -676,3 +676,92 @@ describe("SDK argument name guidance", () => {
     }
   });
 });
+
+it("skips object-root output schema projection on output=off while keeping runtime validation and legacy wrapping", async () => {
+  const server = new EvidenceMcpServer(
+    { name: "output-off-skip-test", version: "1" },
+    { capabilities: {} },
+    undefined,
+    createToolResultDelivery(4096),
+    undefined,
+    "off",
+  );
+  let objectOutputCalls = 0;
+  const spyObjectOutput = z.strictObject({ count: z.int() });
+  const baseStandard = spyObjectOutput["~standard"];
+  Object.defineProperty(spyObjectOutput, "~standard", {
+    value: {
+      ...baseStandard,
+      jsonSchema: {
+        ...baseStandard.jsonSchema,
+        output: (options: unknown) => {
+          objectOutputCalls += 1;
+          return baseStandard.jsonSchema.output(options as never);
+        },
+      },
+    },
+  });
+  server.registerTool(
+    "object_tool",
+    {
+      inputSchema: z.strictObject({ n: z.int() }),
+      outputSchema: spyObjectOutput,
+    },
+    async ({ n }) => ({
+      content: [],
+      structuredContent: n >= 0 ? { count: n } : ({ count: "bad" } as never),
+    }),
+  );
+  const nonObjectUnionOutput = z.union([
+    z.strictObject({ status: z.literal("ok") }),
+    z.string(),
+  ]);
+  server.registerTool(
+    "union_tool",
+    {
+      inputSchema: z.strictObject({}),
+      outputSchema: nonObjectUnionOutput,
+    },
+    async () => ({
+      content: [],
+      structuredContent: { status: "ok" as const },
+    }),
+  );
+  const client = new Client(
+    { name: "output-off-client", version: "1" },
+    { supportedProtocolVersions: ["2025-11-25"] },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  try {
+    await client.connect(clientTransport);
+    expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
+    const listed = await client.listTools();
+    expect(objectOutputCalls).toBe(0);
+    for (const tool of listed.tools) expect(tool.outputSchema).toBeUndefined();
+
+    const valid = await client.callTool({
+      name: "object_tool",
+      arguments: { n: 42 },
+    });
+    expect(valid.isError).toBeFalsy();
+    expect(valid.structuredContent).toEqual({ count: 42 });
+
+    const invalidOutput = await client.callTool({
+      name: "object_tool",
+      arguments: { n: -1 },
+    });
+    expect(invalidOutput.isError).toBe(true);
+
+    // Non-object union root keeps 2025 legacy `{ result }` wrapping.
+    const wrapped = await client.callTool({
+      name: "union_tool",
+      arguments: {},
+    });
+    expect(wrapped.isError).toBeFalsy();
+    expect(wrapped.structuredContent).toEqual({ result: { status: "ok" } });
+  } finally {
+    await Promise.all([client.close(), serving.close()]);
+  }
+});

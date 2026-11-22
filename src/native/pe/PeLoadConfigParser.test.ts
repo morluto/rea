@@ -5,15 +5,25 @@ import {
   peLoadConfigSchema,
   type PeLoadConfigField,
 } from "../../domain/native/peLoadConfig.js";
-import { parsePeLoadConfig } from "./PeLoadConfigParser.js";
 import {
+  parsePeLoadConfig,
+  parsePeLoadConfigFromImage,
+} from "./PeLoadConfigParser.js";
+import { readPeHardening } from "../hardening/PeHardening.js";
+import { readPeImage } from "../../domain/native/peImage.js";
+import {
+  PE_LOAD_CONFIG_FIXTURE,
   peLoadConfigImage,
   peManySectionsImage,
   type PeLoadConfigFixtureOptions,
 } from "./PeLoadConfig.fixture.js";
 
 /** Element reads of every parsed image's section and mapping tables. */
-const tableReads = vi.hoisted(() => ({ count: 0, budget: Infinity }));
+const tableReads = vi.hoisted(() => ({
+  count: 0,
+  budget: Infinity,
+  imageReads: 0,
+}));
 vi.mock("../../domain/native/peImage.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("../../domain/native/peImage.js")>();
@@ -33,6 +43,7 @@ vi.mock("../../domain/native/peImage.js", async (importOriginal) => {
   return {
     ...actual,
     readPeImage: (bytes: Buffer) => {
+      tableReads.imageReads++;
       const image = actual.readPeImage(bytes);
       return {
         ...image,
@@ -206,6 +217,20 @@ it("retains a callback in virtual-only section storage with unknown file offset"
   expect(
     (await parse({ zeroFillCallback: true })).tls?.callbacks[0],
   ).toMatchObject({ rva: 0x2200, file_offset: null, section: ".text" });
+});
+
+it("requires the full physical section extent even when its virtual bytes fit", async () => {
+  const bytes = peLoadConfigImage({ textVirtualSize: 0x20 }).subarray(
+    0,
+    0x1620,
+  );
+  await expect(
+    parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    ),
+  ).rejects.toMatchObject({ failure: { kind: "truncated" } });
 });
 
 it("resolves callback sections without rescanning the largest section table", async () => {
@@ -399,3 +424,80 @@ it.each([32, 64] as const)(
     }
   },
 );
+
+it.each([32, 64] as const)(
+  "reads DWORDs after the four PE%d TLS pointers",
+  async (bits) => {
+    const bytes = peLoadConfigImage({ bits });
+    const layout = PE_LOAD_CONFIG_FIXTURE;
+    const offset =
+      layout.dataFile + layout.tlsRva - layout.dataRva + 4 * (bits / 8);
+    bytes.writeUInt32LE(0xfedcba98, offset);
+    bytes.writeUInt32LE(0x80100000, offset + 4);
+    const report = await parsePeLoadConfig(
+      bytes,
+      { path: "/sample.exe", sha256: "a".repeat(64), bytes: bytes.length },
+      inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" }),
+    );
+    expect(report.tls).toMatchObject({
+      size_of_zero_fill: 0xfedcba98,
+      characteristics: 0x80100000,
+    });
+  },
+);
+
+describe("PE load-config reuse and lazy section indexing", () => {
+  it("skips section and mapping index builds when TLS and load-config directories are absent", async () => {
+    for (const bits of [32, 64] as const) {
+      tableReads.count = 0;
+      const report = await parse({ bits, tls: false, loadConfig: false });
+      expect(report).toMatchObject({ tls: null, load_config: null });
+      expect(tableReads.count).toBe(0);
+    }
+  });
+
+  it("reuses a pre-parsed PeImage via parsePeLoadConfigFromImage and in readPeHardening", async () => {
+    const bytes = peLoadConfigImage({ bits: 64 });
+    const artifact = {
+      path: "/sample.exe",
+      sha256: "a".repeat(64),
+      bytes: bytes.length,
+    };
+    const input = inspectPeLoadConfigInputSchema.parse({ path: "/sample.exe" });
+    const expected = await parsePeLoadConfig(bytes, artifact, input);
+
+    tableReads.imageReads = 0;
+    const image = readPeImage(bytes);
+    const fromImage = await parsePeLoadConfigFromImage(
+      bytes,
+      image,
+      artifact,
+      input,
+    );
+    expect(fromImage).toEqual(expected);
+    expect(tableReads.imageReads).toBe(1);
+
+    const noDirs = peLoadConfigImage({ tls: false, loadConfig: false });
+    tableReads.imageReads = 0;
+    tableReads.count = 0;
+    const noDirHardening = await readPeHardening(noDirs, {
+      path: "/nodirs.exe",
+      sha256: "a".repeat(64),
+      bytes: noDirs.length,
+    });
+    expect(tableReads.imageReads).toBe(1);
+    expect(tableReads.count).toBe(0);
+    expect(
+      noDirHardening.rows.find((row) => row.property === "cfg_instrumented")
+        ?.state,
+    ).toBe("unknown");
+
+    tableReads.imageReads = 0;
+    const withDirHardening = await readPeHardening(bytes, artifact);
+    expect(tableReads.imageReads).toBe(1);
+    expect(
+      withDirHardening.rows.find((row) => row.property === "cfg_instrumented")
+        ?.state,
+    ).toBe("enabled");
+  });
+});

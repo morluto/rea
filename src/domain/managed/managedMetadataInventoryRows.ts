@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import { decodeStrictUtf8 } from "../strictUtf8.js";
 import { readMemberReferenceRowFacts } from "./managedMemberReferenceRows.js";
 import { readTypeDefinitionRowFacts } from "./managedTypeDefinitionRows.js";
@@ -27,6 +28,7 @@ import {
   metadataBlobOffset,
   readMetadataGuid,
   readMetadataString,
+  readRequiredMetadataName,
 } from "./managedMetadataHeaps.js";
 import {
   managedFailure,
@@ -37,7 +39,7 @@ import type { ManagedTypeReferenceLookup } from "./managedTypeReferences.js";
 import type { ManagedResourceDirectory } from "./managedMetadataInventory.js";
 import type { ManagedType, parseTypes } from "./managedMemberInspectorCore.js";
 
-type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
+import type { ManagedModuleRow } from "./managedModuleIdentity.js";
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
@@ -70,48 +72,47 @@ const publicKeyIdentity = (
 export const readModule = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
-): ModuleIdentity | null => {
+  issues: ManagedParseIssue[],
+): ManagedModuleRow | null => {
   const table = layout.table(0);
   if (table === undefined || table.rowCount === 0) return null;
+  const ambiguousNames = layout.strings.kind === "ambiguous";
+  // String index zero establishes a local empty value, but it cannot make
+  // one of several Module rows authoritative for this ambiguous profile.
+  if (ambiguousNames && table.rowCount !== 1) return null;
   const cursor = metadataRowCursor(bytes, layout, 0, 1);
   const generation = cursor.u16();
-  const name = readMetadataString(
-    bytes,
-    layout,
-    cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
-  );
-  const mvid = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
-  const encId = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
-  const encBaseId = readMetadataGuid(
-    bytes,
-    layout,
-    cursor.readIndex(layout.guidIndexSize),
-  );
-  return {
-    name,
+  const nameIndex = cursor.readIndex(layout.stringIndexSize);
+  const mvidIndex = cursor.readIndex(layout.guidIndexSize);
+  const encIndex = cursor.readIndex(layout.guidIndexSize);
+  const encBaseIndex = cursor.readIndex(layout.guidIndexSize);
+
+  const readName = () => readMetadataString(bytes, layout, nameIndex);
+  // A unique row establishes its coordinates even when the name heap read fails.
+  const name =
+    table.rowCount === 1 ? readManagedValue(readName, issues) : readName();
+  const readGuid = (index: number) => {
+    const read = () => readMetadataGuid(bytes, layout, index);
+    return (
+      (name === undefined ? readManagedValue(read, issues) : read()) ?? null
+    );
+  };
+  const facts = {
     generation,
-    mvid: mvid ?? null,
-    enc_id: encId ?? null,
-    enc_base_id: encBaseId ?? null,
-    token: metadataToken(0, 1),
+    mvid: readGuid(mvidIndex),
+    enc_id: readGuid(encIndex),
+    enc_base_id: readGuid(encBaseIndex),
+    token: "0x00000001" as const,
     row_offset: table.offset,
   };
+  return name === undefined
+    ? { ...facts, name: null, name_index: nameIndex }
+    : { ...facts, name };
 };
 
 export const readAssembly = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-  heapExtent: number,
 ): AssemblyIdentity | null => {
   const table = layout.table(32);
   if (table === undefined || table.rowCount === 0) return null;
@@ -130,13 +131,11 @@ export const readAssembly = (
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
   );
   const culture = readMetadataString(
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    heapExtent,
   );
   return {
     name,
@@ -178,11 +177,10 @@ export const readAssemblyReferenceName = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-  heapExtent: number,
 ): Pick<AssemblyReference, "name" | "token" | "row_offset"> => {
   const { nameIndex } = assemblyReferenceHeader(bytes, layout, row);
   return {
-    name: readMetadataString(bytes, layout, nameIndex, heapExtent),
+    name: readMetadataString(bytes, layout, nameIndex),
     token: metadataToken(35, row),
     row_offset: metadataRowOffset(layout, 35, row),
   };
@@ -192,18 +190,16 @@ export const readAssemblyReference = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
   row: number,
-  heapExtent: number,
 ): { readonly name: string; readonly reference: AssemblyReference | null } => {
   const { cursor, version, flags, keyIndex, nameIndex } =
     assemblyReferenceHeader(bytes, layout, row);
-  const name = readMetadataString(bytes, layout, nameIndex, heapExtent);
+  const name = readMetadataString(bytes, layout, nameIndex);
   try {
     const keyOrToken = readMetadataBlob(bytes, layout, keyIndex);
     const culture = readMetadataString(
       bytes,
       layout,
       cursor.readIndex(layout.stringIndexSize),
-      heapExtent,
     );
     const hashValue = readMetadataBlob(
       bytes,
@@ -319,18 +315,14 @@ export const managedMetadataTypeNames = (
       } else {
         const source = readTypeDefinitionRowFacts(bytes, layout, row);
         flags = source.flags;
-        name = readMetadataString(
+        name = readRequiredMetadataName(
           bytes,
           layout,
-          source.nameIndex,
-          layout.strings.size,
+          "TypeDef",
+          metadataToken(2, row),
+          source,
         );
-        namespace = readMetadataString(
-          bytes,
-          layout,
-          source.namespaceIndex,
-          layout.strings.size,
-        );
+        namespace = readMetadataString(bytes, layout, source.namespaceIndex);
       }
       parentRow = nesting.enclosing.get(row) ?? null;
       const isNested = (flags & 0x7) >= 2;
@@ -428,7 +420,11 @@ const decodeFixedString = (
   blob: Buffer,
   layout: ManagedMetadataLayout,
 ): string | null => {
-  if (blob.length < 3 || blob.readUInt16LE(0) !== 1 || blob[2] === 0xff)
+  if (
+    blob.length < 3 ||
+    new BinaryReader(blob, true, "managed").u16(0) !== 1 ||
+    blob[2] === 0xff
+  )
     return null;
   const decoded = readManagedCompressedUnsigned(blob, 2);
   if (!decoded.ok) return null;
@@ -542,7 +538,6 @@ export const readResource = ({
     bytes,
     layout,
     cursor.readIndex(layout.stringIndexSize),
-    layout.strings.size,
   );
   const implementationOffset = cursor.offset;
   const implementationRaw = cursor.readIndex(
@@ -573,7 +568,7 @@ export const readResource = ({
       });
     } else {
       const start = directory.offset + declaredOffset;
-      dataLength = bytes.readUInt32LE(start);
+      dataLength = new BinaryReader(bytes, true, "managed-pe").u32(start);
       if (dataLength > directory.size - declaredOffset - 4) {
         issues.push({
           code: "invalid-resource",

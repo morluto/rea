@@ -15,8 +15,8 @@ additional permission flag or degraded mode is required.
 
 - Windows 10+ x64 with fixed local NTFS/ReFS target and temporary volumes;
 - Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), or 26.12.1+;
-- an operator-installed Ghidra 12.x (>=12.2) distribution (verified with 12.2);
-- a 64-bit full JDK inside that installation's declared Java range (JDK 25 or newer, with no maximum, for the verified 12.2 release);
+- an operator-installed Ghidra distribution and 64-bit full JDK in the
+  [supported range](../getting-started/installation.md#ghidra);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, a
   [DOS MZ executable](ghidra-dos.md), or a
   [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
@@ -160,11 +160,11 @@ x64 host. The packaged verifier accepts the same flags. These fixtures are not
 compiler-produced programs. ARM64EC (machine 0xA641) and ARM64X are not admitted;
 this target support does not establish Windows-on-Arm host support.
 
-Real Windows x64 verification with Ghidra 12.1.4 and JDK 21 completed the ARM64
-application and ARMNT/Thumb DLL fixtures' 26 read-only operations, constant-return
-decompilation, byte searches, CLI/MCP file-offset parity, source identity, and
-owned cleanup. The DLL fixture also verifies the exported caller/callee
-relationship. The x86/x64 compact-reference value-flow battery does not cover
+Recorded on Ghidra 12.1.4 with JDK 21 (no longer accepted); not yet re-run on
+12.2. That Windows x64 run completed the ARM64 application and ARMNT/Thumb DLL
+fixtures' 26 read-only operations, constant-return decompilation, byte searches,
+CLI/MCP file-offset parity, source identity, and owned cleanup. The DLL fixture
+also verified the exported caller/callee relationship. The x86/x64 compact-reference value-flow battery does not cover
 ARM or ARM64 instructions. ARM64 EXE file-offset verification includes ambiguous
 mappings; the single-section ARM32 DLL cannot exercise that case.
 

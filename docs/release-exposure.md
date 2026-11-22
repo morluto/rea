@@ -42,6 +42,14 @@ The audit composes existing readers. It does not reread Electron fuse bytes itse
 | `macho.hardened_runtime`        | Not assessed in this audit                                                     |          |
 | `android.manifest`              | Not assessed in this audit                                                     |          |
 
+`native.pdb_path` retains undecodable CodeView paths as hex in
+`observation.pdb_path_bytes` with the containing image path and an explicit
+unknown encoding. The check can observe the reference even when its text is
+unavailable. CodeView path reads stop at the first 4 KiB of each record.
+When a CodeView record has no file pointer, its RVA must resolve to
+file-backed content in the declared PE image. Raw section alignment
+padding does not supply an RVA mapping.
+
 `go.build_paths` reads a flag's arguments by the rules of the tool that takes them. A linker `-X` value is an application string, so a relative one is not a path. A rooted one cannot be told from a file path, so it is reported: `-X main.route=/api/v1` is sampled like `-X main.root=/srv/build`, because dropping both would miss the second.
 
 `text.credential_markers` matches provider-prefixed forms such as a PEM private-key header and documented vendor token prefixes. The report contains the rule id and location only. Matched bytes, previews, lengths, and hashes of matched bytes are omitted.
@@ -66,6 +74,6 @@ A map read counts against the source-map allowance when it starts, so an oversiz
 
 `exposed` means the check's condition was observed. `not_observed` means that condition was absent in a completed scan. `not_applicable` means the check does not apply to this artifact, for example Electron fuses on an app bundle with no Electron Framework, or on a directory whose native images were all read and hold no fuse sentinel. `unknown` means the check could not be decided, including a directory with no ASAR layout where those reads are missing or incomplete (an `asar: false` Electron build has no ASAR to find), safe fuses from an incomplete inventory, an unopened packaged native image, or a dropped image when the sample did not read an executable named as the Electron host or every executable that could be it, a missing fuse sentinel on an Electron target, a universal binary with a slice that has no sentinel or an undecided fuse, a file that changed after inventory, Electron fuses on a selected ASAR (which does not include the executable that holds them), a PE inside a package that was too large to read, Go or Rust metadata on a native image stored inside a package, and Go or Rust metadata that was not present. Absence of that metadata is not proof the binary is something else. `not_assessed` means this audit did not run the check.
 
-Cancellation during a Go, Rust, fuse, or desktop read returns a typed cancellation error. Its partial observation holds the report with completed facts, and checks whose readers did not run are `unknown`. Cancellation during the member scan returns the same typed cancellation error. Its partial observation holds the members examined before the cancellation, with member coverage `unknown` and a limitation saying the scan was cancelled. Cancellation before the scan can be assembled, such as during inventory, returns no partial report.
+Cancellation during a Go, Rust, fuse, or desktop read returns a typed cancellation error. Its partial observation holds the report with completed facts, and checks whose readers did not run are `unknown`. Cancellation during the member scan returns the same typed cancellation error. Its partial observation holds the members examined before the cancellation, with member coverage `unknown` and a limitation saying the scan was cancelled. Cancellation before the scan can be assembled, such as during inventory, returns no partial report. If a reader still owns a resource that could not be closed, the workflow returns `cleanup_incomplete` with that owner and any partial report it could assemble. See [lifecycle completion](development/tool-design.md#own-the-lifecycle).
 
 Severity is `null` unless the status is `exposed`.

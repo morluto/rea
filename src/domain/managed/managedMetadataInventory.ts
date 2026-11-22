@@ -1,6 +1,8 @@
 import type {
   ManagedArtifactInspection,
   ManagedParseIssue,
+  NamedManagedModule,
+  UnresolvedManagedModuleName,
 } from "./managedArtifact.js";
 import {
   METADATA_TABLE_NAMES,
@@ -25,7 +27,6 @@ import {
 } from "./managedReaderFailure.js";
 import type { ManagedPeLayout } from "./managedPeReader.js";
 
-type ModuleIdentity = NonNullable<ManagedArtifactInspection["module"]>;
 type AssemblyIdentity = NonNullable<ManagedArtifactInspection["assembly"]>;
 type AssemblyReference = ManagedArtifactInspection["references"][number];
 type ManagedResource = ManagedArtifactInspection["resources"][number];
@@ -55,7 +56,8 @@ export const readManagedResourceDirectory = (
 };
 
 export interface ManagedMetadataInventory {
-  readonly module: ModuleIdentity | null;
+  readonly module: NamedManagedModule | null;
+  readonly unresolvedModuleName: UnresolvedManagedModuleName | null;
   readonly assembly: AssemblyIdentity | null;
   readonly targetFrameworks: readonly string[];
   readonly referenceNames: readonly string[];
@@ -105,17 +107,21 @@ const validateIdentityTableCounts = (
 export const readManagedModuleIdentity = (
   bytes: Buffer,
   layout: ManagedMetadataLayout,
-): Pick<ManagedMetadataInventory, "module" | "issues"> => {
+): Pick<
+  ManagedMetadataInventory,
+  "module" | "unresolvedModuleName" | "issues"
+> => {
   const issues: ManagedParseIssue[] =
     layout.guid.issue === null ? [] : [layout.guid.issue];
   if (layout.blob?.issue) issues.push(layout.blob.issue);
+  if (layout.strings.issue !== null) issues.push(layout.strings.issue);
   validateIdentityTableCounts(layout, issues);
-  const module =
-    readManagedValue(
-      () => readModule(bytes, layout, layout.strings.size),
-      issues,
-    ) ?? null;
-  return { module, issues };
+  const row = readManagedValue(() => readModule(bytes, layout, issues), issues);
+  return {
+    module: row?.name === null ? null : (row ?? null),
+    unresolvedModuleName: row?.name === null ? row : null,
+    issues,
+  };
 };
 
 const readReferences = (
@@ -129,7 +135,7 @@ const readReferences = (
   const referenceNames = new Set<string>();
   const references = readRows(layout.table(35), (row) => {
     const observed = readManagedValue(
-      () => readAssemblyReference(bytes, layout, row, layout.strings.size),
+      () => readAssemblyReference(bytes, layout, row),
       issues,
     );
     if (observed === undefined) return undefined;
@@ -202,18 +208,15 @@ export const readManagedMetadataInventory = (
   memberLists: TypeMemberListFacts,
   identity: Pick<
     ManagedMetadataInventory,
-    "module" | "issues"
+    "module" | "unresolvedModuleName" | "issues"
   > = readManagedModuleIdentity(bytes, layout),
   typeNames?: ManagedMetadataTypeNameLookup,
 ): ManagedMetadataInventory => {
   const issues: ManagedParseIssue[] = [...memberLists.issues];
   appendManagedParseIssues(issues, identity.issues);
-  const { module } = identity;
+  const { module, unresolvedModuleName } = identity;
   const assembly =
-    readManagedValue(
-      () => readAssembly(bytes, layout, layout.strings.size),
-      issues,
-    ) ?? null;
+    readManagedValue(() => readAssembly(bytes, layout), issues) ?? null;
   const { references, referenceNames } = readReferences(bytes, layout, issues);
   const resources = readResources({
     bytes,
@@ -230,6 +233,7 @@ export const readManagedMetadataInventory = (
   );
   return {
     module,
+    unresolvedModuleName,
     assembly,
     targetFrameworks,
     referenceNames,
@@ -239,6 +243,14 @@ export const readManagedMetadataInventory = (
     issues: uniqueManagedParseIssues(issues),
   };
 };
+
+/** Add row-local identity only when the checked Module row has an unresolved name. */
+export const unresolvedModuleMetadata = (
+  identity: Pick<ManagedMetadataInventory, "unresolvedModuleName">,
+): { readonly unresolved_module_name?: UnresolvedManagedModuleName } =>
+  identity.unresolvedModuleName === null
+    ? {}
+    : { unresolved_module_name: identity.unresolvedModuleName };
 
 /** Stable table-name/count projection for caller-visible coverage. */
 export const managedTableRowCounts = (

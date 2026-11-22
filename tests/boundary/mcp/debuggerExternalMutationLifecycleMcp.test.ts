@@ -21,10 +21,13 @@ import {
 import { phaseGate } from "../../support/lifecycleHarness.js";
 import { waitFor } from "../../support/testWait.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import type { BinarySession } from "../../../src/application/binary/BinarySession.js";
+import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
 
-type RecordEvidence = (evidence: Evidence) => Result<"added", AnalysisError>;
+type RecordEvidence = BinarySession["recordEvidence"];
 
 /**
  * The debugger operations each lifecycle regression drives, independent of
@@ -274,11 +277,9 @@ describe.each([RIZIN, GDB, CUTTER])(
         retryCleanup: async () => ok(null),
         ...overrides,
       };
-      const recorded: Evidence[] = [];
-      const server = debuggerTools.serve(operations, session, (evidence) => {
-        recorded.push(evidence);
-        return ok("added" as const);
-      });
+      const server = debuggerTools.serve(operations, session, (evidence) =>
+        session.recordEvidence(evidence),
+      );
       const client = new Client(
         { name: "debugger-lifecycle", version: "1" },
         { jsonSchemaValidator: createMcpSchemaValidation() },
@@ -292,15 +293,16 @@ describe.each([RIZIN, GDB, CUTTER])(
         InMemoryTransport.createLinkedPair();
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      return { client, recorded };
+      return { client, session };
     };
 
     it("retries a failed debugger cleanup before the next mutation and keeps it owned while it fails", async () => {
       const detach = ownedDetachFailure(debuggerTools.command.name);
+      const completed = debuggerTools.evidence();
       const execute = vi
         .fn<Operations["execute"]>()
         .mockResolvedValueOnce(err(detach.error))
-        .mockImplementation(async () => ok(debuggerTools.evidence()));
+        .mockResolvedValue(ok(completed));
       const start = vi.fn<Operations["start"]>(async () => ok(null));
       const retryCleanup = vi
         .fn<Operations["retryCleanup"]>()
@@ -310,7 +312,7 @@ describe.each([RIZIN, GDB, CUTTER])(
           return ok(null);
         });
       const operations = { execute, start, retryCleanup };
-      const { client } = await connect(operations);
+      const { client, session } = await connect(operations);
       const next = operations[debuggerTools.next.runs as "execute" | "start"];
 
       const failed = await client.callTool(debuggerTools.command);
@@ -327,6 +329,12 @@ describe.each([RIZIN, GDB, CUTTER])(
       expect(admitted.isError ?? false, JSON.stringify(admitted)).toBe(false);
       expect(retryCleanup).toHaveBeenCalledTimes(2);
       expect(next).toHaveBeenCalledTimes(nextCalls + 1);
+      if (debuggerTools.next.runs === "execute") {
+        expect(admitted.structuredContent).toMatchObject({
+          evidence_id: completed.evidence_id,
+        });
+        expect(session.evidenceById(completed.evidence_id)).toEqual(completed);
+      }
     });
 
     it("keeps a completed command's Evidence when cancellation arrives during final cleanup", async () => {
@@ -348,23 +356,44 @@ describe.each([RIZIN, GDB, CUTTER])(
       expect((await session.open(target)).ok).toBe(true);
       const completed = debuggerTools.evidence();
       const execute = vi.fn(async () => ok(completed));
-      const { client, recorded } = await connect({ execute }, session);
+      const { client } = await connect({ execute }, session);
+      const partial = vi.spyOn(
+        ToolResultDelivery.prototype,
+        "toPartialErrorToolResult",
+      );
+      onTestFinished(() => {
+        partial.mockRestore();
+      });
       const controller = new AbortController();
       const command = client
         .callTool(debuggerTools.command, { signal: controller.signal })
-        .catch(() => undefined);
+        .catch((cause: unknown) => cause);
       await retiring.reached(command, "analysis retirement close");
       expect(execute).toHaveBeenCalledOnce();
+      expect(session.hasEvidence(completed.evidence_id)).toBe(false);
       controller.abort();
+      await client.ping();
       retiring.release();
-      await command;
-      // Retirement still completes, and the completed command's Evidence is
-      // retained through the session writer as the cancellation's partial.
+      expect(await command).toBeInstanceOf(Error);
+
+      // The SDK suppresses replies to cancelled calls. Observe the canonical
+      // server result so client rejection alone cannot satisfy the test.
       await waitFor(() =>
-        expect(recorded.map(({ evidence_id }) => evidence_id)).toContain(
-          completed.evidence_id,
-        ),
+        expect(session.hasEvidence(completed.evidence_id)).toBe(true),
       );
+      expect(partial).toHaveBeenCalledOnce();
+      const delivery = partial.mock.results[0];
+      if (delivery?.type !== "return")
+        throw new Error("Missing server cancellation result");
+      expect(parseMcpToolError(delivery.value)).toMatchObject({
+        error: {
+          code: "cancelled",
+          details: {
+            partial_observation: { evidence_id: completed.evidence_id },
+          },
+        },
+      });
+      expect(session.evidenceById(completed.evidence_id)).toEqual(completed);
       expect(session.activeTarget()).toBeUndefined();
     });
 

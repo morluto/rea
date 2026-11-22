@@ -30,10 +30,11 @@ import {
   cliNative,
   nativeBoundarySummary,
   nativeImplementations,
-  parseFields,
-  parseImplMaps,
-  parseMethods,
   parseModuleRefs,
+  readReferencedFieldNames,
+  resolveImplMapMemberNames,
+  scanImplMaps,
+  scanNativeMethods,
 } from "./ManagedNativeBoundaryHelpers.js";
 
 type Inventory = ReturnType<typeof readManagedMetadataInventory>;
@@ -166,30 +167,33 @@ export const inspectManagedNativeBoundariesBytes = (
     });
   }
   try {
-    const heapExtent = layout.strings.size;
     appendManagedParseIssues(issues, inventory.issues);
-    const moduleRefs = parseModuleRefs(bytes, layout, heapExtent, issues);
-    const members = new Map([
-      ...parseFields(bytes, layout, heapExtent, issues),
-      ...parseMethods(bytes, layout, heapExtent, issues),
-    ]);
-    const imports = parseImplMaps({
+    const moduleRefs = parseModuleRefs(bytes, layout, issues);
+    const implMaps = scanImplMaps(bytes, layout, moduleRefs);
+    const fieldNames = readReferencedFieldNames(
       bytes,
       layout,
-      heapExtent,
-      modules: moduleRefs,
-      members,
+      implMaps.referencedFieldRows,
       issues,
-    });
+    );
+    const { methodNames, methods } = scanNativeMethods(
+      bytes,
+      layout,
+      implMaps.referencedMethodRows,
+      issues,
+    );
+    appendManagedParseIssues(issues, implMaps.issues);
+    const imports = resolveImplMapMemberNames(
+      implMaps.imports,
+      fieldNames,
+      methodNames,
+    );
     const pinvokeTokens = new Set(
       imports
         .map(({ member_token }) => member_token)
         .filter((token): token is string => token !== null),
     );
-    const implementations = nativeImplementations(
-      members.values(),
-      pinvokeTokens,
-    );
+    const implementations = nativeImplementations(methods, pinvokeTokens);
     return buildNativeBoundaryInspection({
       target,
       bytes,

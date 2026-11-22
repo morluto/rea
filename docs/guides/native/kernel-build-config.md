@@ -72,11 +72,14 @@ Each entry has a `name`, a `kind`, and a `value`:
 | `kind`    | Source line                | `value`                   |
 | --------- | -------------------------- | ------------------------- |
 | `y`, `m`  | `CONFIG_X=y`, `CONFIG_X=m` | `y` or `m`                |
-| `number`  | decimal or `0x` hex        | the text as written       |
+| `number`  | Kconfig integer or hex     | the text as written       |
 | `string`  | `CONFIG_X="..."`           | decoded text (`\"`, `\\`) |
 | `not_set` | `# CONFIG_X is not set`    | `null`                    |
 
-Banner text and configuration values are target-derived and untrusted.
+Kconfig can write hexadecimal values without a `0x` prefix. REA preserves
+the spelling and leaves the numeric base unresolved when the value alone
+cannot establish it. Banner text and configuration values are target-derived
+and untrusted.
 
 ## bzImage payloads
 

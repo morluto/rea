@@ -14,6 +14,7 @@ import {
 import {
   CAPTURE_PROCESS_MEMORY_LIMIT_REASON,
   historicalCaptureFailure,
+  recordedDecoderCpuSeconds,
   captureMemoryFailure,
   protobufCaptureFailure,
   withCaptureReaderCleanup,
@@ -309,6 +310,14 @@ export class HistoricalCaptureDecoder {
             input.format,
             OPERATION,
             reply.message,
+            {
+              userMessage: reply.message,
+              remediationAction:
+                "Meet the reported capture format or decoder requirement before retrying.",
+              ...(reply.pointer === ""
+                ? {}
+                : { diagnostics: { pointer: reply.pointer } }),
+            },
           );
         throw new AnalysisOutputError(OPERATION, reply.message, {
           userMessage: `The capture decoder refused a complete reply exceeding ${String(captureBudgets().outputBytes)} bytes: ${reply.message}`,
@@ -433,6 +442,11 @@ export class HistoricalCaptureDecoder {
       // Preparation transfers independent helper/descriptor owners. Keep that
       // typed stage separate from the decoder supervisor lease above: its
       // historical error already follows the post-launch completion owner.
+      const effectiveCpuSeconds = await recordedDecoderCpuSeconds(
+        runtime?.path,
+        cause,
+        runtimeResources,
+      );
       const error = retainProcessInspectionCleanup(
         processInspectionFailure(cause),
         historicalCaptureFailure(
@@ -442,6 +456,7 @@ export class HistoricalCaptureDecoder {
           options,
           reportedHeap,
           processLease,
+          effectiveCpuSeconds,
         ),
         runtimeResources,
         OPERATION,

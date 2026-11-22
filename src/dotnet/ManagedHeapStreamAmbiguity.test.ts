@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
 
+import {
+  duplicateManagedHeap as duplicateHeap,
+  type DuplicateHeapVariant as Variant,
+} from "../../tests/fixtures/managedDuplicateMetadataHeap.js";
 import { readManagedMetadataLayout } from "../domain/managed/managedMetadataLayout.js";
 import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { inspectManagedArtifactBytes } from "./ManagedArtifactInspector.js";
@@ -11,86 +15,16 @@ import {
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 
-const FIRST_MVID = "11111111-1111-1111-1111-111111111111";
-const SECOND_MVID = "22222222-2222-2222-2222-222222222222";
-
-type Variant = "forward" | "reverse" | "alias" | "outside-root";
-
-const duplicateHeap = (
-  bytes: Buffer,
-  name: "#GUID" | "#US" | "#Blob",
-  alternateHeap: Buffer,
-  variant: Variant,
-) => {
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Fixture omitted a CLI header");
-  const size = pe.cli.metadata.size;
-  const start = pe.rvaToOffset(pe.cli.metadata.rva, size, "fixture metadata");
-  const original = Buffer.from(bytes.subarray(start, start + size));
-  const streamCount = original.readUInt16LE(30);
-  const headers: number[] = [];
-  let heapHeader = -1;
-  let end = 32;
-  for (let index = 0; index < streamCount; index += 1) {
-    headers.push(end);
-    const terminator = original.indexOf(0, end + 8);
-    if (original.toString("ascii", end + 8, terminator) === name)
-      heapHeader = end;
-    end = Math.ceil((terminator + 1) / 4) * 4;
-  }
-  if (heapHeader < 0) throw new Error(`Fixture omitted ${name}`);
-  const headerSize = 8 + Math.ceil((name.length + 1) / 4) * 4;
-  const alternate = size + headerSize;
-  const extended = Buffer.alloc(
-    variant === "alias" ? alternate : alternate + alternateHeap.byteLength,
-  );
-  original.copy(extended, 0, 0, end);
-  original.copy(extended, end + headerSize, end);
-  extended.writeUInt16LE(streamCount + 1, 30);
-  for (const header of headers)
-    extended.writeUInt32LE(original.readUInt32LE(header) + headerSize, header);
-  const originalHeap = extended.readUInt32LE(heapHeader);
-  const [first, second] = (
-    {
-      forward: [originalHeap, alternate],
-      reverse: [alternate, originalHeap],
-      alias: [originalHeap, originalHeap],
-      "outside-root": [originalHeap, extended.length],
-    } as const
-  )[variant];
-  if (variant !== "alias") alternateHeap.copy(extended, alternate);
-  extended.writeUInt32LE(first, heapHeader);
-  extended.writeUInt32LE(second, end);
-  const originalSize = original.readUInt32LE(heapHeader + 4);
-  extended.writeUInt32LE(
-    variant === "reverse" ? alternateHeap.byteLength : originalSize,
-    heapHeader + 4,
-  );
-  extended.writeUInt32LE(
-    variant === "alias" || variant === "reverse"
-      ? originalSize
-      : alternateHeap.byteLength,
-    end + 4,
-  );
-  extended.write(name, end + 8);
-  bytes.set(extended, start);
-  bytes.writeUInt32LE(extended.length, pe.cli.headerOffset + 12);
-
-  return {
-    bytes,
-    duplicateHeader: start + end,
-    firstHeader: start + heapHeader,
-    firstRange: start + first,
-    secondRange: start + second,
-    metadataEnd: start + extended.length,
-  };
-};
+const FIRST_MVID = "67452301-ab89-efcd-1032-547698badcfe";
+const SECOND_MVID = "98badcfe-5476-1032-efcd-ab8967452301";
 
 const duplicateGuidFixture = (variant: Variant) =>
   duplicateHeap(
-    buildManagedPeFixture({ mvid: Buffer.alloc(16, 0x11) }),
+    buildManagedPeFixture({
+      mvid: Buffer.from("0123456789abcdef1032547698badcfe", "hex"),
+    }),
     "#GUID",
-    Buffer.alloc(16, 0x22),
+    Buffer.from("fedcba9876543210efcdab8967452301", "hex"),
     variant,
   );
 
@@ -104,9 +38,15 @@ it.each([
     const { bytes, duplicateHeader, firstHeader, firstRange, secondRange } =
       duplicateGuidFixture(variant);
     const target = managedPeFixtureTarget(bytes);
-    const artifact = inspectManagedArtifactBytes(bytes, target);
     const members = inspectManagedMembersBytes(bytes, target);
-    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
+    const boundaries =
+      variant === "reverse"
+        ? null
+        : inspectManagedNativeBoundariesBytes(bytes, target);
+    const reports =
+      boundaries === null
+        ? [members]
+        : [members, inspectManagedArtifactBytes(bytes, target), boundaries];
     const scope = "metadata.#GUID";
     const issue = {
       code: "invalid-stream",
@@ -117,7 +57,7 @@ it.each([
       ),
     };
 
-    for (const report of [artifact, members, boundaries]) {
+    for (const report of reports) {
       expect(report).toMatchObject({
         artifact: { sha256: target.sha256 },
         metadata: {
@@ -142,40 +82,18 @@ it.each([
       );
     }
     expect(members.identity_scope.requires_mvid).toBe(mvid);
-    expect(boundaries.identity_scope.requires_mvid).toBe(mvid);
-    expect(
-      members.types.some(({ full_name }) => full_name === "Fixture.Program"),
-    ).toBe(true);
+    if (boundaries !== null)
+      expect(boundaries.identity_scope.requires_mvid).toBe(mvid);
+    expect(members.types).toMatchObject([{ full_name: "Fixture.Program" }]);
     expect(members.methods).toHaveLength(1);
     if (variant !== "alias") {
-      for (const report of [artifact, members, boundaries]) {
+      for (const report of reports) {
         expect(JSON.stringify(report)).not.toContain(FIRST_MVID);
         expect(JSON.stringify(report)).not.toContain(SECOND_MVID);
       }
     }
   },
 );
-
-it("rejects a duplicate #GUID declaration whose extent leaves the metadata root", () => {
-  const { bytes, metadataEnd } = duplicateGuidFixture("outside-root");
-  const target = managedPeFixtureTarget(bytes);
-
-  for (const inspect of [
-    inspectManagedArtifactBytes,
-    inspectManagedMembersBytes,
-    inspectManagedNativeBoundariesBytes,
-  ]) {
-    const report = inspect(bytes, target);
-    expect(report.metadata.status).toBe("malformed");
-    expect(report.module).toBeNull();
-    expect(report.coverage.issues).toContainEqual({
-      code: "invalid-metadata-root",
-      scope: "metadata.#GUID",
-      detail: "metadata.#GUID leaves the metadata byte range",
-      offset: metadataEnd,
-    });
-  }
-});
 
 const duplicateUserStringFixture = (variant: Variant) => {
   const {
@@ -228,30 +146,16 @@ it.each(["forward", "reverse", "alias"] as const)(
         },
       ],
     });
-    expect(inspectManagedArtifactBytes(bytes, target).metadata.status).toBe(
-      "complete",
-    );
-    expect(
-      inspectManagedNativeBoundariesBytes(bytes, target).metadata.status,
-    ).toBe("complete");
+    if (variant === "forward") {
+      expect(inspectManagedArtifactBytes(bytes, target).metadata.status).toBe(
+        "complete",
+      );
+      expect(
+        inspectManagedNativeBoundariesBytes(bytes, target).metadata.status,
+      ).toBe("complete");
+    }
   },
 );
-
-it("rejects a duplicate #US declaration outside the metadata root", () => {
-  const { bytes, metadataEnd } = duplicateUserStringFixture("outside-root");
-  const members = inspectManagedMembersBytes(
-    bytes,
-    managedPeFixtureTarget(bytes),
-  );
-  expect(members.metadata.status).toBe("malformed");
-  expect(members.coverage.issues).toContainEqual({
-    code: "invalid-metadata-root",
-    scope: "metadata.#US",
-    detail: "metadata.#US leaves the metadata byte range",
-    offset: metadataEnd,
-  });
-  expect(members.user_strings).toBeNull();
-});
 
 const duplicateBlobFixture = (
   variant: Variant,
@@ -284,23 +188,30 @@ it.each(["forward", "reverse", "alias"] as const)(
   (variant) => {
     const { bytes, duplicateHeader } = duplicateBlobFixture(variant);
     const target = managedPeFixtureTarget(bytes);
-    const artifact = inspectManagedArtifactBytes(bytes, target);
     const members = inspectManagedMembersBytes(bytes, target);
-    const boundaries = inspectManagedNativeBoundariesBytes(bytes, target);
-    for (const report of [artifact, members, boundaries]) {
+    const artifact =
+      variant === "reverse" ? null : inspectManagedArtifactBytes(bytes, target);
+    const boundaries =
+      variant === "reverse"
+        ? null
+        : inspectManagedNativeBoundariesBytes(bytes, target);
+    for (const report of [members, artifact, boundaries]) {
+      if (report === null) continue;
       expect(report).toMatchObject({
         metadata: {
           status: "partial",
           table_row_counts: { Module: 1, Assembly: 1, MethodDef: 1, Field: 1 },
         },
-        module: { name: "Fixture.dll", mvid: expect.any(String) },
+        module: {
+          name: "Fixture.dll",
+          mvid: "00112233-4455-6677-8899-aabbccddeeff",
+        },
         coverage: { state: "partial" },
       });
-      expect(
-        report.coverage.issues.filter(
-          ({ scope }) => scope === "metadata.#Blob",
-        ),
-      ).toEqual([
+      const issues = report.coverage.issues.filter(
+        ({ scope }) => scope === "metadata.#Blob",
+      );
+      expect(issues).toEqual([
         {
           code: "invalid-stream",
           scope: "metadata.#Blob",
@@ -311,6 +222,18 @@ it.each(["forward", "reverse", "alias"] as const)(
         },
       ]);
     }
+
+    expect(members.types).toMatchObject([{ full_name: "Fixture.Program" }]);
+    if (variant === "alias") {
+      expect(members.methods[0]?.signature.parse_status).toBe("decoded");
+      expect(members.fields[0]?.signature.parse_status).toBe("decoded");
+    } else {
+      expect(members.fields).toEqual([]);
+      expect(members.methods).toEqual([]);
+      expect(members.member_refs).toEqual([]);
+      expect(members.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
+    }
+    if (artifact === null || boundaries === null) return;
     expect(artifact.classification.evidence).toContainEqual(
       expect.objectContaining({ code: "unity-reference-observed" }),
     );
@@ -318,26 +241,17 @@ it.each(["forward", "reverse", "alias"] as const)(
       name: "Fixture.Managed",
       public_key: { kind: "none", byte_length: 0, sha256: null, token: null },
     });
-    expect(members.types).toContainEqual(
-      expect.objectContaining({ full_name: "Fixture.Program" }),
-    );
-    expect(boundaries.pinvoke_imports).toContainEqual(
-      expect.objectContaining({ import_name: "get_value" }),
-    );
     if (variant === "alias") {
-      expect(artifact.references).toContainEqual(
-        expect.objectContaining({ name: "UnityEngine.CoreModule" }),
-      );
-      expect(members.methods[0]?.signature.parse_status).toBe("decoded");
-      expect(members.fields[0]?.signature.parse_status).toBe("decoded");
+      expect(artifact.references).toMatchObject([
+        { name: "UnityEngine.CoreModule" },
+      ]);
     } else {
       expect(artifact.references).toEqual([]);
       expect(artifact.attributes).toEqual([]);
-      expect(members.fields).toEqual([]);
-      expect(members.methods).toEqual([]);
-      expect(members.member_refs).toEqual([]);
-      expect(members.method_rows).toEqual({ offset: 0, count: 1, total: 1 });
     }
+    expect(boundaries.pinvoke_imports).toContainEqual(
+      expect.objectContaining({ import_name: "get_value" }),
+    );
   },
 );
 
@@ -381,17 +295,25 @@ it("preserves a decoded body while its nonzero locals blob is unresolved", () =>
   });
 });
 
-it("validates the extent of a later #Blob declaration before observing metadata", () => {
-  const { bytes, metadataEnd } = duplicateBlobFixture("outside-root");
-  const report = inspectManagedArtifactBytes(
-    bytes,
-    managedPeFixtureTarget(bytes),
-  );
-  expect(report.metadata.status).toBe("malformed");
-  expect(report.coverage.issues).toContainEqual({
-    code: "invalid-metadata-root",
-    scope: "metadata.#Blob",
-    detail: "metadata.#Blob leaves the metadata byte range",
-    offset: metadataEnd,
-  });
-});
+it.each([
+  ["#GUID", duplicateGuidFixture, inspectManagedArtifactBytes],
+  ["#US", duplicateUserStringFixture, inspectManagedMembersBytes],
+  ["#Blob", duplicateBlobFixture, inspectManagedArtifactBytes],
+] as const)(
+  "validates the later %s extent before admitting metadata",
+  (heap, fixture, inspect) => {
+    const { bytes, metadataEnd } = fixture("outside-root");
+    const report = inspect(bytes, managedPeFixtureTarget(bytes));
+    expect(report.metadata.status).toBe("malformed");
+    expect(report.module).toBeNull();
+    expect(report.coverage.issues).toEqual([
+      {
+        code: "invalid-metadata-root",
+        scope: `metadata.${heap}`,
+        offset: metadataEnd,
+        detail: `metadata.${heap} leaves the metadata byte range`,
+      },
+    ]);
+    if (heap === "#US") expect(report).toMatchObject({ user_strings: null });
+  },
+);

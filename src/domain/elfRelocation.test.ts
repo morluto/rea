@@ -1,5 +1,8 @@
-import { expect, it } from "vitest";
-import { readElfRelocationEntry } from "./elfRelocation.js";
+import { describe, expect, it } from "vitest";
+import {
+  readElfRelocationEntry,
+  readElfRelocationEntryAt,
+} from "./elfRelocation.js";
 
 const formats = [
   { bits: 32, littleEndian: false },
@@ -31,18 +34,18 @@ it.each(formats)(
       view.setInt32(8, Number(addend), littleEndian);
     }
     const before = Buffer.from(backing);
+    const input = new Uint8Array(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength,
+    );
     const rel = readElfRelocationEntry(
-      backing.subarray(7),
+      bytes.subarray(0, wordBytes * 2),
       bits,
       littleEndian,
       "rel",
     );
-    const rela = readElfRelocationEntry(
-      backing.subarray(7),
-      bits,
-      littleEndian,
-      "rela",
-    );
+    const rela = readElfRelocationEntry(input, bits, littleEndian, "rela");
     expect(backing.equals(before)).toBe(true);
     backing.fill(0);
     expect(rel).toEqual({
@@ -80,3 +83,46 @@ it.each(formats)(
     }
   },
 );
+
+describe("readElfRelocationEntryAt", () => {
+  it.each(formats)(
+    "decodes ELF$bits REL/RELA at non-zero offsets without slicing (littleEndian=$littleEndian)",
+    ({ bits, littleEndian }) => {
+      const wide = bits === 64;
+      const wordBytes = wide ? 8 : 4;
+      const bytes = new Uint8Array(wordBytes * 3 + 5);
+      const offset = 5;
+      const view = new DataView(
+        bytes.buffer,
+        bytes.byteOffset + offset,
+        wordBytes * 3,
+      );
+      const relOffset = wide ? 0x0102030405060708n : 0x05060708n;
+      const symbolIndex = wide ? 0x12345678 : 0x654321;
+      const type = wide ? 0x9abcdef0 : 0xab;
+      const info = (BigInt(symbolIndex) << (wide ? 32n : 8n)) | BigInt(type);
+      const addend = wide ? -42n : -7n;
+      if (wide) {
+        view.setBigUint64(0, relOffset, littleEndian);
+        view.setBigUint64(8, info, littleEndian);
+        view.setBigInt64(16, addend, littleEndian);
+      } else {
+        view.setUint32(0, Number(relOffset), littleEndian);
+        view.setUint32(4, Number(info), littleEndian);
+        view.setInt32(8, Number(addend), littleEndian);
+      }
+      expect(
+        readElfRelocationEntryAt(bytes, offset, bits, littleEndian, "rel"),
+      ).toEqual({ offset: relOffset, type, symbolIndex });
+      expect(
+        readElfRelocationEntryAt(bytes, offset, bits, littleEndian, "rela"),
+      ).toEqual({ offset: relOffset, type, symbolIndex, addend });
+      expect(
+        readElfRelocationEntryAt(bytes, -1, bits, littleEndian, "rel"),
+      ).toBeNull();
+      expect(
+        readElfRelocationEntryAt(bytes, offset + 1, bits, littleEndian, "rela"),
+      ).toBeNull();
+    },
+  );
+});

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sha256Hex } from "../kernel/sha256Hex.js";
+import { createHash } from "node:crypto";
 
 export const PLAYWRIGHT_RESPONSE_BODY_PROVENANCE_LIMITATION =
   "Captured response-body bytes are the result of Playwright's Response.body() API. Playwright may satisfy that API with a credentialed follow-up load of the request URL when CDP has no body, so transaction and event links do not verify that retained bytes came from the original network transaction.";
@@ -55,7 +55,7 @@ const unavailableBrowserNetworkBodySchema = z.discriminatedUnion("reason", [
   }),
 ]);
 
-export const browserNetworkBodySchema = z.union([
+export const browserNetworkBodySchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("not_requested") }),
   z.strictObject({ state: z.literal("not_exposed") }),
   unavailableBrowserNetworkBodySchema,
@@ -80,20 +80,41 @@ export const browserNetworkBodySchema = z.union([
       redacted: z.boolean(),
     })
     .superRefine((artifact, context) => {
-      const bytes = Buffer.from(artifact.content, "base64");
-      if (bytes.toString("base64") !== artifact.content)
-        context.addIssue({
-          code: "custom",
-          path: ["content"],
-          message: "Network body must use canonical base64",
-        });
-      if (bytes.length !== artifact.bytes)
+      const encoded = artifact.content;
+      const hash = createHash("sha256");
+      // Complete quartets decode independently. Round-trip each bounded
+      // window to verify spelling without copying the entire retained body.
+      const windowCharacters = 64 * 1024;
+      let decodedBytes = 0;
+      for (
+        let offset = 0;
+        offset < encoded.length;
+        offset += windowCharacters
+      ) {
+        const end = Math.min(offset + windowCharacters, encoded.length);
+        const window = encoded.slice(offset, end);
+        const bytes = Buffer.from(window, "base64");
+        if (
+          bytes.toString("base64") !== window ||
+          (end < encoded.length && window.endsWith("="))
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: ["content"],
+            message: "Network body must use canonical base64",
+          });
+          return;
+        }
+        decodedBytes += bytes.length;
+        hash.update(bytes);
+      }
+      if (decodedBytes !== artifact.bytes)
         context.addIssue({
           code: "custom",
           path: ["bytes"],
           message: "Network body byte count disagrees with retained bytes",
         });
-      if (sha256Hex(bytes) !== artifact.sha256)
+      if (hash.digest("hex") !== artifact.sha256)
         context.addIssue({
           code: "custom",
           path: ["sha256"],
@@ -103,7 +124,7 @@ export const browserNetworkBodySchema = z.union([
 ]);
 
 /** Headers retain producer order and duplicates, with credential values removed. */
-export const browserNetworkHeadersSchema = z.union([
+export const browserNetworkHeadersSchema = z.discriminatedUnion("state", [
   z.strictObject({ state: z.literal("not_requested") }),
   z.strictObject({
     state: z.literal("unavailable"),
