@@ -922,6 +922,29 @@ jobs:
           tests/boundary/process/processCaptureLifecycle.test.ts
           tests/boundary/process/processCli.test.ts
           tests/boundary/mcp/sessionMcp.test.ts
+          tests/acceptance/appBundleBackslashCli.test.ts
+          tests/acceptance/applications/appBundleEncodingCli.test.ts
+          tests/acceptance/applications/assetCatalogResourceKeys.test.ts
+          tests/acceptance/applications/nativePlistBinaryScalars.test.ts
+          tests/acceptance/applications/nativePlistNesting.test.ts
+          tests/acceptance/applications/resourceOnlyPlistSelection.test.ts
+          tests/acceptance/nativeDispatchFallbackFailure.test.ts
+          tests/acceptance/nativeDispatchSnapshot.test.ts
+          tests/acceptance/nativeMachoParenthesizedCli.test.ts
+          tests/boundary/cli/artifactArmSlicesCli.test.ts
+          tests/boundary/cli/nativeDispatchInputBudget.test.ts
+          tests/boundary/cli/nativeDispatchRecordBudget.test.ts
+          tests/boundary/cli/nativeMachoDylibIdentityCli.test.ts
+          tests/boundary/cli/nativeMachoEchoedPathCli.test.ts
+          tests/boundary/cli/nativeMachoEvidenceDeliveryCli.test.ts
+          tests/boundary/cli/nativeMachoLinkerOptionsCli.test.ts
+          tests/boundary/cli/nativeMachoMissingUuidCli.test.ts
+          tests/boundary/cli/nativeMachoObjectSegmentCli.test.ts
+          tests/boundary/cli/nativeSignatureCallerSelection.test.ts
+          tests/boundary/cli/rawDiskImageCli.test.ts
+          tests/boundary/mcp/artifactArmSlicesMcp.test.ts
+          tests/boundary/mcp/nativeDispatchBoundTarget.test.ts
+          tests/boundary/mcp/nativePlistDiagnosticsMcp.test.ts
 
   reconstruction-readiness:
     name: Reconstruction readiness

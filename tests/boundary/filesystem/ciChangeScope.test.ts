@@ -2215,6 +2215,7 @@ const scopesSchema = z.object({
   CI_FLAGS: z.array(z.string()),
   CI_LANES: z.record(z.string(), z.object({ paths: z.array(z.string()) })),
   MANUAL_VERIFIERS: z.array(z.string()),
+  DARWIN_MANUAL_TESTS: z.record(z.string(), z.string().min(1)),
 });
 
 const loadScopes = async () =>
@@ -2263,6 +2264,52 @@ it("owns every explicit native-host test path with the lane that runs it", async
   expect(listed("windows-curated").length).toBeGreaterThan(0);
   expect(unowned("apple-artifacts", "apple")).toEqual([]);
   expect(unowned("windows-curated", "package")).toEqual([]);
+});
+
+// A darwin gate only skips the case off macOS, so a gated file that no macOS
+// job names passes CI without ever running.
+const DARWIN_GATE =
+  /skipIf\(process\.platform !== "darwin"\)|runIf\(process\.platform === "darwin"\)/u;
+
+it("runs every darwin-gated test file in a macOS job or records why it is manual", async () => {
+  const { DARWIN_MANUAL_TESTS } = await loadScopes();
+  const root = fileURLToPath(new URL("../../../", import.meta.url));
+  const gated: string[] = [];
+  for (const path of (await git(root, ["ls-files", "*.test.ts"]))
+    .split("\n")
+    .filter(Boolean))
+    if (DARWIN_GATE.test(await readFile(join(root, path), "utf8")))
+      gated.push(path);
+  const jobs = z.object({
+    jobs: z.record(
+      z.string(),
+      z.object({
+        "runs-on": z.unknown().optional(),
+        steps: z.array(z.object({ run: z.string().optional() })).optional(),
+      }),
+    ),
+  });
+  const named = new Set<string>();
+  for (const name of await readdir(
+    new URL("../../../.github/workflows/", import.meta.url),
+  )) {
+    if (!/\.ya?ml$/u.test(name)) continue;
+    const tokens = Object.values(jobs.parse(await workflowFile(name)).jobs)
+      .filter((job) => JSON.stringify(job["runs-on"] ?? "").includes("macos"))
+      .flatMap((job) => job.steps ?? [])
+      .flatMap((step) => step.run?.split(/\s+/u) ?? []);
+    for (const token of tokens)
+      if (token.endsWith(".test.ts")) named.add(token);
+  }
+  const manual = Object.keys(DARWIN_MANUAL_TESTS);
+  expect(gated.length).toBeGreaterThan(0);
+  expect(
+    gated.filter((path) => !named.has(path) && !manual.includes(path)),
+  ).toEqual([]);
+  // A stale exemption hides a file that later loses its gate or gains a job.
+  expect(
+    manual.filter((path) => !gated.includes(path) || named.has(path)),
+  ).toEqual([]);
 });
 
 it("never runs a manual-only verifier from an automatic workflow", async () => {
