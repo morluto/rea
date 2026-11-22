@@ -149,7 +149,7 @@ export class CdpRuntimeSources {
   /** Retain complete script text and compute a digest distinct from the producer hash. */
   async read(scriptIds: Iterable<string>): Promise<WebRuntimeSource[]> {
     this.check();
-    const validatedContexts = new Map<number, Record<string, JsonValue>>();
+    const validatedContexts = new WeakMap<object, Record<string, JsonValue>>();
     for (const scriptId of new Set(scriptIds)) {
       if (this.#sources.has(scriptId)) continue;
       const script = this.scripts.get(scriptId);
@@ -159,15 +159,12 @@ export class CdpRuntimeSources {
           ? undefined
           : this.#contexts.get(script.executionContextId);
       let reportedExecutionContext: Record<string, JsonValue> | null = null;
-      if (script !== undefined && context !== undefined) {
-        const cached = validatedContexts.get(script.executionContextId);
+      if (context !== undefined) {
+        const cached = validatedContexts.get(context);
         if (cached !== undefined) reportedExecutionContext = cached;
         else {
           reportedExecutionContext = ownedJsonObjectSchema.parse(context);
-          validatedContexts.set(
-            script.executionContextId,
-            reportedExecutionContext,
-          );
+          validatedContexts.set(context, reportedExecutionContext);
         }
       }
       const item: WebRuntimeSource = {
