@@ -44,8 +44,8 @@ it("skips a readable, writable Mach-O decoy with extra protection bits", () => {
   bytes.writeUInt32LE(144, 20);
   bytes.writeBigUInt64LE(BigInt(headerOffset), firstSegment + 32);
   bytes.writeBigUInt64LE(BigInt(headerOffset), firstSegment + 48);
-  bytes.writeUInt32LE(11, firstSegment + 56);
-  bytes.writeUInt32LE(11, firstSegment + 60);
+  bytes.writeUInt32LE(3, firstSegment + 56);
+  bytes.writeUInt32LE(3, firstSegment + 60);
   bytes.writeUInt32LE(0x19, secondSegment);
   bytes.writeUInt32LE(72, secondSegment + 4);
   bytes.write("__DATA2", secondSegment + 8, "ascii");
@@ -56,12 +56,14 @@ it("skips a readable, writable Mach-O decoy with extra protection bits", () => {
   bytes.writeUInt32LE(3, secondSegment + 56);
   bytes.writeUInt32LE(3, secondSegment + 60);
 
-  expect(readGoBinaryImage(bytes).build_info).toMatchObject({
-    header_offset: headerOffset,
-    go_version: "go1.26.0",
-  });
-  bytes.writeUInt32LE(3, firstSegment + 56);
-  bytes.writeUInt32LE(3, firstSegment + 60);
+  for (const protection of [firstSegment + 56, firstSegment + 60]) {
+    bytes.writeUInt32LE(11, protection);
+    expect(readGoBinaryImage(bytes).build_info).toMatchObject({
+      header_offset: headerOffset,
+      go_version: "go1.26.0",
+    });
+    bytes.writeUInt32LE(3, protection);
+  }
   expect(readGoBinaryImage(bytes).build_info).toMatchObject({
     header_offset: decoyOffset,
     go_version: "go-decoy",

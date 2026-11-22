@@ -533,19 +533,32 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     const { input } = this.presentation;
     if (inputSchema === undefined || !hasAdvertisedInputJsonSchema(inputSchema))
       return config;
+    let draft2020:
+      | {
+          readonly description: string | undefined;
+          readonly inputSchema: Record<string, unknown> | undefined;
+        }
+      | undefined;
+    const projectDraft2020 = () => {
+      if (draft2020 !== undefined) return draft2020;
+      const projected = (inputSchema as StandardSchemaWithJSON)[
+        "~standard"
+      ].jsonSchema.input({ target: "draft-2020-12" });
+      draft2020 = isRecord(projected)
+        ? advertiseToolInput(description, projected, input)
+        : { description, inputSchema: undefined };
+      return draft2020;
+    };
     return {
-      ...this.describeTool(name, () => {
-        const projected = (inputSchema as StandardSchemaWithJSON)[
-          "~standard"
-        ].jsonSchema.input({ target: "draft-2020-12" });
-        return isRecord(projected)
-          ? advertiseToolInput(description, projected, input).description
-          : description;
-      }),
+      ...this.describeTool(name, () => projectDraft2020().description),
       inputSchema: transformAdvertisedInputJsonSchema(
         inputSchema,
         (projected) =>
           advertiseToolInput(description, projected, input).inputSchema,
+        (target) =>
+          target === "draft-2020-12"
+            ? projectDraft2020().inputSchema
+            : undefined,
       ),
     };
   }

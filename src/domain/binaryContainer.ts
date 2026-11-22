@@ -188,10 +188,11 @@ export type ImageSection = {
     }
 );
 
-/** Declared PT_DYNAMIC file extent, before consumer-specific admission. */
+/** Declared PT_DYNAMIC location, before consumer-specific admission. */
 export interface ElfDynamicSegment {
   readonly offset: bigint;
   readonly size: bigint;
+  readonly virtual_address: bigint;
 }
 
 /** Native container facts, without language metadata search policy. */

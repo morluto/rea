@@ -10,8 +10,10 @@ import {
   chmod,
   mkdir,
   readFile,
+  stat,
   symlink,
   truncate,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -233,6 +235,9 @@ it("drains hash descriptors even when session shutdown fails and retains its wor
   const workspace = launches[0]?.cwd;
   if (workspace === undefined)
     throw new Error("Expected an acquired workspace");
+  // Change the verified stat identity without changing the retained APK bytes.
+  const { atime, mtimeMs } = await stat(apk);
+  await utimes(apk, atime, new Date(mtimeMs - 10_000));
   const target = await parseBinaryTarget(apk);
   if (!target.ok) throw target.error;
   const fault = failInputHashCloses(target.value.path, 1);

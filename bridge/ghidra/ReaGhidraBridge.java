@@ -56,6 +56,7 @@ import com.google.gson.JsonIOException;
 import com.google.gson.JsonNull;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.stream.JsonWriter;
 
 import ghidra.app.util.headless.HeadlessScript;
 import ghidra.app.decompiler.DecompInterface;
@@ -469,7 +470,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     ? descriptor.decompileTimeoutSeconds() : request.decompileTimeoutSeconds();
                 valueFlowLimits = request.valueFlowLimits();
                 applyDecompilePayloadLimit(request.decompileMaxPayloadMiB());
-                writeSuccess(writer, request.id, handleRequest(request, descriptor));
+                dispatchAndWrite(writer, request, descriptor);
             }
             catch (RequestFailure failure) {
                 writeFailure(writer, request.id, failure.code, failure.getMessage());
@@ -485,11 +486,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
-    private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
-            throws Exception {
+    private void dispatchAndWrite(
+            BufferedWriter writer,
+            Request request,
+            SessionDescriptor descriptor) throws Exception {
         if (request.method.equals("ping")) {
             requireKeys(request.params, Set.of());
-            return sessionInfo(descriptor);
+            writeSuccess(writer, request.id, sessionInfo(descriptor));
+            return;
         }
         if (analysisTimeoutOccurred()) {
             throw new RequestFailure(
@@ -499,6 +503,18 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
         if (descriptor.existingProject && isMutatingOperation(request.method))
             throw new RequestFailure("method_unavailable", "Existing Ghidra project sessions are read-only");
+        switch (request.method) {
+            case "list_names" -> writeStreamingSuccess(writer, request.id, listNames(request.params));
+            case "list_procedures" -> writeStreamingSuccess(writer, request.id, listProcedures(request.params));
+            case "list_strings" -> writeStreamingSuccess(writer, request.id, listStrings(request.params));
+            case "search_procedures" -> writeStreamingSuccess(writer, request.id, search(request.params, true));
+            case "search_strings" -> writeStreamingSuccess(writer, request.id, search(request.params, false));
+            default -> writeSuccess(writer, request.id, handleRequest(request, descriptor));
+        }
+    }
+
+    private JsonElement handleRequest(Request request, SessionDescriptor descriptor)
+            throws Exception {
         return switch (request.method) {
             case "checkpoint_program" -> checkpointProgram(request.params, descriptor);
             case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
@@ -508,10 +524,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "address_to_file_offset" -> addressToFileOffset(request.params);
             case "address_name" -> addressName(request.params);
             case "list_documents" -> listDocuments(request.params);
-            case "list_names" -> listNames(request.params);
-            case "list_procedures" -> listProcedures(request.params);
             case "list_segments" -> listSegments(request.params);
-            case "list_strings" -> listStrings(request.params);
             case "procedure_address" -> procedureAddress(request.params);
             case "procedure_assembly" -> procedureAssembly(request.params);
             case "procedure_callees" -> procedureCalls(request.params, false);
@@ -521,8 +534,6 @@ public final class ReaGhidraBridge extends HeadlessScript {
             case "read_function_instructions" -> readFunctionInstructions(request.params);
             case "procedure_references" -> procedureReferences(request.params);
             case "resolve_containing_procedure" -> containingProcedure(request.params);
-            case "search_procedures" -> search(request.params, true);
-            case "search_strings" -> search(request.params, false);
             case "inspect_native_data_type" -> inspectNativeDataType(request.params);
             case "inspect_native_instruction" -> inspectNativeInstruction(request.params, true);
             case "resolve_native_call_targets" -> resolveNativeCallTargets(request.params);
@@ -2567,42 +2578,43 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return count;
     }
 
-    private JsonArray listNames(JsonObject params) throws Exception {
+    private StreamingResult listNames(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         String requested = optionalString(params, "address");
+        List<NameEntry> entries;
         if (requested != null) {
             Address address = parseReaAddress(requested);
             if (nameInventory != null) {
-                return nameInventoryJson(sliceAtAddress(nameInventory, NameEntry::address, address));
-            }
-            if (!address.isMemoryAddress() && !address.isExternalAddress()) {
-                return new JsonArray();
-            }
-            List<NameEntry> entries = new ArrayList<>();
-            for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(address)) {
-                monitor.checkCancelled();
-                Address symbolAddress = symbol.getAddress();
-                if (!symbolAddress.isMemoryAddress() && !symbolAddress.isExternalAddress()) {
-                    continue;
+                entries = sliceAtAddress(nameInventory, NameEntry::address, address);
+            } else if (!address.isMemoryAddress() && !address.isExternalAddress()) {
+                entries = List.of();
+            } else {
+                List<NameEntry> found = new ArrayList<>();
+                for (Symbol symbol : currentProgram.getSymbolTable().getSymbols(address)) {
+                    monitor.checkCancelled();
+                    Address symbolAddress = symbol.getAddress();
+                    if (!symbolAddress.isMemoryAddress() && !symbolAddress.isExternalAddress()) {
+                        continue;
+                    }
+                    found.add(new NameEntry(symbolAddress, symbol.getName(true), symbolFacts(symbol)));
                 }
-                entries.add(new NameEntry(symbolAddress, symbol.getName(true), symbolFacts(symbol)));
+                found.sort(NAME_ORDER);
+                entries = found;
             }
-            entries.sort(NAME_ORDER);
-            return nameInventoryJson(entries);
+        } else {
+            entries = names();
         }
-        return nameInventoryJson(names());
+        monitor.checkCancelled();
+        return out -> writeNameEntries(out, entries);
     }
 
-    private JsonArray listProcedures(JsonObject params) throws Exception {
+    private StreamingResult listProcedures(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document"));
         requireDocument(params);
-        JsonArray result = new JsonArray();
-        for (ProcedureEntry entry : procedures()) {
-            monitor.checkCancelled();
-            result.add(resultItem(entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol()));
-        }
-        return result;
+        List<ProcedureEntry> entries = procedures();
+        monitor.checkCancelled();
+        return out -> writeProcedureEntries(out, entries);
     }
 
     private JsonArray listSegments(JsonObject params) {
@@ -2625,24 +2637,25 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonArray listStrings(JsonObject params) throws Exception {
+    private StreamingResult listStrings(JsonObject params) throws Exception {
         requireKeys(params, Set.of("document", "address"));
         requireDocument(params);
         String requested = optionalString(params, "address");
+        List<StringEntry> entries;
         if (requested != null) {
             Address address = parseReaAddress(requested);
             if (stringInventory != null) {
-                return stringInventoryJson(sliceAtAddress(stringInventory, StringEntry::address, address));
+                entries = sliceAtAddress(stringInventory, StringEntry::address, address);
+            } else {
+                Data data = currentProgram.getListing().getDefinedDataAt(address);
+                StringEntry entry = data == null ? null : stringEntry(data);
+                entries = entry == null ? List.of() : List.of(entry);
             }
-            JsonArray result = new JsonArray();
-            Data data = currentProgram.getListing().getDefinedDataAt(address);
-            StringEntry entry = data == null ? null : stringEntry(data);
-            if (entry != null) {
-                result.add(resultItem(entry.address(), entry.value(), "string", entry.facts(), null));
-            }
-            return result;
+        } else {
+            entries = strings();
         }
-        return stringInventoryJson(strings());
+        monitor.checkCancelled();
+        return out -> writeStringEntries(out, entries);
     }
 
     private JsonElement procedureAddress(JsonObject params) throws Exception {
@@ -2670,7 +2683,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private JsonArray search(JsonObject params, boolean procedureSearch) throws Exception {
+    private StreamingResult search(JsonObject params, boolean procedureSearch) throws Exception {
         Set<String> keys = new HashSet<>(Set.of("pattern", "mode", "case_sensitive", "document"));
         if (params.has("literal_ascii_candidate")) keys.add("literal_ascii_candidate");
         requireKeys(params, keys);
@@ -2693,34 +2706,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 ? literalMatcher(expression)
                 : regexMatcher(expression, caseSensitive);
         }
-        JsonArray items = new JsonArray();
         if (procedureSearch) {
             // Search the names exact lookup accepts, keeping one row per
             // procedure under its primary name.
+            List<MatchedProcedure> matches = new ArrayList<>();
             for (ProcedureEntry entry : procedures()) {
                 monitor.checkCancelled();
                 ProcedureNameMatch match = matchProcedureNames(entry, matcher);
                 if (!match.matched()) {
                     continue;
                 }
-                JsonObject item = resultItem(entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol());
-                if (!match.aliases().isEmpty()) {
-                    JsonArray aliases = new JsonArray();
-                    for (String alias : match.aliases()) aliases.add(alias);
-                    item.add("matched_aliases", aliases);
-                }
-                items.add(item);
+                matches.add(new MatchedProcedure(entry, match.aliases()));
             }
-            return items;
+            return out -> writeMatchedProcedures(out, matches);
         }
+        List<StringEntry> matches = new ArrayList<>();
         for (StringEntry entry : strings()) {
             monitor.checkCancelled();
             if (!matcher.matches(entry.value())) {
                 continue;
             }
-            items.add(resultItem(entry.address(), entry.value(), "string", entry.facts(), null));
+            matches.add(entry);
         }
-        return items;
+        return out -> writeStringEntries(out, matches);
     }
 
     /**
@@ -5661,22 +5669,45 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return value.replaceAll("[\\r\\n]+", " ");
     }
 
-    private JsonArray nameInventoryJson(List<NameEntry> entries) throws Exception {
-        JsonArray result = new JsonArray();
+    private static void writeNameEntries(JsonWriter out, List<NameEntry> entries) throws IOException {
+        out.beginArray();
         for (NameEntry entry : entries) {
-            monitor.checkCancelled();
-            result.add(resultItem(entry.address(), entry.value(), "symbol", entry.facts(), null));
+            writeResultItem(out, entry.address(), entry.value(), "symbol", entry.facts(), null, List.of());
         }
-        return result;
+        out.endArray();
     }
 
-    private JsonArray stringInventoryJson(List<StringEntry> entries) throws Exception {
-        JsonArray result = new JsonArray();
-        for (StringEntry entry : entries) {
-            monitor.checkCancelled();
-            result.add(resultItem(entry.address(), entry.value(), "string", entry.facts(), null));
+    private static void writeProcedureEntries(JsonWriter out, List<ProcedureEntry> entries) throws IOException {
+        out.beginArray();
+        for (ProcedureEntry entry : entries) {
+            writeResultItem(out, entry.address(), entry.value(), "procedure", entry.facts(), entry.symbol(), List.of());
         }
-        return result;
+        out.endArray();
+    }
+
+    private static void writeMatchedProcedures(JsonWriter out, List<MatchedProcedure> matches) throws IOException {
+        out.beginArray();
+        for (MatchedProcedure match : matches) {
+            ProcedureEntry entry = match.entry();
+            writeResultItem(
+                out,
+                entry.address(),
+                entry.value(),
+                "procedure",
+                entry.facts(),
+                entry.symbol(),
+                match.matchedAliases()
+            );
+        }
+        out.endArray();
+    }
+
+    private static void writeStringEntries(JsonWriter out, List<StringEntry> entries) throws IOException {
+        out.beginArray();
+        for (StringEntry entry : entries) {
+            writeResultItem(out, entry.address(), entry.value(), "string", entry.facts(), null, List.of());
+        }
+        out.endArray();
     }
 
     private static <T> List<T> sliceAtAddress(
@@ -5704,23 +5735,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return sortedEntries.subList(low, end);
     }
 
-    private static JsonObject resultItem(
+    private static void writeResultItem(
+        JsonWriter out,
         Address address,
         String value,
         String factsName,
         InventoryFacts facts,
-        SymbolFacts symbol
-    ) {
-        JsonObject result = new JsonObject();
-        result.addProperty("address", canonicalAddress(address));
-        result.addProperty("value", value);
+        SymbolFacts symbol,
+        List<String> matchedAliases
+    ) throws IOException {
+        out.beginObject();
+        out.name("address").value(canonicalAddress(address));
+        out.name("value").value(value);
         if (factsName != null) {
-            result.add(factsName, facts.toJson());
+            out.name(factsName);
+            facts.writeJson(out);
         }
         if (symbol != null) {
-            result.add("symbol", symbol.toJson());
+            out.name("symbol");
+            symbol.writeJson(out);
         }
-        return result;
+        if (!matchedAliases.isEmpty()) {
+            out.name("matched_aliases");
+            out.beginArray();
+            for (String alias : matchedAliases) {
+                out.value(alias);
+            }
+            out.endArray();
+        }
+        out.endObject();
     }
 
     private static JsonObject memoryRegion(MemoryBlock block, String imageBase) {
@@ -6317,6 +6360,21 @@ public final class ReaGhidraBridge extends HeadlessScript {
         writeResponse(writer, response);
     }
 
+    private static void writeStreamingSuccess(BufferedWriter writer, int id, StreamingResult result)
+            throws IOException {
+        JsonWriter out = GSON.newJsonWriter(new SurrogateEscapingWriter(writer));
+        out.setSerializeNulls(true);
+        out.beginObject();
+        out.name("id").value(id);
+        out.name("ok").value(true);
+        out.name("result");
+        result.write(out);
+        out.endObject();
+        out.flush();
+        writer.newLine();
+        writer.flush();
+    }
+
     /** Reserved response id for a failure not tied to one parsed request. */
     private static final int CONNECTION_FAILURE_ID = 0;
 
@@ -6467,8 +6525,13 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    private interface StreamingResult {
+        void write(JsonWriter out) throws IOException;
+    }
+
     private interface InventoryFacts {
         JsonObject toJson();
+        void writeJson(JsonWriter out) throws IOException;
     }
 
     private static int compareInventory(
@@ -6517,6 +6580,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
             facts.addProperty("source", source);
             return facts;
         }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("primary").value(primary);
+            out.name("dynamic").value(dynamic);
+            out.name("external").value(external);
+            out.name("type").value(type);
+            out.name("source").value(source);
+            out.endObject();
+        }
     }
 
     private record ProcedureFacts(
@@ -6536,6 +6610,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             }
             return facts;
         }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("external").value(external);
+            out.name("thunk").value(thunk);
+            out.name("thunk_target");
+            if (thunkTarget == null) {
+                out.nullValue();
+            } else {
+                out.value(canonicalAddress(thunkTarget));
+            }
+            out.endObject();
+        }
     }
 
     private record StringFacts(
@@ -6554,8 +6642,20 @@ public final class ReaGhidraBridge extends HeadlessScript {
             facts.addProperty("byte_length", byteLength);
             return facts;
         }
+
+        @Override
+        public void writeJson(JsonWriter out) throws IOException {
+            out.beginObject();
+            out.name("encoding").value(encoding);
+            out.name("termination").value(
+                missingNullTerminator ? "missing" : "present_or_not_required"
+            );
+            out.name("byte_length").value(byteLength);
+            out.endObject();
+        }
     }
 
+    private record MatchedProcedure(ProcedureEntry entry, List<String> matchedAliases) {}
     private record NameEntry(Address address, String value, SymbolFacts facts) {}
     private record ProcedureAlias(String leaf, String qualified, boolean leafIsSuffix) {
         ProcedureAlias(String leaf, String qualified) {

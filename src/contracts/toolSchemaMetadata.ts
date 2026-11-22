@@ -277,6 +277,7 @@ export const omitAdvertisedOutputJsonSchema = <Schema>(
 export const transformAdvertisedInputJsonSchema = <Schema>(
   schema: Schema,
   transform: (projected: Record<string, unknown>) => Record<string, unknown>,
+  resolveCached?: (target: string) => Record<string, unknown> | undefined,
 ): Schema => {
   const standard = Reflect.get(schema as object, "~standard");
   if (!isRecord(standard)) return schema;
@@ -293,6 +294,11 @@ export const transformAdvertisedInputJsonSchema = <Schema>(
     if (cacheable) {
       const cached = byTarget.get(target);
       if (cached !== undefined) return cached;
+      const seeded = resolveCached?.(target);
+      if (seeded !== undefined) {
+        byTarget.set(target, seeded);
+        return seeded;
+      }
     }
     const projected = (project as (options: unknown) => unknown)(options);
     const transformed = isRecord(projected) ? transform(projected) : projected;
