@@ -219,6 +219,10 @@ class InvalidRequestError(Exception):
     """Caller input failed bridge request or operation validation."""
 
 
+class SelectorNotFoundError(InvalidRequestError):
+    """A valid selector did not resolve in the current Hopper document."""
+
+
 EXHAUSTIVE_ANALYSIS_METHODS = frozenset(
     (
         "analyze_function",
@@ -457,7 +461,7 @@ def _address_selection(document, value=None):
             try:
                 address = int(value, 16)
             except ValueError as error:
-                raise InvalidRequestError("Unknown Hopper address or name: %s" % value) from error
+                raise SelectorNotFoundError("Unknown Hopper address or name: %s" % value) from error
     if not 0 <= address < 0xFFFFFFFFFFFFFFFF:
         raise InvalidRequestError("Address is outside Hopper's usable unsigned 64-bit range: %s" % value)
     return address, source
@@ -478,7 +482,7 @@ def _procedure(document, value=None):
     address, source = _address_selection(document, value)
     result = _segment(document, address).getProcedureAtAddress(address)
     if result is None:
-        raise InvalidRequestError("No procedure exists at the requested address")
+        raise SelectorNotFoundError("No procedure exists at the requested address")
     if source == "symbol" and address != result.getEntryPoint():
         raise InvalidRequestError(
             "Symbol %s at %s is inside procedure %s at %s; select its entry name/address or use resolve_containing_procedure for explicit containment"
@@ -1586,6 +1590,8 @@ def _diagnostic_type(error):
         return "capability_unavailable"
     if isinstance(error, PermissionError):
         return "authorization"
+    if isinstance(error, SelectorNotFoundError):
+        return "selector_not_found"
     if isinstance(error, InvalidRequestError):
         return "invalid_request"
     return "bridge_exception"
@@ -1598,7 +1604,7 @@ def _safe_diagnostic(error):
         message = str(error)
     elif diagnostic_type == "authorization":
         message = "Invalid bridge capability"
-    elif diagnostic_type == "invalid_request":
+    elif diagnostic_type in ("invalid_request", "selector_not_found"):
         message = str(error)
     else:
         message = "%s: Hopper bridge operation failed" % type(error).__name__
