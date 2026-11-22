@@ -126,7 +126,7 @@ export class CdpRuntimeRequests {
     const result = this.items.map((request) => ({
       ...request,
       reported_initiator: sanitizeRuntimeInitiator(
-        request.reported_initiator,
+        structuredClone(request.reported_initiator),
         this.sources,
       ),
       callsites: request.callsites.map((site) =>
