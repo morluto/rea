@@ -428,65 +428,6 @@ it.skipIf(process.platform !== "linux")(
 describe.skipIf(process.platform !== "linux")(
   "captureDesktopApplication on Linux",
   () => {
-    it("records the window, a requested checkpoint and the state change with its content", async () => {
-      const { root, home, environment } = await fixture();
-      const output = join(root, "out");
-      const statePath = join(home, ".config/fakeapp/state.ini");
-      let checkpointAt: number | undefined;
-      const nextRequest = (): SessionRequest | undefined => {
-        if (checkpointAt === undefined) {
-          if (readFileSyncSafe(statePath) !== "count=1\n") return undefined;
-          checkpointAt = performance.now();
-          return { kind: "checkpoint", name: "written" };
-        }
-        // Leave time for window samples before stopping.
-        return performance.now() - checkpointAt > 1500
-          ? { kind: "stop" }
-          : undefined;
-      };
-
-      const evidence = await captureDesktopApplication(
-        request(output),
-        host(environment, nextRequest),
-      );
-
-      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
-      expect(evidence.operation).toBe("capture_desktop_application");
-      const capture = desktopApplicationCaptureSchema.parse(
-        evidence.normalized_result,
-      );
-      expect(capture.session).toMatchObject({
-        end_reason: "stop_requested",
-        window_match: { class: "FakeApp", instance: "fakeapp" },
-      });
-      expect(capture.session.first_window_ms).not.toBeNull();
-      expect(capture.host).toMatchObject({
-        hostname: hostname(),
-        user: userInfo().username,
-      });
-      expect(
-        capture.state.checkpoints.map((checkpoint) => checkpoint.name),
-      ).toEqual(["baseline", "written", "stop", "exit"]);
-      expect(capture.state.checkpoints[0]?.retained).toEqual([
-        { path: statePath, sha256: sha256("count=0\n"), size: 8 },
-      ]);
-      const change = capture.state.checkpoints[1]?.changes.find(
-        (candidate) => candidate.path === statePath,
-      );
-      expect(change).toMatchObject({
-        kind: "modified",
-        before: { sha256: sha256("count=0\n") },
-        after: { sha256: sha256("count=1\n") },
-        in_state_directory: true,
-      });
-      expect(
-        await readFile(join(output, "content", sha256("count=1\n")), "utf8"),
-      ).toBe("count=1\n");
-      expect(
-        JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
-      ).toEqual(JSON.parse(JSON.stringify(evidence)));
-    });
-
     it("keeps a baseline-only capture when cancelled before any checkpoint", async () => {
       const { root, home, environment } = await fixture();
       const output = join(root, "out");
@@ -635,15 +576,50 @@ describe.skipIf(process.platform !== "linux")(
       const capture = desktopApplicationCaptureSchema.parse(
         evidence.normalized_result,
       );
+      expect(evidence.operation).toBe("capture_desktop_application");
+      expect(capture.session).toMatchObject({
+        end_reason: "stop_requested",
+        window_match: { class: "FakeApp", instance: "fakeapp" },
+        first_window_ms: expect.any(Number),
+      });
+      expect(capture.host).toMatchObject({
+        hostname: hostname(),
+        user: userInfo().username,
+      });
+      expect(capture.state.checkpoints.map(({ name }) => name)).toEqual([
+        "baseline",
+        "seed",
+        "stop",
+        "exit",
+      ]);
+      expect(capture.state.checkpoints[0]?.retained).toEqual([
+        { path: statePath, sha256: sha256("count=0\n"), size: 8 },
+      ]);
       const seed = capture.state.checkpoints[1];
-      // The acknowledgement comes after the checkpoint is taken and carries its counts and the file the app wrote.
+      if (seed === undefined) throw new Error("Expected the recorded seed");
+      expect(seed.changes.find(({ path }) => path === statePath)).toMatchObject(
+        {
+          kind: "modified",
+          before: { sha256: sha256("count=0\n") },
+          after: { sha256: sha256("count=1\n") },
+          in_state_directory: true,
+        },
+      );
+      expect(
+        await readFile(join(output, "content", sha256("count=1\n")), "utf8"),
+      ).toBe("count=1\n");
+      expect(
+        JSON.parse(await readFile(join(output, "capture.json"), "utf8")),
+      ).toEqual(JSON.parse(JSON.stringify(evidence)));
+
+      // The acknowledgement carries the counts from the recorded checkpoint.
       expect(parsed[2]).toEqual({
         kind: "checkpoint",
         name: "seed",
         trigger: "request",
-        at_ms: seed?.at_ms,
-        entries: seed?.entries,
-        changes: seed?.changes.length,
+        at_ms: seed.at_ms,
+        entries: seed.entries,
+        changes: seed.changes.length,
         retained_files: 1,
         retained_bytes: 8,
         changed_files: [".config/fakeapp/state.ini"],

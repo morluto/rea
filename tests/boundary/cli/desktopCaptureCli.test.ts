@@ -141,11 +141,12 @@ it("exports and drafts between the checkpoints the command names", async () => {
   expect(
     parseEvidence(JSON.parse(drafted.stdout)).normalized_result,
   ).toMatchObject({ checkpoints: { baseline: "seed", final: "end" } });
+  expect(refused.exitCode).toBe(1);
   expect(JSON.parse(refused.stdout)).toMatchObject({
     code: "invalid_request",
     details: {
       operation: "describe_desktop_application_task",
-      issues: [{ path: ["end_checkpoint"] }],
+      issues: [{ path: ["end_checkpoint"], reason: "invalid_value" }],
     },
   });
 });
@@ -244,8 +245,13 @@ it("names a dconf database that changed by the seed but could not be read, so th
   // At baseline the database did not exist yet, so nothing was lost.
   const before = await exportAt("baseline", "baseline");
 
-  expect(unread).toHaveLength(1);
-  expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
+  expect(unread).toEqual([
+    expect.stringContaining(
+      "changed by the seed checkpoint but could not be read",
+    ),
+  ]);
+  if (process.platform === "linux")
+    expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
   expect(
     await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
   ).toContain('DCONF = ""');
