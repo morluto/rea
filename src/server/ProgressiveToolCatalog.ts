@@ -30,6 +30,10 @@ export class ProgressiveToolCatalog {
   >;
   /** Exact names and counts also cover the always-advertised adapter. */
   private readonly inventory: ReadonlyMap<string, CatalogListing>;
+  private readonly inputSchemas = new WeakMap<
+    RegisteredTool,
+    Record<string, unknown>
+  >();
 
   constructor(
     registrations: ReadonlyMap<string, RegisteredTool>,
@@ -70,6 +74,43 @@ export class ProgressiveToolCatalog {
     });
   }
 
+  private inputSchemaFor(registered: RegisteredTool): Record<string, unknown> {
+    let schema = this.inputSchemas.get(registered);
+    if (schema === undefined) {
+      schema = (registered.inputSchema?.["~standard"].jsonSchema.input({
+        target: "draft-2020-12",
+      }) as Record<string, unknown> | undefined) ?? { type: "object" };
+      this.inputSchemas.set(registered, schema);
+    }
+    return schema;
+  }
+
+  private rankMatches(query: string | undefined): readonly string[] {
+    const words = (query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+    const ranked: { readonly name: string; readonly score: number }[] = [];
+    for (const [name, tool] of this.tools) {
+      let matchesAll = true;
+      for (let i = 0; i < words.length; i++) {
+        if (!tool.search.includes(words[i]!)) {
+          matchesAll = false;
+          break;
+        }
+      }
+      if (!matchesAll) continue;
+      let score = 0;
+      for (let i = 0; i < words.length; i++) {
+        if (name.includes(words[i]!)) score += 1;
+      }
+      ranked.push({ name, score });
+    }
+    ranked.sort(
+      (left, right) =>
+        right.score - left.score ||
+        (left.name < right.name ? -1 : left.name > right.name ? 1 : 0),
+    );
+    return ranked.map((entry) => entry.name);
+  }
+
   discover(input: z.infer<typeof DISCOVER_TOOLS.inputSchema>) {
     const names =
       input.names === undefined ? undefined : [...new Set(input.names)];
@@ -93,37 +134,24 @@ export class ProgressiveToolCatalog {
         ),
         false,
       );
-    const words = (input.query ?? "")
-      .toLowerCase()
-      .split(/\s+/u)
-      .filter(Boolean);
-    const matches =
-      names ??
-      [...this.tools]
-        .filter(([, tool]) => words.every((word) => tool.search.includes(word)))
-        .map(([name]) => name)
-        .sort((left, right) => {
-          const score = (name: string) =>
-            words.filter((word) => name.includes(word)).length;
-          return (
-            score(right) - score(left) ||
-            (left < right ? -1 : left > right ? 1 : 0)
-          );
-        });
+    const matches = names ?? this.rankMatches(input.query);
     const page =
       names ?? matches.slice(input.offset, input.offset + input.limit);
     const selected = page.map((name) => ({
       name,
       ...this.inventory.get(name)!,
     }));
+    let loadedCount = 0;
+    for (const { registered } of this.inventory.values()) {
+      if (registered.enabled) loadedCount += 1;
+    }
+    for (let i = 0; i < selected.length; i++) {
+      if (!selected[i]!.registered.enabled) loadedCount += 1;
+    }
     const result: z.infer<typeof DISCOVER_TOOLS.outputSchema> = {
       profile: "hot-cold",
       inventory_count: this.inventory.size,
-      loaded_count:
-        [...this.inventory.values()].filter(
-          ({ registered }) => registered.enabled,
-        ).length +
-        selected.filter(({ registered }) => !registered.enabled).length,
+      loaded_count: loadedCount,
       total_matches: matches.length,
       next_offset:
         names === undefined && input.offset + page.length < matches.length
@@ -132,9 +160,7 @@ export class ProgressiveToolCatalog {
       tools: selected.map(({ name, description, registered }) => ({
         name,
         description,
-        input_schema: registered.inputSchema?.["~standard"].jsonSchema.input({
-          target: "draft-2020-12",
-        }) ?? { type: "object" },
+        input_schema: this.inputSchemaFor(registered),
       })),
       next_step:
         selected.length === 0

@@ -494,14 +494,23 @@ Entry 0 is the reserved undefined symbol: `st_info`, `st_other`, `st_shndx`,
 `st_value` and `st_size` must be zero, and any other value rejects the table.
 The gABI also requires `st_name` to be zero. A nonzero `st_name` with those
 fields zero does not define an export: the entry is skipped, coverage stays
-complete, and `limitations` records the name offset. An ELF without section
-headers is `unsupported`. With section headers, a missing
-`SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
-observed, including a directory containing only the inactive null section.
-Enumerating dynamic symbols from that segment is not implemented. A present
-section directory with neither a dynamic symbol table nor a dynamic segment
-reports a complete empty inventory. Mach-O exports are reported by
-`inspect_macho`.
+complete, and `limitations` records the name offset.
+
+When `SHT_DYNSYM` is absent, including an ELF with no section headers, the
+reader locates symbols and strings through `PT_DYNAMIC` and their file-backed
+`PT_LOAD` mappings. `DT_HASH` or a nonempty `DT_GNU_HASH` supplies the symbol
+count; if both supply a count, they must agree. A missing hash table or empty
+GNU buckets without a SysV count leaves coverage `unsupported`, because the
+complete symbol inventory is unknown. Unmapped, conflicting or truncated
+table ranges are refused.
+
+The dynamic fallback retains readable `DT_VERSYM` indices and hidden flags,
+but does not decode names from `DT_VERDEF` or `DT_VERNEED`. Versioned exports
+therefore retain their rows with null version names and `partial` coverage;
+an unreadable `DT_VERSYM` retains `version: "unknown"`. Section-backed version
+names continue to use the tables described above. A present section directory
+with neither a dynamic symbol table nor a dynamic segment reports a complete
+empty inventory. Mach-O exports are reported by `inspect_macho`.
 
 ELF export tables marked `SHF_COMPRESSED` are not decompressed. A compressed
 dynamic symbol table or its string table reports `unsupported` coverage rather

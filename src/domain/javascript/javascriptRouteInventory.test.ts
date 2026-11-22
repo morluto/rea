@@ -640,3 +640,37 @@ it("distinguishes URL suffixes from literal Next script filename bytes", () => {
       .sort(),
   ).toEqual([...local].sort());
 });
+
+it("inventories Expo Router context keys without claiming page classification", () => {
+  const result = build([
+    source(
+      "index-abc.js",
+      `__d(function(g,r,i,a,m,e,d){const t=Object.defineProperties({},{"./(app)/_layout.tsx":{enumerable:!0,get(){return r(d[0])}},"./(app)/reports/[id]/edit.tsx":{enumerable:!0,get(){return r(d[1])}}});m.exports=t},1,[2,3]);const back='/reports/archive';`,
+    ),
+  ]);
+  expect(result.routes).toEqual([
+    expect.objectContaining({
+      path: "/reports/:id/edit",
+      classification: "unknown",
+      classification_basis: "unknown",
+      confidence: "low",
+      mechanisms: ["expo-router-context-key"],
+    }),
+    expect.objectContaining({
+      path: "/reports/archive",
+      mechanisms: ["route-string-constant"],
+    }),
+  ]);
+  expect(
+    result.occurrences.find(
+      ({ mechanism }) => mechanism === "expo-router-context-key",
+    ),
+  ).toMatchObject({
+    origin: "source-syntax",
+    derivation: "inferred",
+    unprefixed_path: "/reports/:id/edit",
+    segments: [{ value: "./(app)/reports/[id]/edit.tsx", origin: "literal" }],
+  });
+  expect(result.unknowns).toEqual([]);
+  expect(result.coverage.candidate_enumeration).toBe("complete");
+});

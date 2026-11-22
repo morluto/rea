@@ -185,6 +185,7 @@ const PATH_SCOPES = {
     "tests/boundary/cli/nativeMachoArm64_32Cli.test.ts",
     "tests/boundary/cli/nativeMachoEncryptionCli.test.ts",
     "tests/boundary/mcp/nativeSignatureTargetBindingMcp.test.ts",
+    "tests/boundary/cli/nativeBundleExecutableProvenanceCliMcp.test.ts",
     "src/process/capture/FilesystemSnapshot.test.ts",
     "tests/process-global/filesystemSnapshotFallbackCancellation.test.ts",
     "tests/boundary/process/darwinProcessRunTokenReader.test.ts",

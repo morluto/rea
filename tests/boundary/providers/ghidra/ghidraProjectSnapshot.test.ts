@@ -292,3 +292,78 @@ it.skipIf(process.platform === "win32")(
     ).rejects.toMatchObject({ _tag: "ConfigurationError" });
   },
 );
+
+it("copies multi-chunk and empty files in one pass matching fingerprint parity and file modes", async () => {
+  const { source, destination } = await fixture();
+  const large = Buffer.alloc(256 * 1024 + 17, 0x41);
+  large[0] = 0x5a;
+  large[256 * 1024] = 0x7e;
+  await writeFile(join(source, "selected.rep", "data"), large);
+  await writeFile(join(source, "selected.rep", "empty"), Buffer.alloc(0));
+
+  const commitment = await resolveGhidraProject(
+    { path: join(source, "selected.gpr"), programName: "target.elf" },
+    { path: "/tmp/target.elf" },
+    resources,
+  );
+  await copyExistingGhidraProject(source, destination, {
+    projectName: "selected",
+    expectedSha256: commitment.sha256,
+    resources,
+  });
+
+  expect(
+    (await readFile(join(destination, "selected.rep", "data"))).equals(large),
+  ).toBe(true);
+  expect(
+    await readFile(join(destination, "selected.rep", "empty")),
+  ).toHaveLength(0);
+  expect(
+    await fingerprintGhidraProject(destination, "selected", resources),
+  ).toBe(commitment.sha256);
+  if (process.platform !== "win32") {
+    expect(
+      (await stat(join(destination, "selected.rep", "data"))).mode & 0o777,
+    ).toBe(0o600);
+    expect(
+      (await stat(join(destination, "selected.rep", "empty"))).mode & 0o777,
+    ).toBe(0o600);
+    expect((await stat(join(destination, "selected.rep"))).mode & 0o777).toBe(
+      0o700,
+    );
+  }
+});
+
+it("refuses expectedSha256 without a resource scope before copying any files", async () => {
+  const { source, destination } = await fixture();
+  await expect(
+    copyExistingGhidraProject(source, destination, {
+      projectName: "selected",
+      expectedSha256: "a".repeat(64),
+    }),
+  ).rejects.toMatchObject({ _tag: "ConfigurationError" });
+  expect(await readdir(destination)).toEqual([]);
+});
+
+it.each([null, "stop-copy"])(
+  "preserves copy cancellation reason %j without leaving partial verification",
+  async (reason) => {
+    const { source, destination } = await fixture();
+    const commitment = await resolveGhidraProject(
+      { path: join(source, "selected.gpr"), programName: "target.elf" },
+      { path: "/tmp/target.elf" },
+      resources,
+    );
+    const controller = new AbortController();
+    controller.abort(reason);
+    await expect(
+      copyExistingGhidraProject(source, destination, {
+        projectName: "selected",
+        expectedSha256: commitment.sha256,
+        resources,
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
+    expect(await readdir(destination)).toEqual([]);
+  },
+);

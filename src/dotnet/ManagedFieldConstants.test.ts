@@ -3,7 +3,11 @@ import { buildManagedPeFixture } from "../../scripts/fixtures/managed/pe.mjs";
 import { managedPeFixtureTarget } from "./ManagedPe.fixture.js";
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import { managedMemberInspectionSchema } from "../domain/managed/managedArtifact.js";
-import { MANAGED_CODED_INDEXES } from "../domain/managed/managedMetadataLayout.js";
+import {
+  MANAGED_CODED_INDEXES,
+  readManagedMetadataLayout,
+} from "../domain/managed/managedMetadataLayout.js";
+import { readManagedPeLayout } from "../domain/managed/managedPeReader.js";
 import { decodeMetadataCodedIndex } from "../domain/managed/managedMetadataHeaps.js";
 
 const inspectConstant = (typeCode: number, hex: string) => {
@@ -235,5 +239,48 @@ it.each([
         }),
       ]),
     );
+  },
+);
+
+const i4Value = (n: number): Buffer => {
+  const buf = Buffer.alloc(4);
+  buf.writeInt32LE(n, 0);
+  return buf;
+};
+
+it.each([
+  { parents: [1, 3, 2, 4], declarations: 1, state: "decoded", value: 200 },
+  {
+    parents: [1, 2, 3, 2, 4],
+    declarations: 2,
+    state: "unavailable",
+    value: null,
+  },
+])(
+  "preserves every selected default declaration in a non-monotonic Constant table ($parents)",
+  ({ parents, declarations, state, value }) => {
+    const bytes = buildManagedPeFixture({
+      fields: Array.from({ length: 4 }, (_, index) => ({
+        name: `F${String(index + 1)}`,
+        flags: 0x8056,
+      })),
+      constants: parents.map((parent) => ({
+        typeCode: 0x08,
+        parentRaw: parent << 2,
+        value: i4Value(parent * 100),
+      })),
+    });
+    const target = managedPeFixtureTarget(bytes);
+    const complete = inspectManagedMembersBytes(bytes, target);
+    const typeName = complete.types[0]?.full_name;
+    if (typeName === undefined) throw new Error("Expected a fixture type");
+    const selected = inspectManagedMembersBytes(bytes, target, {
+      typeNames: [typeName],
+    });
+    const defaultOf = (report: typeof selected) =>
+      report.fields.find(({ name }) => name === "F2")?.constant;
+    expect(defaultOf(selected)).toEqual(defaultOf(complete));
+    expect(defaultOf(selected)).toMatchObject({ state, value });
+    expect(defaultOf(selected)?.declarations).toHaveLength(declarations);
   },
 );
