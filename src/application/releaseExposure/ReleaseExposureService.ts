@@ -876,10 +876,8 @@ const limitNativeSample = (
       settledLayouts.add(folder);
   }
   const layouts = [...layoutSet];
-  const preferredByLayout = new Map<string, ReleaseExposureNativeImage[]>();
   const keptByLayout = new Map<string, ReleaseExposureNativeImage[]>();
   for (const folder of layouts) {
-    preferredByLayout.set(folder, []);
     keptByLayout.set(folder, []);
   }
   let missedOutsideHost = scan.coverage === "unknown";
@@ -891,12 +889,6 @@ const limitNativeSample = (
       );
     outside.push(...kept);
   } else {
-    for (const image of preferred) {
-      for (const folder of layouts) {
-        if (inLayout(folder, image.path))
-          preferredByLayout.get(folder)!.push(image);
-      }
-    }
     for (const image of kept) {
       let inAnyLayout = false;
       for (const folder of layouts) {
@@ -928,7 +920,7 @@ const limitNativeSample = (
         layouts.every(
           (folder) =>
             settledLayouts.has(folder) ||
-            hostRead(preferredByLayout.get(folder)!),
+            hostRead(preferred.filter((image) => inLayout(folder, image.path))),
         );
   const outsideHosts = hostsAmong(outside);
   // A build without an ASAR names no host, so any sampled image outside the
