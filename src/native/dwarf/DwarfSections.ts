@@ -1,4 +1,5 @@
 import { binaryMetadataArchitecture } from "../../domain/binaryMetadataArchitecture.js";
+import { hasDosMzMagic } from "../../domain/dosMz.js";
 import type { BinaryArchitecture } from "../../domain/binaryTargetTypes.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
@@ -138,15 +139,21 @@ export const locateDwarfSections = async (
   pause?: ZstandardFramePause,
 ): Promise<LocatedDwarfImage> => {
   const budget: InflateBudget = { allowance: maximumDecodedBytes, used: 0 };
-  const magic =
-    bytes.length >= 4 ? new BinaryReader(bytes, true, "dwarf").u32(0) : null;
-  if (magic === 0x464c457f)
-    return finish(await locateElf(bytes, budget, pause));
-  if (bytes.length >= 2 && bytes[0] === 0x4d && bytes[1] === 0x5a)
-    return finish(locatePe(bytes, budget));
   if (
     bytes.length >= 4 &&
-    isMachoMagic(new BinaryReader(bytes, false, "dwarf").u32(0))
+    bytes[0] === 0x7f &&
+    bytes[1] === 0x45 &&
+    bytes[2] === 0x4c &&
+    bytes[3] === 0x46
+  )
+    return finish(await locateElf(bytes, budget, pause));
+  if (hasDosMzMagic(bytes)) return finish(locatePe(bytes, budget));
+  if (
+    bytes.length >= 4 &&
+    isMachoMagic(
+      ((bytes[0]! << 24) | (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!) >>>
+        0,
+    )
   )
     return finish(locateMacho(bytes, budget));
   throw new BinaryFormatFailure(
