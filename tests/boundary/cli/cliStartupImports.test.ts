@@ -15,6 +15,10 @@ const MARKER = "REA_TEST_RESOLVED ";
 // must not resolve them just to register the complete command catalog.
 const DEFERRED_IMPORTS = [
   {
+    name: "inspect-byte-entropy",
+    path: "/dist/composition/binaryDiagnostics/byteEntropy.js",
+  },
+  {
     name: "guided-workflows",
     path: "/dist/application/GuidedWorkflowAccess.js",
   },
@@ -148,6 +152,10 @@ const HEAVY_SHARED_MODULES = [
   {
     name: "session-tool-contracts",
     path: "/dist/contracts/sessionToolContracts.js",
+  },
+  {
+    name: "evidence-bundle-commands",
+    path: "/dist/application/EvidenceBundleCommands.js",
   },
   ...DEFERRED_IMPORTS,
 ] as const;
@@ -322,17 +330,64 @@ describe("CLI startup imports", () => {
   });
 });
 
+describe("CLI one-shot command imports", () => {
+  it("loads only the selected diagnostic factory for a standalone command", async () => {
+    const directory = await createTestTempDirectory(
+      "rea-cli-diagnostics-imports-",
+    );
+    const input = join(directory, "bytes");
+    await writeFile(input, "Some bytes to inspect.");
+    await expect(
+      resolvedPackages(
+        ["scripts/rea.mjs", "inspect-byte-entropy", input, "--json"],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toEqual(new Set(["inspect-byte-entropy"]));
+  });
+
+  it("loads summary projection and bundle delivery only when requested", async () => {
+    const source = await createTestTempDirectory("rea-cli-js-summary-imports-");
+    await writeFile(join(source, "index.js"), "export const answer = 42;\n");
+    const command = [
+      "scripts/rea.mjs",
+      "analyze-javascript-application",
+      source,
+      "--json",
+    ];
+    const output = join(
+      await createTestTempDirectory("rea-cli-js-delivery-"),
+      "evidence.json",
+    );
+    await expect(
+      resolvedPackages(command, HEAVY_SHARED_MODULES),
+    ).resolves.toEqual(new Set(["javascript-application"]));
+    await expect(
+      resolvedPackages(
+        [...command, "--detail", "summary", "--evidence_output", output],
+        HEAVY_SHARED_MODULES,
+      ),
+    ).resolves.toEqual(
+      new Set([
+        "javascript-application",
+        "analysis-view-result",
+        "analysis-view-service",
+        "evidence-bundle-commands",
+      ]),
+    );
+  });
+});
+
 describe("Bundled heavy startup controls", () => {
   it("detects bundled heavy modules through native command and AnalysisView runs", async () => {
     await expect(
       resolvedPackages(
-        ["scripts/rea.mjs", "decompile-all", "--help"],
+        ["scripts/rea.mjs", "match-native-functions", "--help"],
         HEAVY_SHARED_MODULES,
       ),
     ).resolves.toContain("session-tool-contracts");
     await expect(
       resolvedPackages(
-        ["scripts/rea.mjs", "inspect-wasm-artifact", "--help"],
+        ["scripts/rea.mjs", "inspect-analysis-view", "--help"],
         HEAVY_SHARED_MODULES,
       ),
     ).resolves.toContain("analysis-view-result");
@@ -371,22 +426,18 @@ describe("Bundled heavy startup controls", () => {
   });
 
   it("does not load AnalysisView or session contracts for single-command startup", async () => {
-    for (const command of ["inspect-uefi-nvram", "inspect-sqlite-database"]) {
+    for (const command of [
+      "inspect-uefi-nvram",
+      "inspect-sqlite-database",
+      "inspect-wasm-artifact",
+      "guided-workflows",
+    ]) {
       await expect(
         resolvedPackages(
           ["scripts/rea.mjs", command, "--help"],
           HEAVY_SHARED_MODULES,
         ),
       ).resolves.toEqual(new Set());
-    }
-    for (const command of ["inspect-wasm-artifact", "guided-workflows"]) {
-      const loaded = await resolvedPackages(
-        ["scripts/rea.mjs", command, "--help"],
-        HEAVY_SHARED_MODULES,
-      );
-      expect(loaded).not.toContain("analysis-view-service");
-      expect(loaded).not.toContain("session-tool-contracts");
-      expect(loaded).not.toContain("mcp-registration");
     }
   });
 });
