@@ -37,6 +37,7 @@ import { createV8CodeCacheService } from "./v8CodeCache.js";
 import { createMavenGradleMetadataService } from "./mavenGradleMetadata.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
+import { createLabviewArtifactService } from "./labview.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
@@ -389,6 +390,7 @@ const modules = {
     ({ options }) => options.il2cppMetadata ?? createIl2cppMetadataService(),
   ),
   peResources: service(() => createPeResourcesService()),
+  labviewArtifact: service(() => createLabviewArtifactService()),
   nativeExports: service(() => createNativeExportsService()),
   devicetree: service(() => createDevicetreeService()),
   elfNotes: service(() => createElfNotesService()),

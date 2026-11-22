@@ -135,6 +135,11 @@ export const CLI_COMMAND_REGISTRATIONS = {
     () => import("./goCommands.js"),
     (module, context) => module.registerGoCommands(context.cli, context.logger),
   ),
+  labview: plain(
+    () => import("./labviewCommands.js"),
+    (module, context) =>
+      module.registerLabviewCommands(context.cli, context.logger),
+  ),
   il2cpp: plain(
     () => import("./il2cppCommands.js"),
     (module, context) =>
@@ -463,6 +468,7 @@ const CLI_FAMILY_REGISTRATIONS: {
     "releaseExposure",
     "go",
     "il2cpp",
+    "labview",
     "model",
     "gpu",
     "rust",

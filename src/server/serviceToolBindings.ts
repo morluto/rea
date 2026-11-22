@@ -51,6 +51,7 @@ import type { PeCertificatesService } from "../application/binaryDiagnostics/PeC
 import type { PeImportsService } from "../application/binaryDiagnostics/PeImportsService.js";
 import type { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import type { PeResourcesService } from "../application/binaryDiagnostics/PeResourcesService.js";
+import type { LabviewArtifactService } from "../application/labview/LabviewArtifactService.js";
 import type { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import type { WindowsShortcutService } from "../application/binaryDiagnostics/WindowsShortcutService.js";
 import type { PacketCaptureService } from "../application/captures/PacketCaptureService.js";
@@ -481,6 +482,12 @@ const SERVICE_TOOL_BINDINGS = {
       run: (input, options) => service.inspect(input, options),
     },
   })) satisfies Bind<PeResourcesService>,
+  labviewArtifact: ((service) => ({
+    inspect_labview_artifact: {
+      admission: "application",
+      run: (input, options) => service.inspect(input, options),
+    },
+  })) satisfies Bind<LabviewArtifactService>,
   nativeExports: ((service) => ({
     inspect_native_exports: {
       admission: "application",

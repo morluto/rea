@@ -28,6 +28,7 @@ import * as desktopApplicationModule from "./cli/desktopApplicationCommands.js";
 import * as releaseExposureModule from "./cli/releaseExposureCommands.js";
 import * as goModule from "./cli/goCommands.js";
 import * as il2cppModule from "./cli/il2cppCommands.js";
+import * as labviewModule from "./cli/labviewCommands.js";
 import * as modelModule from "./cli/modelCommands.js";
 import * as gpuModule from "./cli/gpuCommands.js";
 import * as rustModule from "./cli/rustCommands.js";
@@ -88,6 +89,7 @@ const CLI_COMMAND_MODULES: CliCommandModules = {
   releaseExposure: releaseExposureModule,
   go: goModule,
   il2cpp: il2cppModule,
+  labview: labviewModule,
   model: modelModule,
   gpu: gpuModule,
   rust: rustModule,

@@ -7,6 +7,7 @@ import type {
 } from "../contracts/toolContracts.js";
 import { ADB_PROVIDER_IDENTITY } from "../adb/AdbProviderIdentity.js";
 import { JADX_PROVIDER_IDENTITY } from "../android/JadxRelease.js";
+import { LABVIEW_PROVIDER_IDENTITY } from "../labview/LabviewProviderIdentity.js";
 import { APK_SIGNATURE_PROVIDER_IDENTITY } from "../apkSignature/ApkSignatureRelease.js";
 import { APKTOOL_PROVIDER_IDENTITY } from "../apktool/ApktoolProviderIdentity.js";
 import {
@@ -492,6 +493,11 @@ export const CAPABILITY_DECLARATIONS = {
   peResources: {
     providers: [
       providerBinding(PE_RESOURCES_PROVIDER, ["inspect_pe_resources"]),
+    ],
+  },
+  labviewArtifact: {
+    providers: [
+      providerBinding(LABVIEW_PROVIDER_IDENTITY, ["inspect_labview_artifact"]),
     ],
   },
   windowsShortcut: {
