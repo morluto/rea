@@ -118,6 +118,7 @@
 * **elf:** retain authenticated debug-link evidence on interruption ([#13437](https://github.com/morluto/rea/issues/13437)) ([7fc333f](https://github.com/morluto/rea/commit/7fc333ffa0cf6546716120152c2cbf5f54cd0457))
 * **entropy:** keep the whole-file census in a counter that cannot wrap ([a3acfcf](https://github.com/morluto/rea/commit/a3acfcf003a1213c751a46051630f06023766d1f))
 * **environment:** prefer live collection spellings for writes ([#13603](https://github.com/morluto/rea/issues/13603)) ([65943f9](https://github.com/morluto/rea/commit/65943f934b00cab7d8e02837b4b4bd4e090a67da))
+* **environment:** preserve caller query provenance on writes ([#13637](https://github.com/morluto/rea/issues/13637)) ([6d8e0f0](https://github.com/morluto/rea/commit/6d8e0f09fcfbbb5dde772ca775ef72fb5e79b1a1))
 * **environment:** preserve document write replay match provenance ([#13604](https://github.com/morluto/rea/issues/13604)) ([5deee1a](https://github.com/morluto/rea/commit/5deee1acf1f0163a6a5d60568a841ade32811bf5))
 * **environment:** preserve state-backed read match provenance ([#13621](https://github.com/morluto/rea/issues/13621)) ([3c51cde](https://github.com/morluto/rea/commit/3c51cde2ef434c085343fb588fb6e1cfde991f9c))
 * **evidence:** bound omitted validation issue locations ([#13309](https://github.com/morluto/rea/issues/13309)) ([4485912](https://github.com/morluto/rea/commit/4485912fd83b64834cc88e5af9bcd7febe2baae8))
