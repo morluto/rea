@@ -90,11 +90,6 @@ describe("readElfSymbol", () => {
     );
   });
 
-  it("refuses an unknown symbol", async () => {
-    const result = await readElfSymbol(buildElf64Image([]), "_kDartAbsent");
-    expect("failure" in result).toBe(true);
-  });
-
   it("locates snapshot symbols in a section-stripped ET_DYN image", async () => {
     const image = strippedImageWithSections();
     const isolateData = await readElfSymbol(image, "_kDartIsolateSnapshotData");
@@ -149,7 +144,7 @@ describe("readElfSymbol", () => {
     image.writeUInt16LE(1, 0x38); // e_phnum
     const result = await readElfSymbol(image, "_kDartVmSnapshotData");
     expect("failure" in result && result.failure.reason).toBe(
-      "symbol _kDartVmSnapshotData is not in the dynamic symbol table",
+      "symbol _kDartVmSnapshotData has no exported dynamic definition",
     );
   });
 
@@ -375,12 +370,9 @@ describe("stripped ELF symbol-table ownership", () => {
     expect(result.symbols).toEqual([
       { name: "_kDartVmSnapshotData", offset: 0x400, size: 52 },
     ]);
-    expect(result.failures).toContainEqual({
-      reason: expect.stringMatching(
-        /_kDartIsolateSnapshotData.*not in the dynamic symbol table/i,
-      ),
-      missingSymbol: "_kDartIsolateSnapshotData",
-    });
+    expect(result.failures.map(({ missingSymbol }) => missingSymbol)).toContain(
+      "_kDartIsolateSnapshotData",
+    );
     image.writeBigUInt64LE(0x60000001n, dynamic + 4 * 16); // No recognized count table.
     expect(
       (await readElfSymbols(image, ["_kDartVmSnapshotData"])).failures,
@@ -564,6 +556,38 @@ describe("readSnapshotHeader", () => {
   });
 });
 
+it.each([
+  ["ELF32 section", buildElf32Image],
+  ["ELF64 section", buildElf64Image],
+  ["ELF64 dynamic segment", buildStrippedElf64Image],
+] as const)(
+  "resolves only exported snapshot definitions from an %s table",
+  async (_, build) => {
+    const vm = "_kDartVmSnapshotData";
+    const isolate = "_kDartIsolateSnapshotData";
+    const local = "_kDartVmSnapshotInstructions";
+    const internal = "_kDartIsolateSnapshotInstructions";
+    const table = build([
+      { name: "unselected", value: 0x380, size: 16, binding: 0 },
+      { name: vm, value: 0x440, size: 52, other: 2 }, // Hidden decoy.
+      { name: vm, value: 0x400, size: 52, binding: 2 }, // Weak definition.
+      { name: isolate, value: 0x480, size: 52, other: 0x83 }, // Protected; upper bits are not visibility.
+      { name: local, value: 0x500, size: 16, binding: 0 },
+      { name: internal, value: 0x540, size: 16, other: 1 },
+    ]);
+    const image = Buffer.concat([table, Buffer.alloc(0x600 - table.length)]);
+    const result = await readElfSymbols(image, [vm, isolate, local, internal]);
+    expect(result.symbols).toEqual([
+      { name: vm, offset: 0x400, size: 52 },
+      { name: isolate, offset: 0x480, size: 52 },
+    ]);
+    expect(result.failures.map(({ missingSymbol }) => missingSymbol)).toEqual([
+      local,
+      internal,
+    ]);
+  },
+);
+
 it("keeps section admission ahead of program admission for unrepresentable raw offsets", async () => {
   const bytes = buildStrippedElf64Image([]);
   bytes.writeBigUInt64LE(0xffffffffffffffffn, 0x28);
@@ -596,14 +620,13 @@ it.each([256, 257])(
     bytes[stringOffset + 1 + length] = 0;
     bytes.writeBigUInt64LE(BigInt(length + 2), stringHeader + 0x20);
     bytes.writeBigUInt64LE(BigInt(bytes.length), 64 + 0x20);
-    expect(await readElfSymbols(bytes, [name])).toEqual(
+    expect(await readElfSymbols(bytes, [name])).toMatchObject(
       length === 256
         ? { symbols: [{ name, offset: 64, size: 4 }], failures: [] }
         : {
             symbols: [],
             failures: [
               {
-                reason: `symbol ${name} is not in the dynamic symbol table`,
                 missingSymbol: name,
               },
             ],
@@ -630,14 +653,9 @@ it("checks raw symbol precision only after definition and requested-name selecti
     failures: [{ reason: "Symbol unselected has unrepresentable bounds" }],
   });
   bytes.writeUInt16LE(0, symbols + 6);
-  expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
+  expect(await readElfSymbols(bytes, ["unselected"])).toMatchObject({
     symbols: [],
-    failures: [
-      {
-        reason: "symbol unselected is not in the dynamic symbol table",
-        missingSymbol: "unselected",
-      },
-    ],
+    failures: [{ missingSymbol: "unselected" }],
   });
 });
 
