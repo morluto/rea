@@ -189,6 +189,8 @@ function* buildJavaScriptArtifactGraphInputSteps(
         unavailableFilesByPath.get(path) ?? fileSet.unanalyzed_files?.get(path),
       hasDirectory: (path, container) =>
         fileSet.unanalyzed_files?.hasDirectory(path, container) ?? false,
+      filePathsBelow: (path) =>
+        fileSet.unanalyzed_files?.filePathsBelow?.(path),
     },
     fileNodes: new Map(),
     assetNodes: new Map(),

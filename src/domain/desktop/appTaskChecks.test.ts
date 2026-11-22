@@ -1084,6 +1084,41 @@ describe("evaluateTaskChecks whole text", () => {
 });
 
 describe("parseDesktopTask", () => {
+  it.each(["/value~2", "/tail~", "/[name=London~Bridge]/value"])(
+    "rejects an invalid JSON pointer escape in %s",
+    (pointer) => {
+      expect(
+        task([{ kind: "value_absent", file: "a", pointer }]),
+      ).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("~0 or ~1"),
+      });
+    },
+  );
+
+  it.each<{ pointer: string; view: JsonValue }>([
+    { pointer: "/value~02", view: { "value~2": "found" } },
+    { pointer: "/tail~0", view: { "tail~": "found" } },
+    {
+      pointer: "/[name=London~0Bridge]/a~1b",
+      view: [{ name: "London~Bridge", "a/b": "found" }],
+    },
+  ])(
+    "resolves a valid JSON pointer escape in $pointer",
+    ({ pointer, view }) => {
+      const parsed = task([
+        { kind: "value_equals", file: "a", pointer, value: "found" },
+      ]);
+      if (!parsed.ok) throw new Error(parsed.error);
+      const views = new Map<string, TaskFileView>([
+        ["a", { format: "json", view }],
+      ]);
+      expect(evaluateTaskChecks(parsed.value.checks, views, new Map())).toEqual(
+        [expect.objectContaining({ passed: true })],
+      );
+    },
+  );
+
   it("settles ids and keeps the prompt trimmed", () => {
     const parsed = parseDesktopTask({
       name: "add-milk",

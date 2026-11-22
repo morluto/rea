@@ -80,6 +80,7 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { bundleExecutableProvenance } from "../../domain/apple/bundleExecutableProvenance.js";
 import {
   analysisErrorWithCleanupDependencies,
   analysisErrorWithCloseRejection,
@@ -382,9 +383,8 @@ export class BinarySession
       const imported = this.importAnalysisSnapshot(options.snapshot);
       if (!imported.ok) return imported;
     }
-    // The same bytes can be selected through a different spelling without retiring the engine.
-    if (retained.target.callerInputPath !== target.callerInputPath)
-      this.#active = { ...retained, target };
+    // Refresh selection facts from this open while keeping the live engine.
+    this.#active = { ...retained, target };
     return ok(target);
   }
 
@@ -1223,12 +1223,16 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
+    if (!closed.ok) {
+      // A fresh session can hold an imported snapshot and no retired target.
+      // Clear only a binding left by a target this open already retired.
+      if (previous !== undefined) this.#clearUnrestoredSnapshot();
       return analysisErrorWithCloseRejection(
         primary,
         closed.error,
         "open_binary",
       );
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 
@@ -1238,6 +1242,7 @@ export class BinarySession
   ): Promise<AnalysisError> {
     const restored = await this.#restore(previous);
     if (restored.ok) return primary;
+    this.#clearUnrestoredSnapshot();
     primary.retainSecondaryFailure(restored.error, {
       restoration_error: projectAnalysisError(
         primaryAnalysisError(restored.error),
@@ -1495,7 +1500,19 @@ export class BinarySession
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
     const dispatch = this.#runtimeAvailability.dispatch();
-    const dispatched = await active.client.execute(name, arguments_, options);
+    const executionOptions =
+      name === "inspect_macho" || name === "inspect_signature"
+        ? {
+            ...options,
+            bundleExecutableProvenance:
+              bundleExecutableProvenance(active.target) ?? null,
+          }
+        : options;
+    const dispatched = await active.client.execute(
+      name,
+      arguments_,
+      executionOptions,
+    );
     const result = unrecordedExecution(dispatched);
     const profiled = bindExecutionTarget(
       commitExecutionProfile(name, result, profile),
@@ -1721,6 +1738,13 @@ export class BinarySession
     } catch {
       return false;
     }
+  }
+
+  /** The retired target did not return, so its snapshot binding must not block the next open. */
+  #clearUnrestoredSnapshot(): void {
+    if (this.#active !== undefined) return;
+    this.clearSnapshot();
+    this.#clearRuntimeAvailability();
   }
 
   async #restore(

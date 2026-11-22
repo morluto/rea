@@ -63,6 +63,9 @@ redaction, and its live status clears only after a confirmed retry.
 
 ## Formats and upstream profiles
 
+Unsupported format and decoder errors identify the reported requirement and
+include its source location when the decoder supplies one.
+
 HAR uses `har-schema@2.0.0` draft-06 schemas, `ajv@8.20.0`,
 `ajv-formats@3.0.1`, `jsonc-parser@3.3.1` JSON visitor, and
 `lossless-json@4.3.1` numeric representations, pinned in the npm lockfile.
@@ -105,6 +108,13 @@ REA preserves the original spelling in reported Evidence and removes brackets
 only from its validation copy, only for these declared producers and a valid
 IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
+The same Chromium DevTools writer reports `serverIPAddress` as `""` when a
+request has no remote address, such as a refused connection, an aborted request
+or an internal redirect: it copies `NetworkRequest.remoteAddress()`, which
+starts empty. REA retains that empty value in reported Evidence, omits the
+optional field only from its validation copy for this declared producer, and
+adds a record limitation that the server address is unknown. Other producers'
+empty addresses remain validation failures.
 
 Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
 Linux**. Set its absolute executable path:
@@ -163,9 +173,9 @@ conflicting repeated reserved parameters remain invalid. Repeated headers with
 implicit binary encoding and `encoding=binary` agree without rewriting either
 header. Invalid declarations remain visible even with explicit framing, and
 declared gRPC bodies still receive credential checks before a MIME refusal.
-An excluded HAR `mimeType` remains unknown for automatic interpretation even
-when a visible Content-Type header exists. That header can still identify the
-transport for credential checks; explicit wire framing remains independent.
+HAR `mimeType` controls automatic interpretation and remains unknown when
+excluded. Each visible Content-Type declaration still informs credential checks,
+including when it disagrees with the HAR MIME field or another header.
 
 Native gRPC admits only data-frame flags 0/1; gRPC-web additionally admits its
 terminal trailer frame. `grpc-web-text` supports independently padded base64
@@ -236,10 +246,11 @@ when MIME metadata is unavailable. CLI exposes `--protobuf-body-pointer` and
 base64 layer also checks explicit exclusions; newly recognized trailer
 credentials exclude the entire affected binary sidecar and its reported
 encoding, preserving a redaction coordinate instead of a credential digest.
-Credential inspection covers every selected body before descriptor reads or
-field expansion. Later capacity or schema failures can therefore retain the
-sanitized source even with explicit sensitivity options. If that source pass
-is interrupted, unchecked bodies are not published as partial Evidence.
+Credential checks use visible transport declarations for format-owned bodies in
+selected records before descriptor reads or field expansion. The `body_pointers`
+filter applies to wire interpretation. Later capacity or schema failures can
+retain the sanitized source even with explicit sensitivity options. An interrupted
+source pass withholds unchecked bodies from partial Evidence.
 Framing overrides apply only to format-owned body coordinates and preserve
 exclusions for the transport declared in MIME metadata.
 Explicitly excluded or conflicting MIME metadata is not treated as absent:
@@ -377,6 +388,24 @@ global, per-record and Evidence explanations added during projection. Contract
 field names, typed discriminators and exact decoder identities keep their
 canonical meanings; declarations do not rename formats or providers.
 
+A HAR capture's header names, query parameter names and JSON or form body
+member names that look like credentials (whole name segments such as `token`,
+`secret`, `password`, `api_key`, `authorization` or `session`) and hold a
+retained value are counted in a limitation that lists up to 20 of them by
+record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
+of text, says how many are not listed, and never names a value; the
+[environment build](../../agent-environments.md) runs the same scan as its
+`credential-named-members` warning. Values already excluded, such as the
+standard authentication headers or declared sensitive values, are not counted.
+The scan reads at most 524288 values in all across the selected records: a
+body's values are bounded from its text before it is parsed, and a header
+list, query string or form-parameter list is charged by its length before it
+is read, so a body larger than 4 MiB of UTF-8 text, or any of these that would
+take the scan past its budget, is not scanned, and a second limitation counts
+them by record and side. Names do not establish sensitivity, so nothing is excluded on
+them; declare the values as sensitive to exclude them. Other capture formats
+are not scanned.
+
 Historical evidence does not prove runtime attribution, execution or deployment
 authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
 wire fragments. Native dictionary duplicate keys have the unchanged upstream
@@ -406,6 +435,20 @@ retained. Empty query pairs are ignored. Original URLs stay in parent Evidence;
 name decoding does not normalize the recorded paths used for grouping.
 The inventory describes observed names, without inferring required parameters,
 value types or a complete API schema. Sensitive-parent refusals still apply.
+
+Select `include_request_header_names: true` in the view to include the header,
+cookie and set-cookie names recorded for each group. The default and explicit
+`false` omit the `request_header_names` field. Selected groups carry
+`request_headers`, `cookie_names` and `set_cookie_names`, each an array of
+`{name, record_ordinals}` entries sorted by Unicode code point and listed once
+per record. `request_headers` holds the `request.headers` names verbatim, so
+`Accept` and `accept` stay distinct, while credential header names such as
+`Authorization` and `Cookie` appear as names only. `cookie_names` holds the
+`request.cookies` names and `set_cookie_names` the `response.cookies` names.
+No header, cookie or set-cookie value, prefix, digest or substring is copied,
+including from headers whose value was redacted at capture time. A name's
+presence does not establish authentication, session semantics, a required
+header or a complete header schema.
 
 | Rule       | Exact segment format                                 | Placeholder  |
 | ---------- | ---------------------------------------------------- | ------------ |
@@ -1136,7 +1179,7 @@ host memory or `NODE_OPTIONS` does not raise the old-generation heap. Update
 `capture.decoder_old_generation_mib` through MCP, or set
 `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` before starting a new REA process.
 Retry after owned cleanup completes; the update does not release resources.
-See the [settings design](../../design/limits-and-recovery.md#failure-and-retry).
+See the [analysis settings and recovery](../../reference/limits-and-recovery.md#failure-and-retry).
 Record selection happens after complete decoding and does not reduce that
 workload. Use a smaller capture exported by its producer or another decoder
 with sufficient capacity, retaining the original for provenance. Subsets do

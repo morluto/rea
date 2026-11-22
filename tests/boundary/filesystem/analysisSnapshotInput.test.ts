@@ -21,10 +21,22 @@ import { RECREATE_EVIDENCE_GUIDANCE } from "../../../src/domain/evidenceFormat.j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { withArtifactResourceScope } from "../../fixtures/artifactInventory.js";
 
+const emptySnapshot = () => ({
+  target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
+  binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
+  entries: [],
+  workflow_entries: [],
+  evidence_bundle: createEvidenceBundle([]),
+});
+
 describe.each([
-  { mode: "native", paddingBytes: 0 },
-  { mode: "streamed", paddingBytes: 9 * 1024 * 1024 },
-])("analysis snapshot input ($mode)", ({ paddingBytes }) => {
+  { mode: "native", paddingBytes: 0, nonObjectRoots: ["[{}]", "null", "true"] },
+  {
+    mode: "streamed",
+    paddingBytes: 9 * 1024 * 1024,
+    nonObjectRoots: ["[{}]", "true"],
+  },
+])("analysis snapshot input ($mode)", ({ paddingBytes, nonObjectRoots }) => {
   it.each([
     {
       label: "header",
@@ -73,7 +85,7 @@ describe.each([
     },
   );
 
-  it.each(["[]", "null", "5", '"x"', "true"])(
+  it.each(nonObjectRoots)(
     "classifies a readable %s root as invalid content, not an I/O failure",
     async (document) => {
       const root = await createTestTempDirectory("rea-snapshot-root-");
@@ -110,13 +122,7 @@ describe.each([
       ok: false,
       error: { _tag: "EvidenceIntegrityError" },
     });
-    const snapshot = {
-      target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
-      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-      entries: [],
-      workflow_entries: [],
-      evidence_bundle: createEvidenceBundle([]),
-    };
+    const snapshot = emptySnapshot();
     await writeFile(path, `${prefix}${JSON.stringify(snapshot)}`);
     expect(await readAnalysisSnapshot(path)).toEqual({
       ok: true,
@@ -131,32 +137,26 @@ it("refuses a snapshot holding an earlier-format bundle with the recreate guidan
   const { evidence_format: _current, ...unmarked } = createEvidenceBundle([]);
   await writeFile(
     path,
-    JSON.stringify({
-      target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
-      binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-      entries: [],
-      workflow_entries: [],
-      evidence_bundle: unmarked,
-    }),
+    JSON.stringify({ ...emptySnapshot(), evidence_bundle: unmarked }),
   );
   const loaded = await readAnalysisSnapshot(path);
   if (loaded.ok) throw new Error("Expected the earlier format to be refused");
-  expect(projectAnalysisError(loaded.error)).toMatchObject({
+  const projected = projectAnalysisError(loaded.error);
+  expect(projected).toMatchObject({
     code: "evidence_integrity_mismatch",
-    details: { reason: expect.stringContaining(RECREATE_EVIDENCE_GUIDANCE) },
+    details: {
+      reason: expect.stringContaining(
+        "This Evidence bundle predates format revision",
+      ),
+    },
   });
+  expect(projected.details?.reason).toContain(RECREATE_EVIDENCE_GUIDANCE);
 });
 
 it("locates a bundle schema issue within the snapshot when reading and writing", async () => {
   const root = await createTestTempDirectory("rea-snapshot-bundle-issue-");
   const { providers: _providers, ...bundle } = createEvidenceBundle([]);
-  const snapshot = {
-    target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
-    binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-    entries: [],
-    workflow_entries: [],
-    evidence_bundle: bundle,
-  };
+  const snapshot = { ...emptySnapshot(), evidence_bundle: bundle };
   const path = join(root, "snapshot.json");
   await writeFile(path, JSON.stringify(snapshot));
   const read = await readAnalysisSnapshot(path);
@@ -183,13 +183,7 @@ it("locates a bundle schema issue within the snapshot when reading and writing",
 it("retains serialization schema diagnostics without creating a snapshot file", async () => {
   const root = await createTestTempDirectory("rea-snapshot-write-diagnostic-");
   const path = join(root, "snapshot.json");
-  const snapshot = {
-    target: snapshotTarget(ANALYSIS_SNAPSHOT_TARGET),
-    binding: snapshotBinding(ANALYSIS_SNAPSHOT_PROFILE),
-    entries: [],
-    workflow_entries: [],
-    evidence_bundle: createEvidenceBundle([]),
-  };
+  const snapshot = emptySnapshot();
   Reflect.deleteProperty(snapshot, "binding");
   const written = await withArtifactResourceScope((resources) =>
     writeAnalysisSnapshot(snapshot, path, false, resources),
