@@ -1086,13 +1086,19 @@ const createOwnedCleanupPlan = async (
     ({ processGroupId }) => processGroupId === ownership.processGroupId,
   );
   const unresolved: ProcessOwnershipValidationFailure[] = [];
-  for (const failure of tokenOwned.failures)
+  const unresolvedPids = new Set<number>();
+  for (const failure of tokenOwned.failures) {
     mergeProcessOwnershipFailure(unresolved, failure);
+    unresolvedPids.add(failure.pid);
+  }
   // The later bracketed token scan retains the current, more useful failure
   // for a PID whose earlier membership read was also unavailable.
-  for (const failure of relationSnapshot.failures)
-    if (!unresolved.some(({ pid }) => pid === failure.pid))
+  for (const failure of relationSnapshot.failures) {
+    if (!unresolvedPids.has(failure.pid)) {
       mergeProcessOwnershipFailure(unresolved, failure);
+      unresolvedPids.add(failure.pid);
+    }
+  }
   for (const process of tokenOwned.owned)
     if (omittedFromListedTable(process.pid))
       mergeProcessOwnershipFailure(unresolved, {
@@ -1193,8 +1199,9 @@ const createOwnedCleanupPlan = async (
             "sampled process-group leader identity could not be verified",
         })),
       );
+    const memberPids = new Set(members.map(({ pid }) => pid));
     const scanFailures = tokenOwned.failures.filter(({ pid }) =>
-      members.some((member) => member.pid === pid),
+      memberPids.has(pid),
     );
     for (const failure of failures)
       mergeProcessOwnershipFailure(unresolved, failure);
