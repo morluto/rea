@@ -29,8 +29,8 @@ export const idaFunctionSchema = z.union([
 ]);
 export type IdaFunction = z.infer<typeof idaFunctionSchema>;
 
-/** Legacy metadata describes the recorded input, whereas modern health names live paths. */
-export const legacyMetadataSchema = z
+/** Attached metadata describes the recorded input, whereas modern health names live paths. */
+export const attachedMetadataSchema = z
   .object({
     path: z.string().min(1),
     module: z.string(),
@@ -49,6 +49,10 @@ export const modernHealthSchema = z
   .object({
     status: z.literal("ok"),
     input_path: z.string().min(1),
+    input_sha256: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/iu)
+      .nullish(),
     idb_path: z.string().nullable(),
     imagebase: idaAddressSchema,
     auto_analysis_ready: z.boolean().nullable(),
@@ -61,7 +65,7 @@ export const cursorSchema = z.union([
   z.object({ next: z.int().nonnegative() }),
   z.object({ done: z.literal(true) }),
 ]);
-/** Both legacy pages and modern cursors must finish or advance strictly. */
+/** Offset pages and cursors must finish or advance strictly. */
 export const nextPageOffset = (
   next: number | null,
   current: number,
@@ -78,11 +82,15 @@ export const nextOffset = (
 ): number | null =>
   nextPageOffset("done" in cursor ? null : cursor.next, current);
 
-export const legacyPageSchema = z.object({
-  data: z.array(jsonValueSchema),
-  next_offset: z.int().nonnegative().nullable(),
-});
-export const modernPageSchema = z.array(legacyPageSchema).length(1);
+/** One `list_funcs` page: a single-query batch with an offset continuation. */
+export const modernPageSchema = z
+  .array(
+    z.object({
+      data: z.array(jsonValueSchema),
+      next_offset: z.int().nonnegative().nullable(),
+    }),
+  )
+  .length(1);
 
 const modernLookupRowSchema = z.object({
   query: z.string(),
@@ -129,23 +137,11 @@ export const modernDecompileSchema = z.object({
   total_lines: z.int().nonnegative().optional(),
 });
 
-export const legacyStringSchema = z.object({
-  address: idaAddressSchema,
-  string: z.string(),
-  length: z.int().nonnegative(),
-});
 export const idaStringsPageSchema = z.object({
   matches: z.array(z.object({ addr: idaAddressSchema, string: z.string() })),
   cursor: cursorSchema,
   error: z.string().nullish(),
 });
-export const legacyXrefsSchema = z.array(
-  z.object({
-    address: idaAddressSchema,
-    type: z.string(),
-    function: idaFunctionSchema.nullable(),
-  }),
-);
 export const modernXrefsSchema = z
   .array(
     z.object({
@@ -205,9 +201,6 @@ export const modernCallGraphSchema = z
       .passthrough(),
   )
   .length(1);
-export const legacyCalleesSchema = z.array(
-  z.object({ address: idaAddressSchema, name: z.string() }).passthrough(),
-);
 
 /** Parsed database lifecycle observations retain explicit ownership information. */
 export const openDatabaseSchema = z
@@ -305,3 +298,38 @@ export const surveySegmentsSchema = z
         });
     }
   });
+
+/**
+ * Translate a `search_strings` literal query into a candidate regex for upstream
+ * `find_regex` across all IDA protocols (`modern`, `hexrays`, and `native`)
+ * while keeping REA's ECMAScript Unicode simple case folding as the final filter.
+ *
+ * Across all 1,114,112 Unicode code points, only U+017F (`ſ` ↔ `s`/`S`) and
+ * U+212A (`K` ↔ `k`/`K`) fold to ASCII under `/iu`. Spelling them inline as
+ * `(?:[sS]|\u017f)` and `(?:[kK]|\u212a)` matches both Unicode regex engines
+ * (Python `re`) and UTF-8-as-bytes matchers (`ida-free-mcp`) without a catch-all
+ * wildcard that forces every non-ASCII string across paginated RPCs.
+ *
+ * Returns `undefined` when ill-formed UTF-16 surrogates or non-ASCII
+ * case-insensitive characters require unfiltered enumeration.
+ */
+export const idaLiteralSearchPattern = (
+  pattern: string,
+  caseSensitive: boolean,
+): string | undefined => {
+  if (/[\uD800-\uDFFF]/u.test(pattern)) return undefined;
+  if (!caseSensitive && /[\u0080-\u{10ffff}]/u.test(pattern)) return undefined;
+  let literal = (caseSensitive ? pattern : pattern.toLowerCase()).replace(
+    /[.*+?^${}()|[\]\\]/gu,
+    "\\$&",
+  );
+  // Spell ASCII variants (plus U+017F/U+212A simple folds) explicitly rather
+  // than depending on upstream regex case flags or locale rules.
+  if (!caseSensitive)
+    literal = literal.replace(/[a-z]/gu, (char) => {
+      if (char === "s") return "(?:[sS]|\u017f)";
+      if (char === "k") return "(?:[kK]|\u212a)";
+      return `[${char}${char.toUpperCase()}]`;
+    });
+  return literal;
+};

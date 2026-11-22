@@ -6,16 +6,23 @@ import { z } from "zod";
 
 import { advertisedInputExamples } from "../../../src/contracts/advertisedInputExamples.js";
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import { advertiseTool } from "../../../src/contracts/advertisedTool.js";
 import { emptyArraySchema } from "../../../src/domain/emptyArraySchema.js";
 import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
-import { GENERATED_MCP_TOOL_CATALOG } from "../../fixtures/mcpToolCatalog.js";
 import {
   arrayItemSchemaError,
   unsupportedInputLiteralSchemaError,
 } from "../../fixtures/mcpClientSchemaConstraints.js";
-import { advertisedSchemaErrors } from "../../fixtures/mcpAdvertisedSchemaValidity.js";
+import {
+  advertisedSchemaErrors,
+  localInputReferences,
+  recursiveReferences,
+  resolveReference,
+} from "../../fixtures/mcpAdvertisedSchemaValidity.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { servedCatalog } from "../../../src/application/environment/environmentState.js";
+import { environmentToolAnswer } from "../../../src/application/environment/environmentToolAnswer.js";
+import { createEnvironmentMcpServer } from "../../../src/server/environment/serveEnvironment.js";
 import { servedFrom } from "../../fixtures/environmentStateServing.js";
 import type { TimedCaptureRow } from "../../fixtures/analysisView.js";
 import {
@@ -24,6 +31,8 @@ import {
   FIRST_BOOK,
   THIRD_BOOK,
 } from "../../fixtures/environmentStateWrites.js";
+import { advertisedToolPresentation } from "../../../src/contracts/mcpSchemaPresentation.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 
 interface ToolSchemas {
   readonly name: string;
@@ -34,7 +43,7 @@ interface ToolSchemas {
 
 function expectStrictInputSchemaParity(
   tools: readonly ToolSchemas[],
-  ajv: Ajv2020,
+  validators: ReadonlyMap<string, ReturnType<Ajv2020["compile"]>>,
 ): void {
   const advertised = new Map(tools.map((tool) => [tool.name, tool]));
   const names = [
@@ -55,13 +64,53 @@ function expectStrictInputSchemaParity(
       ({ name: toolName }) => toolName === name,
     );
     const tool = advertised.get(name);
+    const validate = validators.get(name);
     const example = contract?.examples[0];
-    if (contract === undefined || tool === undefined || example === undefined)
+    if (
+      contract === undefined ||
+      tool === undefined ||
+      validate === undefined ||
+      example === undefined
+    )
       throw new Error(`${name} did not have an advertised example`);
     const malformed = { ...example.input, __unexpected_root_key__: true };
     expect(contract.inputSchema.safeParse(malformed).success, name).toBe(false);
-    expect(ajv.compile(tool.inputSchema)(malformed), name).toBe(false);
+    expect(validate(malformed), name).toBe(false);
   }
+}
+
+async function listAdvertisedTools(server: McpServer) {
+  const client = new Client(
+    { name: "schema-validation", version: "0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    return (await client.listTools()).tools;
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+}
+
+let cachedCanonicalTools:
+  | Promise<Awaited<ReturnType<Client["listTools"]>>["tools"]>
+  | undefined;
+
+function listCanonicalAdvertisedTools() {
+  cachedCanonicalTools ??= (async () => {
+    const server = new McpServer({ name: "schema-validation", version: "0" });
+    for (const contract of TOOL_CONTRACTS)
+      server.registerTool(
+        contract.name,
+        toolRegistrationOptions(contract),
+        async () => ({ content: [] }),
+      );
+    return listAdvertisedTools(server);
+  })();
+  return cachedCanonicalTools;
 }
 
 function expectKnownAuthorityHints(tools: readonly ToolSchemas[]): void {
@@ -203,23 +252,6 @@ function expectMeaningfulPropertyDescriptions(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function resolveReference(schema: unknown, reference: string): unknown {
-  if (reference === "#") return schema;
-  if (!reference.startsWith("#/")) return undefined;
-  let value = schema;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (
-      typeof value !== "object" ||
-      value === null ||
-      !Object.hasOwn(value, key)
-    )
-      return undefined;
-    value = Reflect.get(value, key);
-  }
-  return value;
-}
-
 /** Follow SDK-shared local definitions at each schema path component. */
 function schemaAt(
   root: unknown,
@@ -302,89 +334,6 @@ function expectManagedLocalSignatureSchema(
   expect(validateLocals({ has_context_dependent_types: false })).toBe(false);
 }
 
-function recursiveReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) =>
-    (["inputSchema", "outputSchema"] as const).flatMap((kind) => {
-      const schema = tool[kind];
-      const found = new Set<string>();
-      const visit = (node: unknown, active: readonly string[]): void => {
-        if (typeof node !== "object" || node === null) return;
-        for (const [key, child] of Object.entries(node)) {
-          if (
-            [
-              "$defs",
-              "definitions",
-              "examples",
-              "default",
-              "const",
-              "enum",
-            ].includes(key)
-          )
-            continue;
-          if (key !== "$ref" || typeof child !== "string") visit(child, active);
-          else if (active.includes(child)) found.add(child);
-          else visit(resolveReference(schema, child), [...active, child]);
-        }
-      };
-      visit(schema, []);
-      return [...found].map(
-        (reference) => `${tool.name}.${kind}: ${reference}`,
-      );
-    }),
-  );
-}
-
-const schemaMapKeywords = new Set([
-  "$defs",
-  "definitions",
-  "properties",
-  "patternProperties",
-  "dependentSchemas",
-  "dependencies",
-]);
-const schemaArrayKeywords = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
-const schemaChildKeywords = new Set([
-  "items",
-  "additionalItems",
-  "contains",
-  "additionalProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "propertyNames",
-  "not",
-  "if",
-  "then",
-  "else",
-]);
-
-function localInputReferences(tools: readonly ToolSchemas[]): string[] {
-  return tools.flatMap((tool) => {
-    const references: string[] = [];
-    const visit = (node: unknown, path: string): void => {
-      if (!isRecord(node)) return;
-      if (typeof node.$ref === "string") references.push(`${path}.$ref`);
-      for (const [key, value] of Object.entries(node)) {
-        if (schemaMapKeywords.has(key) && isRecord(value)) {
-          for (const [name, schema] of Object.entries(value))
-            visit(schema, `${path}.${key}.${name}`);
-        } else if (schemaArrayKeywords.has(key) && Array.isArray(value)) {
-          value.forEach((schema, index) =>
-            visit(schema, `${path}.${key}[${index}]`),
-          );
-        } else if (schemaChildKeywords.has(key)) {
-          if (Array.isArray(value))
-            value.forEach((schema, index) =>
-              visit(schema, `${path}.${key}[${index}]`),
-            );
-          else visit(value, `${path}.${key}`);
-        }
-      }
-    };
-    visit(tool.inputSchema, `${tool.name}.inputSchema`);
-    return references;
-  });
-}
-
 it("finds references only in input schema positions, not literal data", () => {
   const schema = {
     type: "object",
@@ -438,7 +387,10 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
         };
       },
     );
-    const client = new Client({ name: "process-schema", version: "0" });
+    const client = new Client(
+      { name: "process-schema", version: "0" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
     const [clientTransport, serverTransport] =
       InMemoryTransport.createLinkedPair();
     try {
@@ -484,7 +436,7 @@ const advertiseAndEnforceProcessEnvironmentKeyConstraint =
   };
 
 describe("served environment catalogs", () => {
-  it("advertises served environment catalogs in schemas clients accept: bulk bodies, pinned queries and fixed members", () => {
+  it("lists portable schemas for bulk bodies, pinned queries and fixed members", async () => {
     const edition = { format: "HC", featured: 1 };
     const stored = { ...THIRD_BOOK, ...edition };
     const captures: readonly (readonly TimedCaptureRow[])[] = [
@@ -511,28 +463,42 @@ describe("served environment catalogs", () => {
         ["GET", "/api/books/3", stored],
       ],
     ];
-    const tools = captures.flatMap((rows) => {
+    const tools: Awaited<ReturnType<Client["listTools"]>>["tools"] = [];
+    for (const rows of captures) {
       const served = servedFrom(rows);
       const catalog = servedCatalog(served.source, served.state, "books");
       if (!catalog.ok) throw catalog.error;
-      return catalog.value.tools;
-    });
+      const server = createEnvironmentMcpServer(
+        "books",
+        catalog.value.tools,
+        environmentToolAnswer(served.source, served.store),
+      );
+      tools.push(...(await listAdvertisedTools(server)));
+    }
     const create = tools.find((tool) => tool.name === "post_books");
-    expect(create?.inputSchema.properties["notify"]).toMatchObject({
+    expect(create?.inputSchema.properties?.["notify"]).toMatchObject({
       enum: ["quiet"],
     });
-    expect(JSON.stringify(create?.inputSchema)).toContain(
-      '"const":"hardcover"',
+    expect(create?.inputSchema).toHaveProperty(
+      "properties.body.properties.books.items.properties.format.enum",
+      ["hardcover"],
     );
-    expect(tools.some((tool) => tool.name === "delete_books")).toBe(true);
+    expect(create?.inputSchema).toHaveProperty(
+      "properties.body.properties.books.items.properties.featured.description",
+      expect.stringMatching(/\btrue\b/u),
+    );
     expect(
-      advertisedSchemaErrors(
-        tools.map((tool) => ({
-          name: tool.name,
-          inputSchema: tool.inputSchema as unknown as Record<string, unknown>,
-        })),
-      ),
-    ).toEqual([]);
+      tools.find((tool) => tool.name === "delete_books")?.inputSchema
+        .properties?.["body"],
+    ).toMatchObject({
+      type: "array",
+      items: { type: "object" },
+    });
+    expect(advertisedSchemaErrors(tools)).toEqual([]);
+    for (const { name, inputSchema } of tools)
+      expect(
+        unsupportedInputLiteralSchemaError(inputSchema, name),
+      ).toBeUndefined();
   });
 });
 
@@ -557,195 +523,159 @@ describe("MCP JSON Schema validity", () => {
   });
 
   it("advertises valid input and output schemas for every canonical tool", async () => {
-    const server = new McpServer({ name: "schema-validation", version: "0" });
-    const client = new Client({ name: "schema-validation", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    for (const contract of TOOL_CONTRACTS)
-      server.registerTool(
-        contract.name,
-        toolRegistrationOptions(contract),
-        async () => ({
-          content: [],
-        }),
+    const tools = await listCanonicalAdvertisedTools();
+    expect(tools.map(({ name }) => name).sort()).toEqual(
+      TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+    expect(advertisedSchemaErrors(tools)).toEqual([]);
+    expect(localInputReferences(tools)).toEqual([]);
+    expect(recursiveReferences(tools)).toEqual([]);
+    expectKnownAuthorityHints(tools);
+    const byName = new Map(tools.map((tool) => [tool.name, tool]));
+    expectManagedLocalSignatureSchema(byName.get("inspect_managed_members"));
+    const comparison = byName.get("compare_web_captures")?.inputSchema;
+    for (const side of ["before", "after"])
+      expect(comparison).toHaveProperty(
+        ["properties", side, "properties", "inspection"],
+        {
+          type: "object",
+          description: expect.stringContaining(
+            "complete canonical observation",
+          ),
+        },
       );
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const { tools } = await client.listTools();
-      expect(tools.map(({ name }) => name).sort()).toEqual(
-        TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    for (const contract of TOOL_CONTRACTS) {
+      const tool = byName.get(contract.name);
+      expect(tool?.title?.trim(), contract.name).toBeTruthy();
+      expect(tool?.description?.trim(), contract.name).toBeTruthy();
+      const examples = advertisedInputExamples(contract);
+      expect(tool?.inputSchema.examples, contract.name).toEqual(
+        examples.length === 0 ? undefined : examples,
       );
-      expect(advertisedSchemaErrors(tools)).toEqual([]);
-      expect(localInputReferences(tools)).toEqual([]);
-      expect(recursiveReferences(tools)).toEqual([]);
-      expectKnownAuthorityHints(tools);
-      const byName = new Map(tools.map((tool) => [tool.name, tool]));
-      expectManagedLocalSignatureSchema(byName.get("inspect_managed_members"));
-      const comparison = byName.get("compare_web_captures")?.inputSchema;
-      for (const side of ["before", "after"])
-        expect(comparison).toHaveProperty(
-          ["properties", side, "properties", "inspection"],
-          {
-            type: "object",
-            description: expect.stringContaining(
-              "complete canonical observation",
-            ),
-          },
-        );
-      const catalogProjection = tools.map((tool) => ({
-        name: tool.name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-        outputSchema: tool.outputSchema,
-        annotations: tool.annotations,
-      }));
-      expect(catalogProjection).toEqual(
-        GENERATED_MCP_TOOL_CATALOG.map((tool) => ({
-          name: tool.name,
-          title: tool.title,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: tool.outputSchema,
-          annotations: tool.annotations,
-        })),
-      );
-      for (const contract of TOOL_CONTRACTS) {
-        const tool = byName.get(contract.name);
-        expect(tool?.title?.trim(), contract.name).toBeTruthy();
-        expect(tool?.description?.trim(), contract.name).toBeTruthy();
-        const examples = advertisedInputExamples(contract);
-        expect(tool?.inputSchema.examples, contract.name).toEqual(
-          examples.length === 0 ? undefined : examples,
-        );
-        for (const example of contract.examples)
-          expect(
-            contract.inputSchema.safeParse(example.input).success,
-            `${contract.name}: ${example.title}`,
-          ).toBe(true);
-        expectMeaningfulPropertyDescriptions(tool?.inputSchema, contract.name);
-      }
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+      for (const example of contract.examples)
+        expect(
+          contract.inputSchema.safeParse(example.input).success,
+          `${contract.name}: ${example.title}`,
+        ).toBe(true);
+      expectMeaningfulPropertyDescriptions(tool?.inputSchema, contract.name);
     }
   });
 });
 
 describe("MCP root input schemas", () => {
   it("advertises object roots while enforcing union requirements at runtime", async () => {
-    const server = new McpServer({ name: "schema-constraints", version: "0" });
-    const client = new Client({ name: "schema-constraints", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    for (const contract of TOOL_CONTRACTS)
-      server.registerTool(
-        contract.name,
-        toolRegistrationOptions(contract),
-        async () => ({ content: [] }),
-      );
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const { tools } = await client.listTools();
-      const advertised = new Map(tools.map((tool) => [tool.name, tool]));
-      const ajv = new Ajv2020({ strict: false, validateFormats: false });
-      const graphContract = TOOL_CONTRACTS.find(
-        ({ name }) => name === "project_managed_application_graph",
-      );
-      const graphTool = advertised.get("project_managed_application_graph");
-      if (graphContract === undefined || graphTool === undefined)
-        throw new Error("Managed application graph tool was not advertised");
-      expect(graphContract.inputSchema.safeParse({}).success).toBe(false);
-      expect(graphTool.inputSchema).toMatchObject({ type: "object" });
-      expect(ajv.compile(graphTool.inputSchema)({})).toBe(false);
-      expect(ajv.compile(graphTool.inputSchema)({ unrelated: true })).toBe(
-        false,
-      );
-      expect(graphTool.inputSchema.description).toContain(
-        "Provide a complete input group",
-      );
-      expect(graphTool.inputSchema.description).not.toContain("exactly one");
+    const tools = await listCanonicalAdvertisedTools();
+    const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+    const ajv = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+      inlineRefs: false,
+      code: { optimize: false },
+    });
+    const compiledValidators = new Map<
+      string,
+      ReturnType<Ajv2020["compile"]>
+    >();
+    const graphContract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "project_managed_application_graph",
+    );
+    const graphTool = advertised.get("project_managed_application_graph");
+    if (graphContract === undefined || graphTool === undefined)
+      throw new Error("Managed application graph tool was not advertised");
+    expect(graphContract.inputSchema.safeParse({}).success).toBe(false);
+    expect(graphTool.inputSchema).toMatchObject({ type: "object" });
+    const validateGraph = ajv.compile(graphTool.inputSchema);
+    compiledValidators.set("project_managed_application_graph", validateGraph);
+    expect(validateGraph({})).toBe(false);
+    expect(validateGraph({ unrelated: true })).toBe(false);
+    expect(graphTool.inputSchema.description).toContain(
+      "Provide a complete input group",
+    );
+    expect(graphTool.inputSchema.description).not.toContain("exactly one");
 
-      for (const contract of TOOL_CONTRACTS) {
-        const inputSchema = advertised.get(contract.name)!.inputSchema;
-        expect(inputSchema.type, contract.name).toBe("object");
-        expect(inputSchema.properties, contract.name).toBeDefined();
-        // Anthropic tool input schemas reject root combinators.
-        for (const combinator of ["anyOf", "oneOf", "allOf"])
-          expect(inputSchema, contract.name).not.toHaveProperty(combinator);
-        const validate = ajv.compile(inputSchema);
-        for (const example of contract.examples)
-          expect(
-            validate(example.input),
-            `${contract.name}: ${example.title}`,
-          ).toBe(true);
-      }
-
-      expectStrictInputSchemaParity(tools, ajv);
-
-      for (const name of ["inspect_web_page", "analyze_web_bundle"]) {
-        const contract = TOOL_CONTRACTS.find((tool) => tool.name === name);
-        const tool = advertised.get(name);
-        if (contract === undefined || tool === undefined)
-          throw new Error(`${name} was not advertised`);
-        const validate = ajv.compile(tool.inputSchema);
-        const base = {
-          cdp_endpoint: "http://127.0.0.1:9222",
-          target_id: "target",
-        };
-        for (const flag of [undefined, false, true, "false", null]) {
-          const input =
-            flag === undefined
-              ? base
-              : { ...base, include_script_sources: flag };
-          const accepted =
-            flag === undefined ||
-            flag === true ||
-            (name === "inspect_web_page" && flag === false);
-          const parsed = contract.inputSchema.safeParse(input);
-          expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
-          // The advertisement relaxes Boolean literals; the canonical parser
-          // still rejects false when this operation requires script sources.
-          expect(validate(input), `${name}: ${String(flag)}`).toBe(
-            flag === undefined || typeof flag === "boolean",
-          );
-          if (parsed.success && flag === undefined)
-            expect(parsed.data).toMatchObject({
-              include_script_sources: name === "analyze_web_bundle",
-            });
-        }
-      }
-
-      const nativeObservation = TOOL_CONTRACTS.find(
-        ({ name }) => name === "observe_native_ui",
-      );
-      const nativeScenario = TOOL_CONTRACTS.find(
-        ({ name }) => name === "capture_native_ui_scenario",
-      );
-      const nativeObservationTool = advertised.get("observe_native_ui");
-      const nativeScenarioTool = advertised.get("capture_native_ui_scenario");
-      if (
-        nativeObservation === undefined ||
-        nativeScenario === undefined ||
-        nativeObservationTool === undefined ||
-        nativeScenarioTool === undefined
-      )
-        throw new Error("Native UI tools were not registered");
-      const target = { pid: 123, window_id: 456 };
-      const scenario = {
-        ...target,
-        steps: [{ kind: "wait", milliseconds: 100 }],
-      };
-      const observationResult = nativeObservation.inputSchema.safeParse(target);
-      const scenarioResult = nativeScenario.inputSchema.safeParse(scenario);
-      expect(observationResult.success).toBe(true);
-      expect(scenarioResult.success).toBe(true);
-      expect(ajv.compile(nativeObservationTool.inputSchema)(target)).toBe(true);
-      expect(ajv.compile(nativeScenarioTool.inputSchema)(scenario)).toBe(true);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    for (const contract of TOOL_CONTRACTS) {
+      const inputSchema = advertised.get(contract.name)!.inputSchema;
+      expect(inputSchema.type, contract.name).toBe("object");
+      expect(inputSchema.properties, contract.name).toBeDefined();
+      // Anthropic tool input schemas reject root combinators.
+      for (const combinator of ["anyOf", "oneOf", "allOf"])
+        expect(inputSchema, contract.name).not.toHaveProperty(combinator);
+      const validate =
+        compiledValidators.get(contract.name) ?? ajv.compile(inputSchema);
+      compiledValidators.set(contract.name, validate);
+      for (const example of contract.examples)
+        expect(
+          validate(example.input),
+          `${contract.name}: ${example.title}`,
+        ).toBe(true);
     }
+
+    expectStrictInputSchemaParity(tools, compiledValidators);
+
+    for (const name of ["inspect_web_page", "analyze_web_bundle"]) {
+      const contract = TOOL_CONTRACTS.find((tool) => tool.name === name);
+      const tool = advertised.get(name);
+      if (contract === undefined || tool === undefined)
+        throw new Error(`${name} was not advertised`);
+      const validate = ajv.compile(
+        advertiseTool(
+          { inputSchema: tool.inputSchema },
+          advertisedToolPresentation("off"),
+        ).inputSchema ?? {},
+      );
+      const base = {
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "target",
+      };
+      for (const flag of [undefined, false, true, "false", null]) {
+        const input =
+          flag === undefined ? base : { ...base, include_script_sources: flag };
+        const accepted =
+          flag === undefined ||
+          flag === true ||
+          (name === "inspect_web_page" && flag === false);
+        const parsed = contract.inputSchema.safeParse(input);
+        expect(parsed.success, `${name}: ${String(flag)}`).toBe(accepted);
+        // The advertised dialect relaxes Boolean literals; the canonical parser
+        // still rejects false when this operation requires script sources.
+        expect(validate(input), `${name}: ${String(flag)}`).toBe(
+          flag === undefined || typeof flag === "boolean",
+        );
+        if (parsed.success && flag === undefined)
+          expect(parsed.data).toMatchObject({
+            include_script_sources: name === "analyze_web_bundle",
+          });
+      }
+    }
+
+    const nativeObservation = TOOL_CONTRACTS.find(
+      ({ name }) => name === "observe_native_ui",
+    );
+    const nativeScenario = TOOL_CONTRACTS.find(
+      ({ name }) => name === "capture_native_ui_scenario",
+    );
+    const nativeObservationTool = advertised.get("observe_native_ui");
+    const nativeScenarioTool = advertised.get("capture_native_ui_scenario");
+    if (
+      nativeObservation === undefined ||
+      nativeScenario === undefined ||
+      nativeObservationTool === undefined ||
+      nativeScenarioTool === undefined
+    )
+      throw new Error("Native UI tools were not registered");
+    const target = { pid: 123, window_id: 456 };
+    const scenario = {
+      ...target,
+      steps: [{ kind: "wait", milliseconds: 100 }],
+    };
+    const observationResult = nativeObservation.inputSchema.safeParse(target);
+    const scenarioResult = nativeScenario.inputSchema.safeParse(scenario);
+    expect(observationResult.success).toBe(true);
+    expect(scenarioResult.success).toBe(true);
+    expect(compiledValidators.get("observe_native_ui")!(target)).toBe(true);
+    expect(
+      compiledValidators.get("capture_native_ui_scenario")!(scenario),
+    ).toBe(true);
   });
 });
 
@@ -762,79 +692,55 @@ const advertiseAndEnforceItemSelectorCollectionConstraints =
     if (contract === undefined)
       throw new Error("inspect_analysis_view contract was not registered");
 
-    const server = new McpServer({
-      name: "item-selector-schema",
-      version: "0",
-    });
-    server.registerTool(
-      contract.name,
-      toolRegistrationOptions(contract),
-      async () => ({
-        content: [],
-      }),
+    const advertised = (await listCanonicalAdvertisedTools()).find(
+      ({ name }) => name === contract.name,
     );
-    const client = new Client({ name: "item-selector-schema", version: "0" });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const advertised = (await client.listTools()).tools.find(
-        ({ name }) => name === contract.name,
-      );
-      if (advertised === undefined)
-        throw new Error("inspect_analysis_view tool was not advertised");
+    if (advertised === undefined)
+      throw new Error("inspect_analysis_view tool was not advertised");
 
-      const validate = new Ajv2020({
-        strict: false,
-        validateFormats: false,
-      }).compile(advertised.inputSchema);
-      const source = {
-        kind: "retained-evidence",
-        evidence_id: `ev_${"a".repeat(64)}`,
-      };
-      const itemInput = (collection: string, selector: unknown) => ({
-        source,
-        view: { kind: "item", collection, selector },
-      });
-      const nodeId = `jag_node_${"b".repeat(64)}`;
-      // Collection-specific selector constraints must survive JSON Schema
-      // conversion: the advertised schema rejects exactly what runtime
-      // input validation rejects.
-      const invalid: ReadonlyArray<readonly [string, unknown]> = [
-        ["modules", { index: 0 }],
-        ["modules", { name: "entry" }],
-        ["sections", { path: "/src/entry.js" }],
-        ["symbols", { node_id: nodeId }],
-      ];
-      const valid: ReadonlyArray<readonly [string, unknown]> = [
-        ["modules", { path: "/src/entry.js" }],
-        ["modules", { node_id: nodeId }],
-        ["sections", { index: 0 }],
-        ["sections", { name: ".text" }],
-        ["symbols", { index: 0 }],
-        ["symbols", { name: "main" }],
-      ];
-      for (const [collection, selector] of invalid) {
-        const input = itemInput(collection, selector);
-        const label = `${collection}/${Object.keys(selector as object)[0]}`;
-        expect(contract.inputSchema.safeParse(input).success, label).toBe(
-          false,
-        );
-        expect(validate(input), `advertised schema rejects ${label}`).toBe(
-          false,
-        );
-      }
-      for (const [collection, selector] of valid) {
-        const input = itemInput(collection, selector);
-        const label = `${collection}/${Object.keys(selector as object)[0]}`;
-        expect(contract.inputSchema.safeParse(input).success, label).toBe(true);
-        expect(validate(input), `advertised schema accepts ${label}`).toBe(
-          true,
-        );
-      }
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    const validate = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+      inlineRefs: false,
+      code: { optimize: false },
+    }).compile(advertised.inputSchema);
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: `ev_${"a".repeat(64)}`,
+    };
+    const itemInput = (collection: string, selector: unknown) => ({
+      source,
+      view: { kind: "item", collection, selector },
+    });
+    const nodeId = `jag_node_${"b".repeat(64)}`;
+    // Collection-specific selector constraints must survive JSON Schema
+    // conversion: the advertised schema rejects exactly what runtime
+    // input validation rejects.
+    const invalid: ReadonlyArray<readonly [string, unknown]> = [
+      ["modules", { index: 0 }],
+      ["modules", { name: "entry" }],
+      ["sections", { path: "/src/entry.js" }],
+      ["symbols", { node_id: nodeId }],
+    ];
+    const valid: ReadonlyArray<readonly [string, unknown]> = [
+      ["modules", { path: "/src/entry.js" }],
+      ["modules", { node_id: nodeId }],
+      ["sections", { index: 0 }],
+      ["sections", { name: ".text" }],
+      ["symbols", { index: 0 }],
+      ["symbols", { name: "main" }],
+    ];
+    for (const [collection, selector] of invalid) {
+      const input = itemInput(collection, selector);
+      const label = `${collection}/${Object.keys(selector as object)[0]}`;
+      expect(contract.inputSchema.safeParse(input).success, label).toBe(false);
+      expect(validate(input), `advertised schema rejects ${label}`).toBe(false);
+    }
+    for (const [collection, selector] of valid) {
+      const input = itemInput(collection, selector);
+      const label = `${collection}/${Object.keys(selector as object)[0]}`;
+      expect(contract.inputSchema.safeParse(input).success, label).toBe(true);
+      expect(validate(input), `advertised schema accepts ${label}`).toBe(true);
     }
   };
 
@@ -845,86 +751,42 @@ it(
 
 describe("MCP process input JSON Schema", () => {
   it("advertises process strings without weakening terminal input", async () => {
-    const server = new McpServer({
-      name: "process-schema-validation",
-      version: "0",
-    });
-    const client = new Client({
-      name: "process-schema-validation",
-      version: "0",
-    });
-    const [clientTransport, serverTransport] =
-      InMemoryTransport.createLinkedPair();
-    for (const contract of TOOL_CONTRACTS)
-      server.registerTool(
-        contract.name,
-        toolRegistrationOptions(contract),
-        async () => ({ content: [] }),
-      );
-    try {
-      await server.connect(serverTransport);
-      await client.connect(clientTransport);
-      const processContract = TOOL_CONTRACTS.find(
-        ({ name }) => name === "capture_process_scenario",
-      );
-      const processTool = (await client.listTools()).tools.find(
-        ({ name }) => name === "capture_process_scenario",
-      );
-      if (processContract === undefined || processTool === undefined)
-        throw new Error("Process scenario tool was not advertised");
-      const validate = new Ajv2020({
-        strict: false,
-        validateFormats: false,
-      }).compile(processTool.inputSchema);
-      const base = { executable: "/usr/bin/true" };
-      for (const input of [
-        { ...base, executable: "/usr/bin/true\0" },
-        { ...base, arguments: ["\0"] },
-        { ...base, working_directory: "/tmp\0" },
-        { ...base, environment: { KEY: "value\0" } },
-        { ...base, filesystem_observation_paths: ["/tmp\0"] },
-      ]) {
-        expect(processContract.inputSchema.safeParse(input).success).toBe(
-          false,
-        );
-        expect(validate(input)).toBe(false);
-      }
-      const terminalInput = {
-        ...base,
-        events: [{ type: "input", at_ms: 0, data: "\0" }],
-      };
-      expect(processContract.inputSchema.safeParse(terminalInput).success).toBe(
-        true,
-      );
-      expect(validate(terminalInput)).toBe(true);
-    } finally {
-      await Promise.allSettled([client.close(), server.close()]);
+    const tools = await listCanonicalAdvertisedTools();
+    const processContract = TOOL_CONTRACTS.find(
+      ({ name }) => name === "capture_process_scenario",
+    );
+    const processTool = tools.find(
+      ({ name }) => name === "capture_process_scenario",
+    );
+    if (processContract === undefined || processTool === undefined)
+      throw new Error("Process scenario tool was not advertised");
+    const validate = new Ajv2020({
+      strict: false,
+      validateFormats: false,
+    }).compile(processTool.inputSchema);
+    const base = { executable: "/usr/bin/true" };
+    for (const input of [
+      { ...base, executable: "/usr/bin/true\0" },
+      { ...base, arguments: ["\0"] },
+      { ...base, working_directory: "/tmp\0" },
+      { ...base, environment: { KEY: "value\0" } },
+      { ...base, filesystem_observation_paths: ["/tmp\0"] },
+    ]) {
+      expect(processContract.inputSchema.safeParse(input).success).toBe(false);
+      expect(validate(input)).toBe(false);
     }
+    const terminalInput = {
+      ...base,
+      events: [{ type: "input", at_ms: 0, data: "\0" }],
+    };
+    expect(processContract.inputSchema.safeParse(terminalInput).success).toBe(
+      true,
+    );
+    expect(validate(terminalInput)).toBe(true);
   });
 });
 
-it("ships nonrecursive input and output schemas in the generated catalog", () => {
-  expect(advertisedSchemaErrors(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-  expect(recursiveReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
-it("ships input schemas without local references in the generated catalog", () => {
-  expect(localInputReferences(GENERATED_MCP_TOOL_CATALOG)).toEqual([]);
-});
-
-it("rejects unresolved output-schema references even for uncalled tools", () => {
-  const errors = advertisedSchemaErrors([
-    {
-      name: "dangling",
-      inputSchema: { type: "object" },
-      outputSchema: { $ref: "#/$defs/missing" },
-    },
-  ]);
-  expect(errors).toHaveLength(1);
-  expect(errors[0]).toContain("dangling.outputSchema");
-});
-
-it("validates each tool independently when output schema IDs repeat", () => {
+it("compiles every output schema independently when IDs repeat, including uncalled tools", () => {
   const outputSchema = { $id: "urn:rea:test:shared-output", type: "string" };
   const errors = advertisedSchemaErrors([
     { name: "first", inputSchema: { type: "object" }, outputSchema },
@@ -992,6 +854,24 @@ it("checks client array constraints in schema positions while preserving literal
         "literal",
       ),
     ).toBe(`literal.properties.value.${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "array",
+          items: [{ type: "string" }, literal],
+        },
+        "tuple",
+      ),
+    ).toBe(`tuple.items[1].${reason}`);
+    expect(
+      unsupportedInputLiteralSchemaError(
+        {
+          type: "string",
+          contentSchema: literal,
+        },
+        "encoded",
+      ),
+    ).toBe(`encoded.contentSchema.${reason}`);
   }
 });
 
@@ -1026,7 +906,7 @@ it.each([false, true])(
   },
 );
 
-it("distinguishes recursive references from shared definitions", () => {
+it("finds recursion through schema-valued keywords and ignores literal metadata", () => {
   const diamond = {
     type: "object",
     properties: {
@@ -1034,18 +914,26 @@ it("distinguishes recursive references from shared definitions", () => {
       right: { $ref: "#/$defs/shared" },
     },
     $defs: { shared: { type: "string" } },
+    default: { $ref: "#" },
+    "x-fixture": { $ref: "#" },
   };
-  expect(
-    recursiveReferences([{ name: "diamond", inputSchema: diamond }]),
-  ).toEqual([]);
-  expect(
-    recursiveReferences([{ name: "root", inputSchema: { $ref: "#" } }]),
-  ).toEqual(["root.inputSchema: #"]);
   const escaped = {
-    $ref: "#/$defs/a~1b",
-    $defs: { "a/b": { $ref: "#/$defs/a~1b" } },
+    $ref: "#/$defs/a%20~1b",
+    $defs: { "a /b": { $ref: "#/$defs/a%20~1b" } },
   };
   expect(
-    recursiveReferences([{ name: "escaped", inputSchema: escaped }]),
-  ).toEqual(["escaped.inputSchema: #/$defs/a~1b"]);
+    recursiveReferences([
+      { name: "diamond", inputSchema: diamond },
+      { name: "root", inputSchema: { $ref: "#" } },
+      { name: "escaped", inputSchema: escaped },
+      {
+        name: "property",
+        inputSchema: { properties: { default: { $ref: "#" } } },
+      },
+    ]),
+  ).toEqual([
+    "root.inputSchema: #",
+    "escaped.inputSchema: #/$defs/a%20~1b",
+    "property.inputSchema: #",
+  ]);
 });

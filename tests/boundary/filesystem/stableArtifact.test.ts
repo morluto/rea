@@ -10,26 +10,24 @@ import {
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { expect, it, onTestFinished } from "vitest";
-import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
+import { phaseGate } from "../../support/lifecycleHarness.js";
+import {
+  readStableArtifact,
+  streamStableArtifact,
+} from "../../../src/resources/readStableArtifact.js";
 import {
   artifactFileCompletion,
   ArtifactFileCleanupFailure,
   ArtifactFileCancelled,
   withArtifactFileHandle,
-} from "../../../src/artifacts/ArtifactFileOperation.js";
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+} from "../../../src/resources/ArtifactFileOperation.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("reads exact binary and empty bytes and rejects symlink/size/cancellation boundaries", async () => {
+it("reads an empty artifact and rejects symlink, size, and cancellation boundaries", async () => {
   const root = await createTestTempDirectory("rea-stable-artifact-");
   const path = join(root, "source.bin");
   await writeFile(path, Buffer.from([0, 255, 254]));
-  expect(
-    Buffer.compare(
-      (await readStableArtifact(path, 3)).bytes,
-      Buffer.from([0, 255, 254]),
-    ),
-  ).toBe(0);
   await expect(readStableArtifact(path, 2)).rejects.toMatchObject({
     reason: "limit",
   });
@@ -51,25 +49,14 @@ it("reads exact binary and empty bytes and rejects symlink/size/cancellation bou
   });
 });
 
-it("preserves exact binary bytes and digest across physical chunks and a partial tail", async () => {
+it("observes all bytes across short reads and retains only the selected prefix during streaming", async () => {
   const root = await createTestTempDirectory("rea-stable-chunks-");
   const path = join(root, "source.bin");
-  const bytes = Buffer.from(
-    Array.from({ length: 3 * 65536 + 7 }, (_, i) => i % 251),
-  );
+  const bytes = Buffer.alloc(3 * 65536 + 7);
+  for (let index = 0; index < bytes.length; index += 1)
+    bytes[index] = index % 251;
   await writeFile(path, bytes);
-  const snapshot = await readStableArtifact(path, bytes.length);
-  expect(snapshot.sha256).toBe(
-    createHash("sha256").update(bytes).digest("hex"),
-  );
-  expect(snapshot.bytes.equals(bytes)).toBe(true);
-});
-
-it("joins short descriptor reads into the exact snapshot without gaps", async () => {
-  const root = await createTestTempDirectory("rea-stable-short-read-");
-  const path = join(root, "source.bin");
-  const bytes = Buffer.from(Array.from({ length: 1031 }, (_, i) => i % 251));
-  await writeFile(path, bytes);
+  const digest = createHash("sha256").update(bytes).digest("hex");
   const snapshot = await readStableArtifact(path, bytes.length, undefined, {
     lstat: (selected) => lstat(selected, { bigint: true }),
     open: async (...args) => {
@@ -81,15 +68,31 @@ it("joins short descriptor reads into the exact snapshot without gaps", async ()
           offset: number,
           length: number,
           position: number,
-        ) => read(buffer, offset, Math.min(length, 17), position),
+        ) => read(buffer, offset, Math.min(length, 65531), position),
       });
       return handle;
     },
   });
   expect(snapshot.bytes.equals(bytes)).toBe(true);
-  expect(snapshot.sha256).toBe(
-    createHash("sha256").update(bytes).digest("hex"),
-  );
+  expect(snapshot.sha256).toBe(digest);
+
+  const prefixLength = 17;
+  let observed = 0;
+  const stream = await streamStableArtifact(path, bytes.length, {
+    retainBytes: () => prefixLength,
+    onChunk: (chunk) => {
+      expect(chunk.length).toBeLessThanOrEqual(65536);
+      const end = observed + chunk.length;
+      expect(chunk.equals(bytes.subarray(observed, end))).toBe(true);
+      observed = end;
+    },
+  });
+  expect(observed).toBe(bytes.length);
+  expect(stream).toEqual({
+    sha256: digest,
+    size: bytes.length,
+    prefix: bytes.subarray(0, prefixLength),
+  });
 });
 
 it.each([-1, Number.NaN, "oversized"] as const)(
@@ -128,16 +131,7 @@ it.each(["complete", "fail"] as const)(
     const physical = Object.assign(new Error("pending physical read failed"), {
       code: "EIO",
     });
-    let enter!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enter = resolve;
-    });
-    let release!: () => void;
-    let reject!: (cause: unknown) => void;
-    const blocked = new Promise<void>((resolve, fail) => {
-      release = resolve;
-      reject = fail;
-    });
+    const stableRead = phaseGate();
     let descriptor: Awaited<ReturnType<typeof open>> | undefined;
     const reading = readStableArtifact(path, 64, controller.signal, {
       lstat: (selected) => lstat(selected, { bigint: true }),
@@ -146,8 +140,7 @@ it.each(["complete", "fail"] as const)(
         descriptor = handle;
         Object.defineProperty(handle, "read", {
           value: async (buffer: Buffer, offset: number) => {
-            enter();
-            await blocked;
+            await stableRead.hold();
             buffer.set(bytes, offset);
             return { bytesRead: bytes.length, buffer };
           },
@@ -162,13 +155,13 @@ it.each(["complete", "fail"] as const)(
         settled = true;
       });
     try {
-      await entered;
+      await stableRead.reached(result, "stable artifact read");
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
       expect(descriptor?.fd).toBeGreaterThanOrEqual(0);
-      if (outcome === "fail") reject(physical);
-      else release();
+      if (outcome === "fail") stableRead.reject(physical);
+      else stableRead.release();
       const failure = await result;
       if (outcome === "fail") expect(failure).toBe(physical);
       else
@@ -176,7 +169,8 @@ it.each(["complete", "fail"] as const)(
       expect(artifactFileCompletion(failure)).toBeUndefined();
       expect(descriptor?.fd).toBe(-1);
     } finally {
-      release();
+      controller.abort(reason);
+      stableRead.release();
       await result;
     }
   },

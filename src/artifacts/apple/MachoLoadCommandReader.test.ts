@@ -24,16 +24,19 @@ import {
   versionMinCommand,
 } from "./MachoImage.fixture.js";
 import {
-  MAX_LAZY_INFO_DEPENDENCIES,
-  MAX_LAZY_INFO_SYMBOL_REFERENCES,
   MAX_LOAD_COMMAND_BYTES,
   readMachoImage,
-} from "./MachoLoadCommandReader.js";
+} from "../../domain/apple/machoLoadCommandReader.js";
 import { hasMachoMagic } from "../../domain/apple/machoContainer.js";
 import { traceDylibResolution } from "./DylibResolutionReader.js";
-import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
+import { MAX_JVM_CLASS_IDENTITY_BYTES } from "../../domain/apple/jvmClassFile.js";
+import { DirectoryArtifactReader } from "../../resources/index.js";
+
+// Independently exercise the dependency and reference budgets.
+const MAX_LAZY_INFO_DEPENDENCIES = 1024;
+const MAX_LAZY_INFO_SYMBOL_REFERENCES = 64 * 1024;
 
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
@@ -492,8 +495,12 @@ it.each([false, true] as const)(
   },
 );
 
+// dyld absolute paths start with "/". On Windows the test root is a drive path
+// (`E:\...`), so a load path built from it is not dyld-absolute there.
 describe("absolute dyld candidate paths at the filesystem reader boundary", () => {
-  it.each(["install-name", "rpath"] as const)(
+  it
+    .skipIf(process.platform === "win32")
+    .each(["install-name", "rpath"] as const)(
     "resolves an absolute in-root %s while preserving its source path",
     async (kind) => {
       const root = await createTestTempDirectory("rea-dylib-absolute-in-root-");
@@ -602,7 +609,13 @@ describe("absolute dyld candidate paths at the filesystem reader boundary", () =
       resolution: { status: "undetermined", image: null },
     });
     expect(trace.edges[1]).toMatchObject({
-      candidates: [{ outcome: "escapes-target", resolved_path: null }],
+      candidates: [
+        {
+          outcome:
+            process.platform === "win32" ? "undetermined" : "escapes-target",
+          resolved_path: null,
+        },
+      ],
       resolution: { status: "undetermined", image: null },
     });
     expect(trace.edges[2]).toMatchObject({
@@ -621,48 +634,52 @@ describe("absolute dyld candidate paths at the filesystem reader boundary", () =
 });
 
 describe("absolute dyld candidate traversal", () => {
-  it("maps an absolute candidate spelled through the selected root symlink", async () => {
-    const root = await createTestTempDirectory(
-      "rea-dylib-absolute-root-alias-",
-    );
-    const aliasRoot = join(root, "bundle-alias");
-    const bridgePath = "Frameworks/libBridge.dylib";
-    const bridgeAbsolute = `${aliasRoot}/${bridgePath}`;
-    const executable = machoImage({
-      commands: [
-        buildVersionCommand(1),
-        dylibCommand(LC.LOAD_DYLIB, bridgeAbsolute),
-      ],
-    });
-    const bridge = machoImage({
-      fileType: FILE_TYPE.dylib,
-      commands: [buildVersionCommand(1)],
-    });
-    await symlink(".", aliasRoot);
-    await mkdir(join(root, "Frameworks"), { recursive: true });
-    await writeFile(join(root, "App"), executable);
-    await writeFile(join(root, bridgePath), bridge);
+  // Needs symlink privilege, and its install name is built from a drive path.
+  it.skipIf(process.platform === "win32")(
+    "maps an absolute candidate spelled through the selected root symlink",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-dylib-absolute-root-alias-",
+      );
+      const aliasRoot = join(root, "bundle-alias");
+      const bridgePath = "Frameworks/libBridge.dylib";
+      const bridgeAbsolute = `${aliasRoot}/${bridgePath}`;
+      const executable = machoImage({
+        commands: [
+          buildVersionCommand(1),
+          dylibCommand(LC.LOAD_DYLIB, bridgeAbsolute),
+        ],
+      });
+      const bridge = machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      });
+      await symlink(".", aliasRoot);
+      await mkdir(join(root, "Frameworks"), { recursive: true });
+      await writeFile(join(root, "App"), executable);
+      await writeFile(join(root, bridgePath), bridge);
 
-    const trace = await traceDylibResolution({
-      rootPath: aliasRoot,
-      targetPath: `${aliasRoot}/App`,
-      targetSha256: createHash("sha256").update(executable).digest("hex"),
-      enumerateRoots: false,
-      parameters: { roots: ["App"] },
-    });
+      const trace = await traceDylibResolution({
+        rootPath: aliasRoot,
+        targetPath: `${aliasRoot}/App`,
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: ["App"] },
+      });
 
-    expect(trace.edges[0]).toMatchObject({
-      install_name: bridgeAbsolute,
-      candidates: [
-        {
-          path: bridgeAbsolute,
-          outcome: "resolved",
-          resolved_path: bridgePath,
-        },
-      ],
-      resolution: { status: "resolved", image: bridgePath },
-    });
-  });
+      expect(trace.edges[0]).toMatchObject({
+        install_name: bridgeAbsolute,
+        candidates: [
+          {
+            path: bridgeAbsolute,
+            outcome: "resolved",
+            resolved_path: bridgePath,
+          },
+        ],
+        resolution: { status: "resolved", image: bridgePath },
+      });
+    },
+  );
 
   it.skipIf(process.platform === "win32")(
     "preserves symlink-then-parent traversal for an absolute in-root path",
@@ -938,6 +955,24 @@ describe("Mach-O load command reader: decodes thin-image load commands", () => {
       encoding: "dylib_command",
       current_version: "1295.4.0",
       compatibility_version: "1.0.0",
+    });
+  });
+
+  it("keeps marker-shaped timestamps on legacy lazy dylib commands", async () => {
+    const facts = await read(
+      machoImage({
+        commands: [
+          dylibUseCommand(LC.LAZY_LOAD_DYLIB, "@rpath/libLazy.dylib", 0x09),
+        ],
+      }),
+    );
+    if (facts.status !== "parsed") throw new Error(facts.status);
+    expect(facts.slices[0]?.dependencies[0]).toMatchObject({
+      command: "LC_LAZY_LOAD_DYLIB",
+      encoding: "dylib_command",
+      install_name: "@rpath/libLazy.dylib",
+      weak: false,
+      delayed_init: false,
     });
   });
 
@@ -1808,6 +1843,28 @@ describe("Mach-O load command reader inputs", () => {
     ).toEqual({ status: "malformed", reason: "Mach-O header is truncated" });
   });
 
+  it.each([MAX_JVM_CLASS_IDENTITY_BYTES, MAX_JVM_CLASS_IDENTITY_BYTES + 1])(
+    "reports a known FAT range error and skips full class reads for %i bytes",
+    async (size) => {
+      const header = Buffer.alloc(28);
+      header.writeUInt32BE(0xcafebabe, 0);
+      header.writeUInt32BE(1, 4);
+      header.writeUInt32BE(CPU.arm64.type, 8);
+      header.writeUInt32BE(size, 16);
+      header.writeUInt32BE(32, 20);
+      const readAt = vi.fn(async (offset: number, length: number) =>
+        header.subarray(offset, offset + length),
+      );
+      expect(await readMachoImage(readAt, size)).toMatchObject({
+        status: "malformed",
+        reason: expect.stringContaining("slice range extends beyond the file"),
+      });
+      expect(Math.max(...readAt.mock.calls.map(([, length]) => length))).toBe(
+        28,
+      );
+    },
+  );
+
   it("keeps oversized CAFEBABE identity unknown when class payload is sparse", async () => {
     const classPrefix = Buffer.from(javaClassFile(4000, true));
     const payloadBytes = MAX_LOAD_COMMAND_BYTES + 1;
@@ -1946,13 +2003,15 @@ describe("Mach-O load command reader failures", () => {
       status: "malformed",
       reason: "Mach-O header is truncated",
     });
-    const oversized = machoImage({});
-    new DataView(oversized.buffer).setUint32(
-      20,
-      MAX_LOAD_COMMAND_BYTES + 8,
-      true,
-    );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    const commandBytes = MAX_LOAD_COMMAND_BYTES + 8;
+    const header = machoImage({});
+    const oversized = Buffer.alloc(header.byteLength + commandBytes);
+    oversized.set(header);
+    oversized.writeUInt32LE(commandBytes, 20);
+    expect(await read(oversized)).toMatchObject({
+      status: "unsupported",
+      reason: expect.stringMatching(/above the .* limit/iu),
+    });
     const beyond = machoImage({ commands: [rpathCommand("x")] });
     new DataView(beyond.buffer).setUint32(20, beyond.length, true);
     expect(await read(beyond)).toMatchObject({
@@ -1999,25 +2058,31 @@ describe("Mach-O load command reader defect precedence", () => {
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
       decodeFirst,
     );
-    // over a missing later command,
+    // An impossible declared count prevents any command from being decoded.
     const missing = machoImage({ commands: [shortRpath] });
     new DataView(missing.buffer).setUint32(16, 2, true);
-    expect(await read(missing)).toEqual(decodeFirst);
-    // and over unconsumed command bytes.
+    expect(await read(missing)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/count 2 cannot fit/iu),
+    });
+    // An earlier decode defect wins over unconsumed command bytes.
     const unconsumed = machoImage({
       commands: [shortRpath, rpathCommand("x")],
     });
     new DataView(unconsumed.buffer).setUint32(16, 1, true);
     expect(await read(unconsumed)).toEqual(decodeFirst);
 
-    // The command-size limit is checked before the slice bounds.
+    // A table whose declared size leaves the slice is malformed.
     const oversized = machoImage({});
     new DataView(oversized.buffer).setUint32(
       20,
       MAX_LOAD_COMMAND_BYTES + 8,
       true,
     );
-    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+    expect(await read(oversized)).toMatchObject({
+      status: "malformed",
+      reason: expect.stringMatching(/extend beyond.*slice/iu),
+    });
 
     // A malformed FAT slice wins over an earlier or later unsupported one.
     const bigEndian = new Uint8Array(32);

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  dylibResolutionInputSchema,
   machoImageSlices,
   traceDylibLoading,
   type DylibTreeEntry,
@@ -1275,7 +1276,9 @@ describe("conditional loads", () => {
     ])
       expect(
         trace.findings.find((finding) => finding.kind === kind)?.explanation,
-      ).toContain(`${VENDOR} loads only conditionally; if it loads,`);
+      ).toContain(
+        `The dependency-expansion chain for ${VENDOR} is conditional; if that chain is used,`,
+      );
   });
 });
 
@@ -1792,3 +1795,28 @@ it.each([
     }
   },
 );
+
+describe("caller-selected dylib roots", () => {
+  const admits = (root: string) =>
+    dylibResolutionInputSchema.safeParse({ roots: [root] }).success;
+
+  it.each(["a", "a/b", ".a", "..a", "a.", "a/.b/..c", "Contents/MacOS/App"])(
+    "admits the normalized relative root %j",
+    (root) => expect(admits(root)).toBe(true),
+  );
+
+  it.each([
+    "",
+    "/a",
+    "a/",
+    "a//b",
+    ".",
+    "..",
+    "./a",
+    "a/./b",
+    "a/../b",
+    "a/..",
+    "a\\b",
+    "a\u0000b",
+  ])("refuses the root %j", (root) => expect(admits(root)).toBe(false));
+});

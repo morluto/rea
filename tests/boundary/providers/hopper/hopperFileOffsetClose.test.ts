@@ -1,15 +1,10 @@
 import { createHash } from "node:crypto";
-import {
-  mkdir,
-  mkdtemp,
-  rm,
-  writeFile,
-  type FileHandle,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile, type FileHandle } from "node:fs/promises";
+
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 import { createAnalysisProfile } from "../../../../src/domain/analysisProfile.js";
 import {
@@ -25,6 +20,7 @@ import { silentLogger } from "../../../../src/logger.js";
 import { err, ok } from "../../../../src/domain/result.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { HopperProvider } from "../../../../src/hopper/HopperProvider.js";
+import { releaseOwnedCleanup } from "../../../support/cleanupRelease.js";
 
 const state = vi.hoisted(() => ({
   path: "",
@@ -103,7 +99,7 @@ const clientFor = async (path: string, bytes: Buffer) => {
 };
 
 it("preserves file-offset reads and retries the exact descriptor after close fails", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-hopper-file-offset-close-"));
+  const root = await createTestTempDirectory("rea-hopper-file-offset-close-");
   const bytes = Buffer.alloc(64);
   bytes.writeUInt32LE(0xfeedfacf, 0);
   bytes.writeUInt32LE(0x0100000c, 4);
@@ -239,12 +235,11 @@ it("preserves file-offset reads and retries the exact descriptor after close fai
     state.fail = false;
     for (const entry of state.handles) await entry.close();
     await client.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it("clears a combined Hopper close only after the descriptor and session release", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-hopper-combined-close-"));
+  const root = await createTestTempDirectory("rea-hopper-combined-close-");
   const bytes = Buffer.alloc(64);
   bytes.writeUInt32LE(0xfeedfacf, 0);
   bytes.writeUInt32LE(0x0100000c, 4);
@@ -288,7 +283,7 @@ it("clears a combined Hopper close only after the descriptor and session release
     ]);
     expect(call).toHaveBeenCalledTimes(1);
 
-    session.resolveCleanup();
+    releaseOwnedCleanup(session);
     expect(session.cleanupIncomplete).toBe(false);
     expect(combined.error.cleanupIncomplete).toBe(true);
     expect(combined.error.cleanupResources).toEqual([state.path]);
@@ -307,15 +302,14 @@ it("clears a combined Hopper close only after the descriptor and session release
     state.fail = false;
     for (const entry of state.handles) await entry.close();
     await client.close();
-    await rm(root, { recursive: true, force: true });
   }
 });
 
 it.each([false, true])(
   "retains a source metadata failure when cancellation arrives during close (close failure: %s)",
   async (closeFails) => {
-    const root = await mkdtemp(
-      join(tmpdir(), "rea-hopper-file-offset-primary-"),
+    const root = await createTestTempDirectory(
+      "rea-hopper-file-offset-primary-",
     );
     const bytes = Buffer.alloc(64);
     state.path = join(root, "sample");
@@ -358,7 +352,6 @@ it.each([false, true])(
       state.abortOnClose = undefined;
       call.mockRestore();
       await client.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -366,8 +359,8 @@ it.each([false, true])(
 it.each([false, true])(
   "retains verified source coordinates when cancellation arrives during close (close failure: %s)",
   async (closeFails) => {
-    const root = await mkdtemp(
-      join(tmpdir(), "rea-hopper-file-offset-cancel-"),
+    const root = await createTestTempDirectory(
+      "rea-hopper-file-offset-cancel-",
     );
     const bytes = Buffer.alloc(64);
     state.path = join(root, "sample");
@@ -424,7 +417,6 @@ it.each([false, true])(
       state.abortOnClose = undefined;
       call.mockRestore();
       await client.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
@@ -432,7 +424,7 @@ it.each([false, true])(
 it.each([false, true])(
   "uses the descriptor read outcome when cancellation and an I/O result coincide (read failure: %s)",
   async (readFails) => {
-    const root = await mkdtemp(join(tmpdir(), "rea-hopper-file-offset-read-"));
+    const root = await createTestTempDirectory("rea-hopper-file-offset-read-");
     const bytes = Buffer.alloc(64);
     state.path = join(root, "sample");
     await writeFile(state.path, bytes);
@@ -472,13 +464,12 @@ it.each([false, true])(
       state.afterRead = undefined;
       call.mockRestore();
       await client.close();
-      await rm(root, { recursive: true, force: true });
     }
   },
 );
 
 it("retains a changed source digest without publishing verified coordinates after late cancellation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-hopper-file-offset-changed-"));
+  const root = await createTestTempDirectory("rea-hopper-file-offset-changed-");
   const bytes = Buffer.alloc(64);
   state.path = join(root, "sample");
   await writeFile(state.path, bytes);
@@ -511,6 +502,5 @@ it("retains a changed source digest without publishing verified coordinates afte
     state.abortOnClose = undefined;
     call.mockRestore();
     await client.close();
-    await rm(root, { recursive: true, force: true });
   }
 });

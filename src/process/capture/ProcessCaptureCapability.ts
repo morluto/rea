@@ -1,4 +1,5 @@
 import { tmpdir } from "node:os";
+import { HOST_PLATFORM } from "../../platform/HostPlatform.js";
 import { prepareProcessOwnershipInspection } from "../ProcessOwnershipObservation.js";
 
 export type ProcessCaptureCapability =
@@ -50,7 +51,7 @@ const processCaptureProbeFailureReason = (cause: unknown): string => {
 export const probeProcessCaptureCapability = async (
   options: ProcessCaptureProbeOptions = {},
 ): Promise<ProcessCaptureCapability> => {
-  const platform = options.platform ?? process.platform;
+  const platform = options.platform ?? HOST_PLATFORM.platform;
   const ownershipReason = processCaptureOwnershipUnavailableReason(platform);
   if (ownershipReason !== undefined)
     return {

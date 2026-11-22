@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { withVerifierWorkspace } from "../../lib/verifier-workspace.mjs";
+import {
+  VerifierFixture,
+  withVerifierFixture,
+} from "../../lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../../../tests/conformance/ghidra/fixture-toolchain.mjs";
 import {
   assertAgrees,
   buildElf,
@@ -25,7 +28,12 @@ import {
   readOtadata,
 } from "./esp-flash-tools.mjs";
 
-let workspace;
+// Refuse a host without the RISC-V toolchain before allocating anything.
+await requireLaneToolchain("esp");
+// The verifier's commands may use files under the workspace until they close.
+const fixture = await VerifierFixture.open({ prefix: "rea-esp-flash-proof-" });
+fixture.releaseAfter(() => commands.close());
+const workspace = fixture.path;
 const path = (name) => join(workspace, name);
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
@@ -395,7 +403,6 @@ const damaged = async (report) => {
 const verify = async () => {
   const tools = await checkTools("verify:esp-flash");
   const espIdf = await checkEspIdf();
-  workspace = await mkdtemp(join(tmpdir(), "rea-esp-flash-proof-"));
   const report = {
     esptool: tools.esptoolVersion,
     esp_idf: espIdf,
@@ -411,4 +418,4 @@ const verify = async () => {
   console.log(JSON.stringify(report, null, 2));
 };
 
-await withVerifierWorkspace(verify, commands, () => workspace);
+await withVerifierFixture(fixture, verify);

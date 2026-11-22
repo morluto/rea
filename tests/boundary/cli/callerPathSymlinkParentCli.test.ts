@@ -1,3 +1,4 @@
+import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { createHash } from "node:crypto";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { describe, expect } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
-import { peResourceFixture } from "../../../src/native/pe/PeResources.fixture.js";
+import { peResourceFixture } from "../../../src/domain/pe/peResources.fixture.js";
 import { createGoBinaryFixture } from "../../fixtures/go/image.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
@@ -41,12 +42,12 @@ describe.skipIf(process.platform === "win32")(
             const evidence = toolContract(operation).outputSchema.parse(
               result.json,
             );
-            expect(evidence.subject?.digest.sha256, `${command} ${path}`).toBe(
-              selectedDigest,
-            );
+            expect(
+              fileIdentity(evidence.subject).sha256,
+              `${command} ${path}`,
+            ).toBe(selectedDigest);
           }
       },
-      30_000,
     );
 
     cliTest(
@@ -81,10 +82,11 @@ describe.skipIf(process.platform === "win32")(
           const evidence = toolContract(
             "inspect_pe_resources",
           ).outputSchema.parse(result.json);
-          expect(evidence.subject?.digest.sha256, path).toBe(selectedDigest);
+          expect(fileIdentity(evidence.subject).sha256, path).toBe(
+            selectedDigest,
+          );
         }
       },
-      30_000,
     );
   },
 );

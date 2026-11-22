@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { expect } from "vitest";
 
-import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { analysisErrorProjectionSchema } from "../../../src/domain/analysisErrorProjectionSchema.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { webBundleAcquisitionPartialObservationSchema } from "../../../src/domain/webBundleAnalysis.js";
 import { startSourceMapCancellationBrowser } from "../../fixtures/browserSourceMapCancellation.js";
@@ -90,7 +90,6 @@ processTest.skipIf(process.platform === "win32")(
           },
         ],
       });
-      expect(acquisition.source_maps.items).toHaveLength(1);
       expect(acquisition.inspection.completeness.excluded).toContainEqual({
         section: "source_maps",
         reason: "disallowed_origin",

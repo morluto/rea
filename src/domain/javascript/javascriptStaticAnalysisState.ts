@@ -1,7 +1,7 @@
 import type * as t from "@babel/types";
 import type { JavaScriptBundlerFactoryRoles } from "./javascriptBundlerFactoryRoles.js";
 import type { JavaScriptOpenReceiverFact } from "./javascriptSemanticReceiverFacts.js";
-import type { JavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import type { JavaScriptRpcScan } from "./javascriptRpcEndpoint.js";
 import type { JavaScriptStaticPathIntrinsicQuery } from "./javascriptStaticAnalysisHelpers.js";
 import type { JavaScriptExpressionShapeResolver } from "./javascriptSemanticExpressionShapes.js";
 
@@ -88,6 +88,7 @@ export interface JavaScriptAnalysisAccumulator {
   }[];
   readonly contextBridgeApis: LocatedJavaScriptFinding<ElectronContextBridgeFinding>[];
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
+  readonly pendingIpcChannels: Map<number, t.Node>;
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];
   readonly nativeAddonBindings: LocatedJavaScriptFinding<ElectronNativeAddonBindingFinding>[];
@@ -202,6 +203,7 @@ export const createJavaScriptAnalysisAccumulator = (
   pendingBrowserWindows: [],
   contextBridgeApis: [],
   ipc: [],
+  pendingIpcChannels: new Map(),
   senderValidations: [],
   utilityProcesses: [],
   nativeAddonBindings: [],

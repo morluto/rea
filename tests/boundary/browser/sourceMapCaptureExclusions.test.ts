@@ -1,108 +1,210 @@
 import { expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
-import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import {
+  analyzeWebBundleInputSchema,
+  webBundleAnalysisSchema,
+  type WebBundleAnalysis,
+  type WebSourceMaps,
+} from "../../../src/domain/webBundleAnalysis.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
-it.each(["none", "excluded", "mixed", "redirect", "not-selected"] as const)(
-  "preserves captured source-map exclusion coverage: %s",
-  async (mode) => {
-    const source = "export const observed = true;";
-    const browser = await startFakeCdpBrowser({
-      sourceMapBody: JSON.stringify({
-        version: 3,
-        names: [],
-        sources: ["main.js"],
-        sourcesContent: [source],
-        mappings: "AAAA",
-      }),
-      ...(mode === "redirect"
-        ? { sourceMapRedirect: "https://outside.example.test/main.js.map" }
-        : {}),
-      commandResult: ({ method }) =>
-        method === "Debugger.getScriptSource"
-          ? { scriptSource: source }
-          : undefined,
-      commandEvents: (command, origin) => {
-        if (command.method !== "Debugger.enable") return undefined;
-        const script = (id: string, sourceMapURL?: string) => ({
-          method: "Debugger.scriptParsed",
-          ...(command.sessionId === undefined
-            ? {}
-            : { sessionId: command.sessionId }),
-          params: {
-            scriptId: id,
-            url: `${origin}/${id}.js`,
-            hash: id,
-            length: Buffer.byteLength(source),
-            isModule: true,
-            executionContextId: 1,
-            scriptLanguage: "JavaScript",
-            ...(sourceMapURL === undefined ? {} : { sourceMapURL }),
-          },
-        });
-        return [
-          script(
-            "main",
-            mode === "none"
-              ? undefined
-              : mode === "redirect"
-                ? "/app.js.map"
-                : "https://outside.example.test/main.js.map",
-          ),
-          ...(mode === "mixed" ? [script("second", "/app.js.map")] : []),
-        ];
+const expectMapCoverageIssue = (
+  analysis: WebBundleAnalysis,
+  changes: Partial<WebSourceMaps>,
+  ...path: string[]
+): void => {
+  expect(
+    webBundleAnalysisSchema.safeParse({
+      ...analysis,
+      observations: {
+        ...analysis.observations,
+        source_maps: { ...analysis.observations.source_maps, ...changes },
       },
-    });
-    trackBrowser(browser);
-    const provider = new CdpBrowserProvider();
-    try {
+    }),
+  ).toMatchObject({
+    success: false,
+    error: { issues: [{ path: ["observations", "source_maps", ...path] }] },
+  });
+};
+
+const expectMaplessCoverageRefusals = (analysis: WebBundleAnalysis): void => {
+  expectMapCoverageIssue(analysis, {
+    status: "unavailable",
+    requested: 1,
+    processed: 1,
+  });
+  expectMapCoverageIssue(
+    analysis,
+    { status: "unavailable", requested: 1 },
+    "limitation",
+  );
+  expectMapCoverageIssue(
+    analysis,
+    { requested: 1, limitation: "Source map pending" },
+    "status",
+  );
+};
+
+const expectRedirectCoverage = (analysis: WebBundleAnalysis): void => {
+  const { chunks, source_maps: maps } = analysis.observations;
+  const scriptKey = chunks.nodes[0]?.script_key;
+  expect(maps).toMatchObject({
+    status: "unavailable",
+    requested: 1,
+    processed: 1,
+    items: [{ script_key: scriptKey, status: "policy_filtered" }],
+  });
+  expect(maps.excluded).toBeUndefined();
+  expectMapCoverageIssue(analysis, { requested: 0 });
+  expect(analysis.unknowns).toContainEqual({
+    dimension: "source_maps",
+    reason: expect.stringMatching(
+      /requested source maps.*unavailable or incomplete/i,
+    ),
+    affected_script_keys: [scriptKey],
+  });
+};
+
+it("distinguishes unrequested maps, map exclusions, and usable map evidence", async () => {
+  const modes = [
+    "not-selected",
+    "none",
+    "excluded",
+    "mixed",
+    "redirect",
+  ] as const;
+  let mode: (typeof modes)[number] = modes[0];
+  const localMap = "/app.js.map?token=map-secret";
+  const foreignMap = "https://outside.example.test/main.js.map";
+  const browser = await startFakeCdpBrowser({
+    eventsBeforeReply: ["Debugger.enable"],
+    sourceMapBody: JSON.stringify({
+      version: 3,
+      names: [],
+      sources: ["src/main.ts"],
+      sourcesContent: ["export const original = true;"],
+      mappings: "AAAA",
+    }),
+    sourceMapReply: (url, response) => {
+      if (mode !== "redirect" || url !== localMap) return false;
+      response.writeHead(302, { location: foreignMap }).end();
+      return true;
+    },
+    commandEvents: (command, origin) => {
+      if (command.method !== "Debugger.enable") return undefined;
+      const script = (id: string, sourceMapURL?: string) => ({
+        method: "Debugger.scriptParsed",
+        sessionId: command.sessionId,
+        params: {
+          scriptId: id,
+          url: `${origin}/${id}.js`,
+          hash: id,
+          isModule: true,
+          executionContextId: 1,
+          scriptLanguage: "JavaScript",
+          ...(sourceMapURL === undefined ? {} : { sourceMapURL }),
+        },
+      });
+      if (mode === "none") return [script("main")];
+      if (mode === "mixed")
+        return [script("main", foreignMap), script("second", localMap)];
+      return [script("main", mode === "excluded" ? foreignMap : localMap)];
+    },
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const input = {
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+  };
+  const originalSource = `${browser.allowedOrigin}/src/main.ts`;
+  try {
+    for (const scenario of modes) {
+      mode = scenario;
+      const before = browser.httpRequests.length;
       const result = await provider.analyzeBundle(
         analyzeWebBundleInputSchema.parse({
-          cdp_endpoint: browser.endpoint,
-          allowed_origins: [browser.allowedOrigin],
-          target_id: "allowed-page",
-          observation_ms: 0,
-          fetch_source_maps: mode !== "not-selected",
+          ...input,
+          ...(mode === "not-selected" ? {} : { fetch_source_maps: true }),
         }),
       );
       if (!result.ok) throw result.error;
       const maps = result.value.observations.source_maps;
       if (mode === "none" || mode === "not-selected") {
-        expect(maps).toEqual({
+        expect(maps, mode).toEqual({
           status: "not_requested",
           requested: 0,
           processed: 0,
           items: [],
         });
-        expect(result.value.completeness.status).toBe("complete");
-        expect(result.value.unknowns).toEqual([]);
+        expect(result.value.completeness.status, mode).toBe("complete");
+        expect(result.value.unknowns, mode).toEqual([]);
+        if (mode === "none") expectMaplessCoverageRefusals(result.value);
       } else {
-        expect(maps.status).toBe(mode === "mixed" ? "partial" : "unavailable");
-        expect(result.value.completeness.status).toBe("partial");
-        expect(result.value.unknowns).toContainEqual(
-          expect.objectContaining({ dimension: "source_maps" }),
-        );
+        expect(result.value.completeness.status, mode).toBe("partial");
         if (mode === "redirect") {
-          expect(maps.excluded).toBeUndefined();
-          expect(maps.items[0]?.status).toBe("policy_filtered");
+          expectRedirectCoverage(result.value);
         } else {
-          expect(maps.excluded).toEqual([
+          expect(result.value.unknowns, mode).toContainEqual(
+            expect.objectContaining({ dimension: "source_maps" }),
+          );
+          expect(maps.excluded, mode).toEqual([
             { section: "source_maps", reason: "disallowed_origin", count: 1 },
           ]);
-          expect(maps.requested).toBe(mode === "mixed" ? 1 : 0);
-          expect(maps.processed).toBe(mode === "mixed" ? 1 : 0);
-          if (mode === "mixed") expect(maps.items[0]?.status).toBe("included");
+          if (mode === "excluded")
+            expect(maps, mode).toMatchObject({
+              status: "unavailable",
+              requested: 0,
+              processed: 0,
+              items: [],
+            });
+          else
+            expect(maps, mode).toMatchObject({
+              status: "partial",
+              requested: 1,
+              processed: 1,
+              items: [
+                {
+                  status: "included",
+                  declared_url: `${browser.allowedOrigin}${localMap}`,
+                  original_sources: [{ source: originalSource }],
+                  mappings: [
+                    {
+                      generated_line: 1,
+                      generated_column: 0,
+                      source: originalSource,
+                      original_line: 1,
+                      original_column: 0,
+                    },
+                  ],
+                },
+              ],
+            });
         }
       }
-      expect(JSON.stringify(result.value)).not.toContain(
+      expect(JSON.stringify(result.value), mode).not.toContain(
         "outside.example.test",
       );
-      expect(
-        browser.httpRequests.filter(({ url }) => url.startsWith("/app.js.map")),
-      ).toHaveLength(mode === "mixed" || mode === "redirect" ? 1 : 0);
-    } finally {
-      await provider.close();
+      const mapRequests = browser.httpRequests
+        .slice(before)
+        .filter(({ url }) => url.startsWith("/app.js.map"));
+      expect(mapRequests, mode).toEqual(
+        mode === "mixed" || mode === "redirect"
+          ? [
+              {
+                url: localMap,
+                authorization: undefined,
+                cookie: undefined,
+                referer: undefined,
+              },
+            ]
+          : [],
+      );
     }
-  },
-);
+  } finally {
+    await provider.close();
+  }
+});

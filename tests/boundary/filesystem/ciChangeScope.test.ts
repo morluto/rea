@@ -2,6 +2,7 @@ import {
   chmod,
   cp,
   mkdir,
+  mkdtemp,
   readFile,
   readdir,
   rename,
@@ -10,15 +11,18 @@ import {
 import { dirname, join, matchesGlob } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it as sequentialIt } from "vitest";
 import { parse } from "yaml";
 import { z } from "zod";
 
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createTestWorkspace,
   removeTestWorkspace,
 } from "../../support/workspace/workspaceFixture.js";
+import {
+  gitRepository,
+  planChanges,
+} from "../../../scripts/ci/change-plan.mjs";
 import {
   executeWorkflowFixture as execFileAsync,
   workflowGit as git,
@@ -26,8 +30,19 @@ import {
 
 async function commit(directory: string) {
   await git(directory, ["add", "."]);
-  await git(directory, ["commit", "-m", "fix: fixture change"]);
-  return git(directory, ["rev-parse", "HEAD"]);
+  // Git names the full commit in its summary line ("[main 0123…] subject"),
+  // so the case needs no separate rev-parse process.
+  const summary = await git(directory, [
+    "-c",
+    "core.abbrev=no",
+    "commit",
+    "-m",
+    "fix: fixture change",
+  ]);
+  const created = /^\[[^\]]* ([0-9a-f]{40})\]/u.exec(summary)?.[1];
+  if (created === undefined)
+    throw new Error(`Git did not report the fixture commit: ${summary}`);
+  return created;
 }
 
 async function change(
@@ -43,38 +58,49 @@ async function change(
   return commit(directory);
 }
 
-let seed: { directory: string; base: string } | undefined;
-let seedWorkspaceRoot: string | undefined;
+// Every case owns its copied repository and output files, so cases run
+// concurrently; each one mostly waits on Git and plan subprocesses.
+const it = sequentialIt.concurrent;
+
+let seed:
+  | { readonly root: string; readonly directory: string; readonly base: string }
+  | undefined;
+// Owned from creation, so a failed seed setup is still removed.
+let workspaceRoot: string | undefined;
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-ci-scope-seed-");
-  seedWorkspaceRoot = workspace.root;
+  workspaceRoot = workspace.root;
   const directory = await workspace.mkdir("repository");
-  await git(directory, ["init", "--initial-branch=main"]);
+  // No template: every case copies this repository, and sample hooks are
+  // never run (fixture Git disables hooks).
+  await git(directory, ["init", "--initial-branch=main", "--template="]);
   const base = await change(
     directory,
     ["src/provider.ts", "README.md"],
     "Initial fixture content\n",
   );
-  seed = { directory, base };
+  seed = { root: workspace.root, directory, base };
 });
 
+// Case repositories live in the seed workspace and are removed with it. A
+// per-case cleanup hook would bind to whichever concurrent case is current.
 afterAll(async () => {
-  if (seedWorkspaceRoot !== undefined)
-    await removeTestWorkspace(seedWorkspaceRoot);
+  if (workspaceRoot !== undefined) await removeTestWorkspace(workspaceRoot);
 });
 
 async function fixture() {
   const initial = seed;
   if (initial === undefined)
     throw new Error("CI scope seed was not initialized");
-  const directory = await createTestTempDirectory("rea-ci-scope-");
+  const directory = await mkdtemp(join(initial.root, "case-"));
   // Copy the pristine object database, refs and index; each case owns its mutations.
   await cp(initial.directory, directory, { recursive: true });
   return { directory, base: initial.base };
 }
 
-async function classify(
+/** Run the CI entrypoint as the workflow does, writing GITHUB_OUTPUT. */
+async function runPlanScript(
   directory: string,
   base: string,
   head: string,
@@ -103,10 +129,94 @@ async function classify(
   return z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout));
 }
 
+/** Plan against the fixture repository's real Git history, in process. */
+function classify(
+  directory: string,
+  base: string,
+  head: string,
+  event = "pull_request",
+  full = false,
+  skipFull = false,
+): Promise<Record<string, unknown>> {
+  return Promise.resolve().then(() =>
+    planChanges(
+      { event, full, skipFull, base, head },
+      gitRepository(directory),
+    ),
+  );
+}
+
+const PATH_BASE = "1".repeat(40);
+const PATH_HEAD = "2".repeat(40);
+
+/**
+ * Plan a commit that adds or edits only `paths`. Git's diff for such a commit
+ * is exactly those paths, so these cases skip the repository; `packageJson`
+ * holds package.json at the base and head when the commit edits it.
+ * Deletions, renames, malformed metadata and history keep the Git fixture.
+ */
+function classifyCommit(
+  paths: readonly string[],
+  event = "pull_request",
+  full = false,
+  packageJson?: { readonly before: string; readonly after: string },
+): Promise<Record<string, unknown>> {
+  return Promise.resolve().then(() =>
+    planChanges(
+      { event, full, skipFull: false, base: PATH_BASE, head: PATH_HEAD },
+      {
+        mergeBase: (base) => base,
+        isAncestor: () => true,
+        changedFiles: () => paths,
+        // No test reaches these synthetic paths; selection falls back to all.
+        listFiles: () => [],
+        readFiles: () => new Map(),
+        readFile: (revision, path) => {
+          if (path === "package.json" && packageJson !== undefined)
+            return revision === PATH_BASE
+              ? packageJson.before
+              : packageJson.after;
+          throw new Error(`${path} at ${revision} needs the Git fixture`);
+        },
+      },
+    ),
+  );
+}
+
+const classifyPaths = (
+  paths: readonly string[],
+  event?: string,
+  full?: boolean,
+) => classifyCommit(paths, event, full);
+
+const classifyPackage = (before: string, after: string) =>
+  classifyCommit(["package.json"], "pull_request", false, { before, after });
+
 it.each([
+  // Shared resource owners moved from src/artifacts keep their lanes.
+  ["src/resources/AnalysisCleanupLease.ts", "apk_signature"],
+  ["src/resources/readStableArtifact.ts", "sqlite"],
+  ["src/resources/readStableArtifact.ts", "browser"],
+  ["src/resources/readStableArtifact.ts", "binary_layout"],
+  ["src/resources/readStableArtifact.ts", "evm"],
+  ["src/resources/readStableArtifact.ts", "recorded_crash"],
+  ["src/resources/readStableArtifact.ts", "web_network"],
+  ["src/resources/readStableArtifact.ts", "web_source_map"],
+  ["src/resources/ArtifactResourceScope.ts", "sqlite"],
+  ["src/resources/ArtifactResourceScope.ts", "agentenv"],
+  ["src/resources/ArtifactReader.ts", "sqlite"],
+  ["src/resources/ArtifactReader.ts", "binary_layout"],
+  ["src/resources/ArtifactReader.ts", "evm"],
+  ["src/resources/ArtifactReader.ts", "web_network"],
+  // Hopper launcher discovery moved out of config; the packaged Hopper
+  // baseline still checks the launcher it selects.
+  ["src/hopperPaths/HopperLauncherDiscovery.ts", "package"],
+  // The pwntools input bound moved from src/native/pwntools to src/config.
+  ["src/config/pwntoolsInputLimit.ts", "binary_layout"],
+  ["src/config/pwntoolsInputLimit.ts", "recorded_crash"],
   ["bridge/native/rea_lldb_tracer.py", "python"],
   ["bridge/pwndbg/test_core_context.py", "python"],
-  ["tests/support/analysis-efficiency/test_signal_oracle.py", "python"],
+  ["tests/support/analysis-efficiency/test_catalog_eval.py", "python"],
   ["scripts/run-python-tests.py", "python"],
   ["scripts/verify-browser-request.mjs", "browser"],
   ["scripts/lib/browser-request-e2e.mjs", "browser"],
@@ -132,16 +242,36 @@ it.each([
   ["tests/acceptance/pcapVerifier.test.ts", "packet_capture"],
   ["tests/fixtures/pcap/offlineHttpCapture.ts", "packet_capture"],
   ["scripts/verify-pcap.mjs", "packet_capture"],
+  [".github/actions/ubuntu-archive/action.yml", "signal_recording"],
   ["src/signals/RecordingProvider.ts", "signal_recording"],
   ["tests/boundary/mcp/signalRecordingMcp.test.ts", "signal_recording"],
   ["src/process/LinuxResourceLimits.ts", "packet_capture"],
   ["src/process/LinuxResourceLimits.ts", "signal_recording"],
   ["scripts/ci/require-provider-tests.mjs", "packet_capture"],
   ["scripts/ci/require-provider-tests.mjs", "signal_recording"],
+  // Provider ports moved from src/application keep their provider lanes.
+  ["src/ports/sqlite/SqliteDatabasePort.ts", "sqlite"],
+  ["src/ports/BrowserScenarioCapturePort.ts", "browser"],
+  ["src/ports/WebModulePorts.ts", "browser"],
+  ["src/ports/binaryDiagnostics/ElfNotesPort.ts", "binary_layout"],
+  ["src/ports/binaryDiagnostics/RecordedCrashPort.ts", "recorded_crash"],
+  ["src/ports/evm/EvmInterfacePort.ts", "evm"],
+  ["src/ports/apkSignature/ApkSignaturePort.ts", "apk_signature"],
+  ["src/ports/javascript/JavaScriptRecoveryPort.ts", "javascript_recovery"],
+  ["src/ports/WebRuntimePort.ts", "web_runtime"],
+  ["src/go/GoBinaryProvider.ts", "go_binary"],
+  ["scripts/verify-go-binary.mjs", "go_binary"],
+  ["bridge/android/ReaJadxBridge.java", "android_metadata"],
+  ["src/android/JadxRelease.ts", "android_metadata"],
+  [
+    "tests/conformance/android/ReaJadxMetadataRegression.java",
+    "android_metadata",
+  ],
+  ["src/ports/WebSourceLocationPorts.ts", "web_source_map"],
+  ["src/ports/captures/PacketCapturePort.ts", "packet_capture"],
+  ["src/ports/signals/SignalRecordingPort.ts", "signal_recording"],
 ])("selects %s for %s", async (path, scope) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(await classifyPaths([path])).toMatchObject({
     [scope]: true,
   });
 });
@@ -149,9 +279,7 @@ it.each([
 it.each(["src/domain/webCaptureDiffSchemas.ts", "src/domain/webScreenshot.ts"])(
   "selects real browser verification for %s without capture lanes",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       browser: true,
       packet_capture: false,
       signal_recording: false,
@@ -201,11 +329,9 @@ it("keeps every translated README and authored guide on the documentation lane",
 });
 
 it("runs documentation verification when only its published-route verifier changes", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "scripts/verify-documentation-routes.mjs",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["scripts/verify-documentation-routes.mjs"]),
+  ).toMatchObject({
     docs: true,
   });
 });
@@ -213,11 +339,9 @@ it("runs documentation verification when only its published-route verifier chang
 it.each(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"])(
   "selects static checks for authored documentation code (%s) without provider lanes",
   async (extension) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [
+    const plan = await classifyPaths([
       `docs/.vitepress/helpers/navigation.${extension}`,
     ]);
-    const plan = await classify(directory, base, head);
     const { CI_FLAGS } = await loadScopes();
     expect(plan).toMatchObject({ tier: "fast", code: true, docs: true });
     for (const flag of CI_FLAGS)
@@ -243,11 +367,9 @@ it("retains code checks when documentation code is removed or renamed to Markdow
 });
 
 it("selects code checks for documentation filenames containing line separators", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "docs/.vitepress/navigation\u2028menu.ts",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["docs/.vitepress/navigation\u2028menu.ts"]),
+  ).toMatchObject({
     code: true,
     docs: true,
     runtime: false,
@@ -264,9 +386,7 @@ it.each([
 ])(
   "keeps portable CI reporter %s on static checks and portable tests",
   async (name) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [`scripts/ci/${name}`]);
-    const plan = await classify(directory, base, head);
+    const plan = await classifyPaths([`scripts/ci/${name}`]);
     const { CI_FLAGS } = await loadScopes();
     expect(plan.code).toBe(true);
     for (const flag of CI_FLAGS)
@@ -275,12 +395,9 @@ it.each([
 );
 
 it("preserves a provider lane when a portable CI reporter changes with provider source", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [
-    "scripts/ci/test-report.mjs",
-    "src/evm/Example.ts",
-  ]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPaths(["scripts/ci/test-report.mjs", "src/evm/Example.ts"]),
+  ).toMatchObject({
     code: true,
     evm: true,
     browser: false,
@@ -289,9 +406,7 @@ it("preserves a provider lane when a portable CI reporter changes with provider 
 });
 
 it("keeps unknown CI scripts on the fast Linux baseline", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["scripts/ci/new-qualification.mjs"]);
-  const plan = await classify(directory, base, head);
+  const plan = await classifyPaths(["scripts/ci/new-qualification.mjs"]);
   const { CI_FLAGS } = await loadScopes();
   expect(plan).toMatchObject({ tier: "fast", code: true, runtime: true });
   for (const flag of CI_FLAGS)
@@ -299,25 +414,233 @@ it("keeps unknown CI scripts on the fast Linux baseline", async () => {
   expect(plan.matrix).toEqual({
     include: [{ os: "ubuntu-latest", platform: "linux", architecture: "x64" }],
   });
-  const full = await classify(directory, base, head, "pull_request", true);
+  const full = await classifyPaths(
+    ["scripts/ci/new-qualification.mjs"],
+    "pull_request",
+    true,
+  );
   for (const flag of CI_FLAGS) expect(full[flag]).toBe(true);
 });
 
-it("emits an observational owner proposal without changing ordinary or full portable execution", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["src/evm/Example.ts"]);
-  expect(await classify(directory, base, head)).toMatchObject({
-    code: true,
-    testSelection: { mode: "candidate", owners: ["evm"] },
+it("does not credit a fixture test as coverage for an unrelated shared script", async () => {
+  const { directory } = await fixture();
+  const module = "scripts/lib/uncovered.mjs";
+  const data = "tests/fixtures/independent.txt";
+  const test = "tests/boundary/filesystem/independent.test.ts";
+  await mkdir(dirname(join(directory, test)), { recursive: true });
+  await writeFile(join(directory, test), `readFileSync("${data}");\n`);
+  const base = await change(directory, [module, data]);
+  const head = await change(
+    directory,
+    [module, data],
+    "Updated fixture content\n",
+  );
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: `No test reaches shared script module: ${module}`,
+    },
   });
-  expect(
-    await classify(directory, base, head, "pull_request", true),
-  ).toMatchObject({
-    code: true,
-    testSelection: { mode: "full", owners: [] },
+});
+
+it("selects the tests a pull request affects and runs everything when it cannot decide", async () => {
+  const { directory } = await fixture();
+  // The entrypoint's output file is not part of the change.
+  await mkdir(join(directory, ".git", "info"), { recursive: true });
+  await writeFile(join(directory, ".git", "info", "exclude"), "scope-output\n");
+  const write = async (path: string, content: string) => {
+    await mkdir(dirname(join(directory, path)), { recursive: true });
+    await writeFile(join(directory, path), content);
+  };
+  const imports = (specifier: string) =>
+    `import { value } from "${specifier}";\nvoid value;\n`;
+  await write("src/evm/Example.ts", "export const value = 1;\n");
+  await write("src/evm/Example.test.ts", imports("./Example.js"));
+  await write("src/evm/Other.ts", "export const value = 2;\n");
+  await write(
+    "tests/support/evmHelper.ts",
+    imports("../../src/evm/Example.js"),
+  );
+  // Through a test-only helper, through the leaf owner, and by name.
+  await write(
+    "tests/composition/helped.test.ts",
+    imports("../support/evmHelper.js"),
+  );
+  await write("tests/boundary/evm/cli.test.ts", "// spawns the built CLI\n");
+  await write(
+    "tests/conformance/named.test.ts",
+    'readFileSync("src/evm/Example.ts");\n',
+  );
+  await write(
+    "tests/composition/unrelated.test.ts",
+    imports("../../src/provider.js"),
+  );
+  const base = await commit(directory);
+  const head = await change(
+    directory,
+    ["src/evm/Example.ts"],
+    "export const value = 3;\n",
+  );
+  const selected = [
+    "src/evm/Example.test.ts",
+    "tests/boundary/evm/cli.test.ts",
+    "tests/composition/helped.test.ts",
+    "tests/conformance/named.test.ts",
+  ];
+  expect(await runPlanScript(directory, base, head)).toMatchObject({
+    testSelection: { version: 3, mode: "selected", files: selected, shards: 1 },
+    testShards: ["1/1"],
   });
   const output = await readFile(join(directory, "scope-output"), "utf8");
-  expect(output).toContain('test_selection={"version":1,"mode":"full"');
+  expect(output).toContain("test_mode=selected\n");
+  expect(output).toContain('test_shards=["1/1"]\n');
+
+  // ci:full, main pushes and shared or untraced inputs run the complete suite.
+  expect(
+    await runPlanScript(directory, base, head, "pull_request", true),
+  ).toMatchObject({
+    testSelection: { version: 3, mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
+  });
+  expect(await classify(directory, base, head, "push")).toMatchObject({
+    testSelection: { mode: "full" },
+    testShards: expect.arrayContaining(["12/12"]),
+  });
+  let previous = head;
+  for (const path of [
+    "src/process/Shared.ts",
+    "scripts/build-something.mjs",
+    "tests/fixtures/data.bin",
+  ]) {
+    const parent = previous;
+    previous = await change(directory, [path]);
+    expect(await classify(directory, parent, previous)).toMatchObject({
+      testSelection: { mode: "full", reason: expect.stringContaining(path) },
+    });
+  }
+  // A leaf owner's boundary tests cover its other modules.
+  const unreached = await change(
+    directory,
+    ["src/evm/Other.ts"],
+    "export const value = 4;\n",
+  );
+  expect(await classify(directory, previous, unreached)).toMatchObject({
+    testSelection: { mode: "selected" },
+  });
+  const isolated = await change(directory, ["src/unowned/Lonely.ts"]);
+  expect(await classify(directory, unreached, isolated)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "No test imports, names or sits beside a changed path",
+    },
+  });
+  // Above the cap, selection gives way to the complete suite.
+  const many = Array.from(
+    { length: 401 },
+    (_, index) => `tests/composition/many${String(index)}.test.ts`,
+  );
+  const wide = await change(directory, many);
+  expect(await classify(directory, isolated, wide)).toMatchObject({
+    testSelection: {
+      mode: "full",
+      reason: "401 affected test files exceed the 400-file selection cap",
+    },
+  });
+  const capped = await change(directory, many.slice(0, 101), "// edited\n");
+  expect(await classify(directory, wide, capped)).toMatchObject({
+    testSelection: { mode: "selected" },
+    testShards: ["1/3", "2/3", "3/3"],
+  });
+});
+
+it("routes license inventories to docs checks and keeps blame-ignore edits formatting-only", async () => {
+  expect(await classifyPaths([".git-blame-ignore-revs"])).toMatchObject({
+    code: false,
+    docs: false,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["licenses/npm-dependencies.txt"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["THIRD_PARTY_NOTICES.md"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  expect(await classifyPaths(["LICENSE"])).toMatchObject({
+    code: true,
+    docs: true,
+    runtime: false,
+    package: false,
+  });
+  for (const staticOnly of [
+    "scripts/lib/module-layers.baseline.json",
+    "scripts/verify/architecture-guards.mjs",
+    "scripts/verify/baselines/cleanup-dependency-binding.json",
+    "tsconfig.scripts.json",
+  ]) {
+    expect(await classifyPaths([staticOnly]), staticOnly).toMatchObject({
+      code: true,
+      docs: false,
+      runtime: false,
+      package: false,
+    });
+  }
+  for (const docsAndCode of [
+    "scripts/check-doc-facts.mjs",
+    "scripts/lib/product-catalog.mjs",
+  ]) {
+    expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
+      code: true,
+      docs: true,
+      runtime: false,
+      package: false,
+    });
+  }
+  expect(
+    await classifyPaths([
+      ".cursor-plugin/skills/reverse-engineer-anything/SKILL.md",
+    ]),
+  ).toMatchObject({
+    docs: true,
+    runtime: true,
+    package: false,
+  });
+});
+
+it("passes the workflow environment through the entrypoint unchanged", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, ["src/evm/Example.ts"]);
+  const { CI_FLAGS } = await loadScopes();
+  // Fast and reused plans exercise BASE_SHA/HEAD_SHA and CI_SKIP_FULL; the
+  // entrypoint must answer exactly as the in-process planner does.
+  for (const [event, skipFull, tier] of [
+    ["pull_request", false, "fast"],
+    ["push", false, "fast"],
+    ["schedule", true, "reused"],
+  ] as const) {
+    const expected = await classify(
+      directory,
+      base,
+      head,
+      event,
+      false,
+      skipFull,
+    );
+    expect(expected.tier).toBe(tier);
+    expect(
+      await runPlanScript(directory, base, head, event, false, skipFull),
+    ).toEqual(expected);
+    const output = await readFile(join(directory, "scope-output"), "utf8");
+    for (const flag of CI_FLAGS)
+      expect(output).toContain(`${flag}=${String(expected[flag])}\n`);
+    expect(output).toContain(`tier=${tier}\n`);
+  }
 });
 
 it("does not charge a documentation PR for unrelated implementation updates on main", async () => {
@@ -366,9 +689,7 @@ it.each([
 ])(
   "selects the reverse-tool coverage and mutation gate for %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
     });
@@ -402,9 +723,7 @@ const reverseToolsInputs = [
 it.each(reverseToolsInputs)(
   "selects the reverse-tool quality gate for configured input %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, [path]);
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
     });
@@ -421,9 +740,9 @@ it.each([
 ])(
   "retains complete checks when documentation is mixed with %s",
   async (path) => {
-    const { directory, base } = await fixture();
-    const head = await change(directory, ["README.md", path]);
-    expect(await classify(directory, base, head)).toMatchObject({ code: true });
+    expect(await classifyPaths(["README.md", path])).toMatchObject({
+      code: true,
+    });
   },
 );
 
@@ -442,9 +761,9 @@ it("retains complete checks when implementation is renamed into documentation", 
 });
 
 it("keeps main pushes scoped when a successful ancestor baseline is available", async () => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, ["docs/readme/README_ja.md"]);
-  expect(await classify(directory, base, head, "push")).toMatchObject({
+  expect(
+    await classifyPaths(["docs/readme/README_ja.md"], "push"),
+  ).toMatchObject({
     tier: "fast",
     code: false,
     package: false,
@@ -496,7 +815,7 @@ it.each(["", "not-a-commit"])(
   },
 );
 
-it("selects only a trusted successful ancestor from recent CI push runs", async ({
+it("selects a completed CI ancestor rather than a foreign or non-terminal run", async ({
   skip,
 }) => {
   skip(process.platform === "win32", "the fake gh is a POSIX shell script");
@@ -514,6 +833,8 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
     JSON.stringify({
       workflow_runs: [
         {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -521,6 +842,26 @@ it("selects only a trusted successful ancestor from recent CI push runs", async 
           head_sha: foreignBase,
         },
         {
+          status: "in_progress",
+          path: ".github/workflows/ci.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/release.yml@refs/heads/main",
+          event: "push",
+          conclusion: "success",
+          head_branch: "main",
+          head_repository: { full_name: "owner/repo" },
+          head_sha: foreignBase,
+        },
+        {
+          status: "completed",
+          path: ".github/workflows/ci.yml@refs/heads/main",
           event: "push",
           conclusion: "success",
           head_branch: "main",
@@ -608,9 +949,9 @@ it("fails closed when the successful push baseline is not an ancestor", async ()
 
 it("fails classification rather than treating an invalid Git comparison as a scope", async () => {
   const { directory, base } = await fixture();
-  await expect(classify(directory, "missing-ref", base)).rejects.toMatchObject({
-    code: 1,
-  });
+  await expect(
+    runPlanScript(directory, "missing-ref", base),
+  ).rejects.toMatchObject({ code: 1 });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
 });
 
@@ -653,12 +994,20 @@ it("retains native Inspector verification on every documented package host", asy
       { os: "macos-15-intel", platform: "darwin", architecture: "x64" },
     ],
   });
-  const windowsInspector = stepSchema.parse(
-    workflow.jobs["windows-curated"].steps.find(
-      (step) => step.run === "npm run verify:inspector",
-    ),
+  const windowsSteps = workflow.jobs["windows-curated"].steps;
+  const windowsBuild = windowsSteps.findIndex(
+    (step) => step.run === "npm run build:cached",
   );
-  expect(windowsInspector.if).toBeUndefined();
+  expect(windowsBuild).toBeGreaterThanOrEqual(0);
+  expect(windowsSteps[windowsBuild]?.if).toBeUndefined();
+  for (const [verifier, condition] of [
+    ["node scripts/verify/inspector/runtime-observation.mjs", undefined],
+    ["node scripts/verify-windows-package.mjs", "matrix.suite == 'package'"],
+  ] as const) {
+    const step = windowsSteps.findIndex(({ run }) => run === verifier);
+    expect(step).toBeGreaterThan(windowsBuild);
+    expect(windowsSteps[step]?.if).toBe(condition);
+  }
 });
 
 it.each([
@@ -692,6 +1041,38 @@ it.each([
     "tests/module/example.test.ts",
     { code: true, runtime: false, browser: false, package: false },
   ],
+  // The darwin package baseline is the CI run of packaged Hopper commands
+  // against the fake bridge and the reply contracts.
+  [
+    "tests/process-global/curatedWindowsLane.test.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/fixtures/fakeHopper.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "tests/fixtures/fakeHopperReplies.mjs",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/hopper/HopperReplyContracts.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSegments.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  // Schemas the contracts import transitively.
+  [
+    "src/domain/native/functionBody.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    "src/domain/native/nativeSymbol.ts",
+    { code: true, runtime: true, package: true },
+  ],
+  ["src/domain/native/functionBody.test.ts", { code: true, package: false }],
   ["scripts/lib/release-proposal.mjs", { code: true, package: true }],
   ["scripts/lib/release-proposal.d.mts", { code: true, package: true }],
   ["scripts/lib/release-pull-request.mjs", { code: true, package: true }],
@@ -706,10 +1087,16 @@ it.each([
     { code: true, website: true, package: false },
   ],
   [
+    "website/public/index.html",
+    { code: false, docs: true, website: true, package: false },
+  ],
+  [
     "website/locales/zh-CN/messages.po",
     { code: false, website: true, package: false },
   ],
   ["scripts/website_i18n.py", { code: false, website: true, package: false }],
+  ["scripts/read-authored-skill-manifest.mjs", { website: true }],
+  ["src/domain/skillManifest.ts", { website: true }],
   [
     "docs/readme/README_ja.md",
     { code: false, docs: true, website: true, package: false },
@@ -734,6 +1121,7 @@ it.each([
     {
       code: true,
       runtime: true,
+      website: true,
       package: true,
       evm: false,
       browser: false,
@@ -769,6 +1157,22 @@ it.each([
     { code: true, ghidra_bridge: true, runtime: false, package: false },
   ],
   [
+    "scripts/verify-ghidra-loader-relocation.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "scripts/verify-ghidra-prototype-conflicts.mjs",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaLoaderRelocationProbe.java",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/loader-relocation-provider.c",
+    { code: true, ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
     "src/ghidra/GhidraBridgeSources.ts",
     { code: true, ghidra_bridge: true, runtime: true, package: true },
   ],
@@ -794,6 +1198,10 @@ it.each([
   ],
   [
     "tests/conformance/ghidra/ReaDecodeProbe.java",
+    { ghidra_bridge: true, runtime: false, package: false },
+  ],
+  [
+    "tests/conformance/ghidra/ReaPrototypeConflictProbe.java",
     { ghidra_bridge: true, runtime: false, package: false },
   ],
   [
@@ -860,7 +1268,7 @@ it.each([
     { code: true, runtime: true, package: true },
   ],
   ["src/hopper/BridgeLauncher.ts", { code: true, apple: true }],
-  ["src/domain/hopperErrors.ts", { code: true, apple: true }],
+  ["src/hopper/HopperErrors.ts", { code: true, apple: true }],
   [
     "tests/boundary/providers/hopper/hopperMacLaunchArguments.test.ts",
     { code: true, apple: true },
@@ -876,6 +1284,49 @@ it.each([
   [
     "src/domain/windowsNativeArtifact.ts",
     { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/windows-cross-compiler/action.yml",
+    { code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yml",
+    { code: true, runtime: true, package: true, binary_layout: true },
+  ],
+  [
+    ".github/actions/ubuntu-archive/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
+  ],
+  [
+    ".github/actions/host-apt-packages/action.yaml",
+    {
+      code: true,
+      runtime: true,
+      package: true,
+      binary_layout: true,
+      signal_recording: true,
+      recorded_crash: false,
+      workflows: true,
+    },
   ],
   ["src/domain/peCoffHeader.ts", { code: true, runtime: true, package: true }],
   ["src/domain/dosMz.ts", { code: true, runtime: true, package: true }],
@@ -1028,6 +1479,10 @@ it.each([
     { code: true, package: true, runtime: true, apple: false },
   ],
   [
+    "src/desktop/AgentEnvBridgeSources.ts",
+    { code: true, package: true, runtime: true, apple: false },
+  ],
+  [
     "scripts/verify-packed-bridge.mjs",
     {
       code: true,
@@ -1095,6 +1550,29 @@ it.each([
       browser: false,
     },
   ],
+  // One lane names it; others reach it only through `src/process/**`.
+  [
+    "src/process/RegularFileRead.ts",
+    {
+      code: true,
+      runtime: true,
+      agentenv: true,
+      javascript_recovery: false,
+      recorded_crash: false,
+      web_source_map: false,
+      package: false,
+    },
+  ],
+  [
+    "src/process/ownedDebuggerSession.ts",
+    {
+      code: true,
+      runtime: true,
+      reverse_tools: true,
+      javascript_recovery: false,
+      package: false,
+    },
+  ],
   [
     "src/server/createServer.ts",
     {
@@ -1150,11 +1628,11 @@ it.each([
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
-    "src/artifacts/SafeOutputTree.ts",
+    "src/resources/SafeOutputTree.ts",
     { code: true, agentenv: true, runtime: true },
   ],
   [
-    "src/cliJsonInput.ts",
+    "src/cli/cliJsonInput.ts",
     { code: true, agentenv: true, runtime: true, package: false },
   ],
   [
@@ -1170,9 +1648,7 @@ it.each([
     { code: true, sqlite: false, ghidra_bridge: false, agentenv: false },
   ],
 ])("selects the appropriate lanes for %s", async (path, expected) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject(expected);
+  expect(await classifyPaths([path])).toMatchObject(expected);
 });
 
 it("scopes package script edits while retaining broad dependency checks", async () => {
@@ -1216,20 +1692,14 @@ it("scopes package script edits while retaining broad dependency checks", async 
 it.each(["test:sqlite", "test:sqlite:run"])(
   "routes %s script changes to the SQLite runtime matrix",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "vitest run" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({
-        scripts: { [script]: "vitest run --reporter=default" },
-      }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "vitest run" } }),
+        JSON.stringify({
+          scripts: { [script]: "vitest run --reporter=default" },
+        }),
+      ),
+    ).toMatchObject({
       code: true,
       sqlite: true,
       evm: false,
@@ -1239,20 +1709,14 @@ it.each(["test:sqlite", "test:sqlite:run"])(
 );
 
 it("keeps unrelated test script changes off the SQLite runtime matrix", async () => {
-  const { directory } = await fixture();
-  const base = await change(
-    directory,
-    ["package.json"],
-    JSON.stringify({ scripts: { "test:domain": "vitest run src/domain" } }),
-  );
-  const head = await change(
-    directory,
-    ["package.json"],
-    JSON.stringify({
-      scripts: { "test:domain": "vitest run src/domain --reporter=default" },
-    }),
-  );
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(
+    await classifyPackage(
+      JSON.stringify({ scripts: { "test:domain": "vitest run src/domain" } }),
+      JSON.stringify({
+        scripts: { "test:domain": "vitest run src/domain --reporter=default" },
+      }),
+    ),
+  ).toMatchObject({
     code: true,
     sqlite: false,
     evm: false,
@@ -1264,9 +1728,7 @@ it.each([
   "src/domain/apkSignature/apkSignatureSchemes.ts",
   "scripts/verify-apk-signature.mjs",
 ])("selects the real APK signing lane for %s", async (path) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject({
+  expect(await classifyPaths([path])).toMatchObject({
     apk_signature: true,
   });
 });
@@ -1341,6 +1803,7 @@ it.each(["evm", "browser"])(
         outputs: {
           ...Object.fromEntries(CI_FLAGS.map((flag) => [flag, "false"])),
           tier: "fast",
+          test_mode: "full",
           [scope]: "true",
         },
       },
@@ -1375,6 +1838,22 @@ it.each([
   [
     ".github/workflows/real-termux.yml",
     { workflows: true, code: false, package: false, website: false },
+  ],
+  [
+    ".github/actions/npm-cache/action.yml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/example/nested/action.yaml",
+    { workflows: true, code: true, runtime: true, package: false },
+  ],
+  [
+    ".github/actions/publish-mcp/registry-state.mjs",
+    { workflows: false, code: true, runtime: true, package: true },
+  ],
+  [
+    ".github/actionlint.yml",
+    { workflows: true, code: false, runtime: false, package: false },
   ],
   [
     "src/domain/javascript/example.test.ts",
@@ -1414,6 +1893,11 @@ it.each([
     "docs/.vitepress/package.json",
     { code: true, docs: true, runtime: false, package: false },
   ],
+  ["package-lock.json", { code: true, docs: true, runtime: true }],
+  [
+    "scripts/generate-third-party-inventory.mjs",
+    { code: true, docs: true, runtime: false },
+  ],
   ["docs/data.json", { code: false, docs: true, package: false }],
   ["CHANGELOG.md", { code: false, docs: true, package: false }],
   ["SECURITY.md", { code: false, docs: true, package: false }],
@@ -1433,10 +1917,6 @@ it.each([
   ],
   [
     ".github/workflows/release.yml",
-    { workflows: true, code: true, package: false, website: false },
-  ],
-  [
-    ".github/workflows/pr-readiness.yml",
     { workflows: true, code: true, package: false, website: false },
   ],
   [
@@ -1544,9 +2024,7 @@ it.each([
     { code: true, fixtures: false, readiness: false, package: false },
   ],
 ])("preserves scope boundaries for %s", async (path, expected) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  expect(await classify(directory, base, head)).toMatchObject(expected);
+  expect(await classifyPaths([path])).toMatchObject(expected);
 });
 
 it("unions provider scopes across mixed changes and deletions", async () => {
@@ -1566,7 +2044,7 @@ it("fails without emitting a plan when package metadata is malformed", async () 
   const { directory } = await fixture();
   const base = await change(directory, ["package.json"], '{"scripts":{}}');
   const head = await change(directory, ["package.json"], "{broken");
-  await expect(classify(directory, base, head)).rejects.toMatchObject({
+  await expect(runPlanScript(directory, base, head)).rejects.toMatchObject({
     code: 1,
   });
   expect(await readFile(join(directory, "scope-output"), "utf8")).toBe("");
@@ -1591,18 +2069,12 @@ it.each([
 ])(
   "routes the %s script to its glob-owned lane",
   async (script, command, expected) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: command } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: `${command} --verbose` } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: command } }),
+        JSON.stringify({ scripts: { [script]: `${command} --verbose` } }),
+      ),
+    ).toMatchObject({
       code: true,
       ...expected,
     });
@@ -1612,18 +2084,12 @@ it.each([
 it.each(["knip:production", "lint:typed"])(
   "keeps the %s analysis command within static checks",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "node scripts/old.mjs" } }),
+        JSON.stringify({ scripts: { [script]: "node scripts/new.mjs" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: false,
       package: false,
@@ -1694,23 +2160,17 @@ it("honors ci:full for successive PR revisions", async () => {
 it.each(["compile:termux", "build:termux", "build:termux:run"])(
   "does not expand %s edits into unrelated providers",
   async (script) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [script]: "npm run compile:termux" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({
-        scripts: {
-          [script]:
-            "node scripts/run-exclusive.mjs artifacts npm run compile:termux",
-        },
-      }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [script]: "npm run compile:termux" } }),
+        JSON.stringify({
+          scripts: {
+            [script]:
+              "node scripts/run-exclusive.mjs artifacts npm run compile:termux",
+          },
+        }),
+      ),
+    ).toMatchObject({
       code: true,
       workflows: true,
       runtime: false,
@@ -1864,9 +2324,7 @@ it.each([
   ".nvmrc",
   ".npmrc",
 ])("selects package hosts for compiler input %s", async (path) => {
-  const { directory, base } = await fixture();
-  const head = await change(directory, [path]);
-  const plan = await classify(directory, base, head);
+  const plan = await classifyPaths([path]);
   expect(plan).toMatchObject({
     tier: "fast",
     code: true,
@@ -1885,19 +2343,13 @@ it.each([
 it.each(["typescript", "tsrs"])(
   "selects fallback host checks when compiler dependency %s changes",
   async (name) => {
-    const { directory } = await fixture();
     const before = { name: "fixture", devDependencies: { [name]: "1.0.0" } };
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify(before),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ ...before, devDependencies: { [name]: "2.0.0" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify(before),
+        JSON.stringify({ ...before, devDependencies: { [name]: "2.0.0" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: true,
       package: true,
@@ -1919,21 +2371,33 @@ it.each([
 ])(
   "selects fallback host checks when compiler command %s changes",
   async (name) => {
-    const { directory } = await fixture();
-    const base = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [name]: "node scripts/old.mjs" } }),
-    );
-    const head = await change(
-      directory,
-      ["package.json"],
-      JSON.stringify({ scripts: { [name]: "node scripts/new.mjs" } }),
-    );
-    expect(await classify(directory, base, head)).toMatchObject({
+    expect(
+      await classifyPackage(
+        JSON.stringify({ scripts: { [name]: "node scripts/old.mjs" } }),
+        JSON.stringify({ scripts: { [name]: "node scripts/new.mjs" } }),
+      ),
+    ).toMatchObject({
       code: true,
       runtime: true,
       package: true,
     });
   },
 );
+
+it("reads a Git blob whose path contains a line break alongside an ordinary blob", async ({
+  skip,
+}) => {
+  skip(
+    process.platform === "win32",
+    "Windows paths cannot contain line breaks",
+  );
+  const { directory } = await fixture();
+  const path = "src/two\nlines.test.ts";
+  const head = await change(directory, [path], "multiline path\n");
+  expect(gitRepository(directory).readFiles(head, [path, "README.md"])).toEqual(
+    new Map([
+      [path, "multiline path\n"],
+      ["README.md", "Initial fixture content\n"],
+    ]),
+  );
+});

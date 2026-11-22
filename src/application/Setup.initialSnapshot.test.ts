@@ -2,7 +2,7 @@ import { expect, it } from "vitest";
 
 import { runSetup } from "./Setup.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
-import { supportedClientRegistrationProfile } from "./SupportedClients.js";
+import { supportedClientRegistrationProfile } from "../../tests/fixtures/clientRegistrationProfile.js";
 
 it("refreshes doctor after approved setup changes", async () => {
   const host = new FakeSetupHost();

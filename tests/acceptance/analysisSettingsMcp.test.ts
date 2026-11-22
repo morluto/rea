@@ -1,4 +1,6 @@
+import { canonicalOutputSchema } from "../fixtures/canonicalOutputSchema.js";
 import { analysisSettingsResultSchema } from "../../src/contracts/analysisSettingsContracts.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../src/domain/analysisResourceLimits.js";
 import { expect, it } from "vitest";
 import type { AnySchema } from "ajv";
 import { Ajv2020 } from "ajv/dist/2020.js";
@@ -7,6 +9,7 @@ import { writeFile } from "node:fs/promises";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { join } from "node:path";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../scripts/lib/mcp-verification-environment.mjs";
 import { asarHeaderBytes } from "../fixtures/asarHeader.js";
 import { nativeMatchingNamedInventory } from "../fixtures/nativeFunctionMatching.js";
@@ -80,7 +83,7 @@ it("recovers expanded ASAR listing admission on the same MCP connection independ
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it("advertises exact contracts and recovers a full large-index archive over one MCP connection", async () => {
   const root = await createTestTempDirectory("rea-runtime-settings-");
@@ -111,7 +114,9 @@ it("advertises exact contracts and recovers a full large-index archive over one 
       const tool = catalog.tools.find((tool) => tool.name === name)!;
       expect(tool).toBeDefined();
       expect(ajv.validateSchema(tool.inputSchema as AnySchema)).toBe(true);
-      expect(ajv.validateSchema(tool.outputSchema as AnySchema)).toBe(true);
+      expect(
+        ajv.validateSchema(canonicalOutputSchema(tool.name) as AnySchema),
+      ).toBe(true);
     }
     const initial = await invoke("inspect_analysis_settings", {
       settings: ["asar.max_header_bytes"],
@@ -214,7 +219,7 @@ it("advertises exact contracts and recovers a full large-index archive over one 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.each(["0", "2147483648"])(
   "keeps invalid JADX launch timeout %s local and repairable through MCP",
@@ -232,9 +237,11 @@ it.each(["0", "2147483648"])(
       const tool = (await client.listTools()).tools.find(
         (entry) => entry.name === "inspect_analysis_settings",
       );
-      expect(tool?.outputSchema).toBeDefined();
+      expect(tool).toBeDefined();
       const ajv = new Ajv2020({ strict: false });
-      const validate = ajv.compile(tool!.outputSchema as AnySchema);
+      const validate = ajv.compile(
+        canonicalOutputSchema(tool!.name) as AnySchema,
+      );
       expect(
         validate(response.structuredContent),
         JSON.stringify(validate.errors),
@@ -279,7 +286,6 @@ it.each(["0", "2147483648"])(
       await client.close();
     }
   },
-  30000,
 );
 
 it("lowers, restores and seeds the native matching allowance over MCP", async () => {
@@ -348,7 +354,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
           setting: "native.matching_representation_bytes",
           value: 4096,
           launch_value: 4096,
-          default_value: 100663296,
+          default_value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
           source: "setting",
           environment: "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
         },
@@ -407,7 +413,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
         {
           setting: "native.matching_representation_bytes",
           action: "set",
-          value: 100663296,
+          value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
         },
       ],
     });
@@ -415,7 +421,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
       settings: [
         {
           source: "runtime",
-          value: 100663296,
+          value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
           pending_restart: false,
           configuration_error: inspected.settings[0]!.configuration_error,
         },
@@ -427,7 +433,7 @@ it("lowers, restores and seeds the native matching allowance over MCP", async ()
   } finally {
     await invalid.client.close();
   }
-}, 30000);
+});
 
 it("starts with invalid runtime seeds and recovers ASAR and capture work on the same connection", async () => {
   const root = await createTestTempDirectory("rea-invalid-runtime-seeds-");
@@ -457,12 +463,26 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
   );
   const { client, call } = await connectLocalToolsMcp({
     REA_ASAR_MAX_HEADER_BYTES: "invalid",
-    REA_ASAR_MAX_LISTING_BYTES: "invalid",
+    REA_ASAR_MAX_LISTING_BYTES: "9007199254740992",
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "invalid",
   });
+  const expectSettingRefusal = (
+    result: Awaited<ReturnType<typeof call>>,
+    setting: string,
+  ) => {
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "configuration_invalid",
+      details: { settings: [{ setting }] },
+    });
+  };
   try {
+    const header = {
+      setting: "asar.max_header_bytes",
+      action: "set",
+      value: 8192,
+    };
     const changes = [
-      { setting: "asar.max_header_bytes", action: "set", value: 8192 },
+      header,
       { setting: "asar.max_listing_bytes", action: "set", value: 4096 },
       {
         setting: "capture.decoder_old_generation_mib",
@@ -489,17 +509,22 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
         })
       ).isError,
     ).not.toBe(true);
-    const refusedArchive = await call("inspect_artifact", {});
-    expect(refusedArchive.isError).toBe(true);
-    expect(JSON.stringify(refusedArchive)).toContain(
+    expectSettingRefusal(
+      await call("inspect_artifact", {}),
       "REA_ASAR_MAX_HEADER_BYTES",
     );
-    const refused = await call("inspect_web_network_capture", {
-      capture_path: capture,
-      format: "har",
-    });
-    expect(refused.isError).toBe(true);
-    expect(JSON.stringify(refused)).toContain(
+    expect(
+      (await call("update_analysis_settings", { changes: [header] })).isError,
+    ).not.toBe(true);
+    expectSettingRefusal(
+      await call("inspect_artifact", {}),
+      "REA_ASAR_MAX_LISTING_BYTES",
+    );
+    expectSettingRefusal(
+      await call("inspect_web_network_capture", {
+        capture_path: capture,
+        format: "har",
+      }),
       "REA_CAPTURE_DECODER_OLD_GENERATION_MIB",
     );
     expect(
@@ -517,7 +542,7 @@ it("starts with invalid runtime seeds and recovers ASAR and capture work on the 
   } finally {
     await client.close();
   }
-}, 30000);
+});
 
 it.skipIf(process.platform === "win32")(
   "ignores Windows ChangeTime launch settings on other hosts",
@@ -539,5 +564,4 @@ it.skipIf(process.platform === "win32")(
       await client.close();
     }
   },
-  30000,
 );

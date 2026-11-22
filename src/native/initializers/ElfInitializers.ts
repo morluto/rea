@@ -1,6 +1,17 @@
+import { readInitializerWord } from "./initializerWord.js";
 import { setImmediate as immediate } from "node:timers/promises";
-import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
-import { readElfDynamicEntry } from "../../domain/elfDynamicEntry.js";
+import {
+  assertArtifactReadActive,
+  yieldArtifactRead,
+} from "../../resources/index.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
+import {
+  admitElfDynamicDirectory,
+  readElfDynamicEntry,
+} from "../../domain/elfDynamicEntry.js";
 import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import {
   MAX_NATIVE_INITIALIZER_ENTRIES,
@@ -8,36 +19,45 @@ import {
   type NativeInitializerInspection,
   type NativeInitializerKind,
 } from "../../domain/native/nativeInitializers.js";
-import type { ElfPointerWrite } from "../metadata/ElfPointerRelocations.js";
+import type { ElfPointerWrite } from "../../domain/native/elfPointerRelocations.js";
 import {
   ElfPointerRelocationFailure,
   elfRelativeRelocationType,
   readElfRelocationWritesSteps,
-} from "../metadata/ElfPointerRelocations.js";
-import { readElfImage } from "../metadata/ElfImage.js";
+} from "../../domain/native/elfPointerRelocations.js";
+import {
+  readElfImage,
+  readElfImageFromDirectory,
+} from "../../domain/native/elfImage.js";
 import {
   BinaryFormatFailure,
   BinaryMappingFailure,
+  BinaryReader,
   BinaryResourceFailure,
   createFileMappingIndex,
   mappedFileOffset,
   type FileMappingIndex,
-} from "../metadata/BinaryContainer.js";
-import { readElfDirectoryFromBuffer } from "../metadata/NativeSectionDirectory.js";
-import type { NativeSection } from "../metadata/NativeSectionDirectory.js";
+} from "../../domain/binaryContainer.js";
+import {
+  readElfDirectoryFromBuffer,
+  readElfDirectoryFromBufferCooperative,
+} from "../../domain/native/nativeSectionDirectory.js";
+import type { NativeSection } from "../../domain/native/nativeSectionDirectory.js";
 import {
   loadElfSymbolIndex,
   elfInitializerSlotKey,
-  readPointerWord,
   relocationFromEntry,
   sectionRelocations,
   sectionSymbolKey,
   type ElfInitializerSymbol,
+  type ElfSymbolIndex,
   type SlotRelocation,
   type ElfInitializerSlot,
 } from "./ElfInitializerSymbols.js";
 import {
   finishInitializerReport,
+  preferInitializerSymbolName,
+  type InitializerSymbolName,
   type CollectedInitializer,
   type InitializerPage,
 } from "./initializerReport.js";
@@ -107,20 +127,28 @@ interface Source {
 }
 
 interface ElfScan {
+  readonly reader: BinaryReader;
   readonly bytes: Buffer;
   readonly bits: 32 | 64;
   readonly little: boolean;
   readonly machine: number;
   readonly relocatable: boolean;
   readonly notes: InitializerNotes;
-  incomplete: boolean;
+  /** Known gaps (`partial`) and undetermined facts (`unknown`) noted so far. */
+  coverage: CoverageStatus;
   /** Array slots still walkable across every source, so a declared size never sets the work. */
   slotBudget: number;
 }
 
-const note = (scan: ElfScan, message: string, incomplete = true): void => {
+/**
+ * Record an observation and its effect on coverage: `partial` when declared
+ * slots or names were examined but not reported, `unknown` when whether the
+ * listed facts are complete cannot be determined, `complete` for a note that
+ * loses nothing.
+ */
+const note = (scan: ElfScan, message: string, effect: CoverageStatus): void => {
   scan.notes.add(message);
-  if (incomplete) scan.incomplete = true;
+  scan.coverage = joinCoverageStatus([scan.coverage, effect]);
 };
 
 const wordOf = (bits: 32 | 64): number => bits / 8;
@@ -129,7 +157,7 @@ const wordOf = (bits: 32 | 64): number => bits / 8;
 const isSentinel = (value: bigint, bits: 32 | 64): boolean =>
   value === 0n || value === (1n << BigInt(bits)) - 1n;
 
-/** Read the consumed DT_* tags. The first duplicate wins. A missing DT_NULL stays incomplete. */
+/** Read the consumed DT_* tags. The first duplicate wins. A missing DT_NULL leaves coverage unknown. */
 const readDynamicTags = (
   scan: ElfScan,
   segment: { readonly offset: bigint; readonly size: bigint } | undefined,
@@ -139,26 +167,19 @@ const readDynamicTags = (
   if (segment === undefined) return tags;
   if (extra > 0)
     throw new BinaryFormatFailure("malformed", "multiple PT_DYNAMIC segments");
-  const width = scan.bits === 64 ? 16 : 8;
-  const start = Number(segment.offset);
-  const size = Number(segment.size);
-  if (size > 16 * 1024 * 1024)
+  const table = admitElfDynamicDirectory(scan.bytes.length, segment, scan.bits);
+  if (!table.ok) {
+    if (table.error.kind === "malformed")
+      throw new BinaryFormatFailure("malformed", table.error.message);
     throw new BinaryResourceFailure(
       "structure",
-      16 * 1024 * 1024,
-      "ELF dynamic directory exceeds the 16 MiB structural allowance",
+      table.error.maximum,
+      table.error.message,
+      "structure",
+      "bytes",
     );
-  if (
-    size < 0 ||
-    size % width !== 0 ||
-    start < 0 ||
-    start > scan.bytes.length ||
-    size > scan.bytes.length - start
-  )
-    throw new BinaryFormatFailure(
-      "malformed",
-      "PT_DYNAMIC is truncated or outside the file",
-    );
+  }
+  const { offset: start, size, width } = table.value;
   let terminated = false;
   for (let at = start; at + width <= start + size; at += width) {
     const parsed = readElfDynamicEntry(
@@ -177,6 +198,7 @@ const readDynamicTags = (
       note(
         scan,
         `Duplicate dynamic tag ${parsed.value.tag} was ignored after the first value.`,
+        "unknown",
       );
       continue;
     }
@@ -189,6 +211,7 @@ const readDynamicTags = (
     note(
       scan,
       "PT_DYNAMIC has no DT_NULL terminator. Tags seen before the end were used.",
+      "unknown",
     );
   return tags;
 };
@@ -197,7 +220,7 @@ const readDynamicTags = (
  * File offset of `size` bytes at `address`: a whole slot, or a target's first
  * byte. Only load mappings establish linked addresses: section declarations
  * cannot supply backing for an unmapped or zero-filled address. Ambiguous
- * mappings stay unknown and make the report incomplete.
+ * mappings stay unknown and leave coverage unknown.
  */
 const fileOffsetFor = (
   scan: ElfScan,
@@ -209,7 +232,7 @@ const fileOffsetFor = (
     return mappings.offset(address, size);
   } catch (cause) {
     if (!(cause instanceof BinaryMappingFailure)) throw cause;
-    if (cause.reason === "ambiguous") note(scan, AMBIGUOUS_MAPPING);
+    if (cause.reason === "ambiguous") note(scan, AMBIGUOUS_MAPPING, "unknown");
     return null;
   }
 };
@@ -282,6 +305,7 @@ const slotsFromSpan = (
       byteSize < 0n
         ? `${label} size is negative.`
         : `${label} size is not a multiple of the pointer width. Trailing bytes were not read.`,
+      "partial",
     );
   if (byteSize < 0n) return [];
   const declared = byteSize / stride;
@@ -292,6 +316,7 @@ const slotsFromSpan = (
     note(
       scan,
       `${label} declares ${declared.toString()} slots. Scanning stopped at the ${String(MAX_NATIVE_INITIALIZER_ENTRIES)}-slot budget, so later slots were not read.`,
+      "partial",
     );
   const slots: ArraySlot[] = [];
   let missed = false;
@@ -308,6 +333,7 @@ const slotsFromSpan = (
     note(
       scan,
       `${label} has slots that are not file-backed. Those slots were omitted.`,
+      "partial",
     );
   return slots;
 };
@@ -357,11 +383,16 @@ const sectionSource = (
     note(
       scan,
       `${label} is compressed. Its initializer slots were not decoded.`,
+      "partial",
     );
     return { kind, sentinel, detail: label, slots: [] };
   }
   if (!section.file_backed) {
-    note(scan, `${label} is not file-backed. Its slots were omitted.`);
+    note(
+      scan,
+      `${label} is not file-backed. Its slots were omitted.`,
+      "partial",
+    );
     return { kind, sentinel, detail: label, slots: [] };
   }
   return {
@@ -411,7 +442,11 @@ const arraySources = (
     );
   const size = tags.get(request.sizeTag);
   if (size === undefined) {
-    note(scan, `${request.detail} has no size tag. Its slots were not read.`);
+    note(
+      scan,
+      `${request.detail} has no size tag. Its slots were not read.`,
+      "partial",
+    );
     return [];
   }
   return [
@@ -456,7 +491,11 @@ const directSource = (
   const va = vaForFile(mappings, entry.valueOffset);
   // DT_INIT / DT_FINI store the target, not a slot pointer, so an unmapped field has no slot address.
   if (va === null)
-    note(scan, `${detail} value field is not inside a load segment.`);
+    note(
+      scan,
+      `${detail} value field is not inside a load segment.`,
+      "unknown",
+    );
   return {
     kind,
     sentinel: false,
@@ -635,24 +674,25 @@ const loadWrites = async (
       note(
         scan,
         `${String(clobbered.size)} initializer slot(s) are partly overwritten or written more than once by dynamic relocations and are listed as unresolved.`,
+        "unknown",
       );
     if (!next.value.pointer_coverage_known) {
       const issues = next.value.issues;
       if (issues.length === 0)
-        note(scan, "Dynamic relocation coverage is incomplete.");
-      for (const issue of issues) note(scan, issue);
+        note(scan, "Dynamic relocation coverage is incomplete.", "unknown");
+      for (const issue of issues) note(scan, issue, "unknown");
       return { writes, clobbered, trustRaw: false };
     }
     return { writes, clobbered, trustRaw: true };
   } catch (cause) {
-    if (!(cause instanceof ElfPointerRelocationFailure)) throw cause;
-    if (cause.reason === "native-index-capacity")
-      throw new BinaryResourceFailure(
-        "structure",
-        16 * 1024 * 1024,
-        cause.message,
-      );
-    note(scan, cause.message);
+    // A budget stop is not a malformed table; the provider reports it with
+    // the maximum the failing index declared.
+    if (
+      !(cause instanceof ElfPointerRelocationFailure) ||
+      cause.kind === "limit"
+    )
+      throw cause;
+    note(scan, cause.message, "unknown");
     return { writes: new Map(), clobbered: new Set(), trustRaw: false };
   }
 };
@@ -701,7 +741,7 @@ const fromDynamicWrite = (
       importName: null,
       definedName: null,
     };
-  const relative = elfRelativeRelocationType(scan.machine);
+  const relative = elfRelativeRelocationType(scan.machine, scan.bits);
   if (write.value !== null && write.source.kind === relative)
     return {
       method: "relative_addend",
@@ -718,7 +758,7 @@ const fromDynamicWrite = (
       definedName: null,
     };
   if (symbolsUnavailable && write.symbol_index !== 0)
-    note(scan, UNAVAILABLE_DYNAMIC_SYMBOLS);
+    note(scan, UNAVAILABLE_DYNAMIC_SYMBOLS, "unknown");
   return relocationFromEntry(
     scan,
     {
@@ -728,7 +768,7 @@ const fromDynamicWrite = (
     },
     symbols,
     encoding === "rel"
-      ? readPointerWord(scan.bytes, write.file_offset, scan.bits, scan.little)
+      ? readInitializerWord(scan.reader, write.file_offset, scan.bits)
       : null,
   );
 };
@@ -737,7 +777,7 @@ const rawRelocation = (
   scan: ElfScan,
   fileOffset: number | null,
 ): SlotRelocation => {
-  const value = readPointerWord(scan.bytes, fileOffset, scan.bits, scan.little);
+  const value = readInitializerWord(scan.reader, fileOffset, scan.bits);
   return value === null
     ? { method: "unresolved", value: null, importName: null, definedName: null }
     : { method: "raw", value, importName: null, definedName: null };
@@ -772,27 +812,25 @@ const resolveSlot = (
   return rawRelocation(scan, slot.fileOffset);
 };
 
-interface SymbolNames {
-  readonly defined: ReadonlyMap<bigint, string>;
-  readonly definedInSection: ReadonlyMap<string, string>;
-}
+type SymbolNames = Pick<ElfSymbolIndex, "defined" | "definedInSection">;
 
 const symbolOf = (
   scan: ElfScan,
   applied: SlotRelocation,
   names: SymbolNames,
-): string | null => {
+): InitializerSymbolName | null => {
   if (applied.method === "unresolved_import") return applied.importName;
-  if (applied.method === "symbol_addend" && applied.definedName !== null)
-    return applied.definedName;
-  if (applied.value === null) return null;
-  if (scan.relocatable)
-    return applied.sectionIndex === undefined
-      ? null
-      : (names.definedInSection.get(
+  const direct =
+    applied.method === "symbol_addend" ? applied.definedName : null;
+  if (typeof direct === "string" || applied.value === null) return direct;
+  const indexed = !scan.relocatable
+    ? names.defined.get(applied.value)
+    : applied.sectionIndex === undefined
+      ? undefined
+      : names.definedInSection.get(
           sectionSymbolKey(applied.sectionIndex, applied.value),
-        ) ?? null);
-  return names.defined.get(applied.value) ?? null;
+        );
+  return preferInitializerSymbolName(direct, indexed);
 };
 
 interface Target {
@@ -902,7 +940,7 @@ const collectEntries = (
         note(
           scan,
           "A stored zero slot is listed so the array length stays visible. It is not a function address.",
-          false,
+          "complete",
         );
       }
       const target = targetOf(scan, applied, sections, index, locateTarget);
@@ -927,12 +965,13 @@ const collectEntries = (
     note(
       scan,
       "Initializer scanning stopped at 65536 slots. Later slots were not read.",
+      "partial",
     );
   if (skipped > 0)
     note(
       scan,
       `Omitted ${String(skipped)} .ctors or .dtors sentinel values (0 or -1).`,
-      false,
+      "complete",
     );
   return { entries, examined: scanned };
 };
@@ -944,23 +983,33 @@ export const readElfInitializers = async (
   signal?: AbortSignal,
 ): Promise<NativeInitializerInspection> => {
   assertArtifactReadActive(signal);
-  const image = readElfImage(bytes);
-  const directory = readElfDirectoryFromBuffer(bytes);
+  const operation = "inspect_native_initializers";
+  const directory =
+    signal === undefined
+      ? readElfDirectoryFromBuffer(bytes, operation)
+      : await readElfDirectoryFromBufferCooperative(
+          bytes,
+          () => yieldArtifactRead(signal),
+          operation,
+        );
+  assertArtifactReadActive(signal);
+  const image = readElfImageFromDirectory(bytes, directory);
   const scan: ElfScan = {
     bytes,
+    reader: new BinaryReader(bytes, image.byte_order === "little", "elf"),
     bits: image.bits,
     little: image.byte_order === "little",
     machine: image.elf.machine,
     relocatable: directory.elf_type === ET_REL,
     notes: new InitializerNotes(),
-    incomplete: false,
+    coverage: "complete",
     slotBudget: MAX_NATIVE_INITIALIZER_ENTRIES,
   };
   if (scan.relocatable)
     note(
       scan,
-      "Relocatable object (ET_REL): slot and value addresses are offsets inside the named section, not load addresses.",
-      false,
+      "Relocatable object (ET_REL): section-associated slot and value addresses are offsets inside that section, not load addresses. Absolute symbols do not name a section.",
+      "complete",
     );
   const tags = readDynamicTags(
     scan,
@@ -969,7 +1018,7 @@ export const readElfInitializers = async (
   );
   const namesKnown = directory.section_names_limitation === undefined;
   if (!namesKnown && directory.section_names_limitation !== undefined)
-    note(scan, directory.section_names_limitation);
+    note(scan, directory.section_names_limitation, "unknown");
   const index = indexSections(directory.sections);
   const mappings = createFileMappingIndex(image.mappings, image.zero_fills);
   const locate = (address: bigint): number | null =>
@@ -1002,6 +1051,7 @@ export const readElfInitializers = async (
           note(
             scan,
             "An ELF initializer slot's section offset disagrees with its load mapping; affected slots are unresolved.",
+            "unknown",
           );
           return { ...slot, mappingMismatch: true };
         }),
@@ -1016,7 +1066,9 @@ export const readElfInitializers = async (
   const loaded = await loadWrites(scan, image, wanted, signal);
   assertArtifactReadActive(signal);
   const symbols = loadElfSymbolIndex(scan, directory.sections, scan.notes);
-  if (symbols.incomplete) scan.incomplete = true;
+  // Missing or budget-stopped symbols leave unknown which listed slots lack a name.
+  if (symbols.incomplete)
+    scan.coverage = joinCoverageStatus([scan.coverage, "unknown"]);
   const uncovered = sources.flatMap((source) =>
     source.slots.flatMap((slot) =>
       slot.direct === undefined &&
@@ -1039,7 +1091,7 @@ export const readElfInitializers = async (
     signal,
   });
   if (scan.notes.recorded !== notesBeforeRelocs || !sectionRels.complete)
-    scan.incomplete = true;
+    scan.coverage = joinCoverageStatus([scan.coverage, "unknown"]);
   const dynamic = dynamicSymbols(
     scan,
     directory.sections,
@@ -1076,6 +1128,6 @@ export const readElfInitializers = async (
     collected.examined,
     scan.notes,
     page,
-    scan.incomplete,
+    scan.coverage,
   );
 };

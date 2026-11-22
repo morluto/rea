@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { resolvePwntoolsLimits } from "../../../src/domain/native/pwntoolsResourceLimits.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 const replyClose = vi.hoisted(() => ({
@@ -35,7 +34,7 @@ vi.mock("node:fs/promises", async (original) => {
   };
 });
 
-import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceScope } from "../../../src/resources/ArtifactResourceScope.js";
 import {
   AnalysisError,
   primaryAnalysisError,
@@ -75,11 +74,14 @@ const fixture = async (
   replyClose.denied = false;
   replyClose.onClose = undefined;
   replyClose.handles = [];
-  const environment = snapshotEnvironment({
-    REA_PWNDBG_GDB: process.execPath,
-    REA_PWNDBG_GDBINIT: init,
-    REA_PWNDBG_VENV_PATH: venv,
-  });
+  const environment = snapshotEnvironment(
+    {
+      REA_PWNDBG_GDB: process.execPath,
+      REA_PWNDBG_GDBINIT: init,
+      REA_PWNDBG_VENV_PATH: venv,
+    },
+    process.platform,
+  );
   const provider = new PwntoolsRecordedCrashProvider(environment);
   onTestFinished(async () => {
     replyClose.denied = false;
@@ -251,3 +253,30 @@ it.each(["malformed JSON", "malformed UTF-8", "producer refusal"])(
     expect(replyClose.handles.every((handle) => handle.fd === -1)).toBe(true);
   },
 );
+
+it("binds producer_limits.output_bytes when the debugger bridge reports its reply over budget", async () => {
+  const selected = await fixture(
+    Buffer.from(
+      JSON.stringify({
+        ok: false,
+        reason: "output-limit",
+        message: "authored debugger reply exceeded output_bytes",
+      }),
+    ),
+  );
+  const error: unknown = await selected
+    .project(new AbortController().signal)
+    .catch((cause: unknown) => cause);
+  if (!(error instanceof AnalysisError))
+    throw new Error("Expected debugger reply failure");
+  const projected = projectAnalysisError(error);
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "producer_limits.output_bytes",
+    effective_value: resolvePwntoolsLimits().output_bytes,
+  });
+  expect(projected.remediation.action).toContain(
+    "Increase producer_limits.output_bytes",
+  );
+  expect(projected.remediation.action).not.toContain("--");
+});

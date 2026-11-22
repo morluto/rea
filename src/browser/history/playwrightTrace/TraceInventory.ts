@@ -1,6 +1,7 @@
 import { digestCanonicalValue } from "../../../domain/canonicalDigest.js";
+import { Budget } from "../../../domain/budget.js";
 import { AnalysisResourceConstraintError } from "../../../domain/analysisErrorCore.js";
-import type { ArtifactEntry } from "../../../artifacts/ArtifactReader.js";
+import type { ArtifactEntry } from "../../../resources/index.js";
 import {
   PLAYWRIGHT_TRACE_LIMITS,
   PLAYWRIGHT_TRACE_OPERATION,
@@ -20,21 +21,23 @@ export class TraceInventory {
   readonly events: TraceEvent[] = [];
   readonly diagnostics: PlaywrightTrace["diagnostics"] = [];
   readonly #paths = new Map<string, TraceMember[]>();
-  #bytes = 0;
+  readonly #facts = new Budget(PLAYWRIGHT_TRACE_LIMITS.factsBytes);
   constructor(readonly artifact: PlaywrightTrace["artifact"]) {}
   reserve(bytes: number): void {
-    this.#bytes += bytes;
-    if (this.#bytes > PLAYWRIGHT_TRACE_LIMITS.factsBytes)
-      throw new AnalysisResourceConstraintError(
-        PLAYWRIGHT_TRACE_OPERATION,
-        "memory",
-        "Trace facts exceed the 32 MiB retained representation allowance.",
-        { retained_fact_allowance: PLAYWRIGHT_TRACE_LIMITS.factsBytes },
-        {
-          remediationAction:
-            "Select a smaller complete recorder chunk; fields and reply pagination do not increase parser allowances.",
-        },
-      );
+    this.#facts.charge(
+      bytes,
+      () =>
+        new AnalysisResourceConstraintError(
+          PLAYWRIGHT_TRACE_OPERATION,
+          "memory",
+          "Trace facts exceed the 32 MiB retained representation allowance.",
+          { retained_fact_allowance: PLAYWRIGHT_TRACE_LIMITS.factsBytes },
+          {
+            remediationAction:
+              "Select a smaller complete recorder chunk; fields and reply pagination do not increase parser allowances.",
+          },
+        ),
+    );
   }
   retain(value: unknown): void {
     this.reserve(512 + Buffer.byteLength(JSON.stringify(value)) * 4);
