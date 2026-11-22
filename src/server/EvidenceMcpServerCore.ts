@@ -329,7 +329,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         return catalog.discover(input);
       },
     );
-    const catalog = new ProgressiveToolCatalog(
+    const catalog: ProgressiveToolCatalog = new ProgressiveToolCatalog(
       this.registrations,
       adapter,
       this.catalogIdentity,
