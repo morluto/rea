@@ -174,10 +174,15 @@ it("exports and drafts state from the same capture each cites", async () => {
     state: {
       ...original.state,
       checkpoints: [
-        checkpoint("replacement", "baseline", [], [
-          retained(SETTINGS, "[ui]\nwrap=true\n"),
-          retained(DATABASE, "SQLite format 3\0v1"),
-        ]),
+        checkpoint(
+          "replacement",
+          "baseline",
+          [],
+          [
+            retained(SETTINGS, "[ui]\nwrap=true\n"),
+            retained(DATABASE, "SQLite format 3\0v1"),
+          ],
+        ),
       ],
     },
   });
@@ -189,12 +194,12 @@ it("exports and drafts state from the same capture each cites", async () => {
     const nextCapture = join(folder, "next-capture.json");
     await writeFile(nextCapture, replacementJson);
     const close = OwnedFileHandle.prototype.close;
-    return vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementationOnce(
-      async function (this: OwnedFileHandle) {
+    return vi
+      .spyOn(OwnedFileHandle.prototype, "close")
+      .mockImplementationOnce(async function (this: OwnedFileHandle) {
         await close.call(this);
         await rename(nextCapture, capturePath);
-      },
-    );
+      });
   };
   const exportRead = await replaceAfterClose();
   const directory = join(folder, "bundle");
@@ -2458,7 +2463,8 @@ describe("exportDesktopApplication launch document", () => {
     expect(result.parameters.synthetic_seed).toBe(false);
     expect(
       result.limitations.filter(
-        (line) => line.startsWith("The seed is") || line.startsWith("The seed was"),
+        (line) =>
+          line.startsWith("The seed is") || line.startsWith("The seed was"),
       ),
     ).toEqual([
       "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
