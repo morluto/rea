@@ -273,7 +273,8 @@ describe("IDA workspace admission identity", () => {
     // Modifying the private input bytes is detected and refused.
     const original = await readFile(workspace.inputPath);
     const tampered = Buffer.from(original);
-    tampered[tampered.length - 1] = (tampered[tampered.length - 1]! ^ 0xff) & 0xff;
+    tampered[tampered.length - 1] =
+      (tampered[tampered.length - 1]! ^ 0xff) & 0xff;
     await writeFile(workspace.inputPath, tampered);
     expect(await workspace.verifyInputUnchanged()).toBe(false);
     await workspace.remove();
