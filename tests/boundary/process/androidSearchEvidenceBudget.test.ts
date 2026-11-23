@@ -60,7 +60,7 @@ const rawInventoryNames = (raw: unknown): number =>
     return sum + items.length;
   }, 0);
 
-test("delivers bounded search_android_classes Evidence while retaining the complete inventory", async () => {
+const connectJadxSearchFixture = async () => {
   const { provider, apk, launches } = await createJadxProtocolFixture(
     "search-audit-metadata",
     undefined,
@@ -84,6 +84,7 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     await client.close();
     await server.close();
     await session.close();
+    await verifyJadxFixtureCleanup(launches);
   });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -103,6 +104,11 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
       ).structuredContent,
     );
 
+  return { apk, client, search, session };
+};
+
+test("delivers bounded search_android_classes Evidence while retaining the complete inventory", async () => {
+  const { search, session } = await connectJadxSearchFixture();
   const single = await search("Target");
   expect(
     androidResultSchemas.search_android_classes.parse(single.normalized_result),
@@ -214,6 +220,10 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
       },
     },
   ]);
+});
+
+test("pages filtered class matches with bounded provider lookahead", async () => {
+  const { apk, client, search } = await connectJadxSearchFixture();
 
   const page = await search("Class", { offset: 1, limit: 2 });
   expect(page.normalized_result).toMatchObject({
@@ -260,10 +270,6 @@ test("delivers bounded search_android_classes Evidence while retaining the compl
     matches: [],
     coverage: "complete",
   });
-
-  await client.close();
-  await server.close();
-  await verifyJadxFixtureCleanup(launches);
 });
 
 test("keeps the complete paged inventory inline without a retaining session", async () => {
