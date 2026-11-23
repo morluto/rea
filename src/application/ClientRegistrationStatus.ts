@@ -151,6 +151,11 @@ export interface ClientRegistrationInspection {
    * can ask setup's own preflight whether it would refresh it.
    */
   readonly client: SetupClient;
+  /**
+   * The registration is MiMo Code's import of Claude Code's entry, which
+   * follows that file; refreshing this client would add a second entry.
+   */
+  readonly importedFrom?: "claude_code";
 }
 
 /** Project diagnostics from the same inspection used to select maintenance. */
@@ -188,8 +193,14 @@ export const readClientRegistrationInspections = async (
     const record = (
       status: ClientRegistrationStatus,
       activation: ClientRegistrationInspection["activation"] = "unknown",
+      importedFrom?: ClientRegistrationInspection["importedFrom"],
     ): void => {
-      inspections.push({ status, activation, client });
+      inspections.push({
+        status,
+        activation,
+        client,
+        ...(importedFrom === undefined ? {} : { importedFrom }),
+      });
     };
     const selected = options.selectedClientIds?.includes(client.name) === true;
     // An unresolved location leaves this client's registration unknown, never
@@ -419,19 +430,29 @@ export const readClientRegistrationInspections = async (
               options.platform,
             )
           : undefined;
-      if (
-        registrationEnvironment !== undefined &&
-        !registrationEnvironment.ok
-      ) {
-        record({
-          client: client.name,
-          config_path: configPath,
-          ...(selectedScope === undefined ? {} : { scope: selectedScope }),
-          command: [],
-          command_identity: commandFacts.identity,
-          state: "invalid",
-          remediation: registrationEnvironment.error.message,
-        });
+      const { importedFrom } = configuration.value;
+      const importNote =
+        importedFrom === undefined
+          ? undefined
+          : claudeCodeImportNote(client, configPath, commandFacts.identity);
+      const environmentFailure = registrationEnvironmentFailure(
+        registrationEnvironment,
+        configuration.value,
+      );
+      if (environmentFailure !== undefined) {
+        record(
+          {
+            client: client.name,
+            config_path: configPath,
+            ...(selectedScope === undefined ? {} : { scope: selectedScope }),
+            command: [],
+            command_identity: commandFacts.identity,
+            state: "invalid",
+            remediation: withImportNote(importNote, environmentFailure),
+          },
+          "unknown",
+          importedFrom,
+        );
         continue;
       }
       const packageReference = commandFacts.package?.reference;
@@ -523,13 +544,14 @@ export const readClientRegistrationInspections = async (
             : undefined),
         packageReference,
         advisory:
-          registrationEnvironment?.ok === true
+          importNote ??
+          (registrationEnvironment?.ok === true
             ? timeoutAdvisory(
                 client,
                 registration,
                 registrationEnvironment.value.timeoutInputs,
               )
-            : undefined,
+            : undefined),
         configuration: configuration.value,
         alignmentStale: alignment === "stale",
         providerSettings:
@@ -548,11 +570,19 @@ export const readClientRegistrationInspections = async (
               ),
         activation,
       });
-      record(
+      const reported: ClientRegistrationStatus =
         sharedDisabledConflict && status.state !== "aligned"
           ? { ...status, manual_conflict: "shared_disabled_activation" }
-          : status,
+          : status;
+      record(
+        importNote === undefined || reported.state === "aligned"
+          ? reported
+          : {
+              ...reported,
+              remediation: `${importNote} ${reported.remediation}`,
+            },
         activation,
+        importedFrom,
       );
     } catch (cause: unknown) {
       if (
@@ -627,6 +657,26 @@ const registrationAligned = ({
     ? "aligned"
     : "stale";
 };
+
+/** The client's own environment check decides first; a read that kept the launcher may report one too. */
+const registrationEnvironmentFailure = (
+  checked: Result<unknown, ConfigurationError> | undefined,
+  { environmentError }: EffectiveClientRegistrationConfiguration,
+): string | undefined =>
+  checked !== undefined && !checked.ok
+    ? checked.error.message
+    : environmentError?.detail;
+
+const withImportNote = (note: string | undefined, message: string): string =>
+  note === undefined ? message : `${note} ${message}`;
+
+/** Setup replaces only an imported entry REA owns. */
+const claudeCodeImportNote = (
+  client: SetupClient,
+  configPath: string,
+  identity: ClientRegistrationCommandIdentity,
+): string =>
+  `MiMo Code imports this rea entry from Claude Code's ${configPath} because none of its own configuration defines rea${identity === "owned" ? `; rea setup --client ${client.name} gives it its own entry` : ""}.`;
 
 /** A client that rewrites its file from memory must be quit before setup. */
 const remediation = (

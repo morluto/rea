@@ -106,3 +106,18 @@ export const isAbsentClientConfigPath = (cause: unknown): boolean =>
   cause instanceof Error &&
   "code" in cause &&
   (cause.code === "ENOENT" || cause.code === "ENOTDIR");
+
+/** Whether the two client rows reach the same existing file, including path aliases. */
+export const sameClientConfigurationFile = async (
+  left: string,
+  right: string,
+  resolvePath: (path: string) => Promise<string> = realpath,
+): Promise<boolean> => {
+  if (left === right) return true;
+  try {
+    const [a, b] = await Promise.all([resolvePath(left), resolvePath(right)]);
+    return a === b;
+  } catch {
+    return false;
+  }
+};

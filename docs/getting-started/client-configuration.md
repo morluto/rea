@@ -964,6 +964,52 @@ the [CLI guide](cli.md). Kilo also reads its legacy extension MCP files
 `kilo.json` layer. REA neither inspects nor removes them, so a `rea` entry added
 there by hand stays in effect after uninstall.
 
+## MiMo Code
+
+Setup writes `mcp.rea` into MiMo Code's global folder: `~/.config/mimocode` on
+every platform, `$XDG_CONFIG_HOME/mimocode` when `XDG_CONFIG_HOME` is set, or
+`$MIMOCODE_HOME/config` when `MIMOCODE_HOME` is set. MiMo Code merges
+`config.json`, `mimocode.json` and `mimocode.jsonc` from that folder in that
+order. Like MiMo Code's own writer, setup edits the last of them that exists
+and creates `mimocode.jsonc` when none does. The entry is
+`{ "type": "local", "command": [...], "enabled": true }`; comments, other
+servers and other settings stay in place, and a second run changes nothing.
+MiMo Code drops a `disabled` key, so only `enabled: false` turns the entry
+off. A relative `MIMOCODE_HOME` or `XDG_CONFIG_HOME` depends on MiMo Code's
+working directory, so REA refuses it.
+
+Doctor also reads the project files MiMo Code loads from the working directory
+and each parent folder: `mimocode.json` and `mimocode.jsonc`, then
+`.mimocode/mimocode.json` and `.mimocode/mimocode.jsonc`. It reports the entry
+that wins, for example `enabled: false` in a project `.mimocode` folder. Setup
+and uninstall never change project files.
+
+When none of its own files defines `rea`, MiMo Code imports the `rea` entry
+from Claude Code's `~/.claude.json`, then from the project's `.claude.json`.
+When setup replaces an owned user import with a native MiMo Code entry, it
+combines the imported environment with the selected settings before validating
+them and leaves Claude Code's file untouched. Setup
+refuses the change if another launcher owns that name or the resulting settings
+are invalid.
+
+Doctor reports that entry with the Claude Code path and says it is imported;
+update leaves it to Claude Code's own refresh, and reports a stale imported
+entry instead when `CLAUDE_CONFIG_DIR` points Claude Code at another file.
+Uninstall removes REA's MiMo Code entries only when no enabled `rea` entry in
+`~/.claude.json` would take their place, or when the same run also removes
+that entry. If MiMo Code uses only an enabled, REA-owned import and Claude Code
+uninstall targets another profile, uninstall stops before removing files or
+purging data. Setting `MIMOCODE_DISABLE_CLAUDE_CODE` or
+`MIMOCODE_DISABLE_CLAUDE_CODE_MCP` to `true` or `1` turns the import off for
+MiMo Code and for REA.
+
+REA does not read `MIMOCODE_CONFIG`, `MIMOCODE_CONFIG_DIR`,
+`MIMOCODE_CONFIG_CONTENT`, or MiMo Code's managed and remote configuration.
+Doctor walks every parent folder instead of stopping at the Git worktree root,
+and reads `~/.mimocode` only as one of those folders. These rules follow MiMo
+Code's source; a running MiMo Code has not yet been checked against them.
+Restart MiMo Code after setup.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
