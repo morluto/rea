@@ -287,29 +287,30 @@ export const phaseFromFfsTypeName = (
 };
 
 export const isPhaseSupportedByFfsType = (
-  phase: "SEC" | "PEI" | "DXE" | "SMM" | "APP" | "MISC",
+  phase: string,
   typeName?: string,
 ): boolean => {
   if (!typeName) return true;
+  const upperPhase = phase.toUpperCase();
   const norm = typeName.toLowerCase().trim();
   if (norm === "combined-peim-driver") {
-    return phase === "PEI" || phase === "DXE";
+    return upperPhase === "PEI" || upperPhase === "DXE";
   }
   if (norm === "combined-smm-dxe") {
-    return phase === "SMM" || phase === "DXE";
+    return upperPhase === "SMM" || upperPhase === "DXE";
   }
-  if (norm === "security-core") return phase === "SEC";
-  if (norm === "pei-core" || norm === "peim") return phase === "PEI";
-  if (norm === "driver" || norm === "dxe-core") return phase === "DXE";
+  if (norm === "security-core") return upperPhase === "SEC";
+  if (norm === "pei-core" || norm === "peim") return upperPhase === "PEI";
+  if (norm === "driver" || norm === "dxe-core") return upperPhase === "DXE";
   if (
     norm === "smm" ||
     norm === "smm-core" ||
     norm === "mm-standalone" ||
     norm === "mm-core-standalone"
   ) {
-    return phase === "SMM";
+    return upperPhase === "SMM";
   }
-  if (norm === "application") return phase === "APP";
+  if (norm === "application") return upperPhase === "APP";
   return true;
 };
 
@@ -721,12 +722,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
   ): Result<AnalysisExecution, AnalysisError> {
     return {
       ok: false,
-      error:
-        reason instanceof AnalysisTimeoutError
-          ? new AnalysisTimeoutError(request.operation, reason.timeoutMs, {
-              cause: reason,
-            })
-          : cancelledBy(request.operation, carriedReason(reason)),
+      error: cancelledBy(request.operation, carriedReason(reason)),
     };
   }
 
@@ -790,12 +786,9 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
     const timer = setTimeout(expire, timeoutMs);
     const parent = options?.signal;
     const onParentAbort = () => {
-      const reason = parent?.reason;
-      if (reason instanceof AnalysisTimeoutError) {
-        controller.abort(reason);
-      } else {
-        controller.abort(cancelledBy(request.operation, carriedReason(reason)));
-      }
+      controller.abort(
+        cancelledBy(request.operation, carriedReason(parent?.reason)),
+      );
     };
     if (parent?.aborted) onParentAbort();
     else parent?.addEventListener("abort", onParentAbort, { once: true });
@@ -1450,9 +1443,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         modulesToProcess.length > 0
       ) {
         const PUBLICATION_RESERVE_MS = 5_000;
+        const GHIDRA_SHUTDOWN_GRACE_MS = 5_000;
         const timeLeftForGhidra =
           remainingTimeMs !== undefined
-            ? Math.floor(remainingTimeMs() - PUBLICATION_RESERVE_MS)
+            ? Math.floor(
+                remainingTimeMs() -
+                  PUBLICATION_RESERVE_MS -
+                  GHIDRA_SHUTDOWN_GRACE_MS,
+              )
             : 45_000;
 
         if (timeLeftForGhidra <= 1_000) {
@@ -1953,7 +1951,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           `#endif // ${headerGuard}`,
           "",
         ].join("\n");
-        const headerBytes = Buffer.from(headerContent, "utf8");
+        let finalHeaderContent = headerContent;
+        let headerBytes = Buffer.from(finalHeaderContent, "utf8");
+        if (
+          totalStagedCBytes + headerBytes.length >
+          MAX_DECOMPILE_TOTAL_BYTES
+        ) {
+          isCoveragePartial = true;
+          if (
+            !effectiveLimitations.includes(
+              "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+            )
+          ) {
+            effectiveLimitations.push(
+              "Decompiled C output truncated after reaching 64 MiB aggregate staging budget.",
+            );
+          }
+          finalHeaderContent = `/* UEFI Module Header omitted: reached 64 MiB aggregate staging budget */\n`;
+          headerBytes = Buffer.from(finalHeaderContent, "utf8");
+        }
         const headerSha256 = sha256Hex(headerBytes);
         totalStagedCBytes += headerBytes.length;
         publicationEntries.push({
@@ -2206,7 +2222,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 const candidateCBytes = Buffer.byteLength(candidateC, "utf8");
                 const remainingModulesCount =
                   modulesToProcess.length - moduleSeq;
-                const reservedScaffoldBytes = remainingModulesCount * 1024;
+                const reservedScaffoldBytes = remainingModulesCount * 2048;
                 if (
                   candidateCBytes > 0 &&
                   totalStagedCBytes + candidateCBytes + reservedScaffoldBytes <=
@@ -2261,7 +2277,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             ) {
               const cStat = await stat(ghidraOutC);
               const remainingModulesCount = modulesToProcess.length - moduleSeq;
-              const reservedScaffoldBytes = remainingModulesCount * 1024;
+              const reservedScaffoldBytes = remainingModulesCount * 2048;
               const remainingCBytes =
                 MAX_DECOMPILE_TOTAL_BYTES -
                 totalStagedCBytes -
@@ -2825,12 +2841,28 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 (requested === "smm" && isCombinedSmmDxe);
 
               if (matchesPhase) {
+                const effectivePhase =
+                  requested !== "all" &&
+                  file.type_name &&
+                  isPhaseSupportedByFfsType(
+                    requested.toUpperCase(),
+                    file.type_name,
+                  )
+                    ? (requested.toUpperCase() as
+                        | "SEC"
+                        | "PEI"
+                        | "DXE"
+                        | "SMM"
+                        | "APP"
+                        | "MISC")
+                    : phase;
+
                 discoveredModules.push({
                   guid: file.guid,
                   rawName,
                   cleanName,
                   typeName: file.type_name,
-                  phase,
+                  phase: effectivePhase,
                   sourceLogicalPath: section.logical_path,
                   sourceStream: payload.sourceStream,
                   sourceRange: payload.range ?? {
@@ -3012,6 +3044,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
       const declaredManifestPayloads: ManifestPayloadEntry[] = [];
       const matchedManifestPayloads = new Set<ManifestModuleEntry>();
       let manifestSha256: string | null = null;
+      let declaredDecompiledCount: number | undefined;
 
       if (manifestEntry !== undefined) {
         const declared = manifestEntry.declaredSize ?? 0;
@@ -3056,21 +3089,27 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
             const parsed = JSON.parse(manifestRaw.toString("utf8"));
             if (
               typeof parsed?.total_modules_found === "number" &&
-              typeof parsed?.total_modules_decompiled === "number" &&
-              parsed.total_modules_found > parsed.total_modules_decompiled
+              typeof parsed?.total_modules_decompiled === "number"
             ) {
-              isCoveragePartial = true;
-              const omittedCount =
-                parsed.total_modules_found - parsed.total_modules_decompiled;
-              if (limitations.length < 50) {
-                limitations.push(
-                  `Manifest firmware_manifest.json declares ${omittedCount} omitted module(s) (${parsed.total_modules_decompiled} of ${parsed.total_modules_found} decompiled).`,
-                );
+              declaredDecompiledCount = parsed.total_modules_decompiled;
+              if (
+                parsed.total_modules_found > parsed.total_modules_decompiled
+              ) {
+                isCoveragePartial = true;
+                const omittedCount =
+                  parsed.total_modules_found - parsed.total_modules_decompiled;
+                if (limitations.length < 50) {
+                  limitations.push(
+                    `Manifest firmware_manifest.json declares ${omittedCount} omitted module(s) (${parsed.total_modules_decompiled} of ${parsed.total_modules_found} decompiled).`,
+                  );
+                }
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json#omitted_modules",
+                  reason: `declared_omissions:${omittedCount}`,
+                });
               }
-              omittedCandidates.push({
-                identityRelPath: "firmware_manifest.json#omitted_modules",
-                reason: `declared_omissions:${omittedCount}`,
-              });
+            } else if (typeof parsed?.total_modules_decompiled === "number") {
+              declaredDecompiledCount = parsed.total_modules_decompiled;
             }
             const rawSourceCov = parsed?.source_coverage;
             const rawCov = parsed?.coverage;
@@ -3138,6 +3177,22 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               omittedCandidates.push({
                 identityRelPath: "firmware_manifest.json#coverage",
                 reason: "unknown_coverage",
+              });
+            } else if (rawCov !== undefined && rawCov !== "complete") {
+              isCoveragePartial = true;
+              hasUnknownCoverage = true;
+              const formattedVal =
+                typeof rawCov === "string"
+                  ? rawCov
+                  : (JSON.stringify(rawCov) ?? String(rawCov));
+              if (limitations.length < 50) {
+                limitations.push(
+                  `Manifest firmware_manifest.json declares unrecognized coverage "${formatMarkdownCodeSpan(ellipsisExcerpt(formattedVal, 32))}".`,
+                );
+              }
+              omittedCandidates.push({
+                identityRelPath: "firmware_manifest.json#coverage",
+                reason: "unrecognized_coverage",
               });
             }
             if (Array.isArray(parsed?.modules)) {
@@ -3353,6 +3408,23 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   registerFallbackKey(crossPlatformFolded);
                 }
               }
+              if (
+                declaredDecompiledCount !== undefined &&
+                declaredManifestPayloads.length < declaredDecompiledCount
+              ) {
+                isCoveragePartial = true;
+                const missingRowCount =
+                  declaredDecompiledCount - declaredManifestPayloads.length;
+                if (limitations.length < 50) {
+                  limitations.push(
+                    `Manifest firmware_manifest.json declares ${declaredDecompiledCount} decompiled module(s) but contains only ${declaredManifestPayloads.length} valid module payload row(s).`,
+                  );
+                }
+                omittedCandidates.push({
+                  identityRelPath: "firmware_manifest.json#missing_module_rows",
+                  reason: `missing_module_rows:${missingRowCount}`,
+                });
+              }
             }
           } catch (manifestErr) {
             isCoveragePartial = true;
@@ -3391,6 +3463,21 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         readonly fromManifest?: ManifestModuleEntry | undefined;
       }
       const admittedCandidates: AdmittedCandidateModule[] = [];
+
+      const candidateCrossPlatformKeys = new Map<string, string>();
+      const ambiguousDirectoryInventoryKeys = new Set<string>();
+      if (!isWindows) {
+        for (const cEntry of candidateEntries) {
+          const normK = cEntry.path.split(/[/\\]+/).join("/");
+          const existing = candidateCrossPlatformKeys.get(normK);
+          if (existing !== undefined && existing !== cEntry.path) {
+            ambiguousDirectoryInventoryKeys.add(normK);
+            ambiguousDirectoryInventoryKeys.add(normK.toLowerCase());
+          } else {
+            candidateCrossPlatformKeys.set(normK, cEntry.path);
+          }
+        }
+      }
 
       for (const entry of candidateEntries) {
         checkpoint();
@@ -3544,17 +3631,20 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               )
                 .map((s) => s.toLowerCase())
                 .filter((s) => s.length > 0);
-        const fallbackManifestEntry = !ambiguousCrossPlatformKeys.has(
-          crossPlatformLookupKey,
-        )
-          ? manifestModulesByFallbackRelPath.get(crossPlatformLookupKey)
-          : undefined;
+        const fallbackManifestEntry =
+          !ambiguousCrossPlatformKeys.has(crossPlatformLookupKey) &&
+          !ambiguousDirectoryInventoryKeys.has(crossPlatformLookupKey)
+            ? manifestModulesByFallbackRelPath.get(crossPlatformLookupKey)
+            : undefined;
         const fromManifest =
           manifestModulesByExactRelPath.get(exactLookupKey) ??
           fallbackManifestEntry ??
           (isWindows
             ? (manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
-              manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey))
+              (!ambiguousCrossPlatformKeys.has(crossPlatformFoldedKey) &&
+              !ambiguousDirectoryInventoryKeys.has(crossPlatformFoldedKey)
+                ? manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey)
+                : undefined))
             : undefined);
         if (fromManifest !== undefined) {
           matchedManifestPayloads.add(fromManifest);
@@ -3720,6 +3810,35 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         compareUnicodeCodePoints(a.identityRelPath, b.identityRelPath),
       );
 
+      if (
+        typeof declaredDecompiledCount === "number" &&
+        admittedCandidates.length < declaredDecompiledCount
+      ) {
+        isCoveragePartial = true;
+        const missingCount =
+          declaredDecompiledCount - admittedCandidates.length;
+        const alreadyReported = limitations.some((l) =>
+          l.includes(
+            `declares ${declaredDecompiledCount} decompiled module(s)`,
+          ),
+        );
+        if (!alreadyReported && limitations.length < 50) {
+          limitations.push(
+            `Manifest firmware_manifest.json declares ${declaredDecompiledCount} decompiled module(s) but only ${admittedCandidates.length} candidate module(s) were admitted from directory.`,
+          );
+        }
+        if (
+          !omittedCandidates.some((o) =>
+            o.identityRelPath.startsWith("firmware_manifest.json#missing_"),
+          )
+        ) {
+          omittedCandidates.push({
+            identityRelPath: "firmware_manifest.json#missing_admitted_modules",
+            reason: `missing_admitted_modules:${missingCount}`,
+          });
+        }
+      }
+
       const dirHash = createHash("sha256");
       dirHash.update("manifest:" + (manifestSha256 ?? "none") + "\n");
 
@@ -3810,12 +3929,25 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
           continue;
         }
 
+        const effectivePhase =
+          requested !== "all" &&
+          cand.typeName &&
+          isPhaseSupportedByFfsType(requested.toUpperCase(), cand.typeName)
+            ? (requested.toUpperCase() as
+                | "SEC"
+                | "PEI"
+                | "DXE"
+                | "SMM"
+                | "APP"
+                | "MISC")
+            : cand.phase;
+
         const modData = moduleDataByIdentity.get(cand.identityRelPath)!;
         discoveredModules.push({
           guid: cand.guid,
           rawName: cand.rawName,
           cleanName: cand.cleanName,
-          phase: cand.phase,
+          phase: effectivePhase,
           typeName: cand.typeName,
           sourceRelPath: cand.identityRelPath,
           sourcePath: cand.fullPath,

@@ -2278,8 +2278,8 @@ it("discovers Terse Executable (TE / VZ) binaries in directory input mode", asyn
   }
 });
 
-it("preserves AnalysisTimeoutError when aborted via timeout deadline", async () => {
-  const directory = await createTestTempDirectory("rea-uefi-timeout-obs-");
+it("treats caller abort reasons as opaque cancellations rather than timeouts", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-caller-cancel-");
   const inDir = join(directory, "input");
   const outDir = join(directory, "output");
 
@@ -2303,7 +2303,8 @@ it("preserves AnalysisTimeoutError when aborted via timeout deadline", async () 
     });
     expect(executed.ok).toBe(false);
     if (!executed.ok) {
-      expect(executed.error).toBeInstanceOf(AnalysisTimeoutError);
+      expect(executed.error).toBeInstanceOf(AnalysisCancelledError);
+      expect(executed.error._tag).toBe("AnalysisCancelledError");
     }
   } finally {
     await provider.close();
@@ -7762,6 +7763,185 @@ it("omits disassembly when remaining time cannot cover publication reserve and s
     ).toBe(true);
   } finally {
     nowSpy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("projects combined modules into requested phase when filtering by phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-proj-phase-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Combined.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      modules: [
+        {
+          name: "CombinedMod",
+          payload_file: "Combined.efi",
+          phase: "PEI",
+          type: "combined-peim-driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, {
+          include_disassembly: false,
+          filter_phase: "dxe",
+        }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("complete");
+    expect(result.phases.dxe).toBe(1);
+    expect(result.phases.pei).toBe(0);
+    expect(result.modules[0]?.phase).toBe("DXE");
+    expect(result.modules[0]?.relative_c_file?.startsWith("DXE/")).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("reconciles declared decompiled count with valid manifest module rows", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-reconcile-rows-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      coverage: "complete",
+      source_coverage: "complete",
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) =>
+          l.includes("declares 2 decompiled module(s)") &&
+          l.includes("contains only 1 valid module payload row(s)"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves malformed legacy coverage as unknown", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-malformed-cov-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+  await writeFile(join(inDir, "Mod1.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      coverage: 42,
+      modules: [
+        {
+          name: "Mod1",
+          payload_file: "Mod1.efi",
+          phase: "DXE",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.coverage).toBe("partial");
+    expect(
+      result.limitations.some(
+        (l) => l.includes("declares unrecognized coverage") && l.includes("42"),
+      ),
+    ).toBe(true);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("suppresses cross-platform fallback when normalized key is ambiguous in directory inventory", async () => {
+  if (process.platform === "win32") {
+    return;
+  }
+  const directory = await createTestTempDirectory("rea-uefi-disambig-inv-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "sub"), { recursive: true });
+  await writeFile(join(inDir, "sub", "mod.efi"), createMinimalPeBuffer());
+  await writeFile(join(inDir, "sub\\mod.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      total_modules_found: 2,
+      total_modules_decompiled: 2,
+      modules: [
+        {
+          name: "WindowsLiteralMod",
+          payload_file: "sub\\mod.efi",
+          phase: "SMM",
+          type: "driver",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // The literal file sub\mod.efi gets the manifest row (SMM)
+    // The slash file sub/mod.efi must NOT get the Windows row as a fallback
+    const literalMod = result.modules.find((m) =>
+      m.source_path?.includes("sub\\mod.efi"),
+    );
+    const slashMod = result.modules.find((m) =>
+      m.source_path?.includes("sub/mod.efi"),
+    );
+    expect(literalMod?.name).toBe("WindowsLiteralMod");
+    expect(slashMod?.name).not.toBe("WindowsLiteralMod");
+  } finally {
     await provider.close();
   }
 });
