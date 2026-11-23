@@ -1,9 +1,7 @@
 import type { Readable } from "node:stream";
 
-import {
-  systemdJournalMetadataSchema,
-  type ArtifactFormatMetadata,
-} from "../domain/artifactFormatMetadata.js";
+import type { ArtifactFormatMetadata } from "../domain/artifactFormatMetadata.js";
+import { systemdJournalMetadataSchema } from "../domain/formatMetadata/androidAndSystemMetadata.js";
 import type { RegionDecodeFailure } from "../domain/firmware/regionDecoder.js";
 import {
   createJournalDecoder,
@@ -20,10 +18,7 @@ import {
   assertArtifactReadActive,
   ArtifactFileSource,
 } from "../resources/index.js";
-import {
-  malformedInput,
-  truncatedInput,
-} from "../domain/parseFailure.js";
+import { malformedInput, truncatedInput } from "../domain/parseFailure.js";
 import { ArtifactPreparation } from "./ArtifactPreparation.js";
 import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
 import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";

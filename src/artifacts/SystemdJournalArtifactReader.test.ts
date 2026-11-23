@@ -380,7 +380,10 @@ it("reports a short signed journal as truncated rather than malformed", async ()
   try {
     await expect(
       reader.entries()[Symbol.asyncIterator]().next(),
-    ).rejects.toMatchObject({ reason: "format", cause: { failure: { kind: "truncated" } } });
+    ).rejects.toMatchObject({
+      reason: "format",
+      cause: { failure: { kind: "truncated" } },
+    });
   } finally {
     await reader.close();
   }
