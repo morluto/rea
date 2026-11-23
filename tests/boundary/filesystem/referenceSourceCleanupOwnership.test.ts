@@ -504,6 +504,111 @@ it.each([
   },
 );
 
+it.each([false, true])(
+  "keeps a cancelled file's failed close on the directory EIO (directory close fails=%s)",
+  async (directoryCloseFails) => {
+    const root = await createTestTempDirectory(
+      "rea-reference-listed-file-close-",
+    );
+    const file = join(root, "source.ts");
+    await writeFile(file, "export const answer = 1;\n");
+    const resources = new ArtifactResourceScope();
+    let allowFileClose = false;
+    onTestFinished(async () => {
+      allowFileClose = true;
+      await resources.close().catch(() => undefined);
+    });
+    const readFailure = Object.assign(new Error("injected directory EIO"), {
+      code: "EIO",
+    });
+    const fileCloseFailure = new Error(
+      "file close rejected after cancellation",
+    );
+    const directoryCloseFailure = new Error(
+      "directory close rejected after listing EIO",
+    );
+    const controller = new AbortController();
+    const reason = { selected: "file read cancelled after listing" };
+    let sourceHandle: FileHandle | undefined;
+    let fileCloseCalls = 0;
+    let directoryCloseCalls = 0;
+
+    openMock.mockImplementation(async (...args) => {
+      const handle = await actual.open(...args);
+      if (String(args[0]) !== file) return handle;
+      sourceHandle = handle;
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+        controller.abort(reason);
+        return read(...readArgs);
+      });
+      const close = handle.close.bind(handle);
+      vi.spyOn(handle, "close").mockImplementation(async () => {
+        fileCloseCalls += 1;
+        if (!allowFileClose) throw fileCloseFailure;
+        await close();
+      });
+      return handle;
+    });
+    opendirMock.mockImplementation(async (...args) => {
+      const directory = await actual.opendir(...args);
+      const operations: DirectoryOperations = directory;
+      const read = operations.read.bind(directory);
+      let reads = 0;
+      vi.spyOn(operations, "read").mockImplementation(async () => {
+        if (reads++ > 0) throw readFailure;
+        return read();
+      });
+      const close = operations.close.bind(directory);
+      vi.spyOn(operations, "close").mockImplementation(async () => {
+        directoryCloseCalls += 1;
+        await close();
+        if (directoryCloseFails) throw directoryCloseFailure;
+      });
+      return directory;
+    });
+
+    const result = await readReferenceSource(root, resources, {
+      signal: controller.signal,
+    });
+    if (result.ok) throw new Error("Directory read and file close both failed");
+    const remaining = directoryCloseFails ? [file, root] : [file];
+    expect(result.error.tag).toBe("reference-source-reader");
+    expect(result.error.code).toBe("io");
+    expect(result.error.cause).toBe(readFailure);
+    expect(result.error.cleanup?.resources).toEqual(remaining);
+    expect(result.error.secondaryCancellation?.cause).toBe(reason);
+    expect(result.error.partial?.rootFailure?.code).toBe("io");
+    expect(result.error.partial?.entries).toContainEqual(
+      expect.objectContaining({
+        status: "failed",
+        kind: "file",
+        path: "source.ts",
+        code: "cancelled",
+      }),
+    );
+    expect(fileCloseCalls).toBe(1);
+    expect(directoryCloseCalls).toBe(1);
+    expect(sourceHandle?.fd).toBeGreaterThanOrEqual(0);
+    expect(resources.cleanupResources).toEqual(remaining);
+
+    allowFileClose = true;
+    if (directoryCloseFails) {
+      await expect(resources.close()).rejects.toMatchObject({
+        cleanup: { resources: [root] },
+      });
+      expect(resources.cleanupResources).toEqual([root]);
+      expect(directoryCloseCalls).toBe(1);
+    } else {
+      await resources.close();
+      expect(resources.hasPending).toBe(false);
+      expect(resources.cleanupResources).toEqual([]);
+    }
+    expect(fileCloseCalls).toBe(2);
+    expect(sourceHandle?.fd).toBe(-1);
+  },
+);
+
 it("keeps cancelled traversal typed when native directory close rejects after invalidation", async () => {
   const root = await createTestTempDirectory("rea-reference-directory-owner-");
   await mkdir(join(root, "child"));
