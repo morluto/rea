@@ -11,6 +11,7 @@ const REVERSE_TOOL_MODULES = [
   "src/process/ExecFileOutput.ts",
   "src/server/externalMutationToolHandler.ts",
   "src/server/serviceToolBindings.ts",
+  "src/server/debuggerToolBindings.ts",
   "src/server/externalMutationAdmission.ts",
   "src/server/createServer.ts",
   "src/rizin/RizinCommand.ts",
