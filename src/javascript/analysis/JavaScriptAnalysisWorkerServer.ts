@@ -114,6 +114,14 @@ export const retainJavaScriptStaticCheckpoint = (
   key: string,
   facts: JavaScriptStaticAnalysis,
 ): void => {
+  const previous = retainedStatics.get(key);
+  if (previous !== undefined) {
+    retainedStatics.delete(key);
+    retainedStaticBytes -= previous.retainedBytes;
+  }
+  // Skip encoding where reuse is disabled or no capacity remains.
+  const capacity = staticReuseCapacityBytes();
+  if (retainedStaticBytes >= capacity) return;
   let text: string;
   let retainedBytes: number;
   try {
@@ -127,12 +135,7 @@ export const retainJavaScriptStaticCheckpoint = (
     // the same refusal, so retention never fails preload discovery.
     return;
   }
-  const previous = retainedStatics.get(key);
-  if (previous !== undefined) {
-    retainedStatics.delete(key);
-    retainedStaticBytes -= previous.retainedBytes;
-  }
-  if (retainedStaticBytes + retainedBytes > staticReuseCapacityBytes()) return;
+  if (retainedStaticBytes + retainedBytes > capacity) return;
   retainedStatics.set(key, {
     text,
     retainedBytes,
