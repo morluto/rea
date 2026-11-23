@@ -19,7 +19,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 
-import { createElectronFuseService } from "../composition/electronFuses.js";
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 
 import {
@@ -69,7 +68,10 @@ const registerElectronFuseCommand = (cli: CliInstance, logger: Logger): void =>
       },
     },
     inspectWithService(
-      createElectronFuseService,
+      async () =>
+        (
+          await import("../composition/electronFuses.js")
+        ).createElectronFuseService(),
       ELECTRON_FUSE_PROVIDER_IDENTITY.id,
     ),
   );
