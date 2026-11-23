@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
+import { schemaDepth } from "./compactJsonSchema.js";
 import { compactAdvertisedOutputSchema } from "./compactOutputSchema.js";
 import { COMPACT_OUTPUT_SCHEMA_BUDGET_BYTES } from "./mcpSchemaPresentation.js";
 import { advertisedOutputJsonSchema } from "./toolSchemaMetadata.js";
@@ -52,6 +53,74 @@ const referencedSchema = {
 } as const;
 
 describe("compact advertised output schema", () => {
+  it("keeps nullable integers valid when a deep sibling triggers pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0
+        ? leaf
+        : { type: "object", properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: {
+          count: { type: ["integer", "null"] },
+          deep: nest({ type: "string" }, 9),
+        },
+        required: ["count", "deep"],
+      },
+      100_000,
+    );
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    expect(validate({ count: 5, deep: {} })).toBe(true);
+    expect(validate({ count: null, deep: {} })).toBe(true);
+    expect(serializedBytes(schema)).toBeLessThanOrEqual(100_000);
+  });
+
+  it("keeps untyped deep schemas accepting every value after pruning", () => {
+    const nest = (
+      leaf: Record<string, unknown>,
+      levels: number,
+    ): Record<string, unknown> =>
+      levels === 0 ? leaf : { properties: { child: nest(leaf, levels - 1) } };
+    const { schema, presentation } = compactAdvertisedOutputSchema(
+      {
+        type: "object",
+        properties: { deep: nest({ type: "string" }, 9) },
+        required: ["deep"],
+      },
+      100_000,
+    );
+    // Nine untyped property nestings put the replaced node at depth 8.
+    // Pruning leaves that node as an empty schema.
+    expect(schema).toEqual({
+      type: "object",
+      properties: {
+        deep: {
+          properties: {
+            child: {
+              properties: {
+                child: {
+                  properties: {
+                    child: {},
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      required: ["deep"],
+    });
+    expect(schemaDepth(schema)).toBe(8);
+    expect(presentation).toBe("inline");
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    for (const child of [null, 1, "text", { nested: true }])
+      expect(validate({ deep: { child: { child: { child } } } })).toBe(true);
+  });
+
   it("drops nested annotation prose while keeping the root guidance and validation", () => {
     const { schema, presentation } = compactAdvertisedOutputSchema(
       structuredClone(annotatedSchema),
@@ -104,7 +173,9 @@ describe("compact advertised output schema", () => {
     expect(validate(["anything"])).toBe(true);
     expect(validate({ also: "anything" })).toBe(true);
   });
+});
 
+describe("compact object-union output schemas", () => {
   it("keeps an object-stamped union's alternatives when the canonical schema cannot inline", () => {
     // SDK 2.4.0 stamps type:object on a root that is only a $ref union of
     // objects. search_guidance is that shape and does not fit the compact

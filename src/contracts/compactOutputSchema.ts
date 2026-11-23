@@ -3,6 +3,7 @@ import {
   inlineWithinBudget,
   isSchemaObject,
   jsonValueSchema,
+  pruneSchemaBeyondDepth,
   reduceToShallowProperties,
   schemaDepth,
   serializedBytes,
@@ -154,9 +155,25 @@ export const compactAdvertisedOutputSchema = (
       schema: withoutContentBoundIdentity(inline),
       presentation: "inline",
     };
+  // An inlined schema that only exceeds the depth limit keeps every fitting
+  // branch. Pruning returns nothing when widening a child under oneOf or not
+  // could reject a valid result.
+  if (inline !== undefined) {
+    const pruned = pruneSchemaBeyondDepth(inline);
+    if (
+      pruned !== undefined &&
+      schemaDepth(pruned) <= COMPACT_SCHEMA_MAX_DEPTH &&
+      serializedBytes(pruned) <= budgetBytes
+    )
+      return {
+        schema: withoutContentBoundIdentity(pruned),
+        presentation: "inline",
+      };
+  }
   // SDK 2.4.0 stamps `type: "object"` on a `$ref` union before this projection
   // sees it. That union has no root `properties`; keep each alternative's
-  // shape instead of the empty property bag.
+  // shape instead of the empty property bag. guided_workflows already
+  // declared the same object root.
   const keyword =
     schema.type === "object" && !isSchemaObject(schema.properties)
       ? compositionKeyword(schema)
