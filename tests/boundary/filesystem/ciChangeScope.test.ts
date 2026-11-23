@@ -596,6 +596,8 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
   for (const docsAndCode of [
     "scripts/check-doc-facts.mjs",
     "scripts/lib/product-catalog.mjs",
+    "scripts/generate-completion-ledger.mjs",
+    "scripts/lib/completion-ledger-generation.mts",
   ]) {
     expect(await classifyPaths([docsAndCode]), docsAndCode).toMatchObject({
       code: true,
@@ -613,6 +615,17 @@ it("routes license inventories to docs checks and keeps blame-ignore edits forma
     runtime: true,
     package: false,
   });
+});
+
+it("checks README locale links when the website language inventory changes", async () => {
+  expect(await classifyPaths(["website/locales/languages.json"])).toMatchObject(
+    {
+      docs: true,
+      website: true,
+      runtime: false,
+      package: false,
+    },
+  );
 });
 
 it("passes the workflow environment through the entrypoint unchanged", async () => {
