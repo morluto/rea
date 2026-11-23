@@ -1,30 +1,40 @@
 import { expect, it } from "vitest";
-import {
-  analyzeJavaScriptStaticSource,
-  analyzeParsedJavaScriptStaticSource,
-} from "./javascriptStaticAnalysis.js";
+import { analyzeParsedJavaScriptStaticSourceSteps } from "./javascriptStaticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+
+const complete = <Value>(steps: Iterator<void, Value>): Value => {
+  let next = steps.next();
+  while (!next.done) next = steps.next();
+  return next.value;
+};
 
 const analyze = (source: string) => {
   const parsed = parseJavaScriptSource(source, "main.cjs");
   if (parsed === null) throw new Error("Fixture must parse");
-  return analyzeParsedJavaScriptStaticSource(source, parsed);
+  return complete(analyzeParsedJavaScriptStaticSourceSteps(source, parsed));
 };
 
 const prefix = `const { BrowserWindow } = require("electron");
 const w = new BrowserWindow({ webPreferences: { contextIsolation: true } });`;
 const options = `{ webPreferences: { nodeIntegration: false, preload: require("path").resolve(__dirname, "p2.js") } }`;
 
-it("retains loader uncertainty without promoting a candidate preload role", () => {
-  const result = analyzeJavaScriptStaticSource(
+it("keeps an unresolved popup preload path and records its role", () => {
+  const result = analyze(
     `${prefix}\nw.webContents.setWindowOpenHandler(() => ({action:"allow", overrideBrowserWindowOptions:{webPreferences:{preload:"./p2.js"}}}));`,
   );
   expect(result.electron.browser_windows[1]).toMatchObject({
-    loader_authority: "candidate",
     preload_path: "./p2.js",
     window_open_handler: expect.any(Object),
   });
-  expect(result.role_paths).toEqual([]);
+  expect(result.role_paths).toContainEqual(
+    expect.objectContaining({
+      role: "preload",
+      path: "./p2.js",
+      resolution_context: "module-specifier",
+      mechanism:
+        "setWindowOpenHandler:overrideBrowserWindowOptions.webPreferences.preload",
+    }),
+  );
 });
 
 it("retains an allow handler's explicit popup configuration and source-proven opener", () => {
