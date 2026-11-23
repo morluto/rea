@@ -1,4 +1,10 @@
 import { readRuntimeSetting } from "../config/runtimeAnalysisSettings.js";
+import {
+  KUNA_EXPORT_READY,
+  KunaSingleFunctionCache,
+  type KunaSingleFunctionOutcome,
+} from "./KunaSingleFunctionCache.js";
+
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
   snapshotRegexConfiguration,
@@ -145,35 +151,6 @@ const WAIT_PROGRESS_INTERVAL_MS = 10_000;
 type AnswerSource =
   | { readonly kind: "project-export"; readonly project: KunaProject }
   | { readonly kind: "single-function" };
-
-/** A queued single-function request found the export finished first. */
-const EXPORT_READY = Symbol("kuna-export-ready");
-
-type SingleFunctionOutcome =
-  | Result<string, AnalysisError>
-  | typeof EXPORT_READY;
-
-/** One single-function run that every request for its address shares. */
-interface SingleFunctionRun {
-  readonly outcome: Promise<SingleFunctionOutcome>;
-  /** Stops the run once every waiter has left. */
-  readonly controller: AbortController;
-  waiters: number;
-}
-
-/**
- * Completed single-function texts a session keeps while it has no export
- * reader. Each repeat would otherwise analyze the whole image again; after a
- * failed export that holds for the rest of the session.
- */
-const SINGLE_FUNCTION_TEXT_CACHE_BYTES = 16 * 1024 * 1024;
-/** Charged per kept text beside its UTF-8 bytes. */
-const SINGLE_FUNCTION_TEXT_ENTRY_BYTES = 256;
-
-interface SingleFunctionText {
-  readonly text: string;
-  readonly bytes: number;
-}
 
 interface Answer {
   readonly result: JsonValue;
@@ -367,11 +344,8 @@ export class KunaSessionClient implements AnalysisClient {
    * this queue so one held read does not block another span's open.
    */
   #spanAdmission: Promise<void> = Promise.resolve();
-  /** Single-function runs in flight, by entry address. */
-  readonly #singleFunctionRuns = new Map<string, SingleFunctionRun>();
-  /** Completed single-function texts by address, least recently used first. */
-  readonly #singleFunctionTexts = new Map<string, SingleFunctionText>();
-  #singleFunctionTextBytes = 0;
+  /** Coalesces single-function decompile runs and caches completed texts until export ready. */
+  readonly #singleFunctions: KunaSingleFunctionCache;
   /** Owns background work: aborting it cancels this session's export interest. */
   readonly #session = new AbortController();
   /** Requests and shared readers retain their resources until their work settles. */
@@ -432,6 +406,13 @@ export class KunaSessionClient implements AnalysisClient {
     this.#environment = dependencies.environment;
     this.#platform = dependencies.platform;
     this.#launcher = dependencies.launcher;
+    this.#singleFunctions = new KunaSingleFunctionCache(
+      this.#session.signal,
+      () => this.#reader === undefined && !this.#closing,
+      (work) => this.#own(work),
+      (operation, cause) =>
+        classifyProviderFailure(cause, kunaSessionDialect(operation)),
+    );
     this.#commands = new KunaTargetCommands(target, {
       signal: this.#session.signal,
       ...(dependencies.launcher === undefined
@@ -628,7 +609,7 @@ export class KunaSessionClient implements AnalysisClient {
     while (this.#active.size > 0) await Promise.allSettled(this.#active);
     this.#references.clear();
     this.#strings.clear();
-    this.#dropSingleFunctionTexts();
+    this.#singleFunctions.clear();
     await this.#project;
     await this.#inventory;
     const failures: ProviderCleanupError[] = [];
@@ -973,7 +954,7 @@ export class KunaSessionClient implements AnalysisClient {
       signal,
       true,
     );
-    if (standalone === EXPORT_READY)
+    if (standalone === KUNA_EXPORT_READY)
       throw new Error(
         "Independent decompilation unexpectedly yielded to project",
       );
@@ -1553,7 +1534,7 @@ export class KunaSessionClient implements AnalysisClient {
         installation,
         options.signal,
       );
-      if (outcome === EXPORT_READY) continue;
+      if (outcome === KUNA_EXPORT_READY) continue;
       if (!outcome.ok) {
         const failure = outcome.error;
         if (
@@ -1620,90 +1601,10 @@ export class KunaSessionClient implements AnalysisClient {
     address: string,
     installation: KunaInstallation,
     signal: AbortSignal | undefined,
-  ): Promise<SingleFunctionOutcome> {
-    if (isAborted(signal))
-      return Promise.resolve(err(cancelledBy(operation, signal)));
-    const kept = this.#singleFunctionTexts.get(address);
-    if (kept !== undefined) {
-      this.#singleFunctionTexts.delete(address);
-      this.#singleFunctionTexts.set(address, kept);
-      return Promise.resolve(ok(kept.text));
-    }
-    let run = this.#singleFunctionRuns.get(address);
-    if (run === undefined) {
-      const controller = new AbortController();
-      const created: SingleFunctionRun = {
-        controller,
-        waiters: 0,
-        outcome: this.#own(
-          this.#singleFunction(
-            operation,
-            address,
-            installation,
-            AbortSignal.any([this.#session.signal, controller.signal]),
-          ).catch((cause: unknown) =>
-            err(classifyProviderFailure(cause, kunaSessionDialect(operation))),
-          ),
-        ),
-      };
-      this.#singleFunctionRuns.set(address, created);
-      void created.outcome.then((outcome) => {
-        // A run whose waiters all left was already replaced or removed.
-        if (this.#singleFunctionRuns.get(address) !== created) return;
-        this.#singleFunctionRuns.delete(address);
-        if (outcome !== EXPORT_READY && outcome.ok)
-          this.#keepSingleFunctionText(address, outcome.value);
-      });
-      run = created;
-    }
-    const shared = run;
-    shared.waiters += 1;
-    return new Promise((resolve) => {
-      let waiting = true;
-      const leave = () => {
-        waiting = false;
-        shared.waiters -= 1;
-      };
-      const onAbort = () => {
-        if (!waiting) return;
-        leave();
-        if (shared.waiters > 0) {
-          resolve(err(cancelledBy(operation, carriedReason(signal?.reason))));
-          return;
-        }
-        // A run whose waiters all left winds down; a new request starts afresh.
-        if (this.#singleFunctionRuns.get(address) === shared)
-          this.#singleFunctionRuns.delete(address);
-        shared.controller.abort(signal?.reason);
-      };
-      signal?.addEventListener("abort", onAbort, { once: true });
-      void shared.outcome.then((outcome) => {
-        signal?.removeEventListener("abort", onAbort);
-        if (waiting) leave();
-        resolve(outcome);
-      });
-    });
-  }
-
-  /** Keep a completed text within budget, dropping the least recently used. */
-  #keepSingleFunctionText(address: string, text: string): void {
-    // The export's text supersedes it; a closing session keeps nothing.
-    if (this.#reader !== undefined || this.#closing) return;
-    const bytes = Buffer.byteLength(text) + SINGLE_FUNCTION_TEXT_ENTRY_BYTES;
-    if (bytes > SINGLE_FUNCTION_TEXT_CACHE_BYTES) return;
-    this.#singleFunctionTexts.set(address, { text, bytes });
-    this.#singleFunctionTextBytes += bytes;
-    while (this.#singleFunctionTextBytes > SINGLE_FUNCTION_TEXT_CACHE_BYTES) {
-      const oldest = this.#singleFunctionTexts.entries().next().value;
-      if (oldest === undefined) break;
-      this.#singleFunctionTexts.delete(oldest[0]);
-      this.#singleFunctionTextBytes -= oldest[1].bytes;
-    }
-  }
-
-  #dropSingleFunctionTexts(): void {
-    this.#singleFunctionTexts.clear();
-    this.#singleFunctionTextBytes = 0;
+  ): Promise<KunaSingleFunctionOutcome> {
+    return this.#singleFunctions.join(operation, address, signal, (runSignal) =>
+      this.#singleFunction(operation, address, installation, runSignal),
+    );
   }
 
   /** One `kuna decompile --addr` run, admitted by the provider's run slots. */
@@ -1713,13 +1614,13 @@ export class KunaSessionClient implements AnalysisClient {
     installation: KunaInstallation,
     signal: AbortSignal,
     independent = false,
-  ): Promise<SingleFunctionOutcome> {
+  ): Promise<KunaSingleFunctionOutcome> {
     const prepared = await this.#commands.prepare();
     if (!prepared.ok) return prepared;
     const admitted = independent
       ? await this.#runSlots.acquire(signal)
       : await this.#admitSingleFunction(signal);
-    if (admitted === EXPORT_READY) return admitted;
+    if (admitted === KUNA_EXPORT_READY) return admitted;
     if (admitted === undefined) return err(cancelledBy(operation, signal));
     if (signal.aborted) {
       admitted();
@@ -1752,12 +1653,12 @@ export class KunaSessionClient implements AnalysisClient {
   }
 
   /**
-   * A run slot, or EXPORT_READY when the export this session builds finishes
+   * A run slot, or KUNA_EXPORT_READY when the export this session builds finishes
    * first; the export then answers without another Kuna process.
    */
   async #admitSingleFunction(
     signal: AbortSignal,
-  ): Promise<KunaRunRelease | undefined | typeof EXPORT_READY> {
+  ): Promise<KunaRunRelease | undefined | typeof KUNA_EXPORT_READY> {
     const yielded = new AbortController();
     const slot = this.#runSlots.acquire(
       AbortSignal.any([signal, yielded.signal]),
@@ -1770,17 +1671,17 @@ export class KunaSessionClient implements AnalysisClient {
             (built.ok ||
               built.error instanceof KunaPublishedProjectCleanupError) &&
             this.#reader !== undefined
-              ? EXPORT_READY
+              ? KUNA_EXPORT_READY
               : new Promise<never>(() => undefined),
           );
     const admitted = await (exported === undefined
       ? slot
       : Promise.race([slot, exported]));
-    if (admitted !== EXPORT_READY) return admitted;
+    if (admitted !== KUNA_EXPORT_READY) return admitted;
     yielded.abort(OwnerCancellation.noLongerNeeded);
     // A slot granted in the same turn is returned rather than leaked.
     void slot.then((release) => release?.());
-    return EXPORT_READY;
+    return KUNA_EXPORT_READY;
   }
 
   async #assemblyText(
@@ -2260,7 +2161,7 @@ export class KunaSessionClient implements AnalysisClient {
 
   #adopt(project: KunaProject): void {
     this.#reader = this.#readerFor(project);
-    this.#dropSingleFunctionTexts();
+    this.#singleFunctions.clear();
     this.#releasePin ??= this.#cache.pin(project.key);
   }
 
