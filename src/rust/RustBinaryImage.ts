@@ -1,12 +1,12 @@
-import type { ImageSection } from "../domain/binaryContainer.js";
+import type {
+  BinaryContainer,
+  ImageSection,
+} from "../domain/binaryContainer.js";
 import { malformedInput, unsupportedInput } from "../domain/parseFailure.js";
 import { keyedBy, uniqueKeyed } from "../domain/keyedCollection.js";
 import type { ZstandardFramePause } from "../domain/compression/zstandardExactFrame.js";
 import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
-import {
-  readBinaryContainer,
-  readBinaryContainerFromReader,
-} from "../domain/native/readBinaryContainer.js";
+import { readBinaryContainerFromReader } from "../domain/native/readBinaryContainer.js";
 import type {
   RustAuditableMetadata,
   RustBinary,
@@ -19,13 +19,11 @@ import {
 } from "../domain/rust/rustBinary.js";
 import { RUST_PRODUCER_DEFAULTS } from "../domain/rust/rustResourceLimits.js";
 import {
-  readAuditableSection,
   readAuditableSectionFromReader,
   RUST_AUDITABLE_FORMAT,
 } from "./RustAuditableReader.js";
 import {
   hasWasmPreamble,
-  readRustWasmSections,
   readRustWasmSectionsFromReader,
 } from "./RustWasmImage.js";
 
@@ -67,19 +65,6 @@ interface RustImageLayout extends Pick<
   /** Spans where rustc stores constant `/rustc/<hash>/` path strings. */
   readonly compiler_strings: readonly FileSpan[];
 }
-
-/** Read dependency metadata from container sections without executing the image. */
-export const readRustBinaryImage = (
-  bytes: Buffer,
-  maxRustcHashes = DEFAULT_RUSTC_HASH_LIMIT,
-  maxOutputBytes: number = RUST_PRODUCER_DEFAULTS.output_bytes,
-): RustBinaryImage =>
-  finishRustBinaryImage(
-    bytes,
-    maxRustcHashes,
-    maxOutputBytes,
-    hasWasmPreamble(bytes) ? wasmLayout(bytes) : nativeLayout(bytes),
-  );
 
 const readSlice = (
   source: NativeByteSource,
@@ -205,43 +190,8 @@ const rustcCommitFromReader = async (
       };
 };
 
-const finishRustBinaryImage = (
-  bytes: Buffer,
-  maxRustcHashes: number,
-  maxOutputBytes: number,
-  layout: RustImageLayout,
-): RustBinaryImage => {
-  const { section_name, dependency, compiler_strings, ...identity } = layout;
-  return {
-    ...identity,
-    auditable_metadata:
-      dependency === null
-        ? null
-        : readAuditableSection(
-            section_name,
-            dependency.offset,
-            bytes.subarray(
-              dependency.offset,
-              dependency.offset + dependency.size,
-            ),
-            { maxOutputBytes, peFileAlignment: dependency.peFileAlignment },
-          ),
-    rustc_commit: rustcCommit(
-      bytes,
-      compiler_strings,
-      maxRustcHashes,
-      maxOutputBytes,
-    ),
-  };
-};
-
-const nativeLayout = (
-  bytes: Buffer,
-  container = readBinaryContainer(bytes, "inspect_rust_binary"),
-): RustImageLayout => nativeLayoutFromContainer(container);
-
 const nativeLayoutFromContainer = (
-  container: ReturnType<typeof readBinaryContainer>,
+  container: BinaryContainer,
 ): RustImageLayout => {
   const section_name = rustDependencySectionName(container.format);
   const dependency = dependencySection(section_name, container.sections);
@@ -279,21 +229,6 @@ const nativeLayoutFromContainer = (
   };
 };
 
-/** WebAssembly fixes little-endian encoding but declares no container word size. */
-const wasmLayout = (bytes: Buffer): RustImageLayout => {
-  const { dependency_sections, data_section } = readRustWasmSections(bytes);
-  if (dependency_sections.length > 1) throw duplicateDependencySection();
-  return {
-    format: "wasm",
-    architecture: "wasm",
-    bits: null,
-    byte_order: "little",
-    section_name: rustDependencySectionName("wasm"),
-    dependency: dependency_sections[0] ?? null,
-    compiler_strings: data_section === null ? [] : [data_section],
-  };
-};
-
 /** cargo-auditable writes one dependency section; a second leaves the list ambiguous. */
 const duplicateDependencySection = () =>
   malformedInput(
@@ -326,44 +261,6 @@ const dependencySection = (
   return section;
 };
 
-const rustcCommit = (
-  bytes: Buffer,
-  spans: readonly FileSpan[],
-  maxHashes: number,
-  maxOutputBytes: number,
-): RustBinaryImage["rustc_commit"] => {
-  const retention: RustcPathRetention = {
-    hashes: [],
-    seen: new Set(),
-    maxHashes,
-    maxBytes: maxOutputBytes,
-    bytes: 2,
-    reason: undefined,
-  };
-  // Overlapping section and ELF load ranges are scanned once, so total work
-  // stays bounded by the file size however many mappings reference a range.
-  for (const range of mergedFileRanges(spans)) {
-    collectHashes(bytes, range, retention);
-    if (retention.reason !== undefined) break;
-  }
-  return retention.hashes.length === 0
-    ? null
-    : {
-        evidence_kind: "inferred",
-        hashes: retention.hashes,
-        ...(retention.reason !== undefined
-          ? {
-              coverage: rustcPartialCoverage(
-                retention.reason,
-                retention.reason === "report_bytes"
-                  ? maxOutputBytes
-                  : maxHashes,
-              ),
-            }
-          : {}),
-      };
-};
-
 /** One owner for compiler-path uniqueness, retained output and exhaustion. */
 interface RustcPathRetention {
   readonly hashes: { hash: string; file_offset: number }[];
@@ -390,17 +287,6 @@ const mergedFileRanges = (
   }
   return merged;
 };
-
-const collectHashes = (
-  bytes: Buffer,
-  range: { readonly offset: number; readonly end: number },
-  retention: RustcPathRetention,
-): void =>
-  collectHashesInChunk(
-    bytes.subarray(range.offset, range.end),
-    range.offset,
-    retention,
-  );
 
 const collectHashesInChunk = (
   region: Buffer,

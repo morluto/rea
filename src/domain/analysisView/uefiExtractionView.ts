@@ -40,7 +40,6 @@ const exactNames = <Schema extends z.ZodType>(schema: Schema, what: string) =>
   z
     .array(schema)
     .min(1)
-    .max(64)
     .optional()
     .describe(`Exact ${what}; any listed value matches`);
 
@@ -204,7 +203,8 @@ const fileFilter = (view: FilesView) =>
   view.ffs_type_names === undefined
     ? undefined
     : (file: ExtractedFile): boolean => {
-        const owner = file.ffs_file;
+        // Older Evidence omits the owner; an unrecorded owner matches no owner filter.
+        const owner = file.ffs_file ?? null;
         return (
           (view.media_types === undefined ||
             (file.media_type !== null &&
