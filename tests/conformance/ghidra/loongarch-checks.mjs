@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 /** The lane binds this language; Ghidra's opinion also maps soft float to it. */
 const LANGUAGE = "Loongarch:LE:64:lp64d";
@@ -124,20 +122,24 @@ export function parseLoongArchReadelf(text, expected = {}) {
 }
 
 /** Independent reader is a bounded test prerequisite, never an REA provider. */
-export async function inspectLoongArchReadelf(path, expected = {}) {
-  const command = process.env.REA_LOONGARCH_READELF ?? "readelf";
+export async function inspectLoongArchReadelf(commands, path, expected = {}) {
+  if (typeof commands?.exec !== "function")
+    throw new TypeError(
+      "The independent LoongArch reader requires an owned command runner",
+    );
+  const command = fixtureCommand(FIXTURE_TOOLS.loongarchReadelf);
   const options = {
     env: { ...process.env, LC_ALL: "C" },
     timeout: 10000,
     maxBuffer: 1024 * 1024,
   };
-  const version = await execute(command, ["--version"], options);
+  const version = await commands.exec(command, ["--version"], options);
   assert.match(
     version.stdout,
     /^GNU readelf\b/u,
     "This lane requires GNU readelf",
   );
-  const result = await execute(
+  const result = await commands.exec(
     command,
     ["-h", "-s", "-W", "-r", path],
     options,

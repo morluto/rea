@@ -31,7 +31,15 @@ export function parseLoongArchReadelf(
   text: string,
   expected?: LoongArchReadelfExpected,
 ): LoongArchReadelfFacts;
+export interface LoongArchCommandRunner {
+  exec(
+    command: string,
+    args: readonly string[],
+    options?: { env?: NodeJS.ProcessEnv; timeout?: number; maxBuffer?: number },
+  ): Promise<{ stdout: string; stderr: string }>;
+}
 export function inspectLoongArchReadelf(
+  commands: LoongArchCommandRunner,
   path: string,
   expected?: LoongArchReadelfExpected,
 ): Promise<

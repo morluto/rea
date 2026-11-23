@@ -22,6 +22,11 @@ export const FIXTURE_TOOLS = Object.freeze({
   riscvLinker: { variable: "REA_RISCV_LLD", fallback: "ld.lld" },
   riscvReadelf: { variable: "REA_RISCV_READELF", fallback: "llvm-readelf" },
   riscvObjdump: { variable: "REA_RISCV_OBJDUMP", fallback: "llvm-objdump" },
+  loongarchGcc: {
+    variable: "REA_LOONGARCH_GCC",
+    fallback: "loongarch64-linux-gnu-gcc",
+  },
+  loongarchReadelf: { variable: "REA_LOONGARCH_READELF", fallback: "readelf" },
   // The PSPSDK build runs these by name; no variable selects them.
   make: { fallback: "make" },
   pspConfig: { fallback: "psp-config" },
@@ -146,6 +151,12 @@ export const LANE_TOOLCHAINS = Object.freeze({
     runs(tools.riscvLinker),
     runs(tools.riscvReadelf, llvm),
     runs(tools.riscvObjdump, llvm),
+  ],
+  loongarch: [
+    // A GNU cross compiler names its configured target; a host gcc answers
+    // --version but cannot emit LoongArch code.
+    runs(tools.loongarchGcc, /^loongarch64-linux-gnu/u, ["-dumpmachine"]),
+    runs(tools.loongarchReadelf, gnuReadelf),
   ],
   // The ESP image and flash lanes build ESP32-C3 ELF files with the same
   // RISC-V Clang, linking through --ld-path; esptool is checked by the lane.

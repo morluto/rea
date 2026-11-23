@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const execute = promisify(execFile);
+import { FIXTURE_TOOLS, fixtureCommand } from "./fixture-toolchain.mjs";
 
 /** `EF_LARCH_OBJABI_V1`; clearing it declares the old-world object ABI v0. */
 const OBJABI_V1 = 0x40;
@@ -26,13 +24,19 @@ const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
  * instruction bytes remain the new-world toolchain's output. No fixture code
  * is executed.
  */
-export async function buildLoongArchFixture(directory) {
-  const compiler = process.env.REA_LOONGARCH_GCC ?? "loongarch64-linux-gnu-gcc";
-  const version = await execute(compiler, ["--version"], { timeout: 10000 });
+export async function buildLoongArchFixture(directory, commands) {
+  if (typeof commands?.exec !== "function")
+    throw new TypeError(
+      "LoongArch fixture builds require an owned command runner",
+    );
+  const compiler = fixtureCommand(FIXTURE_TOOLS.loongarchGcc);
+  const version = await commands.exec(compiler, ["--version"], {
+    timeout: 10000,
+  });
   const compile = async (name, arguments_) => {
     const path = join(directory, name);
     const args = [...commonArguments, ...arguments_, source, probe, "-o", path];
-    await execute(compiler, args, { timeout: 120000 });
+    await commands.exec(compiler, args, { timeout: 120000 });
     const bytes = await readFile(path);
     return { path, bytes, args };
   };

@@ -110,8 +110,10 @@ instruction encodings in `tests/conformance/ghidra/loongarch-probe.S`. The
 optional lane requires a caller-supplied LoongArch GNU cross toolchain, GNU
 `readelf`, Ghidra and its compatible JDK; ordinary host-native checks do not
 acquire these tools. `REA_LOONGARCH_GCC` selects the compiler and
-`REA_LOONGARCH_READELF` selects readelf. These are test-time prerequisites, not
-REA runtime providers.
+`REA_LOONGARCH_READELF` selects readelf; the lane probes both before it allocates
+a workspace, and runs them under the shared owned command owner so a deadline
+stops their process group. These are test-time prerequisites, not REA runtime
+providers.
 
 ```bash
 GHIDRA_INSTALL_DIR=/absolute/path/to/ghidra npm run verify:ghidra:loongarch

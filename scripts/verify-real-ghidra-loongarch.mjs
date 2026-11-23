@@ -1,12 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
@@ -27,7 +24,14 @@ import {
   requireLoongArchRelocation,
 } from "../tests/conformance/ghidra/loongarch-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 if (process.argv.length !== 2)
@@ -49,10 +53,21 @@ if (installation.status !== "available")
   throw new Error(
     `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
   );
-const execute = promisify(execFile);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
-const workspace = await mkdtemp(join(tmpdir(), "rea-loongarch-proof-"));
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("loongarch");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-loongarch-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const env = {
@@ -67,22 +82,33 @@ const env = {
 };
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"])
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
+// Compiler, reader and CLI launches share one command owner. A timeout stops
+// that process group.
+const commands = await createVerifierCommands();
 const reports = [];
 let primaryFailure;
 try {
-  const fixture = await buildLoongArchFixture(workspace);
-  const shared = await inspectLoongArchReadelf(fixture.shared.path, {
+  const fixture = await buildLoongArchFixture(workspace, commands);
+  const shared = await inspectLoongArchReadelf(commands, fixture.shared.path, {
     type: 3,
     flags: 0x43,
   });
-  const oldWorld = await inspectLoongArchReadelf(fixture.old_world.path, {
-    type: 3,
-    flags: 0x3,
-  });
-  const executable = await inspectLoongArchReadelf(fixture.executable.path, {
-    type: 2,
-    flags: 0x43,
-  });
+  const oldWorld = await inspectLoongArchReadelf(
+    commands,
+    fixture.old_world.path,
+    {
+      type: 3,
+      flags: 0x3,
+    },
+  );
+  const executable = await inspectLoongArchReadelf(
+    commands,
+    fixture.executable.path,
+    {
+      type: 2,
+      flags: 0x43,
+    },
+  );
   const relocation64 = requireLoongArchRelocation(shared, "R_LARCH_64");
   const jumpSlot = requireLoongArchRelocation(shared, "R_LARCH_JUMP_SLOT");
   assert.equal(relocation64.symbol, "rea_loongarch_global");
@@ -302,7 +328,7 @@ try {
     }
 
     // Same public operation through the CLI, not a private injected provider.
-    const cli = await execute(
+    const cli = await commands.exec(
       process.execPath,
       [
         entrypoint,
@@ -376,21 +402,53 @@ try {
 } catch (cause) {
   primaryFailure = cause;
 }
+// Close the command owner before the parent-tree check. A failed close stays
+// registered for retry and the diagnostic workspace is retained.
+let cleanupFailure;
+try {
+  await workspaceFixture.closeEarly([() => commands.close()]);
+} catch (cause) {
+  cleanupFailure = cause;
+}
+if (cleanupFailure !== undefined)
+  throw retainWorkspace(
+    `LoongArch command cleanup failed; retained diagnostic workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "LoongArch verification and command cleanup both failed",
+            ),
+    },
+  );
 const completed = await completeVerifierRun(run);
-if (
-  completed.process_lineage.status !== "verified" ||
-  completed.process_lineage.descendants.length !== 0
-)
-  throw new Error(
-    `Cleanup unverified; retained diagnostic workspace: ${workspace}`,
-    { cause: primaryFailure },
+let lineageFailure;
+try {
+  assertVerifierCleanupComplete(completed.process_lineage);
+} catch (cause) {
+  lineageFailure = cause;
+}
+if (lineageFailure !== undefined)
+  throw retainWorkspace(
+    `Cleanup unverified; retained workspace: ${workspace}`,
+    {
+      cause:
+        primaryFailure === undefined
+          ? lineageFailure
+          : new AggregateError(
+              [primaryFailure, lineageFailure],
+              "LoongArch verification and cleanup check both failed",
+            ),
+    },
   );
 if (primaryFailure !== undefined)
-  throw new Error(
+  throw retainWorkspace(
     `LoongArch verification failed; retained workspace: ${workspace}`,
     { cause: primaryFailure },
   );
-await rm(workspace, { recursive: true, force: true });
+await workspaceFixture.release();
 console.log(
   JSON.stringify(
     {
@@ -399,6 +457,7 @@ console.log(
       host: { platform: process.platform, architecture: process.arch },
       provider: { id: "ghidra", version: installation.providerVersion },
       fixtures: reports,
+      cleanup: "complete",
     },
     null,
     2,
