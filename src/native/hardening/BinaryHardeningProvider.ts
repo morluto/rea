@@ -11,8 +11,7 @@ import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
   ArtifactReaderFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
   type ArtifactFilePrimaryFacts,
   assertArtifactReadActive,
@@ -36,12 +35,19 @@ import {
   BinaryResourceFailure,
   binaryResourceCeiling,
 } from "../../domain/binaryContainer.js";
-import { readElfHardeningCooperative } from "./ElfHardening.js";
-import { readMachoHardening } from "./MachoHardening.js";
-import { readPeHardening } from "./PeHardening.js";
+import {
+  readElfHardening,
+  readElfHardeningFromHandle,
+} from "./ElfHardening.js";
+import {
+  readMachoHardening,
+  readMachoHardeningFromHandle,
+} from "./MachoHardening.js";
+import { readPeHardening, readPeHardeningFromHandle } from "./PeHardening.js";
 import { errorMessage } from "../../kernel/errorMessage.js";
 
 const OPERATION = "inspect_binary_hardening";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Portable ELF, PE, and Mach-O hardening reader over one stable regular file. */
 export class BinaryHardeningProvider implements BinaryHardeningPort {
@@ -64,25 +70,73 @@ export class BinaryHardeningProvider implements BinaryHardeningPort {
     input: InspectBinaryHardeningInput,
     options?: ExecutionOptions,
   ) {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const report = await withStableArtifactHandle(
           input.path,
           input.max_file_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const report = await readBinaryHardening(
-          snapshot.bytes,
           {
-            path: input.path,
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (identity) => {
+              snapshot = identity;
+            },
           },
-          options?.signal,
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const source = {
+              size: handle.size,
+              prefix: handle.prefix,
+              readRange: (offset: number, length: number) =>
+                handle.readRange(offset, length),
+            };
+            const artifact = {
+              path: input.path,
+              sha256: handle.sha256,
+              bytes: handle.size,
+            };
+            if (
+              handle.prefix.length >= 4 &&
+              handle.prefix[0] === 0x7f &&
+              handle.prefix[1] === 0x45 &&
+              handle.prefix[2] === 0x4c &&
+              handle.prefix[3] === 0x46
+            )
+              return {
+                artifact,
+                format: "elf" as const,
+                images: [
+                  await readElfHardeningFromHandle(source, options?.signal),
+                ],
+                limitations: [...BINARY_HARDENING_LIMITATIONS],
+              };
+            if (hasDosMzMagic(handle.prefix))
+              return {
+                artifact,
+                format: "pe" as const,
+                images: [
+                  await readPeHardeningFromHandle(
+                    source,
+                    artifact,
+                    options?.signal,
+                  ),
+                ],
+                limitations: [...BINARY_HARDENING_LIMITATIONS],
+              };
+            return {
+              artifact,
+              format: "mach-o" as const,
+              images: await readMachoHardeningFromHandle(
+                source,
+                options?.signal,
+              ),
+              limitations: [...BINARY_HARDENING_LIMITATIONS],
+            };
+          },
         );
         assertArtifactReadActive(options?.signal);
         return ok(report);
@@ -110,7 +164,7 @@ export const readBinaryHardening = async (
     return {
       artifact,
       format: "elf",
-      images: [await readElfHardeningCooperative(bytes, signal)],
+      images: [readElfHardening(bytes, signal)],
       limitations: [...BINARY_HARDENING_LIMITATIONS],
     };
   if (hasDosMzMagic(bytes))
@@ -193,7 +247,7 @@ const binaryHardeningFailurePrimary = (
 const binaryHardeningFailure = (
   cause: unknown,
   input: InspectBinaryHardeningInput,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError =>
   projectStableArtifactFailure(
     cause,

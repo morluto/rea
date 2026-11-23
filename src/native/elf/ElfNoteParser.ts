@@ -1454,6 +1454,52 @@ export const walkElfNoteTables = (
   return notes;
 };
 
+/** Same note-table walk over a random-access range reader without buffering the full image. */
+export const walkElfNoteTablesFromReader = async (
+  readRange: (offset: number, length: number) => Promise<Buffer>,
+  fileSize: number,
+  little: boolean,
+  tables: readonly ElfNoteTableWalk[],
+  maxEntries: number,
+  signal?: AbortSignal,
+): Promise<ElfWalkedNote[]> => {
+  const text: TextBudget = {
+    limit: Math.max(fileSize, 1),
+    used: 0,
+    hashed: 0,
+    scanned: 0,
+    hashes: new Map(),
+    scans: new Map(),
+  };
+  const examined = { count: 0 };
+  const notes: ElfWalkedNote[] = [];
+  for (const table of tables) {
+    assertArtifactReadActive(signal);
+    requireElfRange(fileSize, table.offset, table.size);
+    const slice =
+      table.size === 0
+        ? Buffer.alloc(0)
+        : await readRange(table.offset, table.size);
+    for (const note of parseNoteStreamFromTable(
+      slice,
+      table.offset,
+      little,
+      noteAlignment(table.alignment),
+      maxEntries,
+      examined,
+      text,
+      signal,
+    ))
+      notes.push({
+        owner: note.owner,
+        type: note.type,
+        descriptor: note.descriptor,
+        descriptorOffset: note.descriptor_offset,
+      });
+  }
+  return notes;
+};
+
 /** GNU property feature words from notes the owner already walked. */
 export const readGnuPropertyWords = (
   notes: readonly ElfWalkedNote[],
