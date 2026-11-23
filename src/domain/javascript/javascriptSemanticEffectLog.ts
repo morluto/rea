@@ -781,6 +781,37 @@ export const bindingMethodMayHaveChanged = (
   );
 };
 
+/**
+ * Whether a member of the required module `specifier` was written anywhere in
+ * the source, or its exported object was handed to a call that may write one.
+ * The module is shared by every value built from it, so these effects are not
+ * ordered against a read.
+ */
+export const requiredModuleSurfaceTouched = (
+  state: JavaScriptSemanticAnalysisState,
+  specifier: string,
+): boolean =>
+  (state.requiredModuleEffects.get(specifier) ?? []).some(
+    ({ path, kind }) =>
+      kind === "write" ||
+      // A null or unresolved key may select the exported object; only a
+      // definite other member keeps the surface untouched.
+      path.every((key) => typeof key !== "string" || key === "prototype"),
+  );
+
+/**
+ * Whether `binding`'s object itself, rather than one of its members, was handed
+ * to code at a site other than `except`. A member handed out cannot gain or lose
+ * siblings, but the object handed out can replace its own members.
+ */
+export const bindingObjectEscapedOutside = (
+  binding: JavaScriptSemanticBindingState,
+  except: t.Node | undefined,
+): boolean =>
+  binding.escapedPaths.some(
+    (effect) => effect.path.length === 0 && effect.node !== except,
+  );
+
 /** Whether a member write to `binding`'s object is recorded. */
 export const bindingHasMemberWrites = (
   binding: JavaScriptSemanticBindingState,

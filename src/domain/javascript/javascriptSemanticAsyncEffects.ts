@@ -15,6 +15,7 @@ import {
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
@@ -23,10 +24,18 @@ import {
   isIntrinsicGlobalReference,
   isUnmodifiedGlobalReference,
 } from "./javascriptSemanticGlobalReference.js";
-import { opaqueCodeMayChangeGlobalRead } from "./javascriptSemanticEffectLog.js";
+import {
+  ambientPathMayHaveChanged,
+  bindingMethodMayHaveChanged,
+  bindingObjectEscapedOutside,
+  opaqueCodeMayChangeGlobalRead,
+  requiredModuleSurfaceTouched,
+} from "./javascriptSemanticEffectLog.js";
+import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
 import { createGlobalReferenceReader } from "./javascriptSemanticAmbientWrites.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
+  builtinDataEffectCallablePath,
   builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
@@ -196,6 +205,121 @@ export const rejectsSemanticEventListener = (
   );
 };
 
+/** Node builtin calls whose result is an `EventEmitter`. */
+const NODE_EMITTER_FACTORIES = ["spawn", "exec", "execFile", "fork"] as const;
+
+/**
+ * The construction whose class resolves to Node's `EventEmitter`, or `null`
+ * when the initializer is something else. A default import and the
+ * `EventEmitter` member both name that class; only a proven host loader
+ * establishes the builtin identity, because a bundled or shimmed `events`
+ * module is not bound by Node's `checkListener`.
+ */
+const nodeEventEmitterConstruction = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): t.Node | null => {
+  const value = unwrapJavaScriptExpression(node).node;
+  // Node's own factories return a `ChildProcess`, which inherits the listener
+  // methods and their `checkListener` contract. The analyzer already proves
+  // these calls, so the receiver does not have to be a constructor call.
+  if (t.isCallExpression(value)) {
+    const factory = builtinDataEffectCallablePath(value.callee, state, [
+      "child_process",
+      "node:child_process",
+    ]);
+    return factory !== null &&
+      factory.length === 1 &&
+      NODE_EMITTER_FACTORIES.some((name) => name === factory[0])
+      ? value
+      : null;
+  }
+  if (!t.isNewExpression(value)) return null;
+  const path =
+    semanticRequireOrigin(value.callee, state)?.origin.importedPath ??
+    builtinDataEffectCallablePath(value.callee, state, [
+      "events",
+      "node:events",
+    ]);
+  if (path === undefined || path === null) return null;
+  if (path.length === 0) return value;
+  if (path.length !== 1) return null;
+  const selected = path[0];
+  return selected === "EventEmitter" || selected === "default" ? value : null;
+};
+
+/**
+ * Whether the class reference a construction uses was handed to another call,
+ * which may replace a member of it before this receiver exists. Building the
+ * receiver is not such an escape.
+ */
+const nodeEventEmitterClassEscaped = (
+  construction: t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const { callee } = construction;
+  if (!t.isIdentifier(callee)) return false;
+  const binding = resolveSemanticBindingState(state, callee, callee.name);
+  return (
+    binding !== undefined && bindingObjectEscapedOutside(binding, construction)
+  );
+};
+
+/**
+ * Whether the receiver is a value this module constructs from Node's
+ * `EventEmitter` and still calls the native listener method. Only that class
+ * validates the listener argument with `checkListener`; other EventEmitter-style
+ * APIs define one-argument forms, such as Socket.IO's `socket.off("x")`, which
+ * removes every listener for the event. Any receiver whose selected method may
+ * have been replaced keeps its operation as an unresolved candidate.
+ */
+const provenNativeEventEmitterReceiver = (
+  receiver: t.Expression | t.Super,
+  method: string,
+  call: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isIdentifier(receiver)) return false;
+  const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+  if (binding === undefined) return false;
+  const initializer = semanticStableInitializer(binding, state);
+  if (initializer === undefined || initializer.projection.length !== 0)
+    return false;
+  const construction = nodeEventEmitterConstruction(initializer.node, state);
+  if (construction === null) return false;
+  // Node allocates through `EventEmitter.init.call(this, opts)`. The inherited
+  // call slot is shared by every function, so replacing it changes the
+  // allocation even when no `events` binding was written or exposed.
+  if (
+    ambientPathMayHaveChanged(
+      state,
+      ["global", "Function", "prototype", "call"],
+      "contents",
+    )
+  )
+    return false;
+  if (
+    t.isNewExpression(construction) &&
+    nodeEventEmitterClassEscaped(construction, state)
+  )
+    return false;
+  // The events module is shared by every receiver built from it, so a write to
+  // any of its members, or an escape of its prototype object, replaces what the
+  // method call selects.
+  if (requiredModuleSurfaceTouched(state, "events")) return false;
+  // Passing the instance to another call lets that call replace the method
+  // first. Writing the selected method or replacing the receiver's own prototype
+  // selects a different contract the same way. A call that runs after this one
+  // cannot change whether it threw.
+  return !bindingMethodMayHaveChanged(binding, method, call, state, {
+    fresh: true,
+    inherited: true,
+    definingPrototypeDepth: undefined,
+    isolatedNativeCloses: false,
+    targets: () => true,
+  });
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
@@ -212,15 +336,26 @@ const collectEvent = (
   if (method === undefined) return;
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
-  const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
-    ? node.arguments[1]
-    : undefined;
+  const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
+  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
+  // A listener method called without a listener argument passes `undefined` to
+  // Node's `checkListener`, which throws before it registers or removes
+  // anything. Only a spread argument can still reach that position, and only a
+  // receiver proven to be Node's `EventEmitter` is held to that contract.
+  if (
+    listenerMethod &&
+    listenerArgument === undefined &&
+    !node.arguments.some((argument) => t.isSpreadElement(argument)) &&
+    provenNativeEventEmitterReceiver(member.object, method, node, state)
+  )
+    return;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
     EVENT_LISTENER_METHODS.includes(method) &&
     !t.isSpreadElement(eventArgument) &&
+    listenerArgument !== undefined &&
     rejectsSemanticEventListener(listenerArgument)
   )
     return;
