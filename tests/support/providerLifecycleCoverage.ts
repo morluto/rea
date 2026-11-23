@@ -1643,7 +1643,12 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
         "reads signed TYPE_INT64 constants and rejects a truncated payload",
       ),
     ),
-    typedFailures("tests/boundary/filesystem/pythonPyc.test.ts"),
+    covered(
+      test(
+        "src/application/python/PythonPycService.test.ts",
+        "retains completed pyc Evidence and the opaque caller reason on late cancellation",
+      ),
+    ),
   ),
   "rea-release-exposure": inProcess(
     covered(

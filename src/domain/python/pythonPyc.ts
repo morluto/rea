@@ -58,7 +58,7 @@ const consecutiveProfiles = (
   );
 
 /** Standalone marshal coverage; source identity and header shape have a separate owner. */
-export const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
+const PYTHON_PYC_MARSHAL_PROFILES: ReadonlyMap<
   number,
   PythonPycMarshalProfile
 > = new Map([
@@ -324,6 +324,18 @@ export const pythonPycSchema = z
         message: "Code-object coverage disagrees with the listed code objects.",
       });
     }
+    // Every decoded object consumes at least its one-byte marshal tag, and
+    // the report can list only code objects reached during that walk.
+    if (
+      report.coverage.objects < report.code_objects.length ||
+      report.coverage.objects > marshalBytes
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "objects"],
+        message:
+          "Marshal objects must cover all listed code objects and cannot exceed the marshal byte count.",
+      });
     report.code_objects.forEach((code, owner) => {
       if (
         code.localspluskinds_hex !== null &&
