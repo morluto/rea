@@ -11,6 +11,17 @@ const EXPLICIT_ARGUMENT_RECOVERY =
 const RECOVERY_END =
   " A host timeout without a REA result is a client deadline, not proof that work or cleanup stopped; session status cannot establish completion of all target-free work. Do not replay uncertain analysis. Increase the client deadline with execution/cleanup/delivery headroom, or report the needed change (Codex: mcp_servers.<server>.tool_timeout_sec, seconds). Server analysis_timeout_ms is a separate millisecond budget and cannot fix a shorter client deadline. Keep the connection for reported cleanup retries. After a connection/startup failure, retry once only if safe or known not to have started. If it persists, ask the user to restart the MCP client; run rea doctor if REA cannot start or tools remain missing. Preserve needed Evidence before restarting REA.";
 
+/**
+ * Audit-driven standardized recovery messages schema.
+ * All providers should now migrate toward this structured guidance.
+ */
+export interface AnalysisErrorRecoveryGuidance {
+  readonly recovery_action: string;
+  readonly remediation_guidance: string;
+  readonly context: 'SCHEMA_INVALIDITY' | 'LOOKUP_MISS';
+  readonly metadata?: Record<string, string>;
+}
+
 /** Only direct callers to runtime settings tools when they are advertised. */
 export const recoveryInstructions = (
   runtimeSettingsAvailable: boolean,
