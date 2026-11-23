@@ -5,7 +5,6 @@ import type { ZstandardFramePause } from "../domain/compression/zstandardExactFr
 import type { NativeByteSource } from "../domain/native/nativeSectionDirectory.js";
 import {
   readBinaryContainer,
-  readBinaryContainerCooperative,
   readBinaryContainerFromReader,
 } from "../domain/native/readBinaryContainer.js";
 import type {
@@ -80,29 +79,6 @@ export const readRustBinaryImage = (
     maxRustcHashes,
     maxOutputBytes,
     hasWasmPreamble(bytes) ? wasmLayout(bytes) : nativeLayout(bytes),
-  );
-
-/** Same image as {@link readRustBinaryImage}. ELF section names yield through `pause`. */
-export const readRustBinaryImageCooperative = async (
-  bytes: Buffer,
-  maxRustcHashes: number | undefined,
-  maxOutputBytes: number | undefined,
-  pause: ZstandardFramePause,
-): Promise<RustBinaryImage> =>
-  finishRustBinaryImage(
-    bytes,
-    maxRustcHashes ?? DEFAULT_RUSTC_HASH_LIMIT,
-    maxOutputBytes ?? RUST_PRODUCER_DEFAULTS.output_bytes,
-    hasWasmPreamble(bytes)
-      ? wasmLayout(bytes)
-      : nativeLayout(
-          bytes,
-          await readBinaryContainerCooperative(
-            bytes,
-            "inspect_rust_binary",
-            pause,
-          ),
-        ),
   );
 
 const readSlice = (

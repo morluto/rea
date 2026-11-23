@@ -24,7 +24,6 @@ import {
 } from "../../domain/binaryContainer.js";
 import {
   readElfImage,
-  readElfImageCooperative,
   readElfImageFromReader,
 } from "../../domain/native/elfImage.js";
 import type { NativeByteSource } from "../../domain/native/nativeSectionDirectory.js";
@@ -900,27 +899,6 @@ export const parseKernelModule = (
     input,
     readElfImage(bytes, "inspect_kernel_module"),
   );
-
-/** Same report as {@link parseKernelModule}. Section names yield for `signal`. */
-export const parseKernelModuleCooperative = async (
-  bytes: Buffer,
-  artifact: Report["artifact"],
-  input: InspectKernelModuleInput,
-  signal?: AbortSignal,
-): Promise<Report> => {
-  assertArtifactReadActive(signal);
-  return (
-    moduleCompressionReport(bytes, artifact) ??
-    parseKernelModuleImage(
-      bytes,
-      artifact,
-      input,
-      await readElfImageCooperative(bytes, "inspect_kernel_module", () =>
-        yieldArtifactRead(signal),
-      ),
-    )
-  );
-};
 
 /** Decode kernel-module metadata positionally over a bounded file handle. */
 export const parseKernelModuleFromHandle = async (
