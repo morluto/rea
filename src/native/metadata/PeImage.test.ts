@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 import { readGoBinaryImage } from "../../go/GoBinaryImage.js";
-import { readPeImage } from "../../domain/native/peImage.js";
+import {
+  readPeImage,
+  readPeImageFromReader,
+} from "../../domain/native/peImage.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
 import { BinaryFormatFailure } from "../../domain/binaryContainer.js";
@@ -230,5 +233,29 @@ it.each([0xffff, 0x8664 ^ 0x7b79])(
       architecture: `pe-machine-${machine}`,
       bits: 64,
     });
+  },
+);
+
+it.each([0x014c, 0x8664])(
+  "admits a streamed empty section table at EOF for machine %s",
+  async (machine) => {
+    const bytes = pe(machine);
+    const peOffset = bytes.readUInt32LE(60);
+    const image = bytes.subarray(
+      0,
+      peOffset + 24 + bytes.readUInt16LE(peOffset + 20),
+    );
+    const reads: number[] = [];
+    const streamed = await readPeImageFromReader({
+      size: image.length,
+      prefix: image.subarray(0, 64),
+      readRange: async (offset, length) => {
+        reads.push(length);
+        return image.subarray(offset, offset + length);
+      },
+    });
+    expect(streamed).toEqual(readPeImage(image));
+    expect(streamed.sections).toEqual([]);
+    expect(reads.every((length) => length > 0)).toBe(true);
   },
 );
