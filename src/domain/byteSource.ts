@@ -20,15 +20,21 @@ export interface PrefixedByteSource extends ByteSource {
  * `prefixBytes` models how much of the file admission retained.
  */
 export const bufferByteSource = (
-  bytes: Buffer,
-  prefixBytes = bytes.length,
-): PrefixedByteSource => ({
-  size: bytes.length,
-  prefix: bytes.subarray(0, prefixBytes),
-  readRange: (offset, length) =>
-    Promise.resolve(
-      offset < 0 || length <= 0 || offset >= bytes.length
-        ? Buffer.alloc(0)
-        : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
-    ),
-});
+  data: Uint8Array,
+  prefixBytes = data.length,
+): PrefixedByteSource => {
+  // A Buffer view over the same memory; no bytes are copied.
+  const bytes = Buffer.isBuffer(data)
+    ? data
+    : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    size: bytes.length,
+    prefix: bytes.subarray(0, prefixBytes),
+    readRange: (offset, length) =>
+      Promise.resolve(
+        offset < 0 || length <= 0 || offset >= bytes.length
+          ? Buffer.alloc(0)
+          : bytes.subarray(offset, Math.min(bytes.length, offset + length)),
+      ),
+  };
+};
