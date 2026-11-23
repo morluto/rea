@@ -8,7 +8,59 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 
+import { javaScriptExecutions } from "./javascriptSemanticExecutionPoints.js";
 import { childNodes } from "./javascriptSemanticTraversal.js";
+
+/** A synchronous local body with no writes, escaping throws, or observable
+ * execution can only expose its inputs through its separately resolved result. */
+export const createSemanticInertCallQuery = (
+  localRead: (identifier: t.Identifier) => boolean,
+  primitive: (node: t.Node) => boolean,
+) => {
+  const cache = new WeakMap<t.Function, boolean>();
+  return (fn: t.Node | undefined): boolean => {
+    if (
+      !t.isFunction(fn) ||
+      fn.async ||
+      fn.generator ||
+      !fn.params.every((p) => t.isIdentifier(p))
+    )
+      return false;
+    const cached = cache.get(fn);
+    if (cached !== undefined) return cached;
+    const pending: { node: t.Node; parent: t.Node }[] = [
+      { node: fn.body, parent: fn },
+    ];
+    while (pending.length > 0) {
+      const { node, parent } = pending.pop()!;
+      if (
+        t.isAssignmentExpression(node) ||
+        t.isUpdateExpression(node) ||
+        t.isThrowStatement(node) ||
+        (t.isIdentifier(node) &&
+          t.isReferenced(node, parent) &&
+          !localRead(node)) ||
+        (t.isBinaryExpression(node) &&
+          (node.operator === "in" || node.operator === "instanceof")) ||
+        javaScriptExecutions(node, parent).some(
+          (effect) =>
+            effect.kind !== "coercion" || !effect.operands.every(primitive),
+        )
+      ) {
+        cache.set(fn, false);
+        return false;
+      }
+      for (const child of childNodes(node))
+        if (
+          !t.isFunction(node) ||
+          semanticMethodDefinitionExpression(node, child)
+        )
+          pending.push({ node: child, parent: node });
+    }
+    cache.set(fn, true);
+    return true;
+  };
+};
 
 /** Effectful inputs still evaluated when an expression returns a scalar. */
 export const javaScriptScalarEvaluationSources = (

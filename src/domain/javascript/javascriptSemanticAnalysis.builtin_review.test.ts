@@ -2335,3 +2335,55 @@ it.each([
     ).toEqual(expected);
   },
 );
+
+it.each([
+  [
+    "Object.assign=custom;Object.assign({},delete module.id);require('fs').readFileSync('probe')",
+    ["probe"],
+  ],
+  [
+    "Object.defineProperty(Reflect.set,'name',{get(){observe(module);return 'set'}});const f=Reflect.set.bind(null,module);Object.assign=custom;Object.assign({},f.name);require('fs').readFileSync('probe')",
+    [],
+  ],
+  [
+    "const fs=require('fs');fs.writeFileSync=function(){this.readFileSync=()=>{}};fs.appendFileSync('ignored','x');fs.readFileSync('probe')",
+    [],
+  ],
+  [
+    "function scalar(v){return 1}Object.assign=custom;Object.assign({},scalar(module));require('fs').readFileSync('probe')",
+    ["probe"],
+  ],
+  [
+    "Object.defineProperty(Reflect.set,'length',{get(){observe(module);return 1}});Reflect.set.bind(null,module);require('fs').readFileSync('probe')",
+    [],
+  ],
+  [
+    "Object.defineProperty(Reflect.set,'name',{get(){return 'set'}});Reflect.set.bind(null,module);require('fs').readFileSync('probe')",
+    ["probe"],
+  ],
+  [
+    "const fs=require('fs'),append=fs.appendFileSync;fs.writeFileSync=function(){this.readFileSync=()=>{}};append('ignored','x');fs.readFileSync('probe')",
+    [],
+  ],
+  [
+    "function scalar(v){const x=1;const y=x+2;return y}Object.assign=custom;Object.assign({},scalar(module));require('fs').readFileSync('probe')",
+    ["probe"],
+  ],
+  [
+    "function scalar(v){return 1}const box={get value(){observe(module);return 0}};Object.assign=custom;Object.assign({},scalar(box.value));require('fs').readFileSync('probe')",
+    [],
+  ],
+  [
+    "function scalar(v){observe(v);return 1}Object.assign=custom;Object.assign({},scalar(module));require('fs').readFileSync('probe')",
+    [],
+  ],
+] as const)(
+  "keeps effects at the operation that consumes them: %s",
+  (source, expected) => {
+    expect(
+      analyzeCommonJs(source)
+        .configurationOperations.filter(({ key }) => key === "probe")
+        .map(({ key }) => key),
+    ).toEqual(expected);
+  },
+);

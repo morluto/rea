@@ -7,6 +7,7 @@ import { createSemanticAmbientEffectQuery } from "./javascriptSemanticEffectQuer
 import {
   semanticBuiltinDataProperty,
   createSemanticBuiltinSlotQuery,
+  recordSemanticFsDelegateCalls,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
@@ -2978,6 +2979,9 @@ export function* collectSemanticMemberMutationsSteps(
     )
       break;
   }
+  recordSemanticFsDelegateCalls(state, callableReads, (site, authority) =>
+    recordRequiredEffect("fs", [null], "write", site, authority),
+  );
   // Gathering effects can evaluate a primitive projection before its object
   // escapes. Final values must use the completed mutation state.
   clearSemanticValueCaches(state);

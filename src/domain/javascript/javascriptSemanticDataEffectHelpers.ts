@@ -732,7 +732,7 @@ const affectsBuiltinPath = (
       semanticPropertyPathKeyMatches(key, selected[index]!),
   );
 
-const FS_RECEIVER_METHODS = [
+const FS_DATA_METHODS = [
   "access",
   "appendFile",
   "chmod",
@@ -777,17 +777,14 @@ const FS_RECEIVER_METHODS = [
   "close",
 ];
 
-const BUILTIN_RECEIVER_METHODS: ReadonlyMap<
-  string,
-  ReadonlySet<string>
-> = new Map(
+const BUILTIN_DATA_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
   Object.entries({
     vm: new Set(["compileFunction"]),
     path: new Set(["resolve", "join", "dirname"]),
     "path/posix": new Set(["resolve", "join", "dirname"]),
     url: new Set(["fileURLToPath"]),
     fs: new Set([
-      ...FS_RECEIVER_METHODS.flatMap((method) => [method, `${method}Sync`]),
+      ...FS_DATA_METHODS.flatMap((method) => [method, `${method}Sync`]),
       "existsSync",
       "exists",
       "mkdtempDisposableSync",
@@ -1018,6 +1015,74 @@ export const requiredModuleChanged = (
   );
 };
 
+// These fs wrappers call mutable methods on the shared CommonJS exports.
+const fsDelegates: Readonly<Record<string, readonly string[]>> = {
+  appendFile: ["writeFile", "open", "write", "fsync", "close"],
+  appendFileSync: [
+    "writeFileSync",
+    "openSync",
+    "writeSync",
+    "fsyncSync",
+    "closeSync",
+  ],
+  writeFile: ["open", "write", "fsync", "close"],
+  writeFileSync: ["openSync", "writeSync", "fsyncSync", "closeSync"],
+  exists: ["access"],
+  readFileSync: ["openSync", "closeSync"],
+  realpath: ["lstat", "stat", "readlink"],
+  truncate: ["open", "close"],
+  truncateSync: ["openSync", "ftruncateSync", "closeSync"],
+};
+
+/** A native wrapper calls its current delegate with the shared fs exports,
+ * even when the outer function was captured earlier or imported by name. */
+export const recordSemanticFsDelegateCalls = (
+  state: JavaScriptSemanticAnalysisState,
+  calls: readonly {
+    readonly invocation?: t.CallExpression | t.OptionalCallExpression;
+  }[],
+  record: (site: t.Node, authority?: "candidate") => void,
+): void => {
+  const writes = state.requiredModuleEffects
+    .get("fs")
+    ?.filter((effect) => effect.kind === "write");
+  if (!writes?.length) return;
+  for (const { invocation } of calls) {
+    if (!invocation) continue;
+    const source = semanticExpressionModuleOrigin(
+      invocation.callee,
+      state,
+      new Set(),
+      true,
+    );
+    if (!source) continue;
+    const { specifier, importedPath } = builtinNamespaceOrigin(source);
+    if (
+      specifier !== "fs" ||
+      (importedPath.length !== 1 &&
+        !(
+          importedPath.length === 2 &&
+          ["apply", "call"].includes(importedPath[1]!)
+        ))
+    )
+      continue;
+    const delegates = Object.hasOwn(fsDelegates, importedPath[0]!)
+      ? fsDelegates[importedPath[0]!]
+      : undefined;
+    if (!delegates) continue;
+    for (const write of writes)
+      if (
+        delegates.some((key) => affectsBuiltinPath(write.path, [key])) &&
+        !semanticTopLevelEffectFollowsCapture(
+          invocation,
+          write.node,
+          state.parentsByNode,
+        )
+      )
+        record(invocation, source.loaderAuthority ?? write.loaderAuthority);
+  }
+};
+
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (
   node: t.Node | undefined,
@@ -1110,7 +1175,7 @@ const computeOriginalBuiltinReceiver = (
         }));
   if (
     method === null ||
-    !BUILTIN_RECEIVER_METHODS.get(
+    !BUILTIN_DATA_METHODS.get(
       posixReceiver ? "path/posix" : origin.specifier,
     )?.has(method) ||
     (receiver !== undefined &&
@@ -1178,7 +1243,7 @@ export const semanticBuiltinDataProperty = (
   const origin = builtinNamespaceOrigin(source);
   return (
     origin.importedPath.length === 0 &&
-    ((BUILTIN_RECEIVER_METHODS.get(origin.specifier)?.has(method) ?? false) ||
+    ((BUILTIN_DATA_METHODS.get(origin.specifier)?.has(method) ?? false) ||
       (origin.specifier === "process" && ["env", "argv"].includes(method)))
   );
 };

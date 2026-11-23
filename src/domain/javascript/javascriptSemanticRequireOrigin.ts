@@ -70,6 +70,7 @@ import {
 import { electronMemberPath } from "./javascriptElectronMemberWrites.js";
 import {
   javaScriptScalarEvaluationSources,
+  createSemanticInertCallQuery,
   semanticBranchMayBeSkipped,
 } from "./javascriptSemanticEvaluationOrder.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
@@ -1725,7 +1726,7 @@ const writesModuleRequire = (
           javaScriptScalarEvaluationSources(
             expression,
             scalarEvaluationBodies,
-            interop.isFreshObject,
+            ordinaryDeleteReceiver,
           ),
           expression,
         )) ||
@@ -1819,6 +1820,12 @@ const writesModuleRequire = (
   // their assigned values instead of treating every write as the wrapper.
   // Accessors and unproven descriptor/source maps remain conservative.
   const ambientEffectAt = createSemanticAmbientEffectQuery(state);
+  const ordinaryWrapper = (node: t.Node): boolean =>
+    t.isIdentifier(node, { name: "module" }) &&
+    isModuleObject(node) &&
+    !ambientBindingMayObserveWriteAt(state, node, "module");
+  const ordinaryDeleteReceiver = (node: t.Node): boolean =>
+    interop.isFreshObject(node) || ordinaryWrapper(node);
   const scalarResult = (node: t.Node): boolean => {
     if (isPrimitiveJavaScriptExpression(node)) return true;
     if (
@@ -1830,9 +1837,7 @@ const writesModuleRequire = (
     // An ordinary wrapper lookup has no proxy trap. Preserve the usual
     // operand walk whenever wrapper identity, its prototype, or a hook can vary.
     if (
-      !t.isIdentifier(wrapper, { name: "module" }) ||
-      !isModuleObject(wrapper) ||
-      ambientBindingMayObserveWriteAt(state, wrapper, "module") ||
+      !ordinaryWrapper(wrapper) ||
       ambientEffectAt(["commonjs-module", "__proto__"], node)
     )
       return false;
@@ -1930,6 +1935,17 @@ const writesModuleRequire = (
     }
     return bodies;
   };
+  const inertCall = createSemanticInertCallQuery(
+    (node) => resolveSemanticBindingState(state, node, node.name) !== undefined,
+    (node) => {
+      if (isPrimitiveJavaScriptExpression(node)) return true;
+      const value = evaluateSemanticExpression(node, state, node);
+      return (
+        value.status === "literal" ||
+        (value.status === "union" && value.values.length > 0)
+      );
+    },
+  );
   const returnedReferences = createSemanticReturnedReferences(state);
   const callableById = new Map(
     state.callables.map((callable) => [callable.callableId, callable]),
@@ -2035,6 +2051,45 @@ const writesModuleRequire = (
         return undefined;
     return [{ node: data, path: ["value"] }];
   };
+  // BoundFunctionCreate reads the target's metadata before initializing
+  // the new function's own data slots. Reading a proven data slot is inert.
+  const bindMetadataMayInvokeGetter = createSemanticAmbientEffectQuery(
+    state,
+    (effect, path) => {
+      if (writtenValues(effect, path.at(-1)!) !== undefined) return false;
+      if (!t.isCallExpression(effect) && !t.isOptionalCallExpression(effect))
+        return true;
+      const invocation = interop.intrinsicInvocation(effect);
+      if (
+        invocation?.kind !== "known" ||
+        ![
+          "intrinsic.Object.defineProperty",
+          "intrinsic.Reflect.defineProperty",
+        ].includes(invocation.path.join("."))
+      )
+        return true;
+      const descriptor = invocation.arguments?.[2];
+      if (
+        !t.isObjectExpression(descriptor) ||
+        descriptor.properties.some(
+          (prop) => t.isSpreadElement(prop) || prop.computed,
+        )
+      )
+        return true;
+      const get = descriptor.properties.findLast(
+        (prop) =>
+          !t.isSpreadElement(prop) &&
+          semanticStaticPropertyKey(prop.key, prop.computed) === "get",
+      );
+      return !inertCall(
+        t.isObjectMethod(get, { kind: "method" })
+          ? get
+          : t.isObjectProperty(get)
+            ? get.value
+            : undefined,
+      );
+    },
+  );
   // Resolve only ordered, exact literal allocations. Unknown aliases, getters,
   // conditional replacements and computed slots cannot prove distinct owners.
   const nativeDataDefinition = (node: t.Node | undefined): boolean => {
@@ -2833,9 +2888,20 @@ const writesModuleRequire = (
             ))
         )
           return true;
-        // Even a call that falls through evaluates its arguments.
+        const inertBody =
+          callable.callableIds.length > 0 &&
+          callable.callableIds.every((id) =>
+            inertCall(state.callableNodesById.get(id)),
+          );
+        const inputs = inertBody
+          ? javaScriptScalarEvaluationSources(
+              value,
+              scalarEvaluationBodies,
+              ordinaryDeleteReceiver,
+            )
+          : value.arguments;
         pending.push(
-          ...value.arguments.map((node) => ({ node, path: [], readAt })),
+          ...inputs.map((node) => ({ node, path: [], readAt })),
           ...results.map((reference) => ({
             node: reference.node,
             path: [...reference.projection, ...path],
@@ -2875,7 +2941,7 @@ const writesModuleRequire = (
             ...javaScriptScalarEvaluationSources(
               value,
               scalarEvaluationBodies,
-              interop.isFreshObject,
+              ordinaryDeleteReceiver,
             ).map((node) => ({
               node,
               path: [],
@@ -2929,6 +2995,17 @@ const writesModuleRequire = (
       for (const target of commonJsDelegateWriteTargets(node))
         record(node, target.object);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        const creation = interop.boundIntrinsic(node);
+        if (
+          creation?.kind === "known" &&
+          ["name", "length"].some((key) =>
+            bindMetadataMayInvokeGetter(
+              ["global", ...creation.path.slice(1), key],
+              node,
+            ),
+          )
+        )
+          writes.push(node);
         const invocation = interop.intrinsicInvocation(node);
         if (
           invocation?.kind === "opaque" &&
