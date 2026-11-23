@@ -17,6 +17,7 @@ import {
 } from "../../src/domain/analysisView/analysisViewResult.js";
 import { workspaceCliTest as test } from "../support/cli/workspaceCliFixture.js";
 import { createMcpSchemaValidation } from "../fixtures/mcpSchemaValidation.js";
+import { expectCarrierProbes } from "../fixtures/nativeCarrierProbes.js";
 
 // Compile SDK output validators for the tools a test calls, not the whole catalog.
 const schemaValidation = createMcpSchemaValidation();
@@ -169,22 +170,8 @@ for (const format of ["dotnet-bundle", "pyinstaller"] as const) {
         root_sha256: createHash("sha256").update(bytes).digest("hex"),
       });
       if (format === "dotnet-bundle") {
-        expect(inventory.next_probes[0]).toMatchObject({
-          operation: "extract_artifact",
-          authority: "artifact-bytes",
-        });
         // The apphost carrier is a PE, so its readers follow the package's.
-        expect(
-          inventory.next_probes.map(({ operation }) => operation).slice(1),
-        ).toEqual([
-          "inspect_pe_imports",
-          "inspect_native_exports",
-          "inspect_pe_load_config",
-          "inspect_pe_resources",
-          "inspect_binary_hardening",
-          "audit_release_exposure",
-          "open_binary",
-        ]);
+        expectCarrierProbes(inventory.next_probes, "pe", ["extract_artifact"]);
       }
       expect(
         inventory.unexplored_branches.map(({ next_probe }) => next_probe),
