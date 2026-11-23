@@ -7099,8 +7099,13 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
   const outDir = join(directory, "out");
   await mkdir(inDir, { recursive: true });
 
-  const peBuffer = createMinimalPeBuffer();
-  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  // Two 17 MiB modules: 17 + 17 = 34 MiB > 32 MiB discovery preload cap.
+  // Module 1 is cached; Module 2 has mod.bytes === undefined, forcing scratch readback.
+  const moduleSize = 17 * 1024 * 1024;
+  const mod1Buffer = createMinimalPeBuffer(0x8664, 1, moduleSize);
+  const mod2Buffer = createMinimalPeBuffer(0x8664, 1, moduleSize);
+  await writeFile(join(inDir, "Module_1.efi"), mod1Buffer);
+  await writeFile(join(inDir, "Module_2.efi"), mod2Buffer);
 
   const originalGhidra = process.env.GHIDRA_INSTALL_DIR;
   const mockGhidraDir = join(directory, "mock_ghidra");
@@ -7115,13 +7120,18 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
   );
   process.env.GHIDRA_INSTALL_DIR = mockGhidraDir;
 
+  let scratchCorrupted = false;
   const spy = vi
     .spyOn(ExecFileOutputModule, "execFileOutput")
     .mockImplementation(async (_command, args) => {
-      // Corrupt the single staged input mod_1.efi while Ghidra is running
-      const efiPath = args[args.indexOf("-import") + 1];
-      if (efiPath && existsSync(efiPath)) {
-        await writeFile(efiPath, Buffer.from("TRUNCATED_BAD_INPUT"));
+      // Corrupt the staged scratch copy of mod_2.efi in the batch input directory
+      const batchDir = args[args.indexOf("-import") + 1];
+      if (batchDir && existsSync(batchDir)) {
+        const stagedMod2 = join(batchDir, "mod_2.efi");
+        if (existsSync(stagedMod2)) {
+          await writeFile(stagedMod2, Buffer.from("TRUNCATED_BAD_INPUT"));
+          scratchCorrupted = true;
+        }
       }
       return { stdout: "", stderr: "", stdoutBytes: 0, stderrBytes: 0 };
     });
@@ -7136,10 +7146,14 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
       ),
     );
     const result = executed.value.result as UefiDecompileResult;
-    // Source identity is preserved because the corrupted scratch file was rejected and authentic bytes re-read
-    expect(result.modules[0]?.code_bytes).toBe(peBuffer.length);
-    const expectedSha = createHash("sha256").update(peBuffer).digest("hex");
-    expect(result.modules[0]?.payload_sha256).toBe(expectedSha);
+    expect(scratchCorrupted).toBe(true);
+    expect(result.modules).toHaveLength(2);
+
+    // Module 2 was beyond the 32 MiB preload cap, so its scratch copy was checked.
+    // The corrupted scratch copy was rejected, and authentic source bytes were re-read.
+    expect(result.modules[1]?.code_bytes).toBe(mod2Buffer.length);
+    const expectedSha2 = createHash("sha256").update(mod2Buffer).digest("hex");
+    expect(result.modules[1]?.payload_sha256).toBe(expectedSha2);
   } finally {
     if (originalGhidra !== undefined) {
       process.env.GHIDRA_INSTALL_DIR = originalGhidra;
@@ -7147,6 +7161,157 @@ it("rejects corrupted or truncated scratch inputs and verifies digest before acc
       delete process.env.GHIDRA_INSTALL_DIR;
     }
     spy.mockRestore();
+    await provider.close();
+  }
+});
+
+it("prefers source_coverage over legacy coverage when evaluating directory manifest", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-source-cov-pref-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  const peBuffer = createMinimalPeBuffer();
+  await writeFile(join(inDir, "Sample.efi"), peBuffer);
+  // Prior run had tool output failures (coverage: "partial"), but source was intact (source_coverage: "complete")
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      image_sha256:
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      coverage: "partial",
+      source_coverage: "complete",
+      total_modules_found: 1,
+      total_modules_decompiled: 1,
+      phases: { sec: 0, pei: 0, dxe: 1, smm: 0, app: 0, misc: 0 },
+      modules: [
+        {
+          occurrence: 1,
+          name: "Sample",
+          phase: "DXE",
+          payload_file: "DXE/Sample.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    // Rerun over intact payloads reports complete coverage, not partial
+    expect(result.coverage).toBe("complete");
+    expect(
+      result.limitations.some((l) =>
+        l.includes("declares partial source coverage"),
+      ),
+    ).toBe(false);
+  } finally {
+    await provider.close();
+  }
+});
+
+it("preserves distinct POSIX manifest rows with literal backslashes", async () => {
+  if (HOST_PLATFORM.platform === "win32") return; // POSIX-specific test
+
+  const directory = await createTestTempDirectory("rea-uefi-posix-backslash-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(join(inDir, "sub"), { recursive: true });
+
+  const pe1 = createMinimalPeBuffer(0x8664, 1, 256);
+  const pe2 = createMinimalPeBuffer(0x8664, 1, 512);
+  // Two legal POSIX paths: sub/mod.efi and sub\mod.efi in root
+  await writeFile(join(inDir, "sub", "mod.efi"), pe1);
+  await writeFile(join(inDir, "sub\\mod.efi"), pe2);
+
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "SlashModule",
+          phase: "DXE",
+          payload_file: "sub/mod.efi",
+          guid: "11111111-1111-1111-1111-111111111111",
+        },
+        {
+          name: "BackslashModule",
+          phase: "PEI",
+          payload_file: "sub\\mod.efi",
+          guid: "22222222-2222-2222-2222-222222222222",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(2);
+    const slashMod = result.modules.find((m) => m.name === "SlashModule");
+    const backslashMod = result.modules.find(
+      (m) => m.name === "BackslashModule",
+    );
+    expect(slashMod).toBeDefined();
+    expect(backslashMod).toBeDefined();
+    expect(slashMod?.guid).toBe("11111111-1111-1111-1111-111111111111");
+    expect(backslashMod?.guid).toBe("22222222-2222-2222-2222-222222222222");
+    expect(slashMod?.phase).toBe("DXE");
+    expect(backslashMod?.phase).toBe("PEI");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("retains PEIM ABI for noncanonical vendor type with PEI phase", async () => {
+  const directory = await createTestTempDirectory("rea-uefi-vendor-peim-");
+  const inDir = join(directory, "in");
+  const outDir = join(directory, "out");
+  await mkdir(inDir, { recursive: true });
+
+  await writeFile(join(inDir, "VendorPei.efi"), createMinimalPeBuffer());
+  await writeFile(
+    join(inDir, "firmware_manifest.json"),
+    JSON.stringify({
+      modules: [
+        {
+          name: "VendorPei",
+          phase: "PEI",
+          type: "vendor-peim",
+          payload_file: "VendorPei.efi",
+        },
+      ],
+    }),
+  );
+
+  const provider = new UefiAnalysisProvider();
+  try {
+    const executed = expectOk(
+      await provider.execute(
+        decompileRequest(inDir, outDir, { include_disassembly: false }),
+      ),
+    );
+    const result = executed.value.result as UefiDecompileResult;
+    expect(result.modules).toHaveLength(1);
+    expect(result.modules[0]?.phase).toBe("PEI");
+
+    const cFile = join(outDir, result.modules[0]!.relative_c_file!);
+    const cContent = await readFile(cFile, "utf8");
+    // PEIM entry point prototype must be retained, NOT DXE EFI_SYSTEM_TABLE
+    expect(cContent).toContain("EFI_PEI_SERVICES");
+    expect(cContent).toContain("EFI_PEI_FILE_HANDLE");
+    expect(cContent).not.toContain("EFI_SYSTEM_TABLE");
+  } finally {
     await provider.close();
   }
 });

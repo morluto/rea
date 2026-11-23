@@ -341,7 +341,7 @@ export const buildUefiEntryPointScaffolding = (
   if (
     normType === "peim" ||
     normType === "combined-peim-driver" ||
-    (normType === undefined && phase === "PEI")
+    phase === "PEI"
   ) {
     return {
       typedefs: [
@@ -368,10 +368,7 @@ export const buildUefiEntryPointScaffolding = (
     };
   }
 
-  if (
-    normType === "security-core" ||
-    (normType === undefined && phase === "SEC")
-  ) {
+  if (normType === "security-core" || phase === "SEC") {
     return {
       typedefs: [],
       prototype: `void EFIAPI ${identifier}EntryPoint(void *PeiCoreEntryPoint);`,
@@ -473,7 +470,10 @@ export const buildUefiEntryPointScaffolding = (
     normType === "application" ||
     normType === "combined-smm-dxe";
 
-  if (phase === "MISC" && !isSupportedDxeEntryType) {
+  if (
+    (phase === "MISC" || !["DXE", "APP", "SMM"].includes(phase)) &&
+    !isSupportedDxeEntryType
+  ) {
     return {
       typedefs: [],
       prototype: `void EFIAPI ${identifier}EntryPoint(void);`,
@@ -2909,6 +2909,7 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
         string,
         ManifestModuleEntry
       >();
+      const ambiguousCrossPlatformKeys = new Set<string>();
       let manifestSha256: string | null = null;
 
       if (manifestEntry !== undefined) {
@@ -2970,10 +2971,13 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                 reason: `declared_omissions:${omittedCount}`,
               });
             }
-            if (
-              parsed?.coverage === "partial" ||
-              parsed?.source_coverage === "partial"
-            ) {
+            const manifestSourceCoverage =
+              typeof parsed?.source_coverage === "string"
+                ? parsed.source_coverage
+                : typeof parsed?.coverage === "string"
+                  ? parsed.coverage
+                  : undefined;
+            if (manifestSourceCoverage === "partial") {
               isCoveragePartial = true;
               if (limitations.length < 50) {
                 limitations.push(
@@ -3175,13 +3179,19 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
                   );
                 }
                 if (!isWindows) {
-                  manifestModulesByFallbackRelPath.set(
-                    crossPlatformNorm,
-                    manifestEntryRecord,
-                  );
+                  if (manifestModulesByFallbackRelPath.has(crossPlatformNorm)) {
+                    ambiguousCrossPlatformKeys.add(crossPlatformNorm);
+                  } else {
+                    manifestModulesByFallbackRelPath.set(
+                      crossPlatformNorm,
+                      manifestEntryRecord,
+                    );
+                  }
                   if (
-                    !manifestModulesByFallbackRelPath.has(crossPlatformFolded)
+                    manifestModulesByFallbackRelPath.has(crossPlatformFolded)
                   ) {
+                    ambiguousCrossPlatformKeys.add(crossPlatformFolded);
+                  } else {
                     manifestModulesByFallbackRelPath.set(
                       crossPlatformFolded,
                       manifestEntryRecord,
@@ -3380,9 +3390,14 @@ export class UefiAnalysisProvider implements UefiAnalysisPort {
               )
                 .map((s) => s.toLowerCase())
                 .filter((s) => s.length > 0);
+        const fallbackManifestEntry = !ambiguousCrossPlatformKeys.has(
+          crossPlatformLookupKey,
+        )
+          ? manifestModulesByFallbackRelPath.get(crossPlatformLookupKey)
+          : undefined;
         const fromManifest =
           manifestModulesByExactRelPath.get(exactLookupKey) ??
-          manifestModulesByFallbackRelPath.get(crossPlatformLookupKey) ??
+          fallbackManifestEntry ??
           (isWindows
             ? (manifestModulesByFoldedRelPath.get(foldedLookupKey) ??
               manifestModulesByFallbackRelPath.get(crossPlatformFoldedKey))
