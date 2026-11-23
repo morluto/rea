@@ -1101,6 +1101,41 @@ function* readRebaseStreamSteps(
   }
 }
 
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Fast path for range checks over `[low, high]`: when every address in the
+ * closed interval belongs unambiguously to one segment and stays within safe
+ * integer file offsets, return its base file offset at `low`. Otherwise return
+ * `null` to fall back to per-slot `legacyRebaseState`.
+ */
+const singleLegacySegmentFileBase = (
+  segments: readonly Segment[],
+  low: bigint,
+  high: bigint,
+): number | null => {
+  let owner: Segment | undefined;
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i]!;
+    const segEnd = segment.address + segment.size;
+    // Any segment overlapping [low, high + REBASE_POINTER_SIZE) could map a
+    // slot in [low, high].
+    if (high < segment.address || low + REBASE_POINTER_SIZE > segEnd) continue;
+    if (owner !== undefined) return null;
+    owner = segment;
+  }
+  if (owner === undefined) return null;
+  if (
+    low < owner.address ||
+    high + REBASE_POINTER_SIZE > owner.address + owner.size
+  )
+    return null;
+  const lowMapped = BigInt(owner.offset) + (low - owner.address);
+  const highMapped = BigInt(owner.offset) + (high - owner.address);
+  if (lowMapped < 0n || highMapped > MAX_SAFE_INTEGER_BIGINT) return null;
+  return Number(lowMapped);
+};
+
 /** Read loader-owned membership without interpreting a stored pointer word. */
 const legacyRebaseState = (
   segments: readonly Segment[],
@@ -1119,7 +1154,7 @@ const legacyRebaseState = (
         reason: `Ambiguous segments map legacy rebase pointer location 0x${address.toString(16)}`,
       };
     const mapped = BigInt(segment.offset) + relative;
-    if (mapped < 0n || mapped > BigInt(Number.MAX_SAFE_INTEGER))
+    if (mapped < 0n || mapped > MAX_SAFE_INTEGER_BIGINT)
       return {
         kind: "unsupported",
         reason: "Legacy rebase file offset exceeds the safe integer range",
@@ -1580,17 +1615,35 @@ const hasUnresolvedLegacyBytes = (
     )
       return true;
   if (binds.index.exhausted) return true;
-  if (rebases.membership !== null)
-    for (let slot = first; slot < end; slot++) {
-      const state = legacyRebaseState(segments, rebases.membership, slot);
-      // Text rebases own four bytes; conflicting kinds may include a pointer.
-      if (
-        typeof state !== "number" ||
-        state === REBASE_CONFLICT ||
-        (state === REBASE_NON_POINTER && slot + 4n > address)
-      )
-        return true;
+  if (rebases.membership !== null && first < end) {
+    const baseOffset = singleLegacySegmentFileBase(segments, first, end - 1n);
+    if (baseOffset !== null) {
+      const count = Number(end - first);
+      for (let delta = 0; delta < count; delta += 1) {
+        const fileOffset = baseOffset + delta;
+        const state =
+          ((rebases.membership[Math.floor(fileOffset / 4)] ?? 0) >>
+            ((fileOffset % 4) * 2)) &
+          3;
+        if (
+          state === REBASE_CONFLICT ||
+          (state === REBASE_NON_POINTER && delta > 3)
+        )
+          return true;
+      }
+    } else {
+      for (let slot = first; slot < end; slot++) {
+        const state = legacyRebaseState(segments, rebases.membership, slot);
+        // Text rebases own four bytes; conflicting kinds may include a pointer.
+        if (
+          typeof state !== "number" ||
+          state === REBASE_CONFLICT ||
+          (state === REBASE_NON_POINTER && slot + 4n > address)
+        )
+          return true;
+      }
     }
+  }
   return false;
 };
 
@@ -1614,14 +1667,29 @@ const hasPartialLegacyPointerWrite = (
       return true;
   }
   if (binds.index.exhausted) return true;
-  if (rebases.membership !== null)
-    for (let at = low; at <= high; at += 1n) {
-      const state = legacyRebaseState(segments, rebases.membership, at);
-      if (typeof state !== "number" || state === REBASE_CONFLICT) return true;
-      if (state === REBASE_NON_POINTER && at + 4n > address) return true;
-      if (state === REBASE_POINTER && at !== address && at + 8n > address)
-        return true;
+  if (rebases.membership !== null) {
+    const baseOffset = singleLegacySegmentFileBase(segments, low, high);
+    if (baseOffset !== null) {
+      for (let delta = 0; delta <= 14; delta += 1) {
+        const fileOffset = baseOffset + delta;
+        const state =
+          ((rebases.membership[Math.floor(fileOffset / 4)] ?? 0) >>
+            ((fileOffset % 4) * 2)) &
+          3;
+        if (state === REBASE_CONFLICT) return true;
+        if (state === REBASE_NON_POINTER && delta > 3) return true;
+        if (state === REBASE_POINTER && delta !== 7) return true;
+      }
+    } else {
+      for (let at = low; at <= high; at += 1n) {
+        const state = legacyRebaseState(segments, rebases.membership, at);
+        if (typeof state !== "number" || state === REBASE_CONFLICT) return true;
+        if (state === REBASE_NON_POINTER && at + 4n > address) return true;
+        if (state === REBASE_POINTER && at !== address && at + 8n > address)
+          return true;
+      }
     }
+  }
   return false;
 };
 

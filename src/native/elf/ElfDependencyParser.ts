@@ -488,6 +488,22 @@ const agreedSection = (
 const sectionInsideFile = (section: SectionFacts, fileBytes: number): boolean =>
   section.size <= fileBytes - section.offset;
 
+const hashSectionInFile = (
+  section: SectionFacts | undefined,
+  fileBytes: number,
+  label: string,
+  issues: ElfDependencyIssue[],
+): section is SectionFacts => {
+  if (section === undefined) return false;
+  if (sectionInsideFile(section, fileBytes)) return true;
+  issues.push({
+    code: "malformed_entry",
+    location: hex(section.offset),
+    message: `${label} section header declares bytes past the end of the file`,
+  });
+  return false;
+};
+
 /**
  * Section headers are optional and can declare bytes the file does not hold.
  * Only the part inside the file is a table or a report location. A table that
@@ -1328,27 +1344,30 @@ const locateSymbolCount = function* (
       });
     return declaredCount;
   }
-  const hashInFile =
-    hash !== undefined && sectionInsideFile(hash, reader.bytes.length);
-  if (hash !== undefined && !hashInFile)
-    issues.push({
-      code: "malformed_entry",
-      location: hex(hash.offset),
-      message: ".hash section header declares bytes past the end of the file",
-    });
   const sectionHash =
-    hash !== undefined && hashInFile && hash.size >= 8
+    hashSectionInFile(hash, reader.bytes.length, ".hash", issues) &&
+    hash.size >= 8
       ? sysvSymbolCountAt(reader, hash.offset, hash.offset + hash.size)
       : null;
   const count = sectionHash ?? dynamicCount();
   if (count !== null) return count;
-  const gnuWords =
-    gnuHash !== undefined && gnuHash.size >= 16
-      ? hashWords(reader, gnuHash.offset, gnuHash.offset + gnuHash.size)
-      : tags.has(DT_GNU_HASH)
-        ? mappedHashWords(reader, mappings, tags.get(DT_GNU_HASH)!)
-        : null;
-  const gnu = gnuWords === null ? null : yield* gnuSymbolCount(gnuWords, bits);
+  const sectionGnu =
+    hashSectionInFile(gnuHash, reader.bytes.length, ".gnu.hash", issues) &&
+    gnuHash.size >= 16
+      ? yield* gnuSymbolCount(
+          hashWords(reader, gnuHash.offset, gnuHash.offset + gnuHash.size),
+          bits,
+        )
+      : null;
+  const gnuAddress = tags.get(DT_GNU_HASH);
+  const gnu =
+    sectionGnu ??
+    (gnuAddress === undefined
+      ? null
+      : yield* gnuSymbolCount(
+          mappedHashWords(reader, mappings, gnuAddress),
+          bits,
+        ));
   if (gnu !== null) return gnu;
   issues.push({
     code: "table_unavailable",

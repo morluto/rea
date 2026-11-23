@@ -281,19 +281,15 @@ export const parseEnvironment = (
         unresolvedSettings.has("REA_GHIDRA_PROJECT_PATH")
         ? []
         : ["REA_GHIDRA_PROGRAM_NAME"]
-      : [
-          "REA_GHIDRA_LANGUAGE_ID",
-          "REA_GHIDRA_COMPILER_SPEC_ID",
-          "REA_GHIDRA_SEED_FILE",
-          "REA_GHIDRA_DISABLED_ANALYZERS",
-          "REA_GHIDRA_NATIVEAOT_JAR",
-        ].filter(
-          (setting) =>
-            // Blank analyzer lists parse to no override, so they cannot conflict.
-            (setting === "REA_GHIDRA_DISABLED_ANALYZERS"
-              ? env[setting]
-              : environment[setting]) !== undefined,
-        );
+      : (
+          [
+            "REA_GHIDRA_LANGUAGE_ID",
+            "REA_GHIDRA_COMPILER_SPEC_ID",
+            "REA_GHIDRA_SEED_FILE",
+            "REA_GHIDRA_DISABLED_ANALYZERS",
+            "REA_GHIDRA_NATIVEAOT_JAR",
+          ] as const
+        ).filter((setting) => env[setting] !== undefined);
   if (incompatible.length > 0)
     return err(
       new ConfigurationError("Invalid existing Ghidra project configuration", {

@@ -1387,27 +1387,6 @@ const CONTROL_CHAR_JSON_BYTES = (unit: number): number =>
     ? 2
     : 6;
 
-const jsonCharByteSize = (
-  input: string,
-  cursor: number,
-): { readonly charBytes: number; readonly step: number } => {
-  const unit = input.charCodeAt(cursor);
-  if (unit >= 0x20 && unit < 0x80)
-    return { charBytes: unit === 0x22 || unit === 0x5c ? 2 : 1, step: 1 };
-  if (unit < 0x20) return { charBytes: CONTROL_CHAR_JSON_BYTES(unit), step: 1 };
-  if (unit < 0x800) return { charBytes: 2, step: 1 };
-  if (unit >= 0xd800 && unit <= 0xdbff) {
-    const next = input.charCodeAt(cursor + 1);
-    return next >= 0xdc00 && next <= 0xdfff
-      ? { charBytes: 4, step: 2 }
-      : { charBytes: 6, step: 1 };
-  }
-  return {
-    charBytes: unit >= 0xdc00 && unit <= 0xdfff ? 6 : 3,
-    step: 1,
-  };
-};
-
 const scanBoundedJsonBody = (
   input: string,
   start: number,
@@ -1417,7 +1396,26 @@ const scanBoundedJsonBody = (
   let cursor = start;
   let bytes = 0;
   while (cursor < end) {
-    const { charBytes, step } = jsonCharByteSize(input, cursor);
+    const unit = input.charCodeAt(cursor);
+    let charBytes: number;
+    let step = 1;
+    if (unit >= 0x20 && unit < 0x80) {
+      charBytes = unit === 0x22 || unit === 0x5c ? 2 : 1;
+    } else if (unit < 0x20) {
+      charBytes = CONTROL_CHAR_JSON_BYTES(unit);
+    } else if (unit < 0x800) {
+      charBytes = 2;
+    } else if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = input.charCodeAt(cursor + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        charBytes = 4;
+        step = 2;
+      } else {
+        charBytes = 6;
+      }
+    } else {
+      charBytes = unit >= 0xdc00 && unit <= 0xdfff ? 6 : 3;
+    }
     if (cursor + step > end || bytes + charBytes > remainingBytes) break;
     bytes += charBytes;
     cursor += step;

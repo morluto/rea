@@ -339,13 +339,13 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "keeps whole-file identity and entropy while selecting unaligned blocks and a partial tail",
+        "keeps %i-byte blocks relative to an unaligned window across short physical reads",
       ),
     ),
     covered(
       test(
         "src/application/binaryDiagnostics/ByteEntropyService.test.ts",
-        "honors cancellation before and during streaming",
+        "honors cancellation %s and closes any admitted descriptor",
       ),
     ),
   ),
@@ -447,7 +447,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/boundary/filesystem/flutterBuildProvider.test.ts",
-        "inspects a full synthetic AOT image end to end",
+        "projects each payload shape through the owned snapshot",
       ),
     ),
     covered(
@@ -1549,7 +1549,7 @@ export const PROVIDER_LIFECYCLE_COVERAGE: Readonly<
     covered(
       test(
         "tests/acceptance/peCertificatesCli.test.ts",
-        "reports PKCS#7 signer identity and RDN indices through CLI and MCP",
+        "reports PKCS#7 signer identity and BER lengths through both adapters",
       ),
     ),
     typedFailures("tests/boundary/filesystem/peCertificates.test.ts"),

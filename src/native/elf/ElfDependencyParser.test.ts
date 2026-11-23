@@ -927,6 +927,108 @@ it("takes the symbol count from GNU hash when .hash is past the file end", () =>
   );
 });
 
+it("falls back to DT_GNU_HASH when SHT_GNU_HASH is truncated", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const report = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      sectionSizes: { ".gnu.hash": 16 },
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual(intact.imports);
+  expect(
+    report.issues.some((issue) => issue.code === "table_unavailable"),
+  ).toBe(false);
+});
+
+it("reports .gnu.hash past EOF and falls back to DT_GNU_HASH", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const withDynamic = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      sectionSizes: { ".gnu.hash": 100_000 },
+    }),
+  );
+  expect(withDynamic.coverage.status).toBe("partial");
+  expect(withDynamic.imports).toEqual(intact.imports);
+  expect(withDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message:
+        ".gnu.hash section header declares bytes past the end of the file",
+    }),
+  );
+
+  const withoutDynamic = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      oversizedSection: ".dynsym",
+      displacedSection: ".gnu.hash",
+      omitGnuHashTag: true,
+    }),
+  );
+  expect(withoutDynamic.coverage.status).toBe("partial");
+  expect(withoutDynamic.imports).toEqual([]);
+  expect(withoutDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "malformed_entry",
+      message:
+        ".gnu.hash section header declares bytes past the end of the file",
+    }),
+  );
+  expect(withoutDynamic.issues).toContainEqual(
+    expect.objectContaining({
+      code: "table_unavailable",
+      message: expect.stringContaining("Dynamic symbol count"),
+    }),
+  );
+});
+
+it("reads symbol count from an in-file SHT_GNU_HASH section when DT_GNU_HASH is absent", () => {
+  const intact = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+    }),
+  );
+  const report = parse(
+    elfDependencyFixture({
+      omitHash: true,
+      gnuHash: true,
+      gnuHashSection: true,
+      omitGnuHashTag: true,
+      oversizedSection: ".dynsym",
+    }),
+  );
+  expect(report.coverage.status).toBe("partial");
+  expect(report.imports).toEqual(intact.imports);
+  expect(
+    report.issues.some((issue) => issue.message.includes(".gnu.hash")),
+  ).toBe(false);
+});
+
 it.each([32, 64] as const)(
   "keeps ELF%i imports inside aligned and unaligned short dynamic symbol sections",
   (bits) => {

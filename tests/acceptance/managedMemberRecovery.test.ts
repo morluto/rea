@@ -40,6 +40,26 @@ const createTransport = () =>
     stderr: "pipe",
   });
 
+const expectDefaultMemberRecovery = (value: unknown) => {
+  const report = managedMemberInspectionSchema.parse(value);
+  expect(report.coverage).toMatchObject({
+    state: "partial",
+    issues: [
+      {
+        code: "resource-limit",
+        scope: "metadata.representation",
+        limit: {
+          parameter: "max_metadata_representation_bytes",
+          effective_value: 64 * 1024 * 1024,
+        },
+      },
+    ],
+  });
+  expect(report.types).toHaveLength(3);
+  expect(report.methods).toEqual([]);
+  return report;
+};
+
 cliTest(
   "CLI and stdio MCP recover type discovery and preserve partial retained pages",
   async ({ cli }) => {
@@ -87,12 +107,7 @@ cliTest(
       );
       expect(fileIdentity(mcpEvidence.subject).sha256).toBe(sha256);
       expect(fileIdentity(cliEvidence.subject).sha256).toBe(sha256);
-      const report = managedMemberInspectionSchema.parse(
-        mcpEvidence.normalized_result,
-      );
-      expect(report.coverage.state).toBe("partial");
-      expect(report.types).toHaveLength(3);
-      expect(report.methods).toEqual([]);
+      const report = expectDefaultMemberRecovery(mcpEvidence.normalized_result);
       const empty = report.types.find((type) => type.method_list.count === 0);
       if (empty === undefined) throw new Error("Missing empty fixture type");
       const selectedCli = await cli.run({

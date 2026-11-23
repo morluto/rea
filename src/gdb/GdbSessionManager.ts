@@ -1639,8 +1639,11 @@ export class GdbSessionManager {
       }
       session.promptTail = prompt.slice(-4);
     }
-    const lines: { readonly value: string; readonly invalidUtf8: boolean }[] =
-      [];
+    const lines: {
+      readonly value: string;
+      readonly invalidUtf8: boolean;
+      readonly utf8Bytes: number;
+    }[] = [];
     let offset = 0;
     let framingFailure: string | undefined;
     while (offset < data.byteLength) {
@@ -1682,31 +1685,52 @@ export class GdbSessionManager {
         framingFailure = `GDB emitted an MI line exceeding the ${String(MAX_MI_LINE_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
         break;
       }
-      this.#appendLineBytes(session, piece);
-      if (newline < 0) break;
-      const record = Buffer.concat(
-        [
-          ...session.bufferChunks,
-          ...(session.bufferTail === undefined
-            ? []
-            : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
-        ],
-        session.bufferBytes,
-      );
+      let record: Buffer;
+      if (
+        newline >= 0 &&
+        session.bufferChunks.length === 0 &&
+        session.bufferTailBytes === 0
+      ) {
+        // Fast path: complete line sits contiguously inside `data`, avoiding a
+        // 64 KiB slab allocation and Buffer.concat copy per line.
+        record = piece;
+      } else {
+        this.#appendLineBytes(session, piece);
+        if (newline < 0) break;
+        if (
+          session.bufferChunks.length === 0 &&
+          session.bufferTail !== undefined
+        ) {
+          record = session.bufferTail.subarray(0, session.bufferTailBytes);
+        } else {
+          record = Buffer.concat(
+            [
+              ...session.bufferChunks,
+              ...(session.bufferTail === undefined
+                ? []
+                : [session.bufferTail.subarray(0, session.bufferTailBytes)]),
+            ],
+            session.bufferBytes,
+          );
+        }
+      }
       const withoutCarriageReturn =
         record.at(-1) === 0x0d ? record.subarray(0, -1) : record;
       const invalidUtf8 = !isUtf8(withoutCarriageReturn);
       const line = withoutCarriageReturn.toString("utf8");
+      const utf8Bytes = invalidUtf8
+        ? Buffer.byteLength(line, "utf8")
+        : withoutCarriageReturn.byteLength;
       session.bufferChunks.length = 0;
       session.bufferTail = undefined;
       session.bufferTailBytes = 0;
       session.bufferBytes = 0;
       if (invalidUtf8) session.invalidUtf8Observed = true;
-      if (line.length > 0) lines.push({ value: line, invalidUtf8 });
+      if (line.length > 0) lines.push({ value: line, invalidUtf8, utf8Bytes });
       offset = newline + 1;
     }
-    for (const { value: line } of lines) {
-      if (Buffer.byteLength(line, "utf8") > MAX_RECENT_MI_LINE_BYTES) {
+    for (const { value: line, utf8Bytes } of lines) {
+      if (utf8Bytes > MAX_RECENT_MI_LINE_BYTES) {
         session.lines.push(truncateUtf8RecordPrefix(line));
         session.recentRecordsTruncated = true;
       } else session.lines.push(line);
@@ -1715,9 +1739,9 @@ export class GdbSessionManager {
       session.lines.splice(0, session.lines.length - 256);
       session.recentRecordsTruncated = true;
     }
-    for (const { value: line, invalidUtf8 } of lines) {
+    for (const { value: line, invalidUtf8, utf8Bytes } of lines) {
       for (const pending of session.pending.values()) {
-        const lineBytes = Buffer.byteLength(line, "utf8") + 1;
+        const lineBytes = utf8Bytes + 1;
         if (
           pending.outputBytes + lineBytes <= pending.outputBudgetBytes &&
           pending.lines.length < MAX_COMMAND_OUTPUT_RECORDS

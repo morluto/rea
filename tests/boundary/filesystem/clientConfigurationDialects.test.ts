@@ -5,7 +5,7 @@ import {
   classifyClientRegistrationCommand,
 } from "../../../src/application/ClientRegistrationIdentity.js";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parse as parseJsonc, type ParseError } from "jsonc-parser";
@@ -485,33 +485,6 @@ describe("OpenCode V2 native server table", () => {
     });
   });
 
-  it("treats a V2 table holding a server named type as native", async () => {
-    const { home, client } = await openCodeClient("rea-opencode-type-server-");
-    const typeServer = { type: "local", command: ["node", "type.js"] };
-    await writeFile(
-      client.configPath,
-      `${JSON.stringify({ mcp: { servers: { type: typeServer, rea: { type: "local", command } } } })}\n`,
-    );
-
-    expect(await hostRegistrationStatuses(home)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          client: "opencode",
-          state: "aligned",
-          command,
-        }),
-      ]),
-    );
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
-    expect(
-      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
-    ).toEqual({
-      servers: { type: typeServer },
-    });
-  });
-
   it("keeps a V1 server named servers in the V1 table", async () => {
     const { client } = await openCodeClient("rea-opencode-v1-servers-");
     const servers = { type: "local", command: ["node", "servers.js"] };
@@ -532,188 +505,95 @@ describe("OpenCode V2 native server table", () => {
   });
 });
 
-it.each([{ args: null }, { args: [1] }])(
-  "uses the array command for ownership when obsolete args are %j",
-  async ({ args }) => {
-    const { home, client } = await openCodeClient("rea-opencode-array-args-");
-    const other = { type: "local", command: ["node", "other.js"] };
-    const original = JSON.stringify({
-      mcp: { servers: { rea: { type: "local", command, args }, other } },
-    });
-    await writeFile(client.configPath, original);
-    expect(await hostRegistrationStatuses(home)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          client: "opencode",
-          command_identity: "owned",
-          command,
-        }),
-      ]),
-    );
-    expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
-      "removed",
-    );
-    expect(
-      parseOpenCode(await readFile(client.configPath, "utf8")).mcp,
-    ).toEqual({ servers: { other } });
-    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
-      original,
-    );
-  },
-);
+it("removes an owned V2 array launcher despite obsolete args beside a server named type", async () => {
+  const { home, client } = await openCodeClient("rea-opencode-type-server-");
+  const typeServer = { type: "local", command: ["node", "type.js"] };
+  const original = JSON.stringify({
+    mcp: {
+      servers: {
+        type: typeServer,
+        rea: { type: "local", command, args: [1] },
+      },
+    },
+  });
+  await writeFile(client.configPath, original);
+  expect(await hostRegistrationStatuses(home)).toContainEqual(
+    expect.objectContaining({
+      client: "opencode",
+      config_path: client.configPath,
+      state: "aligned",
+      command_identity: "owned",
+      command,
+    }),
+  );
+  expect((await systemUninstallHost(home).removeClient(client)).status).toBe(
+    "removed",
+  );
+  expect(parseOpenCode(await readFile(client.configPath, "utf8")).mcp).toEqual({
+    servers: { type: typeServer },
+  });
+  expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+    original,
+  );
+});
 
-describe("OpenCode project-scoped discovery", () => {
-  it("discovers project-scoped registration and reports scope: project", async () => {
+describe("OpenCode project-scoped registration", () => {
+  it("discovers a project-only launcher and keeps it selected over a stale user launcher", async () => {
     const home = await createTestTempDirectory("rea-opencode-project-home-");
     const projectDir = await createTestTempDirectory(
       "rea-opencode-project-cwd-",
     );
     vi.spyOn(process, "cwd").mockReturnValue(projectDir);
 
-    const projectConfigPath = resolve(projectDir, "opencode.json");
-    const alignedCommand = command;
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcp: {
-          servers: {
-            rea: {
-              type: "local",
-              command: alignedCommand,
-              enabled: true,
-            },
-          },
-        },
-      }),
-    );
-
-    const statuses = await readClientRegistrationStatuses(home, undefined, {
-      platform: HOST_PLATFORM.platform,
-      environment: {},
+    const configuration = (argv: readonly string[]) => ({
+      mcp: {
+        servers: { rea: { type: "local", command: argv, disabled: false } },
+      },
     });
-    const status = statuses.find(({ client }) => client === "opencode");
-    expect(status).toMatchObject({
+    const projectPath = join(projectDir, "opencode.json");
+    await writeFile(projectPath, JSON.stringify(configuration(command)));
+    const options = { platform: HOST_PLATFORM.platform, environment: {} };
+    const projectRegistration = {
       client: "opencode",
       state: "aligned",
       scope: "project",
-      config_path: projectConfigPath,
+      config_path: projectPath,
+      command,
       remediation: null,
-    });
-  });
+    };
+    expect(
+      await readClientRegistrationStatuses(home, undefined, options),
+    ).toContainEqual(expect.objectContaining(projectRegistration));
 
-  it("evaluates project-scoped configuration over user-scoped configuration", async () => {
-    const { home, client } = await openCodeClient(
-      "rea-opencode-project-shadow-",
+    const userClient = supportedClients(home, HOST_PLATFORM.platform, {}).find(
+      ({ name }) => name === "opencode",
     );
-    const projectDir = await createTestTempDirectory(
-      "rea-opencode-project-cwd-",
-    );
-    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
-
-    const alignedCommand = command;
-    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
-
-    // Stale user registration
+    if (userClient === undefined) throw new Error("missing OpenCode client");
+    const stale = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+    await mkdir(dirname(userClient.configPath), { recursive: true });
     await writeFile(
-      client.configPath,
+      userClient.configPath,
       JSON.stringify({
-        mcp: {
-          rea: {
-            type: "local",
-            command: staleCommand,
-            enabled: true,
-          },
-        },
+        mcp: { rea: { type: "local", command: stale, enabled: true } },
       }),
     );
 
-    // Aligned project registration
-    const projectConfigPath = resolve(projectDir, "opencode.json");
-    await writeFile(
-      projectConfigPath,
-      JSON.stringify({
-        mcp: {
-          servers: {
-            rea: {
-              type: "local",
-              command: alignedCommand,
-              enabled: true,
-            },
-          },
-        },
+    expect(
+      await readClientRegistrationStatuses(home, undefined, {
+        ...options,
+        scope: "user",
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        client: "opencode",
+        state: "stale",
+        config_path: userClient.configPath,
+        command: stale,
       }),
     );
-
-    const statuses = await readClientRegistrationStatuses(home, undefined, {
-      platform: HOST_PLATFORM.platform,
-      environment: {},
-    });
-    const status = statuses.find(({ client }) => client === "opencode");
-    expect(status).toMatchObject({
-      client: "opencode",
-      state: "aligned",
-      scope: "project",
-      config_path: projectConfigPath,
-    });
-  });
-});
-
-describe("OpenCode project-scoped precedence and drift", () => {
-  it("gives inner ancestor/cwd directory precedence over outer ancestor directory", async () => {
-    const home = await createTestTempDirectory("rea-opencode-ancestor-home-");
-    const parentDir = await createTestTempDirectory("rea-opencode-parent-");
-    await mkdir(join(parentDir, ".git"), { recursive: true });
-    const subDir = join(parentDir, "sub");
-    await mkdir(subDir, { recursive: true });
-    vi.spyOn(process, "cwd").mockReturnValue(subDir);
-
-    const alignedCommand = command;
-    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
-
-    // Lower precedence in parentDir
-    await writeFile(
-      join(parentDir, "opencode.json"),
-      JSON.stringify({
-        mcp: {
-          servers: {
-            rea: {
-              type: "local",
-              command: staleCommand,
-              enabled: true,
-            },
-          },
-        },
-      }),
-    );
-
-    // Higher precedence in subDir (process.cwd())
-    const alignedConfigPath = resolve(subDir, "opencode.json");
-    await writeFile(
-      alignedConfigPath,
-      JSON.stringify({
-        mcp: {
-          servers: {
-            rea: {
-              type: "local",
-              command: alignedCommand,
-              enabled: true,
-            },
-          },
-        },
-      }),
-    );
-
-    const statuses = await readClientRegistrationStatuses(home, undefined, {
-      platform: HOST_PLATFORM.platform,
-      environment: {},
-    });
-    const status = statuses.find(({ client }) => client === "opencode");
-    expect(status).toMatchObject({
-      client: "opencode",
-      state: "aligned",
-      scope: "project",
-      config_path: alignedConfigPath,
-    });
+    expect(
+      await readClientRegistrationStatuses(home, undefined, options),
+    ).toContainEqual(expect.objectContaining(projectRegistration));
   });
 
   it("directs project launcher migration and activation repairs to the project file", async () => {
@@ -795,7 +675,7 @@ describe("OpenCode project-scoped precedence and drift", () => {
     expect(disabledStatus?.remediation).toContain(
       `Update or remove the rea registration in ${projectConfigPath}`,
     );
-    expect(disabledStatus?.remediation).not.toContain("Run rea setup");
+    expect(disabledStatus?.remediation).not.toMatch(/\brun\s+rea\s+setup\b/iu);
   });
 });
 

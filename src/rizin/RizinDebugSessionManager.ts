@@ -1347,6 +1347,12 @@ export class RizinDebugSessionManager {
         offset = nextOffset;
         continue;
       }
+      if (boundary >= 0 && session.frameChunks.length === 0) {
+        const captured = decodeRizinFrameBytes(session, piece, false);
+        this.#deliverFrame(session, captured.frame, captured.bytes);
+        offset = nextOffset;
+        continue;
+      }
       if (piece.length > 0) {
         session.frameChunks.push(Buffer.from(piece));
         session.bufferedFrameBytes += piece.length;
@@ -1866,15 +1872,26 @@ const hasUnclaimedRizinFrames = (session: RizinDebugSession): boolean =>
   session.bufferedFrameBytes > 0 ||
   session.discardingOversizedFrame;
 
-/** Parse the receiver's bounded bytes once for normal, startup and interrupted reads. */
-const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
-  const bytes = Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+const decodeRizinFrameBytes = (
+  session: RizinDebugSession,
+  bytes: Buffer,
+  truncated: boolean,
+) => {
   const invalidUtf8 = !isUtf8(bytes);
   session.invalidUtf8Observed ||= invalidUtf8;
   return {
     bytes: bytes.length,
     frame: { text: bytes.toString("utf8"), truncated, invalidUtf8 },
   };
+};
+
+/** Parse the receiver's bounded bytes once for normal, startup and interrupted reads. */
+const bufferedRizinFrame = (session: RizinDebugSession, truncated: boolean) => {
+  const bytes =
+    session.frameChunks.length === 1
+      ? session.frameChunks[0]!
+      : Buffer.concat(session.frameChunks, session.bufferedFrameBytes);
+  return decodeRizinFrameBytes(session, bytes, truncated);
 };
 
 const rizinCaptureStoppedSentence = (
@@ -1958,9 +1975,10 @@ const waitForCommandFrames = async (
   // following it, and apply the same decoded UTF-8 budget as normal frames.
   const interrupted = () => {
     let markerSeen = false;
-    for (;;) {
-      const queued = session.frames.shift();
-      if (queued === undefined) break;
+    let consumed = 0;
+    while (consumed < session.frames.length) {
+      const queued = session.frames[consumed]!;
+      consumed += 1;
       session.queuedFrameBytes -= queued.queueChargeBytes;
       frameCount += 1;
       if (frameCount > MAX_COMMAND_FRAMES) {
@@ -1970,6 +1988,7 @@ const waitForCommandFrames = async (
       markerSeen = append(queued.frame);
       if (markerSeen || outputTruncated) break;
     }
+    if (consumed > 0) session.frames.splice(0, consumed);
     if (!markerSeen && !outputTruncated && session.bufferedFrameBytes > 0)
       append(
         bufferedRizinFrame(session, session.discardingOversizedFrame).frame,

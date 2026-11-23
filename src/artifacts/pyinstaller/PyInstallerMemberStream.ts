@@ -51,11 +51,22 @@ export const readPyInstallerMemberPrefix = async (
   return prefix.subarray(0, copied);
 };
 
+const declaredSizeMismatch = (): ArtifactReaderFailure =>
+  new ArtifactReaderFailure(
+    "integrity",
+    "PyInstaller member size disagrees with its declaration or previous observation",
+    { integrityCheck: "declared-size" },
+  );
+
 /** Backpressure bounds plaintext independently of the untrusted declared size. */
 export const pyInstallerMemberStream = (
   source: Readable,
   options: MemberStreamOptions,
 ): { readonly output: Readable; readonly completion: Promise<void> } => {
+  const plaintextBound = Math.min(
+    options.maxBytes,
+    options.expectedBytes ?? options.maxBytes,
+  );
   let bytes = 0;
   let headerSent = false;
   let completing = false;
@@ -70,11 +81,13 @@ export const pyInstallerMemberStream = (
       try {
         abortIfNeeded(options.signal);
         bytes += chunk.length;
-        if (bytes > options.maxBytes)
-          throw new ArtifactReaderFailure(
-            "limit",
-            "PyInstaller member exceeds its plaintext budget",
-          );
+        if (bytes > plaintextBound)
+          throw options.expectedBytes === plaintextBound
+            ? declaredSizeMismatch()
+            : new ArtifactReaderFailure(
+                "limit",
+                "PyInstaller member exceeds its plaintext budget",
+              );
         options.charge?.(chunk.length);
         prependHeader();
         callback(null, chunk);
@@ -99,11 +112,7 @@ export const pyInstallerMemberStream = (
           options.expectedBytes !== undefined &&
           bytes !== options.expectedBytes
         )
-          throw new ArtifactReaderFailure(
-            "integrity",
-            "PyInstaller member size disagrees with its declaration or previous observation",
-            { integrityCheck: "declared-size" },
-          );
+          throw declaredSizeMismatch();
         await options.complete?.(bytes);
         abortIfNeeded(options.signal);
         prependHeader();

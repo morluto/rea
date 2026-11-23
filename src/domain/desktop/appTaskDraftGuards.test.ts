@@ -175,8 +175,9 @@ describe("draftTaskFiles guards of a spreadsheet's cells", () => {
 
 describe("draftTaskFiles guards beyond a sibling's same field", () => {
   it("guards a field a user sets on the siblings, not a default they all share", () => {
+    const requirements = "Requirements[@work=old";
     const plan = (designType: string) =>
-      `<project><tasks><task name="Requirements" work="28800" type="normal"/><task name="Design" work="86400" type="${designType}"/><task name="Launch" work="14400" type="normal"/></tasks></project>`;
+      `<project><tasks><task name="${requirements}" work="28800" type="normal"/><task name="Design" work="86400" type="${designType}"/><task name="Launch" work="14400" type="normal"/></tasks></project>`;
     const task = (name: string) =>
       `/root/children/[name=tasks]/children/[name=task][@name=${name}]/attributes`;
 
@@ -187,7 +188,7 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
       {
         kind: "value_equals",
         file: FILE,
-        pointer: `${task("Requirements")}/work`,
+        pointer: `${task(requirements)}/work`,
         value: "28800",
       },
       {
