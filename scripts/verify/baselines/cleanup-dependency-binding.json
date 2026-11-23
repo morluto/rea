@@ -5,7 +5,6 @@
   "src/application/binary/CompositeProvider.ts": 1,
   "src/application/desktop/DesktopApplicationExport.ts": 2,
   "src/application/frida/FridaInstrumentationService.ts": 2,
-  "src/browser/PlaywrightBrowserScenarioProvider.ts": 1,
   "src/browser/WebSourceMapFetcher.ts": 2,
   "src/desktop/ScreenJudgeProcess.ts": 1,
   "src/domain/explicitSensitiveFailure.ts": 1,

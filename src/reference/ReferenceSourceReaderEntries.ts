@@ -188,9 +188,12 @@ export const traverseDirectory = async (
         : ((await state.beforeDirectory?.(
             pathFromRoot(state.root, current.path),
           )) ?? ok(undefined));
-      if (result.ok && isAborted(state.signal))
-        result = err(cancelled(state.signal));
       while (result.ok) {
+        // The admission callback can cancel enumeration while it is awaited.
+        if (isAborted(state.signal)) {
+          result = err(cancelled(state.signal));
+          break;
+        }
         while (!listingComplete && listed.length < OBSERVATION_WINDOW) {
           let child: Dirent | null;
           try {
