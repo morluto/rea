@@ -74,14 +74,14 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
     let candidatePhase: CandidatePhase | undefined;
     let candidate: StableArtifactStream | undefined;
     let crc32 = 0;
-    let parsedImage: ElfDebugLink | undefined;
+    let completedImage: ElfDebugLink | undefined;
     let observedImage:
       | { readonly sha256: string; readonly bytes: number }
       | undefined;
     try {
       return await this.#resources.run(async () => {
         field = "path";
-        const image = await withStableArtifactHandle(
+        const image = await withStableArtifactHandle<ElfDebugLink>(
           input.path,
           input.max_file_bytes,
           {
@@ -91,9 +91,12 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
             onIdentity: (identity) => {
               observedImage = identity;
             },
+            onVerifiedResult: (value) => {
+              completedImage = value;
+            },
           },
-          async (handle) => {
-            parsedImage = await parseElfDebugLinkFromHandle(
+          (handle) =>
+            parseElfDebugLinkFromHandle(
               {
                 size: handle.size,
                 prefix: handle.prefix,
@@ -106,9 +109,7 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
               },
               input,
               options?.signal,
-            );
-            return parsedImage;
-          },
+            ),
         );
         if (input.candidate_path === undefined) return ok(image);
         field = "candidate_path";
@@ -154,16 +155,11 @@ export class ElfDebugLinkProvider implements ElfDebugLinkPort {
           input,
           candidate,
         );
-      else if (
-        parsedImage !== undefined &&
-        artifactFileCompletion(cause)?.value === parsedImage
-      ) {
-        // Only the file owner can establish that the decoded image passed
-        // the final stability check before release was interrupted.
+      else if (completedImage !== undefined) {
         retained =
           input.candidate_path === undefined
-            ? parsedImage
-            : incompleteCandidateObservation(parsedImage);
+            ? completedImage
+            : incompleteCandidateObservation(completedImage);
       }
       return err(
         elfDebugLinkFailure(cause, input, field, {
