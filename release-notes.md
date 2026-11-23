@@ -61,6 +61,7 @@
 * **browser:** name the CPU ceiling when mitmproxy dies with SIGXCPU ([39ade56](https://github.com/morluto/rea/commit/39ade5694b680dae47228ff26fcdfaafb74555ff))
 * **browser:** name the inherited address-space limit on a decoder memory refusal ([92f3f28](https://github.com/morluto/rea/commit/92f3f28d2952508499668452adcdf285e43bf857))
 * **browser:** preserve malformed request-body coverage ([#13219](https://github.com/morluto/rea/issues/13219)) ([d41af19](https://github.com/morluto/rea/commit/d41af199f0958a81fe0c3ba113decdf804110753))
+* **browser:** preserve peer observations after a rejected page attachment ([#13841](https://github.com/morluto/rea/issues/13841)) ([6ecb70c](https://github.com/morluto/rea/commit/6ecb70c79c4e2d065cf0c9c2c72b57dd24596c21))
 * **browser:** preserve terminal verifier startup outcomes ([#13228](https://github.com/morluto/rea/issues/13228)) ([39ccb1d](https://github.com/morluto/rea/commit/39ccb1d3b8347cf5b34d33fa86c52d5b9d69c1ea))
 * **browser:** refuse partial HTTP source-map responses ([#13236](https://github.com/morluto/rea/issues/13236)) ([a7b195d](https://github.com/morluto/rea/commit/a7b195d0e1bd94908271d9216dd9bd257d8d0666))
 * **browser:** report only grammatical CORP and X-Content-Type-Options values ([1aa394d](https://github.com/morluto/rea/commit/1aa394d62d6f60809e9fbc1ca6cbfdb3341bc95f))
