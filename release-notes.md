@@ -873,6 +873,7 @@
 * **macho:** consolidate fixed header and extent proofs ([#13919](https://github.com/morluto/rea/issues/13919)) ([2f79fa8](https://github.com/morluto/rea/commit/2f79fa8ef0565b7d2c18dff42ae075890c019c83))
 * **macho:** consolidate lipo field and native slice proofs ([#13937](https://github.com/morluto/rea/issues/13937)) ([806c547](https://github.com/morluto/rea/commit/806c547ed812a2e8380c88f47f3f22c1ddc09352))
 * **macho:** consolidate native path framing proofs ([#13926](https://github.com/morluto/rea/issues/13926)) ([ac10dc0](https://github.com/morluto/rea/commit/ac10dc0bc76072d1dbcb7d204ea92438576088e9))
+* **macho:** make slice cancellation and cleanup ordering deterministic ([#13944](https://github.com/morluto/rea/issues/13944)) ([62f3ca2](https://github.com/morluto/rea/commit/62f3ca29d6a0557502e5203371bb4e4ce1f71b14))
 * **managed:** bound projection budget fixtures ([337fd43](https://github.com/morluto/rea/commit/337fd43a0f91aa63c9697fd5dc912f7807454ba3))
 * **managed:** consolidate ambiguous heap and Module identity checks ([#13377](https://github.com/morluto/rea/issues/13377)) ([5fc6b33](https://github.com/morluto/rea/commit/5fc6b3351e897860dc213fce3a7bfde63848b34a))
 * **managed:** consolidate graph projection checks ([#12979](https://github.com/morluto/rea/issues/12979)) ([7cc9fa1](https://github.com/morluto/rea/commit/7cc9fa1166b04d97c38dac63a83a41b0045aa29d))
