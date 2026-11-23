@@ -380,6 +380,20 @@ it.each([
     invalidatesCompile: false,
   },
   {
+    label: "imported TypeScript script",
+    path: "scripts/helper.mts",
+    content: "export const scriptHelper = 2;\n",
+    diagnostic: "TS2322",
+    invalidatesCompile: false,
+  },
+  {
+    label: "imported JavaScript test helper",
+    path: "tests/helper.mjs",
+    content: "export const testHelper = 2;\n",
+    diagnostic: "TS2322",
+    invalidatesCompile: false,
+  },
+  {
     label: "GitHub action source",
     path: ".github/actions/helper.ts",
     content: "export const githubValue = 2;\n",
@@ -466,6 +480,18 @@ it.each([
     await writeFile(
       join(root, "scripts/api.d.mts"),
       'import type { Scope } from "#compiler-scope";\nexport type ApiScope = Scope;\n',
+    );
+    await writeFile(
+      join(root, "scripts/helper.mts"),
+      "export const scriptHelper = 1;\n",
+    );
+    await writeFile(
+      join(root, "tests/helper.mjs"),
+      "export const testHelper = 1;\n",
+    );
+    await writeFile(
+      join(root, "tests/use-helpers.ts"),
+      'import { scriptHelper } from "../scripts/helper.mjs";\nimport { testHelper } from "./helper.mjs";\nexport const checkedScript: 1 = scriptHelper;\nexport const checkedTest: 1 = testHelper;\n',
     );
     await writeFile(
       join(root, "tests/use-script.ts"),
@@ -560,13 +586,21 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
   await writeFile(join(root, ".npmrc"), "engine-strict=true\n");
   await writeFile(join(root, ".gitignore"), ".cache/\n");
   await writeFile(join(root, ".jscpd.json"), "{}\n");
-  await writeFile(join(root, "docs/.vitepress/config.ts"), "export {};\n");
+  const vitePressEntry = 'export { value } from "./documentation.js";\n';
+  const ownedHelpers = ["docs/.vitepress/documentation.ts", "tests/helper.mjs"];
+  const initialHelper = "export const value = 1;\n";
+  await writeFile(join(root, "docs/.vitepress/config.ts"), vitePressEntry);
+  for (const helper of ownedHelpers)
+    await writeFile(join(root, helper), initialHelper);
   await writeFile(
     join(root, "vitest.config.ts"),
     'import { CiTestSequencer } from "./tests/ciTestSequencer.js";\nexport const sequencer = CiTestSequencer;\n',
   );
   await writeFile(join(root, "src/input.ts"), "export {};\n");
-  await writeFile(join(root, "tests/input.ts"), "export {};\n");
+  await writeFile(
+    join(root, "tests/input.ts"),
+    'export { value } from "./helper.mjs";\n',
+  );
 
   const initial = new Map<string, string>();
   for (const task of ["jscpd", "knip", "metadata:check", "scan:todos"])
@@ -612,7 +646,19 @@ it("invalidates checker task hashes for Node, ignore, and VitePress config chang
     taskHash(root, "knip", cache),
     "knip must hash its configured VitePress entry",
   ).not.toBe(initial.get("knip"));
-  await writeFile(join(root, "docs/.vitepress/config.ts"), "export {};\n");
+  await writeFile(join(root, "docs/.vitepress/config.ts"), vitePressEntry);
+
+  for (const helper of ownedHelpers) {
+    await writeFile(join(root, helper), "export const value = 2;\n");
+    expect(taskHash(root, "knip", cache), helper).not.toBe(initial.get("knip"));
+    await writeFile(join(root, helper), initialHelper);
+  }
+  await mkdir(join(root, "docs/.vitepress/dist"), { recursive: true });
+  await writeFile(
+    join(root, "docs/.vitepress/dist/bundle.js"),
+    "export const value = 1;\n",
+  );
+  expect(taskHash(root, "knip", cache)).toBe(initial.get("knip"));
 
   await writeFile(join(root, "vitest.config.ts"), "export {};\n");
   expect(

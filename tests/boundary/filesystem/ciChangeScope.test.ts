@@ -1,4 +1,5 @@
 import {
+  access,
   chmod,
   cp,
   mkdir,
@@ -711,14 +712,20 @@ it.each([
   },
 );
 
-const reverseToolsVitestConfig = await readFile(
-  new URL("../../../vitest.reverse-tools.config.ts", import.meta.url),
-  "utf8",
-);
-const reverseToolsVitestInputs = [
-  ...reverseToolsVitestConfig.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
-].flatMap((match) =>
-  match[1] === undefined ? [] : [match[1].replace(/^\.\//u, "")],
+const reverseToolsVitestInputs = (
+  await Promise.all(
+    [
+      "vitest.reverse-tools.config.ts",
+      "vitest.reverse-tools-semantics.config.ts",
+    ].map((name) =>
+      readFile(new URL(`../../../${name}`, import.meta.url), "utf8"),
+    ),
+  )
+).flatMap((source) =>
+  Array.from(
+    source.matchAll(/"((?:\.\/)?(?:src|tests)\/[^"]+)"/gu),
+    ([, path]) => path!.replace(/^\.\//u, ""),
+  ),
 );
 const reverseToolsMutationConfig = JSON.parse(
   await readFile(
@@ -736,8 +743,9 @@ const reverseToolsInputs = [
 ];
 
 it.each(reverseToolsInputs)(
-  "selects the reverse-tool quality gate for configured input %s",
+  "keeps configured reverse-tool input %s on disk and in the quality gate",
   async (path) => {
+    await access(new URL(`../../../${path}`, import.meta.url));
     expect(await classifyPaths([path])).toMatchObject({
       code: true,
       reverse_tools: true,
