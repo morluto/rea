@@ -42,6 +42,7 @@ export const devicetreeFixture = (
     ],
   },
   version = 17,
+  lastCompatibleVersion = 16,
 ): Buffer => {
   const names = new Map<string, number>(),
     strings: Buffer[] = [],
@@ -79,7 +80,7 @@ export const devicetreeFixture = (
     72 + body.length,
     40,
     version,
-    16,
+    lastCompatibleVersion,
     0,
     namesBlock.length,
     body.length,

@@ -450,7 +450,7 @@ for (const [name, build, flags, code] of [
   ],
   [
     "unsupported",
-    () => devicetreeFixture(undefined, 18),
+    () => devicetreeFixture(undefined, 18, 18),
     [],
     "unsupported_target",
   ],

@@ -403,8 +403,7 @@ it("reads a later version only when it is backwards compatible with v17", () => 
     },
     summary: { model: "Test board" },
   });
-  bytes.writeUInt32BE(18, 24);
-  expect(() => parse(bytes)).toThrow(
+  expect(() => parse(devicetreeFixture(undefined, 18, 18))).toThrow(
     "FDT version 18 with last_comp_version 18 is unsupported",
   );
 });
