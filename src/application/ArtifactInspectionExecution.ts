@@ -32,7 +32,7 @@ export interface ArtifactInspectionSpec<TInput, TParameters, TReport> {
   readonly outputSchema: z.ZodType<TReport>;
   readonly provider: ArtifactInspectionPort<TParameters, TReport>;
   readonly invalidOutputMessage: string;
-  readonly toParameters?: (input: TInput) => TParameters;
+  readonly toParameters: (input: TInput) => TParameters;
   readonly validateReport: (
     report: TReport,
     parameters: TParameters,
@@ -75,10 +75,7 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
     const ready = requireAnalysisViewRetention(spec.operation, retention);
     if (!ready.ok) return ready;
   }
-  const parameters =
-    spec.toParameters !== undefined
-      ? spec.toParameters(input.value)
-      : (input.value as unknown as TParameters);
+  const parameters = spec.toParameters(input.value);
   const inspected = await spec.provider.inspect(parameters, options);
   if (!inspected.ok) return inspected;
   const checked = spec.outputSchema.safeParse(inspected.value);

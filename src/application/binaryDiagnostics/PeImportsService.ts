@@ -34,6 +34,7 @@ export class PeImportsService {
         provider: this.provider,
         invalidOutputMessage:
           "PE import provider returned malformed output or changed artifact identity.",
+        toParameters: (input) => input,
         validateReport: (report, input) =>
           report.artifact.path === input.path && validReport(report, input),
         buildEvidence: (value, identity, parameters) => {

@@ -34,6 +34,7 @@ export class ElfNotesService {
         provider: this.provider,
         invalidOutputMessage:
           "ELF note provider returned malformed output or changed artifact identity.",
+        toParameters: (input) => input,
         validateReport: (report, input) =>
           report.artifact.path === input.path &&
           validReport(report, input.max_entries, input.max_file_bytes),

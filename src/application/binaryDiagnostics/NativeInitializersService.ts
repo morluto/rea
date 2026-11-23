@@ -38,6 +38,7 @@ export class NativeInitializersService {
         provider: this.provider,
         invalidOutputMessage:
           "Native initializer provider returned malformed output or changed artifact identity.",
+        toParameters: (input) => input,
         validateReport: (report, input) =>
           report.artifact.path === input.path && validReport(report, input),
         buildEvidence: (value, identity, parameters) =>
