@@ -205,3 +205,57 @@ it.each([{ source: "BEAM successful close" }, null])(
     }
   },
 );
+
+it("refuses a short positional read of the selected BEAM lambda table", async () => {
+  const root = await createTestTempDirectory("rea-beam-table-eof-");
+  const path = join(root, "selected.beam");
+  const bytes = erlangBeamFixture();
+  await fileSystem.writeFile(path, bytes);
+  const payloadBytes = 28;
+  const payloadOffset = bytes.length - payloadBytes;
+  expect(bytes.toString("latin1", payloadOffset - 8, payloadOffset - 4)).toBe(
+    "FunT",
+  );
+  const service = new BeamService(new BeamProvider());
+  const handles: FileHandle[] = [];
+  let shortReads = 0;
+  injected.opened = (openedPath, handle) => {
+    if (String(openedPath) !== path) return;
+    handles.push(handle);
+    const read = handle.read.bind(handle) as (
+      buffer: Buffer,
+      offset: number,
+      length: number,
+      position: number,
+    ) => Promise<{ bytesRead: number; buffer: Buffer }>;
+    const instrumented = handle as unknown as { read: typeof read };
+    instrumented.read = (buffer, offset, length, position) => {
+      if (position !== payloadOffset || length !== payloadBytes)
+        return read(buffer, offset, length, position);
+      shortReads += 1;
+      return Promise.resolve({ bytesRead: 0, buffer });
+    };
+  };
+  try {
+    const result = await service.inspect({ path });
+    expect(shortReads).toBe(1);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisArtifactChangedError",
+        integrityCheck: "read-coverage",
+        cleanupIncomplete: false,
+        partialObservation: {
+          kind: "file-snapshot-hash",
+          path,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          bytes: bytes.length,
+        },
+      },
+    });
+    expect(handles).toHaveLength(1);
+    expect(handles[0]?.fd).toBe(-1);
+  } finally {
+    await service.close();
+  }
+});
