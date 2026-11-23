@@ -91,6 +91,7 @@
 * **ci:** read portable build plan from a file instead of a pipe ([#13456](https://github.com/morluto/rea/issues/13456)) ([60dfeec](https://github.com/morluto/rea/commit/60dfeec745235e7b8c6f524b54960dbb31729dd9))
 * **ci:** retry release history reads after transport disconnects ([dcb36f6](https://github.com/morluto/rea/commit/dcb36f66c7ae28b9fd7ea529a914eeea3d37cbaa))
 * **ci:** select coverage guards for modified test registrations ([#12860](https://github.com/morluto/rea/issues/12860)) ([75fe508](https://github.com/morluto/rea/commit/75fe508eb45982447521be4d5849ccadf3ab8401))
+* **ci:** track configuration inputs across cached checks ([#14015](https://github.com/morluto/rea/issues/14015)) ([4fdacbf](https://github.com/morluto/rea/commit/4fdacbf982c1bb409dda50cb80ba3eec74dd259e))
 * **ci:** verify packaged Agent Environment bridges ([#12874](https://github.com/morluto/rea/issues/12874)) ([41fc470](https://github.com/morluto/rea/commit/41fc470072d441eefc3536a3de4a3ebb7902b5e4))
 * **cli:** complete inline option values ([#13366](https://github.com/morluto/rea/issues/13366)) ([0451a86](https://github.com/morluto/rea/commit/0451a8688d55c389c67048fa7764af0c0d5a8ab1))
 * **cli:** preserve doctor routing with empty output values ([#13262](https://github.com/morluto/rea/issues/13262)) ([a06e04b](https://github.com/morluto/rea/commit/a06e04b4dfcd994a426cc6b6ab77082260b95a3f))
