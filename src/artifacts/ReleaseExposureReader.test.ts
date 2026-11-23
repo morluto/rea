@@ -4972,6 +4972,33 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
   });
 });
 
+it.each([
+  ["#!/usr/bin/env -S -iu NODE_OPTIONS node", 1],
+  ["#!/usr/bin/env -S -iuNODE_OPTIONS node", 1],
+  ["#!/usr/bin/env -S -iC /srv/app node", 1],
+  ["#!/usr/bin/env -S -iC/srv/app node", 1],
+  ["#!/usr/bin/env -S -u -v node", 1],
+  ["#!/usr/bin/env -S MODE=production -i node", 0],
+  ["#!/usr/bin/env -S MODE=production -u NODE_OPTIONS node", 0],
+  ["#!/usr/bin/env -S MODE=production -- node", 0],
+  ["#!/usr/bin/env -S -iu node deno", 0],
+] as const)(
+  "classifies env option ownership in %j",
+  async (shebang, embedded) => {
+    const root = await createTestTempDirectory("rea-release-env-operands-");
+    const map = embeddedSourceMap().toString("base64");
+    await writeFile(
+      join(root, "runner"),
+      `${shebang}\nrun();\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe(
+      embedded === 1 ? "exposed" : "not_observed",
+    );
+  },
+);
+
 describe("ReleaseExposureReader env -S programs named by a variable", () => {
   const script = (shebang: string): string =>
     `${shebang}\nrun();\n//# sourceMappingURL=data:application/json;base64,${embeddedSourceMap().toString("base64")}\n`;

@@ -269,3 +269,45 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "audits Node shebang maps using env option operand ownership",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-release-env-operands-cli-");
+    const path = join(root, "runner");
+    const map = Buffer.from(
+      JSON.stringify({
+        version: 3,
+        sources: ["source.ts"],
+        sourcesContent: ["export const value = 1;"],
+        mappings: "",
+      }),
+    ).toString("base64");
+    for (const [arguments_, status, exitCode] of [
+      ["-iu NODE_OPTIONS node", "exposed", 3],
+      ["-i -u NODE_OPTIONS node", "exposed", 3],
+      ["MODE=production -i node", "not_observed", 0],
+    ] as const) {
+      const bytes = Buffer.from(
+        `#!/usr/bin/env -S ${arguments_}\nrun();\n//# sourceMappingURL=data:application/json;base64,${map}\n`,
+      );
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: [
+          "audit-release-exposure",
+          root,
+          "--fail_on",
+          "high",
+          "--json",
+        ],
+      });
+      expect(result.exitCode, result.stderr).toBe(exitCode);
+      const report = outputSchema.parse(result.json).normalized_result;
+      expect(
+        report.checks.find(({ id }) => id === "javascript.source_map_sources")
+          ?.status,
+      ).toBe(status);
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+    }
+  },
+);
