@@ -54,7 +54,6 @@ import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import type { KunaInstallation } from "./KunaInstallation.js";
 import type { KunaDeadline } from "./KunaConfiguration.js";
 import {
-  kunaExportFileNames,
   exportKunaProject,
   KUNA_EXPORT_OPERATION,
   kunaExportFailureDialect,
@@ -64,10 +63,6 @@ import {
 } from "./KunaProjectExport.js";
 import type { ProviderProcessSupervisor } from "../process/ProviderProcess.js";
 import type { KunaProcessLauncher } from "./KunaCommand.js";
-import type {
-  KunaInventoryFunction,
-  KunaProjectFunction,
-} from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
 import { releaseProducerIdentity } from "../filesystem/ProducerIdentity.js";
 import { errorMessage } from "../kernel/errorMessage.js";
@@ -78,7 +73,6 @@ import {
   manifestBytes,
   parseManifest,
   type KunaProject,
-  type KunaProjectKeyInputs,
   type KunaProjectManifest,
 } from "./KunaCacheManifest.js";
 
