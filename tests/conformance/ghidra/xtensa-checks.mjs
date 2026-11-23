@@ -222,46 +222,46 @@ const decompiledFunction = (code, name) => {
 };
 
 /**
- * Whether `statement` writes `variable`: plain or compound assignment, or an
- * increment or decrement.
+ * A local declaration, which Ghidra prints before the body's statements: a
+ * type and a name, with no initializer, call or operator.
  */
-const writes = (statement, variable) =>
-  new RegExp(
-    `(?<![\\w.>])${variable}\\s*(?:(?:[-+*/%&|^]|<<|>>)?=(?!=)|\\+\\+|--)|(?:\\+\\+|--)\\s*${variable}\\b`,
-    "u",
-  ).test(statement);
+const isDeclaration = (statement) =>
+  /^(?!(?:return|goto)\b)[A-Za-z_]\w*(?:\s+[A-Za-z_]\w*)*\s+\**[A-Za-z_]\w*(?:\[\d*\])?$/u.test(
+    statement,
+  );
+
+/** The statements of a function body other than its declarations. */
+const bodyStatements = (statements) =>
+  statements.filter((statement) => !isDeclaration(statement));
 
 /**
- * The single expression a straight-line function returns, in terms of its
- * parameters' incoming values: no statement may write a parameter.
+ * The expression a straight-line function returns, in terms of its
+ * parameters' incoming values: the body holds only declarations and that one
+ * return, so no statement can change a parameter or the result first.
  */
 const returnedExpression = (code, name) => {
   const { parameters, statements } = decompiledFunction(code, name);
-  const returns = statements
-    .map((statement) => RETURN.exec(statement))
-    .filter((match) => match !== null);
-  assert.equal(returns.length, 1, `${name} must return once: ${code}`);
-  for (const parameter of parameters)
-    assert.ok(
-      !statements.some((statement) => writes(statement, parameter)),
-      `${name} must not write its parameter ${parameter}: ${code}`,
-    );
-  return { parameters, expression: returns[0][1] };
+  const body = bodyStatements(statements);
+  const returned = body.length === 1 ? RETURN.exec(body[0]) : null;
+  assert.ok(
+    returned !== null,
+    `${name} must hold only its return statement: ${code}`,
+  );
+  return { parameters, expression: returned[1] };
 };
 
-/** The statement returns `call`, or assigns it to a temporary returned later. */
+/**
+ * The statement returns `call`, or assigns it to a temporary that the next
+ * statement returns, so nothing can change the result in between.
+ */
 const returnsResult = (statements, index, call) => {
   const direct = RETURN.exec(statements[index]);
   if (direct !== null) return operand(direct[1]) === call;
   const assignment = ASSIGNMENT.exec(statements[index]);
   if (assignment === null || operand(assignment[2]) !== call) return false;
-  const [, temporary] = assignment;
-  for (const statement of statements.slice(index + 1)) {
-    const returned = RETURN.exec(statement);
-    if (returned !== null) return operand(returned[1]) === temporary;
-    if (writes(statement, temporary)) return false;
-  }
-  return false;
+  const [following] = bodyStatements(statements.slice(index + 1));
+  const returned = following === undefined ? null : RETURN.exec(following);
+  return returned !== null && operand(returned[1]) === assignment[1];
 };
 
 const display = (value) =>

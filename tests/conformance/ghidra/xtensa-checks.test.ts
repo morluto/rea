@@ -246,11 +246,19 @@ describe("Xtensa lane decompiled dataflow", () => {
       "param_1 += 100;",
       "param_1++;",
       "--param_1;",
+      "(param_1) = param_1 + 100;",
+      "*(&param_1) = 0;",
     ].map((write) => ({
       name: `a leaf that writes its argument (${write})`,
       entry: ENTRY,
       leaf: leafWith(`${write}\n  return param_1 + 7;`),
-      error: /rea_xtensa_leaf must not write its parameter param_1/u,
+      error: /rea_xtensa_leaf must hold only its return statement/u,
+    })),
+    ...["(uVar1) = 0;", "rea_xtensa_other();"].map((statement) => ({
+      name: `a statement between the call and its return (${statement})`,
+      entry: ENTRY.replace("return uVar1", `${statement}\n  return uVar1`),
+      leaf: LEAF,
+      error: /must return the rea_xtensa_leaf result/u,
     })),
   ])("refuses $name", ({ entry, leaf, error }) => {
     expect(() => assertXtensaFixturePseudocode(entry, leaf, VALUES)).toThrow(
@@ -301,7 +309,7 @@ describe("Xtensa lane decompiled dataflow", () => {
       name: "a callee that writes its value before the product",
       entry: C_ENTRY,
       scale: C_SCALE.replace("  return", "  value = value << 1;\n  return"),
-      error: /rea_xtensa_c_scale must not write its parameter value/u,
+      error: /rea_xtensa_c_scale must hold only its return statement/u,
     },
   ])("refuses $name", ({ entry, scale, error }) => {
     expect(() =>
