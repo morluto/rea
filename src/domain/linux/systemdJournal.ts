@@ -133,6 +133,8 @@ export interface JournalHeaderFacts {
   readonly machine_id: string;
   /** Null when the compatible `tail-entry-boot-id` flag is clear. */
   readonly tail_entry_boot_id: string | null;
+  /** The legacy boot id at bytes 56-71; null when the flag makes it a tail id. */
+  readonly boot_id: string | null;
   readonly seqnum_id: string;
   readonly header_size: number;
   readonly arena_size: number;
@@ -291,14 +293,6 @@ const readUint64 = (
   return Number(value);
 };
 
-/** Read a little-endian u32 directly from header bytes, before any BinaryReader. */
-const u32At = (bytes: Uint8Array, offset: number): number =>
-  (bytes[offset]! |
-    (bytes[offset + 1]! << 8) |
-    (bytes[offset + 2]! << 16) |
-    (bytes[offset + 3]! << 24)) >>>
-  0;
-
 const readFlagFacts = (view: BinaryReader) => {
   const compatibleFlags = view.u32(HEADER.compatibleFlags);
   const incompatibleFlags = view.u32(HEADER.incompatibleFlags);
@@ -310,19 +304,25 @@ const readFlagFacts = (view: BinaryReader) => {
   };
 };
 
-const readIdFacts = (bytes: Uint8Array) => ({
+const readIdFacts = (bytes: Uint8Array, compatibleFlags: number) => ({
   file_id: formatId128(bytes.subarray(HEADER.fileId, HEADER.fileId + 16)),
   machine_id: formatId128(
     bytes.subarray(HEADER.machineId, HEADER.machineId + 16),
   ),
-  // Bytes 56-71 are the legacy boot id unless `tail-entry-boot-id` is set:
-  // the compatible flag is what tells the two meanings apart.
+  // Bytes 56-71 are the legacy boot id unless `tail-entry-boot-id` is set.
+  // Both readings keep the source value; only which name it carries changes.
   tail_entry_boot_id:
-    (u32At(bytes, 8) & (1 << 1)) !== 0
+    (compatibleFlags & (1 << 1)) !== 0
       ? formatId128(
           bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
         )
       : null,
+  boot_id:
+    (compatibleFlags & (1 << 1)) !== 0
+      ? null
+      : formatId128(
+          bytes.subarray(HEADER.tailEntryBootId, HEADER.tailEntryBootId + 16),
+        ),
   seqnum_id: formatId128(bytes.subarray(HEADER.seqnumId, HEADER.seqnumId + 16)),
 });
 
@@ -333,7 +333,7 @@ const unanchoredHeader = (
   declaredHeaderSize: number,
 ): JournalHeaderFacts => ({
   ...readFlagFacts(view),
-  ...readIdFacts(bytes),
+  ...readIdFacts(bytes, view.u32(HEADER.compatibleFlags)),
   state: "unknown",
   header_size: declaredHeaderSize,
   arena_size: 0,
@@ -379,9 +379,10 @@ const readHeaderFacts = (
     declaredHeaderSize >= offset + size;
   const optional = (offset: number, size: number, field: string) =>
     covers(offset, size) ? u64(offset, field) : null;
+  const flags = readFlagFacts(view);
   return {
-    ...readFlagFacts(view),
-    ...readIdFacts(bytes),
+    ...flags,
+    ...readIdFacts(bytes, flags.compatible_flags),
     state:
       JOURNAL_STATES.get(view.bytes[HEADER.state]!) ??
       `unknown-${String(view.bytes[HEADER.state]!)}`,

@@ -285,6 +285,8 @@ export const systemdJournalHeaderSchema = z.strictObject({
   // Null when the compatible `tail-entry-boot-id` flag is clear, so the bytes
   // hold the legacy boot id rather than a tail-entry identity.
   tail_entry_boot_id: z.string().nullable(),
+  // The legacy boot id at the same offset; exactly one of the two is non-null.
+  boot_id: z.string().nullable(),
   seqnum_id: z.string(),
   header_size: offset,
   arena_size: offset,
