@@ -44,6 +44,38 @@ describe("kernel module stable filesystem boundary", () => {
     }
   });
 
+  it("reads module metadata and signature beyond the retained prefix", async () => {
+    const root = await createTestTempDirectory("rea-kernel-module-positional-");
+    const path = join(root, "demo.ko");
+    // Enough section headers to place .modinfo and the signature beyond 4 KiB.
+    const bytes = kernelModuleFixture({
+      sharedNameSections: { name: ".padding", count: 70 },
+    });
+    const firstSection = Number(bytes.readBigUInt64LE(40)) + 64;
+    const modinfoOffset = Number(bytes.readBigUInt64LE(firstSection + 24));
+    expect(modinfoOffset).toBeGreaterThan(4096);
+    await writeFile(path, bytes);
+    const service = createKernelModuleService();
+    try {
+      const result = await service.inspect({ path });
+      if (!result.ok) throw result.error;
+      expect(result.value.normalized_result).toMatchObject({
+        modinfo: {
+          entries: expect.arrayContaining([
+            expect.objectContaining({
+              key: "license",
+              value: "GPL",
+              location: { offset: modinfoOffset, bytes: expect.any(Number) },
+            }),
+          ]),
+        },
+        signature: { status: "present" },
+      });
+    } finally {
+      await service.close();
+    }
+  });
+
   it("reports non-file and malformed ELF selections as caller input errors", async () => {
     const root = await createTestTempDirectory("rea-kernel-module-files-");
     const path = join(root, "demo.ko");
