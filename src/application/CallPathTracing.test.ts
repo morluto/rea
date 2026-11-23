@@ -115,12 +115,21 @@ describe("call-path traversal bounds", () => {
   });
 
   it("stops at max_nodes and reports unexpanded queued procedures", async () => {
-    const result = await traceCallPath(resolveAddress, observeEdges, {
-      start: "0x1000",
-      goal: "0x4000",
-      direction: "forward",
-      max_nodes: 2,
-    });
+    const reads: string[] = [];
+    const result = await traceCallPath(
+      resolveAddress,
+      (operation, args) => {
+        reads.push(String(args.procedure));
+        return observeEdges(operation, args);
+      },
+      {
+        start: "0x1000",
+        goal: "0x4000",
+        direction: "forward",
+        max_nodes: 2,
+      },
+    );
+    expect(reads).toEqual(["0x1000", "0x2000"]);
     if (!result.ok) throw new Error("Expected bounded trace result");
     expect(result.value).toMatchObject({
       goal_status: "unknown",

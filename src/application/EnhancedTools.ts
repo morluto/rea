@@ -551,7 +551,7 @@ export class EnhancedTools {
     ];
     let queueIndex = 0;
     let expandedNodes = 0;
-    let depthLimited = false;
+    let depthLimitRecorded = false;
     const graph: Record<string, JsonValue[]> = {};
     const sortedLimitations = () =>
       [...limitations].sort(compareUnicodeCodePoints);
@@ -634,18 +634,18 @@ export class EnhancedTools {
             input.max_depth !== undefined &&
             current.depth >= input.max_depth
           ) {
-            depthLimited = true;
+            if (!depthLimitRecorded) {
+              limitations.add(
+                `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
+              );
+              depthLimitRecorded = true;
+            }
             continue;
           }
           discovered.add(address);
           queue.push({ address, depth: current.depth + 1 });
         }
       }
-    }
-    if (depthLimited && input.max_depth !== undefined) {
-      limitations.add(
-        `Call graph traversal stopped at caller-selected max_depth ${String(input.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to inspect further.`,
-      );
     }
     return ok({ graph, limitations: sortedLimitations() });
   }
