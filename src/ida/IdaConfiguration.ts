@@ -17,7 +17,9 @@ import { err, ok, type Result } from "../domain/result.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
+  type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import {
   RegularFileOperationCancelled,
@@ -185,11 +187,6 @@ export const readIdaConfiguration = (
 ): Promise<Result<IdaConfiguration, ConfigurationError>> =>
   options.resourceScope.run(async () => {
     let closeLease: AnalysisCleanupLease | undefined;
-    let textSizeFailure: ConfigurationError | undefined;
-    const sizeRefusal = () => {
-      textSizeFailure = registrationTooLarge();
-      return err(textSizeFailure);
-    };
     try {
       const text = await withOwnedRegularFile<
         Result<string, ConfigurationError>
@@ -211,7 +208,8 @@ export const readIdaConfiguration = (
           },
         },
         async ({ handle, initial: metadata }) => {
-          if (metadata.size > MAXIMUM_REGISTRATION_BYTES) return sizeRefusal();
+          if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
+            return err(registrationTooLarge());
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
@@ -222,9 +220,8 @@ export const readIdaConfiguration = (
                 new RegularFileOperationCancelled(reason),
             },
           );
-          return bytes === undefined
-            ? sizeRefusal()
-            : ok(bytes.toString("utf8"));
+          if (bytes === undefined) return err(registrationTooLarge());
+          return ok(bytes.toString("utf8"));
         },
       );
       if (!text.ok) return text;
@@ -266,13 +263,15 @@ export const readIdaConfiguration = (
         ),
       );
     } catch (cause: unknown) {
-      if (
-        textSizeFailure !== undefined &&
-        !(cause instanceof RegularFileCleanupFailure)
-      )
-        return err(textSizeFailure);
       if (cause instanceof WindowsChangeTimeConfigurationError)
         return err(cause);
+      const rejection =
+        cause instanceof RegularFileCancelled ||
+        cause instanceof RegularFileCleanupFailure
+          ? completedRegistrationRejection(cause.outcome)
+          : undefined;
+      if (cause instanceof RegularFileCancelled && rejection !== undefined)
+        return err(rejection);
       if (cause instanceof NonRegularFileReadError)
         return err(
           idaConfigurationError(
@@ -281,8 +280,9 @@ export const readIdaConfiguration = (
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
-      if (cancellation !== undefined && textSizeFailure === undefined) {
+      const cancellation =
+        rejection === undefined ? regularFileCancellation(cause) : undefined;
+      if (cancellation !== undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
             "ida:registration",
@@ -303,20 +303,19 @@ export const readIdaConfiguration = (
         );
       }
       if (cause instanceof RegularFileCleanupFailure) {
+        // A size rejection is a completed outcome holding a rejected Result,
+        // so the close failure must keep that primary reason, not replace it.
         const primary =
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
-            : cause.cleanupCause;
-        const sizeFailure = textSizeFailure;
+            : (rejection ?? cause.cleanupCause);
         const primaryMessage =
-          sizeFailure !== undefined
-            ? sizeFailure.message
+          primary instanceof ConfigurationError
+            ? primary.message
             : cause.outcome.kind === "failed"
-              ? primary instanceof WindowsChangeTimeConfigurationError
-                ? primary.message
-                : primary instanceof NonRegularFileReadError
-                  ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
-                  : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
+              ? primary instanceof NonRegularFileReadError
+                ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
+                : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
               : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
@@ -354,6 +353,22 @@ const registrationTooLarge = (): ConfigurationError =>
   idaConfigurationError(
     "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
   );
+
+/** Recognize the size rejection carried by a completed read whose close failed. */
+const completedRegistrationRejection = (
+  outcome: RegularFileOperationOutcome<unknown>,
+): ConfigurationError | undefined => {
+  if (outcome.kind !== "completed") return undefined;
+  const value: unknown = outcome.value;
+  return typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    value.error instanceof ConfigurationError
+    ? value.error
+    : undefined;
+};
 
 /**
  * Name the registration key that sets an IDA request or readiness deadline.

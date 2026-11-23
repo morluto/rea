@@ -256,8 +256,10 @@ changing a callback solely to satisfy its declared `void` return type.
 `npm run knip:production` writes advisory candidates to
 `.cache/static-checks/production-reachability.json`; execution/report errors fail.
 Ordinary Knip remains. `check`, `check:pr`, and `check:ci:deep` run reachability
-then typed lint sequentially after cached work. Typed lint builds the project
-type graph and stays separate from fast feedback. Its default Go settings are
+then full typed lint sequentially after cached work. Fast PR Static checks
+report typed diagnostics for changed JavaScript and TypeScript files. They use
+full typed lint if the changed file list exceeds the CI output budget. Typed
+lint builds the project type graph in both modes. Its default Go settings are
 `GOMAXPROCS=1` and `GOMEMLIMIT=1024MiB`; caller-selected settings take precedence.
 One Go worker reuses checker caches across the file queue without changing the
 file inventory or TypeScript project scope. The Go memory target is soft and
