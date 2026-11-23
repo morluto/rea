@@ -1,0 +1,311 @@
+import { unknownTarget } from "../../domain/targetIdentity.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
+import { wasmInterfaceEntryRepresentationBytes } from "../../domain/wasm/wasmInterface.js";
+import { setImmediate } from "node:timers/promises";
+import { constants as bufferConstants } from "node:buffer";
+import { requireAuthenticationHeadroom } from "../JsonAuthenticationHeadroom.js";
+import { ARTIFACT_COMPARISON_PROVIDER } from "../../domain/comparisonEvidenceIdentity.js";
+import {
+  compareWasmInterfacesInputSchema,
+  wasmInterfaceComparisonSchema,
+} from "../../contracts/wasm/wasmComparisonContracts.js";
+import {
+  createEvidence,
+  evidenceEnvelopeForAdmission,
+  evidenceFileTarget,
+  type Evidence,
+} from "../../domain/evidence.js";
+import {
+  wasmArtifactSchema,
+  wasmArtifactMatchesSubject,
+  type WasmArtifact,
+} from "../../domain/wasm/wasmArtifact.js";
+import type { WasmInterfaceEntry } from "../../domain/wasm/wasmInterface.js";
+import {
+  AnalysisInputError,
+  cancelledBy,
+} from "../../domain/analysisErrorCore.js";
+import { WasmInterfaceBudget } from "../../domain/wasm/wasmInterfaceBudget.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok, type Result } from "../../domain/result.js";
+import {
+  resolveEvidenceRequest,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { z } from "zod";
+import { safeParseEvidence } from "../../domain/evidenceValidation.js";
+import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import type { EvidenceWorkflowExecution } from "../investigation/EvidenceWorkflowExecution.js";
+import {
+  withEvidenceSources,
+  type AnalysisResultWithSources,
+} from "../investigation/recordEvidenceSources.js";
+
+const OPERATION = "compare_wasm_interfaces";
+const parseInspection = (
+  raw: unknown,
+  side: "left" | "right",
+): Result<{ evidence: Evidence; result: WasmArtifact }, AnalysisInputError> => {
+  const authenticated = safeParseEvidence(raw);
+  if (!authenticated.ok)
+    return inspectionInputFailure(authenticated.error, side);
+  const evidence = authenticated.value;
+  if (evidence.operation !== "inspect_wasm_artifact")
+    return inspectionInputFailure(
+      new TypeError("Expected complete inspect_wasm_artifact Evidence"),
+      side,
+    );
+  const parsed = wasmArtifactSchema.safeParse(evidence.normalized_result);
+  if (!parsed.success) return inspectionInputFailure(parsed.error, side);
+  const result = parsed.data;
+  if (
+    !wasmArtifactMatchesSubject(
+      result.artifact,
+      evidenceFileTarget(evidence),
+    ) ||
+    evidence.parameters.path !== result.artifact.path
+  )
+    return inspectionInputFailure(
+      new TypeError(
+        "WASM Evidence subject/selection does not match normalized artifact identity",
+      ),
+      side,
+    );
+  return ok({ evidence, result });
+};
+
+/** Attribute a rejected side to the input argument that supplied it. */
+const inspectionInputFailure = (
+  cause: Error,
+  side: "left" | "right",
+): Result<never, AnalysisInputError> =>
+  err(
+    new AnalysisInputError(OPERATION, { cause }, [
+      { path: [side], reason: "invalid_value", message: cause.message },
+    ]),
+  );
+
+/** Compare only producer-owned typed facts; no raw WAT or original file is reread. */
+export const compareWasmInterfaces = async (
+  rawInput: unknown,
+  options?: ExecutionOptions,
+  lookup?: EvidenceLookup,
+): Promise<AnalysisResultWithSources<EvidenceWorkflowExecution>> => {
+  if (options?.signal?.aborted)
+    return err(cancelledBy(OPERATION, options.signal));
+  const resolved = resolveEvidenceRequest(
+    OPERATION,
+    rawInput,
+    compareWasmInterfacesInputSchema,
+    lookup,
+    options,
+  );
+  if (!resolved.ok) return resolved;
+  const assertActive = () => {
+    if (options?.signal?.aborted) throw cancelledBy(OPERATION, options.signal);
+  };
+  try {
+    await setImmediate();
+    assertActive();
+    const parsedLeft = parseInspection(resolved.value.input.left, "left");
+    if (!parsedLeft.ok) return parsedLeft;
+    const parsedRight = parseInspection(resolved.value.input.right, "right");
+    if (!parsedRight.ok) return parsedRight;
+    const left = parsedLeft.value;
+    const right = parsedRight.value;
+    const scope = resolved.value.input.scope;
+    const selected = (entry: WasmInterfaceEntry): boolean =>
+      scope === "both" ||
+      entry.direction === (scope === "imports" ? "import" : "export");
+    const groups = new Map<
+      string,
+      {
+        left: WasmInterfaceEntry[];
+        right: WasmInterfaceEntry[];
+        entry: WasmInterfaceEntry;
+      }
+    >();
+    const budget = new WasmInterfaceBudget(
+      resolved.value.input.max_interface_bytes,
+      OPERATION,
+    );
+    let work = 0;
+    for (const [side, inspection] of [
+      ["left", left],
+      ["right", right],
+    ] as const) {
+      // optional-fact-default: an absent interface fails knownInventory, so every key is unknown.
+      for (const entry of inspection.result.interface?.entries ?? []) {
+        if (++work % 256 === 0) {
+          await setImmediate();
+          assertActive();
+        }
+        if (!selected(entry)) continue;
+        budget.reserve(wasmInterfaceEntryRepresentationBytes(entry));
+        const key = JSON.stringify([entry.direction, entry.module, entry.name]);
+        let group = groups.get(key);
+        if (group === undefined) {
+          budget.reserve(512);
+          group = { left: [], right: [], entry };
+          groups.set(key, group);
+        }
+        group[side].push(entry);
+      }
+    }
+    const knownInventory = (inspection: typeof left): boolean =>
+      inspection.result.interface?.state === "complete";
+    const changes: z.infer<typeof wasmInterfaceComparisonSchema>["changes"] =
+      [];
+    const summary = {
+      added: 0,
+      removed: 0,
+      changed: 0,
+      unchanged: 0,
+      unknown: 0,
+    };
+    for (const group of groups.values()) {
+      if (++work % 256 === 0) {
+        await setImmediate();
+        assertActive();
+      }
+      let state: keyof typeof summary;
+      let reason: string | null = null;
+      const l = group.left[0];
+      const r = group.right[0];
+      if (group.left.length > 1 || group.right.length > 1) {
+        state = "unknown";
+        reason =
+          "Duplicate interface names are ambiguous; all occurrences retained";
+      } else if (!knownInventory(left) || !knownInventory(right)) {
+        state = "unknown";
+        reason =
+          "Incomplete interface inventories cannot establish per-key uniqueness or absence";
+      } else if (
+        [l, r].some(
+          (entry) =>
+            entry !== undefined &&
+            (entry.signature === null ||
+              entry.issue !== null ||
+              entry.kind === "unknown"),
+        )
+      ) {
+        state = "unknown";
+        reason =
+          "Signature/type semantics were not admitted for every present entry";
+      } else if (l === undefined) state = "added";
+      else if (r === undefined) state = "removed";
+      else if (l.kind !== r.kind) state = "changed";
+      else
+        state =
+          JSON.stringify(l.signature) === JSON.stringify(r.signature)
+            ? "unchanged"
+            : "changed";
+      summary[state]++;
+      changes.push({
+        direction: group.entry.direction,
+        module: group.entry.module,
+        name: group.entry.name,
+        state,
+        left: group.left,
+        right: group.right,
+        reason,
+      });
+    }
+    const compareText = (a: string, b: string): number =>
+      a < b ? -1 : a > b ? 1 : 0;
+    changes.sort(
+      (a, b) =>
+        compareText(a.direction, b.direction) ||
+        compareText(a.module ?? "", b.module ?? "") ||
+        compareText(a.name, b.name),
+    );
+    // An inspection without interface facts cannot tell what that side
+    // declares, so it makes the comparison unknown even beside a known gap.
+    const sideCoverage = (inspection: typeof left): CoverageStatus =>
+      inspection.result.interface === undefined
+        ? "unknown"
+        : knownInventory(inspection)
+          ? "complete"
+          : "partial";
+    const joined = joinCoverageStatus([
+      sideCoverage(left),
+      sideCoverage(right),
+      summary.unknown > 0 ? "partial" : "complete",
+    ]);
+    const coverage =
+      joined === "complete" ? ("complete-within-inputs" as const) : joined;
+    const limitations = [
+      "Exact declared interface equality is not runtime/ABI compatibility, successful linking or original-source identity.",
+      "Typed facts come from the selected validated WABT decoding; unsupported signature semantics and duplicate names remain unknown.",
+    ];
+    const observedReport = {
+      left: {
+        evidence_id: left.evidence.evidence_id,
+        artifact: left.result.artifact,
+      },
+      right: {
+        evidence_id: right.evidence.evidence_id,
+        artifact: right.result.artifact,
+      },
+      scope,
+      coverage,
+      changes,
+      summary,
+      limitations,
+    };
+    const observation = {
+      operation: OPERATION,
+      predicateType: "rea.wasm-interface-comparison",
+      parameters: {
+        left_evidence_id: left.evidence.evidence_id,
+        right_evidence_id: right.evidence.evidence_id,
+        scope,
+        ...(resolved.value.input.max_interface_bytes === undefined
+          ? {}
+          : { max_interface_bytes: resolved.value.input.max_interface_bytes }),
+      },
+      result: observedReport,
+      confidence: "derived" as const,
+      authority: "analyst-inference" as const,
+      limitations,
+      evidenceLinks: [left.evidence.evidence_id, right.evidence.evidence_id],
+    };
+    const admission = requireAuthenticationHeadroom(
+      evidenceEnvelopeForAdmission(
+        unknownTarget("derived-from-linked-evidence"),
+        ARTIFACT_COMPARISON_PROVIDER,
+        observation,
+      ),
+      {
+        operation: OPERATION,
+        path: "selected WASM Evidence",
+        description: "Complete WASM comparison Evidence cannot be assembled",
+        serializedCodeUnitLimit: bufferConstants.MAX_STRING_LENGTH,
+      },
+    );
+    if (!admission.ok) return admission;
+    const report = wasmInterfaceComparisonSchema.parse(observedReport);
+    const evidence = createEvidence(
+      unknownTarget("derived-from-linked-evidence"),
+      ARTIFACT_COMPARISON_PROVIDER,
+      {
+        ...observation,
+        result: report,
+      },
+    );
+    await setImmediate();
+    const completed = completeProviderEvidence(evidence, options?.signal);
+    const sources = [left.evidence, right.evidence];
+    return withEvidenceSources(
+      completed.ok ? ok({ evidence: completed.value, sources }) : completed,
+      sources,
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return err(cause);
+    throw cause;
+  }
+};

@@ -1,0 +1,636 @@
+#!/usr/bin/env node
+import {
+  assertFeatureTrace,
+  findMappedNonFunction,
+} from "./lib/ida-feature-trace.mjs";
+import { privateIdaInput } from "./lib/ida-private-input.mjs";
+import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import {
+  verifierFailureReasons,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
+
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { access, readdir, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
+import { Client } from "@modelcontextprotocol/client";
+import { createOwnedMcpStdioTransport } from "./lib/owned-mcp-stdio.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+
+const { values } = parseArgs({
+  options: {
+    target: { type: "string" },
+    procedure: { type: "string", default: "rea_fixture_add" },
+    "second-procedure": { type: "string" },
+    "second-marker": { type: "string" },
+    "expected-string": { type: "string" },
+    "expected-xref": { type: "string" },
+    "expected-backend": { type: "string" },
+    "verify-peer-cleanup": { type: "boolean" },
+    "package-root": { type: "string" },
+    report: { type: "string" },
+  },
+});
+if (values.target === undefined || process.env.REA_IDA_MCP_CONFIG === undefined)
+  throw new Error(
+    "IDA verification requires --target and REA_IDA_MCP_CONFIG; see docs/providers/ida-provider.md. No toolchain is installed by this lane.",
+  );
+if (
+  (values["second-procedure"] === undefined) !==
+    (values["second-marker"] === undefined) ||
+  values["second-marker"] === ""
+)
+  throw new Error(
+    "IDA verification requires --second-procedure and a nonempty --second-marker together; choose a marker unique to the second function's pseudocode.",
+  );
+if (values["expected-string"] === "" || values["expected-xref"] === "")
+  throw new Error("IDA verification oracles must be nonempty.");
+const packageRoot = resolve(
+  values["package-root"] ?? fileURLToPath(new URL("..", import.meta.url)),
+);
+const target = resolve(values.target);
+const entry = join(packageRoot, "scripts", "rea.mjs");
+const importBuilt = (path) =>
+  import(pathToFileURL(join(packageRoot, "dist", path)).href);
+const [
+  { toolContract },
+  { evidenceSchema },
+  { functionDossierSchema },
+  { readIdaConfiguration, idaCompatibilityProfile },
+  { createIdaMcpConnection },
+  { idaAddressSchema },
+  { hasIdaDatabaseSignature },
+  { hexRaysOpenSchema, hexRaysListSchema, hexRaysCloseSchema },
+  { sameIdaHostPath },
+  { isPathWithinRoot },
+] = await Promise.all([
+  importBuilt("contracts/toolContracts.js"),
+  importBuilt("domain/evidence.js"),
+  importBuilt("domain/native/functionDossier.js"),
+  importBuilt("ida/IdaConfiguration.js"),
+  importBuilt("ida/IdaMcpConnection.js"),
+  importBuilt("ida/IdaProtocolValues.js"),
+  importBuilt("domain/analysisDatabase.js"),
+  importBuilt("ida/IdaHexRaysProtocol.js"),
+  importBuilt("ida/IdaWorkspace.js"),
+  importBuilt("domain/localPath.js"),
+]);
+const config = await withVerifierResourceOwner(async (resourceScope) => {
+  const registration = await readIdaConfiguration(
+    process.env.REA_IDA_MCP_CONFIG,
+    { resourceScope },
+  );
+  if (!registration.ok) throw registration.error;
+  return registration.value;
+});
+if (
+  config.protocol === "native" &&
+  (values["second-procedure"] === undefined ||
+    values["second-marker"] === undefined)
+)
+  throw new Error(
+    "Native IDA verification requires --second-procedure and --second-marker to verify distinct-function switching; see docs/providers/ida-provider.md.",
+  );
+const expectedBackend = values["expected-backend"];
+if (
+  expectedBackend !== undefined &&
+  (config.protocol !== "hexrays" ||
+    (expectedBackend !== "idat" && expectedBackend !== "idalib"))
+)
+  throw new Error(
+    "--expected-backend requires a Hex-Rays registration and an idat or idalib value.",
+  );
+if (values["verify-peer-cleanup"] && config.protocol !== "hexrays")
+  throw new Error(
+    "--verify-peer-cleanup requires a Hex-Rays stdio registration.",
+  );
+const environment = Object.fromEntries(
+  Object.entries({
+    ...process.env,
+    REA_ANALYSIS_PROVIDER: "ida",
+    REA_LOG_LEVEL: "error",
+  }).filter(([, value]) => value !== undefined),
+);
+const report = {
+  passed: false,
+  mode: config.mode,
+  protocol: idaCompatibilityProfile(config).protocol,
+  worker_backends: [],
+  checks: [],
+  observations: [],
+  unverified: [],
+};
+const expectedXref =
+  values["expected-xref"] === undefined
+    ? undefined
+    : idaAddressSchema.parse(values["expected-xref"]);
+let phase = "target admission";
+const workspaces = new Set();
+let targetIsDatabase = false;
+const databases = new Set();
+const digest = async () => {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(target)) hash.update(chunk);
+  return hash.digest("hex");
+};
+const observe = (input) => {
+  const evidence = evidenceSchema.parse(input);
+  assert.equal(evidence.provider.id, "ida");
+  assert.equal(evidence.provider.version, "1");
+  assert.equal(evidence.analysis_profile.parameters.cache_policy, "live");
+  assert.equal(evidence.analysis_profile.parameters.engine_version, null);
+  assert.ok(evidence.limitations.length > 0);
+  if (config.protocol === "native" && evidence.operation === "analyze_function")
+    assert.equal(evidence.relationship_coverage?.status, "unknown");
+  assert.ok(
+    evidence.locations.some((location) => location.kind === "artifact-path"),
+  );
+  if (config.protocol === "hexrays") {
+    const backend = evidence.raw_result.worker_backend;
+    assert.ok(
+      backend === "idalib" || backend === "idat",
+      "Hex-Rays evidence must identify the bound worker backend.",
+    );
+    if (expectedBackend !== undefined)
+      assert.equal(
+        backend,
+        expectedBackend,
+        "Hex-Rays worker backend differed from the requested verification lane.",
+      );
+    if (!report.worker_backends.includes(backend))
+      report.worker_backends.push(backend);
+  }
+  if (config.mode === "headless") {
+    workspaces.add(
+      dirname(
+        privateIdaInput(
+          evidence.raw_result.metadata_before,
+          target,
+          targetIsDatabase,
+        ),
+      ),
+    );
+    for (const observation of evidence.raw_result.observations) {
+      // Hex-Rays reads select their lease by instance id through execute_python.
+      const database =
+        config.protocol === "hexrays"
+          ? observation.arguments.instance_id
+          : observation.arguments.database;
+      if (config.protocol === "hexrays")
+        assert.equal(observation.tool, "execute_python");
+      assert.equal(typeof database, "string");
+      databases.add(database);
+    }
+  }
+  report.observations.push(evidence);
+  return evidence.normalized_result;
+};
+const cli = async () => {
+  phase = "production CLI function analysis";
+  const commands = await createVerifierCommands();
+  const { stdout } = await withVerifierCleanup(
+    () =>
+      commands.exec(
+        process.execPath,
+        [
+          entry,
+          "function",
+          target,
+          values.procedure,
+          "--provider",
+          "ida",
+          "--json",
+        ],
+        {
+          env: environment,
+          timeout: config.timeoutMs * 3,
+          maxBuffer: 16 * 1024 * 1024,
+        },
+      ),
+    [() => commands.close()],
+  ).catch((cause) => {
+    const primary = cause instanceof AggregateError ? cause.cause : cause;
+    report.failed_cli = {
+      stdout: primary?.stdout ?? primary?.snapshot?.stdout?.text,
+      stderr: primary?.stderr ?? primary?.snapshot?.stderr?.text,
+    };
+    throw cause;
+  });
+  const dossier = functionDossierSchema.parse(observe(JSON.parse(stdout)));
+  assert.ok(dossier.pseudocode.length > 0);
+  assert.ok(dossier.assembly.length > 0);
+  assert.equal(dossier.procedure.body.available, false);
+  report.checks.push("production CLI and complete function Evidence");
+  return dossier;
+};
+const verifyPeerCleanup = async (analysis, closeWithPeer, retryClose) => {
+  phase = "Hex-Rays peer lease cleanup";
+  const privateInput = privateIdaInput(
+    analysis.raw_result.metadata_before,
+    target,
+    targetIsDatabase,
+  );
+  const workspace = dirname(privateInput);
+  assert.ok(workspaces.has(workspace));
+  const peer = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
+  let instanceId;
+  const releasePeer = async () => {
+    if (instanceId === undefined) return;
+    hexRaysCloseSchema.parse(
+      await peer.call("close_database", { instance_id: instanceId }),
+    );
+    instanceId = undefined;
+  };
+
+  await withVerifierCleanup(async () => {
+    await peer.connect();
+    const lease = hexRaysOpenSchema.parse(
+      await peer.call("open_database", {
+        path: privateInput,
+        set_current: false,
+      }),
+    );
+    instanceId = lease.instance_id;
+    assert.equal(lease.backend, analysis.raw_result.worker_backend);
+
+    const retained = requireMcpToolError(await closeWithPeer());
+    assert.equal(retained.code, "cleanup_incomplete");
+    const resources = retained.details?.resources;
+    assert.ok(
+      Array.isArray(resources) && resources.includes(workspace),
+      "The cleanup error must identify the retained workspace.",
+    );
+    await access(privateInput);
+    const inventory = hexRaysListSchema.parse(
+      await peer.call("list_databases", {}),
+    );
+    const held = inventory.instances.find(
+      (row) => row.instance_id === instanceId,
+    );
+    assert.ok(held?.status === "current" || held?.status === "attached");
+    assert.equal(held.backend, lease.backend);
+    assert.ok(
+      sameIdaHostPath(held.path, privateInput),
+      "The peer lease must still bind the private input.",
+    );
+
+    await releasePeer();
+    await retryClose();
+    await assert.rejects(access(workspace), { code: "ENOENT" });
+    report.checks.push(
+      "a second Hex-Rays client retains the private database until its lease is released and REA retries cleanup",
+    );
+  }, [releasePeer, () => peer.close()]);
+};
+
+const mcp = async (cliDossier) => {
+  const client = new Client({ name: "rea-real-ida-verifier", version: "1" });
+  const transport = await createOwnedMcpStdioTransport({
+    command: process.execPath,
+    arguments: [entry, "mcp"],
+    hostEnvironment: environment,
+    cwd: process.cwd(),
+    expectedCommand: null,
+    sweepTokenOwnedProcesses: true,
+  });
+  const call = async (name, args) => {
+    phase = `production MCP ${name}`;
+    const result = await client.callTool(
+      { name, arguments: args },
+      { timeout: config.timeoutMs * 2 },
+    );
+    if (result.isError === true) report.failed_tool_result = result;
+    assert.notEqual(result.isError, true);
+    return toolContract(name).outputSchema.parse(result.structuredContent);
+  };
+  let opened = false;
+  await withVerifierCleanup(async () => {
+    await client.connect(transport, { timeout: config.timeoutMs });
+    await call("open_binary", { path: target, provider_id: "ida" });
+    opened = true;
+    const analyzed = await call("analyze_function", {
+      procedure: values.procedure,
+      detail: "complete",
+    });
+    const dossier = functionDossierSchema.parse(observe(analyzed));
+    assert.deepEqual(dossier.procedure, cliDossier.procedure);
+    assert.equal(dossier.pseudocode, cliDossier.pseudocode);
+    assert.deepEqual(dossier.assembly, cliDossier.assembly);
+    assert.equal(analyzed.operation, "analyze_function");
+    for (const [name, args] of [
+      ["list_procedures", {}],
+      ["list_strings", {}],
+      ["procedure_address", { procedure: dossier.procedure.name }],
+      ["procedure_assembly", { procedure: dossier.procedure.address }],
+      ["procedure_callees", { procedure: dossier.procedure.address }],
+      ["search_procedures", { pattern: dossier.procedure.name }],
+      ["procedure_pseudo_code", { procedure: dossier.procedure.address }],
+      ["read_function_instructions", { procedure: dossier.procedure.address }],
+      [
+        "search_strings",
+        {
+          pattern: values["expected-string"] ?? "a.b",
+          mode: "literal",
+          case_sensitive: true,
+        },
+      ],
+      ["xrefs", { address: dossier.procedure.address }],
+    ]) {
+      const result = await call(name, args);
+      const value = observe(result);
+      switch (name) {
+        case "list_procedures":
+        case "search_procedures":
+          assert.ok(
+            value.some(
+              (item) =>
+                item.address === dossier.procedure.address &&
+                item.value === dossier.procedure.name,
+            ),
+            `${name} omitted the resolved procedure.`,
+          );
+          break;
+        case "procedure_address":
+          assert.equal(value, dossier.procedure.address);
+          break;
+        case "procedure_assembly":
+          assert.equal(value, dossier.assembly.join("\n"));
+          break;
+        case "procedure_pseudo_code":
+          assert.equal(value, dossier.pseudocode);
+          break;
+        case "procedure_callees":
+          assert.deepEqual(
+            [...value].sort(),
+            dossier.callees.map((item) => item.address).sort(),
+          );
+          break;
+        case "read_function_instructions":
+          assert.deepEqual(value.procedure.address, dossier.procedure.address);
+          assert.deepEqual(value.instructions, dossier.assembly);
+          break;
+        case "list_strings":
+        case "search_strings":
+          if (values["expected-string"] !== undefined)
+            assert.ok(
+              value.some((item) =>
+                item.value.includes(values["expected-string"]),
+              ),
+              `${name} omitted the expected literal.`,
+            );
+          break;
+        case "xrefs":
+          if (expectedXref !== undefined)
+            assert.ok(
+              value.includes(expectedXref),
+              "xrefs omitted the expected source address.",
+            );
+          break;
+      }
+    }
+    if (config.mode === "headless") {
+      const documents = observe(await call("list_documents", {}));
+      assert.equal(documents.length, 1);
+      assert.equal(basename(documents[0]), basename(target));
+      assert.ok(
+        !workspaces.has(dirname(documents[0])),
+        "list_documents reported the private workspace copy.",
+      );
+      const resolveAt = async (address) =>
+        observe(await call("resolve_containing_procedure", { address }));
+      const instructionAddresses = dossier.assembly
+        .map((line) => /^(0x[0-9a-f]+)/iu.exec(line)?.[1])
+        .filter((address) => address !== undefined);
+      const queries = [
+        dossier.procedure.address,
+        ...instructionAddresses.slice(1, 2),
+      ];
+      for (const queried of queries) {
+        const containing = await resolveAt(queried);
+        assert.equal(containing.found, true);
+        assert.equal(containing.procedure.address, dossier.procedure.address);
+        assert.equal(containing.procedure.name, dossier.procedure.name);
+      }
+      const unmapped = await resolveAt("0xffffffffffffff00");
+      assert.equal(unmapped.found, false);
+      assert.equal(unmapped.reason, "outside_segments");
+      const strings = observe(await call("list_strings", {}));
+      const mappedString = await findMappedNonFunction(strings, resolveAt);
+      if (mappedString === undefined)
+        report.unverified.push(
+          "Mapped non-function containment: no string of the target is mapped outside every function.",
+        );
+      const context = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: dossier.procedure.address },
+      });
+      assert.notEqual(context.isError, true);
+      const contextResult = context.structuredContent.result;
+      assert.equal(contextResult.document, documents[0]);
+      assert.equal(contextResult.procedure.state, "available");
+      assert.equal(
+        contextResult.procedure.value.procedure.address,
+        dossier.procedure.address,
+      );
+      const traced = await client.callTool({
+        name: "trace_feature",
+        arguments: { query: dossier.procedure.name },
+      });
+      assert.notEqual(traced.isError, true);
+      const trace = traced.structuredContent.normalized_result;
+      assertFeatureTrace(trace, dossier.procedure);
+      report.checks.push(
+        "headless containing procedures, the admitted program as the document, address context, and the procedure match and references of feature tracing",
+      );
+    }
+    if (values["expected-string"] === undefined)
+      report.unverified.push(
+        "String inventory/search correctness: no independent expected literal supplied.",
+      );
+    else
+      report.checks.push(
+        "string inventory and literal search contain the expected literal",
+      );
+    if (expectedXref === undefined)
+      report.unverified.push(
+        "Xref correctness: no independent expected source address supplied.",
+      );
+    else report.checks.push("xrefs contain the expected source address");
+    if (values["second-procedure"] !== undefined) {
+      const secondAddress = observe(
+        await call("procedure_address", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.notEqual(secondAddress, dossier.procedure.address);
+      const secondCode = observe(
+        await call("procedure_pseudo_code", {
+          procedure: values["second-procedure"],
+        }),
+      );
+      assert.equal(typeof secondCode, "string");
+      assert.ok(secondCode.length > 0);
+      assert.ok(
+        !dossier.pseudocode.includes(values["second-marker"]),
+        "The second marker also appears in the first function's pseudocode.",
+      );
+      assert.ok(
+        secondCode.includes(values["second-marker"]),
+        "The second function's pseudocode omitted its expected marker.",
+      );
+      const restored = observe(
+        await call("procedure_pseudo_code", {
+          procedure: dossier.procedure.address,
+        }),
+      );
+      assert.equal(restored, dossier.pseudocode);
+      report.checks.push(
+        "second-function pseudocode identity and return to the original function",
+      );
+    }
+    const invalid = await client.callTool({
+      name: "xrefs",
+      arguments: { address: "not-an-address" },
+    });
+    assert.equal(invalid.isError, true);
+    assert.equal(requireMcpToolError(invalid).code, "invalid_request");
+    if (values["verify-peer-cleanup"])
+      await verifyPeerCleanup(
+        analyzed,
+        () =>
+          client.callTool(
+            { name: "close_binary", arguments: {} },
+            { timeout: config.timeoutMs * 2 },
+          ),
+        () => call("close_binary", {}),
+      );
+    else {
+      await call("close_binary", {});
+      if (config.protocol === "hexrays")
+        report.unverified.push(
+          "Peer-held Hex-Rays cleanup: --verify-peer-cleanup was not selected.",
+        );
+    }
+    opened = false;
+    report.checks.push(
+      "one MCP connection, positive procedure inventory/search, contract-valid tool results, invalid input, and close",
+    );
+    report.checks.push(
+      "CLI/MCP function identity, pseudocode, assembly, instructions, and relationship parity",
+    );
+  }, [
+    async () => {
+      const completedPhase = phase;
+      try {
+        if (opened) await call("close_binary", {});
+      } finally {
+        phase = completedPhase;
+      }
+    },
+    () => client.close(),
+    () => transport.close(),
+  ]);
+};
+const cleanup = async () => {
+  phase = "upstream lifecycle verification";
+  const upstream = createIdaMcpConnection(config, process.env, {
+    platform: process.platform,
+  });
+  try {
+    await upstream.connect();
+    if (config.mode === "attached") {
+      const metadata = await upstream.readResource("ida://idb/metadata");
+      assert.equal(metadata.sha256.toLowerCase(), await digest());
+      report.checks.push(
+        "existing GUI target remains open with the original input identity",
+      );
+    } else {
+      if (config.protocol === "hexrays") {
+        // Leases are per server process, so a fresh server proves release by
+        // listing no live database inside any REA private workspace.
+        const inventory = await upstream.call("list_databases", {});
+        assert.ok(
+          inventory.instances.every(({ path }) =>
+            [...workspaces].every(
+              (workspace) =>
+                !isAbsolute(path) || !isPathWithinRoot(workspace, path),
+            ),
+          ),
+        );
+      } else {
+        const inventory = await upstream.call("idb_list", {});
+        assert.ok(
+          inventory.sessions.every(
+            (session) => !databases.has(session.session_id),
+          ),
+        );
+      }
+      for (const workspace of workspaces)
+        await assert.rejects(access(workspace), { code: "ENOENT" });
+      report.checks.push(
+        "owned database IDs absent from upstream discovery and private workspaces removed",
+      );
+    }
+  } finally {
+    await upstream.close();
+  }
+};
+try {
+  const before = await digest();
+  for await (const head of createReadStream(target, { end: 3 }))
+    targetIsDatabase = hasIdaDatabaseSignature(head);
+  const siblings = (await readdir(dirname(target))).sort();
+  await mcp(await cli());
+  await cleanup();
+  assert.equal(await digest(), before);
+  // Engines write databases beside their input; only the private copy may get one.
+  assert.deepEqual((await readdir(dirname(target))).sort(), siblings);
+  report.checks.push(
+    "original target bytes and sibling directory entries unchanged",
+  );
+  report.passed = true;
+} catch (cause) {
+  report.failure = {
+    phase,
+    message: cause instanceof Error ? cause.message : String(cause),
+    ...(cause instanceof AggregateError
+      ? { causes: verifierFailureReasons(cause) }
+      : {}),
+  };
+  process.exitCode = 1;
+} finally {
+  if (values.report !== undefined)
+    await writeFile(
+      resolve(values.report),
+      `${JSON.stringify(report, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  console.log(
+    JSON.stringify(
+      {
+        passed: report.passed,
+        mode: report.mode,
+        ...(report.worker_backends.length === 0
+          ? {}
+          : { worker_backends: report.worker_backends }),
+        checks: report.checks,
+        unverified: report.unverified,
+        ...(report.passed
+          ? {}
+          : {
+              failed_phase: phase,
+              detail: "Use --report for private local diagnostics.",
+            }),
+      },
+      null,
+      2,
+    ),
+  );
+}

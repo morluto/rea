@@ -1,6 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
+  "versioning": "always-bump-minor",
   "include-v-in-tag": false,
   "changelog-sections": [
     { "type": "feat", "section": "Features", "hidden": false },
@@ -14,7 +15,64 @@
   ],
   "packages": {
     ".": {
-      "package-name": "rea-agents"
+      "package-name": "rea-agents",
+      "extra-files": [
+        { "type": "generic", "path": "docs/getting-started/installation.md" },
+        {
+          "type": "generic",
+          "path": "src/generatedPackageMetadata.ts"
+        },
+        {
+          "type": "json",
+          "path": "server.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "server.json",
+          "jsonpath": "$.packages[0].version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.mcpServers.rea.args[1]"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": ".codex-plugin/mcp.json",
+          "jsonpath": "$.mcpServers.rea.args[1]"
+        },
+        {
+          "type": "json",
+          "path": ".cursor-plugin/plugin.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "mcp.json",
+          "jsonpath": "$.mcpServers.rea.args[1]"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
+        },
+        {
+          "type": "json",
+          "path": ".agents/plugins/marketplace.json",
+          "jsonpath": "$.plugins[0].source.version"
+        }
+      ]
     }
   }
 }

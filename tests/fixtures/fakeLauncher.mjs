@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const bootstrapIndex = process.argv.indexOf("--python") + 1;
+const bootstrapFlag = ["-Y", "--python"].find((flag) =>
+  process.argv.includes(flag),
+);
+const bootstrapIndex =
+  bootstrapFlag === undefined ? 0 : process.argv.indexOf(bootstrapFlag) + 1;
 const actionIndex = Math.max(
   process.argv.indexOf("--executable"),
   process.argv.indexOf("--database"),

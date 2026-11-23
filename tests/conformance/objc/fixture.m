@@ -16,6 +16,9 @@ int main(void) {
   @autoreleasepool {
     Protocol *protocol = @protocol(REAWidgetDelegate);
     NSLog(@"%@", NSStringFromProtocol(protocol));
+    NSLog(@"REA_UTF16_é_😀");
+    NSLog(@"REA_UTF16_ESCAPED_é_\"\\line\nend\t\r");
+    NSLog(@"\nREA_UTF16_LEADING_é");
     return [[[REAWidget alloc] init] performAction:@"run" error:0] ? 0 : 1;
   }
 }

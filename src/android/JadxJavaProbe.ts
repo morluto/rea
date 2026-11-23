@@ -1,0 +1,444 @@
+import { capturedProviderOutput } from "../process/capturedProviderOutput.js";
+import type { ProcessInspectionFailure } from "../process/ProcessInspectionCleanup.js";
+import { launcherFailureOf } from "../process/launchFailure.js";
+import { classifyLaunchFailure } from "../process/classifyProviderOutcome.js";
+import { randomUUID } from "node:crypto";
+import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
+import {
+  AnalysisError,
+  type AnalysisCapturedOutput,
+} from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import {
+  InternalInvariantError,
+  invariantViolation,
+} from "../domain/internalInvariant.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
+import {
+  prepareOwnedCommand,
+  preparationHostCapacityFailure,
+  runOwnedCommand,
+  OwnedCommandFailure,
+} from "../process/OwnedCommand.js";
+import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import {
+  retainOwnedCommandCleanup,
+  processInspectionCancellationError,
+  processInspectionFailure,
+  bindProcessInspectionCancellations,
+} from "../providers/OwnedCommandCleanup.js";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
+import { jadxOperationTimeoutGuidance } from "./JadxOperationTimeout.js";
+
+const JAVA_MODULE_LISTING_TIMEOUT_MS = 10_000;
+const JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES = 1024 * 1024;
+
+export interface JadxJavaProbeOptions {
+  readonly resourceOwner: RetainedResourceScope;
+  readonly signal?: AbortSignal | undefined;
+  readonly operation?: string;
+  /** The Android operation owns this deadline; the probe also has its own bound. */
+  readonly operationDeadline?: {
+    readonly signal: AbortSignal;
+    readonly timeoutMs: number;
+  };
+  readonly launcher?: NonNullable<
+    Parameters<typeof runOwnedCommand>[2]
+  >["launcher"];
+  readonly timeoutMs?: number;
+}
+
+export interface JadxJavaProbeRefusal {
+  /** Actual preparation record; retained without changing timeout or fallback policy. */
+  readonly inspectionFailure?: ProcessInspectionFailure;
+  readonly code:
+    | "runtime_missing"
+    | "runtime_unavailable"
+    | "version_unresolved"
+    | "unsupported_version";
+  readonly message: string;
+  readonly diagnostics: Readonly<Record<string, JsonValue>>;
+  readonly kind: "java_probe" | "java_runtime";
+}
+interface JavaModules {
+  readonly compiler: true;
+  readonly major: number;
+}
+const refusal = (
+  code: JadxJavaProbeRefusal["code"],
+  message: string,
+  diagnostics: JadxJavaProbeRefusal["diagnostics"],
+  kind: JadxJavaProbeRefusal["kind"],
+): Result<never, JadxJavaProbeRefusal> =>
+  err({ code, message, diagnostics, kind });
+
+const projectRefusal = (
+  failure: JadxJavaProbeRefusal,
+  operation: string,
+  cause: unknown,
+  output?: AnalysisCapturedOutput,
+) => {
+  const { stdout: _stdout, stderr: _stderr, ...facts } = failure.diagnostics;
+  return new AnalysisCapabilityUnavailableError(
+    "jadx",
+    operation,
+    failure.message,
+    {
+      cause,
+      userMessage: failure.message,
+      diagnostics: {
+        ...facts,
+        failure_kind: failure.kind,
+        failure_code: failure.code,
+      },
+      ...(output === undefined ? {} : { capturedOutput: output }),
+    },
+  );
+};
+/** Interpret one complete module listing before joining final cleanup. */
+export const inspectJadxJava = async (
+  java: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  options: JadxJavaProbeOptions,
+): Promise<Result<JavaModules, JadxJavaProbeRefusal>> => {
+  const operation = options.operation ?? "inspect_jadx_configuration";
+  try {
+    return await options.resourceOwner.run(async () => {
+      let observed: Result<JavaModules, JadxJavaProbeRefusal> | undefined;
+      try {
+        await prepareOwnedCommand(options.signal);
+        await runOwnedCommand(
+          {
+            command: java,
+            arguments: ["--list-modules"],
+            runId: randomUUID(),
+            expectedCommand: null,
+            hostEnvironment: environment,
+            sweepTokenOwnedProcesses: true,
+          },
+          {
+            timeoutMs: options.timeoutMs ?? JAVA_MODULE_LISTING_TIMEOUT_MS,
+            diagnosticBytes: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
+            acceptNonZeroExit: true,
+            observeCompleted: (snapshot) => {
+              observed = parseJavaModules(java, snapshot);
+            },
+          },
+          {
+            signal: options.signal,
+            ...(options.launcher === undefined
+              ? {}
+              : { launcher: options.launcher }),
+          },
+        );
+        // runOwnedCommand observes every completed run before it resolves.
+        if (observed === undefined)
+          throw invariantViolation(
+            "Java probe completed without an observation",
+          );
+        return observed;
+      } catch (cause: unknown) {
+        const command =
+          cause instanceof OwnedCommandFailure ? cause : undefined;
+        const preparation = processInspectionFailure(cause);
+        const output =
+          command?.snapshot == null
+            ? preparation instanceof DarwinProcessOwnershipInspectionError
+              ? preparation.capturedOutput
+              : undefined
+            : capturedProviderOutput(command.snapshot);
+        const inspectionCancellation =
+          command === undefined || command.preparationFailure !== undefined
+            ? processInspectionCancellationError(cause, operation)
+            : undefined;
+        const cleanups = retainOwnedCommandCleanup(
+          cause,
+          options.resourceOwner,
+          "jadx",
+          operation,
+        );
+        const hostConstraint = hostLaunchConstraint(command, cause);
+        let primary: AnalysisError;
+        if (observed !== undefined && !observed.ok) {
+          if (cleanups.length === 0) return observed;
+          primary = projectRefusal(observed.error, operation, cause, output);
+        } else if (
+          command?.reason === "cancelled" &&
+          command.cancellation !== undefined
+        ) {
+          const reason = command.cancellation.reason;
+          const errorOptions = {
+            ...(output === undefined ? {} : { capturedOutput: output }),
+            ...(observed?.ok === true
+              ? {
+                  diagnostics: {
+                    java_module_observation: {
+                      compiler: observed.value.compiler,
+                      major: observed.value.major,
+                    },
+                  },
+                }
+              : {}),
+          };
+          primary =
+            options.operationDeadline?.signal.aborted === true &&
+            reason === options.operationDeadline.signal.reason
+              ? new AnalysisTimeoutError(
+                  operation,
+                  options.operationDeadline.timeoutMs,
+                  {
+                    ...errorOptions,
+                    cause: reason,
+                    ...jadxOperationTimeoutGuidance(
+                      options.operationDeadline.timeoutMs,
+                    ),
+                  },
+                )
+              : (inspectionCancellation ??
+                cancelledBy(operation, carriedReason(reason), errorOptions));
+        } else if (inspectionCancellation !== undefined) {
+          primary = inspectionCancellation;
+        } else if (
+          observed?.ok === true &&
+          command?.cleanupOwner !== undefined
+        ) {
+          primary = new ProviderAdapterError("jadx", operation, {
+            cause,
+            ...(output === undefined ? {} : { capturedOutput: output }),
+            diagnostics: {
+              stage: "cleanup",
+              java_module_observation: {
+                compiler: observed.value.compiler,
+                major: observed.value.major,
+              },
+            },
+          });
+        } else if (
+          preparation !== undefined &&
+          command?.reason !== "timeout" &&
+          hostConstraint === undefined
+        ) {
+          primary = new ProviderAdapterError("jadx", operation, {
+            cause,
+            ...(output === undefined ? {} : { capturedOutput: output }),
+            diagnostics: {
+              stage: "ownership_preparation",
+              ...(!(
+                preparation instanceof DarwinProcessOwnershipInspectionError
+              ) || preparation.compilerOutcome === undefined
+                ? {}
+                : {
+                    compiler_outcome: jsonValueSchema.parse(
+                      preparation.compilerOutcome,
+                    ),
+                  }),
+            },
+          });
+        } else if (cause instanceof AnalysisError) {
+          primary = cause;
+        } else if (cause instanceof InternalInvariantError) {
+          // A REA defect says nothing about the selected Java runtime.
+          primary = new ProviderAdapterError("jadx", operation, {
+            cause,
+            ...(output === undefined ? {} : { capturedOutput: output }),
+          });
+        } else if (hostConstraint !== undefined) {
+          // The host, not the selected Java runtime, refused this launch.
+          primary = classifyLaunchFailure(hostConstraint, {
+            providerId: "jadx",
+            operation,
+            fixedArguments: true,
+            command: java,
+            details: {
+              cause,
+              diagnostics: {
+                java_executable: java,
+                phase: "module-inspection",
+              },
+            },
+          });
+        } else {
+          const failure = commandProbeRefusal(
+            java,
+            command,
+            cause,
+            options.timeoutMs ?? JAVA_MODULE_LISTING_TIMEOUT_MS,
+          );
+          if (preparation !== undefined)
+            Object.defineProperty(failure, "inspectionFailure", {
+              value: preparation,
+            });
+          if (cleanups.length === 0) return err(failure);
+          primary = projectRefusal(failure, operation, cause, output);
+        }
+        for (const cleanup of cleanups)
+          primary = analysisErrorWithCleanupDependencies(
+            primary,
+            cleanup,
+            operation,
+          );
+        throw bindProcessInspectionCancellations(cause, primary, operation);
+      }
+    });
+  } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) throw cause;
+    throw analysisClientFailureForOperation(cause, "jadx", operation);
+  }
+};
+
+/** A launch the host refused for capacity or argument size, not the runtime's fault. */
+const hostLaunchConstraint = (
+  command: Pick<OwnedCommandFailure, "processError"> | undefined,
+  cause: unknown,
+) => {
+  const launch =
+    preparationHostCapacityFailure(cause) ??
+    launcherFailureOf(command?.processError ?? cause);
+  return launch?.kind === "host-exhausted" || launch?.kind === "argument-list"
+    ? launch
+    : undefined;
+};
+
+const commandProbeRefusal = (
+  java: string,
+  command:
+    | Pick<OwnedCommandFailure, "snapshot" | "reason" | "processError">
+    | undefined,
+  cause: unknown,
+  timeoutMs: number,
+): JadxJavaProbeRefusal => {
+  const output =
+    command?.snapshot == null
+      ? undefined
+      : capturedProviderOutput(command.snapshot);
+  const processError =
+    command?.processError ?? (cause instanceof Error ? cause : undefined);
+  const systemCode =
+    processError === undefined ? undefined : Reflect.get(processError, "code");
+  const missing = launcherFailureOf(processError)?.kind === "missing";
+  const limited = command?.reason === "output-limit";
+  const timedOut = command?.reason === "timeout";
+  return {
+    code: missing
+      ? "runtime_missing"
+      : limited || timedOut
+        ? "version_unresolved"
+        : "runtime_unavailable",
+    kind: missing ? "java_runtime" : "java_probe",
+    message: limited
+      ? `The selected Java launcher ${java} exceeded the ${String(JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES)}-byte module-listing output budget. This release has no runtime override. REA retained partial output but could not establish compiler or version availability. Inspect the selected launcher for verbose or unbounded output; java --list-modules should return a concise module listing. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
+      : timedOut
+        ? `The selected Java launcher ${java} did not finish the module-listing probe within ${String(timeoutMs)} ms. This release has no runtime override. Inspect its startup responsiveness and verify it with java --list-modules. REA_JADX_OPERATION_TIMEOUT_MS does not raise this probe.`
+        : `Cannot inspect selected Java runtime ${java}: ${missing ? `spawn java ${String(systemCode)}` : cause instanceof Error ? cause.message : cause === undefined ? `exit ${String(output?.exit_code ?? "unknown")}${output?.signal == null ? "" : ` (${output.signal})`}` : String(cause)}. Review the selected launcher and retained diagnostics.`,
+    diagnostics: {
+      java_executable: java,
+      phase: "module-inspection",
+      exit_code: output?.exit_code ?? null,
+      process_error_code: typeof systemCode === "string" ? systemCode : null,
+      signal: output?.signal ?? null,
+      killed: null,
+      stdout: output?.stdout ?? "",
+      stderr: output?.stderr ?? "",
+      output_truncated: output?.truncated ?? true,
+      ...(limited
+        ? {
+            failure: "output_limit",
+            output_limit_bytes: JAVA_MODULE_LISTING_MAX_OUTPUT_BYTES,
+          }
+        : {}),
+      ...(timedOut
+        ? { failure: "probe_terminated", deadline_ms: timeoutMs }
+        : {}),
+    },
+  };
+};
+
+const parseJavaModules = (
+  java: string,
+  snapshot: ProviderProcessSnapshot,
+): Result<JavaModules, JadxJavaProbeRefusal> => {
+  if (snapshot.exitCode !== 0 || snapshot.signal !== null)
+    return err(
+      commandProbeRefusal(
+        java,
+        { reason: "process", snapshot, processError: undefined },
+        undefined,
+        JAVA_MODULE_LISTING_TIMEOUT_MS,
+      ),
+    );
+  const stdout = snapshot.stdout.text;
+  const stderr = snapshot.stderr.text;
+  const compiler = /^jdk\.compiler(?:@|$)/mu.test(stdout);
+  if (!compiler)
+    return refusal(
+      "runtime_missing",
+      `Selected Java runtime ${java} does not provide jdk.compiler. Select a full JDK including jdk.compiler via JAVA_HOME or PATH; verify it with java --list-modules. A JRE cannot compile REA's source bridge.`,
+      {
+        java_executable: java,
+        phase: "module-inspection",
+        jdk_compiler: false,
+        stdout,
+        stderr,
+        output_truncated: false,
+      },
+      "java_runtime",
+    );
+  const major = /^java\.base@(\d+)(?:[.+_-]|$)/mu.exec(stdout)?.[1];
+  if (major === undefined)
+    return refusal(
+      "version_unresolved",
+      `The selected Java launcher ${java} did not report a parseable java.base version in its module listing. Inspect the launcher output and verify it with java --list-modules.`,
+      {
+        java_executable: java,
+        phase: "module-inspection",
+        jdk_compiler: true,
+        java_major: null,
+        stdout,
+        stderr,
+        output_truncated: false,
+      },
+      "java_probe",
+    );
+  const majorNumber = Number(major);
+  if (!Number.isSafeInteger(majorNumber) || majorNumber <= 0)
+    return refusal(
+      "version_unresolved",
+      `The selected Java launcher ${java} reported an invalid java.base major version. Review the retained module listing.`,
+      {
+        java_executable: java,
+        phase: "module-inspection",
+        jdk_compiler: true,
+        java_major: null,
+        unparsed_java_major: major,
+        stdout,
+        stderr,
+        output_truncated: false,
+      },
+      "java_probe",
+    );
+  if (majorNumber < 17)
+    return refusal(
+      "unsupported_version",
+      `Selected Java runtime ${java} must be JDK 17 or newer and include jdk.compiler; verify it with java --list-modules.`,
+      {
+        java_executable: java,
+        phase: "module-inspection",
+        jdk_compiler: true,
+        java_major: major ?? null,
+        stdout,
+        stderr,
+        output_truncated: false,
+      },
+      "java_runtime",
+    );
+  return ok({ compiler: true, major: majorNumber });
+};

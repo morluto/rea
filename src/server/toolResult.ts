@@ -1,73 +1,106 @@
-import type { CallToolResult } from "@modelcontextprotocol/server";
+import { isNativeObservationOperation } from "../domain/native/nativeObservation.js";
+import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js";
+import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
+import { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
+import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
+import { smallerBatchDecompileSelection } from "../domain/analysisView/batchDecompileView.js";
+import type { Evidence } from "../domain/evidence.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
-import {
-  AnalysisOutputError,
-  projectAnalysisError,
-  type AnalysisError,
-} from "../domain/errors.js";
-import type { Result } from "../domain/result.js";
-import type { JsonValue } from "../domain/jsonValue.js";
-import type { ToolContract } from "../contracts/toolContracts.js";
+/** Compose native Evidence continuation with the selected, parsed response budget. */
+export const createToolResultDelivery = (
+  maximumResponseBytes: number | undefined,
+): ToolResultDelivery =>
+  new ToolResultDelivery(
+    maximumResponseBytes ?? STDIO_DEFAULT_MAX_BUFFER_SIZE,
+    retainedEvidenceContinuation,
+  );
 
 /**
- * Translate an application result into MCP text content.
- * Error tags and safe messages remain visible while underlying causes, process
- * output, and other potentially sensitive details stay private.
+ * Halve a caller-selected page that did not fit. Null means no smaller page
+ * exists; undefined means the selection was not a page, so the owner's first
+ * page applies.
  */
-export const toCallToolResult = (
-  result: Result<JsonValue, AnalysisError>,
-  contract: ToolContract,
-): CallToolResult =>
-  result.ok ? successResult(result.value, contract) : errorResult(result.error);
+const smallerPage = (
+  selected: JsonValue | undefined,
+): JsonValue | null | undefined => {
+  if (
+    typeof selected !== "object" ||
+    selected === null ||
+    Array.isArray(selected) ||
+    typeof selected.limit !== "number"
+  )
+    return undefined;
+  return selected.limit > 1
+    ? { ...selected, limit: Math.floor(selected.limit / 2) }
+    : null;
+};
 
-const errorResult = (error: AnalysisError): CallToolResult => {
-  const projected = projectAnalysisError(error);
+/** A named, schema-validated call reading one view of one source. */
+const continuationOf = (
+  source: JsonValue,
+  view: unknown,
+): Readonly<Record<string, JsonValue>> => {
+  const input = inspectAnalysisViewInputSchema.safeParse({ source, view });
+  if (!input.success) return {};
   return {
-    content: [
-      {
-        type: "text",
-        text: projected.message,
-      },
-    ],
-    structuredContent: { error: projected },
-    isError: true,
+    continuation: {
+      name: INSPECT_ANALYSIS_VIEW_OPERATION,
+      arguments: ownedJsonValueSchema.parse(input.data),
+    },
   };
 };
 
-const successResult = (
-  value: JsonValue,
-  contract: ToolContract,
-): CallToolResult => {
-  const candidate = contract.kind === "session" ? { result: value } : value;
-  const parsed = contract.outputSchema.safeParse(candidate);
-  if (!parsed.success) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: "Analysis returned an unreadable result. Retry once; if it continues, run `rea doctor`.",
-        },
-      ],
-      structuredContent: {
-        error: projectAnalysisError(
-          new AnalysisOutputError(
-            contract.name,
-            "output does not match the tool contract",
-          ),
-        ),
-      },
-      isError: true,
-    };
+/** Offer a next page for analysis whose owner supports paging. */
+const retainedEvidenceContinuation = (
+  evidence: Evidence,
+  selected?: JsonValue,
+  viewSource?: JsonValue,
+): Readonly<Record<string, JsonValue>> => {
+  // A view continues from the caller's own source, which need not be retained.
+  if (evidence.operation === INSPECT_ANALYSIS_VIEW_OPERATION) {
+    const view = smallerBatchDecompileSelection(evidence.normalized_result);
+    return view === undefined || viewSource === undefined
+      ? {}
+      : continuationOf(viewSource, view);
   }
-  return {
-    content: [{ type: "text", text: formatValue(value) }],
-    structuredContent: candidate,
-  };
+  const smaller = smallerPage(selected);
+  if (smaller === null) return {};
+  const view = smaller ?? ownerFirstPage(evidence);
+  return view === undefined
+    ? {}
+    : continuationOf(
+        { kind: "retained-evidence", evidence_id: evidence.evidence_id },
+        view,
+      );
 };
 
-const formatValue = (value: JsonValue): string => {
-  if (value === null) return "OK";
-  if (typeof value === "string") return value;
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
-};
+/** The first page an owner offers when its complete retained result does not fit. */
+const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
+  evidence.operation === "trace_web_source_location"
+    ? { kind: "source-location", collection: "matches", offset: 0 }
+    : evidence.operation === "analyze_function" ||
+        evidence.operation === "procedure_pseudo_code"
+      ? { kind: "native", facet: "pseudocode", offset: 0 }
+      : evidence.operation === "inspect_native_instruction"
+        ? {
+            kind: "native-instruction-references",
+            collection: "incoming_references",
+            offset: 0,
+            limit: 64,
+          }
+        : evidence.operation === "trace_application_feature"
+          ? { kind: "feature-trace", collection: "paths", offset: 0, limit: 64 }
+          : evidence.operation === "batch_decompile"
+            ? {
+                kind: "batch-decompile",
+                collection: "items",
+                offset: 0,
+                limit: 64,
+              }
+            : isNativeInventoryOperation(evidence.operation)
+              ? { kind: "native-inventory", offset: 0, limit: 64 }
+              : isNativeObservationOperation(evidence.operation)
+                ? { kind: "native-observation", offset: 0, limit: 64 }
+                : undefined;

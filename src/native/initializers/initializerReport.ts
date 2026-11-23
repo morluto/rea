@@ -1,0 +1,166 @@
+import type {
+  NativeInitializerCoverage,
+  NativeInitializerEntry,
+  NativeInitializerInspection,
+  NativeInitializerKind,
+  NativeInitializerName,
+  NativeInitializerResolution,
+} from "../../domain/native/nativeInitializers.js";
+import {
+  MAX_NATIVE_INITIALIZER_NAME_BYTES,
+  NATIVE_INITIALIZER_LIMITATIONS,
+} from "../../domain/native/nativeInitializers.js";
+import type { InitializerNotes } from "./initializerNotes.js";
+import {
+  joinCoverageStatus,
+  type CoverageStatus,
+} from "../../domain/coverage.js";
+
+/** Page requested by the caller after schema defaults. */
+export interface InitializerPage {
+  readonly offset: number;
+  readonly limit: number;
+}
+
+/** A name known to exceed the byte limit, kept until an entry uses it. */
+export const withheldInitializerSymbolName = Symbol(
+  "withheld initializer symbol name",
+);
+export type InitializerSymbolName =
+  | string
+  | typeof withheldInitializerSymbolName;
+
+/** Keep a readable name in the existing preference order, even beside a withheld alias. */
+export const preferInitializerSymbolName = (
+  preferred: InitializerSymbolName | null | undefined,
+  fallback: InitializerSymbolName | null | undefined,
+): InitializerSymbolName | null =>
+  typeof preferred === "string" ? preferred : (fallback ?? preferred ?? null);
+
+/** One collected slot before paging. `index` is assigned from file order. */
+export interface CollectedInitializer {
+  readonly index: number;
+  readonly kind: NativeInitializerKind;
+  /** Null for DT_INIT / DT_FINI when the dynamic value field is outside every load segment. */
+  readonly slotVa: bigint | null;
+  readonly slotFileOffset: number | null;
+  readonly slotBytes: 4 | 8;
+  readonly valueVa: bigint | null;
+  readonly valueFileOffset: number | null;
+  readonly slotSection: string | null;
+  readonly section: string | null;
+  readonly symbol: InitializerSymbolName | null;
+  readonly resolution: NativeInitializerResolution;
+  readonly detail: string | null;
+}
+
+/** Lowercase `0x` hex without leading zeros other than `0x0`. */
+export const hexAddress = (value: bigint): string => `0x${value.toString(16)}`;
+
+const fitsName = (name: InitializerSymbolName | null): name is string =>
+  typeof name === "string" &&
+  name.length > 0 &&
+  name.length <= MAX_NATIVE_INITIALIZER_NAME_BYTES;
+
+/** Target-derived text. Empty and over-long names are not reported. */
+const untrustedName = (
+  name: InitializerSymbolName | null,
+): NativeInitializerName | null =>
+  fitsName(name) ? { name, trust: "observed-untrusted" } : null;
+
+const pageOf = (
+  entries: readonly CollectedInitializer[],
+  examined: number,
+  page: InitializerPage,
+  status: CoverageStatus,
+): {
+  readonly entries: CollectedInitializer[];
+  readonly coverage: NativeInitializerCoverage;
+} => {
+  const returned = entries.slice(page.offset, page.offset + page.limit);
+  return {
+    entries: returned,
+    coverage: {
+      status,
+      examined_entries: examined,
+      total_entries: status === "complete" ? entries.length : null,
+      returned_entries: returned.length,
+      offset: page.offset,
+      limit: page.limit,
+    },
+  };
+};
+
+/** Project one entry after completeness has accounted for all collected names. */
+const toEntry = (entry: CollectedInitializer): NativeInitializerEntry => ({
+  index: entry.index,
+  kind: entry.kind,
+  slot_va: entry.slotVa === null ? null : hexAddress(entry.slotVa),
+  slot_file_offset: entry.slotFileOffset,
+  slot_bytes: entry.slotBytes,
+  value_va: entry.valueVa === null ? null : hexAddress(entry.valueVa),
+  value_file_offset: entry.valueFileOffset,
+  slot_section: untrustedName(entry.slotSection),
+  section: untrustedName(entry.section),
+  symbol: untrustedName(entry.symbol),
+  resolution: entry.resolution,
+  detail: untrustedName(entry.detail)?.name ?? null,
+});
+
+/**
+ * Standing limitations first, then observations from this image. `examined`
+ * counts every slot read, including omitted sentinels. `coverage` is the
+ * scan's own: `partial` when it left declared slots or names unreported,
+ * `unknown` when it could not determine whether the listed facts are complete.
+ */
+export const finishInitializerReport = (
+  body: Omit<
+    NativeInitializerInspection,
+    "status" | "coverage" | "entries" | "limitations" | "applicability"
+  >,
+  entries: readonly CollectedInitializer[],
+  examined: number,
+  notes: InitializerNotes,
+  page: InitializerPage,
+  coverage: CoverageStatus,
+): NativeInitializerInspection => {
+  let withheld = 0;
+  let indexedNameWithheld = false;
+  for (const entry of entries) {
+    indexedNameWithheld ||= entry.symbol === withheldInitializerSymbolName;
+    for (const name of [
+      entry.slotSection,
+      entry.section,
+      entry.symbol,
+      entry.detail,
+    ])
+      if (
+        typeof name === "string" &&
+        name.length > MAX_NATIVE_INITIALIZER_NAME_BYTES
+      )
+        withheld += 1;
+  }
+  // A withheld name is a known gap in this entry's reported facts.
+  const status = joinCoverageStatus([
+    coverage,
+    withheld > 0 || indexedNameWithheld ? "partial" : "complete",
+  ]);
+  const paged = pageOf(entries, examined, page, status);
+  const returned = paged.entries.map(toEntry);
+  return {
+    ...body,
+    applicability: "applicable",
+    status: status === "complete" ? "parsed" : "incomplete",
+    coverage: paged.coverage,
+    entries: returned,
+    limitations: [
+      ...NATIVE_INITIALIZER_LIMITATIONS,
+      ...notes.list(),
+      ...(withheld === 0
+        ? []
+        : [
+            `${String(withheld)} section, symbol or detail name(s) exceeded the ${String(MAX_NATIVE_INITIALIZER_NAME_BYTES)}-byte name budget and were reported as null.`,
+          ]),
+    ],
+  };
+};

@@ -1,0 +1,143 @@
+import {
+  resolvePwntoolsLimits,
+  type PwntoolsProducerLimits,
+} from "../../domain/native/pwntoolsResourceLimits.js";
+import { safeParseUtf8Json } from "../../domain/safeJson.js";
+import { join } from "node:path";
+import {
+  completedStableArtifact,
+  readStableArtifact,
+  type ArtifactResourceScope,
+} from "../../resources/index.js";
+import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import {
+  PWNTOOLS_MEMORY_FAILURE_EXIT,
+  PWNTOOLS_FILE_SIZE_FAILURE_EXIT,
+} from "./PwntoolsRelease.js";
+import { z } from "zod";
+import { errorMessage } from "../../kernel/errorMessage.js";
+
+/** Actual limits reported by the owned bridge after lowering inherited soft limits. */
+export const pwntoolsResourceLimitsSchema = z.strictObject({
+  address_space_bytes: z.int().nonnegative(),
+  cpu_seconds: z.int().nonnegative(),
+  file_size_bytes: z.int().nonnegative(),
+});
+
+/** A report must fit this operation's selected ceilings, including raised budgets. */
+export const pwntoolsResourceLimitsSchemaFor = (
+  limits: PwntoolsProducerLimits,
+) =>
+  pwntoolsResourceLimitsSchema.extend({
+    address_space_bytes: z.int().nonnegative().max(limits.address_space_bytes),
+    cpu_seconds: z.int().nonnegative().max(limits.cpu_seconds),
+    file_size_bytes: z.int().nonnegative().max(limits.file_bytes),
+  });
+
+/** A missing or invalid report leaves limits unknown and retains its read failure. */
+export interface PwntoolsLimitReport {
+  readonly limits: z.output<typeof pwntoolsResourceLimitsSchema> | null;
+  readonly failure: string | null;
+}
+
+/** Private failure-branch evidence; a bare launcher exit code is insufficient. */
+export interface PwntoolsFailureEvidence {
+  readonly finalizationFailures?: Readonly<Record<string, string>>;
+  readonly limits?: PwntoolsLimitReport;
+  readonly marker?: {
+    readonly resource: "memory" | "file-size" | null;
+    readonly failure: string | null;
+  };
+}
+
+/** Read only bounded owned reports; unverified reserved statuses stay unclassified. */
+export const readPwntoolsFailureEvidence = async (
+  cause: unknown,
+  rootPath?: string,
+  resources?: ArtifactResourceScope,
+  selectedLimits: PwntoolsProducerLimits = resolvePwntoolsLimits(),
+): Promise<PwntoolsFailureEvidence> => {
+  const finalizationFailures: Record<string, string> = {};
+  let limitReport: PwntoolsLimitReport | undefined;
+  let marker: PwntoolsFailureEvidence["marker"];
+  if (
+    cause instanceof OwnedCommandFailure &&
+    cause.snapshot?.signal === null &&
+    (cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ||
+      cause.snapshot.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT) &&
+    rootPath !== undefined
+  ) {
+    try {
+      const reported = await readStableArtifact(
+        join(rootPath, "resource.failure"),
+        1,
+        undefined,
+        undefined,
+        resources,
+      ).catch((cause: unknown) => {
+        const completed = completedStableArtifact(cause);
+        if (completed === undefined) throw cause;
+        finalizationFailures["resource.failure"] = errorMessage(cause);
+        return completed;
+      });
+      const expected =
+        cause.snapshot.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT ? "M" : "F";
+      marker = reported.bytes.equals(Buffer.from(expected, "ascii"))
+        ? { resource: expected === "M" ? "memory" : "file-size", failure: null }
+        : {
+            resource: null,
+            failure:
+              "Private bridge failure marker does not match the observed exit status.",
+          };
+    } catch (markerFailure: unknown) {
+      marker = {
+        resource: null,
+        failure: errorMessage(markerFailure),
+      };
+    }
+  }
+  if (
+    cause instanceof OwnedCommandFailure &&
+    (cause.snapshot?.signal === "SIGXCPU" ||
+      cause.snapshot?.signal === "SIGXFSZ" ||
+      ((cause.snapshot?.exitCode === PWNTOOLS_FILE_SIZE_FAILURE_EXIT ||
+        cause.snapshot?.exitCode === PWNTOOLS_MEMORY_FAILURE_EXIT) &&
+        cause.snapshot.signal === null)) &&
+    rootPath !== undefined
+  ) {
+    try {
+      const reported = await readStableArtifact(
+        join(rootPath, "limits.json"),
+        4096,
+        undefined,
+        undefined,
+        resources,
+      ).catch((cause: unknown) => {
+        const completed = completedStableArtifact(cause);
+        if (completed === undefined) throw cause;
+        finalizationFailures["limits.json"] = errorMessage(cause);
+        return completed;
+      });
+      const decoded = safeParseUtf8Json(reported.bytes);
+      if (!decoded.ok) throw decoded.cause;
+      limitReport = {
+        limits: pwntoolsResourceLimitsSchemaFor(selectedLimits).parse(
+          decoded.value,
+        ),
+        failure: null,
+      };
+    } catch (reportFailure: unknown) {
+      limitReport = {
+        limits: null,
+        failure: errorMessage(reportFailure),
+      };
+    }
+  }
+  return {
+    ...(Object.keys(finalizationFailures).length === 0
+      ? {}
+      : { finalizationFailures }),
+    ...(limitReport === undefined ? {} : { limits: limitReport }),
+    ...(marker === undefined ? {} : { marker }),
+  };
+};

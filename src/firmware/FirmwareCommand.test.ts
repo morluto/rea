@@ -1,0 +1,865 @@
+import { createTestArtifactResourceScope } from "../../tests/fixtures/artifactResourceScope.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import { EventEmitter } from "node:events";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { PassThrough } from "node:stream";
+
+import { expect, it as test, vi } from "vitest";
+
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { stopTestChild } from "../../tests/support/process/stopTestChild.js";
+import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { FIRMWARE_LIMITS } from "./FirmwareRelease.js";
+import { FirmwareFileAccess } from "./FirmwareFiles.js";
+import {
+  resolveFirmwareCommand,
+  runFirmwareCommand,
+  type FirmwareLauncher,
+} from "./FirmwareCommand.js";
+import {
+  spawnOwnedProviderProcess,
+  type ProviderProcessHandle,
+  type ProviderProcessSupervisor,
+  type OwnedProviderProcessSpawnOptions,
+} from "../process/ProviderProcess.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  ProcessOwnershipInspectionCancelled,
+  ProcessOwnershipIdentityBatchFailure,
+} from "../process/ProcessInspectionCancellation.js";
+
+const it = test.skipIf(process.platform !== "linux");
+
+it.each([
+  { source: "analysis", wrapped: false },
+  { source: "caller", wrapped: false },
+  { source: "analysis", wrapped: true },
+  { source: "caller", wrapped: true },
+] as const)(
+  "classifies $source cancellation during launcher admission (wrapped: $wrapped)",
+  async ({ source, wrapped }) => {
+    const analysis = new AbortController();
+    const caller = new AbortController();
+    const reason =
+      source === "analysis"
+        ? new DOMException("selected deadline", "TimeoutError")
+        : { caller: "opaque admission cancellation" };
+    const retainCleanup = vi.fn();
+    const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      command: "/usr/bin/true",
+      limiter: "/usr/bin/true",
+      args: ["--version"],
+      cwd: await createTestTempDirectory("rea-firmware-admission-"),
+      environment: process.env,
+      signal: AbortSignal.any([analysis.signal, caller.signal]),
+      deadline: {
+        phase: "analysis",
+        signal: analysis.signal,
+        timeoutMs: 1234,
+        expiresAtMs: performance.now() + 1234,
+      },
+      launcher: async (options) => {
+        // Real launcher is paused at its first ownership-preparation await;
+        // it must reject before acquiring a child after this cancellation.
+        const admission = wrapped
+          ? undefined
+          : spawnOwnedProviderProcess(options);
+        (source === "analysis" ? analysis : caller).abort(reason);
+        if (admission !== undefined) return admission;
+        throw new ProcessOwnershipInspectionCancelled(reason);
+      },
+      retainCleanup,
+    }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisError);
+    if (!(failure instanceof AnalysisError))
+      throw new Error("Expected typed admission interruption");
+    expect(failure.cause).toBe(reason);
+    expect(projectAnalysisError(failure)).toMatchObject(
+      source === "analysis"
+        ? {
+            code: "provider_timeout",
+            details: { timeout_ms: 1234, diagnostics: { phase: "analysis" } },
+            remediation: {
+              action: expect.stringContaining("analysis_timeout_ms"),
+            },
+          }
+        : { code: "cancelled" },
+    );
+    expect(retainCleanup).not.toHaveBeenCalled();
+  },
+);
+
+test.each([
+  "direct",
+  "batch",
+  "deadline-batch",
+  "physical-identity",
+  "physical-name",
+] as const)(
+  "classifies %s by the ownership producer rather than abort resemblance",
+  async (kind) => {
+    const controller = new AbortController();
+    const reason = { caller: "typed admission cancellation" };
+    const cancelled = new ProcessOwnershipInspectionCancelled(reason);
+    const physical = new Error("physical admission failure", { cause: reason });
+    physical.name = "AbortError";
+    const batch = new ProcessOwnershipIdentityBatchFailure(
+      [{ pid: 42, requestIndex: 0, cause: cancelled }],
+      new Map([
+        [
+          44,
+          {
+            state: "unavailable" as const,
+            reason: "completed sibling observation",
+          },
+        ],
+      ]),
+    );
+    const source =
+      kind === "direct" ? cancelled : kind.endsWith("batch") ? batch : physical;
+    const failure = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      command: "/unused/binwalk",
+      limiter: "/unused/prlimit",
+      args: [],
+      cwd: "/unused",
+      environment: {},
+      signal: controller.signal,
+      deadline: {
+        phase: "analysis",
+        signal:
+          kind === "deadline-batch"
+            ? controller.signal
+            : new AbortController().signal,
+        timeoutMs: 30_000,
+        expiresAtMs: performance.now() + 30_000,
+      },
+      launcher: async () => {
+        if (kind.startsWith("physical"))
+          controller.abort(kind === "physical-identity" ? physical : reason);
+        else if (kind === "deadline-batch") controller.abort(reason);
+        throw source;
+      },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError)) throw failure;
+    if (kind.startsWith("physical")) {
+      expect(failure).toMatchObject({
+        _tag: "ProviderAdapterError",
+        cause: physical,
+      });
+      expect(failure.cause).toBe(physical);
+    } else if (kind === "deadline-batch") {
+      expect(failure).toMatchObject({
+        _tag: "AnalysisTimeoutError",
+        cause: reason,
+      });
+      const [cancelled, ...extra] = failure.secondaryFailures;
+      expect(extra).toEqual([]);
+      if (cancelled === undefined || !("inspectionFailure" in cancelled))
+        throw new Error("Missing deadline inspection origin");
+      expect(cancelled.cause).toBe(reason);
+      expect(cancelled.inspectionFailure).toBe(batch);
+    } else {
+      expect(failure).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+      expect(failure.cause).toBe(reason);
+      if (!("inspectionFailure" in failure))
+        throw new Error("Missing ownership inspection origin");
+      expect(failure.inspectionFailure).toBe(source);
+    }
+  },
+);
+
+it("does not relabel an unrelated launch failure when a deadline also fires", async () => {
+  const analysis = new AbortController();
+  const failure = new Error("distinct launch refusal");
+  await expect(
+    runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+      engine: "binwalk",
+      operation: "inspect_firmware_regions",
+      command: "/usr/bin/true",
+      limiter: "/usr/bin/true",
+      args: [],
+      cwd: await createTestTempDirectory("rea-firmware-admission-error-"),
+      environment: process.env,
+      signal: analysis.signal,
+      deadline: {
+        phase: "analysis",
+        signal: analysis.signal,
+        timeoutMs: 1234,
+        expiresAtMs: performance.now() + 1234,
+      },
+      launcher: async () => {
+        analysis.abort();
+        throw failure;
+      },
+      retainCleanup: vi.fn(),
+    }),
+  ).rejects.toMatchObject({ _tag: "ProviderAdapterError", cause: failure });
+});
+
+test("names the host and tool requirement of an unconfigured engine", async () => {
+  const refusal: unknown = await resolveFirmwareCommand(
+    {},
+    "binwalk",
+    "inspect_firmware_regions",
+    new FirmwareFileAccess(),
+    "linux",
+  ).catch((cause: unknown) => cause);
+
+  expect(refusal).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+  });
+  if (!(refusal instanceof AnalysisCapabilityUnavailableError))
+    throw new Error("Expected a capability refusal");
+  expect(projectAnalysisError(refusal)).toMatchObject({
+    code: "capability_unavailable",
+    message: refusal.reason,
+    remediation: { action: refusal.reason },
+  });
+  expect(refusal.reason).toContain("REA_BINWALK_COMMAND");
+});
+
+it("rejects a directory configured as the firmware engine executable", async () => {
+  const root = await createTestTempDirectory("rea-firmware-command-");
+  const command = join(root, "binwalk");
+  const limiter = await executableFixture(root, "prlimit");
+  await mkdir(command);
+
+  await expect(
+    resolveFirmwareCommand(
+      {
+        REA_BINWALK_COMMAND: command,
+        REA_FIRMWARE_PRLIMIT_COMMAND: limiter,
+      },
+      "binwalk",
+      "inspect_firmware_regions",
+      new FirmwareFileAccess(),
+      "linux",
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: expect.stringContaining(
+      `REA_BINWALK_COMMAND is not a readable executable regular file: ${command}: Configured path is not a regular file`,
+    ),
+  });
+});
+
+it("classifies an unusable firmware engine as an unavailable capability", async () => {
+  const root = await createTestTempDirectory("rea-firmware-command-");
+  const command = join(root, "binwalk");
+  const limiter = await executableFixture(root, "prlimit");
+  await writeFile(command, "not executable", { mode: 0o600 });
+
+  await expect(
+    resolveFirmwareCommand(
+      {
+        REA_BINWALK_COMMAND: command,
+        REA_FIRMWARE_PRLIMIT_COMMAND: limiter,
+      },
+      "binwalk",
+      "inspect_firmware_regions",
+      new FirmwareFileAccess(),
+      "linux",
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: expect.stringContaining(command),
+  });
+});
+
+it("rejects a directory configured as the resource limiter executable", async () => {
+  const root = await createTestTempDirectory("rea-firmware-limiter-");
+  const command = await executableFixture(root, "binwalk");
+  const limiter = join(root, "prlimit");
+  await mkdir(limiter);
+
+  await expect(
+    resolveFirmwareCommand(
+      {
+        REA_BINWALK_COMMAND: command,
+        REA_FIRMWARE_PRLIMIT_COMMAND: limiter,
+      },
+      "binwalk",
+      "inspect_firmware_regions",
+      new FirmwareFileAccess(),
+      "linux",
+    ),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: expect.stringContaining(
+      `Resource limiter is not an executable regular file: ${limiter}: Configured path is not a regular file; provide util-linux prlimit`,
+    ),
+  });
+});
+
+// A launched producer that writes its output, then stops on a limit signal.
+const signalledLauncher = (
+  signal: NodeJS.Signals,
+  output: { stdout: string; stderr: string },
+): FirmwareLauncher => {
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const emitter = new EventEmitter();
+  const child: ProviderProcessHandle = {
+    on: emitter.on.bind(emitter),
+    once: emitter.once.bind(emitter),
+    off: emitter.off.bind(emitter),
+    pid: 4242,
+    stdout,
+    stderr,
+    exitCode: null,
+    signalCode: signal,
+    kill: () => false,
+  };
+  let ended = 0;
+  const close = () => {
+    ended += 1;
+    if (ended === 2) emitter.emit("close", null, signal);
+  };
+  stdout.once("end", close);
+  stderr.once("end", close);
+  return async () => {
+    // Queue output after runFirmwareCommand attaches the supervisor.
+    setImmediate(() => {
+      stdout.end(output.stdout);
+      stderr.end(output.stderr);
+    });
+    return {
+      process: child,
+      ownership: {
+        runId: "rea-firmware-signal",
+        leaderPid: 4242,
+        processGroupId: 4242,
+      },
+      cleanup: () => Promise.resolve({ cleaned: true, signaled: false }),
+    };
+  };
+};
+
+const analysisDeadline = (signal: AbortSignal) => ({
+  phase: "analysis" as const,
+  signal,
+  timeoutMs: 30_000,
+  expiresAtMs: performance.now() + 30_000,
+});
+
+test("projects the fixed CPU limit and captured output when firmware stops on SIGXCPU", async () => {
+  const analysis = new AbortController();
+  const failure: unknown = await runFirmwareCommand({
+    resources: createTestArtifactResourceScope(),
+    fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+    engine: "binwalk",
+    operation: "inspect_firmware_regions",
+    command: "/opt/binwalk",
+    limiter: "/usr/bin/prlimit",
+    args: ["--quiet"],
+    cwd: await createTestTempDirectory("rea-firmware-signal-"),
+    environment: process.env,
+    signal: analysis.signal,
+    deadline: analysisDeadline(analysis.signal),
+    launcher: signalledLauncher("SIGXCPU", {
+      stdout: "scan ✓\n",
+      stderr: "cpu limit\n",
+    }),
+    retainCleanup: vi.fn(),
+  }).catch((cause: unknown) => cause);
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure).toMatchObject({ retryable: false });
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "cpu",
+      reported_limits: { cpu_seconds: FIRMWARE_LIMITS.cpuSeconds },
+      captured_output: {
+        stdout: "scan ✓\n",
+        stderr: "cpu limit\n",
+        stdout_bytes: 9,
+        stderr_bytes: 10,
+        signal: "SIGXCPU",
+        exit_code: null,
+        truncated: false,
+      },
+    },
+  });
+  const action = projectAnalysisError(failure).remediation.action;
+  expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+  expect(action).toContain("no runtime override");
+  expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+});
+
+const sixteenMiB = 16 * 1024 * 1024;
+test.each([
+  {
+    inherited: Number.MAX_SAFE_INTEGER,
+    limit: sixteenMiB + 1,
+    adjustable: true,
+  },
+  { inherited: sixteenMiB + 1, limit: sixteenMiB + 1, adjustable: false },
+])(
+  "recommends a larger max_output_bytes on SIGXFSZ only when it raises the limit (inherited $inherited)",
+  async ({ inherited, limit, adjustable }) => {
+    const root = await createTestTempDirectory("rea-firmware-fsize-signal-");
+    const analysis = new AbortController();
+    const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      fileSizeCeiling: inherited,
+      engine: "unblob",
+      operation: "extract_firmware",
+      command: "/opt/unblob",
+      limiter: "/usr/bin/prlimit",
+      args: [],
+      cwd: root,
+      environment: process.env,
+      signal: analysis.signal,
+      deadline: analysisDeadline(analysis.signal),
+      launcher: signalledLauncher("SIGXFSZ", {
+        stdout: "staging\n",
+        stderr: "file limit\n",
+      }),
+      outputBudget: { root, bytes: sixteenMiB, entries: 10 },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure).toMatchObject({ retryable: false });
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "file-size",
+        reported_limits: { file_size_bytes: limit },
+        captured_output: {
+          stdout: "staging\n",
+          stderr: "file limit\n",
+          stdout_bytes: 8,
+          stderr_bytes: 11,
+          signal: "SIGXFSZ",
+          exit_code: null,
+          truncated: false,
+        },
+      },
+    });
+    const action = projectAnalysisError(failure).remediation.action;
+    expect(action).toContain(`${limit} bytes`);
+    expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+    expect(action.includes("Increase max_output_bytes")).toBe(adjustable);
+    expect(action).toContain(
+      adjustable ? "one byte above max_output_bytes" : "no runtime override",
+    );
+  },
+);
+
+const executableFixture = async (root: string, name: string) => {
+  const path = join(root, name);
+  await writeFile(path, "#!/bin/sh\n");
+  await chmod(path, 0o700);
+  return path;
+};
+
+test.each([
+  {
+    selected: 1,
+    inherited: Number.MAX_SAFE_INTEGER,
+    expected: 8 * 1024 * 1024 + 1,
+  },
+  {
+    selected: 16 * 1024 * 1024,
+    inherited: Number.MAX_SAFE_INTEGER,
+    expected: 16 * 1024 * 1024 + 1,
+  },
+  {
+    selected: 16 * 1024 * 1024,
+    inherited: 16 * 1024 * 1024,
+    expected: 16 * 1024 * 1024,
+  },
+  { selected: 16 * 1024 * 1024, inherited: 1024, expected: 1024 },
+])(
+  "separates payload $selected from metadata file headroom and inherited ceiling $inherited",
+  async ({ selected, inherited, expected }) => {
+    const root = await createTestTempDirectory("rea-firmware-file-policy-");
+    const refused = new Error("stop after inspecting launch policy");
+    const launcher = vi.fn(
+      async (options: OwnedProviderProcessSpawnOptions) => {
+        expect(options.arguments).toContain(`--fsize=${expected}:${expected}`);
+        expect(options.arguments).toContain(
+          `--as=${FIRMWARE_LIMITS.addressSpaceBytes}:${FIRMWARE_LIMITS.addressSpaceBytes}`,
+        );
+        throw refused;
+      },
+    );
+    const failure: unknown = await runFirmwareCommand({
+      resources: createTestArtifactResourceScope(),
+      engine: "unblob",
+      operation: "extract_firmware",
+      command: "/synthetic/unblob",
+      limiter: "/synthetic/prlimit",
+      fileSizeCeiling: inherited,
+      args: [],
+      cwd: root,
+      environment: {},
+      signal: new AbortController().signal,
+      deadline: {
+        phase: "analysis",
+        signal: new AbortController().signal,
+        timeoutMs: 120_000,
+        expiresAtMs: performance.now() + 120_000,
+      },
+      launcher,
+      outputBudget: { root, bytes: selected, entries: 10 },
+      retainCleanup: vi.fn(),
+    }).catch((cause: unknown) => cause);
+    expect(failure).toMatchObject({ _tag: "ProviderAdapterError" });
+    if (!(failure instanceof AnalysisError)) throw failure;
+    expect(failure.cause).toBe(refused);
+    expect(failure.cleanupResources).toEqual([]);
+    expect(launcher).toHaveBeenCalledOnce();
+  },
+);
+
+test.each([
+  { exitCode: 0, cleanupFails: false },
+  { exitCode: 7, cleanupFails: false },
+  { exitCode: 7, cleanupFails: true },
+])(
+  "preserves completed exit $exitCode through cancellation during real owned cleanup (fails: $cleanupFails)",
+  async ({ exitCode, cleanupFails }) => {
+    const root = await createTestTempDirectory("rea-firmware-finalization-");
+    const caller = new AbortController();
+    const reason = { caller: "cancel during final cleanup" };
+    let cleanupCalls = 0;
+    const retained: ProviderProcessSupervisor[] = [];
+    let ownedProcess: ProviderProcessHandle | undefined;
+    try {
+      const failure: unknown = await runFirmwareCommand({
+        resources: createTestArtifactResourceScope(),
+        engine: "binwalk",
+        operation: "inspect_firmware_regions",
+        command: process.execPath,
+        limiter: process.execPath,
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+        args: [],
+        cwd: root,
+        environment: process.env,
+        signal: caller.signal,
+        deadline: {
+          phase: "analysis",
+          signal: new AbortController().signal,
+          timeoutMs: 30_000,
+          expiresAtMs: performance.now() + 30_000,
+        },
+        launcher: async (options) => {
+          const owned = await spawnOwnedProviderProcess({
+            ...options,
+            command: process.execPath,
+            arguments: [
+              "-e",
+              `process.stdout.write("scan evidence\\n"); process.stderr.write("producer diagnostics\\n"); process.exitCode = ${exitCode}`,
+            ],
+          });
+          ownedProcess = owned.process;
+          return {
+            ...owned,
+            cleanup: async () => {
+              cleanupCalls += 1;
+              expect(owned.process.exitCode).toBe(exitCode);
+              caller.abort(reason);
+              const cleaned = await cleanupOwnedProcessGroup(owned.ownership);
+              if (cleanupFails && cleanupCalls === 1)
+                return {
+                  cleaned: false as const,
+                  reason: "controlled cleanup refusal after real release",
+                };
+              return cleaned;
+            },
+          };
+        },
+        retainCleanup: (owner) => {
+          retained.push(owner);
+        },
+      }).catch((cause: unknown) => cause);
+      expect(cleanupCalls).toBe(1);
+      expect(failure).toBeInstanceOf(AnalysisError);
+      if (!(failure instanceof AnalysisError))
+        throw new Error("Expected typed failure");
+      if (exitCode === 0) {
+        expect(failure).toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cause: reason,
+        });
+      } else if (cleanupFails) {
+        expect(retained).toHaveLength(1);
+        expect(await retained[0]!.stop()).toMatchObject({
+          status: "verified-cleanup",
+        });
+        expect(cleanupCalls).toBe(2);
+        retained[0]!.dispose();
+        expect(failure).toMatchObject({
+          diagnostics: {
+            previous_error: {
+              code: "execution_failure",
+              details: { diagnostics: { exit_code: 7 } },
+            },
+          },
+          capturedOutput: {
+            stdout: "scan evidence\n",
+            stderr: "producer diagnostics\n",
+            exit_code: 7,
+          },
+        });
+      } else {
+        expect(failure).toMatchObject({
+          _tag: "ProviderAdapterError",
+          diagnostics: {
+            exit_code: 7,
+            stdout: "scan evidence\n",
+            stderr: "producer diagnostics\n",
+          },
+        });
+        const projected = projectAnalysisError(failure);
+        expect(projected.code).toBe("execution_failure");
+        const action = projected.remediation.action;
+        expect(action).toContain(`cpuSeconds is ${FIRMWARE_LIMITS.cpuSeconds}`);
+        expect(action).toContain(
+          `address-space allowance is ${FIRMWARE_LIMITS.addressSpaceBytes} bytes`,
+        );
+        expect(action).toContain(
+          `file-size allowance is ${FIRMWARE_LIMITS.reportBytes + 1} bytes`,
+        );
+        expect(action).toContain("no runtime override");
+        expect(action).toMatch(/analysis_timeout_ms\b.*does not raise/u);
+      }
+    } finally {
+      if (ownedProcess !== undefined) await stopTestChild(ownedProcess);
+    }
+  },
+);
+
+const waitForStreamClose = async (
+  closedPromise: Promise<void> | undefined,
+  timeoutMs: number,
+): Promise<void> => {
+  if (closedPromise === undefined) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      closedPromise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+};
+
+const signalTestGroupKill = (groupId: number): void => {
+  try {
+    process.kill(-groupId, "SIGKILL");
+  } catch (cause: unknown) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ESRCH"))
+      throw cause;
+  }
+};
+
+// The injected launcher runs real owned Node processes on every POSIX host;
+// Linux firmware binaries and prlimit are deliberately outside this lifecycle seam.
+test.skipIf(process.platform === "win32").each([
+  {
+    overflow: false,
+    exitCode: 7,
+    acceptFailure: false,
+    cancelBeforeExit: false,
+    expected: "ProviderAdapterError",
+  },
+  {
+    overflow: false,
+    exitCode: 0,
+    acceptFailure: false,
+    cancelBeforeExit: false,
+    expected: "AnalysisCancelledError",
+  },
+  {
+    overflow: false,
+    exitCode: 1,
+    acceptFailure: true,
+    cancelBeforeExit: false,
+    expected: "AnalysisCancelledError",
+  },
+  {
+    overflow: false,
+    exitCode: 7,
+    acceptFailure: false,
+    cancelBeforeExit: true,
+    expected: "AnalysisCancelledError",
+  },
+  {
+    overflow: true,
+    exitCode: 7,
+    acceptFailure: false,
+    cancelBeforeExit: false,
+    expected: "ProviderAdapterError",
+  },
+])(
+  "retains root exit $exitCode while a handshaken descendant holds output (accepted: $acceptFailure, earlier cancellation: $cancelBeforeExit, overflow: $overflow)",
+  async ({ exitCode, acceptFailure, cancelBeforeExit, expected, overflow }) => {
+    const root = await createTestTempDirectory(
+      "rea-firmware-inherited-output-",
+    );
+    const descendantExit = join(root, "descendant-exit");
+    const caller = new AbortController();
+    const reason = { caller: "cancel with inherited output still open" };
+    let cleanupCalls = 0;
+    let cleanupVerified = false;
+    let ownedGroupId: number | undefined;
+    let closedPromise: Promise<void> | undefined;
+    let closed = false;
+    let exited = false;
+    try {
+      const failure: unknown = await runFirmwareCommand({
+        resources: createTestArtifactResourceScope(),
+        engine: "binwalk",
+        operation: "inspect_firmware_regions",
+        command: process.execPath,
+        limiter: process.execPath,
+        fileSizeCeiling: Number.MAX_SAFE_INTEGER,
+        args: [],
+        cwd: root,
+        environment: process.env,
+        signal: caller.signal,
+        deadline: {
+          phase: "analysis",
+          signal: new AbortController().signal,
+          timeoutMs: 30_000,
+          expiresAtMs: performance.now() + 30_000,
+        },
+        acceptReportedExtractionFailure: acceptFailure,
+        launcher: async (options) => {
+          const exitRelease = join(root, "exit-release");
+          const tailRelease = join(root, "tail-release");
+          const descendant = `
+            const { existsSync } = require("node:fs");
+            const keepAlive = setInterval(() => {}, 1000);
+            const exitCheck = setInterval(() => {
+              if (!existsSync(${JSON.stringify(descendantExit)})) return;
+              clearInterval(exitCheck);
+              clearInterval(keepAlive);
+              process.exit(0);
+            }, 50);
+            const tail = setInterval(() => {
+              if (!existsSync(${JSON.stringify(tailRelease)})) return;
+              clearInterval(tail);
+              process.stderr.write(Buffer.alloc(${overflow ? FIRMWARE_LIMITS.diagnosticBytes : 0}, 120), () => {
+                process.stderr.write("descendant-tail\\n");
+              });
+            }, 10);
+            process.send("ready");
+          `;
+          const owned = await spawnOwnedProviderProcess({
+            ...options,
+            command: process.execPath,
+            arguments: [
+              "-e",
+              `
+              const { spawn } = require("node:child_process");
+              const child = spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], {
+                stdio: ["ignore", "inherit", "inherit", "ipc"],
+              });
+              child.once("message", () => {
+                process.stderr.write("descendant-ready\\n");
+                child.disconnect();
+                child.unref();
+                if (${cancelBeforeExit}) {
+                  const release = setInterval(() => {
+                    if (!require("node:fs").existsSync(${JSON.stringify(exitRelease)})) return;
+                    clearInterval(release);
+                    process.exitCode = ${exitCode};
+                  }, 10);
+                } else process.exitCode = ${exitCode};
+              });
+            `,
+            ],
+          });
+          ownedGroupId = owned.ownership.processGroupId;
+          closedPromise = new Promise<void>((resolve) => {
+            owned.process.once("close", () => {
+              closed = true;
+              resolve();
+            });
+          });
+          let diagnostics = "";
+          owned.process.stderr?.on("data", (chunk: Buffer) => {
+            diagnostics += chunk.toString();
+            if (cancelBeforeExit && !caller.signal.aborted) {
+              expect(exited).toBe(false);
+              caller.abort(reason);
+              void writeFile(exitRelease, "release");
+            } else if (
+              !cancelBeforeExit &&
+              diagnostics.includes("descendant-tail")
+            ) {
+              expect(exited).toBe(true);
+              expect(closed).toBe(false);
+              caller.abort(reason);
+            }
+          });
+          owned.process.once("exit", () => {
+            exited = true;
+            // Release descendant diagnostics only after the supervisor has also
+            // observed the root's exit, leaving inherited pipes open until cleanup.
+            queueMicrotask(() => {
+              void writeFile(tailRelease, "release");
+            });
+          });
+          return {
+            ...owned,
+            cleanup: async () => {
+              cleanupCalls += 1;
+              const result = await cleanupOwnedProcessGroup(owned.ownership);
+              cleanupVerified = result.cleaned;
+              return result;
+            },
+          };
+        },
+        retainCleanup: () => {
+          throw new Error("Real descendant cleanup must complete");
+        },
+      }).catch((cause: unknown) => cause);
+      expect(exited).toBe(true);
+      expect(cleanupCalls).toBe(1);
+      expect(failure).toMatchObject({ _tag: expected });
+      if (expected === "ProviderAdapterError")
+        expect(failure).toMatchObject({
+          diagnostics: {
+            exit_code: 7,
+            stderr: overflow
+              ? expect.stringMatching(/^descendant-ready\nxxx/)
+              : "descendant-ready\ndescendant-tail\n",
+            truncated: overflow,
+          },
+        });
+      else expect(failure).toMatchObject({ cause: reason });
+    } finally {
+      if (!closed) {
+        await writeFile(descendantExit, "exit").catch(() => undefined);
+        await waitForStreamClose(closedPromise, 1_000);
+      }
+      if (!closed && !cleanupVerified && ownedGroupId !== undefined) {
+        signalTestGroupKill(ownedGroupId);
+        await waitForStreamClose(closedPromise, 1_000);
+      }
+    }
+  },
+);

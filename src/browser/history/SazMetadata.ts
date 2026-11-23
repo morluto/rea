@@ -1,0 +1,80 @@
+import { captureBudgets } from "./CaptureBudgets.js";
+import type { Node } from "@xmldom/xmldom";
+import { parseXmlDocument } from "../../domain/xmlDocument.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import {
+  decodeXmlPlistText,
+  XmlPlistTextDecodeError,
+} from "../../domain/propertyListXmlText.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
+
+/** Preserve XML node order, attribute names and text without interpreting producer-specific flags. */
+export const decodeSazMetadata = (bytes: Buffer): JsonValue => {
+  let xml: string;
+  try {
+    xml = decodeXmlPlistText(bytes);
+  } catch (cause: unknown) {
+    if (!(cause instanceof XmlPlistTextDecodeError)) throw cause;
+    if (cause.reason === "unsupported-encoding")
+      throw new CaptureFormatError(
+        "unsupported",
+        `SAZ metadata declares unsupported XML encoding ${cause.declaredEncoding}.`,
+        "",
+        cause,
+      );
+    throw new CaptureFormatError(
+      "malformed",
+      cause.reason === "encoding-mismatch"
+        ? "SAZ metadata encoding declaration disagrees with its bytes."
+        : "SAZ metadata contains invalid bytes for its detected XML encoding.",
+      "",
+      cause,
+    );
+  }
+  const parsed = parseXmlDocument(xml, {
+    doctype: "reject",
+    lineEndings: "preserve",
+  });
+  if (!parsed.ok)
+    throw new CaptureFormatError(
+      parsed.error.kind === "unsupported" ? "unsupported" : "malformed",
+      parsed.error.kind === "unsupported"
+        ? "SAZ metadata DTDs are unsupported."
+        : "SAZ metadata is not well-formed XML.",
+      "",
+      parsed.error,
+    );
+  const document = parsed.value;
+  if (document.documentElement?.tagName !== "Session")
+    throw new CaptureFormatError(
+      "malformed",
+      "SAZ metadata must have a Session document element.",
+    );
+  const visit = (node: Node, depth: number): JsonValue => {
+    if (depth > captureBudgets().depth)
+      throw new CaptureFormatError(
+        { name: "nesting-depth", maximum: captureBudgets().depth },
+        `SAZ metadata exceeds max_nesting_depth (${String(captureBudgets().depth)} levels).`,
+      );
+    const children: JsonValue[] = [];
+    for (let child = node.firstChild; child !== null; child = child.nextSibling)
+      children.push(visit(child, depth + 1));
+    const attributes: JsonValue[] = [];
+    if (node.nodeType === 1) {
+      const element = node as import("@xmldom/xmldom").Element;
+      for (let i = 0; i < element.attributes.length; i++) {
+        const attribute = element.attributes.item(i);
+        if (attribute !== null)
+          attributes.push({ name: attribute.name, value: attribute.value });
+      }
+    }
+    return {
+      name: node.nodeName,
+      type: node.nodeType,
+      value: node.nodeValue,
+      attributes,
+      children,
+    };
+  };
+  return visit(document, 0);
+};

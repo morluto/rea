@@ -1,0 +1,991 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../../../src/domain/analysisResourceLimits.js";
+import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
+import {
+  HOT_TOOL_NAMES,
+  progressiveCatalogIdentity,
+} from "../../../src/contracts/catalog/catalogDiscovery.js";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
+import { promisify } from "node:util";
+
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import {
+  createTestWorkspace,
+  removeTestWorkspace,
+} from "../../support/workspace/workspaceFixture.js";
+import { processHasStopped } from "../../support/process/observePosixProcess.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { observed } from "../../fixtures/analysisExecution.js";
+import { createCliCommandSession } from "../../support/cli/cliCommandSession.js";
+import {
+  cliProcessEnvironment,
+  definedCliEnvironment,
+} from "../../support/cli/cliFixture.js";
+
+import {
+  runProductionMcpDoctor,
+  runProductionMcpDoctorCli,
+} from "../../../src/mcpDoctor.js";
+import {
+  DEFAULT_CATALOG_IDENTITY,
+  catalogIdentityForToolFamilies,
+  createCatalogIdentity,
+} from "../../../src/contracts/catalog/catalogIdentity.js";
+import { parseConfig } from "../../../src/config/parseConfig.js";
+import { runSessionStatus } from "../../../src/application/DirectAnalysisStatus.js";
+import { ok } from "../../../src/domain/result.js";
+import { MCP_PHASE_BUDGET_FLOOR_MS } from "../../../src/config/mcpStartupBudgets.js";
+import { MCP_STARTUP_POLICY } from "../../../src/config/mcpStartupPolicy.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { waitFor } from "../../support/testWait.js";
+import { COMPACT_INPUT_SCHEMA_PRESENTATION } from "../../../src/contracts/mcpSchemaPresentation.js";
+
+// Compile SDK output validators for the tools a test calls, not the whole catalog.
+const schemaValidation = createMcpSchemaValidation();
+const cliSession = createCliCommandSession();
+let compileCacheRoot = "";
+let compileCache = "";
+beforeAll(async () => {
+  compileCacheRoot = (await createTestWorkspace("rea-mcp-doctor-compile-"))
+    .root;
+  compileCache = join(compileCacheRoot, "node-compile");
+});
+afterAll(async () => {
+  schemaValidation.clear();
+  await cliSession.close();
+  if (compileCacheRoot !== "") {
+    await removeTestWorkspace(compileCacheRoot);
+  }
+});
+
+const withCompileCache = <T extends NodeJS.ProcessEnv | Record<string, string>>(
+  environment: T,
+): T =>
+  compileCache === "" || environment.NODE_V8_COVERAGE !== undefined
+    ? environment
+    : ({ NODE_COMPILE_CACHE: compileCache, ...environment } as T);
+
+const runCachedMcpDoctor = (
+  options: Parameters<typeof runProductionMcpDoctor>[0],
+) =>
+  runProductionMcpDoctor({
+    ...options,
+    environment: withCompileCache(options.environment),
+  });
+
+const expectDoctorDeadline = (
+  detail: string | undefined,
+  milliseconds: number,
+) => {
+  expect(detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+  expect(detail).toContain(`${String(milliseconds)} ms`);
+  expect(detail).toContain("source setting");
+  expect(detail).toMatch(/restart REA/i);
+  expect(detail).toMatch(/Codex.*startup_timeout_sec.*client guidance/i);
+  expect(detail).toMatch(/REA does not enforce/i);
+};
+
+const captureProductionCli = async (
+  arguments_: readonly string[],
+  environment: NodeJS.ProcessEnv,
+) =>
+  new Promise<{
+    readonly exitCode: number | null;
+    readonly stdout: string;
+    readonly stderr: string;
+  }>((finish, reject) => {
+    const child = spawn(
+      process.execPath,
+      [resolve("scripts/rea.mjs"), ...arguments_],
+      {
+        cwd: process.cwd(),
+        env: withCompileCache(environment),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const timeout = setTimeout(() => child.kill("SIGTERM"), 15_000);
+    child.once("error", reject);
+    child.once("close", (exitCode) => {
+      clearTimeout(timeout);
+      finish({ exitCode, stdout, stderr });
+    });
+  });
+
+afterEach(() => vi.useRealTimers());
+
+const assertCliCatalogIdentity = async (
+  environment: NodeJS.ProcessEnv,
+  identity: ReturnType<typeof createCatalogIdentity>,
+) => {
+  const sessionEnvironment = definedCliEnvironment(
+    cliProcessEnvironment(
+      { ...environment, REA_LOG_LEVEL: "silent" },
+      compileCache,
+    ),
+  );
+  for (const command of ["capabilities", "providers"]) {
+    const result = await cliSession.run({
+      arguments: [command, "--json"],
+      cwd: process.cwd(),
+      environment: sessionEnvironment,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json, command).toMatchObject({
+      server_identity: {
+        catalog: { counts: identity.counts, digests: identity.digests },
+      },
+    });
+  }
+};
+
+// The CLI commands share this workflow. Exercise each profile here, while
+// retaining representative compiled CLI checks for each public command.
+const assertStatusCatalogIdentity = async (
+  environment: NodeJS.ProcessEnv,
+  identity: ReturnType<typeof createCatalogIdentity>,
+) => {
+  const session = createTestBinarySession(() => ({
+    close: async () => ok(null),
+    execute: async () => observed(null),
+  }));
+  const status = await runSessionStatus({
+    readConfiguration: () => parseConfig(environment),
+    createBinarySession: () => session,
+  });
+  expect(status).toMatchObject({
+    server_identity: {
+      catalog: { counts: identity.counts, digests: identity.digests },
+    },
+  });
+};
+
+const catalogProfiles = [
+  {
+    name: "default",
+    cliParity: true,
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: undefined,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: undefined,
+    },
+    identity: DEFAULT_CATALOG_IDENTITY,
+  },
+  {
+    name: "spelled compact input and compact output schemas",
+    cliParity: true,
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+    },
+    identity: createCatalogIdentity({ outputSchemaProfile: "compact" }),
+  },
+];
+
+const withoutOutputProfile = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv => {
+  const { REA_MCP_OUTPUT_SCHEMA_PROFILE: _profile, ...rest } = environment;
+  return rest;
+};
+
+it("recognizes a hot/cold initial catalog and its inventory identity", async () => {
+  const result = await runCachedMcpDoctor({
+    command: process.execPath,
+    args: [resolve("scripts/rea.mjs"), "mcp"],
+    cwd: process.cwd(),
+    // The product default output profile, not the test suite's.
+    environment: {
+      ...withoutOutputProfile(process.env),
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+    },
+  });
+  expect(result.healthy).toBe(true);
+  expect(result.inventory?.tools).toMatchObject({
+    expected: HOT_TOOL_NAMES.size + 1,
+    observed: HOT_TOOL_NAMES.size + 1,
+    missing: [],
+    unexpected: [],
+  });
+  expect(result.identity?.observed_catalog_digest).toBe(
+    progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY).digests
+      .combined_sha256,
+  );
+  const environment = {
+    ...withoutOutputProfile(process.env),
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+  };
+  const identity = progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY);
+  await assertStatusCatalogIdentity(environment, identity);
+  await assertCliCatalogIdentity(environment, identity);
+});
+
+describe("production MCP doctor", () => {
+  it("reuses immutable compiled profile digests and preserves custom-budget identity", async () => {
+    // Exercise the generated module with Node, outside Vitest's source loader.
+    await promisify(execFile)(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+        import assert from "node:assert/strict";
+        import { createCatalogIdentity, createCatalogDigests } from "./dist/contracts/catalog/catalogIdentity.js";
+        import { RECORDED_CATALOG_DIGEST_PROFILES as profiles } from "./dist/contracts/catalog/recordedCatalogDigests.js";
+        import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES as budgetBytes } from "./dist/contracts/mcpSchemaPresentation.js";
+        assert.ok(Object.isFrozen(profiles));
+        assert.deepEqual(Object.keys(profiles).sort(), ["compact", "off"]);
+        for (const output of ["compact", "off"]) {
+          const identity = createCatalogIdentity({ outputSchemaProfile: output });
+          assert.equal(identity.digests, profiles[output]);
+          assert.ok(Object.isFrozen(identity.digests));
+        }
+        const selection = { budgetBytes: 1 };
+        const custom = createCatalogIdentity({compactPresentation: selection, outputSchemaProfile: "off"});
+        selection.budgetBytes = budgetBytes;
+        const expected = createCatalogDigests(undefined, undefined, { budgetBytes: 1 }, "off");
+        assert.deepEqual(custom.digests, expected);
+        assert.notEqual(custom.digests.tools_sha256, profiles.off.tools_sha256);
+        assert.equal(custom.digests, custom.digests);
+      `,
+      ],
+      { timeout: 30_000 },
+    );
+  });
+
+  it("preserves the full-output envelope for startup failures", async () => {
+    const result = await runProductionMcpDoctorCli(
+      ["--json", "--full-output"],
+      {
+        dispatcherPath: resolve("tests/fixtures/mcpDoctorExit.mjs"),
+        packageRoot: process.cwd(),
+        stdoutIsTerminal: false,
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.output)).toMatchObject({
+      ok: false,
+      error: {
+        healthy: false,
+        scope: expect.stringContaining(
+          "does not verify a client's registered command",
+        ),
+        checks: [{ name: "transport", ok: false }],
+      },
+      meta: {
+        command: "rea mcp doctor",
+        duration: expect.stringMatching(/^\d+ms$/u),
+      },
+    });
+  });
+
+  it.each(catalogProfiles)(
+    "verifies the $name catalog through production stdio and status",
+    async ({ environment, identity, cliParity }) => {
+      const result = await runCachedMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, ...environment },
+      });
+
+      expect(result).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+        inventory: {
+          tools: {
+            expected: expect.any(Number),
+            observed: expect.any(Number),
+            missing: [],
+            unexpected: [],
+          },
+        },
+        request_flow: { tool: "binary_session", ok: true },
+      });
+      expect(result.inventory?.tools.expected).toBe(
+        result.inventory?.tools.observed,
+      );
+      expect(result.inventory?.tools.expected).toBe(
+        DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+      );
+      expect(result.identity?.expected_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      expect(result.identity?.observed_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      const selectedEnvironment = { ...process.env, ...environment };
+      await assertStatusCatalogIdentity(selectedEnvironment, identity);
+      if (cliParity)
+        await assertCliCatalogIdentity(selectedEnvironment, identity);
+    },
+  );
+});
+
+describe("production MCP doctor family scopes", () => {
+  it.each([
+    { families: "session", output: "off", cliParity: false },
+    { families: "session,application", output: "compact", cliParity: true },
+  ] as const)(
+    "reports a selected family scope healthy with its own inventory and digest ($output)",
+    async ({ families, output, cliParity }) => {
+      const environment = {
+        ...process.env,
+        REA_MCP_TOOL_FAMILIES: families,
+        REA_MCP_OUTPUT_SCHEMA_PROFILE: output,
+      };
+      const result = await runCachedMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment,
+      });
+
+      const expected = contractsForToolFamilies(new Set(families.split(",")));
+      expect(result).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+        inventory: {
+          tools: {
+            expected: expected.length,
+            observed: expected.length,
+            missing: [],
+            unexpected: [],
+          },
+        },
+        request_flow: { tool: "binary_session", ok: true },
+      });
+      const identity = catalogIdentityForToolFamilies(
+        COMPACT_INPUT_SCHEMA_PRESENTATION,
+        output,
+        new Set(families.split(",")),
+      );
+      expect(result.identity?.expected_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      expect(result.identity?.observed_catalog_digest).toBe(
+        identity.digests.combined_sha256,
+      );
+      await assertStatusCatalogIdentity(environment, identity);
+      if (cliParity) await assertCliCatalogIdentity(environment, identity);
+    },
+  );
+
+  it.each(["browser", "native"])(
+    "explains unobserved identity for a %s scope without session",
+    async (families) => {
+      const result = await runCachedMcpDoctor({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        environment: { ...process.env, REA_MCP_TOOL_FAMILIES: families },
+      });
+      expect(result).toMatchObject({
+        healthy: false,
+        adapter: "production-stdio",
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+        request_flow: { tool: "binary_session", ok: false },
+        identity: {
+          observed_package_version: null,
+          observed_catalog_digest: null,
+        },
+      });
+      const scopeLimitation =
+        /binary_session.*outside.*selected tool families.*include.*session family.*request.flow.*identity/iu;
+      expect(result.checks).toContainEqual({
+        name: "server-identity",
+        ok: false,
+        detail: expect.stringMatching(
+          new RegExp(`^identity not observed: ${scopeLimitation.source}`, "iu"),
+        ),
+      });
+      expect(result.checks).not.toContainEqual(
+        expect.objectContaining({
+          name: "server-identity",
+          detail: expect.stringContaining("missing"),
+        }),
+      );
+      expect(result.checks).toContainEqual({
+        name: "request-flow",
+        ok: false,
+        detail: expect.stringMatching(scopeLimitation),
+      });
+    },
+  );
+
+  it("fails startup instead of misreporting inventory for an invalid scope", async () => {
+    const result = await runCachedMcpDoctor({
+      command: process.execPath,
+      args: [resolve("scripts/rea.mjs"), "mcp"],
+      cwd: process.cwd(),
+      environment: { ...process.env, REA_MCP_TOOL_FAMILIES: "session,typo" },
+    });
+
+    expect(result.healthy).toBe(false);
+    expect(result.checks).toContainEqual({
+      name: "transport",
+      ok: false,
+      detail: expect.any(String),
+    });
+    expect(result.diagnostics?.stderr).toEqual(
+      expect.stringContaining("REA_MCP_TOOL_FAMILIES"),
+    );
+  });
+});
+
+describe("production MCP doctor output", () => {
+  it("keeps both structured stdout formats parseable when prompts are not advertised", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-output-");
+    const directories = {
+      home: join(root, "home"),
+      config: join(root, "config"),
+      data: join(root, "data"),
+      cache: join(root, "cache"),
+      state: join(root, "state"),
+      temp: join(root, "temp"),
+    };
+    await Promise.all(
+      Object.values(directories).map((path) =>
+        mkdir(path, { recursive: true }),
+      ),
+    );
+    const environment = {
+      ...process.env,
+      REA_MCP_TOOL_FAMILIES: "browser",
+      HOME: directories.home,
+      XDG_CONFIG_HOME: directories.config,
+      XDG_DATA_HOME: directories.data,
+      XDG_CACHE_HOME: directories.cache,
+      XDG_STATE_HOME: directories.state,
+      TMPDIR: directories.temp,
+    };
+
+    const [json, jsonl] = await Promise.all([
+      captureProductionCli(["mcp", "doctor", "--json"], environment),
+      captureProductionCli(["mcp", "doctor", "--format", "jsonl"], environment),
+    ]);
+
+    expect([json.exitCode, jsonl.exitCode]).toEqual([1, 1]);
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      healthy: false,
+      inventory: {
+        prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+      },
+    });
+    expect(JSON.parse(jsonl.stdout)).toMatchObject({
+      $rea: "jsonl/v1",
+      type: "error",
+      ok: false,
+      result: {
+        healthy: false,
+        inventory: {
+          prompts: { expected: 0, observed: 0, missing: [], unexpected: [] },
+        },
+      },
+    });
+  });
+
+  it.each([false, true])(
+    "frames unhealthy JSONL diagnostics and retains the selected envelope (%s)",
+    async (full) => {
+      const result = await runProductionMcpDoctorCli(
+        ["--format", "jsonl", ...(full ? ["--full-output"] : [])],
+        {
+          dispatcherPath: resolve("tests/fixtures/mcpDoctorExit.mjs"),
+          packageRoot: process.cwd(),
+          stdoutIsTerminal: true,
+        },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.output.trimEnd().split("\n")).toHaveLength(1);
+      expect(JSON.parse(result.output)).toMatchObject({
+        $rea: "jsonl/v1",
+        type: "error",
+        result: full
+          ? {
+              ok: false,
+              error: { healthy: false },
+              meta: { command: "rea mcp doctor" },
+            }
+          : { healthy: false },
+      });
+    },
+  );
+
+  it("frames JSONL validation errors before opening a diagnostic session", async () => {
+    const result = await runProductionMcpDoctorCli(
+      ["--format", "jsonl", "--unknown"],
+      {
+        dispatcherPath: "/must-not-start",
+        packageRoot: process.cwd(),
+        stdoutIsTerminal: false,
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.output)).toMatchObject({
+      $rea: "jsonl/v1",
+      type: "error",
+      result: { code: "VALIDATION_ERROR" },
+    });
+  });
+
+  it.each([
+    { name: "report", args: ["--json"] },
+    { name: "full-output envelope", args: ["--json", "--full-output"] },
+    { name: "validation error", args: ["--json", "--unknown"] },
+  ])("indents $name JSON only for a terminal stdout", async ({ args }) => {
+    const render = (stdoutIsTerminal: boolean) =>
+      runProductionMcpDoctorCli(args, {
+        dispatcherPath: resolve("tests/fixtures/mcpDoctorExit.mjs"),
+        packageRoot: process.cwd(),
+        stdoutIsTerminal,
+      });
+    const [redirected, terminal] = await Promise.all([
+      render(false),
+      render(true),
+    ]);
+
+    expect(redirected.output.split("\n")).toHaveLength(2);
+    expect(redirected.output.endsWith("\n")).toBe(true);
+    expect(terminal.output).toContain('\n  "');
+    const withoutDuration = (output: string): unknown => {
+      const value = JSON.parse(output) as { meta?: { duration?: string } };
+      if (value.meta) delete value.meta.duration;
+      return value;
+    };
+    expect(withoutDuration(redirected.output)).toEqual(
+      withoutDuration(terminal.output),
+    );
+    expect(redirected.exitCode).toBe(terminal.exitCode);
+  });
+});
+
+describe("production MCP doctor probe validation", () => {
+  // The default lists no output schemas and `compact` lists widened ones; the
+  // doctor validates the reply against the canonical contract under each.
+  it.each([undefined, "compact"] as const)(
+    "reports schema-invalid probes and mismatched inventory from the child (output profile %s)",
+    async (outputProfile) => {
+      const root = await createTestTempDirectory("rea-mcp-doctor-reply-");
+      const snapshotPath = join(root, "reply.json");
+      const environment = {
+        PATH: process.env.PATH ?? "",
+        ...(outputProfile === undefined
+          ? {}
+          : { REA_MCP_OUTPUT_SCHEMA_PROFILE: outputProfile }),
+      };
+      const client = new Client(
+        { name: "doctor-reply-capture", version: "1" },
+        { jsonSchemaValidator: schemaValidation },
+      );
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [resolve("scripts/rea.mjs"), "mcp"],
+        cwd: process.cwd(),
+        env: withCompileCache(environment),
+        stderr: "pipe",
+      });
+      let removedToolName = "";
+      transport.stderr?.on("data", () => undefined);
+      try {
+        await client.connect(transport);
+        const tools = await client.listTools();
+        expect(
+          tools.tools.some(({ outputSchema }) => outputSchema !== undefined),
+        ).toBe(outputProfile !== undefined);
+        removedToolName =
+          tools.tools.find(({ name }) => name !== "binary_session")?.name ?? "";
+        if (removedToolName === "")
+          throw new Error("Expected a second production tool");
+        const prompts = await client.listPrompts();
+        const toolDefinition = tools.tools.find(
+          ({ name }) => name === "binary_session",
+        );
+        if (toolDefinition === undefined)
+          throw new Error("Production binary_session contract is missing");
+        const reply = await client.callTool(
+          { name: "binary_session", arguments: {} },
+          { toolDefinition },
+        );
+        await writeFile(
+          snapshotPath,
+          JSON.stringify({
+            serverInfo: client.getServerVersion(),
+            protocolVersion: client.getNegotiatedProtocolVersion(),
+            tools,
+            prompts,
+            reply,
+          }),
+        );
+      } finally {
+        await client.close();
+        await transport.close();
+      }
+      // Replay real production metadata through a synthetic stdio producer.
+      for (const mode of ["valid", "invalid", "inventory"]) {
+        const result = await runCachedMcpDoctor({
+          command: process.execPath,
+          args: [
+            resolve("tests/fixtures/mcpDoctorReply.mjs"),
+            snapshotPath,
+            mode,
+          ],
+          cwd: process.cwd(),
+          environment,
+        });
+        expect(result.healthy).toBe(mode === "valid");
+        expect(result.inventory?.tools.observed).toBe(
+          DEFAULT_CATALOG_IDENTITY.counts.mcp_tools +
+            (mode === "inventory" ? 1 : 0),
+        );
+        expect(result.inventory?.prompts.observed).toBe(
+          DEFAULT_CATALOG_IDENTITY.counts.mcp_prompts,
+        );
+        expect(result.checks).toContainEqual({
+          name: "initialize",
+          ok: true,
+          detail: expect.any(String),
+        });
+        expect(result.checks).toContainEqual({
+          name: "server-identity",
+          ok: mode !== "invalid",
+          detail:
+            mode === "invalid"
+              ? expect.stringMatching(
+                  /^identity not observed: .*output schema/iu,
+                )
+              : expect.stringMatching(/^package=.+; catalog=.+$/u),
+        });
+        if (mode === "invalid")
+          expect(result.checks).toContainEqual({
+            name: "request-flow",
+            ok: false,
+            detail: expect.stringMatching(/output schema/iu),
+          });
+        if (mode === "inventory") {
+          expect(result.inventory?.tools).toMatchObject({
+            expected: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools,
+            observed: DEFAULT_CATALOG_IDENTITY.counts.mcp_tools + 1,
+            missing: [removedToolName],
+            unexpected: ["doctor_unexpected_fixture"],
+            duplicates: ["doctor_unexpected_fixture"],
+          });
+          expect(result.checks).toContainEqual({
+            name: "inventory:tools",
+            ok: false,
+            detail: expect.stringContaining("doctor_unexpected_fixture"),
+          });
+        }
+      }
+    },
+  );
+});
+
+describe("production MCP doctor child lifecycle", () => {
+  it("captures startup exit diagnostics", async () => {
+    const result = await runCachedMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpDoctorExit.mjs")],
+      cwd: process.cwd(),
+      environment: { ...process.env, REA_MCP_DOCTOR_DEADLINE_MS: "2000" },
+    });
+    expect(result).toMatchObject({
+      healthy: false,
+      checks: [{ name: "transport", ok: false }],
+      diagnostics: { stderr: expect.stringContaining("startup exit") },
+    });
+  });
+
+  it("drains the complete child stderr and withholds a code point split by the byte limit", async () => {
+    const prefixBytes = MCP_STARTUP_POLICY.doctorStderrBytes - 1;
+    const trailingBytes = 4 * 1024 * 1024;
+    const result = await runNoisyDoctorChild(`
+      for (const chunk of [
+        Buffer.alloc(${prefixBytes}, 0x78),
+        Buffer.from([0xe2, 0x82, 0xac]),
+        Buffer.alloc(${trailingBytes}, 0x79),
+      ]) {
+        await new Promise((resolve, reject) => {
+          process.stderr.write(chunk, (error) =>
+            error ? reject(error) : resolve(),
+          );
+        });
+      }
+      process.exitCode = 1;
+    `);
+
+    expect(result).toMatchObject({
+      healthy: false,
+      diagnostics: {
+        stderr: "x".repeat(prefixBytes),
+        stderr_bytes: prefixBytes + 3 + trailingBytes,
+        stderr_truncated: true,
+      },
+    });
+  });
+
+  it("preserves replacement decoding for malformed UTF-8 within an untruncated stream", async () => {
+    const result = await runNoisyDoctorChild(`
+      await new Promise((resolve, reject) => {
+        process.stderr.write(Buffer.from([0xff]), (error) =>
+          error ? reject(error) : resolve(),
+        );
+      });
+      process.exitCode = 1;
+    `);
+
+    expect(result.diagnostics).toEqual({
+      stderr: "�",
+      stderr_bytes: 1,
+      stderr_truncated: false,
+    });
+  });
+
+  it("applies the configured startup deadline and kills the child", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-");
+    const pidPath = join(root, "pid");
+    // Keep filesystem/process I/O real. Advance only the deadline timers,
+    // after the fixture proves it started and published its PID.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = runCachedMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpDoctorHang.mjs")],
+      cwd: process.cwd(),
+      environment: {
+        ...process.env,
+        REA_MCP_DOCTOR_PID_PATH: pidPath,
+        REA_MCP_DOCTOR_DEADLINE_MS: "60000",
+      },
+    });
+    const pid = await waitFor(async () => {
+      const value = Number.parseInt(await readFile(pidPath, "utf8"), 10);
+      expect(Number.isSafeInteger(value) && value > 0).toBe(true);
+      return value;
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await waitFor(() => pending);
+    vi.useRealTimers();
+    expect(result.healthy).toBe(false);
+    expectDoctorDeadline(result.checks[0]?.detail, 60_000);
+    expect(result.checks[0]?.detail).not.toContain("REA_MCP_STARTUP");
+    await expect(waitForExit(pid)).resolves.toBeUndefined();
+  });
+});
+
+describe("production MCP doctor child ownership", () => {
+  it("omits inherited target selection using the host's environment key identity", async () => {
+    const result = await runNoisyDoctorChild(
+      `process.stderr.write(JSON.stringify({
+        pathPresent: process.env.HOPPER_TARGET_PATH !== undefined,
+        kindPresent: process.env.HOPPER_TARGET_KIND !== undefined,
+        loaderArgsPresent: process.env.HOPPER_LOADER_ARGS_JSON !== undefined,
+        caseAliasPresent: process.env.hopper_target_kind !== undefined,
+        callerSetting: process.env.REA_MCP_DOCTOR_FIXTURE_SENTINEL,
+      }));`,
+      {
+        HOPPER_TARGET_PATH: "/fixture/ambient-target",
+        HOPPER_TARGET_KIND: "database",
+        HOPPER_LOADER_ARGS_JSON: '["fixture-loader"]',
+        hopper_target_kind: "caller-case-alias",
+        REA_MCP_DOCTOR_FIXTURE_SENTINEL: "preserved",
+      },
+    );
+    expect(result.healthy).toBe(false);
+    expect(JSON.parse(result.diagnostics.stderr)).toEqual({
+      pathPresent: false,
+      kindPresent: false,
+      loaderArgsPresent: false,
+      caseAliasPresent: process.platform !== "win32",
+      callerSetting: "preserved",
+    });
+  });
+
+  it.each([
+    ["in the launcher's process group", "0"],
+    ["in its own session", "1"],
+  ])(
+    "stops a descendant %s that outlives the launcher",
+    async (_case, detached) => {
+      const root = await createTestTempDirectory("rea-mcp-doctor-descendant-");
+      const pidPath = join(root, "pids.json");
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const pending = runCachedMcpDoctor({
+        command: process.execPath,
+        args: [resolve("tests/fixtures/mcpDoctorForkDescendant.mjs")],
+        cwd: process.cwd(),
+        environment: {
+          ...process.env,
+          REA_MCP_DOCTOR_PID_PATH: pidPath,
+          REA_MCP_DOCTOR_DESCENDANT_DETACHED: detached,
+          REA_MCP_DOCTOR_DEADLINE_MS: "60000",
+        },
+      });
+      const pids = await waitFor(async () => {
+        const value = JSON.parse(await readFile(pidPath, "utf8")) as {
+          launcher: number;
+          descendant: number;
+        };
+        expect(Number.isSafeInteger(value.descendant)).toBe(true);
+        return value;
+      });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const result = await waitFor(() => pending);
+      vi.useRealTimers();
+      // The launcher exits at once, so only owned cleanup can stop the descendant.
+      // The SDK transport signaled only its direct child and reported success.
+      expect(result.healthy).toBe(false);
+      expect(result.checks.map(({ name }) => name)).toEqual(["transport"]);
+      expectDoctorDeadline(result.checks[0]?.detail, 60_000);
+      await expect(waitForExit(pids.descendant)).resolves.toBeUndefined();
+    },
+  );
+});
+
+describe("production MCP doctor request-flow deadline", () => {
+  it("names the applied deadline when binary_session exceeds it after the catalog", async () => {
+    const root = await createTestTempDirectory("rea-mcp-doctor-session-");
+    const readyPath = join(root, "ready");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const pending = runCachedMcpDoctor({
+      command: process.execPath,
+      args: [resolve("tests/fixtures/mcpStartupProbeChild.mjs")],
+      cwd: process.cwd(),
+      environment: {
+        ...process.env,
+        REA_MCP_PROBE_MODE: "hang-on-call",
+        REA_MCP_PROBE_READY_PATH: readyPath,
+        REA_MCP_DOCTOR_DEADLINE_MS: "60000",
+      },
+    });
+    await waitFor(async () => {
+      await readFile(readyPath, "utf8");
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    const result = await waitFor(() => pending);
+    vi.useRealTimers();
+    expect(result.server).not.toBeNull();
+    const requestFlow = result.checks.find(
+      (check) => check.name === "request-flow",
+    );
+    expect(requestFlow?.ok).toBe(false);
+    expectDoctorDeadline(requestFlow?.detail, 60_000);
+    expect(requestFlow?.detail).not.toContain("REA_MCP_STARTUP");
+  });
+
+  it.each([
+    [
+      "refuse-list",
+      "transport",
+      "Request timed out while reading a remote fixture",
+    ],
+    [
+      "refuse-call",
+      "request-flow",
+      "Maximum total timeout exceeded in a remote operation",
+    ],
+    ["refuse-call", "request-flow", "Production MCP doctor deadline expired"],
+  ] as const)(
+    "keeps initialization evidence when %s reports %s: %s",
+    async (mode, failedCheck, message) => {
+      const result = await runCachedMcpDoctor({
+        command: process.execPath,
+        args: [resolve("tests/fixtures/mcpStartupProbeChild.mjs")],
+        cwd: process.cwd(),
+        environment: {
+          ...process.env,
+          REA_MCP_PROBE_MODE: mode,
+          REA_MCP_PROBE_ERROR_MESSAGE: message,
+          REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+        },
+      });
+      expect(result.server).toEqual({
+        name: "probe-fixture",
+        version: "1",
+        protocol_version: expect.any(String),
+      });
+      expect(result.checks).toContainEqual({
+        name: "initialize",
+        ok: false,
+        detail: `probe-fixture@1; protocol=${result.server?.protocol_version}`,
+      });
+      const refusal = result.checks.find(({ name }) => name === failedCheck);
+      expect(refusal?.ok).toBe(false);
+      expect(refusal?.detail).toContain(message);
+      expect(refusal?.detail).not.toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+    },
+  );
+
+  it("refuses an invalid phase budget before starting a child", async () => {
+    const result = await runCachedMcpDoctor({
+      command: process.execPath,
+      args: ["definitely-missing-mcp-doctor-child.mjs"],
+      cwd: process.cwd(),
+      environment: {
+        ...process.env,
+        REA_MCP_INITIALIZE_BUDGET_MS: "0",
+        REA_MCP_DOCTOR_DEADLINE_MS: "0",
+      },
+    });
+    expect(result.healthy).toBe(false);
+    expect(result.server).toBeNull();
+    expect(result.checks.map(({ name }) => name)).toEqual([
+      "REA_MCP_INITIALIZE_BUDGET_MS",
+      "REA_MCP_DOCTOR_DEADLINE_MS",
+    ]);
+    const budgetRange = `from ${String(MCP_PHASE_BUDGET_FLOOR_MS)} to ${String(MAX_NODE_TIMER_DELAY_MS)} ms`;
+    expect(result.checks[0]?.detail).toContain("REA_MCP_INITIALIZE_BUDGET_MS");
+    expect(result.checks[0]?.detail).toContain(budgetRange);
+    expect(result.checks[1]?.detail).toContain("REA_MCP_DOCTOR_DEADLINE_MS");
+    expect(result.checks[1]?.detail).toContain(budgetRange);
+  });
+});
+
+const runNoisyDoctorChild = async (
+  body: string,
+  environment: NodeJS.ProcessEnv = {},
+) => {
+  const root = await createTestTempDirectory("rea-mcp-doctor-stderr-");
+  const scriptPath = join(root, "noisy.mjs");
+  await writeFile(scriptPath, body);
+  return runCachedMcpDoctor({
+    command: process.execPath,
+    args: [scriptPath],
+    cwd: root,
+    environment: {
+      ...process.env,
+      REA_MCP_DOCTOR_DEADLINE_MS: "5000",
+      ...environment,
+    },
+  });
+};
+
+const waitForExit = async (pid: number): Promise<void> => {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (await processHasStopped(pid)) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`MCP doctor fixture process ${String(pid)} remained alive`);
+};

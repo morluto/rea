@@ -2,9 +2,8 @@ import type { JsonValue } from "../domain/jsonValue.js";
 
 /** Exact example inputs for residual-unknown lifecycle contracts. */
 export const UNKNOWN_CONTRACT_EXAMPLES = {
-  list_unknowns: {},
+  list_unknowns: { offset: 0, limit: 50 },
   record_unknown: {
-    approved: true,
     question: "Does this branch require an unavailable external service?",
     severity: "medium",
     domain: "protocol",
@@ -17,7 +16,6 @@ export const UNKNOWN_CONTRACT_EXAMPLES = {
     relationships: [],
   },
   update_unknown: {
-    approved: true,
     unknown_id: `unk_${"0".repeat(64)}`,
     expected_revision: 1,
     status: "investigating",

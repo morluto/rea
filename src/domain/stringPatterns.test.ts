@@ -1,0 +1,133 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { expect, it } from "vitest";
+import { z } from "zod";
+
+import {
+  IDENTIFIER_PATTERN,
+  STABLE_IDENTIFIER_PATTERN,
+  canonicalBase64Schema,
+  isCanonicalBase64,
+  isPaddedBase64,
+  rejectUnpairedSurrogates,
+} from "./stringPatterns.js";
+
+it("preserves identifier grammars under Unicode and Unicode-set compilation", () => {
+  const variants = [
+    { pattern: IDENTIFIER_PATTERN, previous: /^[A-Za-z][A-Za-z0-9._-]*$/u },
+    {
+      pattern: STABLE_IDENTIFIER_PATTERN,
+      previous: /^[A-Za-z][A-Za-z0-9._:/-]*$/u,
+    },
+  ];
+  const samples = [
+    "",
+    "a",
+    "A",
+    "_id",
+    "1id",
+    "é",
+    "aé",
+    "a/b:c",
+    "a-b.c_1",
+    "a\n",
+    "a\\b",
+  ];
+  for (let code = 0; code < 128; code += 1) {
+    const character = String.fromCharCode(code);
+    samples.push(character, `A${character}`, `A${character}B`);
+  }
+  for (const { pattern, previous } of variants) {
+    for (const flag of ["u", "v"]) {
+      const projected = new RegExp(pattern.source, flag);
+      for (const sample of samples)
+        expect(projected.test(sample), JSON.stringify({ flag, sample })).toBe(
+          previous.test(sample),
+        );
+    }
+  }
+});
+
+it("preserves canonical and permissive padded base64 validation", () => {
+  const previous =
+    /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?$/;
+  const samples = [
+    "",
+    "AA==",
+    "AB==",
+    "AAA=",
+    "AAB=",
+    "////",
+    "A",
+    "AA",
+    "AAA",
+    "====",
+    "AA==\n",
+    "AA==\r\n",
+    "AA==\u2028",
+    "AA==\u2029",
+    "AA\nAA",
+    "AA=\n=",
+    "AA-_",
+    "a b c",
+  ];
+  const alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (const first of alphabet)
+    for (const second of alphabet)
+      samples.push(`${first}${second}==`, `A${first}${second}=`);
+  for (const sample of samples) {
+    expect(isCanonicalBase64(sample), JSON.stringify({ sample })).toBe(
+      previous.test(sample),
+    );
+    expect(isPaddedBase64(sample), JSON.stringify({ sample })).toBe(
+      sample.length % 4 === 0 && /^[A-Za-z0-9+/]*(?:==|=)?$/.test(sample),
+    );
+  }
+});
+
+it("validates the projected base64 schema in Unicode and Unicode-set modes at the encoded-input budget", () => {
+  const projected = z.toJSONSchema(canonicalBase64Schema, {
+    target: "draft-2020-12",
+  });
+  const validate = new Ajv2020({ strict: true }).compile(projected);
+  const unicodeSetsRegExp = Object.assign(
+    (pattern: string) => new RegExp(pattern, "v"),
+    { code: '(pattern => new RegExp(pattern, "v"))' },
+  );
+  const validateUnicodeSets = new Ajv2020({
+    strict: true,
+    // The default pass validates the schema. Here only the projected patterns use v.
+    validateSchema: false,
+    code: { regExp: unicodeSetsRegExp },
+  }).compile(projected);
+  const encoded = Buffer.alloc(24 * 1024 * 1024 - 3, 0x81).toString("base64");
+  for (const { value, expected } of [
+    { value: encoded, expected: true },
+    { value: `${encoded.slice(0, -1)}!`, expected: false },
+    { value: `${encoded.slice(0, -3)}R==`, expected: false },
+    { value: `${encoded}A`, expected: false },
+  ]) {
+    expect(canonicalBase64Schema.safeParse(value).success).toBe(expected);
+    expect(validate(value)).toBe(expected);
+    expect(validateUnicodeSets(value)).toBe(expected);
+  }
+});
+
+it("rejects unpaired surrogates at runtime without advertising a pattern", () => {
+  const schema = rejectUnpairedSurrogates(z.string(), "Must be well-formed");
+  for (const value of ["\ud800", "a\udc00", "\udc00\ud800", "\ud83d"])
+    expect(
+      schema.safeParse(value).error?.issues,
+      JSON.stringify(value),
+    ).toEqual([
+      {
+        code: "invalid_format",
+        format: "regex",
+        message: "Must be well-formed",
+        path: [],
+      },
+    ]);
+  for (const value of ["", "plain", "\ud83d\ude00", "\ufffd", "\uffff"])
+    expect(schema.safeParse(value).success, JSON.stringify(value)).toBe(true);
+  expect(z.toJSONSchema(schema, { io: "input" })).not.toHaveProperty("pattern");
+});

@@ -1,0 +1,69 @@
+import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js";
+import type { CapabilityDescriptor } from "../ports/AnalysisProvider.js";
+import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { APPLE_DISPATCH_TARGET_APPLICABILITY } from "../domain/native/objcSwiftMetadata.js";
+
+/** Source-owned commitment for the pure Apple dispatch metadata reader. */
+export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
+  {
+    id: NATIVE_MACOS_PROVIDER_IDENTITY.id,
+    name: NATIVE_MACOS_PROVIDER_IDENTITY.name,
+    version: "apple-metadata-reader-4",
+  },
+  {
+    operation: "inspect_native_dispatch_metadata",
+    reader: "apple-dispatch-metadata",
+    revision: 4,
+  },
+);
+/** Operations whose target process can show UI, use the network and write files. */
+const OWNED_PROCESS_OPERATIONS: ReadonlySet<string> = new Set([
+  "capture_native_ui_scenario",
+  "observe_native_calls",
+]);
+
+/** Declare native host coverage without creating a command runner. */
+export const nativeMacOSCapabilities = (
+  platform: NodeJS.Platform,
+): readonly CapabilityDescriptor[] => {
+  const available = platform === "darwin";
+  return Object.freeze(
+    [
+      ...NATIVE_TOOL_CONTRACTS,
+      { name: "inspect_native_dispatch_metadata" as const },
+    ].map((contract): CapabilityDescriptor => {
+      const availability = available
+        ? ({ available: true, reason: null } as const)
+        : ({
+            available: false,
+            availabilityCode: "unsupported_host",
+            reason: "Native macOS utilities require macOS.",
+          } as const);
+      return Object.freeze({
+        provider: NATIVE_MACOS_PROVIDER_IDENTITY,
+        operation: contract.name,
+        ...(contract.name === "inspect_native_dispatch_metadata"
+          ? {
+              analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
+              targetApplicability: APPLE_DISPATCH_TARGET_APPLICABILITY,
+            }
+          : {}),
+        ...availability,
+        effects: Object.freeze({
+          mutatesArtifact: false,
+          launchesProcess: contract.name !== "inspect_native_dispatch_metadata",
+          mayShowUi: OWNED_PROCESS_OPERATIONS.has(contract.name),
+          mayAccessNetwork: OWNED_PROCESS_OPERATIONS.has(contract.name),
+          mayWriteFilesystem:
+            "effects" in contract && contract.effects.writesFilesystem,
+          changesPermissions: false,
+          requiresRoot: false,
+        }),
+        limitations: Object.freeze([
+          "Availability and textual formats depend on the installed macOS/Xcode toolchain.",
+        ]),
+      });
+    }),
+  );
+};

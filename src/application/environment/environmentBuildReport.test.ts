@@ -1,0 +1,729 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+
+import { scenarioCaptureFixture } from "../../../tests/fixtures/browserScenarioCapture.js";
+import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js";
+import {
+  anonymousOrigin,
+  credentialNamed,
+  nameFromCaptureFile,
+  savedCredentialWarnings,
+  scanCredentialNames,
+  scanScenarioCredentialNames,
+} from "./environmentBuildReport.js";
+
+const record = (
+  ordinal: number,
+  request: unknown,
+  response: unknown,
+): WebNetworkCaptureRecord =>
+  ({
+    ordinal,
+    reported: {
+      request: {
+        method: "POST",
+        url: "http://127.0.0.1/api",
+        ...(request === undefined
+          ? {}
+          : {
+              postData: {
+                mimeType: "application/json",
+                text: JSON.stringify(request),
+              },
+            }),
+      },
+      response: {
+        status: 200,
+        content: {
+          mimeType: "application/json",
+          text: JSON.stringify(response),
+        },
+      },
+    },
+    redactions: [],
+    binary_fields: [],
+  }) as unknown as WebNetworkCaptureRecord;
+
+/** Every body of these records was small enough to scan. */
+const NONE_SKIPPED = { count: 0, pointers: [] };
+
+const execFileAsync = promisify(execFile);
+
+describe("credentialNamed", () => {
+  it("matches whole name segments, not substrings", () => {
+    for (const name of [
+      "password",
+      "authToken",
+      "api_key",
+      "apiKey",
+      "sessionId",
+      "client_secret",
+      "X-Session",
+      "refresh.token",
+      "Authorization",
+      "APIToken",
+      "accesstoken",
+      "passphrase",
+      "api_keys",
+      "ssh_key",
+    ])
+      expect(credentialNamed(name), name).toBe(true);
+    for (const name of ["author", "authority_level", "keyboard", "tokenizer"])
+      expect(credentialNamed(name), name).toBe(false);
+  });
+
+  it("splits case changes, digits and lowercasing as toLowerCase does", () => {
+    for (const name of [
+      "SSHKey",
+      "API2Token",
+      "AUTHORIZATION",
+      "x-Session-ID",
+      // KELVIN SIGN lowercases to `k`.
+      "toKen",
+      "İİ-token",
+    ])
+      expect(credentialNamed(name), name).toBe(true);
+    for (const name of [
+      "authorizations",
+      "xToken2",
+      "apiXKey",
+      // U+0130 lowercases to `i` and a combining dot, which ends the segment.
+      "sessionİd",
+    ])
+      expect(credentialNamed(name), name).toBe(false);
+  });
+});
+
+describe("scanCredentialNames name reading", () => {
+  it("reads a near-4 MiB alternating-case member name in place within a 64 MiB heap", async () => {
+    const reportUrl = new URL("./environmentBuildReport.ts", import.meta.url)
+      .href;
+    // `x-aAaA…` names no credential, so every character is read; splitting it
+    // into its two million segments took more than 192 MiB of heap.
+    const program = `
+      const { scanCredentialNames } = await import(${JSON.stringify(reportUrl)});
+      const text = JSON.stringify({ ["x-" + "aA".repeat(2_000_000)]: "v", token: "t" });
+      const record = {
+        ordinal: 1,
+        reported: {
+          request: { method: "GET", url: "http://127.0.0.1/api" },
+          response: { status: 200, content: { mimeType: "application/json", text } },
+        },
+        redactions: [],
+        binary_fields: [],
+      };
+      process.stdout.write(JSON.stringify(scanCredentialNames([record])));
+    `;
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        "--max-old-space-size=64",
+        "--import",
+        import.meta.resolve("tsx"),
+        "--input-type=module",
+        "-e",
+        program,
+      ],
+      { encoding: "utf8" },
+    );
+    expect(JSON.parse(stdout)).toEqual({
+      count: 1,
+      pointers: ["record 1 response /token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
+});
+
+describe("scanCredentialNames", () => {
+  it("counts string values under credential names in request and response bodies, by pointer and never by value", () => {
+    const scanned = scanCredentialNames([
+      record(
+        3,
+        { name: "Folder", secret: "s3cr3t-value" },
+        { data: [{ id: 1, sessionId: "abc123def" }], hasPassword: true },
+      ),
+      record(4, undefined, { token: "", "a/b": { apiKey: "k-1" } }),
+    ]);
+    expect(scanned).toEqual({
+      count: 3,
+      pointers: [
+        "record 3 request /secret",
+        "record 3 response /data/0/sessionId",
+        "record 4 response /a~1b/apiKey",
+      ],
+      skipped: NONE_SKIPPED,
+    });
+    expect(JSON.stringify(scanned)).not.toContain("s3cr3t");
+  });
+
+  it("scans header and query names, form bodies and string arrays", () => {
+    const withHeaders = {
+      ordinal: 7,
+      reported: {
+        request: {
+          method: "POST",
+          url: "http://127.0.0.1/api?api_key=k&page=1",
+          headers: [
+            { name: "X-Api-Key", value: "k-123" },
+            { name: "Accept", value: "application/json" },
+            { name: "Authorization", value: null },
+          ],
+          queryString: [
+            { name: "api_key", value: "k" },
+            { name: "page", value: "1" },
+          ],
+          postData: {
+            mimeType: "application/x-www-form-urlencoded",
+            text: "user=a&password=hunter22",
+          },
+        },
+        response: {
+          status: 200,
+          headers: [{ name: "X-Auth-Token", value: "t-9" }],
+          content: {
+            mimeType: "application/json",
+            text: JSON.stringify({ tokens: ["a", "b"], token_count: 2 }),
+          },
+        },
+      },
+      redactions: [],
+      binary_fields: [],
+    } as unknown as WebNetworkCaptureRecord;
+    expect(scanCredentialNames([withHeaders])).toEqual({
+      count: 5,
+      pointers: [
+        "record 7 request header X-Api-Key",
+        "record 7 response header X-Auth-Token",
+        "record 7 request query api_key",
+        "record 7 request /password",
+        "record 7 response /tokens",
+      ],
+      skipped: NONE_SKIPPED,
+    });
+  });
+
+  it("counts every occurrence of a repeated form field that holds a value", () => {
+    const form = (text: string): WebNetworkCaptureRecord => {
+      const scanned = record(3, undefined, undefined);
+      (
+        scanned.reported as { request: { postData?: unknown } }
+      ).request.postData = {
+        mimeType: "application/x-www-form-urlencoded",
+        text,
+      };
+      return scanned;
+    };
+    // A later empty occurrence does not hide the earlier value the Evidence ships.
+    expect(scanCredentialNames([form("api_key=secret&api_key=")])).toEqual({
+      count: 1,
+      pointers: ["record 3 request /api_key"],
+      skipped: NONE_SKIPPED,
+    });
+    expect(scanCredentialNames([form("token=a&page=1&token=b")])).toEqual({
+      count: 2,
+      pointers: ["record 3 request /token", "record 3 request /token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
+
+  it("walks bodies nested deeper than the call stack allows", () => {
+    const depth = 20_000;
+    const deep = record(1, undefined, undefined);
+    (
+      deep.reported as { response: { content: { text: string } } }
+    ).response.content.text =
+      `${"[".repeat(depth)}{"token":"x"}${"]".repeat(depth)}`;
+    expect(scanCredentialNames([deep]).count).toBe(1);
+  });
+});
+
+describe("scanCredentialNames body formats", () => {
+  const posted = (mimeType: string, text: string): WebNetworkCaptureRecord => {
+    const scanned = record(3, undefined, undefined);
+    (scanned.reported as { request: { postData?: unknown } }).request.postData =
+      { mimeType, text };
+    return scanned;
+  };
+  const FORM = "application/x-www-form-urlencoded; charset=UTF-8";
+
+  it.each([
+    [
+      "declared form media type",
+      FORM,
+      "password=example with space&",
+      "password",
+    ],
+    ["unlabelled form shape", "", "user=a&&flag&token=example&", "token"],
+  ])("reads a form body by its %s", (_source, mimeType, text, field) => {
+    expect(scanCredentialNames([posted(mimeType, text)])).toEqual({
+      count: 1,
+      pointers: [`record 3 request /${field}`],
+      skipped: NONE_SKIPPED,
+    });
+  });
+
+  it("skips a body holding more values than the scan reads, bounded before it is parsed", () => {
+    const skipped = { count: 1, pointers: ["record 3 request"] };
+    // 300001 empty arrays: under 1 MiB of text, over the value bound.
+    expect(
+      scanCredentialNames([
+        posted("application/json", `[${"[],".repeat(300_000)}[]]`),
+      ]),
+    ).toEqual({ count: 0, pointers: [], skipped });
+    expect(
+      scanCredentialNames([posted(FORM, `${"a=&".repeat(524_288)}token=t`)]),
+    ).toEqual({ count: 0, pointers: [], skipped });
+    expect(
+      scanCredentialNames([
+        posted("application/json", `[${"1,".repeat(200_000)}{"token":"t"}]`),
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 3 request /200000/token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
+
+  it("charges every body and name/value list to one budget before reading it", () => {
+    const named = (
+      ordinal: number,
+      request: Record<string, unknown>,
+    ): WebNetworkCaptureRecord => {
+      const scanned = record(ordinal, undefined, undefined);
+      Object.assign(
+        (scanned.reported as { request: Record<string, unknown> }).request,
+        request,
+      );
+      return scanned;
+    };
+    // Each body bounds to 300003 values: the first fits, the second would pass the budget.
+    const body = `[${"1,".repeat(300_000)}{"token":"t"}]`;
+    const post = { mimeType: "application/json", text: body };
+    expect(
+      scanCredentialNames([
+        named(3, { postData: post }),
+        named(4, { postData: post }),
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 3 request /300000/token"],
+      skipped: { count: 1, pointers: ["record 4 request"] },
+    });
+    // A list is charged by its length before it is read; one past the budget is skipped unread and charges nothing.
+    const list = (name: string, length: number) => {
+      const entry = { name, value: "v" };
+      return Array.from({ length }, () => entry);
+    };
+    const one = named(6, { headers: list("X-Demo-Token", 1) });
+    expect(
+      scanCredentialNames([
+        named(5, {
+          headers: list("X-Demo-Token", 524_289),
+          queryString: list("token", 524_289),
+          postData: {
+            mimeType: "multipart/form-data",
+            params: list("api_key", 524_289),
+          },
+        }),
+        one,
+      ]),
+    ).toEqual({
+      count: 1,
+      pointers: ["record 6 request header X-Demo-Token"],
+      skipped: {
+        count: 3,
+        pointers: [
+          "record 5 request headers",
+          "record 5 request query",
+          "record 5 request",
+        ],
+      },
+    });
+    // Once the budget is spent, one more header is skipped rather than read.
+    expect(
+      scanCredentialNames([
+        named(7, { headers: list("Accept", 524_288) }),
+        one,
+      ]),
+    ).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: { count: 1, pointers: ["record 6 request headers"] },
+    });
+  });
+
+  it("finds nothing in plain text that is not a form", () => {
+    for (const mimeType of ["text/plain", ""])
+      for (const text of ["token=abc to sign in", "Use token=abc", ""])
+        expect(
+          scanCredentialNames([posted(mimeType, text)]),
+          `${mimeType} ${text}`,
+        ).toEqual({ count: 0, pointers: [], skipped: NONE_SKIPPED });
+  });
+});
+
+describe("scanCredentialNames empty text", () => {
+  it("charges nothing for text that holds no value, so it is never reported unread", () => {
+    const entry = { name: "Accept", value: "v" };
+    const spent = record(7, undefined, undefined);
+    (spent.reported as { request: Record<string, unknown> }).request[
+      "headers"
+    ] = Array.from({ length: 524_288 }, () => entry);
+    const bodies = (
+      ordinal: number,
+      request: string,
+      response?: string,
+    ): WebNetworkCaptureRecord => {
+      const scanned = record(ordinal, undefined, undefined);
+      const reported = scanned.reported as {
+        request: { postData?: unknown };
+        response: { content: unknown };
+      };
+      reported.request.postData = {
+        mimeType: "application/x-www-form-urlencoded",
+        text: request,
+      };
+      reported.response.content = {
+        mimeType: "application/json",
+        text: response,
+      };
+      return scanned;
+    };
+    // The headers spend the whole budget; empty forms, a bare `?` and
+    // whitespace-only JSON hold nothing, so only the later field is unread.
+    expect(
+      scanCredentialNames([
+        spent,
+        bodies(8, "", ""),
+        bodies(9, "?", " \n"),
+        bodies(10, "&&", "\t"),
+        bodies(11, "a=1"),
+      ]),
+    ).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: { count: 1, pointers: ["record 11 request"] },
+    });
+  });
+});
+
+describe("scanCredentialNames over structured form parameters", () => {
+  it.each([undefined, null])(
+    "scans each structured form parameter with absent text: %s",
+    (text) => {
+      const structured = record(4, undefined, undefined);
+      (
+        structured.reported as { request: { postData?: unknown } }
+      ).request.postData = {
+        mimeType: "multipart/form-data",
+        text,
+        params: [
+          { name: "api_key", value: "secret" },
+          { name: "api_key", value: "" },
+          { name: "user", value: "a" },
+          { name: "token", value: "t" },
+        ],
+      };
+      expect(scanCredentialNames([structured])).toEqual({
+        count: 2,
+        pointers: ["record 4 request /api_key", "record 4 request /token"],
+        skipped: NONE_SKIPPED,
+      });
+    },
+  );
+});
+
+describe("scanScenarioCredentialNames", () => {
+  it("scans each content event, and each transaction URL once, by event index", () => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session?api_key=k-1",
+          status: 200,
+          mediaType: "application/json",
+          body: "{}",
+          // Recorded without a media type, so its shape decides how it is read.
+          requestBody: '{"password":"x"}',
+          requestHeaders: [{ name: "X-Api-Key", value: "k-2" }],
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    const response = capture.events.items.find(
+      (event) => event.kind === "response",
+    );
+    if (response === undefined) throw new Error("Fixture lacks a response");
+    // A second response leaves the transaction unattributable; its events still ship.
+    const scanned = scanScenarioCredentialNames([
+      ...capture.events.items,
+      { ...response, sequence: 99 },
+    ]);
+    expect(scanned).toEqual({
+      count: 3,
+      pointers: [
+        "event 0 request query api_key",
+        "event 1 request header X-Api-Key",
+        "event 1 request /password",
+      ],
+      skipped: NONE_SKIPPED,
+    });
+    expect(JSON.stringify(scanned)).not.toContain("k-2");
+  });
+
+  it("charges nothing for a URL without a query once the budget is spent", () => {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/api/a",
+        status: 200,
+        mediaType: "application/json",
+        // Bounds to exactly the 524288 values the scan reads.
+        body: `[${"1,".repeat(524_286)}1]`,
+      },
+      { method: "GET", url: "/api/b", status: 204 },
+      { method: "GET", url: "/api/c?", status: 204 },
+      { method: "GET", url: "/api/d?page=1", status: 204 },
+    ]);
+    expect(scanScenarioCredentialNames(capture.events.items)).toEqual({
+      count: 0,
+      pointers: [],
+      skipped: { count: 1, pointers: ["event 7 request query"] },
+    });
+  });
+
+  it("scans each content event of a phase the capture recorded twice", () => {
+    const capture = scenarioCaptureFixture([
+      {
+        method: "GET",
+        url: "/api/session",
+        status: 200,
+        mediaType: "application/json",
+        body: '{"token":"t-1"}',
+      },
+    ]);
+    const content = capture.events.items.find(
+      (event) => event.kind === "network-content",
+    );
+    if (content === undefined) throw new Error("Fixture lacks content");
+    expect(
+      scanScenarioCredentialNames([
+        ...capture.events.items,
+        { ...content, sequence: 99 },
+      ]),
+    ).toEqual({
+      count: 2,
+      pointers: ["event 2 response /token", "event 3 response /token"],
+      skipped: NONE_SKIPPED,
+    });
+  });
+});
+
+describe("scanCredentialNames coverage", () => {
+  it("measures the scan limit in UTF-8 bytes for multibyte text", () => {
+    const multibyte = record(
+      9,
+      { token: "界".repeat(2 * 1024 * 1024) },
+      undefined,
+    );
+    expect(scanCredentialNames([multibyte])).toMatchObject({
+      count: 0,
+      skipped: { count: 1, pointers: ["record 9 request"] },
+    });
+  });
+  it("reports text bodies too large to scan by record and side, never by content", () => {
+    const large = JSON.stringify({
+      token: "t-large",
+      pad: "a".repeat(4 * 1024 * 1024),
+    });
+    const oversized = record(5, undefined, undefined);
+    const reported = oversized.reported as {
+      request: { postData?: unknown };
+      response: { content: { text: string } };
+    };
+    reported.request.postData = { mimeType: "application/json", text: large };
+    reported.response.content.text = large;
+    const base64 = (ordinal: number, bytes: Buffer): WebNetworkCaptureRecord =>
+      ({
+        ...record(ordinal, undefined, undefined),
+        reported: {
+          request: { method: "GET", url: "http://127.0.0.1/api" },
+          response: {
+            status: 200,
+            content: {
+              mimeType: "application/json",
+              text: bytes.toString("base64"),
+              encoding: "base64",
+            },
+          },
+        },
+        binary_fields: [
+          {
+            pointer: "/response/content/text",
+            representation: "har-base64-content",
+            state: "retained",
+            content_base64: bytes.toString("base64"),
+            bytes: bytes.length,
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+          },
+        ],
+      }) as unknown as WebNetworkCaptureRecord;
+    const scanned = scanCredentialNames([
+      oversized,
+      // Decoded only as a prefix, so its end is never read.
+      base64(6, Buffer.from(large)),
+      // Binary bytes hold no JSON or form text, so nothing was left unscanned.
+      base64(7, Buffer.alloc(5 * 1024 * 1024, 0xff)),
+      record(8, { token: "t-small" }, {}),
+    ]);
+    expect(scanned).toEqual({
+      count: 1,
+      pointers: ["record 8 request /token"],
+      skipped: {
+        count: 3,
+        pointers: [
+          "record 5 request",
+          "record 5 response",
+          "record 6 response",
+        ],
+      },
+    });
+    expect(JSON.stringify(scanned)).not.toContain("t-large");
+  });
+});
+
+describe("anonymousOrigin", () => {
+  it("is true for loopback names and IP literals", () => {
+    for (const origin of [
+      "http://127.0.0.1:3101",
+      "http://localhost:3000",
+      "http://app.localhost",
+      "http://[::1]:8080",
+      "http://10.0.0.5",
+    ])
+      expect(anonymousOrigin(origin), origin).toBe(true);
+    expect(anonymousOrigin("http://localhost.:3000")).toBe(true);
+    for (const origin of ["https://grafana.example", "not a url"])
+      expect(anonymousOrigin(origin), origin).toBe(false);
+  });
+});
+
+describe("nameFromCaptureFile", () => {
+  it("drops capture suffixes and keeps a kebab-case label", () => {
+    expect(nameFromCaptureFile("/w/grafana.har")).toBe("grafana");
+    expect(nameFromCaptureFile("/w/grafana.capture.json")).toBe("grafana");
+    expect(nameFromCaptureFile("/w/My App.scoped.HAR")).toBe("my-app-scoped");
+    expect(nameFromCaptureFile("/w/--.json")).toBe("");
+  });
+});
+
+it.each([
+  { text: "password=example", pointers: ["/password"] },
+  { text: "token=a&page=1&token=b", pointers: ["/token", "/token"] },
+  { text: "%70assword=encoded", pointers: ["/password"] },
+  { text: "flag&password=example", pointers: ["/password"] },
+])(
+  "reviews retained form names without a recorded media type: $text",
+  ({ text, pointers }) => {
+    const capture = scenarioCaptureFixture(
+      [
+        {
+          method: "POST",
+          url: "/api/session",
+          status: 200,
+          mediaType: "application/json",
+          body: "{}",
+          requestBody: text,
+        },
+      ],
+      { request_body: true, response_body: true, header_values: true },
+    );
+    expect(scanScenarioCredentialNames(capture.events.items)).toEqual({
+      count: pointers.length,
+      pointers: pointers.map((pointer) => `event 1 request ${pointer}`),
+      skipped: NONE_SKIPPED,
+    });
+  },
+);
+
+it.each([
+  { mimeType: "text/plain", count: 1 },
+  { mimeType: "text/markdown", count: 1 },
+  { mimeType: "application/octet-stream", count: 2 },
+  { mimeType: "", count: 2 },
+])(
+  "prefers JSON-like media types before form fallback ($mimeType)",
+  ({ mimeType, count }) => {
+    const json = record(7, undefined, undefined);
+    const plain = record(8, undefined, undefined);
+    (json.reported as { request: { postData: unknown } }).request.postData = {
+      mimeType: "",
+      text: '{"name":"password=example","token":"actual"}',
+    };
+    (plain.reported as { request: { postData: unknown } }).request.postData = {
+      mimeType,
+      text: "password=example",
+    };
+    expect(scanCredentialNames([json, plain])).toEqual({
+      count,
+      pointers: [
+        "record 7 request /token",
+        ...(count === 2 ? ["record 8 request /password"] : []),
+      ],
+      skipped: NONE_SKIPPED,
+    });
+  },
+);
+
+describe("savedCredentialWarnings", () => {
+  const entry = (name: string, secret?: boolean) => ({
+    name,
+    json_pointer: "/x",
+    ...(secret === undefined ? {} : { secret }),
+  });
+
+  it("points at saved values named like credentials that are not marked secret", () => {
+    expect(
+      savedCredentialWarnings({
+        actions: [
+          { action: "goto" },
+          {
+            action: "request",
+            save: [
+              entry("item_id"),
+              entry("access_token"),
+              entry("api_key", true),
+            ],
+          },
+          {
+            action: "click",
+            save_response: { save: [entry("password", false), entry("list")] },
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        code: "credential-named-saved-values",
+        message: expect.stringContaining("2 saved values"),
+        pointers: [
+          "/parameters/actions/1/save/1",
+          "/parameters/actions/2/save_response/save/0",
+        ],
+      },
+    ]);
+  });
+
+  it("warns about nothing when every credential-named value is secret, or the parameters are not a scenario", () => {
+    expect(
+      savedCredentialWarnings({
+        actions: [
+          { action: "request", save: [entry("token", true), entry("id")] },
+        ],
+      }),
+    ).toEqual([]);
+    expect(savedCredentialWarnings({ operation: "har" })).toEqual([]);
+    expect(savedCredentialWarnings(undefined)).toEqual([]);
+  });
+});

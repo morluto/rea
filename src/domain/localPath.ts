@@ -1,0 +1,68 @@
+import { isAbsolute, relative, sep } from "node:path";
+import { z } from "zod";
+
+import { rejectUnpairedSurrogates } from "./stringPatterns.js";
+
+/**
+ * Reject OS-invalid NUL bytes in a local filesystem name. This is not a path
+ * shape check: an empty or relative value is admitted here and narrowed by the
+ * callers that need a nonempty or absolute path.
+ *
+ * The pattern spells NUL as `\x00` rather than `\u0000`. Both accept exactly the
+ * same strings. The hex form also avoids the short `\0` spelling rejected by
+ * strict schema consumers. A client can reject its entire tool request when
+ * one advertised pattern cannot compile. See `offsetDateTimeSchema` for the
+ * same hex-escape convention.
+ */
+export const nulFreeStringSchema = z
+  .string()
+  .regex(/^[^\x00]*$/u, "Local filesystem paths cannot contain NUL");
+
+/**
+ * A selected local filesystem path: nonempty, NUL-free, and representable
+ * without replacement. The well-formed Unicode rule is enforced but not
+ * advertised; see `rejectUnpairedSurrogates`.
+ */
+export const localPathStringSchema = rejectUnpairedSurrogates(
+  nulFreeStringSchema.min(1),
+  "Local filesystem paths must contain well-formed Unicode",
+);
+
+/**
+ * A Windows absolute path: rooted, UNC, or drive-qualified. The classes spell
+ * backslash and slash as `\x5C` and `\x2F` because `v` mode rejects an
+ * unescaped `/` inside a class. This also admits every POSIX absolute path,
+ * so it is a portable envelope for catalogs built once and shipped to any host.
+ */
+export const windowsAbsolutePathPattern =
+  /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
+
+/**
+ * A caller-selected path that is absolute on the host running REA.
+ * Advertise the host-independent envelope: choosing a regex on the build host
+ * bakes that host's rules into the recorded CLI/MCP catalogs. Runtime admission
+ * still uses the executing host's path rules, without serializing that choice.
+ */
+export const absoluteLocalPathStringSchema = localPathStringSchema
+  .regex(windowsAbsolutePathPattern, {
+    message: "must be an absolute local filesystem path",
+    abort: true,
+  })
+  .superRefine((value, context) => {
+    if (!isAbsolute(value))
+      context.addIssue({
+        code: "invalid_format",
+        format: "regex",
+        message: "must be an absolute local filesystem path",
+        input: value,
+      });
+  });
+
+/** Test lexical containment on the host platform; callers must resolve symlinks first. */
+export const isPathWithinRoot = (root: string, path: string): boolean => {
+  const value = relative(root, path);
+  return (
+    value === "" ||
+    (value !== ".." && !value.startsWith(`..${sep}`) && !isAbsolute(value))
+  );
+};

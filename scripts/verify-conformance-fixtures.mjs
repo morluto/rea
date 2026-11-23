@@ -1,87 +1,135 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import {
+  bindConformanceFixtureArtifact,
+  resolveConformanceFixturePath,
   generateLargeFixture,
   sha256,
   sourceDigest,
+  parseConformanceFixtureManifest,
+  splitNmSymbolRecords,
 } from "./lib/conformance-fixtures.mjs";
+import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 
 const exec = promisify(execFile);
-const manifestPath = resolve(
-  process.argv[2] ?? "build/conformance/manifest.json",
+const verifierRun = createVerifierRun({ inheritProcessRunId: true });
+const manifestArgument = process.argv[2] ?? "build/conformance/manifest.json";
+const manifestPath = await realpath(resolve(manifestArgument));
+const sourceRoot = await resolveSourceRoot(manifestPath, process.argv[3]);
+const manifest = parseConformanceFixtureManifest(
+  JSON.parse(await readFile(manifestPath, "utf8")),
 );
-const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.fixtures))
-  throw new Error("Unsupported conformance manifest");
+if (manifest.platform !== process.platform)
+  throw new Error(
+    `Conformance manifest platform ${manifest.platform} does not match ${process.platform}`,
+  );
 const root = dirname(manifestPath);
+const fileMarker = manifest.platform === "darwin" ? "Mach-O" : "ELF";
+// Both GNU and LLVM nm define -j as names-only output, one symbol per line.
+const nmArguments =
+  manifest.platform === "darwin" ? ["-gU", "-j"] : ["-g", "-j"];
 
-for (const fixture of manifest.fixtures) {
-  const artifactPath = join(root, fixture.artifact);
+for (const fixture of manifest.fixtures) await verifyFixture(fixture);
+
+const v1 = manifest.fixtures.find(({ name }) => name === "version-v1");
+const v2 = manifest.fixtures.find(({ name }) => name === "version-v2");
+if (v1 === undefined || v2 === undefined)
+  throw new Error("Conformance manifest omitted the version pair");
+if (v1.artifactSha256 === v2.artifactSha256)
+  throw new Error("Version-pair artifacts unexpectedly have equal hashes");
+process.stdout.write(
+  `${JSON.stringify({ verifier_run: await completeVerifierRun(verifierRun), verified: manifest.fixtures.length, manifestPath, sourceRoot, platform: manifest.platform })}\n`,
+);
+
+async function resolveSourceRoot(manifestPath, declaredSourceRoot) {
+  if (declaredSourceRoot !== undefined)
+    return realpath(resolve(process.cwd(), declaredSourceRoot));
+  const candidates = [
+    resolve(process.cwd(), "tests/conformance"),
+    resolve(dirname(dirname(dirname(manifestPath))), "tests/conformance"),
+    resolve(dirname(manifestPath), "../../tests/conformance"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await realpath(candidate);
+    } catch {
+      // Try the next clean-checkout candidate.
+    }
+  }
+  throw new Error(
+    "Could not locate tests/conformance; pass its path as the second argument",
+  );
+}
+
+async function verifyFixture(fixture) {
+  const artifactPath = await resolveConformanceFixturePath(
+    root,
+    fixture.artifact,
+  );
   const sources = [];
   for (const source of fixture.sources ?? []) {
+    if (typeof source.path !== "string" || typeof source.sha256 !== "string")
+      throw new Error(`${fixture.name}: invalid source declaration`);
     const content =
       source.path === "generated/large.c"
         ? generateLargeFixture()
-        : await readFile(join(process.cwd(), "tests/conformance", source.path));
+        : await readFile(
+            await resolveConformanceFixturePath(sourceRoot, source.path),
+          );
     if (sha256(content) !== source.sha256)
       throw new Error(
         `${fixture.name}: source hash mismatch for ${source.path}`,
       );
     sources.push({ path: source.path, content });
   }
-  if (
-    fixture.sourceSha256 !== undefined &&
-    sourceDigest(sources) !== fixture.sourceSha256
-  )
+  if (sourceDigest(sources) !== fixture.sourceSha256)
     throw new Error(`${fixture.name}: source manifest digest mismatch`);
-  const artifact = await readFile(artifactPath);
-  if (sha256(artifact) !== fixture.artifactSha256)
-    throw new Error(`${fixture.name}: artifact hash mismatch`);
+  await bindConformanceFixtureArtifact(artifactPath, fixture);
   const fileOutput = (await exec("file", [artifactPath])).stdout;
-  if (!fileOutput.includes("Mach-O"))
-    throw new Error(`${fixture.name}: not Mach-O`);
-  const symbols = (
-    await exec("nm", ["-gU", artifactPath], { maxBuffer: 20 * 1024 * 1024 })
-  ).stdout;
+  if (!fileOutput.includes(fileMarker))
+    throw new Error(`${fixture.name}: not ${fileMarker}`);
+  const symbols = splitNmSymbolRecords(
+    (
+      await exec("nm", [...nmArguments, artifactPath], {
+        maxBuffer: 20 * 1024 * 1024,
+      })
+    ).stdout,
+  );
   const strings = (
     await exec("strings", [artifactPath], { maxBuffer: 20 * 1024 * 1024 })
-  ).stdout;
-  for (const symbol of fixture.expectations.symbols ?? [])
+  ).stdout
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  const expectations = fixture.expectations ?? {};
+  for (const symbol of expectations.symbols ?? [])
     if (!symbols.includes(symbol))
       throw new Error(`${fixture.name}: missing symbol ${symbol}`);
-  for (const value of fixture.expectations.strings ?? [])
+  for (const value of expectations.stringMarkers ?? [])
     if (!strings.includes(value))
-      throw new Error(`${fixture.name}: missing string ${value}`);
+      throw new Error(`${fixture.name}: missing string marker ${value}`);
+  for (const value of expectations.stringFragments ?? [])
+    if (!strings.some((record) => record.includes(value)))
+      throw new Error(`${fixture.name}: missing string fragment ${value}`);
   verifyCount(
     symbols,
-    fixture.expectations.symbolPrefix,
-    fixture.expectations.symbolCount,
+    expectations.symbolPrefix,
+    expectations.symbolCount,
     fixture.name,
   );
   verifyCount(
     strings,
-    fixture.expectations.stringPrefix,
-    fixture.expectations.stringCount,
+    expectations.stringPrefix,
+    expectations.stringCount,
     fixture.name,
   );
 }
 
-const v1 = manifest.fixtures.find(({ name }) => name === "version-v1");
-const v2 = manifest.fixtures.find(({ name }) => name === "version-v2");
-if (v1?.artifactSha256 === v2?.artifactSha256)
-  throw new Error("Version-pair artifacts unexpectedly have equal hashes");
-process.stdout.write(
-  `${JSON.stringify({ verified: manifest.fixtures.length, manifestPath })}\n`,
-);
-
 function verifyCount(output, prefix, expected, fixture) {
   if (prefix === undefined || expected === undefined) return;
-  const count = output
-    .split("\n")
-    .filter((line) => line.includes(prefix)).length;
+  const count = output.filter((record) => record.startsWith(prefix)).length;
   if (count !== expected)
     throw new Error(
       `${fixture}: expected ${expected} ${prefix} records, received ${count}`,

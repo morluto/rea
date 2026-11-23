@@ -1,0 +1,182 @@
+import {
+  sourcePublicationRecoveryOf,
+  type AnalysisError,
+} from "../domain/analysisErrorBase.js";
+import {
+  childFailureDiagnostics,
+  projectAnalysisError,
+} from "../domain/analysisErrorProjection.js";
+import {
+  analysisErrorUserMessage,
+  composedCallerGuidance,
+} from "../domain/analysisErrorPresentation.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { err, type Result } from "../domain/result.js";
+import type { AnalysisExecution } from "../ports/AnalysisProvider.js";
+import type { BinarySessionPort } from "./binary/BinarySessionPort.js";
+import {
+  analysisErrorWithCleanupFailure,
+  analysisErrorWithCloseRejection,
+  withInheritedCleanupOwnership,
+} from "../domain/analysisErrorCleanup.js";
+import { withEvidenceCallerInputPath } from "../domain/evidence.js";
+import { recognizeEvidence } from "../domain/evidenceValidation.js";
+import { isRecord } from "../kernel/isRecord.js";
+
+/**
+ * Project a one-shot failure for its invocation, which has released its
+ * provider session and runtime settings by the time the caller reads it.
+ */
+export const projectInvocationFailure = (
+  error: AnalysisError,
+): ReturnType<typeof projectAnalysisError> =>
+  projectAnalysisError(error, "invocation");
+
+/** Add the actual outer request path to authenticated partial Evidence. */
+export const projectDirectAnalysisFailure = (
+  error: AnalysisError,
+  callerInputPath: string,
+): ReturnType<typeof projectAnalysisError> => {
+  const projection = projectInvocationFailure(error);
+  const partial = projection.details?.partial_observation;
+  const wrapped = isRecord(partial) && partial.kind === "unretained-evidence";
+  // Only authenticated Evidence gains the request path; a record that fails
+  // authentication is projected as the owner reported it, never as absent.
+  const observation = recognizeEvidence(wrapped ? partial.evidence : partial);
+  const rebound =
+    !observation.ok || observation.value === undefined
+      ? undefined
+      : withEvidenceCallerInputPath(observation.value, callerInputPath);
+  const completed = sourcePublicationRecoveryOf(error)?.completed;
+  const completedWithPath =
+    completed?.kind === "unretained-evidence" ||
+    completed?.kind === "inline-evidence"
+      ? {
+          ...completed,
+          evidence: withEvidenceCallerInputPath(
+            completed.evidence,
+            callerInputPath,
+          ),
+        }
+      : completed?.kind === "unretained-observation"
+        ? {
+            ...completed,
+            observation: {
+              ...completed.observation,
+              caller_input_path: callerInputPath,
+            },
+          }
+        : undefined;
+  if (rebound === undefined && completedWithPath === undefined)
+    return projection;
+  return {
+    ...projection,
+    details: {
+      ...projection.details,
+      ...(rebound === undefined
+        ? {}
+        : {
+            partial_observation: wrapped
+              ? { ...partial, evidence: rebound }
+              : rebound,
+          }),
+      ...(completedWithPath === undefined
+        ? {}
+        : { completed_observation: completedWithPath }),
+    },
+  };
+};
+
+/** Await one-shot cleanup and retain either the outcome or both failures. */
+export const withSessionCleanup = async <Value>(
+  session: Pick<BinarySessionPort, "close">,
+  operation: () => Promise<Value>,
+  onCleanupFailure: (value: Value, error: AnalysisError) => Value,
+): Promise<Value> => {
+  let value: Value;
+  try {
+    value = await operation();
+  } catch (cause: unknown) {
+    const closed = await session.close();
+    if (!closed.ok)
+      throw new AggregateError(
+        [cause, closed.error],
+        "Analysis and provider cleanup both failed",
+        { cause },
+      );
+    throw cause;
+  }
+  const closed = await session.close();
+  return closed.ok ? value : onCleanupFailure(value, closed.error);
+};
+
+/** Project typed one-shot outcomes only after execution and cleanup settle. */
+export const directAnalysisCleanupFailure = (
+  result: Result<JsonValue, AnalysisError>,
+  error: AnalysisError,
+  callerInputPath?: string,
+): JsonValue => {
+  const project = (failure: AnalysisError) =>
+    callerInputPath === undefined
+      ? projectInvocationFailure(failure)
+      : projectDirectAnalysisFailure(failure, callerInputPath);
+  const cleanup = project(error);
+  if (!result.ok) {
+    const primary = project(result.error);
+    const combined = analysisErrorWithCleanupFailure(result.error, error);
+    return {
+      error: "Analysis failed",
+      ...primary,
+      code: "cleanup_incomplete",
+      retryable: false,
+      remediation: cleanup.remediation,
+      details: {
+        ...primary.details,
+        // The domain composition owns the union of still-retained resources;
+        // neither projection may overwrite the other owner's cleanup state.
+        resources: [...combined.cleanupResources],
+        cleanup: "incomplete",
+        execution_failure: primary.details?.execution_failure ?? primary.code,
+        cleanup_error: cleanup,
+      },
+    };
+  }
+  return {
+    error: "Analysis failed",
+    ...cleanup,
+    code: "cleanup_incomplete",
+    retryable: false,
+    details: {
+      ...cleanup.details,
+      cleanup: "incomplete",
+      partial_observation: result.value,
+    },
+  };
+};
+
+/** Preserve managed observations or the original typed failure in diagnostics. */
+export const managedAnalysisCleanupFailure = (
+  result: Result<AnalysisExecution, AnalysisError>,
+  error: AnalysisError,
+): Result<AnalysisExecution, AnalysisError> => {
+  if (!result.ok)
+    return err(analysisErrorWithCloseRejection(result.error, error));
+  const failure = new ProviderAdapterError(
+    error instanceof ProviderAdapterError ? error.providerId : "rea",
+    "close_binary",
+    {
+      cause: error,
+      ...composedCallerGuidance({ remediation: error }),
+      cleanup: {
+        reason: analysisErrorUserMessage(error, "invocation"),
+        resources: error.cleanupResources,
+      },
+      ...childFailureDiagnostics(
+        { cleanup_error: { error } },
+        { partial_observation: jsonValueSchema.parse(result.value) },
+      ),
+    },
+  );
+  return err(withInheritedCleanupOwnership(failure, error));
+};

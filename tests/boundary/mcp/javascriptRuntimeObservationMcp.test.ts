@@ -1,0 +1,344 @@
+import { canonicalOutputSchema } from "../../fixtures/canonicalOutputSchema.js";
+import { ok as resultOk } from "../../../src/domain/result.js";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { afterEach, describe, expect, test } from "vitest";
+
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { V8InspectorProvider } from "../../../src/inspector/V8InspectorProvider.js";
+import {
+  javascriptRuntimeObservationSchema,
+  javascriptRuntimeTargetListSchema,
+  observeJavaScriptRuntimeInputSchema,
+} from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE } from "../../../src/contracts/javascript/javascriptRuntimeReconciliationExample.js";
+import { createJavaScriptRuntimeObservationEvidence } from "../../../src/application/javascript/JavaScriptRuntimeObservationEvidence.js";
+import { V8_INSPECTOR_PROVIDER_IDENTITY } from "../../../src/inspector/providerIdentity.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { observed } from "../../fixtures/analysisExecution.js";
+import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+describe("JavaScript runtime observation MCP tools", () => {
+  const resources: Array<{ close(): Promise<unknown> }> = [];
+
+  afterEach(async () => {
+    await Promise.all(resources.splice(0).map((item) => item.close()));
+  });
+
+  registerRuntimeParameterContract(resources);
+  registerRuntimeMetadataContract();
+  registerRetainedRuntimeEvidence(resources);
+});
+
+function registerRuntimeParameterContract(
+  resources: Array<{ close(): Promise<unknown> }>,
+): void {
+  test("attributes V8 role and target disagreements to the parameter that differs", async () => {
+    const session = createTestBinarySession(() => {
+      throw new Error("No provider expected");
+    });
+    const server = createServer({ kind: "session", session });
+    const client = new Client(
+      { name: "runtime-parameter-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    resources.push(client, server, session);
+    await server.connect(st);
+    await client.connect(ct);
+    const observation = javascriptRuntimeObservationSchema.parse({
+      runtime: {
+        product: "node.js",
+        protocol_version: "1.3",
+        v8_version: null,
+      },
+      target: {
+        target_id: "example-v8-target",
+        protocol_type: "node",
+        attached: false,
+        location: { kind: "file", file_path: "/fixtures/main.js" },
+        runtime_kind: "electron-main",
+        runtime_kind_authority: "caller-declared-unverified",
+      },
+      capture: {
+        observation_ms: 0,
+        events_observed: 0,
+        events_retained: 0,
+        events_dropped: 0,
+        metadata_bytes_retained: 0,
+        truncated: false,
+        truncation_reasons: [],
+      },
+      scripts: {
+        items: [],
+        observed_total: 0,
+        parse_failed_total: 0,
+        excluded: { unsupported_location: 0, invalid_protocol_value: 0 },
+      },
+      execution_contexts: [],
+      directly_observed: [],
+      unavailable_without_instrumentation: [],
+      unknowns: [],
+      limitations: [],
+    });
+    for (const [target_id, runtime_kind, expectedPath] of [
+      ["example-v8-target", "node", "runtime_kind"],
+      ["different-target", "electron-main", "target_id"],
+      [" example-v8-target ", "electron-main", "target_id"],
+      ["example-v8-target", "electron-main", null],
+    ] as const) {
+      const evidence = createJavaScriptRuntimeObservationEvidence(
+        "observe_javascript_runtime",
+        {
+          inspector_endpoint: "http://127.0.0.1:9229",
+          target_id,
+          runtime_kind,
+          observation_ms: 0,
+        },
+        observation,
+        V8_INSPECTOR_PROVIDER_IDENTITY,
+      );
+      const response = await client.callTool({
+        name: "reconcile_javascript_runtime",
+        arguments: {
+          static_layers:
+            JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers,
+          runtime_observations: [evidence],
+        },
+      });
+      if (expectedPath === null) expect(response.isError).not.toBe(true);
+      else
+        expect(parseMcpToolError(response).error.details).toMatchObject({
+          issues: [
+            {
+              path: ["runtime_observations", 0, "parameters", expectedPath],
+              reason: "invalid_value",
+            },
+          ],
+        });
+    }
+  });
+}
+
+function registerRuntimeMetadataContract(): void {
+  test("accepts long caller windows and complete observation metadata", () => {
+    const repeated = (count: number): string[] =>
+      Array.from({ length: count }, (_, index) => `item-${index}`);
+    const scope = {
+      inspector_endpoint: "http://127.0.0.1:9222",
+    };
+    expect(
+      observeJavaScriptRuntimeInputSchema.parse({
+        ...scope,
+        target_id: "target",
+        observation_ms: 2_147_483_648,
+      }).observation_ms,
+    ).toBe(2_147_483_648);
+    expect(
+      javascriptRuntimeTargetListSchema.parse({
+        runtime: {
+          product: "Node.js",
+          protocol_version: "1.0",
+          v8_version: null,
+        },
+        targets: [],
+        excluded: {
+          unsupported_location: 0,
+          unconnectable: 0,
+        },
+        limitations: repeated(101),
+      }).limitations,
+    ).toHaveLength(101);
+
+    const unknowns = repeated(101);
+    const limitations = repeated(101);
+    const truncationReasons = repeated(21);
+    const directlyObserved = repeated(21);
+    const unavailableWithoutInstrumentation = repeated(21);
+    expect(
+      javascriptRuntimeObservationSchema.parse({
+        runtime: {
+          product: "Node.js",
+          protocol_version: "1.0",
+          v8_version: null,
+        },
+        target: {
+          target_id: "target",
+          protocol_type: "node",
+          attached: false,
+          location: { kind: "file", file_path: "/tmp/rea-runtime/main.js" },
+          runtime_kind: "node",
+          runtime_kind_authority: "caller-declared-unverified",
+        },
+        capture: {
+          observation_ms: 10_001,
+          events_observed: 0,
+          events_retained: 0,
+          events_dropped: 0,
+          metadata_bytes_retained: 0,
+          truncated: false,
+          truncation_reasons: truncationReasons,
+        },
+        scripts: {
+          items: [],
+          observed_total: 0,
+          parse_failed_total: 0,
+          excluded: {
+            unsupported_location: 0,
+            invalid_protocol_value: 0,
+          },
+        },
+        execution_contexts: [],
+        directly_observed: directlyObserved,
+        unavailable_without_instrumentation: unavailableWithoutInstrumentation,
+        unknowns,
+        limitations,
+      }),
+    ).toMatchObject({
+      capture: {
+        observation_ms: 10_001,
+        truncation_reasons: truncationReasons,
+      },
+      directly_observed: directlyObserved,
+      unavailable_without_instrumentation: unavailableWithoutInstrumentation,
+      unknowns,
+      limitations,
+    });
+  });
+}
+
+function registerRetainedRuntimeEvidence(
+  resources: Array<{ close(): Promise<unknown> }>,
+): void {
+  test("lists and observes one target as retained Evidence", async () => {
+    const root = await createTestTempDirectory("rea-v8-mcp-");
+    const { entry, inspector, client } = await createObservationClient(
+      root,
+      resources,
+    );
+
+    const listed = await client.callTool({
+      name: "list_javascript_runtime_targets",
+      arguments: {
+        inspector_endpoint: inspector.endpoint,
+      },
+    });
+    expect(listed.isError).not.toBe(true);
+    expect(listed.structuredContent).toMatchObject({
+      normalized_result: {
+        targets: [{ target_id: inspector.targetId }],
+      },
+    });
+    const paddedTarget = await client.callTool({
+      name: "observe_javascript_runtime",
+      arguments: {
+        inspector_endpoint: inspector.endpoint,
+        target_id: ` ${inspector.targetId} `,
+        observation_ms: 0,
+      },
+    });
+    expect(parseMcpToolError(paddedTarget).error).toMatchObject({
+      code: "target_unavailable",
+    });
+    expect(inspector.commands).toEqual([]);
+    const operation = "observe_javascript_runtime";
+    const observedRuntime = await client.callTool({
+      name: operation,
+      arguments: {
+        inspector_endpoint: inspector.endpoint,
+        target_id: inspector.targetId,
+        runtime_kind: "node",
+        observation_ms: 10,
+      },
+    });
+    expect(observedRuntime.isError).not.toBe(true);
+    const ajv = new Ajv2020({ strict: false, validateFormats: false });
+    const schema = canonicalOutputSchema(operation);
+    expect(ajv.validateSchema(schema)).toBe(true);
+    expect(
+      ajv.validate(schema, observedRuntime.structuredContent),
+      JSON.stringify(ajv.errors),
+    ).toBe(true);
+    expect(observedRuntime.structuredContent).toMatchObject({
+      normalized_result: {
+        target: {
+          target_id: inspector.targetId,
+          runtime_kind: "node",
+          runtime_kind_authority: "caller-declared-unverified",
+        },
+        scripts: {
+          items: [
+            expect.objectContaining({
+              location: expect.objectContaining({
+                kind: "file",
+                file_path: entry,
+              }),
+              reported_url: pathToFileURL(entry).href,
+            }),
+          ],
+        },
+      },
+    });
+    const evidence = parseEvidence(observedRuntime.structuredContent);
+    expect(evidence).toMatchObject({
+      operation: "observe_javascript_runtime",
+      parameters: {
+        inspector_endpoint: inspector.endpoint,
+        target_id: inspector.targetId,
+        runtime_kind: "node",
+        observation_ms: 10,
+      },
+    });
+    const bundle = await client.callTool({
+      name: "get_evidence_bundle",
+      arguments: {},
+    });
+    expect(bundle.isError).not.toBe(true);
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(evidence);
+  });
+}
+
+const createObservationClient = async (
+  root: string,
+  resources: Array<{ close(): Promise<unknown> }>,
+) => {
+  const entry = join(root, "entry.js");
+  await writeFile(entry, "export const value = 1;\n");
+  const inspector = await startFakeV8Inspector({
+    targetUrl: pathToFileURL(entry).href,
+  });
+  resources.push(inspector);
+  const session = createTestBinarySession(() => ({
+    execute: () => Promise.resolve(observed(null)),
+    close: () => Promise.resolve(resultOk(null)),
+  }));
+  const server = createServer(
+    { kind: "session", session },
+    {
+      javascriptRuntimeObservation: new V8InspectorProvider(),
+      availabilityPolicy: () => ({
+        processCaptureEnabled: false,
+        investigationInputRoots: 0,
+      }),
+    },
+  );
+  const client = new Client(
+    { name: "v8-mcp-test", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(client, server, session);
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return { entry, inspector, client };
+};

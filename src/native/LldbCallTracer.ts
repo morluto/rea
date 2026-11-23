@@ -1,0 +1,1730 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import {
+  bindArtifactFileCleanup,
+  ArtifactResourceScope,
+  AnalysisCleanupLease,
+} from "../resources/index.js";
+import { HOST_PLATFORM } from "../platform/HostPlatform.js";
+import { invariantViolation } from "../domain/internalInvariant.js";
+import { translateNativeCommandFailure } from "./NativeCommandAnalysisError.js";
+import { DEFAULT_NATIVE_COMMAND_TIMEOUT_MS } from "../domain/native/nativeDeadlines.js";
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { randomUUID } from "node:crypto";
+import { rename, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { z } from "zod";
+import {
+  MAX_NATIVE_CALL_CAPTURE_BYTES,
+  nativeCallCaptureLimits,
+} from "../domain/native/nativeCallCaptureLimits.js";
+
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+  type AnalysisTimeoutRecovery,
+} from "../domain/analysisErrorCore.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import type {
+  AnalysisError,
+  AnalysisCleanupObservation,
+} from "../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import type { NativeCallPartialObservation } from "../domain/native/nativeCallPartialObservation.js";
+import {
+  nativeCallEventSchema,
+  nativeCallProcessOutcomeSchema,
+  nativeCodeLocationSchema,
+  type NativeCallObservationInput,
+} from "../domain/native/nativeCallObservation.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { safeParseJson } from "../domain/safeJson.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../process/ProviderProcess.js";
+import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
+import {
+  observeProcessStartIdentity,
+  observeProcessStartIdentityExit,
+  signalProcessWithStartIdentity,
+} from "../process/ProcessOwnershipObservation.js";
+import type { ProcessIdentityObservation } from "../process/ProcessOwnership.js";
+import {
+  ProviderStartupDeadline,
+  waitForAbortableDelay,
+} from "../process/ProviderDeadline.js";
+import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
+import {
+  NativeCommandFailure,
+  resolveXcrunTool,
+  type ResolvedTool,
+} from "../providers/NativeCommandRunner.js";
+import { projectPartialNativeCalls } from "./NativeCallObservation.js";
+import { LldbReadbackFiles } from "./LldbReadbackFiles.js";
+import {
+  analysisErrorWithCleanupDependencies,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
+import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
+import { runOwned } from "../providers/runOwned.js";
+import {
+  processInspectionFailure,
+  retainProcessInspectionCleanup,
+} from "../providers/OwnedCommandCleanup.js";
+import {
+  readLldbObservationJournal,
+  readBoundedPrefix,
+  readPartialCapture,
+  projectLldbPartialObservation,
+} from "./LldbRetainedObservations.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+
+const OPERATION = "observe_native_calls";
+const PROVIDER = "native-macos";
+const LLDB_REQUIREMENT =
+  "LLDB from Xcode or the Command Line Tools is not available";
+/**
+ * LLDB startup, symbol loading and teardown beyond the observation window.
+ * This grace has no runtime override; duration_ms is the caller-selected window.
+ */
+const DEADLINE_GRACE_MS = 60_000;
+const DIAGNOSTIC_BYTES = 16 * 1024;
+
+const lldbGraceRecovery = (durationMs: number): AnalysisTimeoutRecovery => {
+  const total = durationMs + DEADLINE_GRACE_MS;
+  return {
+    userMessage: `observe_native_calls reached its ${String(total)} ms server/provider deadline: duration_ms ${String(durationMs)} plus a fixed ${String(DEADLINE_GRACE_MS)} ms LLDB startup, symbol loading, and teardown grace. This is not the MCP client deadline.`,
+    remediationAction: `This release has no runtime override for the ${String(DEADLINE_GRACE_MS)} ms grace. Increase duration_ms on the next call when the observation window was too short; the grace stays added to that window. Captured output retention is selected with capture_limits.output_bytes before launch; changing it cannot recover an earlier capture. Failure diagnostics keep at most ${String(DIAGNOSTIC_BYTES)} bytes and that excerpt has no runtime override. Allow execution, cleanup, and delivery headroom in the outer MCP client deadline. Confirm the owned process was killed and cleanup finished before retrying.`,
+  };
+};
+
+const BRIDGE = fileURLToPath(
+  new URL("../../bridge/native/rea_lldb_tracer.py", import.meta.url),
+);
+
+/** JSON the LLDB bridge writes after a completed run. */
+const tracedSchema = z.strictObject({
+  status: z.literal("traced"),
+  version: z.string(),
+  pid: z.int().positive(),
+  outcome: nativeCallProcessOutcomeSchema,
+  exit_status: z.int().nullable(),
+  exit_description: z.string().nullable(),
+  killed: z.boolean(),
+  terminated: z.boolean(),
+  target_identity: z.strictObject({
+    loaded_image_sha256: z.null(),
+    selected_file_sha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/u)
+      .nullable(),
+    file_device: z.string().nullable(),
+    file_inode: z.string().nullable(),
+    module_path: z.string().nullable(),
+    module_uuid: z.string().nullable(),
+    stable: z.boolean(),
+  }),
+  resource_limit_reached: z.boolean(),
+  resource_limit: z.enum(["trace_bytes", "trace_frames"]).nullable().optional(),
+  breakpoint_locations_truncated: z.boolean().optional(),
+  target_output: z.strictObject({
+    stdout_bytes: z.int().nonnegative(),
+    stderr_bytes: z.int().nonnegative(),
+    stdout_truncated: z.boolean(),
+    stderr_truncated: z.boolean(),
+    stdout_complete: z.boolean(),
+    stderr_complete: z.boolean(),
+  }),
+  elapsed_ms: z.number().nonnegative(),
+  breakpoints: z.array(
+    z.strictObject({
+      index: z.int().nonnegative(),
+      location_count: z.int().nonnegative(),
+      locations: z.array(nativeCodeLocationSchema),
+    }),
+  ),
+  events: z.array(nativeCallEventSchema),
+  other_stops: z.array(z.string()),
+  /** Breakpoint traps and stops on a requested location that were not recorded as hits; each may be a lost hit. */
+  unattributed_breakpoint_stops: z.int().nonnegative(),
+});
+
+const tracerOutputSchema = z.discriminatedUnion("status", [
+  tracedSchema,
+  z.strictObject({
+    status: z.enum([
+      "target-error",
+      "target-integrity-error",
+      "target-identity-unavailable",
+      "launch-error",
+      "tracer-error",
+    ]),
+    error: z.string().nullable(),
+    target_process_created: z.boolean().optional(),
+    target_process_exit_observed: z.boolean().optional(),
+  }),
+]);
+
+/** Bounded text of one target output stream. */
+export interface CapturedOutput {
+  readonly text: string;
+  /** Bytes drained from the target, which may exceed the retained prefix. */
+  readonly bytes: number;
+  readonly truncated: boolean;
+  /** Whether the bridge confirms it drained the stream through EOF. */
+  readonly complete: boolean;
+}
+
+type CapturedOutputRead =
+  | { readonly ok: true; readonly value: CapturedOutput }
+  | {
+      readonly ok: false;
+      readonly error: unknown;
+      readonly partial?: CapturedOutput;
+    };
+
+/** One completed LLDB observation, before projection into the result contract. */
+export interface NativeCallTrace {
+  readonly debugger: {
+    readonly path: string;
+    readonly sha256: string;
+    readonly version: string | null;
+  };
+  readonly run: z.infer<typeof tracedSchema>;
+  readonly stdout: CapturedOutput;
+  readonly stderr: CapturedOutput;
+  /** REA confirmed the traced process no longer exists. */
+  readonly terminated: boolean;
+}
+
+const debuggerIdentity = (
+  tool: ResolvedTool,
+  version: string | null,
+): NativeCallTrace["debugger"] => ({
+  path: tool.invocationPath,
+  sha256: tool.sha256,
+  version,
+});
+
+/** Launch one owned process under a debugger and record calls. */
+export interface NativeCallTracer {
+  trace(
+    request: {
+      readonly executable: string;
+      readonly architecture: string;
+      readonly expectedSha256: string;
+      readonly input: NativeCallObservationInput;
+    },
+    signal?: AbortSignal,
+  ): Promise<Result<NativeCallTrace, AnalysisError>>;
+  /** Retry cleanup retained after a trace could not verify process exit. */
+  close(): Promise<Result<null, AnalysisError>>;
+}
+
+/** Remediation for a target LLDB may not debug. */
+const ATTACH_REMEDIATION =
+  "Allow debugging for this user (Developer Tools access: `DevToolsSecurity -enable`, or membership in the _developer group). A hardened-runtime target is debuggable only with the com.apple.security.get-task-allow entitlement; inspect_signature reports hardened_runtime and entitlements.";
+
+/** Production tracer: `lldb --batch` running the REA LLDB bridge. */
+export class LldbCallTracer implements NativeCallTracer {
+  private readonly environment: NodeJS.ProcessEnv;
+  #tail: Promise<void> = Promise.resolve();
+  #pendingCleanup: RetainedLldbResources | undefined;
+  readonly #inspectionResources = new ArtifactResourceScope();
+  /** Resolver supervisors owned by this tracer, distinct from the shared Darwin reader. */
+  readonly #resolverCleanup = new Map<
+    ProviderProcessSupervisor,
+    ProviderCleanupError
+  >();
+  constructor(
+    environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly launch: typeof runLldb = runLldb,
+    private readonly resolveTool: (
+      tool: string,
+      signal?: AbortSignal,
+    ) => ReturnType<typeof resolveXcrunTool> = (tool, signal) =>
+      resolveXcrunTool(tool, this.environment, signal),
+  ) {
+    this.environment = snapshotEnvironment(environment, HOST_PLATFORM.platform);
+  }
+
+  async trace(
+    request: Parameters<NativeCallTracer["trace"]>[0],
+    signal?: AbortSignal,
+  ): Promise<Result<NativeCallTrace, AnalysisError>> {
+    return this.#serialize(() => this.#trace(request, signal));
+  }
+
+  async #trace(
+    request: Parameters<NativeCallTracer["trace"]>[0],
+    signal?: AbortSignal,
+  ): Promise<Result<NativeCallTrace, AnalysisError>> {
+    const resolverCleanup = await this.#retryResolverCleanup();
+    if (resolverCleanup !== undefined) return err(resolverCleanup);
+    const pendingCleanup = await this.#retryPendingCleanup();
+    if (pendingCleanup !== undefined) return err(pendingCleanup);
+    const lldb = await this.resolveTool("lldb", signal);
+    if (!lldb.ok) return err(this.#discoveryFailure(lldb.error));
+    const root = await PrivateRuntimeRoot.create({ prefix: "rea-lldb-" });
+    const paths = lldbRuntimePaths(root.path);
+    const owner: RetainedLldbResources = {
+      root,
+      rootLease: new AnalysisCleanupLease(() => root.close(), [root.path]),
+      files: new LldbReadbackFiles(),
+      supervisor: undefined,
+      pidPath: paths.pid,
+      resultPath: paths.result,
+      targetIdentity: undefined,
+      targetPid: undefined,
+      processStopped: true,
+      targetStopped: true,
+      identityInspections: [],
+    };
+    let primaryFailure: AnalysisError | undefined;
+    const finalized = await runOwned(
+      async (): Promise<Result<NativeCallTrace, AnalysisError>> => {
+        try {
+          return await this.#run(lldb.value, owner, request, signal);
+        } catch (cause: unknown) {
+          const partial = await partialNativeObservation({
+            request,
+            files: owner.files,
+            pidPath: paths.pid,
+            stdoutPath: paths.stdoutCapture,
+            stderrPath: paths.stderrCapture,
+            observationPath: paths.observations,
+            version: null,
+            reason: "tracer-failure",
+          });
+          if (
+            !owner.processStopped ||
+            !owner.targetStopped ||
+            owner.files.hasPending
+          )
+            this.#pendingCleanup = owner;
+          const failure = new ProviderAdapterError(PROVIDER, OPERATION, {
+            cause,
+            diagnostics: { reason: errorMessage(cause) },
+            partialObservation: partial.observation,
+            ...(this.#pendingCleanup === owner
+              ? {
+                  cleanup: {
+                    reason: "LLDB trace failed while owned resources remain",
+                    resources: lldbCleanupResources(owner),
+                  },
+                }
+              : {}),
+          });
+          return err(retainPartialReadFailures(failure, partial.readFailures));
+        }
+      },
+      {
+        providerId: PROVIDER,
+        operation: OPERATION,
+        signal,
+        inspectPrimary: (primary) => {
+          if (!primary.ok) primaryFailure = primary.error;
+        },
+        close: async () => {
+          if (owner.files.hasPending) this.#pendingCleanup = owner;
+          if (this.#pendingCleanup === owner) {
+            // A primary that already reports this cleanup keeps owning it;
+            // its unreleased readback files are a secondary failure.
+            if (primaryFailure?.cleanupIncomplete === true) {
+              if (owner.files.hasPending) {
+                const files = lldbCleanupFailure(
+                  owner,
+                  "LLDB readback descriptor cleanup remains incomplete",
+                  owner.files.cleanupCause,
+                );
+                primaryFailure.retainSecondaryFailure(files, {
+                  readback_cleanup: projectAnalysisError(files),
+                });
+              }
+              bindLldbCleanup(primaryFailure, owner);
+              return;
+            }
+            // The runtime root stays retained while its process or files do.
+            throw lldbCleanupFailure(
+              owner,
+              "LLDB readback descriptor cleanup remains incomplete",
+              owner.files.cleanupCause,
+            );
+          }
+          try {
+            await releaseLldbRuntime(owner);
+          } catch (cause: unknown) {
+            this.#pendingCleanup = owner;
+            if (primaryFailure?.cleanupIncomplete === true)
+              bindLldbCleanup(primaryFailure, owner);
+            throw lldbCleanupFailure(owner, errorMessage(cause), cause);
+          }
+        },
+        // A cancellation keeps the trace as cancelled; a retained cleanup
+        // keeps it as the completed trace it was.
+        partial: (trace, replacedBy) =>
+          partialObservationFromTrace(
+            request,
+            trace,
+            replacedBy === "cancellation" ? "cancelled" : "cleanup-failure",
+          ),
+      },
+    );
+    // An identity inspection failure always fails the trace: the bridge
+    // refuses an unavailable identity, and an unverified target exit is a
+    // cleanup failure. Only failures carry these descriptors.
+    if (finalized.kind === "completed") return ok(finalized.value);
+    if (
+      finalized.kind !== "completed-cleanup-retained" &&
+      finalized.cleanup.kind === "released"
+    )
+      return err(
+        this.#retainIdentityInspections(
+          owner,
+          resolvedAnalysisError(bindLldbCleanup(finalized.error, owner)),
+        ),
+      );
+    return err(this.#retainIdentityInspections(owner, finalized.error));
+  }
+
+  /** Move identity-read descriptors to the inspection scope that close retries. */
+  #retainIdentityInspections(
+    owner: RetainedLldbResources,
+    failure: AnalysisError,
+  ): AnalysisError {
+    for (const cause of owner.identityInspections.splice(0))
+      failure = retainProcessInspectionCleanup(
+        cause,
+        failure,
+        this.#inspectionResources,
+        OPERATION,
+      );
+    return failure;
+  }
+
+  /** Retry retained LLDB cleanup without abandoning its process or runtime owner. */
+  async close(): Promise<Result<null, AnalysisError>> {
+    return this.#serialize(() => this.#close());
+  }
+
+  async #close(): Promise<Result<null, AnalysisError>> {
+    const resolverCleanup = await this.#retryResolverCleanup();
+    const failure = await this.#retryPendingCleanup();
+    if (resolverCleanup !== undefined && failure !== undefined)
+      return err(
+        analysisErrorWithCleanupDependencies(
+          resolverCleanup,
+          failure,
+          OPERATION,
+        ),
+      );
+    if (resolverCleanup !== undefined) return err(resolverCleanup);
+    return failure === undefined ? ok(null) : err(failure);
+  }
+
+  #serialize<T>(operation: () => Promise<T>): Promise<T> {
+    const call = this.#tail.then(operation, operation);
+    this.#tail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    return call;
+  }
+
+  async #retryPendingCleanup(): Promise<AnalysisError | undefined> {
+    const owner = this.#pendingCleanup;
+    if (owner === undefined) return undefined;
+    const failures: unknown[] = [];
+    // Files are independent children: release them even while process cleanup fails.
+    try {
+      await owner.files.retryCleanup();
+    } catch (cause: unknown) {
+      failures.push(cause);
+    }
+    if (!owner.processStopped) {
+      if (owner.supervisor === undefined)
+        failures.push(
+          new Error("LLDB process cleanup ownership was unavailable"),
+        );
+      else {
+        try {
+          const stopped = await owner.supervisor.stop();
+          if (stopped.status === "incomplete")
+            failures.push(new Error(stopped.reason));
+          else {
+            owner.supervisor.dispose();
+            owner.processStopped = true;
+          }
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
+      }
+    }
+    if (owner.processStopped && !owner.targetStopped) {
+      owner.targetPid = await owner.files.readTargetPid(owner.pidPath);
+      // A stopped LLDB may have published its result before interruption.
+      const published = await readTracerOutput(owner.resultPath, owner.files);
+      if (
+        bridgeProvesTargetGone(
+          published.ok ? published.value : undefined,
+          owner.targetPid,
+        )
+      )
+        owner.targetStopped = true;
+      else {
+        try {
+          const targetTermination = await ensureTerminated(owner);
+          if (targetTermination !== "terminated")
+            failures.push(
+              new Error(targetTerminationReason(targetTermination)),
+            );
+          else owner.targetStopped = true;
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
+      }
+    }
+    if (failures.length === 0) {
+      try {
+        await releaseLldbRuntime(owner);
+        this.#pendingCleanup = undefined;
+        return undefined;
+      } catch (cause: unknown) {
+        failures.push(cause);
+      }
+    }
+    return this.#retainIdentityInspections(
+      owner,
+      lldbCleanupFailure(
+        owner,
+        failures.map(errorMessage).join("; "),
+        new AggregateError(failures, "LLDB cleanup remains incomplete"),
+      ),
+    );
+  }
+
+  /**
+   * Keep a tracer-owned resolver process for retry. A foreign helper marker
+   * stays on the preparation error and is not adopted here.
+   */
+  #retainResolverCleanup(failure: NativeCommandFailure): void {
+    const owned = [
+      ...failure.cleanupFailures.map((entry) => ({
+        owner: entry.owner,
+        marker: entry.marker,
+        reason: entry.reason,
+        resources: entry.resources,
+      })),
+      ...(failure.cleanupOwner === undefined
+        ? []
+        : [
+            {
+              owner: failure.cleanupOwner,
+              marker: failure.cleanupMarker,
+              reason:
+                failure.cleanupFailure ??
+                "LLDB resolver cleanup remains incomplete",
+              resources: [...failure.cleanupResources],
+            },
+          ]),
+    ];
+    for (const entry of owned) {
+      if (this.#resolverCleanup.has(entry.owner)) continue;
+      const marker =
+        entry.marker ??
+        new ProviderCleanupError(
+          PROVIDER,
+          entry.resources.length > 0
+            ? entry.resources
+            : ["lldb-resolver-process"],
+          { reason: entry.reason },
+          { operation: OPERATION, cause: failure },
+        );
+      marker.bindCleanupReleaseClaim(entry.owner.cleanupRelease);
+      this.#resolverCleanup.set(entry.owner, marker);
+    }
+  }
+
+  #discoveryFailure(failure: NativeCommandFailure): AnalysisError {
+    this.#retainResolverCleanup(failure);
+    const markers = [
+      ...new Set(
+        [
+          failure.cleanupOwner,
+          ...failure.cleanupFailures.map((entry) => entry.owner),
+        ].flatMap((owner) => {
+          if (owner === undefined) return [];
+          const marker = this.#resolverCleanup.get(owner);
+          return marker === undefined ? [] : [marker];
+        }),
+      ),
+    ];
+    const error = translateNativeCommandFailure(
+      OPERATION,
+      failure,
+      this.#inspectionResources,
+      DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
+      {
+        unavailableMessage: LLDB_REQUIREMENT,
+        timeoutRecovery: {
+          userMessage: `LLDB discovery reached REA's ${String(DEFAULT_NATIVE_COMMAND_TIMEOUT_MS)}ms xcrun deadline. This is not the client deadline.`,
+          remediationAction:
+            "Inspect the retained discovery output and cleanup state, then resolve the xcrun/toolchain condition before retrying. This LLDB discovery deadline has no runtime override; duration_ms controls the later target observation window.",
+        },
+      },
+    );
+    return markers.length === 0
+      ? error
+      : error.bindCleanupDependencies(markers);
+  }
+
+  /** Retry only resolver processes this tracer spawned. */
+  async #retryResolverCleanup(): Promise<ProviderCleanupError | undefined> {
+    const retained = [...this.#resolverCleanup];
+    const unresolved: ProviderCleanupError[] = [];
+    try {
+      await this.#inspectionResources.retryCleanup();
+    } catch (cause: unknown) {
+      const failure = new ProviderCleanupError(
+        PROVIDER,
+        this.#inspectionResources.cleanupResources,
+        { reason: "LLDB discovery inspection cleanup remains incomplete" },
+        { operation: OPERATION, cause },
+      );
+      bindArtifactFileCleanup(cause, failure);
+      unresolved.push(failure);
+    }
+    for (const [owner, marker] of retained) {
+      let released = false;
+      try {
+        const stopped = await owner.stop();
+        released =
+          stopped.status !== "incomplete" && stopped.status !== "not-owned";
+      } catch {
+        released = false;
+      }
+      if (!released) {
+        unresolved.push(marker);
+        continue;
+      }
+      // The marker reads the supervisor's release of this stop.
+      this.#resolverCleanup.delete(owner);
+    }
+    if (unresolved.length === 0) return undefined;
+    if (unresolved.length === 1) return unresolved[0];
+    return providerCleanupErrorFromFailures(
+      PROVIDER,
+      unresolved,
+      "LLDB resolver cleanup remains incomplete",
+      {
+        operation: OPERATION,
+        message: "LLDB resolver cleanup remains incomplete",
+      },
+    );
+  }
+
+  async #run(
+    lldb: ResolvedTool,
+    retained: RetainedLldbResources,
+    request: Parameters<NativeCallTracer["trace"]>[0],
+    signal?: AbortSignal,
+  ): Promise<Result<NativeCallTrace, AnalysisError>> {
+    const directory = retained.root.path;
+    const paths = lldbRuntimePaths(directory);
+    const { input } = request;
+    const captureLimits = nativeCallCaptureLimits(input.capture_limits);
+    await writeFile(
+      paths.config,
+      JSON.stringify({
+        executable: request.executable,
+        architecture: request.architecture,
+        expected_sha256: request.expectedSha256,
+        arguments: input.arguments,
+        environment: input.environment,
+        working_directory: input.working_directory ?? null,
+        breakpoints: input.breakpoints.map((breakpoint) =>
+          breakpoint.kind === "function"
+            ? { ...breakpoint, module: breakpoint.module ?? null }
+            : { ...breakpoint, class_name: breakpoint.class_name ?? null },
+        ),
+        duration_ms: input.duration_ms,
+        max_events: input.max_events,
+        argument_registers: input.argument_registers,
+        backtrace_frames: input.backtrace_frames,
+        capture_limits: captureLimits,
+        stdout_path: paths.stdout,
+        stderr_path: paths.stderr,
+        stdout_capture_path: paths.stdoutCapture,
+        stderr_capture_path: paths.stderrCapture,
+        result_path: paths.result,
+        pid_path: paths.pid,
+        identity_ack_path: paths.identityAck,
+        observation_path: paths.observations,
+      }),
+      { mode: 0o600 },
+    );
+    retained.processStopped = false;
+    retained.targetStopped = false;
+    this.#pendingCleanup = retained;
+    const exited = await this.launch(
+      lldb.invocationPath,
+      [
+        "--batch",
+        "--no-lldbinit",
+        "--no-use-colors",
+        "-o",
+        `command script import ${quote(BRIDGE)}`,
+        "-o",
+        `rea_trace ${paths.config}`,
+      ],
+      {
+        deadlineMs: input.duration_ms + DEADLINE_GRACE_MS,
+        pidPath: paths.pid,
+        identityAckPath: paths.identityAck,
+        environment: this.environment,
+        files: retained.files,
+        ...(signal === undefined ? {} : { signal }),
+      },
+    );
+    if (exited.kind === "preparation-failed") {
+      // LLDB was never spawned. Release only this tracer's runtime and keep
+      // the shared helper marker on the preparation error.
+      retained.processStopped = true;
+      retained.targetStopped = true;
+      if (this.#pendingCleanup === retained) this.#pendingCleanup = undefined;
+      return err(lldbPreparationFailure(exited.cause));
+    }
+    retained.supervisor = exited.cleanupOwner;
+    retained.targetIdentity = exited.targetIdentity;
+    if (exited.targetIdentityInspection !== undefined)
+      retained.identityInspections.push(exited.targetIdentityInspection);
+    retained.processStopped =
+      exited.cleanupOwner === undefined && exited.cleanupFailure === undefined;
+    retained.targetStopped = !exited.targetLaunched;
+    // The bridge publishes its result once, at the end of rea_trace. Once LLDB
+    // stopped, an interrupted run still owns that result's target facts, while
+    // only an exited LLDB selects it as the primary outcome.
+    const readback =
+      exited.kind === "exited" ||
+      (exited.targetLaunched && retained.processStopped)
+        ? await readTracerOutput(paths.result, retained.files)
+        : undefined;
+    const published = readback?.ok ? readback.value : undefined;
+    const output = exited.kind === "exited" ? published : undefined;
+    retained.targetPid = await retained.files.readTargetPid(paths.pid);
+    const targetTermination: TargetTermination =
+      exited.targetLaunched &&
+      !bridgeProvesTargetGone(published, retained.targetPid)
+        ? await ensureTerminated(retained)
+        : "terminated";
+    retained.targetStopped = targetTermination === "terminated";
+    if (
+      retained.processStopped &&
+      retained.targetStopped &&
+      !retained.files.hasPending
+    )
+      this.#pendingCleanup = undefined;
+    const terminated = targetTermination === "terminated";
+    const cleanupDetails = [
+      exited.cleanupFailure,
+      ...(terminated ? [] : [targetTerminationReason(targetTermination)]),
+    ].filter((detail): detail is string => detail !== undefined);
+    const lifecycleCleanup =
+      cleanupDetails.length === 0
+        ? undefined
+        : {
+            reason: cleanupDetails.join("; "),
+            resources: lldbCleanupResources(retained),
+          };
+    const partialReason =
+      exited.kind === "cancelled"
+        ? "cancelled"
+        : exited.kind === "timeout"
+          ? "timeout"
+          : lifecycleCleanup !== undefined
+            ? "cleanup-failure"
+            : "tracer-failure";
+    const readCompletedCaptures = async (
+      run: z.infer<typeof tracedSchema>,
+    ) => ({
+      stdout: await capturedOutput(
+        paths.stdoutCapture,
+        run.target_output.stdout_bytes,
+        run.target_output.stdout_truncated,
+        run.target_output.stdout_complete,
+        retained.files,
+        captureLimits.output_bytes,
+      ),
+      stderr: await capturedOutput(
+        paths.stderrCapture,
+        run.target_output.stderr_bytes,
+        run.target_output.stderr_truncated,
+        run.target_output.stderr_complete,
+        retained.files,
+        captureLimits.output_bytes,
+      ),
+    });
+    const getPartialObservation = async (
+      reason: NativeCallPartialObservation["coverage"]["reason"] = partialReason,
+    ): Promise<PartialNativeObservationRead> => {
+      // Cleanup uncertainty does not invalidate a completed, validated result.
+      // Keep host termination proof separate from the bridge's reported facts.
+      if (output?.status === "traced") {
+        const { stdout, stderr } = await readCompletedCaptures(output);
+        return {
+          observation: projectPartialNativeCalls(
+            {
+              path: request.executable,
+              sha256: request.expectedSha256,
+              architecture: request.architecture,
+            },
+            request.input,
+            {
+              debugger: debuggerIdentity(lldb, output.version),
+              run: output,
+              stdout: stdout.ok ? stdout.value : (stdout.partial ?? null),
+              stderr: stderr.ok ? stderr.value : (stderr.partial ?? null),
+              terminated,
+            },
+            reason,
+          ),
+          readFailures: [
+            ...(stdout.ok ? [] : [stdout.error]),
+            ...(stderr.ok ? [] : [stderr.error]),
+          ],
+        };
+      }
+      return partialNativeObservation({
+        request,
+        files: retained.files,
+        pidPath: paths.pid,
+        stdoutPath: paths.stdoutCapture,
+        stderrPath: paths.stderrCapture,
+        observationPath: paths.observations,
+        version: null,
+        reason,
+      });
+    };
+    const failureWithPartial = async <Failure extends AnalysisError>(
+      createFailure: (observation: NativeCallPartialObservation) => Failure,
+      reason?: NativeCallPartialObservation["coverage"]["reason"],
+    ): Promise<Result<NativeCallTrace, AnalysisError>> => {
+      const partial = await getPartialObservation(reason);
+      return err(
+        retainPartialReadFailures(
+          createFailure(partial.observation),
+          partial.readFailures,
+        ),
+      );
+    };
+    if (exited.kind === "cancelled")
+      return failureWithPartial((partialObservation) =>
+        cancelledBy(OPERATION, carriedReason(signal?.reason), {
+          ...(lifecycleCleanup === undefined
+            ? {}
+            : { cleanup: lifecycleCleanup }),
+          partialObservation,
+        }),
+      );
+    if (exited.kind === "timeout")
+      return failureWithPartial(
+        (partialObservation) =>
+          new AnalysisTimeoutError(
+            OPERATION,
+            input.duration_ms + DEADLINE_GRACE_MS,
+            {
+              ...(lifecycleCleanup === undefined
+                ? {}
+                : { cleanup: lifecycleCleanup }),
+              partialObservation,
+              ...lldbGraceRecovery(input.duration_ms),
+            },
+          ),
+      );
+    if (output !== undefined && output.status !== "traced")
+      return failureWithPartial((partialObservation) =>
+        tracerFailure(
+          output,
+          lifecycleCleanup,
+          partialObservation,
+          exited.targetIdentityFailure,
+        ),
+      );
+    const processCleanupFailure = exited.cleanupFailure;
+    if (processCleanupFailure !== undefined)
+      return failureWithPartial(
+        (partialObservation) =>
+          new ProviderCleanupError(
+            PROVIDER,
+            lldbCleanupResources(retained),
+            {
+              reason: "LLDB process-group cleanup could not be verified",
+              cleanup_failure: processCleanupFailure,
+              ...(lifecycleCleanup === undefined
+                ? {}
+                : { target_cleanup: lifecycleCleanup }),
+            },
+            {
+              operation: OPERATION,
+              partialObservation,
+            },
+          ),
+      );
+    if (!terminated)
+      return failureWithPartial(
+        (partialObservation) =>
+          new ProviderCleanupError(
+            PROVIDER,
+            lldbCleanupResources(retained),
+            {
+              reason: "LLDB target process termination could not be verified",
+              ...(lifecycleCleanup === undefined
+                ? {}
+                : { target_cleanup: lifecycleCleanup }),
+            },
+            {
+              operation: OPERATION,
+              partialObservation,
+            },
+          ),
+      );
+    const readbackFailure =
+      readback !== undefined && !readback.ok ? readback.error : undefined;
+    if (
+      output === undefined &&
+      readbackFailure instanceof AnalysisResourceConstraintError
+    )
+      return failureWithPartial((partialObservation) => {
+        readbackFailure.partialObservation = partialObservation;
+        return readbackFailure;
+      });
+    if (output === undefined)
+      return failureWithPartial(
+        (partialObservation) =>
+          new ProviderAdapterError(PROVIDER, OPERATION, {
+            ...(readback !== undefined && !readback.ok
+              ? { cause: readback.error }
+              : {}),
+            diagnostics: {
+              reason: "LLDB exited without a usable tracer result",
+              ...(readback !== undefined && !readback.ok
+                ? {
+                    result_failure:
+                      readback.error instanceof z.ZodError
+                        ? `Tracer result failed schema validation (${readback.error.issues.length} issues)`
+                        : errorMessage(readback.error),
+                  }
+                : {}),
+              exit_code: exited.exitCode,
+              lldb_output: exited.output,
+              ...(lifecycleCleanup === undefined
+                ? {}
+                : { target_cleanup: lifecycleCleanup }),
+            },
+            partialObservation,
+            ...(lifecycleCleanup === undefined
+              ? {}
+              : { cleanup: lifecycleCleanup }),
+          }),
+      );
+    const { stdout, stderr } = await readCompletedCaptures(output);
+    if (!stdout.ok || !stderr.ok) {
+      return err(
+        new ProviderAdapterError(PROVIDER, OPERATION, {
+          cause: new AggregateError(
+            [
+              ...(stdout.ok ? [] : [stdout.error]),
+              ...(stderr.ok ? [] : [stderr.error]),
+            ],
+            "LLDB capture readback failed",
+          ),
+          partialObservation: projectPartialNativeCalls(
+            {
+              path: request.executable,
+              sha256: request.expectedSha256,
+              architecture: request.architecture,
+            },
+            request.input,
+            {
+              debugger: debuggerIdentity(lldb, output.version),
+              run: output,
+              stdout: stdout.ok ? stdout.value : (stdout.partial ?? null),
+              stderr: stderr.ok ? stderr.value : (stderr.partial ?? null),
+              terminated,
+            },
+            "capture-failure",
+          ),
+          diagnostics: {
+            reason: "LLDB target output capture could not be read",
+            ...(stdout.ok
+              ? {}
+              : { stdout_capture_error: errorMessage(stdout.error) }),
+            ...(stderr.ok
+              ? {}
+              : { stderr_capture_error: errorMessage(stderr.error) }),
+            ...(lifecycleCleanup === undefined
+              ? {}
+              : { target_cleanup: lifecycleCleanup }),
+          },
+          ...(lifecycleCleanup === undefined
+            ? {}
+            : { cleanup: lifecycleCleanup }),
+        }),
+      );
+    }
+    const trace: NativeCallTrace = {
+      debugger: debuggerIdentity(lldb, output.version),
+      run: output,
+      stdout: stdout.value,
+      stderr: stderr.value,
+      terminated,
+    };
+    if (exited.overran === true)
+      return err(
+        new AnalysisTimeoutError(
+          OPERATION,
+          input.duration_ms + DEADLINE_GRACE_MS,
+          {
+            partialObservation: partialObservationFromTrace(
+              request,
+              trace,
+              "timeout",
+            ),
+            ...lldbGraceRecovery(input.duration_ms),
+          },
+        ),
+      );
+    return ok(trace);
+  }
+}
+
+/** LLDB command arguments are quoted; the bridge path is REA's own install path. */
+const quote = (value: string): string =>
+  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+
+/** Preserve a decoded bridge failure's type independently of cleanup outcome. */
+const tracerFailure = (
+  output: {
+    readonly status:
+      | "target-error"
+      | "target-integrity-error"
+      | "target-identity-unavailable"
+      | "launch-error"
+      | "tracer-error";
+    readonly error: string | null;
+  },
+  cleanup?: AnalysisCleanupObservation,
+  partialObservation?: NativeCallPartialObservation,
+  targetIdentityFailure?: string,
+): AnalysisError => {
+  const options = {
+    ...(cleanup === undefined ? {} : { cleanup }),
+    ...(partialObservation === undefined ? {} : { partialObservation }),
+  };
+  const message = output.error ?? "no LLDB error text";
+  if (output.status === "target-integrity-error")
+    return new EvidenceIntegrityError(
+      message || "The launched native target did not match its session digest",
+      options,
+    );
+  if (output.status === "target-identity-unavailable")
+    return new ProviderAdapterError(PROVIDER, OPERATION, {
+      ...options,
+      diagnostics: {
+        reason: message,
+        constraint: "target process start identity could not be verified",
+        ...(targetIdentityFailure === undefined
+          ? {}
+          : { identity_observation: targetIdentityFailure }),
+      },
+    });
+  if (output.status === "tracer-error")
+    return new ProviderAdapterError(PROVIDER, OPERATION, {
+      ...options,
+      diagnostics: { reason: `LLDB bridge failed: ${message}` },
+    });
+  if (output.status === "target-error")
+    return new AnalysisCapabilityUnavailableError(
+      PROVIDER,
+      OPERATION,
+      `lldb-target-unloadable: ${message}`,
+      options,
+    );
+  // debugserver reports denied task access as an attach failure.
+  return /attach|not allowed|permission|denied|debugserver/iu.test(message)
+    ? new AnalysisCapabilityUnavailableError(
+        PROVIDER,
+        OPERATION,
+        `debugger-attach-denied: ${message}`,
+        { userMessage: ATTACH_REMEDIATION, ...options },
+      )
+    : new AnalysisCapabilityUnavailableError(
+        PROVIDER,
+        OPERATION,
+        `launch-failed: ${message}`,
+        options,
+      );
+};
+
+interface PartialNativeObservationRead {
+  readonly observation: NativeCallPartialObservation;
+  readonly readFailures: readonly unknown[];
+}
+
+const retainPartialReadFailures = <Failure extends AnalysisError>(
+  failure: Failure,
+  readFailures: readonly unknown[],
+): Failure => {
+  if (readFailures.length === 0) return failure;
+  const readbackFailure = new ProviderAdapterError(PROVIDER, OPERATION, {
+    cause:
+      readFailures.length === 1
+        ? readFailures[0]
+        : new AggregateError(readFailures, "LLDB partial readback failed"),
+    diagnostics: {
+      reason: "LLDB could not read all available partial observation data",
+      read_failures: readFailures.map(errorMessage),
+    },
+  });
+  return failure.retainSecondaryFailure(readbackFailure, {
+    partial_readback_failure: projectAnalysisError(readbackFailure),
+  });
+};
+
+const partialNativeObservation = async (options: {
+  readonly request: Parameters<NativeCallTracer["trace"]>[0];
+  readonly files: LldbReadbackFiles;
+  readonly pidPath: string;
+  readonly stdoutPath: string;
+  readonly stderrPath: string;
+  readonly observationPath: string;
+  readonly version: string | null;
+  readonly reason: NativeCallPartialObservation["coverage"]["reason"];
+}): Promise<PartialNativeObservationRead> => {
+  const captureLimits = nativeCallCaptureLimits(
+    options.request.input.capture_limits,
+  );
+  const [journal, pid, stdout, stderr] = await Promise.all([
+    readLldbObservationJournal(
+      options.observationPath,
+      options.files,
+      captureLimits.trace_bytes,
+    ),
+    options.files.readTargetPid(options.pidPath),
+    readPartialCapture(
+      options.stdoutPath,
+      options.files,
+      captureLimits.output_bytes,
+    ),
+    readPartialCapture(
+      options.stderrPath,
+      options.files,
+      captureLimits.output_bytes,
+    ),
+  ]);
+  const observation = projectLldbPartialObservation({
+    captureLimits,
+    target: {
+      path: options.request.executable,
+      sha256: options.request.expectedSha256,
+      architecture: options.request.architecture,
+      arguments: options.request.input.arguments,
+      environment: options.request.input.environment,
+      working_directory: options.request.input.working_directory ?? null,
+    },
+    pid,
+    stdout: stdout.ok ? stdout.value.capture : null,
+    stderr: stderr.ok ? stderr.value.capture : null,
+    version: options.version,
+    journal: journal.ok
+      ? journal.value.parsed
+      : { events: [], otherStops: [], limitations: [] },
+    journalLimitations: journal.ok
+      ? journal.value.limitations
+      : [
+          `The observation journal could not be read: ${errorMessage(journal.error)}`,
+        ],
+    limitations: [
+      ...(stdout.ok
+        ? stdout.value.limitations
+        : [
+            `The target stdout capture could not be read: ${errorMessage(stdout.error)}`,
+          ]),
+      ...(stderr.ok
+        ? stderr.value.limitations
+        : [
+            `The target stderr capture could not be read: ${errorMessage(stderr.error)}`,
+          ]),
+    ],
+    reason: options.reason,
+  });
+  const readFailures = [journal, stdout, stderr].flatMap((read) =>
+    !read.ok
+      ? [read.error]
+      : read.value.status === "read-failure"
+        ? [read.value.readFailure]
+        : [],
+  );
+  return { observation, readFailures };
+};
+
+const partialObservationFromTrace = (
+  request: Parameters<NativeCallTracer["trace"]>[0],
+  trace: NativeCallTrace,
+  reason: NativeCallPartialObservation["coverage"]["reason"] = "cleanup-failure",
+): NativeCallPartialObservation => {
+  return projectPartialNativeCalls(
+    {
+      path: request.executable,
+      sha256: request.expectedSha256,
+      architecture: request.architecture,
+    },
+    request.input,
+    trace,
+    reason,
+  );
+};
+
+const lldbRuntimePaths = (directory: string) => ({
+  config: join(directory, "config.json"),
+  result: join(directory, "result.json"),
+  pid: join(directory, "pid"),
+  identityAck: join(directory, "identity.ack"),
+  stdout: join(directory, "stdout"),
+  stderr: join(directory, "stderr"),
+  stdoutCapture: join(directory, "stdout.capture"),
+  stderrCapture: join(directory, "stderr.capture"),
+  observations: join(directory, "observations.jsonl"),
+});
+
+const readTracerOutput = async (
+  path: string,
+  files: LldbReadbackFiles,
+): Promise<Result<z.infer<typeof tracerOutputSchema>, unknown>> => {
+  const bytes = await files.read(path, async (file) => {
+    const { size } = await file.stat();
+    if (size > MAX_NATIVE_CALL_CAPTURE_BYTES)
+      return err(
+        new AnalysisResourceConstraintError(
+          OPERATION,
+          "file-size",
+          "LLDB tracer result exceeds the runtime Buffer/single-string representation ceiling",
+          {
+            maximum_result_bytes: MAX_NATIVE_CALL_CAPTURE_BYTES,
+            observed_result_bytes: size,
+          },
+          {
+            retryable: false,
+            remediationAction:
+              "The combined LLDB result cannot fit the running Node Buffer/single-string representation. Select smaller capture_limits.trace_bytes or capture_limits.breakpoint_location_bytes, or fewer breakpoints before a new authorized observation. Increasing the client receive buffer cannot raise this ceiling. Retained journal/output observations remain partial; earlier omitted facts cannot be recovered.",
+          },
+        ),
+      );
+    const read = await readBoundedPrefix(
+      size,
+      async (buffer, offset, length, position) =>
+        (await file.read(buffer, offset, length, position)).bytesRead,
+    );
+    if (read.status === "read-failure") return err(read.cause);
+    return ok(read.buffer.subarray(0, read.bytesRead));
+  });
+  if (!bytes.ok) return bytes;
+  if (!bytes.value.ok) return bytes.value;
+  let text: string;
+  try {
+    text = decodeStrictUtf8(bytes.value.value, "preserve");
+  } catch (cause: unknown) {
+    return err(cause);
+  }
+  const parsed = safeParseJson(text);
+  if (!parsed.ok) return err(parsed.cause);
+  const output = tracerOutputSchema.safeParse(parsed.value);
+  return output.success ? ok(output.data) : err(output.error);
+};
+
+/**
+ * An explicit bridge observation can prove no process was created (with no
+ * published PID) or that the created process exited. A missing PID alone, an
+ * unreadable result, or a traced result remains ambiguous.
+ */
+const bridgeProvesTargetGone = (
+  output: z.infer<typeof tracerOutputSchema> | undefined,
+  targetPid: number | undefined,
+): boolean =>
+  output !== undefined &&
+  output.status !== "traced" &&
+  (output.target_process_exit_observed === true ||
+    (output.target_process_created === false && targetPid === undefined));
+
+const capturedOutput = async (
+  path: string,
+  observedBytes: number,
+  truncated: boolean,
+  complete: boolean,
+  files: LldbReadbackFiles,
+  maximumBytes: number,
+): Promise<CapturedOutputRead> => {
+  const readback = await files.read(path, async (handle) => {
+    const { size } = await handle.stat();
+    const read = await readBoundedPrefix(
+      Math.min(size, maximumBytes),
+      async (target, offset, length, position) =>
+        (await handle.read(target, offset, length, position)).bytesRead,
+    );
+    const { buffer, bytesRead } = read;
+    if (read.status === "read-failure" && bytesRead === 0) throw read.cause;
+    return {
+      status: read.status,
+      capture: {
+        text: buffer.subarray(0, bytesRead).toString("utf8"),
+        bytes: observedBytes,
+        truncated:
+          truncated || size > maximumBytes || read.status === "read-failure",
+        complete:
+          read.status !== "read-failure" &&
+          complete &&
+          bytesRead >= Math.min(observedBytes, maximumBytes),
+      },
+      ...(read.status === "read-failure" ? { readFailure: read.cause } : {}),
+    };
+  });
+  if (!readback.ok) return readback;
+  if (readback.value.status === "read-failure")
+    return {
+      ok: false,
+      error: readback.value.readFailure,
+      partial: readback.value.capture,
+    };
+  return ok(readback.value.capture);
+};
+
+interface RetainedLldbResources {
+  readonly root: PrivateRuntimeRoot;
+  readonly rootLease: AnalysisCleanupLease;
+  readonly files: LldbReadbackFiles;
+  readonly pidPath: string;
+  readonly resultPath: string;
+  supervisor: ProviderProcessSupervisor | undefined;
+  targetIdentity: string | undefined;
+  targetPid: number | undefined;
+  processStopped: boolean;
+  targetStopped: boolean;
+  /**
+   * Inspection-owner rejections of target identity reads. Their descriptors
+   * move to the tracer's inspection scope when the trace or retry reports.
+   */
+  readonly identityInspections: unknown[];
+}
+
+/** Preserve compiler facts and a foreign helper marker without inventing an LLDB exit. */
+const lldbPreparationFailure = (
+  cause: DarwinProcessOwnershipInspectionError,
+): AnalysisError => {
+  const marker = cause.cleanupFailure;
+  const compiler = cause.compilerOutcome;
+  const optionsWithoutCause = {
+    ...(cause.capturedOutput === undefined
+      ? {}
+      : { capturedOutput: cause.capturedOutput }),
+    ...(marker === undefined
+      ? {}
+      : {
+          cleanup: {
+            reason: marker.message,
+            resources: [...marker.cleanupResources],
+          },
+        }),
+    diagnostics: {
+      phase: "process-preparation" as const,
+      tool: "lldb" as const,
+      reason: cause.message,
+      ...(compiler === undefined
+        ? {}
+        : {
+            compiler_outcome: {
+              outcome: compiler.outcome,
+              code: compiler.code,
+              signal: compiler.signal,
+              ...(compiler.timeoutMs === undefined
+                ? {}
+                : { timeout_ms: compiler.timeoutMs }),
+            },
+          }),
+    },
+  };
+  const options = { cause, ...optionsWithoutCause };
+  const error =
+    cause.cancellation === undefined
+      ? new ProviderAdapterError(PROVIDER, OPERATION, options)
+      : cancelledBy(
+          OPERATION,
+          carriedReason(cause.cancellation.reason),
+          optionsWithoutCause,
+        );
+  return marker === undefined ? error : error.bindCleanupDependencies([marker]);
+};
+
+/** Root release certifies the hierarchy only after every child confirms completion. */
+const releaseLldbRuntime = async (
+  owner: RetainedLldbResources,
+): Promise<void> => {
+  if (!owner.processStopped || !owner.targetStopped || owner.files.hasPending)
+    throw invariantViolation(
+      "LLDB runtime still owns unresolved child resources",
+    );
+  await owner.rootLease.release();
+};
+
+const bindLldbCleanup = <Failure extends AnalysisError>(
+  failure: Failure,
+  owner: RetainedLldbResources,
+): Failure => {
+  if (failure.cleanupIncomplete) {
+    owner.rootLease.bindCleanupError(failure);
+    failure.bindCleanupResourceOwner({
+      get cleanupResources() {
+        return lldbCleanupResources(owner);
+      },
+    });
+  }
+  return failure;
+};
+
+const lldbCleanupFailure = (
+  owner: RetainedLldbResources,
+  reason: string,
+  cause: unknown,
+  partialObservation?: NativeCallPartialObservation,
+): ProviderCleanupError =>
+  bindLldbCleanup(
+    new ProviderCleanupError(
+      PROVIDER,
+      lldbCleanupResources(owner),
+      { reason },
+      { operation: OPERATION, cause, partialObservation },
+    ),
+    owner,
+  );
+
+type LldbOutcome =
+  | {
+      readonly kind: "exited";
+      readonly exitCode: number | null;
+      readonly output: string;
+    }
+  | { readonly kind: "cancelled" }
+  | { readonly kind: "timeout" };
+
+type LldbExit =
+  | (LldbOutcome & {
+      /** False proves LLDB never started and could not have created a target. */
+      readonly targetLaunched: boolean;
+      readonly targetIdentity: string | undefined;
+      /** Why the host acknowledged the launched target's identity as unavailable. */
+      readonly targetIdentityFailure?: string;
+      /** The inspection-owner rejection of that read, which may own descriptors. */
+      readonly targetIdentityInspection?: unknown;
+      readonly cleanupFailure: string | undefined;
+      /** The work budget elapsed before this physical LLDB exit was selected. */
+      readonly overran?: true;
+      readonly cleanupOwner?: ProviderProcessSupervisor;
+    })
+  | {
+      readonly kind: "preparation-failed";
+      readonly cause: DarwinProcessOwnershipInspectionError;
+      readonly targetLaunched: false;
+      readonly targetIdentity: undefined;
+      readonly cleanupFailure: undefined;
+    };
+
+const lldbCleanupResources = (owner: RetainedLldbResources): string[] => [
+  ...(owner.processStopped ? [] : ["lldb-process-group"]),
+  ...(owner.targetStopped
+    ? []
+    : [`native-target:${String(owner.targetPid ?? "unknown")}`]),
+  ...owner.files.cleanupResources,
+  ...(owner.rootLease.released ? [] : [owner.root.path]),
+];
+
+/** Supervise LLDB as an owned process group while observing its target PID identity. */
+const runLldb = async (
+  executable: string,
+  arguments_: readonly string[],
+  options: {
+    readonly signal?: AbortSignal;
+    readonly deadlineMs: number;
+    readonly pidPath: string;
+    readonly identityAckPath: string;
+    readonly environment: Readonly<NodeJS.ProcessEnv>;
+    readonly files: LldbReadbackFiles;
+  },
+): Promise<LldbExit> => {
+  if (options.signal?.aborted === true)
+    return {
+      kind: "cancelled",
+      targetLaunched: false,
+      targetIdentity: undefined,
+      cleanupFailure: undefined,
+    };
+  const deadline = new ProviderStartupDeadline(
+    options.deadlineMs,
+    options.signal,
+  );
+  let targetIdentity: string | undefined;
+  let targetIdentityFailure: string | undefined;
+  let targetIdentityInspection: unknown;
+  let supervisor: ProviderProcessSupervisor | undefined;
+  let retained = false;
+  let processFailureBeforeInterruption:
+    | {
+        readonly exitCode: number | null;
+        readonly output: string;
+      }
+    | undefined;
+  const finish = async (outcome: LldbOutcome): Promise<LldbExit> => {
+    // Select the primary result once at the owner boundary, before cleanup.
+    // An exit observed before interruption outranks an interrupted wait, while
+    // an already selected exit keeps its fuller snapshot and diagnostics.
+    const selectedOutcome =
+      outcome.kind !== "exited" &&
+      processFailureBeforeInterruption !== undefined
+        ? { kind: "exited" as const, ...processFailureBeforeInterruption }
+        : outcome;
+    // The work budget is read when the exit is selected, before cleanup: an
+    // exit selected after it elapsed overran the budget, while a budget that
+    // elapses during cleanup keeps the exit. Unconfirmed cleanup is reported
+    // by `cleanupFailure`, never as a timeout.
+    const overran =
+      selectedOutcome.kind === "exited" && deadline.interruption === "timeout"
+        ? true
+        : undefined;
+    const stopped = await supervisor?.stop();
+    retained = stopped?.status === "incomplete";
+    return {
+      ...selectedOutcome,
+      targetLaunched: supervisor !== undefined,
+      targetIdentity,
+      ...(targetIdentityFailure === undefined ? {} : { targetIdentityFailure }),
+      ...(targetIdentityInspection === undefined
+        ? {}
+        : { targetIdentityInspection }),
+      cleanupFailure:
+        stopped?.status === "incomplete" ? stopped.reason : undefined,
+      ...(overran === undefined ? {} : { overran }),
+      ...(retained && supervisor !== undefined
+        ? { cleanupOwner: supervisor }
+        : {}),
+    };
+  };
+  try {
+    const launched = await spawnOwnedProviderProcess({
+      command: executable,
+      arguments: arguments_,
+      runId: randomUUID(),
+      // xcrun-selected toolchains may supply interpreter or exec launchers.
+      // Cleanup still requires native generation and run-token ownership.
+      expectedCommand: null,
+      signal: deadline.signal,
+      hostEnvironment: options.environment,
+    });
+    supervisor = new ProviderProcessSupervisor(
+      {
+        ...launched,
+        ownsProcessLifetime: true,
+        cleanup: () => cleanupOwnedProcessGroup(launched.ownership),
+      },
+      {
+        maxDiagnosticBytes: DIAGNOSTIC_BYTES,
+        onDiagnostic: (event) => {
+          // Latch failure at the process event; a later snapshot cannot order it against abort.
+          if (
+            event.type === "exit" &&
+            deadline.interruption === undefined &&
+            (event.signal !== null || (event.code !== null && event.code !== 0))
+          )
+            processFailureBeforeInterruption ??= {
+              exitCode: event.code,
+              output:
+                `${event.snapshot.stdout.text}${event.snapshot.stderr.text}`.slice(
+                  -DIAGNOSTIC_BYTES,
+                ),
+            };
+        },
+      },
+    );
+    let identityAckWritten = false;
+    while (!(await supervisor.waitForOutputClose(20))) {
+      const pid = await options.files.readTargetPid(options.pidPath);
+      if (pid !== undefined && !identityAckWritten) {
+        let observation: ProcessIdentityObservation | undefined;
+        try {
+          observation = await observeProcessStartIdentity(pid);
+          if (observation === undefined)
+            targetIdentityFailure = `PID ${String(pid)} had exited or was absent from the process table`;
+          else if (observation.state !== "readable")
+            targetIdentityFailure = observation.reason;
+        } catch (cause: unknown) {
+          observation = undefined;
+          targetIdentityFailure = errorMessage(cause);
+          if (processInspectionFailure(cause) !== undefined)
+            targetIdentityInspection = cause;
+        }
+        if (observation?.state === "readable")
+          targetIdentity = observation.identity;
+        // The bridge polls for the acknowledgement's name, so publish it
+        // complete: a reader must never see the created but unwritten file.
+        const stagedAck = `${options.identityAckPath}.partial`;
+        await writeFile(
+          stagedAck,
+          observation?.state === "readable" ? "readable" : "unavailable",
+          { mode: 0o600 },
+        );
+        await rename(stagedAck, options.identityAckPath);
+        identityAckWritten = true;
+      }
+      const interruption = deadline.interruption;
+      if (interruption !== undefined) {
+        return await finish({ kind: interruption });
+      }
+      await waitForAbortableDelay(20, deadline.signal);
+    }
+    const snapshot = supervisor.snapshot();
+    const interruption = deadline.interruption;
+    return await finish(
+      // Closed output with an observed exit owns a physical result. Read it
+      // before the outer success-only cancellation projection retains facts.
+      interruption === undefined || supervisor.observedExit() !== undefined
+        ? {
+            kind: "exited",
+            exitCode: snapshot.exitCode ?? null,
+            output: `${snapshot.stdout.text}${snapshot.stderr.text}`.slice(
+              -DIAGNOSTIC_BYTES,
+            ),
+          }
+        : { kind: interruption },
+    );
+  } catch (cause: unknown) {
+    if (
+      supervisor === undefined &&
+      cause instanceof DarwinProcessOwnershipInspectionError
+    ) {
+      return {
+        kind: "preparation-failed",
+        cause,
+        targetLaunched: false,
+        targetIdentity: undefined,
+        cleanupFailure: undefined,
+      };
+    }
+    const interruption = deadline.interruption;
+    return await finish(
+      interruption === undefined
+        ? {
+            kind: "exited",
+            exitCode: null,
+            output: errorMessage(cause),
+          }
+        : { kind: interruption },
+    );
+  } finally {
+    if (!retained) supervisor?.dispose();
+    deadline.dispose();
+  }
+};
+
+type TargetTermination =
+  | "terminated"
+  | "identity-unavailable"
+  | "identity-changed"
+  | "signal-did-not-stop";
+
+/**
+ * Only signal a surviving target when its captured OS start identity still
+ * matches. An identity check the inspection owner rejects leaves the target
+ * unverified and keeps the rejection on the owner for retention.
+ */
+const ensureTerminated = async (
+  owner: RetainedLldbResources,
+): Promise<TargetTermination> => {
+  try {
+    return await terminateTarget(owner.targetPid, owner.targetIdentity);
+  } catch (cause: unknown) {
+    if (processInspectionFailure(cause) === undefined) throw cause;
+    owner.identityInspections.push(cause);
+    return "identity-unavailable";
+  }
+};
+
+const terminateTarget = async (
+  pid: number | undefined,
+  identity: string | undefined,
+): Promise<TargetTermination> => {
+  if (pid === undefined) return "identity-unavailable";
+  // The target's parent (debugserver) reaps it, so a killed target can stay
+  // in the process table as a zombie. A PID that answers kill(pid, 0) is
+  // therefore not proof the target still runs: with its start identity, an
+  // exited (zombie or replaced) PID counts as terminated.
+  const exited = async (): Promise<boolean> =>
+    !alive(pid) ||
+    (identity !== undefined &&
+      (await observeProcessStartIdentityExit(pid, identity)) === "exited");
+  let signalDisposition: Exclude<TargetTermination, "terminated"> | undefined;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (await exited()) return "terminated";
+    if (attempt === 10) {
+      if (identity === undefined) signalDisposition = "identity-unavailable";
+      else {
+        const result = await signalProcessWithStartIdentity(
+          pid,
+          identity,
+          "SIGKILL",
+        );
+        if (result === "gone") return "terminated";
+        if (result === "identity-changed")
+          signalDisposition = "identity-changed";
+        else if (result === "unverified")
+          signalDisposition = "identity-unavailable";
+        else if (result === "signaled")
+          signalDisposition = "signal-did-not-stop";
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return (await exited())
+    ? "terminated"
+    : (signalDisposition ?? "identity-unavailable");
+};
+
+const targetTerminationReason = (termination: TargetTermination): string => {
+  switch (termination) {
+    case "terminated":
+      return "target process terminated";
+    case "identity-unavailable":
+      return "target process start identity was unavailable; survivor was left untouched";
+    case "identity-changed":
+      return "target PID start identity changed; replacement process was left untouched";
+    case "signal-did-not-stop":
+      return "verified target did not exit after SIGKILL";
+  }
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (cause: unknown) {
+    return !(
+      cause instanceof Error &&
+      "code" in cause &&
+      cause.code === "ESRCH"
+    );
+  }
+};

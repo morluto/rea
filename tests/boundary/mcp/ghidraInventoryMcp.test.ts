@@ -1,0 +1,813 @@
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { expect, it } from "vitest";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { nativeAotPeFixture } from "../../fixtures/nativeaotPe.js";
+import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+import { err, ok } from "../../../src/domain/result.js";
+import { ghidraFunctionIdentity } from "../../../src/domain/ghidraValues.fixture.js";
+import {
+  connectGhidraMcp,
+  ghidraInstallationHost,
+  sessionEvidence,
+} from "./ghidraMcpHarness.js";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
+import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "../../../src/ghidra/GhidraLiteralSearch.js";
+import { ghidraProducerIdentity } from "../../../src/ghidra/GhidraProducerIdentity.js";
+import { parseConfig } from "../../../src/config/parseConfig.js";
+import { silentLogger } from "../../../src/logger.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { waitForExit } from "../../support/process/processFixture.js";
+import { GhidraSessionError } from "../../../src/ghidra/GhidraSessionError.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+it("delivers a complete Ghidra inventory within the existing MCP response budget", async () => {
+  const items = Array.from({ length: 30_000 }, (_, index) => ({
+    address: `0x${(0x1000 + index).toString(16)}`,
+    value: `procedure_${String(index).padStart(6, "0")}`,
+    procedure: { external: false, thunk: false, thunk_target: null },
+  }));
+  const harness = await connectGhidraMcp(
+    "inventory-response-budget",
+    (operation) => {
+      if (operation !== "list_procedures")
+        throw new Error(`Unexpected operation: ${operation}`);
+      return Promise.resolve(ok(items));
+    },
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "list_procedures",
+      arguments: {},
+    });
+    if (reply.isError) throw new Error(JSON.stringify(reply));
+    const evidence = sessionEvidence(harness.session, reply.structuredContent);
+    expect(evidence.raw_result).toBeNull();
+    expect(evidence.normalized_result).toEqual(items);
+    expect(harness.calls).toEqual(["list_procedures"]);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("retains byte-search coverage and rejects malformed pages before creating Evidence", async () => {
+  const page = {
+    matches: [
+      {
+        address: "0x401000",
+        segment: ".text",
+        file_offset: null,
+        procedure: null,
+      },
+    ],
+    searched: {
+      blocks: [
+        { segment: ".text", start: "0x401000", end: "0x40100f", bytes: 16 },
+      ],
+      bytes: 16,
+      skipped_uninitialized: [
+        { segment: ".bss", start: "0x402000", end: "0x40200f", bytes: 16 },
+      ],
+      skipped_not_loaded: [
+        { segment: ".symtab", start: "0x0", end: "0x17f", bytes: 384 },
+      ],
+      skipped_overlays: [
+        {
+          segment: "overlay",
+          start: "overlay:0x401000",
+          end: "overlay:0x40100f",
+          bytes: 16,
+        },
+      ],
+    },
+    complete: false,
+    next_cursor: "continuation",
+  };
+  let output = jsonValueSchema.parse(page);
+  const harness = await connectGhidraMcp("byte-search-projection", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const first = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 ??", limit: 1 },
+    });
+    expect(first.isError).not.toBe(true);
+    expect(
+      sessionEvidence(harness.session, first.structuredContent)
+        .normalized_result,
+    ).toEqual(page);
+    output = jsonValueSchema.parse({
+      ...page,
+      matches: [],
+      complete: true,
+      next_cursor: null,
+    });
+    const last = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 ??", cursor: "continuation" },
+    });
+    expect(last.isError).not.toBe(true);
+    expect(
+      sessionEvidence(harness.session, last.structuredContent)
+        .normalized_result,
+    ).toEqual(output);
+    output = jsonValueSchema.parse({ ...page, complete: true });
+    const malformed = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "49 ??" },
+    });
+    expect(parseMcpToolError(malformed)).toMatchObject({
+      error: { code: "unreadable_output" },
+    });
+    output = jsonValueSchema.parse({
+      ...page,
+      searched: {
+        ...page.searched,
+        skipped_overlays: [
+          {
+            segment: "overlay",
+            start: "overlay:0x401000",
+            end: "overlay:0x40100f",
+            bytes: 15,
+          },
+        ],
+      },
+    });
+    const invalidOverlay = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 ??" },
+    });
+    expect(parseMcpToolError(invalidOverlay)).toMatchObject({
+      error: { code: "unreadable_output" },
+    });
+    for (const block of [
+      { segment: ".text", start: "0x1000", end: "0x1009", bytes: 1 },
+      { segment: ".text", start: "0x1009", end: "0x1000", bytes: 1 },
+      { segment: ".text", start: "overlay:0x1000", end: "0x1000", bytes: 1 },
+      { segment: ".text", start: "invalid", end: "0x1000", bytes: 1 },
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        searched: { ...page.searched, blocks: [block], bytes: block.bytes },
+      });
+      const invalidCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(invalidCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(invalidCoverage.structuredContent).toBeUndefined();
+    }
+    for (const [address, segment] of [
+      ["0x402000", ".bss"],
+      ["overlay:0x401000", ".text"],
+      ["invalid", ".text"],
+    ]) {
+      output = jsonValueSchema.parse({
+        ...page,
+        matches: [{ ...page.matches[0], address, segment }],
+      });
+      const outsideCoverage = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: { pattern: "48 ??" },
+      });
+      expect(parseMcpToolError(outsideCoverage)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(outsideCoverage.structuredContent).toBeUndefined();
+    }
+    const calls = harness.calls.length;
+    for (const args of [{ pattern: "??" }, { pattern: "48", mask: "ffff" }]) {
+      const invalid = await harness.mcp.callTool({
+        name: "search_bytes",
+        arguments: args,
+      });
+      expect(invalid.isError).toBe(true);
+      expect(parseMcpToolError(invalid)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          recovery: {
+            kind: "inspect_input_contract",
+            operation: "search_bytes",
+          },
+        },
+      });
+    }
+    expect(harness.calls).toHaveLength(calls);
+  } finally {
+    await harness.close();
+  }
+});
+
+it("projects cancelled byte searches as typed failures without successful partial Evidence", async () => {
+  const harness = await connectGhidraMcp("byte-search-cancelled", () =>
+    Promise.resolve(
+      err(new GhidraSessionError("cancelled", "Search cancelled")),
+    ),
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 8b" },
+    });
+    expect(reply.isError).toBe(true);
+    expect(parseMcpToolError(reply)).toMatchObject({
+      error: { code: "cancelled" },
+    });
+    expect(reply.structuredContent).toBeUndefined();
+  } finally {
+    await harness.close();
+  }
+});
+
+it("searches bytes through MCP and the socket bridge with pagination and skipped coverage", async () => {
+  const config = parseConfig({ GHIDRA_INSTALL_DIR: "/fixture/ghidra" });
+  if (!config.ok) throw config.error;
+  const provider = new GhidraProvider(
+    config.value,
+    silentLogger,
+    {},
+    ghidraInstallationHost(),
+    (options) =>
+      new GhidraClient({
+        ...options,
+        platform: process.platform,
+        startupTimeoutMs: 5000,
+        launcher: {
+          launch: async (launch) => {
+            const projectRoot = join(launch.runtimeRoot, "project");
+            await mkdir(projectRoot);
+            const child = spawn(
+              process.execPath,
+              [
+                fileURLToPath(
+                  new URL("../../fixtures/fakeGhidra.mjs", import.meta.url),
+                ),
+              ],
+              {
+                stdio: ["ignore", "pipe", "pipe"],
+                env: {
+                  ...process.env,
+                  REA_GHIDRA_FIXTURE_CONFIG: JSON.stringify({
+                    endpointPath: launch.endpointPath,
+                    token: launch.token,
+                    runId: launch.runId,
+                    providerVersion: launch.providerVersion,
+                    profileDigest: launch.profileDigest,
+                    targetSha256: launch.targetSha256,
+                    transport: launch.transport,
+                  }),
+                },
+              },
+            );
+            return ok({
+              process: child,
+              ownsProcessLifetime: true as const,
+              projectRoot,
+              ghidraLogPath: join(launch.runtimeRoot, "ghidra.log"),
+              scriptLogPath: join(launch.runtimeRoot, "script.log"),
+              cleanup: async () => {
+                const signaled =
+                  child.exitCode === null && child.signalCode === null;
+                if (signaled) child.kill("SIGTERM");
+                return (await waitForExit(child, 2000))
+                  ? { cleaned: true as const, signaled }
+                  : { cleaned: false as const, reason: "Fixture did not exit" };
+              },
+            });
+          },
+        },
+      }),
+  );
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([provider]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const client = new Client(
+    { name: "byte-search", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const opened = await client.callTool({
+      name: "open_binary",
+      arguments: { path: process.execPath },
+    });
+    expect(opened.isError).not.toBe(true);
+    const first = await client.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "48 8b ?? ?? 89", limit: 1 },
+    });
+    expect(first.isError, JSON.stringify(first)).not.toBe(true);
+    const firstEvidence = sessionEvidence(session, first.structuredContent);
+    expect(firstEvidence.raw_result).toBeNull();
+    expect(firstEvidence.normalized_result).toMatchObject({
+      matches: [
+        {
+          address: "0x1000",
+          segment: ".text",
+          file_offset: 0,
+          procedure: { name: "fixture_main" },
+        },
+      ],
+      searched: {
+        bytes: 10,
+        skipped_uninitialized: [{ segment: ".bss", bytes: 16 }],
+      },
+      complete: false,
+      next_cursor: "fixture-second-page",
+    });
+    const second = await client.callTool({
+      name: "search_bytes",
+      arguments: {
+        pattern: "48 8b ?? ?? 89",
+        limit: 1,
+        cursor: "fixture-second-page",
+      },
+    });
+    expect(second.isError).not.toBe(true);
+    expect(
+      sessionEvidence(session, second.structuredContent).normalized_result,
+    ).toMatchObject({
+      matches: [{ address: "0x1005", file_offset: 5 }],
+      complete: true,
+      next_cursor: null,
+    });
+    const invalid = await client.callTool({
+      name: "search_bytes",
+      arguments: { pattern: "??" },
+    });
+    expect(invalid.isError).toBe(true);
+    expect(JSON.stringify(invalid.content)).toContain(
+      "Pattern must constrain at least one bit",
+    );
+  } finally {
+    await client.close();
+    await server.close();
+    const closed = await session.close();
+    if (!closed.ok) throw closed.error;
+  }
+});
+
+it("retains missing PDB coverage in empty PE name-search Evidence and snapshot replay", async () => {
+  const root = await createTestTempDirectory("rea-pdb-evidence-");
+  const targetPath = join(root, "fixture.exe");
+  await writeFile(targetPath, nativeAotPeFixture());
+  // Synthetic post-analysis facts at the real provider boundary; no engine is simulated as verified.
+  const pdb = {
+    file: "C:\\build\\fixture.pdb",
+    guid: "01234567-89AB-CDEF-0123-456789ABCDEF",
+    age: "a",
+    signature: null,
+    version: "RSDS",
+    loaded: false,
+  };
+  const harness = await connectGhidraMcp(
+    "ghidra-pdb-coverage",
+    (operation) =>
+      Promise.resolve(
+        ok(
+          operation === "procedure_pseudo_code"
+            ? {
+                value: "int FUN_140001000(void) { return 0; }",
+                limitations: [],
+              }
+            : [],
+        ),
+      ),
+    {
+      targetPath,
+      pdb,
+    },
+  );
+  try {
+    const reply = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: { pattern: "add_numbers" },
+    });
+    expect(reply.isError).not.toBe(true);
+    const evidence = sessionEvidence(harness.session, reply.structuredContent);
+    expect(evidence.normalized_result).toEqual([]);
+    expect(evidence.analysis_profile?.parameters.producer).toEqual(
+      ghidraProducerIdentity(),
+    );
+    const limitation = evidence.limitations.find((value) =>
+      value.includes(pdb.file),
+    );
+    expect(limitation).toContain(pdb.guid);
+    expect(limitation).toContain("age (hex) a");
+    expect(limitation).toContain("not loaded");
+    const decompiled = await harness.mcp.callTool({
+      name: "procedure_pseudo_code",
+      arguments: { procedure: "0x140001000", document: "fixture" },
+    });
+    expect(decompiled.isError).not.toBe(true);
+    const functionEvidence = sessionEvidence(
+      harness.session,
+      decompiled.structuredContent,
+    );
+    expect(functionEvidence.limitations).toContain(limitation);
+    const replay = await harness.session.execute(
+      "procedure_pseudo_code",
+      functionEvidence.parameters,
+    );
+    if (!replay.ok) throw replay.error;
+    expect(replay.value.limitations).toContain(limitation);
+    expect(replay.value.limitations).toContainEqual(
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+    );
+  } finally {
+    await harness.close();
+  }
+});
+
+it("retains defined-string coverage in empty and matching search Evidence", async () => {
+  let output = jsonValueSchema.parse([]);
+  let stringCoverage: string | undefined;
+  const harness = await connectGhidraMcp("ghidra-string-coverage", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    for (const request of [
+      { name: "list_strings", arguments: {} },
+      { name: "search_strings", arguments: { pattern: "projection" } },
+      {
+        name: "search_strings",
+        arguments: { pattern: "projection.*", mode: "regex" },
+      },
+    ]) {
+      const reply = await harness.mcp.callTool(request);
+      expect(reply.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        reply.structuredContent,
+      );
+      expect(evidence.normalized_result).toEqual([]);
+      expect(evidence.analysis_profile?.parameters).toMatchObject({
+        producer: ghidraProducerIdentity(),
+      });
+      const coverage = evidence.limitations.find((limitation) =>
+        /Only Ghidra-defined string Data.*empty search does not establish/u.test(
+          limitation,
+        ),
+      );
+      if (coverage === undefined) throw new Error("Missing string coverage");
+      if (stringCoverage !== undefined) expect(coverage).toBe(stringCoverage);
+      stringCoverage = coverage;
+    }
+    output = jsonValueSchema.parse([
+      {
+        address: "0x401000",
+        value: "projection cache ignored",
+        string: {
+          encoding: "US-ASCII",
+          termination: "present_or_not_required",
+          byte_length: 25,
+        },
+      },
+    ]);
+    const matched = await harness.mcp.callTool({
+      name: "search_strings",
+      arguments: { pattern: "projection" },
+    });
+    const evidence = sessionEvidence(
+      harness.session,
+      matched.structuredContent,
+    );
+    expect(evidence.normalized_result).toEqual(output);
+    expect(evidence.limitations).toContain(stringCoverage);
+    expect(evidence.limitations).toContainEqual(
+      expect.stringMatching(/completeness applies to that inventory/iu),
+    );
+    output = jsonValueSchema.parse([]);
+    const procedures = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: { pattern: "projection" },
+    });
+    expect(
+      sessionEvidence(harness.session, procedures.structuredContent)
+        .limitations,
+    ).not.toContainEqual(expect.stringMatching(/Ghidra.defined string Data/iu));
+  } finally {
+    await harness.close();
+  }
+});
+
+it("rejects contradictory provider output before emitting MCP Evidence", async () => {
+  const bytes = {
+    address: "0x401000",
+    requested_bytes: 4,
+    returned_bytes: 2,
+    bytes_hex: "0410",
+    complete: false,
+  };
+  let output = jsonValueSchema.parse(bytes);
+  const harness = await connectGhidraMcp("ghidra-invalid-inventory", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const accepted = await harness.mcp.callTool({
+      name: "read_bytes",
+      arguments: { address: bytes.address, length: 4 },
+    });
+    expect(accepted.isError).not.toBe(true);
+    expect(accepted.structuredContent).toMatchObject({
+      normalized_result: bytes,
+    });
+    const cases = [
+      ...[
+        { complete: true },
+        { returned_bytes: 4 },
+        { bytes_hex: "04" },
+        { requested_bytes: 1 },
+      ].map((change, index) => ({
+        name: "read_bytes",
+        arguments: {
+          address: `0x${(0x401004 + index * 4).toString(16)}`,
+          length: 4,
+        },
+        output: { ...bytes, ...change },
+      })),
+      {
+        name: "address_to_file_offset",
+        arguments: { address: bytes.address },
+        output: { address: bytes.address, file_offset: -1 },
+      },
+      {
+        name: "list_procedures",
+        arguments: {},
+        output: [
+          {
+            address: "00401000",
+            value: "main",
+            procedure: { external: false, thunk: false, thunk_target: null },
+          },
+        ],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000", value: "needle" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [
+          {
+            address: "0x401000",
+            value: "needle",
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: -1,
+            },
+          },
+        ],
+      },
+      {
+        name: "search_procedures",
+        arguments: { pattern: "fixture" },
+        output: [{ address: "0x401000", value: "fixture_main" }],
+      },
+      {
+        name: "read_function_instructions",
+        arguments: { procedure: "fixture_main" },
+        output: {
+          procedure: { ...ghidraFunctionIdentity(), address: "0X401000" },
+          instructions: ["0x401000: push rbp"],
+          limitations: ["Ghidra-specific instruction text."],
+        },
+      },
+      {
+        name: "resolve_containing_procedure",
+        arguments: { address: "EXTERNAL:0x2" },
+        output: {
+          query_address: "EXTERNAL:0x2",
+          found: true,
+          procedure: {
+            ...ghidraFunctionIdentity(),
+            address: "EXTERNAL:0x1",
+            classification: {
+              ...ghidraFunctionIdentity().classification,
+              external: true,
+            },
+            body: {
+              ...ghidraFunctionIdentity().body,
+              ranges: [],
+              total_bytes: 0,
+              span_bytes: 0,
+              contains_entry: false,
+            },
+          },
+        },
+      },
+    ];
+    for (const probe of cases) {
+      output = jsonValueSchema.parse(probe.output);
+      const rejected = await harness.mcp.callTool({
+        name: probe.name,
+        arguments: probe.arguments,
+      });
+      expect(rejected.isError, probe.name).toBe(true);
+      expect(parseMcpToolError(rejected)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+      expect(parseMcpToolError(rejected)).not.toHaveProperty("evidence_id");
+      expect(parseMcpToolError(rejected)).not.toHaveProperty("result");
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
+it("returns a procedure once with the exact-entry names its search matched", async () => {
+  const primary = {
+    primary: true,
+    dynamic: false,
+    external: false,
+    type: "function",
+    source: "imported",
+  };
+  const row = (
+    address: string,
+    value: string,
+    matched_aliases?: readonly string[],
+  ) => ({
+    address,
+    value,
+    symbol: primary,
+    procedure: { external: false, thunk: false, thunk_target: null },
+    ...(matched_aliases === undefined ? {} : { matched_aliases }),
+  });
+  let output = jsonValueSchema.parse([
+    row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+  ]);
+  const requests: unknown[] = [];
+  const harness = await connectGhidraMcp(
+    "ghidra-procedure-aliases",
+    (operation, input) => {
+      if (operation !== "search_procedures")
+        throw new Error(`Unexpected operation: ${operation}`);
+      requests.push(input);
+      return Promise.resolve(ok(output));
+    },
+  );
+  const search = async (arguments_: Record<string, unknown>) => {
+    const reply = await harness.mcp.callTool({
+      name: "search_procedures",
+      arguments: arguments_,
+    });
+    if (reply.isError === true) throw new Error(JSON.stringify(reply));
+    return sessionEvidence(harness.session, reply.structuredContent);
+  };
+  try {
+    // The bridge owns exact and regex matching over its entry symbols.
+    const exact = await search({
+      pattern: "source_item_primary",
+      case_sensitive: true,
+    });
+    expect(exact.normalized_result).toEqual(output);
+    expect(exact.raw_result).toBeNull();
+    expect(exact.analysis_profile?.parameters).toMatchObject({
+      producer: ghidraProducerIdentity(),
+    });
+
+    // Node owns Unicode folding: the bridge's non-ASCII candidates are kept
+    // only when they match, for secondary names as for primary names.
+    output = jsonValueSchema.parse([
+      row("0x1012a0", "source_item_alias", [
+        "source_item_primary",
+        "Śource_item_label",
+      ]),
+      row("0x101300", "ŚOURCE_ITEM_only", ["ünrelated"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_İTEM_x", "SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    const folded = await search({ pattern: "source_item" });
+    expect(folded.normalized_result).toEqual([
+      row("0x1012a0", "source_item_alias", ["source_item_primary"]),
+      row("0x101340", "FUN_00101340", ["SOURCE_ITEM_label"]),
+      row("0x101380", "ſource_item_plain"),
+    ]);
+    expect(folded.raw_result).toEqual(output);
+    expect(folded.limitations).toContain(GHIDRA_LITERAL_CANDIDATES_LIMITATION);
+    expect(exact.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+    expect(requests).toEqual([
+      expect.objectContaining({ pattern: "source_item_primary" }),
+      expect.objectContaining({
+        pattern: "source_item",
+        case_sensitive: false,
+      }),
+    ]);
+
+    output = jsonValueSchema.parse([row("0x101380", "ſource_item_plain")]);
+    const regex = await search({
+      pattern: "^ſource_item_plain$",
+      mode: "regex",
+    });
+    expect(regex.normalized_result).toEqual(output);
+    expect(regex.raw_result).toBeNull();
+    expect(regex.limitations).not.toContain(
+      GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+    );
+
+    const invalidRows = [
+      {
+        arguments: { pattern: "source_", mode: "regex" },
+        value: row("0x1012a0", "source_item_alias", []),
+      },
+      {
+        arguments: { pattern: "source_item" },
+        value: {
+          ...row("0x101440", "unrelated"),
+          procedure: { external: null },
+        },
+      },
+    ];
+    for (const invalid of invalidRows) {
+      output = jsonValueSchema.parse([invalid.value]);
+      const malformed = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: invalid.arguments,
+      });
+      expect(parseMcpToolError(malformed)).toMatchObject({
+        error: { code: "unreadable_output" },
+      });
+    }
+  } finally {
+    await harness.close();
+  }
+});
+
+it("keeps a namespaced entry name that matched by its leaf spelling", async () => {
+  // procedure_address accepts a symbol's leaf or qualified spelling, so the
+  // bridge matches both and reports the qualified one.
+  const output = jsonValueSchema.parse([
+    {
+      address: "0x101400",
+      value: "outer::impl",
+      procedure: { external: false, thunk: false, thunk_target: null },
+      matched_aliases: ["ns::audit_alias"],
+    },
+    {
+      address: "0x101440",
+      value: "alpha::same",
+      procedure: { external: false, thunk: false, thunk_target: null },
+    },
+  ]);
+  const harness = await connectGhidraMcp("ghidra-namespaced-aliases", () =>
+    Promise.resolve(ok(output)),
+  );
+  try {
+    const [aliasRow, primaryRow] = output as unknown[];
+    for (const [arguments_, expected] of [
+      [
+        {
+          pattern: "^(audit_alias|same)$",
+          mode: "regex",
+          case_sensitive: true,
+        },
+        output,
+      ],
+      // The host folding pass checks reported qualified spellings, which end
+      // with the leaf the bridge matched.
+      [{ pattern: "AUDIT_ALIAS" }, [aliasRow]],
+      [{ pattern: "SAME" }, [primaryRow]],
+    ] as const) {
+      const reply = await harness.mcp.callTool({
+        name: "search_procedures",
+        arguments: arguments_,
+      });
+      expect(reply.isError, JSON.stringify(arguments_)).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, reply.structuredContent)
+          .normalized_result,
+        JSON.stringify(arguments_),
+      ).toEqual(expected);
+    }
+  } finally {
+    await harness.close();
+  }
+});

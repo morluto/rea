@@ -36,9 +36,8 @@ export const verifyPromptCatalog = async (client, options, expectedNames) => {
     throw new Error("packaged MCP guided prompt rendering failed");
 };
 
-/** Verify live completion through each installed stdio target state. */
-export const verifyPromptCompletion = async (client, options, targetOpen) => {
-  const expected = targetOpen ? ["fixture"] : [];
+/** Verify completion candidates for the installed provider readiness state. */
+export const verifyPromptCompletion = async (client, options, expected) => {
   const requests = [
     {
       ref: { type: "ref/prompt", name: "investigate_feature" },
@@ -57,6 +56,8 @@ export const verifyPromptCompletion = async (client, options, targetOpen) => {
       result.completion.total !== expected.length ||
       result.completion.hasMore !== false
     )
-      throw new Error("packaged MCP prompt completion lifecycle failed");
+      throw new Error(
+        `packaged MCP ${request.argument.name} completion mismatch: expected ${JSON.stringify(expected)}, received ${JSON.stringify(result.completion)}`,
+      );
   }
 };

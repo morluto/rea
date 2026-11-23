@@ -1,81 +1,112 @@
 import { z } from "zod";
+import { nativeDispatchMetadataInputSchema } from "../domain/native/objcSwiftMetadata.js";
+import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
+import { decompileDirectoryInputSchema } from "./decompileDirectory.js";
+import { nativeValueTraceInputSchema } from "../domain/native/nativeValueTrace.js";
+import { nativeInvestigationTraceLimitsSchema } from "../domain/native/nativeInvestigationGraph.js";
+const traceLiteralInputSchema = z.strictObject({
+  query: z.string().min(1),
+  case_sensitive: z.boolean().default(false),
+});
+
+export const DEFAULT_CALL_RELATIONSHIP_DIRECTION = "forward";
+export const MAX_ENHANCED_RECORDS = 20_000;
+const callRelationshipDirectionSchema = z
+  .enum(["forward", "backward"])
+  .default(DEFAULT_CALL_RELATIONSHIP_DIRECTION);
+export type CallRelationshipDirection = z.output<
+  typeof callRelationshipDirectionSchema
+>;
 
 /** Input schemas shared by MCP registration and enhanced application dispatch. */
 export const enhancedInputSchemas = {
-  swift_classes: z.object({ pattern: z.string().default("") }),
-  get_objc_classes: z.object({ pattern: z.string().default("") }),
-  get_objc_protocols: z.object({}),
-  batch_decompile: z.object({
+  trace_native_values: nativeValueTraceInputSchema,
+  inspect_native_dispatch_metadata: nativeDispatchMetadataInputSchema,
+  get_objc_classes: z.strictObject({ pattern: z.string().default("") }),
+  get_objc_protocols: z.strictObject({}),
+  batch_decompile: z.strictObject({
     addresses: z
-      .array(z.string().describe("A Hopper address"))
-      .max(20)
+      .array(z.string().describe("A provider-normalized procedure address"))
+      .max(MAX_ENHANCED_RECORDS)
       .default([]),
   }),
-  get_call_graph: z.object({
-    address: z.string().describe("A Hopper address"),
-    direction: z.enum(["forward", "backward"]).default("forward"),
-    depth: z.number().int().min(1).max(5).default(2),
-  }),
-  analyze_swift_types: z.object({}),
-  find_xrefs_to_name: z.object({ name: z.string() }),
-  binary_overview: z.object({
-    detail: z.enum(["concise", "detailed"]).default("concise"),
-    limit: z.number().int().min(1).max(50).default(10),
-  }),
-  analyze_function: z.object({
-    procedure: z.string().describe("A procedure name or address"),
-    include_assembly: z.boolean().default(false),
-    limit: z.number().int().min(1).max(500).default(100),
-    max_pseudocode_chars: z.number().int().min(1).max(100_000).default(20_000),
-    max_instructions: z.number().int().min(1).max(5_000).default(500),
-    pseudocode_offset: z.number().int().min(0).default(0),
-    assembly_offset: z.number().int().min(0).default(0),
-    collection_offset: z
-      .object({
-        comments: z.number().int().min(0).default(0),
-        callers: z.number().int().min(0).default(0),
-        callees: z.number().int().min(0).default(0),
-        incoming_references: z.number().int().min(0).default(0),
-        outgoing_references: z.number().int().min(0).default(0),
-        referenced_strings: z.number().int().min(0).default(0),
-        referenced_names: z.number().int().min(0).default(0),
-        basic_blocks: z.number().int().min(0).default(0),
-      })
-      .default({
-        comments: 0,
-        callers: 0,
-        callees: 0,
-        incoming_references: 0,
-        outgoing_references: 0,
-        referenced_strings: 0,
-        referenced_names: 0,
-        basic_blocks: 0,
-      }),
-  }),
-  trace_feature: z.object({
-    query: z.string().min(1),
-    case_sensitive: z.boolean().default(false),
-    limit: z.number().int().min(1).max(100).default(20),
-    max_operations: z.number().int().min(1).max(100).default(20),
-    unknown_registry_approved: z
-      .literal(true)
+  decompile_all: decompileDirectoryInputSchema,
+  get_call_graph: z.strictObject({
+    address: z
+      .string()
+      .describe(
+        "A procedure symbol or address to resolve to its canonical entry",
+      ),
+    direction: callRelationshipDirectionSchema,
+    max_depth: z
+      .number()
+      .int()
+      .min(0)
       .optional()
-      .describe("Explicit approval to record bounded residuals durably"),
+      .describe(
+        "Optional maximum traversal depth from the starting procedure (0 inspects only the start node). Omit to traverse the full observed graph.",
+      ),
+    max_nodes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+      ),
+  }),
+  analyze_swift_types: z.strictObject({
+    category: z
+      .enum(["classes", "structs", "enums", "protocols", "extensions", "other"])
+      .optional()
+      .describe(
+        "Limit categorized results to one Swift category; unresolved category observations remain in unclassified.",
+      ),
+    pattern: z
+      .string()
+      .optional()
+      .describe(
+        "Case-sensitive literal filter applied to provider procedure names and their supporting Swift manglings.",
+      ),
+  }),
+  find_xrefs_to_name: z.strictObject({ name: z.string() }),
+  binary_overview: z.strictObject({}),
+  // Provider input excludes delivery detail, which belongs to the MCP tool contract.
+  analyze_function: nativeProcedureInputSchema,
+  inspect_native_api: nativeProcedureInputSchema,
+  trace_feature: traceLiteralInputSchema,
+  trace_call_path: z.strictObject({
+    start: z.string().describe("A starting procedure symbol or address"),
+    goal: z
+      .string()
+      .describe("An optional destination procedure symbol or address")
+      .optional(),
+    direction: callRelationshipDirectionSchema,
+    max_depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "Optional maximum hop depth from start to expand (0 inspects no outgoing edges; 1 checks direct neighbors). Omit to traverse the full observed graph.",
+      ),
+    max_nodes: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "Optional maximum number of procedures to expand during traversal. Omit to traverse the full observed graph.",
+      ),
+  }),
+  trace_native_ui_action: nativeInvestigationTraceLimitsSchema.extend({
+    action: z
+      .string()
+      .min(1)
+      .describe(
+        "A unique compiled UI action selector, interface object ID, native symbol or exact function address",
+      ),
   }),
 } as const;
 
 export type EnhancedToolName = keyof typeof enhancedInputSchemas;
-
-/** Runtime parser for dispatching only the eight closed enhanced names. */
-export const enhancedToolNameSchema = z.enum([
-  "swift_classes",
-  "get_objc_classes",
-  "get_objc_protocols",
-  "batch_decompile",
-  "get_call_graph",
-  "analyze_swift_types",
-  "find_xrefs_to_name",
-  "binary_overview",
-  "analyze_function",
-  "trace_feature",
-]);

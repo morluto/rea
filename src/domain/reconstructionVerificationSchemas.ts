@@ -1,12 +1,15 @@
 import { z } from "zod";
 
-import { evidenceBundleSchema } from "./evidenceBundle.js";
+import { compositeKey } from "./unicodeCodePointOrder.js";
+import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
+import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
+import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
+import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
 
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const unknownIdSchema = z.string().regex(/^unk_[a-f0-9]{64}$/u);
-const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
-const claimIdSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9._-]{0,99}$/u);
-const titleSchema = z.string().trim().min(1).max(500);
+const evidenceIdSchema = prefixedDigestSchema("ev");
+const unknownIdSchema = prefixedDigestSchema("unk");
+const claimIdSchema = z.string().regex(IDENTIFIER_PATTERN);
+const titleSchema = z.string().trim().min(1);
 const verificationStatusSchema = z.enum(["pass", "fail", "unknown"]);
 const commonClaim = {
   claim_id: claimIdSchema,
@@ -17,28 +20,14 @@ const commonClaim = {
 const behavioralClaimSchema = z.object({
   ...commonClaim,
   kind: z.literal("behavioral"),
-  dimension: z.enum([
-    "overall",
-    "terminal",
-    "exit",
-    "filesystem",
-    "protocol",
-    "process",
-  ]),
+  dimension: z.enum(["overall", ...PROCESS_COMPARISON_DIMENSIONS]),
 });
 const functionClaimSchema = z.object({
   ...commonClaim,
   kind: z.literal("structural-function"),
   dimension: z.enum([
     "overall",
-    "identity",
-    "pseudocode",
-    "assembly",
-    "comments",
-    "calls",
-    "references",
-    "strings_names",
-    "cfg",
+    ...functionComparisonDimensionNameSchema.options,
   ]),
 });
 const artifactClaimSchema = z.object({
@@ -46,27 +35,58 @@ const artifactClaimSchema = z.object({
   kind: z.literal("structural-artifact"),
   dimension: z.literal("overall"),
 });
+const visualClaimSchema = z.object({
+  ...commonClaim,
+  kind: z.literal("visual"),
+  dimension: z.literal("overall"),
+  source_evidence: z
+    .strictObject({
+      before_evidence_id: evidenceIdSchema,
+      after_evidence_id: evidenceIdSchema,
+    })
+    .optional()
+    .describe(
+      "Select the retained screenshot capture for each side. Supply both IDs when a digest matches multiple captures, including byte-identical before and after captures.",
+    ),
+});
 
 const reconstructionClaimSchema = z.discriminatedUnion("kind", [
   behavioralClaimSchema,
   functionClaimSchema,
   artifactClaimSchema,
+  visualClaimSchema,
 ]);
 
-/** Finite, typed behavioral and structural specification. */
+export const reconstructionClaimSelector = (
+  claim: ReconstructionClaim,
+  resolvedPair?: readonly [string, string],
+): string => {
+  const selected = claim.kind === "visual" ? claim.source_evidence : undefined;
+  const pair =
+    resolvedPair ??
+    (selected === undefined
+      ? []
+      : [selected.before_evidence_id, selected.after_evidence_id]);
+  return compositeKey([
+    claim.kind,
+    claim.comparison_evidence_id,
+    claim.dimension,
+    ...pair,
+  ]);
+};
+
+/** Finite, typed behavioral, structural, and visual specification. */
 export const reconstructionSpecificationSchema = z
   .object({
-    schema_version: z.literal(1),
-    name: z.string().trim().min(1).max(200),
-    claims: z.array(reconstructionClaimSchema).min(1).max(100),
+    name: z.string().trim().min(1),
+    claims: z.array(reconstructionClaimSchema).min(1),
   })
   .superRefine((value, context) => {
     const ids = value.claims.map(({ claim_id: id }) => id);
     if (new Set(ids).size !== ids.length)
       context.addIssue({ code: "custom", message: "Claim IDs must be unique" });
-    const selectors = value.claims.map(
-      ({ kind, comparison_evidence_id: id, dimension }) =>
-        `${kind}:${id}:${dimension}`,
+    const selectors = value.claims.map((claim) =>
+      reconstructionClaimSelector(claim),
     );
     if (new Set(selectors).size !== selectors.length)
       context.addIssue({
@@ -75,18 +95,19 @@ export const reconstructionSpecificationSchema = z
       });
   });
 
-/** Bounded reconstruction-verification input. */
-export const reconstructionVerificationInputSchema = z.object({
+/** Reconstruction-verification input. */
+export const reconstructionVerificationInputSchema = z.strictObject({
   specification: reconstructionSpecificationSchema,
-  evidence_bundle: evidenceBundleSchema,
-  offset: z.number().int().min(0).default(0),
-  limit: z.number().int().min(1).max(100).default(100),
-  unknown_registry_approved: z.literal(true).optional(),
 });
 
 export const reconstructionClaimResultSchema = z.object({
   claim_id: claimIdSchema,
-  kind: z.enum(["behavioral", "structural-function", "structural-artifact"]),
+  kind: z.enum([
+    "behavioral",
+    "structural-function",
+    "structural-artifact",
+    "visual",
+  ]),
   dimension: z.string().min(1),
   status: verificationStatusSchema,
   observed_status: z.enum([
@@ -96,47 +117,105 @@ export const reconstructionClaimResultSchema = z.object({
     "changed",
     "truncated",
     "unknown",
+    "contradiction",
   ]),
   comparison_evidence_id: evidenceIdSchema,
-  left_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
-  right_evidence_ids: z.array(evidenceIdSchema).min(1).max(100),
-  evidence_links: z.array(evidenceIdSchema).min(3).max(201),
-  unknown_ids: z.array(unknownIdSchema).max(100),
+  left_evidence_ids: z.array(evidenceIdSchema).min(1),
+  right_evidence_ids: z.array(evidenceIdSchema).min(1),
+  evidence_links: z.array(evidenceIdSchema).min(2),
+  unknown_ids: z.array(unknownIdSchema),
   limitations: z.array(z.string()),
 });
 
-/** Evidence-cited result over every declared claim, independently paged. */
-export const reconstructionVerificationResultSchema = z.object({
-  status: verificationStatusSchema,
-  specification_sha256: digestSchema,
-  summary: z.object({
-    total: z.number().int().min(1).max(100),
-    passed: z.number().int().min(0),
-    failed: z.number().int().min(0),
-    unknown: z.number().int().min(0),
-    behavioral: z.number().int().min(0),
-    structural: z.number().int().min(0),
-  }),
-  claims: z.object({
-    items: z.array(reconstructionClaimResultSchema).max(100),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1).max(100),
-    total: z.number().int().min(1).max(100),
-    next_offset: z.number().int().min(0).nullable(),
-  }),
-  recommended_probes: z
-    .array(
-      z.object({
-        operation: z.string().min(1).max(200),
-        rationale: z.string().min(1).max(1_000),
-        claim_ids: z.array(claimIdSchema).min(1).max(100),
-        unknown_ids: z.array(unknownIdSchema).max(100),
-      }),
-    )
-    .max(2_000),
-  evidence_links: z.array(evidenceIdSchema).min(3).max(20_100),
-  limitations: z.array(z.string()),
+export const countReconstructionClaimKinds = (
+  claims: readonly Pick<ReconstructionClaimResult, "kind">[],
+) => ({
+  behavioral: claims.filter(({ kind }) => kind === "behavioral").length,
+  structural: claims.filter(
+    ({ kind }) =>
+      kind === "structural-function" || kind === "structural-artifact",
+  ).length,
+  visual: claims.filter(({ kind }) => kind === "visual").length,
 });
+
+/** Evidence-cited result over every declared claim. */
+export const reconstructionVerificationResultSchema = z
+  .object({
+    status: verificationStatusSchema,
+    specification_sha256: digestSchema,
+    summary: z.object({
+      total: z.int().min(1),
+      passed: z.int().min(0),
+      failed: z.int().min(0),
+      unknown: z.int().min(0),
+      behavioral: z.int().min(0),
+      structural: z.int().min(0),
+      visual: z.int().min(0).default(0),
+    }),
+    claims: z.object({
+      items: z.array(reconstructionClaimResultSchema),
+    }),
+    recommended_probes: z.array(
+      z.object({
+        operation: z.string().min(1),
+        rationale: z.string().min(1),
+        claim_ids: z.array(claimIdSchema).min(1),
+        unknown_ids: z.array(unknownIdSchema),
+      }),
+    ),
+    evidence_links: z.array(evidenceIdSchema).min(2),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((result, context) => {
+    const { summary } = result;
+    const claims = result.claims.items;
+    const kinds = countReconstructionClaimKinds(claims);
+    const expectedStatus =
+      summary.failed > 0 ? "fail" : summary.unknown > 0 ? "unknown" : "pass";
+    const issues = [
+      [
+        summary.passed !==
+          claims.filter(({ status }) => status === "pass").length ||
+          summary.failed !==
+            claims.filter(({ status }) => status === "fail").length ||
+          summary.unknown !==
+            claims.filter(({ status }) => status === "unknown").length,
+        "Claim status counts must summarize retained claims",
+        ["summary"],
+      ],
+      [
+        summary.behavioral !== kinds.behavioral ||
+          summary.structural !== kinds.structural ||
+          summary.visual !== kinds.visual,
+        "Claim kind counts must summarize retained claims",
+        ["summary"],
+      ],
+      [
+        summary.total !== summary.passed + summary.failed + summary.unknown,
+        "Claim status counts must equal the summary total",
+        ["summary", "total"],
+      ],
+      [
+        summary.total !==
+          summary.behavioral + summary.structural + summary.visual,
+        "Claim kind counts must equal the summary total",
+        ["summary", "total"],
+      ],
+      [
+        result.claims.items.length !== summary.total,
+        "Retained claims must equal the summary total",
+        ["claims", "items"],
+      ],
+      [
+        result.status !== expectedStatus,
+        "Verification status must summarize claim statuses",
+        ["status"],
+      ],
+    ] as const;
+    for (const [invalid, message, path] of issues)
+      if (invalid)
+        context.addIssue({ code: "custom", message, path: [...path] });
+  });
 
 export type ReconstructionClaim = z.infer<typeof reconstructionClaimSchema>;
 export type ReconstructionClaimResult = z.infer<

@@ -1,0 +1,148 @@
+import {
+  MAX_NODE_TIMER_DELAY_MS,
+  timerDurationMsSchema,
+} from "../analysisResourceLimits.js";
+import { z } from "zod";
+
+import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { solidityMetadataSchema } from "./solidityMetadata.js";
+import {
+  producerResourceLimitsSchema,
+  resolveProducerLimits,
+} from "../producerResourceLimits.js";
+
+/** EVM advertises only producer controls it actually enforces. */
+export const evmProducerLimitsSchema = producerResourceLimitsSchema.omit({
+  command_timeout_ms: true,
+});
+export const EVM_PRODUCER_LIMIT_DEFAULTS = {
+  input_bytes: 4 * 1024 * 1024,
+  output_bytes: 16 * 1024 * 1024,
+  diagnostic_bytes: 1024 * 1024,
+  address_space_bytes: 3 * 1024 * 1024 * 1024,
+  file_bytes: 16 * 1024 * 1024,
+  cpu_seconds: 30,
+} as const;
+export const selectedEvmProducerLimits = (
+  selected: z.output<typeof evmProducerLimitsSchema> | undefined,
+) =>
+  resolveProducerLimits(
+    {
+      ...EVM_PRODUCER_LIMIT_DEFAULTS,
+      file_bytes:
+        selected?.output_bytes ?? EVM_PRODUCER_LIMIT_DEFAULTS.file_bytes,
+    },
+    selected,
+  );
+export type EvmProducerLimits = ReturnType<typeof selectedEvmProducerLimits>;
+
+/** Recover the exact producer budget; inherited OS restrictions remain external. */
+export const evmProducerLimitRecovery = (
+  limits: EvmProducerLimits,
+  field: keyof EvmProducerLimits,
+): string =>
+  `Increase producer_limits.${field} above ${String(limits[field])} on the next inspect_evm_interface call; no REA restart is needed. Defaults are ${String(EVM_PRODUCER_LIMIT_DEFAULTS[field])}; the field accepts positive safe integers. Tighter inherited Linux soft/hard limits remain enforced and cannot be raised by this request. timeout_ms, the 256 MiB worker heap and client transport limits are separate. Resolve incomplete cleanup before retrying; do not repeat the unchanged failed request.`;
+
+const byteOffset = z.int().nonnegative();
+const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
+/** Owned EVMole worker deadline. Omission keeps this value. */
+export const DEFAULT_EVM_TIMEOUT_MS = 30_000;
+
+/** Select the carrier representation explicitly; no RPC or deployed-contract lookup is implied. */
+export const inspectEvmInterfaceInputSchema = z.strictObject({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute path to caller-selected local bytecode carrier",
+  ),
+  encoding: z
+    .enum(["raw", "hex"])
+    .describe(
+      "Raw bytes or UTF-8 hex with optional 0x prefix and outer ASCII whitespace",
+    ),
+  producer_limits: evmProducerLimitsSchema
+    .optional()
+    .describe(
+      "Per-call carrier/reply/diagnostic bytes, address-space/file bytes and CPU seconds. Omission preserves documented defaults; omitted file_bytes follows selected output_bytes. Tighter inherited Linux limits remain enforced. timeout_ms and the 256 MiB worker heap are independent.",
+    ),
+  timeout_ms: timerDurationMsSchema
+    .optional()
+    .describe(
+      `Deadline in milliseconds for the owned EVMole worker command (default ${String(DEFAULT_EVM_TIMEOUT_MS)}), not carrier acquisition or final reply reads. An integer from 1 to ${String(MAX_NODE_TIMER_DELAY_MS)} applies on the next call. Does not raise the separately selected producer_limits or the 256 MiB worker heap.`,
+    ),
+});
+
+/** Recovered interface candidates are inferences, independently of observed byte identity. */
+export const evmInterfaceSchema = z
+  .strictObject({
+    artifact: z.strictObject({
+      path: z.string().min(1),
+      sha256,
+      bytes: byteOffset,
+      encoding: z.enum(["raw", "hex"]),
+    }),
+    bytecode: z.strictObject({
+      sha256,
+      bytes: byteOffset,
+      hex: z.string().regex(/^(?:[0-9a-f]{2})*$/),
+      digest_algorithm: z.literal("sha256"),
+      kind: z.literal("unknown"),
+      deployment_authenticity: z.literal("unknown"),
+      hardfork: z.literal("unknown"),
+      metadata: solidityMetadataSchema.nullable().default(null),
+    }),
+    evidence_kind: z.literal("inferred"),
+    functions: z.array(
+      z.strictObject({
+        selector: z.string().regex(/^0x[0-9a-f]{8}$/),
+        bytecode_offset: byteOffset,
+        dispatch: z.enum(["abi", "fallback"]),
+        inferred_arguments: z.string().nullable(),
+        inferred_state_mutability: z.string().nullable(),
+      }),
+    ),
+    discovery_completeness: z.literal("unknown"),
+    runtime_execution: z.literal("not-performed"),
+    diagnostics: z.strictObject({
+      stdout: z.string(),
+      stderr: z.string(),
+      truncated: z.boolean(),
+    }),
+    limitations: z.array(z.string()),
+  })
+  .superRefine((value, context) => {
+    if (value.bytecode.hex.length !== value.bytecode.bytes * 2)
+      context.addIssue({
+        code: "custom",
+        path: ["bytecode"],
+        message:
+          "Selected byte count does not match the bytecode hex representation.",
+      });
+    const metadata = value.bytecode.metadata;
+    if (
+      metadata !== null &&
+      metadata.status !== "unavailable" &&
+      (metadata.bytecode_offset === null ||
+        metadata.cbor_bytes === null ||
+        metadata.bytecode_offset + metadata.cbor_bytes + 2 !==
+          value.bytecode.bytes ||
+        metadata.cbor_bytes !==
+          Number.parseInt(value.bytecode.hex.slice(-4), 16))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["bytecode", "metadata"],
+        message:
+          "Metadata range must match the terminal length suffix in selected bytecode.",
+      });
+    for (const [index, fn] of value.functions.entries())
+      if (fn.bytecode_offset >= value.bytecode.bytes)
+        context.addIssue({
+          code: "custom",
+          path: ["functions", index, "bytecode_offset"],
+          message: "Inferred body offset lies outside the selected bytecode.",
+        });
+  });
+
+export type InspectEvmInterfaceInput = z.infer<
+  typeof inspectEvmInterfaceInputSchema
+>;
+export type EvmInterface = z.infer<typeof evmInterfaceSchema>;

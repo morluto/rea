@@ -1,0 +1,25 @@
+import { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
+import { EvmoleInterfaceProvider } from "../evm/EvmoleInterfaceProvider.js";
+import { cliCommandFor } from "../contracts/cliCommandNames.js";
+import { HOST_PLATFORM, type HostPlatform } from "../platform/HostPlatform.js";
+import { INSPECT_EVM_INTERFACE_CONTRACT } from "../contracts/evm/evmToolContracts.js";
+
+/** Compose offline interface analysis without import-time I/O or dependency acquisition. */
+export const createEvmInterfaceService = (
+  environment: Readonly<NodeJS.ProcessEnv> = process.env,
+  host: HostPlatform = HOST_PLATFORM,
+): EvmInterfaceService =>
+  new EvmInterfaceService(
+    new EvmoleInterfaceProvider(environment, undefined, undefined, host),
+  );
+
+/**
+ * Static binding of the existing operation, command and fresh service factory.
+ * The host owns injected service identity and its retryable cleanup lifetime.
+ * Construction performs no acquisition, target I/O or import-time execution.
+ */
+export const evmInterfaceModule = {
+  contract: INSPECT_EVM_INTERFACE_CONTRACT,
+  cliCommand: cliCommandFor("inspect_evm_interface"),
+  create: createEvmInterfaceService,
+} as const;

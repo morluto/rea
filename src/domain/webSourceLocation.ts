@@ -1,0 +1,164 @@
+import { deadlineParameterLimit } from "./analysisResourceLimits.js";
+import {
+  localSourceMapLimitsSchema,
+  WEB_SOURCE_MAP_LIMITS,
+} from "./sourceMapLimits.js";
+import { z } from "zod";
+import {
+  browserDeadlineIncrease,
+  type BrowserDeadlineRecovery,
+  browserDeadlineRetry,
+  optionalBrowserDeadlineMs,
+} from "./browserDeadline.js";
+import { digestSchema } from "./digests.js";
+import { absoluteLocalPathStringSchema } from "./localPath.js";
+import { exportedWebScriptSchema } from "./webScriptExport.js";
+import {
+  capturedWebManifestIdentitySchema,
+  selectedWebScriptInputSchema,
+  webArtifactFileSchema,
+} from "./webScriptArtifacts.js";
+
+/** JavaScript source-map positions use UTF-16 columns and one-based lines. */
+export const webSourcePositionSchema = z.strictObject({
+  line: z.int().min(1),
+  column: z.int().min(0),
+});
+
+/** Trace one explicit generated position through an explicitly paired local map. */
+export const webSourceLocationInputSchema = selectedWebScriptInputSchema.extend(
+  {
+    source_map: z.strictObject({
+      path: absoluteLocalPathStringSchema.describe(
+        "Absolute local source-map path; no fetch",
+      ),
+      url: z
+        .string()
+        .min(1)
+        .describe(
+          "Explicit source-map URL context used to resolve original source names",
+        ),
+    }),
+    generated_position: webSourcePositionSchema,
+    source_map_limits: localSourceMapLimitsSchema
+      .exactOptional()
+      .describe(
+        "Per-call source-map admission, decoder and representation budgets. Omitted fields preserve existing defaults; changes apply on the next call without restart.",
+      ),
+    decode_timeout_ms: optionalBrowserDeadlineMs(
+      "Source-map decode deadline in milliseconds (default 20000), for the owned codec process. Omitted means 20000 and applies on the next trace_web_source_location call. deadlineExpired returns no partial mapping. Byte, record and heap budgets are independent; select source_map_limits to change them.",
+    ),
+  },
+);
+export type WebSourceLocationInput = z.output<
+  typeof webSourceLocationInputSchema
+>;
+
+const originalContentSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("embedded"),
+    text: z.string(),
+    utf8_sha256: digestSchema,
+    utf8_bytes: z.int().min(0),
+    representation: z.literal("UTF-8 encoding of decoded sourcesContent text"),
+  }),
+  z.strictObject({
+    state: z.literal("unavailable"),
+    reason: z.literal("sourcesContent-not-retained"),
+  }),
+]);
+
+/** Keep every matching segment, including anonymous mappings and duplicate URLs. */
+export const webSourceMapMatchSchema = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("generated-only") }),
+  z.strictObject({
+    state: z.literal("mapped"),
+    flattened_source_index: z.int().min(0),
+    section_path: z.array(z.int().min(0)),
+    source_index: z.int().min(0),
+    reported_source: z.string().nullable(),
+    reported_source_root: z.string().nullable(),
+    resolved_url: z.string().nullable(),
+    ignored: z.boolean(),
+    content: originalContentSchema,
+    original_position: webSourcePositionSchema.extend({
+      offset: z.int().min(0).nullable(),
+      content_position: z.enum([
+        "verified-in-embedded-text",
+        "outside-embedded-text",
+        "content-unavailable",
+      ]),
+    }),
+    name: z.string().nullable(),
+  }),
+]);
+
+/** Codec observations; map association and deployment authenticity remain selected context. */
+export const webSourceMapReportSchema = z.strictObject({
+  source_map_sha256: digestSchema,
+  url_context: z.string().min(1),
+  engine: z.strictObject({ id: z.string().min(1), version: z.string().min(1) }),
+  runtime: z.discriminatedUnion("id", [
+    z.strictObject({
+      id: z.literal("node-v8"),
+      version: z.string().min(1),
+      v8_heap_limit_bytes: z.int().min(1),
+    }),
+    // Bun reports V8-shaped heap statistics but does not enforce V8 heap flags.
+    // On Windows REA instead enforces a Job Object commit limit on the codec.
+    z.strictObject({
+      id: z.literal("bun"),
+      version: z.string().min(1),
+      node_compatibility_version: z.string().min(1),
+      v8_heap_limit_bytes: z.null(),
+      process_memory_limit_bytes: z.int().min(1).nullable(),
+    }),
+  ]),
+  format: z.enum(["regular", "indexed"]),
+  reported_file: z.string().nullable(),
+  lookup: z.strictObject({
+    requested: webSourcePositionSchema,
+    matched_generated_position: webSourcePositionSchema.nullable(),
+    semantics: z.literal(
+      "greatest generated position <= requested, across lines; all equal-position segments",
+    ),
+    location_units: z.literal("one-based lines; zero-based UTF-16 columns"),
+  }),
+  matches: z.array(webSourceMapMatchSchema),
+  diagnostics: z.array(z.string()),
+});
+
+/** Decode deadline used when decode_timeout_ms is omitted. */
+export const DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS =
+  WEB_SOURCE_MAP_LIMITS.decodeTimeoutMs;
+
+/** Source-map decode deadlineExpired text for trace_web_source_location. */
+export const webSourceMapDecodeTimeoutRecovery = (
+  timeoutMs: number,
+): BrowserDeadlineRecovery => ({
+  userMessage: `trace_web_source_location reached its ${String(timeoutMs)} ms source-map decode deadline (deadlineExpired) for decode_timeout_ms. No partial mapping is returned. This is not the MCP client deadline.`,
+  limit: deadlineParameterLimit(
+    "decode_timeout_ms",
+    timeoutMs,
+    DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS,
+  ),
+  remediationAction: `${browserDeadlineIncrease("decode_timeout_ms", timeoutMs, DEFAULT_WEB_SOURCE_MAP_DECODE_TIMEOUT_MS)} ${browserDeadlineRetry} Byte, record and heap admission are separate per-call source_map_limits fields; changing the deadline does not raise them.`,
+});
+export type WebSourceMapReport = z.output<typeof webSourceMapReportSchema>;
+
+/** Selected capture/map byte identities and complete point attribution inline. */
+export const webSourceLocationResultSchema = webSourceMapReportSchema.extend({
+  manifest: capturedWebManifestIdentitySchema,
+  source: webArtifactFileSchema.extend({
+    script_index: z.int().min(0),
+    script: exportedWebScriptSchema,
+  }),
+  source_map: webArtifactFileSchema.extend({
+    url: z.string().min(1),
+    association: z.literal("caller-selected"),
+  }),
+  generated_offset: z.int().min(0),
+  source_authenticity: z.literal("unknown"),
+  execution: z.literal("unknown"),
+  limitations: z.array(z.string()),
+});

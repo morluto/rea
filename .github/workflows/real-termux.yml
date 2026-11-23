@@ -1,0 +1,62 @@
+name: Real Termux browser verification
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: real-termux-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+  # Writes only on the default branch for push, schedule, manual dispatch,
+  # and workflow_call. Pull requests get an empty token and remote read-only mode.
+  TURBO_TOKEN: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && secrets.TURBO_TOKEN || '' }}"
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_CACHE: "${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call')) && 'local:rw,remote:rw' || 'local:rw,remote:r' }}"
+
+jobs:
+  real-termux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Download the pinned Termux app and verify its release checksum
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/rea-termux"
+          cd "$RUNNER_TEMP/rea-termux"
+          release=https://github.com/termux/termux-app/releases/download/v0.118.3
+          apk=termux-app_v0.118.3+github-debug_x86_64.apk
+          sums=termux-app_v0.118.3+github-debug_sha256sums
+          curl --fail --location --retry 3 --output "$apk" "$release/$apk"
+          curl --fail --location --retry 3 --output "$sums" "$release/$sums"
+          awk -v apk="$apk" '$2 == apk || $2 == "*" apk' "$sums" > selected.sha256
+          test "$(wc -l < selected.sha256)" -eq 1
+          sha256sum --check selected.sha256
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build and capture a page inside Termux
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          ram-size: 4096M
+          heap-size: 512M
+          disk-size: 8192M
+          disable-animations: true
+          script: bash scripts/verify/termux/emulator.sh
+      - name: Upload Termux and Android diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: termux-browser-diagnostics
+          path: ${{ runner.temp }}/rea-termux/diagnostics
+          if-no-files-found: warn

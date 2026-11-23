@@ -1,0 +1,138 @@
+import { createTestArtifactResourceScope } from "../../tests/fixtures/artifactResourceScope.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, test } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+
+import {
+  GhidraHeadlessLauncher,
+  GhidraLaunchError,
+  type GhidraLaunchSession,
+} from "./GhidraLauncher.js";
+import { bindGhidraSessionFailure } from "./GhidraSessionError.js";
+
+// The POSIX `bin/java` fixture cannot execute on Windows (extensionless sh script
+// handed to execFile), so these tests only run on POSIX hosts.
+const it = test.skipIf(process.platform === "win32");
+
+/** Projection bound per launcher-command stream asserted by the tests. */
+const EXPECTED_OUTPUT_BOUND_BYTES = 8 * 1024;
+
+const launchSession = (runtimeRoot: string): GhidraLaunchSession => ({
+  runtimeRoot,
+  transport: "unix-socket",
+  endpointPath: join(runtimeRoot, "endpoint.sock"),
+  token: "test-token",
+  runId: "test-run",
+  targetPath: join(runtimeRoot, "target.bin"),
+  targetSha256: "0".repeat(64),
+  providerVersion: "test",
+  profileDigest: "test",
+});
+
+/** Stand-in "java" whose LaunchSupport probe fails the way a broken JVM does. */
+const failingJavaHome = async (script: string): Promise<string> => {
+  const javaHome = await createTestTempDirectory("rea-fake-java-");
+  await mkdir(join(javaHome, "bin"), { recursive: true });
+  await writeFile(join(javaHome, "bin", "java"), script, { mode: 0o755 });
+  return javaHome;
+};
+
+const probeLauncher = (javaHome: string, runtimeRoot: string) =>
+  new GhidraHeadlessLauncher({
+    environment: {},
+    platform: "darwin",
+    analyzeHeadlessPath: join(runtimeRoot, "support", "analyzeHeadless"),
+    configurationDirectoryName: "ghidra_test_PUBLIC",
+    javaHome,
+    bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
+  });
+
+const launchOutcomeOf = (error: Error): Record<string, unknown> | undefined => {
+  const sessionError = bindGhidraSessionFailure(() => ({}))(
+    "start",
+    error.message,
+    error,
+  );
+  const cause = sessionError.diagnostics["failure_cause"] as Record<
+    string,
+    unknown
+  >;
+  const nested = cause["cause"] as Record<string, unknown> | undefined;
+  const outcome = nested?.["command_outcome"] as Record<string, unknown>;
+  return outcome === undefined ? undefined : outcome;
+};
+
+describe("Ghidra launch failure diagnostics", () => {
+  it("retains the failed launcher command outcome on the launch error", async () => {
+    const javaHome = await failingJavaHome(
+      "#!/bin/sh\necho 'jvm probe exploded' >&2\nexit 3\n",
+    );
+    const runtimeRoot = await createTestTempDirectory("rea-ghidra-launch-");
+    const launched = await probeLauncher(javaHome, runtimeRoot).launch(
+      launchSession(runtimeRoot),
+      { resourceScope: createTestArtifactResourceScope() },
+    );
+    if (launched.ok) throw new Error("expected the launch to fail");
+    expect(launched.error).toBeInstanceOf(GhidraLaunchError);
+    expect(launched.error.message).toBe("Ghidra headless launch failed");
+    const captured =
+      launched.error instanceof GhidraLaunchError
+        ? launched.error.capturedOutput
+        : undefined;
+    expect(captured).toBeUndefined();
+    const outcome = launchOutcomeOf(launched.error);
+    expect(outcome).toMatchObject({
+      killed: false,
+      outputTruncated: false,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+      stdout: "",
+    });
+    expect(outcome?.["stderr"]).toContain("jvm probe exploded");
+  });
+
+  it("bounds projected launcher output and marks truncation explicitly", async () => {
+    const retained = "x".repeat(EXPECTED_OUTPUT_BOUND_BYTES - 1);
+    const oversized = `${retained}éUNRETAINED-TAIL`;
+    const javaHome = await failingJavaHome(
+      `#!/bin/sh\nprintf '%s' '${oversized}' >&2\nexit 1\n`,
+    );
+    const runtimeRoot = await createTestTempDirectory("rea-ghidra-launch-");
+    const launched = await probeLauncher(javaHome, runtimeRoot).launch(
+      launchSession(runtimeRoot),
+      { resourceScope: createTestArtifactResourceScope() },
+    );
+    if (launched.ok) throw new Error("expected the launch to fail");
+    const outcome = launchOutcomeOf(launched.error);
+    expect(outcome).toMatchObject({
+      stderr: retained,
+      stderrBytes: Buffer.byteLength(oversized),
+      stderrTruncated: true,
+      outputTruncated: false,
+    });
+  });
+
+  it("leaves non-command launch failures without retained output", async () => {
+    const runtimeRoot = await createTestTempDirectory("rea-ghidra-launch-");
+    const launcher = new GhidraHeadlessLauncher({
+      environment: {},
+      platform: "darwin",
+      analyzeHeadlessPath: join(runtimeRoot, "support", "analyzeHeadless"),
+      configurationDirectoryName: "ghidra_test_PUBLIC",
+      bridgeScriptPath: join(runtimeRoot, "bridge", "ReaGhidraBridge.java"),
+    });
+    const launched = await launcher.launch(launchSession(runtimeRoot), {
+      resourceScope: createTestArtifactResourceScope(),
+    });
+    if (launched.ok) throw new Error("expected the launch to fail");
+    expect(launched.error).toBeInstanceOf(GhidraLaunchError);
+    expect(launched.error.message).toBe("Ghidra headless launch failed");
+    expect(
+      launched.error instanceof GhidraLaunchError
+        ? launched.error.capturedOutput
+        : undefined,
+    ).toBeUndefined();
+    expect(launchOutcomeOf(launched.error)).toBeUndefined();
+  });
+});

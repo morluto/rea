@@ -1,0 +1,339 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { mkdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
+import {
+  inspectPowerPcReadelf,
+  assertPowerPcLoadedImage,
+  assertPowerPcProbe,
+  assertPowerPcGlobal,
+} from "../tests/conformance/ghidra/ppc-checks.mjs";
+import { parseEvidence } from "../dist/domain/evidence.js";
+import { parseAnalysisSnapshot } from "../dist/domain/analysisSnapshot.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
+import { buildPowerPcFixture } from "../tests/conformance/ghidra/ppc-fixture.mjs";
+import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { VerifierFixture } from "./lib/verifier-fixture.mjs";
+import { requireLaneToolchain } from "../tests/conformance/ghidra/fixture-toolchain.mjs";
+
+// Optional cross-target lane. No tool acquisition and no target execution.
+if (process.argv.length !== 2)
+  throw new Error("Usage: node scripts/verify-real-ghidra-ppc.mjs");
+if (!["linux", "darwin"].includes(process.platform))
+  throw new Error(
+    "PowerPC verification requires a supported Linux/macOS Ghidra host",
+  );
+if (process.env.GHIDRA_INSTALL_DIR === undefined)
+  throw new Error("Missing prerequisite: caller-supplied GHIDRA_INSTALL_DIR");
+const installation = await inspectVerifierGhidraInstallation({
+  environment: process.env,
+  installDir: process.env.GHIDRA_INSTALL_DIR,
+  ...(process.env.JAVA_HOME === undefined
+    ? {}
+    : { javaHome: process.env.JAVA_HOME }),
+});
+if (installation.status !== "available")
+  throw new Error(
+    `Ghidra prerequisite unavailable: ${JSON.stringify(installation)}`,
+  );
+const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
+const run = createVerifierRun();
+// Refuse a host without the fixture toolchain before allocating anything.
+await requireLaneToolchain("ppc");
+const workspaceFixture = await VerifierFixture.open({
+  prefix: "rea-ppc-proof-",
+  // Ghidra children use the workspace as TMPDIR; a plain root admits them on every host.
+  private: false,
+});
+const workspace = workspaceFixture.path;
+// A failed run keeps its workspace for diagnosis; the fixture records why.
+const retainWorkspace = (message, options) => {
+  workspaceFixture.retain(message);
+  return new Error(message, options);
+};
+const runtime = join(workspace, "runtime");
+await mkdir(runtime);
+const env = {
+  PATH: process.env.PATH ?? "/usr/bin:/bin",
+  TMPDIR: runtime,
+  REA_LOG_LEVEL: "silent",
+  REA_ANALYSIS_PROVIDER: "ghidra",
+  REA_PROCESS_RUN_ID: run.run_id,
+  GHIDRA_INSTALL_DIR: installation.installDir,
+  JAVA_HOME: installation.javaHome,
+  HOPPER_LAUNCHER_PATH: "/rea-unconfigured-deep-provider/hopper",
+};
+for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
+  if (process.env[setting] !== undefined) env[setting] = process.env[setting];
+}
+const commands = await createVerifierCommands();
+const reports = [];
+let primaryFailure;
+try {
+  {
+    const fixture = await buildPowerPcFixture(workspace, commands);
+    const independent = await inspectPowerPcReadelf(commands, fixture.path);
+    const resolved = await parseBinaryTarget(fixture.path);
+    if (!resolved.ok) throw resolved.error;
+    assert.deepEqual(
+      resolved.value.powerpc,
+      independent.powerpc,
+      "REA ELF interpretation disagrees with GNU readelf",
+    );
+    assert.equal(resolved.value.sha256, fixture.sha256);
+    const snapshotPath = join(workspace, "ppc.snapshot.json");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [entrypoint, "mcp"],
+      env,
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "rea-real-ppc-proof", version: "1" });
+    let stderr = "";
+    transport.stderr?.on("data", (chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-65536);
+    });
+    const call = async (name, args = {}) => {
+      const reply = await client.callTool(
+        { name, arguments: args },
+        { timeout: 180000 },
+      );
+      return requireMcpOperationResult(reply, name);
+    };
+    try {
+      await client.connect(transport);
+      const target = await call("open_binary", {
+        path: fixture.path,
+        provider_id: "ghidra",
+      });
+      assert.equal(target.architecture, "powerpc");
+      assert.equal(target.sha256, fixture.sha256);
+      // ELF load-image verification is not the DOS comparison lane. Its retained
+      // observations still expose the actual Ghidra language and loaded bytes;
+      // the plain loader would have chosen e500 for this header.
+      const image = await call("inspect_native_load_image");
+      assertPowerPcLoadedImage(image.observations, fixture.sha256);
+      const names = await call("list_names");
+      const bitsName = names.find((item) => item.value === "rea_ppc_bits");
+      assert.ok(bitsName, "Big-endian bit-field fixture is missing");
+      const bitsBytes = await call("read_bytes", {
+        address: bitsName.address,
+        length: 4,
+      });
+      assert.equal(bitsBytes.bytes_hex, "22000000");
+      const bits = await call("inspect_native_data_type", {
+        address: bitsName.address,
+      });
+      assert.equal(bits.kind, "struct");
+      const bitFields = bits.fields.filter((field) => field.bit_field);
+      assert.deepEqual(
+        bitFields.map((field) => [
+          field.name,
+          field.bit_size,
+          field.bit_offset,
+        ]),
+        [
+          ["first", 3, 5],
+          ["second", 5, 0],
+        ],
+      );
+      for (const field of bitFields) {
+        assert.equal(field.bit_field.component_type_lookup, "not-found");
+        assert.equal(field.bit_field.base_type_lookup, "equivalent");
+        assert.equal(field.bit_field.declared_bit_size, field.bit_size);
+        const base = await call("inspect_native_data_type", {
+          type: field.bit_field.base_type_id,
+        });
+        assert.equal(base.status, "available");
+      }
+      const procedures = await call("list_procedures");
+      const entry = procedures.find((p) => p.value === "rea_ppc_entry");
+      const leaf = procedures.find((p) => p.value === "rea_ppc_leaf");
+      assert.ok(entry, "Entry function missing from real Ghidra inventory");
+      assert.ok(leaf, "Leaf function missing from real Ghidra inventory");
+      assert.equal(
+        BigInt(entry.address),
+        BigInt(independent.symbols.rea_ppc_entry),
+      );
+      assert.equal(
+        BigInt(leaf.address),
+        BigInt(independent.symbols.rea_ppc_leaf),
+      );
+      const probe = independent.symbols.rea_ppc_probe;
+      assert.ok(
+        procedures.some(
+          (p) =>
+            p.value === "rea_ppc_probe" && BigInt(p.address) === BigInt(probe),
+        ),
+      );
+      const move = await call("inspect_native_instruction", { address: probe });
+      const branch = await call("inspect_native_instruction", {
+        address: `0x${(BigInt(probe) + 8n).toString(16)}`,
+      });
+      assertPowerPcProbe(move, branch, probe);
+      const global = await call("read_bytes", {
+        address: independent.symbols.rea_ppc_global,
+        length: 4,
+      });
+      assert.equal(global.returned_bytes, 4);
+      assertPowerPcGlobal(global.bytes_hex);
+      const marker = await call("read_bytes", {
+        address: independent.symbols.rea_ppc_marker,
+        length: 29,
+      });
+      assert.equal(
+        marker.bytes_hex,
+        Buffer.from("rea-ppc-source-owned-fixture\0").toString("hex"),
+      );
+      const callees = await call("procedure_callees", {
+        procedure: entry.address,
+      });
+      assert.ok(
+        callees.includes(leaf.address),
+        "Expected direct call not recovered",
+      );
+      const assembly = await call("procedure_assembly", {
+        procedure: entry.address,
+      });
+      assert.ok(assembly.trim().length > 0);
+      const dossier = functionDossierSchema.parse(
+        await call("analyze_function", {
+          procedure: entry.address,
+          detail: "complete",
+        }),
+      );
+      assert.ok(dossier.pseudocode.trim().length > 0);
+      const mapping = await call("address_to_file_offset", {
+        address: entry.address,
+      });
+      const memory = await call("read_bytes", {
+        address: entry.address,
+        length: 16,
+      });
+      const sourceBytes = await readFile(fixture.path);
+      assert.equal(memory.returned_bytes, 16);
+      assert.equal(
+        memory.bytes_hex,
+        sourceBytes
+          .subarray(mapping.file_offset, mapping.file_offset + 16)
+          .toString("hex"),
+      );
+      const saved = await call("close_binary", {
+        snapshot_path: snapshotPath,
+      });
+      assert.ok(saved.evidence_records > 0);
+      const snapshot = parseAnalysisSnapshot(
+        JSON.parse(await readFile(snapshotPath, "utf8")),
+      );
+      assert.equal(snapshot.target.identity.architecture, "powerpc");
+      assert.equal(
+        snapshot.binding.analysis_profile.parameters.language_id,
+        "PowerPC:BE:32:default",
+      );
+      assert.ok(snapshot.evidence_bundle.records.length > 0);
+      for (const evidence of snapshot.evidence_bundle.records)
+        assert.equal(
+          parseEvidence(evidence).subject?.identity.architecture,
+          "powerpc",
+        );
+      await call("open_binary", {
+        path: fixture.path,
+        provider_id: "ghidra",
+        snapshot_path: snapshotPath,
+      });
+      assert.deepEqual(await call("list_procedures"), procedures);
+      await call("close_binary");
+
+      // Same public operation through CLI, not a private injected provider.
+      const cli = await commands.exec(
+        process.execPath,
+        [
+          entrypoint,
+          "function",
+          fixture.path,
+          "rea_ppc_entry",
+          "--provider",
+          "ghidra",
+          "--json",
+        ],
+        { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      const evidence = parseEvidence(JSON.parse(cli.stdout));
+      assert.equal(evidence.subject?.identity.architecture, "powerpc");
+      assert.equal(evidence.subject?.identity.sha256, fixture.sha256);
+      const cliDossier = functionDossierSchema.parse(
+        evidence.normalized_result,
+      );
+      assert.equal(cliDossier.procedure.address, dossier.procedure.address);
+      assert.ok(cliDossier.pseudocode.trim().length > 0);
+      assert.equal(
+        createHash("sha256")
+          .update(await readFile(fixture.path))
+          .digest("hex"),
+        fixture.sha256,
+        "Analysis modified the source executable",
+      );
+      reports.push({
+        ...fixture,
+        independent_reader: independent,
+        effective_language: image.observations.language_id,
+        effective_compiler_spec: image.observations.compiler_spec_id,
+        checks: [
+          "independent ELF header and symbols",
+          "loaded Ghidra identity and bound language",
+          "fixed instruction bytes and immediate",
+          "conditional branch destination",
+          "global word and marker bytes",
+          "big-endian bit-field storage and base type handoff",
+          "CLI/MCP and snapshot identity",
+        ],
+        procedures: procedures.length,
+        status: "passed",
+      });
+    } catch (cause) {
+      throw new Error(`PowerPC verification failed; MCP stderr: ${stderr}`, {
+        cause,
+      });
+    } finally {
+      try {
+        await client.close();
+      } finally {
+        await transport.close();
+      }
+    }
+  }
+} catch (cause) {
+  primaryFailure = cause;
+}
+let completed;
+try {
+  await withVerifierCleanup(async () => {
+    if (primaryFailure !== undefined) throw primaryFailure;
+  }, [
+    async () => {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+      completed = await completeVerifierRun(run);
+      assertVerifierCleanupComplete(completed.process_lineage);
+    },
+  ]);
+} catch (cause) {
+  throw retainWorkspace(
+    `PowerPC verification failed; retained workspace: ${workspace}`,
+    { cause },
+  );
+}
+await workspaceFixture.release();
+console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));

@@ -1,20 +1,24 @@
+import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 
 import { err, ok } from "../domain/result.js";
-import { cancelled, failure } from "./ReferenceSourceReaderErrors.js";
-import { withinRoot } from "./ReferenceSourceReaderPaths.js";
 import {
-  type BigStats,
-  type ReferenceSourceFailureCode,
-  type ReferenceSourceLimits,
-  type ReferenceSourceResult,
+  cancelled,
+  failure,
+  filesystemFailureDetail,
+} from "./ReferenceSourceReaderErrors.js";
+import { isPathWithinRoot } from "../domain/localPath.js";
+import type {
+  ReferenceSourceFailureCode,
+  ReferenceSourceResult,
 } from "./ReferenceSourceReaderTypes.js";
+import { rootFilesystemFailure } from "./ReferenceSourceFailureBuilders.js";
 
-export const bigLstat = (path: string): Promise<BigStats> =>
+export const bigLstat = (path: string): Promise<BigIntStats> =>
   lstat(path, { bigint: true });
 
-export const sameFile = (left: BigStats, right: BigStats): boolean =>
+export const sameFile = (left: BigIntStats, right: BigIntStats): boolean =>
   left.dev === right.dev &&
   left.ino === right.ino &&
   left.size === right.size &&
@@ -24,31 +28,36 @@ export const sameFile = (left: BigStats, right: BigStats): boolean =>
 export const isAborted = (signal?: AbortSignal): boolean =>
   signal?.aborted === true;
 
-const validLimits = (limits: ReferenceSourceLimits): boolean =>
-  Object.values(limits).every(
-    (value) => Number.isSafeInteger(value) && value > 0,
-  );
-
 export const noFollowOpenSupported = (): boolean =>
   Number.isSafeInteger(constants.O_NOFOLLOW) && constants.O_NOFOLLOW !== 0;
 
-export const validateDirectory = async (
-  root: string,
-  rootIdentity: BigStats,
-  path: string,
-): Promise<
-  | { readonly ok: true; readonly stats: BigStats }
+/** A directory's identity admission: its metadata, or why it was refused. */
+export type DirectoryValidation =
+  | { readonly ok: true; readonly stats: BigIntStats }
   | {
       readonly ok: false;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
-    }
-> => {
+      readonly localDiagnostic?: string;
+    };
+
+export const validateDirectory = async (
+  root: string,
+  rootIdentity: BigIntStats,
+  path: string,
+  signal?: AbortSignal,
+): Promise<DirectoryValidation> => {
+  if (isAborted(signal))
+    return {
+      ok: false,
+      code: "cancelled",
+      message: "Reference source traversal cancelled",
+    };
   try {
     const rootNow = await bigLstat(root);
     if (!sameFile(rootIdentity, rootNow))
       return { ok: false, code: "changed", message: "Reference root changed" };
-    const stats = await bigLstat(path);
+    const stats = path === root ? rootNow : await bigLstat(path);
     if (stats.isSymbolicLink())
       return {
         ok: false,
@@ -62,57 +71,69 @@ export const validateDirectory = async (
         message: "Directory identity changed",
       };
     const canonical = await realpath(path);
-    if (canonical !== path || !withinRoot(root, canonical))
+    if (canonical !== path || !isPathWithinRoot(root, canonical))
       return {
         ok: false,
         code: "changed",
         message: "Directory escaped the reference root",
       };
     return { ok: true, stats };
-  } catch {
+  } catch (cause: unknown) {
+    const detail = filesystemFailureDetail(
+      cause,
+      "Directory identity could not be verified",
+    );
+    if (detail === undefined) throw cause;
     return {
       ok: false,
       code: "io",
-      message: "Directory identity could not be verified",
+      ...detail,
     };
   }
 };
 
 export const prepareRoot = async (
   root: string,
-  limits: ReferenceSourceLimits,
   signal?: AbortSignal,
 ): Promise<
   ReferenceSourceResult<{
     readonly canonicalRoot: string;
-    readonly rootIdentity: BigStats;
+    readonly rootIdentity: BigIntStats;
   }>
 > => {
-  if (!validLimits(limits))
-    return err(
-      failure("invalid-limits", "Reader limits must be positive integers"),
-    );
-  if (isAborted(signal)) return err(cancelled());
+  if (isAborted(signal)) return err(cancelled(signal));
   try {
     const metadata = await bigLstat(root);
     if (metadata.isSymbolicLink() || !metadata.isDirectory())
       return err(
-        failure("invalid-root", "Reference source root must be a directory"),
+        failure(
+          "invalid-root",
+          `Reference source root is not a directory: ${root}`,
+        ),
       );
     const canonicalRoot = await realpath(root);
-    if (isAborted(signal)) return err(cancelled());
+    if (isAborted(signal)) return err(cancelled(signal));
     const canonicalMetadata = await bigLstat(canonicalRoot);
     if (!sameFile(metadata, canonicalMetadata))
       return err(
         failure(
           "invalid-root",
-          "Reference source root changed during resolution",
+          `Reference source root changed during resolution: ${root}`,
         ),
       );
     return ok({ canonicalRoot, rootIdentity: canonicalMetadata });
-  } catch {
-    return err(
-      failure("invalid-root", "Reference source root could not be resolved"),
+  } catch (cause: unknown) {
+    const rootFailure = rootFilesystemFailure(
+      cause,
+      "Reference source root could not be resolved",
     );
+    if (rootFailure === undefined) throw cause;
+    return err({
+      ...failure(rootFailure.code, `${rootFailure.message}: ${root}`),
+      ...(rootFailure.remediationAction === undefined
+        ? {}
+        : { remediationAction: rootFailure.remediationAction }),
+      cause,
+    });
   }
 };

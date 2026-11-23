@@ -1,0 +1,389 @@
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { expect, it } from "vitest";
+import { phaseArrival, phaseGate } from "../../support/lifecycleHarness.js";
+import { chmod, rm, writeFile } from "node:fs/promises";
+import { createServer, type Socket } from "node:net";
+import { join } from "node:path";
+
+import {
+  authenticatedServer,
+  writeDescriptor,
+} from "../../fixtures/cutterBridgeProtocol.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { CutterBridgeClient } from "../../../src/cutter/CutterBridgeClient.js";
+import { CutterBridgeService } from "../../../src/cutter/CutterBridgeService.js";
+import { cutterDiscoveryLimitations } from "../../../src/domain/cutterDiscovery.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { cutterMcpServer } from "../../fixtures/debuggerMcp.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+// CutterBridgeClient's per-probe request deadline.
+const CUTTER_REQUEST_DEADLINE_MS = 25_000;
+
+it("propagates MCP cancellation into an active Cutter command", async () => {
+  let observedAbort = false;
+  const dispatch = phaseArrival();
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
+    }),
+    execute: async ({ signal }) => {
+      dispatch.arrive();
+      await new Promise<void>((resolve) => {
+        signal?.addEventListener(
+          "abort",
+          () => {
+            observedAbort = true;
+            resolve();
+          },
+          { once: true },
+        );
+      });
+      return {
+        requestId: "4b18ce4d-bf31-456e-ae31-e8c547b2f9db",
+        output: null,
+        currentFile: null,
+        documentGeneration: 1,
+        identityStatus: "partial" as const,
+        cutterVersion: "Cutter fixture version",
+        executionState: "unknown" as const,
+        error: "transport-response-missing",
+        message: "The command may have completed; do not retry automatically",
+        outputTruncated: false,
+      };
+    },
+  });
+  const server = cutterMcpServer("cutter-cancellation", service);
+  const client = new Client(
+    { name: "cutter-cancellation", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const controller = new AbortController();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const request = client.callTool(
+      {
+        name: "cutter_command",
+        arguments: {
+          session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+          expected_generation: 1,
+          command: "Ps /tmp/possibly-saved.rzdb",
+          json: false,
+        },
+      },
+      { signal: controller.signal },
+    );
+    await dispatch.reached(request, "Cutter command dispatch");
+    controller.abort();
+    await expect(request).rejects.toThrow(/abort/iu);
+    await expect.poll(() => observedAbort).toBe(true);
+  } finally {
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
+it("shares one cleanup proof across concurrent Cutter MCP commands without BinarySession", async () => {
+  // Later confirmations wait on the same held proof without arriving first.
+  const cleanupProof = phaseGate();
+  let confirmations = 0;
+  let dispatches = 0;
+  const service = new CutterBridgeService({
+    listSessions: async () => ({
+      sessions: [],
+      bridge_directory: "/private/bridge",
+      discovery_status: "no_live_bridge_found",
+      bridge_directory_security: "private_verified",
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
+    }),
+    confirmCommandCompletion: async () => {
+      confirmations += 1;
+      if (confirmations > 1) {
+        await cleanupProof.hold();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        return { ok: true, value: false };
+      }
+      await cleanupProof.hold();
+      return { ok: true, value: true };
+    },
+    execute: async ({ command }) => {
+      dispatches += 1;
+      return {
+        requestId: `00000000-0000-4000-8000-${String(dispatches).padStart(12, "0")}`,
+        output: command,
+        currentFile: null,
+        documentGeneration: 1,
+        identityStatus: "partial",
+        cutterVersion: "fixture",
+        executionState: dispatches === 1 ? "unknown" : "complete",
+        error: dispatches === 1 ? "transport-response-missing" : null,
+        message: null,
+        outputTruncated: false,
+      };
+    },
+  });
+  const server = cutterMcpServer("cutter-cleanup-race", service);
+  const client = new Client(
+    { name: "cutter-cleanup-race", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const call = (command: string) =>
+    client.callTool({
+      name: "cutter_command",
+      arguments: {
+        session_id: "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a",
+        expected_generation: 1,
+        command,
+      },
+    });
+  let pending: Promise<unknown>[] = [];
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect((await call("lost response")).isError).toBe(true);
+    const first = call("first queued command");
+    const second = call("second queued command");
+    pending = [first, second];
+    await cleanupProof.reached(
+      Promise.race([first, second]),
+      "Cutter cleanup verification",
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    cleanupProof.release();
+    const results = await Promise.all([first, second]);
+    for (const result of results) expect(result.isError).not.toBe(true);
+    expect(confirmations).toBe(1);
+    expect(dispatches).toBe(3);
+  } finally {
+    cleanupProof.release();
+    await Promise.allSettled(pending);
+    await Promise.allSettled([client.close(), server.close()]);
+  }
+});
+
+it("cancels active discovery sockets, stops queued probes and recovers on the same MCP connection", async () => {
+  const root = await createTestTempDirectory("rea-cutter-discovery-cancel-");
+  if (process.platform !== "win32") await chmod(root, 0o700);
+  const sockets = new Set<Socket>();
+  let connections = 0;
+  const probesConnected = phaseArrival();
+  const peer = createServer((socket) => {
+    sockets.add(socket);
+    connections++;
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+    if (connections === 8) probesConnected.arrive();
+  });
+  await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+  const address = peer.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Missing fixture port");
+  const paths: string[] = [];
+  for (let index = 1; index <= 9; index++) {
+    const session_id = `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`;
+    const path = join(root, `cutter-${process.pid}-${session_id}.json`);
+    paths.push(path);
+    await writeFile(
+      path,
+      JSON.stringify({
+        session_id,
+        pid: process.pid,
+        host: "127.0.0.1",
+        port: address.port,
+        token: "fixture-discovery-token-not-a-real-secret",
+        document_generation: 0,
+        current_file: null,
+        cutter_version: null,
+        identity_status: "partial",
+      }),
+      { mode: 0o600 },
+    );
+  }
+  const service = new CutterBridgeService(
+    new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: root }),
+  );
+  let settled = false;
+  const list = service.listSessions.bind(service);
+  service.listSessions = async (options) => {
+    try {
+      return await list(options);
+    } finally {
+      settled = true;
+    }
+  };
+  const server = cutterMcpServer("cutter-discovery-cancel", service);
+  const client = new Client(
+    { name: "cutter-discovery-cancel", version: "1" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const controller = new AbortController();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const requested = performance.now();
+    const request = client.callTool(
+      { name: "list_cutter_sessions", arguments: {} },
+      { signal: controller.signal },
+    );
+    await probesConnected.reached(request, "Cutter discovery");
+    controller.abort(new Error("selected discovery cancellation"));
+    await expect(request).rejects.toThrow("selected discovery cancellation");
+    await expect.poll(() => settled).toBe(true);
+    await expect.poll(() => sockets.size).toBe(0);
+    // Probes the abort missed would still close at their own request deadline.
+    expect(performance.now() - requested).toBeLessThan(
+      CUTTER_REQUEST_DEADLINE_MS,
+    );
+    expect(connections).toBe(8);
+    await Promise.all(paths.map((path) => rm(path)));
+    const recovered = await client.callTool({
+      name: "list_cutter_sessions",
+      arguments: {},
+    });
+    expect(recovered.isError).not.toBe(true);
+    expect(
+      toolContract("list_cutter_sessions").outputSchema.parse(
+        recovered.structuredContent,
+      ),
+    ).toMatchObject({
+      sessions: [],
+      discovery_status: "no_live_bridge_found",
+      ...(process.platform === "win32"
+        ? {}
+        : { bridge_directory_security: "private_verified" }),
+      limitations: cutterDiscoveryLimitations("no_live_bridge_found"),
+    });
+    expect(connections).toBe(8);
+  } finally {
+    controller.abort();
+    for (const socket of sockets) socket.destroy();
+    try {
+      await Promise.allSettled([client.close(), server.close()]);
+      await service.close();
+    } finally {
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "retains a generation-error command until authenticated terminal proof",
+  async () => {
+    const directory = await createTestTempDirectory(
+      "rea-cutter-generation-proof-",
+    );
+    await chmod(directory, 0o700);
+    const sessionId = "27d3e3f1-f1e5-49ae-91ec-95af1f343a5a";
+    const token = "synthetic-cutter-bridge-token-for-test";
+    let terminal = false;
+    let commands = 0;
+    let pendingRequestId = "";
+    const peer = authenticatedServer(
+      token,
+      sessionId,
+      (request, respond) => {
+        if (request.kind === "status")
+          respond({
+            ok: true,
+            session_id: sessionId,
+            completed_commands:
+              terminal && pendingRequestId !== ""
+                ? [
+                    {
+                      request_id: pendingRequestId,
+                      execution_state: "not_started",
+                    },
+                  ]
+                : [],
+            completed_connection: terminal
+              ? "000000000000ffff"
+              : "0000000000000000",
+          });
+        else if (request.kind === "ack")
+          respond({ ok: true, acknowledged: true });
+        else {
+          commands++;
+          pendingRequestId = String(request.request_id);
+          respond(
+            commands === 1
+              ? { ok: false, error: "active-document-generation-changed" }
+              : { ok: true, execution_state: "complete", output: "observed" },
+          );
+        }
+      },
+      true,
+    );
+    await new Promise<void>((resolve) => peer.listen(0, "127.0.0.1", resolve));
+    const address = peer.address();
+    if (address === null || typeof address === "string")
+      throw new Error("Missing listener");
+    await writeDescriptor(directory, sessionId, address.port, token);
+    const service = new CutterBridgeService(
+      new CutterBridgeClient({ REA_CUTTER_BRIDGE_DIR: directory }),
+    );
+    const server = cutterMcpServer("cutter-generation-proof", service);
+    const client = new Client(
+      {
+        name: "cutter-generation-proof",
+        version: "1",
+      },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(st);
+      await client.connect(ct);
+      const invoke = () =>
+        client.callTool({
+          name: "cutter_command",
+          arguments: {
+            session_id: sessionId,
+            expected_generation: 0,
+            command: "pd 1",
+          },
+        });
+      const first = await invoke();
+      expect(parseMcpToolError(first).error).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          partial_observation: {
+            normalized_result: {
+              execution_state: "unknown",
+              error: "active-document-generation-changed",
+            },
+          },
+        },
+      });
+      const blocked = await invoke();
+      expect(parseMcpToolError(blocked).error.code).toBe("cleanup_incomplete");
+      expect(commands).toBe(1);
+      terminal = true;
+      const recovered = await invoke();
+      expect(recovered.isError).not.toBe(true);
+      const evidence = toolContract("cutter_command").outputSchema.parse(
+        recovered.structuredContent,
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        execution_state: "complete",
+        output: "observed",
+      });
+      expect(commands).toBe(2);
+    } finally {
+      terminal = true;
+      await Promise.allSettled([client.close(), server.close()]);
+      await service.close();
+      await new Promise<void>((resolve) => peer.close(() => resolve()));
+    }
+  },
+);

@@ -1,0 +1,450 @@
+import {
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "../../fixtures/canonicalOutputSchema.js";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { afterAll, expect, it, onTestFinished } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { WebRuntimeService } from "../../../src/application/WebRuntimeService.js";
+import { recordingWebRuntimePort } from "../../../src/application/WebRuntimeService.fixture.js";
+import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
+import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createServer } from "../../../src/server/createServer.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import {
+  negativeColumnScript,
+  runtimeSourceA,
+  runtimeSourceB,
+  startNegativeColumnBrowser,
+  startRuntimeBrowser,
+} from "../../fixtures/webRuntime.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
+it("advertises actual SDK schemas, instrumentation effects and session-owned inline runtime evidence", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      webRuntime: new WebRuntimeService(recordingWebRuntimePort()),
+    },
+  );
+  const client = new Client(
+    { name: "web-runtime-contract", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const tools = (await client.listTools()).tools;
+  const ajv = schemaValidation.assertions;
+  const input = {
+    cdp_endpoint: "http://127.0.0.1:9222",
+    target_id: "allowed-page",
+    observation_ms: 5,
+  };
+  for (const name of [
+    "observe_web_execution",
+    "inspect_web_event_listeners",
+  ] as const) {
+    const advertised = tools.find((tool) => tool.name === name);
+    if (advertised === undefined)
+      throw new Error(`Missing advertised runtime schemas: ${name}`);
+    const inputSchema: Record<string, unknown> = advertised.inputSchema;
+    const outputSchema: Record<string, unknown> = canonicalOutputSchema(
+      advertised.name,
+    );
+    expect(ajv.validateSchema(inputSchema)).toBe(true);
+    expect(ajv.validateSchema(outputSchema)).toBe(true);
+    const args =
+      name === "observe_web_execution"
+        ? input
+        : {
+            cdp_endpoint: "http://127.0.0.1:9222",
+            target_id: "allowed-page",
+            selector: "#selected",
+          };
+    expect(ajv.validate(inputSchema, args)).toBe(true);
+    const response = await client.callTool(
+      { name, arguments: args },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
+    expect(response.isError).not.toBe(true);
+    const parsed = toolContract(name).outputSchema.parse(
+      response.structuredContent,
+    );
+    const evidence = parseEvidence(parsed);
+    expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+  }
+  expect(toolContract("observe_web_execution").effects).toMatchObject({
+    mutatesTarget: true,
+    mayDiscardData: true,
+    idempotent: false,
+  });
+  const invalid = await client.callTool({
+    name: "observe_web_execution",
+    arguments: { ...input, observation_ms: 2_147_483_648 },
+  });
+  expect(parseMcpToolError(invalid).error).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+  });
+});
+
+it("reports provider progress for observe_web_execution to the MCP caller", async () => {
+  const recording = recordingWebRuntimePort();
+  const session = createTestBinarySession(() => {
+    throw new Error("Binary provider must not start");
+  });
+  const server = createServer(
+    { kind: "session", session },
+    {
+      webRuntime: new WebRuntimeService({
+        ...recording,
+        observeExecution: async (input, options) => {
+          await options?.progress?.report({
+            phase: "observe",
+            completed: 1,
+            total: 2,
+            message: "observation window open",
+          });
+          return recording.observeExecution(input, options);
+        },
+      }),
+    },
+  );
+  const client = new Client(
+    { name: "web-runtime-progress", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
+  onTestFinished(async () => {
+    await client.close();
+    await server.close();
+    await session.close();
+  });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  const progress: unknown[] = [];
+  const response = await client.callTool(
+    {
+      name: "observe_web_execution",
+      arguments: {
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "allowed-page",
+        observation_ms: 5,
+      },
+    },
+    { onprogress: (update) => progress.push(update) },
+  );
+  expect(response.isError).not.toBe(true);
+  expect(progress).toContainEqual({
+    progress: 1,
+    message: "observe: observation window open",
+  });
+});
+
+cliTest(
+  "preserves the same reconstructed runtime identity through compiled CLI and MCP evidence",
+  async ({ cli }) => {
+    const browser = await startRuntimeBrowser({
+      commandResult: ({ method }, origin) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "runtime-main",
+                  loaderId: "document-1",
+                  url: `${origin}/app?caller=retained#old`,
+                  urlFragment: "#details",
+                },
+              },
+            }
+          : undefined,
+    });
+    const provider = new CdpWebRuntimeProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(provider) },
+    );
+    const client = new Client(
+      { name: "runtime-frame-identity", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await provider.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    for (const name of [
+      "observe_web_execution",
+      "inspect_web_event_listeners",
+    ] as const) {
+      const response = await client.callTool({
+        name,
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          allowed_origins: [browser.allowedOrigin],
+          ...(name === "observe_web_execution"
+            ? { observation_ms: 1 }
+            : { selector: "#selected" }),
+        },
+      });
+      expect(response.isError).not.toBe(true);
+      const evidence = parseEvidence(
+        toolContract(name).outputSchema.parse(response.structuredContent),
+      );
+      expect(evidence.normalized_result).toMatchObject({
+        target: {
+          initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
+        },
+      });
+      // The observation names the page it was armed on.
+      expect(evidence.subject).toEqual({
+        identity: {
+          kind: "url",
+          url: `${browser.allowedOrigin}/app?caller=retained#details`,
+          origin: browser.allowedOrigin,
+        },
+        name: null,
+        local_path: null,
+      });
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+      const cliResult = await cli.run({
+        arguments: [
+          name.replaceAll("_", "-"),
+          browser.endpoint,
+          "allowed-page",
+          ...(name === "observe_web_execution"
+            ? ["--observation-ms", "1"]
+            : ["#selected"]),
+          "--allowed-origins",
+          browser.allowedOrigin,
+          "--json",
+        ],
+        environment: process.env,
+      });
+      expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+      expect(cliResult.signal).toBeNull();
+      expect(parseEvidence(cliResult.json).normalized_result).toMatchObject({
+        target: {
+          initial_url: `${browser.allowedOrigin}/app?caller=retained#details`,
+        },
+      });
+    }
+  },
+);
+
+cliTest(
+  "delivers negative columns Chrome reports through MCP and the compiled CLI",
+  async ({ cli }) => {
+    const browser = await startNegativeColumnBrowser();
+    const provider = new CdpWebRuntimeProvider();
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(provider) },
+    );
+    const client = new Client(
+      { name: "runtime-negative-columns", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await provider.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const advertised = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_web_event_listeners",
+    );
+    if (advertised === undefined)
+      throw new Error("Missing advertised listener output schema");
+    const response = await client.callTool(
+      {
+        name: "inspect_web_event_listeners",
+        arguments: {
+          cdp_endpoint: browser.endpoint,
+          target_id: "allowed-page",
+          allowed_origins: [browser.allowedOrigin],
+          selector: "#selected",
+        },
+      },
+      { toolDefinition: withCanonicalOutputSchema(advertised) },
+    );
+    expect(response.isError).not.toBe(true);
+    const cliResult = await cli.run({
+      arguments: [
+        "inspect-web-event-listeners",
+        browser.endpoint,
+        "allowed-page",
+        "#selected",
+        "--allowed-origins",
+        browser.allowedOrigin,
+        "--json",
+      ],
+      environment: process.env,
+    });
+    expect(cliResult.exitCode, cliResult.stderr).toBe(0);
+    for (const evidence of [
+      toolContract("inspect_web_event_listeners").outputSchema.parse(
+        response.structuredContent,
+      ),
+      cliResult.json,
+    ])
+      expect(parseEvidence(evidence).normalized_result).toMatchObject({
+        listeners: [
+          {
+            location: {
+              script_id: negativeColumnScript.scriptId,
+              line_number: 21,
+              column_number: -50,
+            },
+          },
+        ],
+        sources: [
+          {
+            script_id: negativeColumnScript.scriptId,
+            resource_start: { line_number: 21, column_number: -60 },
+          },
+        ],
+      });
+  },
+);
+
+it.each([
+  {
+    name: "observe_web_execution" as const,
+    cleanupMethod: "Profiler.disable",
+    args: { target_id: "allowed-page", observation_ms: 5 },
+  },
+  {
+    name: "inspect_web_event_listeners" as const,
+    cleanupMethod: "Runtime.releaseObjectGroup",
+    args: { target_id: "allowed-page", selector: "#selected" },
+  },
+])(
+  "retains promoted partial Evidence from $name after simulated CDP cleanup failure",
+  async ({ name, cleanupMethod, args }) => {
+    const browser = await startRuntimeBrowser({
+      unsupportedMethods: [cleanupMethod],
+    });
+    const session = createTestBinarySession(() => {
+      throw new Error("Binary provider must not start");
+    });
+    const server = createServer(
+      { kind: "session", session },
+      { webRuntime: new WebRuntimeService(new CdpWebRuntimeProvider()) },
+    );
+    const client = new Client(
+      { name: "web-runtime-partial", version: "1" },
+      { jsonSchemaValidator: schemaValidation },
+    );
+    onTestFinished(async () => {
+      await client.close();
+      await server.close();
+      await session.close();
+      await browser.close();
+    });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    const response = await client.callTool({
+      name,
+      arguments: { cdp_endpoint: browser.endpoint, ...args },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(error).toMatchObject({
+      code: "cleanup_incomplete",
+      category: "execution_failure",
+      retryable: false,
+      details: {
+        cleanup: "incomplete",
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: expect.any(String),
+        },
+      },
+    });
+    expect(JSON.stringify(error)).toContain(cleanupMethod);
+    const partialReference = error.details?.partial_observation;
+    if (
+      typeof partialReference !== "object" ||
+      partialReference === null ||
+      !("evidence_id" in partialReference) ||
+      typeof partialReference.evidence_id !== "string"
+    )
+      throw new Error("Cleanup failure omitted its retained partial Evidence");
+    const partial = parseEvidence(
+      session.evidenceById(partialReference.evidence_id),
+    );
+    expect(partial.operation).toBe(name);
+    if (name === "observe_web_execution") {
+      expect(partial.normalized_result).toMatchObject({
+        target: { target_id: "allowed-page" },
+        window: { requested_ms: 5 },
+        coverage: { state: "captured" },
+        sources: [
+          {
+            script_id: "script-a",
+            source: { state: "captured", text: runtimeSourceA },
+          },
+          {
+            script_id: "script-b",
+            source: { state: "captured", text: runtimeSourceB },
+          },
+        ],
+      });
+    } else {
+      expect(partial.normalized_result).toMatchObject({
+        target: { target_id: "allowed-page" },
+        selected_node: { selector: "#selected", match: "found" },
+        listeners: [
+          {
+            type: "click",
+            location: {
+              script_id: "script-a",
+              source_association: "script_id",
+              line_number: 1,
+            },
+          },
+        ],
+      });
+    }
+    expect(
+      browser.commands.some(({ method }) => method === cleanupMethod),
+    ).toBe(true);
+  },
+);

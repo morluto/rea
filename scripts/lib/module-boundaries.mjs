@@ -1,0 +1,189 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { readImportSpecifiers } from "./import-specifiers.mjs";
+import { isLayerException } from "./module-layers.mjs";
+
+const PURE_LAYERS = new Set(["kernel", "domain", "contracts"]);
+const MIGRATED_PROVIDER_ROOTS = new Set([
+  "sqlite",
+  "evm",
+  "go",
+  "il2cpp",
+  "model",
+  "gpu",
+  "python",
+  "nuget",
+  "rust",
+  "wasm",
+  "captures",
+  "signals",
+  "android",
+  "firmware",
+  "ghidra",
+  "hopper",
+  "ida",
+  "inspector",
+  "javascript",
+]);
+const CENTRALIZED_CONSTRUCTOR_OWNER =
+  /^src\/(?:frida\/FridaInstrumentationManager|cutter\/CutterBridge(?:Client|Service)|gdb\/GdbSessionManager|rizin\/RizinDebugSessionManager)\.(?:js|ts)$/u;
+const repositoryPath = (root, path) =>
+  relative(root, path).replaceAll("\\", "/");
+
+const packageImports = new Map();
+
+/** Read the package map once per repository root. */
+const readPackageImports = (root) => {
+  if (!packageImports.has(root)) {
+    try {
+      const manifest = JSON.parse(
+        readFileSync(resolve(root, "package.json"), "utf8"),
+      );
+      packageImports.set(root, manifest.imports ?? {});
+    } catch (cause) {
+      throw new Error(
+        `Cannot read package imports from ${resolve(root, "package.json")}: ${cause.message}`,
+        { cause },
+      );
+    }
+  }
+  return packageImports.get(root);
+};
+
+/**
+ * The file an exact-string package-map specifier names, as Node loads it.
+ * Conditional, array, pattern, undeclared and non-relative mappings are refused.
+ */
+export const packageImportTarget = (root, specifier) => {
+  const target = readPackageImports(root)[specifier];
+  if (typeof target !== "string" || !target.startsWith("./"))
+    throw new Error(
+      `Cannot resolve package import ${JSON.stringify(specifier)}: only exact "./" string mappings are supported; use a relative source import for conditional, array, pattern, or undeclared mappings.`,
+    );
+  return fileURLToPath(
+    new URL(target, pathToFileURL(resolve(root, "package.json"))),
+  );
+};
+
+/**
+ * The own source file a package-map specifier names.
+ *
+ * The map points at built output under `dist/`, so the same ownership rule is
+ * applied to the source file that produces it. Without this the gate silently
+ * accepts every `#`-prefixed import, which is the spelling the package map exists
+ * to encourage.
+ */
+const packageMapTarget = (root, specifier) => {
+  const target = packageImportTarget(root, specifier);
+  const source = repositoryPath(root, target)
+    .replace(/^dist\//u, "src/")
+    .replace(/\.(?:js|mjs|cjs)$/u, ".ts");
+  if (!source.startsWith("src/"))
+    throw new Error(
+      `Cannot resolve package import ${JSON.stringify(specifier)} to a source owner from ${JSON.stringify(repositoryPath(root, target))}; use a relative source import for this boundary check.`,
+    );
+  return resolve(root, source);
+};
+
+const sourceTarget = (root, file, specifier) => {
+  if (specifier.startsWith("file:")) return fileURLToPath(specifier);
+  if (specifier.startsWith("#")) return packageMapTarget(root, specifier);
+  if (isAbsolute(specifier)) return resolve(specifier);
+  return specifier.startsWith(".")
+    ? fileURLToPath(new URL(specifier, pathToFileURL(file)))
+    : undefined;
+};
+
+const failedBoundary = (file, target, typeOnly) => {
+  if (!file.startsWith("src/") || !target.startsWith("src/")) return undefined;
+  const layer = file.split("/")[1];
+  const targetLayer = target.split("/")[1];
+  if (
+    file.startsWith("src/process/capture/") &&
+    (["application", "composition", "server", "cli", "main"].includes(
+      targetLayer,
+    ) ||
+      /^src\/(?:cli|main)\./u.test(target))
+  )
+    return "process-capture";
+  if (
+    file.startsWith("src/application/javascript/") &&
+    /^src\/(?:artifacts\/AsarArtifactReader|resources\/DirectoryArtifactReader)\.(?:js|ts)$/u.test(
+      target,
+    )
+  )
+    return "provider-construction";
+  if (
+    (file.startsWith("src/artifacts/javascript/") ||
+      file.startsWith("src/artifacts/apple/") ||
+      file.startsWith("src/artifacts/inventory/") ||
+      file.startsWith("src/artifacts/extraction/") ||
+      /^src\/artifacts\/ArtifactHash\.(?:js|ts)$/u.test(file)) &&
+    (["application", "composition", "server", "cli", "main"].includes(
+      targetLayer,
+    ) ||
+      /^src\/(?:cli|main)\./u.test(target))
+  )
+    return "artifact-acquisition";
+  if (PURE_LAYERS.has(layer) && !isLayerException(file, target)) {
+    if (
+      (/^src\/[^/]+\//u.test(target) && !PURE_LAYERS.has(targetLayer)) ||
+      /^src\/(?:cli|main)\./u.test(target)
+    )
+      return "pure-layer";
+  }
+  if (layer === "application" && targetLayer === "composition")
+    return "application-composition";
+  if (
+    (layer === "application" || layer === "server") &&
+    !typeOnly &&
+    CENTRALIZED_CONSTRUCTOR_OWNER.test(target)
+  )
+    return "provider-construction";
+  if (
+    (layer === "application" || layer === "server") &&
+    (MIGRATED_PROVIDER_ROOTS.has(targetLayer) ||
+      /^src\/(?:artifacts\/ArtifactProvider|dotnet\/ManagedStaticProvider|native\/NativeMacOSProvider)\.[^/]+$/u.test(
+        target,
+      ) ||
+      /^src\/browser\/[^/]*Provider\.[^/]+$/u.test(target))
+  )
+    return "provider-construction";
+  return undefined;
+};
+
+/** Each own-source import of a file, resolved to its repository path. */
+export const resolveModuleImports = (file, source, root) => {
+  const absoluteFile = resolve(root, file);
+  const importer = repositoryPath(root, absoluteFile);
+  const imports = [];
+  for (const { specifier, line, typeOnly } of readImportSpecifiers(source)) {
+    const resolved = sourceTarget(root, absoluteFile, specifier);
+    if (resolved === undefined) continue;
+    imports.push({
+      file: importer,
+      line,
+      specifier,
+      typeOnly,
+      target: repositoryPath(root, resolved),
+    });
+  }
+  return imports;
+};
+
+/** Check resolved source ownership, including type imports and reexports. */
+export const inspectModuleBoundaries = (file, source, root) =>
+  inspectResolvedModuleBoundaries(resolveModuleImports(file, source, root));
+
+/** Check already resolved imports, as returned by resolveModuleImports. */
+export const inspectResolvedModuleBoundaries = (imports) => {
+  const violations = [];
+  for (const { file, line, specifier, typeOnly, target } of imports) {
+    const boundary = failedBoundary(file, target, typeOnly);
+    if (boundary !== undefined)
+      violations.push({ file, line, specifier, target, boundary });
+  }
+  return violations;
+};

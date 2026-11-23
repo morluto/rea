@@ -1,0 +1,523 @@
+import { createHash } from "node:crypto";
+
+import { describe, expect, it } from "vitest";
+
+import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
+import { webPageInspectionSchema } from "../../../src/domain/browserObservationSchemas.js";
+import {
+  startFakeCdpBrowser,
+  type FakeCdpBrowser,
+} from "../../fixtures/fakeCdpBrowser.js";
+import { trackBrowser } from "./cdpBrowserProvider.support.js";
+
+describe("CdpBrowserProvider: passive evidence redaction", () => {
+  it("captures bounded passive evidence without retaining sensitive values", async () => {
+    const browser = await startFakeCdpBrowser({
+      binaryWebSocketEvent: true,
+      foreignSessionEvents: true,
+      unrelatedWorker: true,
+    });
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    const result = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_storage_keys: true,
+        include_storage_fingerprints: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(() => webPageInspectionSchema.parse(result.value)).not.toThrow();
+    expect(result.value.frames).toHaveLength(1);
+    expect(result.value.dom.nodes).toHaveLength(2);
+    expect(result.value.dom.nodes[1]?.attribute_names).toEqual([
+      "token",
+      "href",
+      "rel",
+    ]);
+    expect(result.value.accessibility).toMatchObject({
+      text_capture: {
+        status: "not_approved",
+        retained_bytes: 0,
+      },
+      nodes: [expect.objectContaining({ name: null, description: null })],
+    });
+    expect(result.value.scripts.items).toHaveLength(1);
+    expect(result.value.scripts.items[0]?.script_key).toMatch(
+      /^scr_[a-f0-9]{64}$/u,
+    );
+    expect(result.value.scripts.items[0]?.frame_id).toBe("frame-main");
+    expect(result.value.scripts.items[0]?.source_map_url).toBe(
+      `${browser.allowedOrigin}/app.js.map?token=map-secret`,
+    );
+    expect(result.value.scripts.items[0]?.resource_reconciliation).toEqual({
+      status: "exact",
+      resource_key: result.value.resources[0]?.resource_key,
+    });
+    expect(result.value.scripts.items[0]?.source).toEqual({
+      included: false,
+      reason: "source capture was not selected",
+    });
+    expect(result.value.resources).toHaveLength(1);
+    expect(result.value.network.requests).toHaveLength(1);
+    expect(result.value.network.requests[0]?.initiator).toEqual({
+      type: "script",
+      url: `${browser.allowedOrigin}/app.js?caller=caller-secret`,
+      line: 3,
+      column: 5,
+    });
+    expect(result.value.network.websocket_connections).toEqual([
+      {
+        request_id: "websocket-1",
+        url: `ws://${new URL(browser.allowedOrigin).host}/live?token=websocket-url-secret`,
+        events: [
+          {
+            direction: "sent",
+            opcode: 1,
+            payload_bytes: Buffer.byteLength("websocket-secret"),
+            payload_shape: null,
+          },
+          {
+            direction: "received",
+            opcode: 2,
+            payload_bytes: 3,
+            payload_shape: null,
+          },
+        ],
+      },
+    ]);
+    expect(result.value.console.events[0]?.argument_types).toEqual(["string"]);
+    expect(result.value.workers).toHaveLength(1);
+    expect(result.value.workers[0]).toMatchObject({
+      opener_target_id: "allowed-page",
+      parent_frame_id: null,
+    });
+    expect(result.value.metadata).toMatchObject({
+      headers_allowlisted: true,
+      responses: [
+        {
+          content_length: 321,
+          content_encoding: "br",
+          csp: { nonce_count: 1, hash_count: 1 },
+          policies: {
+            coop: "same-origin",
+            coep: "require-corp",
+            permissions_policy_features: ["camera", "geolocation"],
+          },
+        },
+      ],
+      dom_urls: [
+        {
+          attribute: "href",
+          url: `${browser.allowedOrigin}/agent?token=dom-url-secret`,
+          destination_scope: "approved",
+        },
+      ],
+      agent_hints: expect.arrayContaining([
+        expect.objectContaining({
+          mechanism: "link_rel",
+          declaration: "mcp service-desc",
+        }),
+        expect.objectContaining({
+          mechanism: "dom_link_rel",
+          declaration: "mcp",
+        }),
+        expect.objectContaining({
+          mechanism: "response_header",
+          declaration: "x-model-context",
+        }),
+      ]),
+    });
+    expect(result.value.storage).toEqual(
+      expect.objectContaining({
+        local_storage_keys: ["public-key"],
+        session_storage_keys: ["public-key"],
+        indexed_db_names: ["app-db"],
+        cache_names: ["assets-v1"],
+        content_fingerprints: expect.arrayContaining([
+          expect.objectContaining({ scope: "cookie", complete: true }),
+          expect.objectContaining({ scope: "local_storage", complete: true }),
+          expect.objectContaining({ scope: "session_storage", complete: true }),
+          expect.objectContaining({
+            scope: "indexed_db_schema",
+            complete: true,
+          }),
+          expect.objectContaining({
+            scope: "indexed_db_record",
+            complete: true,
+          }),
+          expect.objectContaining({ scope: "cache_entry", complete: true }),
+        ]),
+        fingerprint_algorithm: "sha256",
+        fingerprints_complete: true,
+        values_redacted: true,
+      }),
+    );
+    expectSensitiveValuesAbsent(result.value, browser);
+  });
+});
+
+describe("CdpBrowserProvider: page cookie scope", () => {
+  it("uses the attached page URL for cookies and its origin for DOM storage", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_storage_keys: true,
+        include_storage_fingerprints: true,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(
+      browser.commands.find(({ method }) => method === "Network.getCookies")
+        ?.params,
+    ).toEqual({ urls: [`${browser.allowedOrigin}/app?token=frame-secret`] });
+    expect(
+      browser.commands.find(
+        ({ method }) => method === "DOMStorage.getDOMStorageItems",
+      )?.params,
+    ).toEqual({
+      storageId: {
+        securityOrigin: browser.allowedOrigin,
+        isLocalStorage: true,
+      },
+    });
+  });
+});
+
+it("fingerprints decoded cache bytes and leaves malformed cache entries incomplete", async () => {
+  const body = "x".repeat(64 * 1_024 + 1);
+  const validEntries = [
+    {
+      path: "/large",
+      encoded: Buffer.from(body).toString("base64"),
+      decoded: body,
+    },
+    { path: "/pad-bits", encoded: "e31=", decoded: "{}" },
+  ];
+  const malformed = { path: "/malformed", encoded: "e%30=", decoded: null };
+  let entries: readonly {
+    path: string;
+    encoded: string;
+    decoded: string | null;
+  }[] = validEntries;
+  const browser = await startFakeCdpBrowser({
+    commandResult(command, origin) {
+      if (command.method === "CacheStorage.requestEntries")
+        return {
+          cacheDataEntries: entries.map(({ path }) => ({
+            requestURL: origin + path,
+            requestMethod: "GET",
+            requestHeaders: [],
+          })),
+          returnCount: entries.length,
+        };
+      if (command.method !== "CacheStorage.requestCachedResponse")
+        return undefined;
+      const entry = entries.find(
+        ({ path }) => command.params.requestURL === origin + path,
+      );
+      if (entry === undefined) throw new Error("Unexpected cache body request");
+      return { response: { body: entry.encoded } };
+    },
+  });
+  trackBrowser(browser);
+  const input = inspectWebPageInputSchema.parse({
+    cdp_endpoint: browser.endpoint,
+    allowed_origins: [browser.allowedOrigin],
+    target_id: "allowed-page",
+    observation_ms: 0,
+    include_storage_keys: true,
+    include_storage_fingerprints: true,
+  });
+  const capture = async () => {
+    const result = await new CdpBrowserProvider().inspectPage(input);
+    if (!result.ok) throw result.error;
+    const cacheEntries = result.value.storage.content_fingerprints.filter(
+      ({ scope }) => scope === "cache_entry",
+    );
+    expect(cacheEntries).toHaveLength(entries.length);
+    expect(cacheEntries).toEqual(
+      expect.arrayContaining(
+        entries.map(({ path, decoded }) =>
+          expect.objectContaining({
+            identity_sha256: createHash("sha256")
+              .update(
+                JSON.stringify({
+                  cache: "assets-v1",
+                  requestHeaders: [],
+                  requestMethod: "GET",
+                  requestURL: browser.allowedOrigin + path,
+                }),
+              )
+              .digest("hex"),
+            complete: decoded !== null,
+            value_sha256:
+              decoded === null
+                ? null
+                : createHash("sha256").update(decoded).digest("hex"),
+          }),
+        ),
+      ),
+    );
+    expect(JSON.stringify(result.value)).not.toContain(body);
+    return result.value;
+  };
+
+  const before = await capture();
+  expect(before.storage.fingerprints_complete).toBe(true);
+  entries = [...validEntries, malformed];
+  expect((await capture()).storage.fingerprints_complete).toBe(false);
+
+  for (const omit of [
+    "content_fingerprints",
+    "fingerprint_algorithm",
+    "fingerprints_complete",
+  ])
+    expect(
+      webPageInspectionSchema.safeParse({
+        ...before,
+        storage: Object.fromEntries(
+          Object.entries(before.storage).filter(([key]) => key !== omit),
+        ),
+      }).success,
+    ).toBe(false);
+});
+
+describe("CdpBrowserProvider: explicitly requested text and payload shapes", () => {
+  it("captures requested console text verbatim and value-free payload shapes", async () => {
+    const browser = await startFakeCdpBrowser({
+      sensitiveShapes: true,
+      binaryWebSocketEvent: true,
+      nullConsoleArgument: true,
+      eventsBeforeReply: ["Network.enable"],
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_console_text: true,
+        include_json_body_shapes: true,
+        include_websocket_shapes: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.console.events[0]?.argument_types).toEqual([
+      "string",
+      "number",
+      "object",
+      "object",
+    ]);
+    expect(result.value.console.events[0]?.text_capture).toEqual({
+      status: "included",
+      values: [
+        {
+          argument_index: 0,
+          type: "string",
+          text: "authorization=Bearer console-secret",
+        },
+        { argument_index: 1, type: "number", text: "42" },
+        { argument_index: 3, type: "object", text: "null" },
+      ],
+      retained_bytes:
+        Buffer.byteLength("authorization=Bearer console-secret") +
+        Buffer.byteLength("42") +
+        Buffer.byteLength("null"),
+    });
+    expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
+      status: "included",
+      request: {
+        root_type: "object",
+        properties: expect.arrayContaining([
+          expect.objectContaining({
+            path: [{ kind: "property", name: "token" }],
+            types: ["string"],
+          }),
+          expect.objectContaining({
+            path: [
+              { kind: "property", name: "filters" },
+              { kind: "property", name: "active" },
+            ],
+            types: ["boolean"],
+          }),
+        ]),
+      },
+      response: {
+        root_type: "object",
+        properties: expect.arrayContaining([
+          expect.objectContaining({
+            path: [
+              { kind: "property", name: "result" },
+              { kind: "property", name: "token" },
+            ],
+            types: ["string"],
+          }),
+          expect.objectContaining({
+            path: [
+              { kind: "property", name: "items" },
+              { kind: "array-element" },
+              { kind: "property", name: "id" },
+            ],
+            types: ["number"],
+          }),
+        ]),
+      },
+    });
+    expect(result.value.network.websocket_connections).toEqual([
+      expect.objectContaining({
+        events: [
+          expect.objectContaining({
+            opcode: 1,
+            payload_shape: expect.objectContaining({
+              format: "json",
+              json_shape: expect.objectContaining({
+                properties: expect.arrayContaining([
+                  expect.objectContaining({
+                    path: [{ kind: "property", name: "token" }],
+                    types: ["string"],
+                  }),
+                ]),
+              }),
+            }),
+          }),
+          expect.objectContaining({
+            opcode: 2,
+            payload_shape: {
+              format: "binary",
+              json_shape: null,
+            },
+          }),
+        ],
+      }),
+    ]);
+    const serialized = JSON.stringify(result.value);
+    for (const secret of [
+      "request-body-secret",
+      "response-body-secret",
+      "websocket-secret",
+      "object-secret",
+    ])
+      expect(serialized).not.toContain(secret);
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).toContain("Network.getResponseBody");
+    expect(methods).not.toContain("Runtime.getProperties");
+    expect(methods).not.toContain("Runtime.callFunctionOn");
+  });
+});
+
+describe("CdpBrowserProvider: WebSocket connection projection", () => {
+  it("retains allowed connections created without observed frames", async () => {
+    const browser = await startFakeCdpBrowser({ webSocketWithoutFrames: true });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.network.websocket_connections).toEqual([
+      {
+        request_id: "websocket-1",
+        url: `ws://${new URL(browser.allowedOrigin).host}/live?token=websocket-url-secret`,
+        events: [],
+      },
+    ]);
+  });
+});
+
+describe("CdpBrowserProvider: malformed approved payloads", () => {
+  it("fails closed on malformed approved response and binary payload encodings", async () => {
+    const browser = await startFakeCdpBrowser({
+      eventsBeforeReply: ["Network.enable"],
+      commandResult: ({ method }) =>
+        method === "Network.getResponseBody"
+          ? // Permissive base64 decoding skips the invalid characters and yields JSON.
+            { body: "e%%3%0%=", base64Encoded: true }
+          : undefined,
+      binaryWebSocketEvent: true,
+      invalidBinaryWebSocketEvent: true,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+        include_json_body_shapes: true,
+        include_websocket_shapes: true,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.network.requests[0]?.body_shapes).toMatchObject({
+      status: "partial",
+      request: expect.any(Object),
+      // The security-relevant claim: malformed base64 never yields a shape.
+      response: null,
+    });
+    expect(
+      result.value.network.websocket_connections[0]?.events[1],
+    ).toMatchObject({
+      opcode: 2,
+      payload_bytes: null,
+      payload_shape: { format: "binary", json_shape: null },
+    });
+    expect(result.value.completeness.excluded).toEqual(
+      expect.arrayContaining([
+        {
+          section: "json_body_shapes",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+        {
+          section: "websocket_frames",
+          reason: "invalid_protocol_value",
+          count: 1,
+        },
+      ]),
+    );
+  });
+});
+
+const expectSensitiveValuesAbsent = (
+  inspection: ReturnType<typeof webPageInspectionSchema.parse>,
+  browser: FakeCdpBrowser,
+): void => {
+  const serialized = JSON.stringify(inspection);
+  for (const secret of [
+    "forbidden",
+    "request-body-secret",
+    "response-body-secret",
+    "websocket-secret",
+    "unknown-origin-console-secret",
+    "unknown-console-value-secret",
+    "storage-secret",
+    "cookie-secret",
+    "indexed-db-secret",
+    "cache-body-secret",
+  ])
+    expect(serialized).not.toContain(secret);
+  const methods = browser.commands.map((command) => command.method);
+  expect(methods).toContain("Target.detachFromTarget");
+  expect(methods).not.toContain("Browser.close");
+  expect(methods).not.toContain("Target.closeTarget");
+  expect(methods).not.toContain("Runtime.evaluate");
+  expect(methods).not.toContain("Network.getResponseBody");
+};

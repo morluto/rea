@@ -1,0 +1,465 @@
+import { describe, expect, it } from "vitest";
+
+import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import {
+  inspectWebPageInputSchema,
+  listBrowserTargetsInputSchema,
+} from "../../../src/domain/browserObservation.js";
+import { AnalysisInputError } from "../../../src/domain/analysisErrorCore.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
+import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
+import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
+import {
+  startFakeCdpBrowser,
+  type FakeCdpBrowser,
+} from "../../fixtures/fakeCdpBrowser.js";
+import { createDeferred } from "../../fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
+import { trackBrowser, waitFor } from "./cdpBrowserProvider.support.js";
+
+describe("CdpBrowserProvider: cancellation during cleanup", () => {
+  it.each([
+    {
+      name: "WebMCP discovery",
+      operation: "discover_webmcp_tools",
+      invoke: (
+        provider: CdpBrowserProvider,
+        browser: FakeCdpBrowser,
+        signal: AbortSignal,
+      ) =>
+        provider.discoverWebMcpTools(
+          discoverWebMcpToolsInputSchema.parse({
+            cdp_endpoint: browser.endpoint,
+            allowed_origins: [browser.allowedOrigin],
+            target_id: "allowed-page",
+            observation_ms: 0,
+          }),
+          { signal },
+        ),
+    },
+    {
+      name: "screenshot capture",
+      operation: "capture_web_screenshot",
+      invoke: (
+        provider: CdpBrowserProvider,
+        browser: FakeCdpBrowser,
+        signal: AbortSignal,
+      ) =>
+        provider.captureScreenshot(
+          captureWebScreenshotInputSchema.parse({
+            cdp_endpoint: browser.endpoint,
+            allowed_origins: [browser.allowedOrigin],
+            target_id: "allowed-page",
+          }),
+          { signal },
+        ),
+    },
+  ])(
+    "reports cancellation during $name cleanup",
+    async ({ operation, invoke }) => {
+      const browser = await startFakeCdpBrowser({
+        hangOnMethod: "Page.disable",
+        webMcpTools: true,
+      });
+      trackBrowser(browser);
+      const controller = new AbortController();
+      const pending = invoke(
+        new CdpBrowserProvider(),
+        browser,
+        controller.signal,
+      );
+      await waitFor(
+        () => browser.commands.some(({ method }) => method === "Page.disable"),
+        "page cleanup did not start",
+      );
+      controller.abort();
+      await expect(pending).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError", operation },
+      });
+    },
+  );
+
+  it("reports cancellation when an interrupt arrives during page cleanup", async () => {
+    const browser = await startFakeCdpBrowser({
+      hangOnMethod: "Network.disable",
+    });
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const pending = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+      { signal: controller.signal },
+    );
+    await waitFor(
+      () => browser.commands.some(({ method }) => method === "Network.disable"),
+      "page cleanup did not start",
+    );
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      },
+    });
+  });
+});
+
+it("preserves an AnalysisError abort reason during a real source-map download", async () => {
+  const browser = await startFakeCdpBrowser({ hangSourceMap: true });
+  trackBrowser(browser);
+  const controller = new AbortController();
+  const reason = new AnalysisInputError("caller_operation");
+  const pending = new CdpBrowserProvider().analyzeBundle(
+    analyzeWebBundleInputSchema.parse({
+      cdp_endpoint: browser.endpoint,
+      allowed_origins: [browser.allowedOrigin],
+      target_id: "allowed-page",
+      observation_ms: 0,
+      fetch_source_maps: true,
+    }),
+    { signal: controller.signal },
+  );
+  await waitFor(
+    () => browser.httpRequests.some(({ url }) => url.startsWith("/app.js.map")),
+    "source-map download did not start",
+  );
+  controller.abort(reason);
+  const result = await pending;
+  expect(result).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", operation: "analyze_web_bundle" },
+  });
+  if (result.ok) throw new Error("Expected source-map cancellation");
+  expect(result.error.cause).toBe(reason);
+});
+
+describe("CdpBrowserProvider: cancellation and session events", () => {
+  it("honors cancellation during the final progress callback before publishing inspection", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 3) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      },
+    });
+  });
+
+  it("projects direct-session cancellation onto the requested operation", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 1) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "observe_web_session",
+      },
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
+    expect(methods).not.toContain("Browser.close");
+  });
+
+  it("projects capture-window cancellation onto bundle analysis", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+    });
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const result = await new CdpBrowserProvider().analyzeBundle(
+      analyzeWebBundleInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 2) controller.abort();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "analyze_web_bundle",
+      },
+    });
+  });
+
+  it("observes user-driven reload, SPA, redirect, failure, and lifecycle events", async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "same_origin",
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 20,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("window_elapsed");
+    expect(result.value.timeline.map(({ type }) => type)).toEqual([
+      "navigation_requested",
+      "same_origin_reload",
+      "same_document_navigation",
+      "redirect",
+      "load_failed",
+      "lifecycle",
+    ]);
+    expect(result.value.timeline).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "same_origin_reload",
+          detail: "navigation",
+        }),
+        expect.objectContaining({
+          type: "same_document_navigation",
+          url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
+        }),
+        expect.objectContaining({
+          type: "redirect",
+          url: `${browser.allowedOrigin}/redirected?token=redirect-secret`,
+        }),
+        expect.objectContaining({
+          type: "load_failed",
+          detail: "net::ERR_CONNECTION_REFUSED",
+        }),
+      ]),
+    );
+    expect(result.value.completeness.status).toBe("attach_limited");
+    expect(browser.commands.map(({ method }) => method)).toContain(
+      "Target.detachFromTarget",
+    );
+  });
+});
+
+describe("CdpBrowserProvider: session termination and scope changes", () => {
+  it("reports target termination only for an observed target crash", async () => {
+    const browser = await startFakeCdpBrowser({
+      sessionTimeline: "target_crashed",
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_terminated");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "target_terminated",
+      detail: "target_terminated",
+    });
+  });
+
+  it("ends a direct page session when its transport disconnects", async () => {
+    const browser = await startFakeCdpBrowser({
+      pageScopedVersionWebSocket: true,
+      omitTargetWebSocket: true,
+      closeAfterMethod: "Page.setLifecycleEventsEnabled",
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1_000,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("transport_disconnected");
+    expect(result.value.timeline.at(-1)).toMatchObject({
+      type: "transport_disconnected",
+      detail: "transport_disconnected",
+    });
+    const methods = browser.commands.map(({ method }) => method);
+    expect(methods).not.toContain("Target.attachToTarget");
+    expect(methods).not.toContain("Target.detachFromTarget");
+    expect(methods).not.toContain("Target.closeTarget");
+  });
+
+  it("fails closed when the final session frame leaves policy without an event", async () => {
+    const browser = await startFakeCdpBrowser({
+      frameUrlAfterFirstRead: "https://private.example.test/final",
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 1,
+      }),
+    );
+
+    if (!result.ok) throw result.error;
+    expect(result.value.window.end_reason).toBe("target_left_scope");
+    expect(result.value.target.final_url).toBeNull();
+    expect(result.value.completeness).toMatchObject({
+      status: "policy_filtered",
+      policy_filtered_sections: ["timeline"],
+    });
+    expect(JSON.stringify(result.value)).not.toContain("private.example.test");
+  });
+});
+
+describe("CdpBrowserProvider: protocol failures and cancellation cleanup", () => {
+  it("propagates endpoint, payload and wire protocol failures", async () => {
+    for (const [options, reason] of [
+      [{ oversizedDiscovery: true }, "invalid_endpoint_response"],
+      [{ invalidBrowserWebSocket: true }, "invalid_endpoint_response"],
+    ] as const) {
+      const failed = await startFakeCdpBrowser(options);
+      trackBrowser(failed);
+      const result = await new CdpBrowserProvider().listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: failed.endpoint,
+          allowed_origins: [failed.allowedOrigin],
+        }),
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok)
+        expect(result.error).toMatchObject({
+          _tag: "BrowserObservationError",
+          reason,
+        });
+    }
+
+    for (const options of [
+      { malformedMessageOnMethod: "Page.getFrameTree" },
+      { malformedEventOnMethod: "Debugger.enable" },
+      { malformedEventShapeOnMethod: "Debugger.enable" },
+    ]) {
+      const browser = await startFakeCdpBrowser(options);
+      trackBrowser(browser);
+      const result = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      expect(result, JSON.stringify(options)).toMatchObject({
+        ok: false,
+        error: { _tag: "BrowserObservationError", reason: "protocol_error" },
+      });
+    }
+  });
+
+  it("cancels observation and still detaches without closing the page", async () => {
+    const browser = await startFakeCdpBrowser();
+    trackBrowser(browser);
+    const controller = new AbortController();
+    const started = createDeferred<void>();
+    const reason = { caller: "stop page observation" };
+    const pending = new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 5_000,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report: async ({ phase, completed }) => {
+            if (phase === "browser_observation" && completed === 2)
+              setImmediate(started.resolve);
+          },
+        },
+      },
+    );
+    try {
+      await awaitAcknowledgement(
+        started.promise,
+        pending,
+        "page observation window",
+      );
+      controller.abort(reason);
+      const result = await pending;
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        operation: "inspect_web_page",
+      });
+      expect(result.error.cause).toBe(reason);
+      const methods = browser.commands.map(({ method }) => method);
+      expect(methods).toContain("Target.detachFromTarget");
+      expect(methods).not.toContain("Target.closeTarget");
+      expect(methods).not.toContain("Browser.close");
+    } finally {
+      controller.abort(reason);
+      await pending;
+    }
+  });
+});

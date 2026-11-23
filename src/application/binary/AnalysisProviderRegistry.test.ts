@@ -1,0 +1,1768 @@
+import { describe, expect, it } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../../tests/fixtures/lifecycleAcknowledgement.js";
+import { phaseGate } from "../../../tests/support/lifecycleHarness.js";
+
+import { AnalysisProviderRegistry } from "./AnalysisProviderRegistry.js";
+import {
+  createAnalysisExecution,
+  type AnalysisClient,
+  type AnalysisProviderCandidate,
+  type AnalysisProviderInspectionOptions,
+  type CapabilityDescriptor,
+  type ProviderAvailability,
+  type ProviderIdentity,
+  type ProviderTargetSupport,
+} from "../../ports/AnalysisProvider.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { createEvidence } from "../../domain/evidence.js";
+import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import {
+  AnalysisCapabilityUnavailableError,
+  AnalysisUnsupportedTargetError,
+  AnalysisCancelledError,
+} from "../../domain/analysisErrorCore.js";
+import { ProviderSelectionError } from "../../domain/providerSelectionError.js";
+import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { err, ok } from "../../domain/result.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
+
+const DATABASE_TARGET: BinaryTarget = {
+  path: "/tmp/fixture.hop",
+  sha256: "a".repeat(64),
+  kind: "database",
+  format: "analysis-database",
+  databaseEngine: "hopper",
+};
+const ARTIFACT_TARGET: BinaryTarget = {
+  path: "/tmp/app.asar",
+  sha256: "b".repeat(64),
+  kind: "archive",
+  format: "asar",
+};
+
+it("rejects malformed provider capability declarations", () => {
+  const alpha = candidate("alpha");
+  expect(
+    () => new AnalysisProviderRegistry([alpha.provider, alpha.provider]),
+  ).toThrow(/Duplicate analysis provider ID: alpha/u);
+  expect(
+    () =>
+      new AnalysisProviderRegistry([
+        {
+          ...alpha.provider,
+          capabilities: () => {
+            const descriptor = capability(alpha.provider.identity());
+            return [descriptor, descriptor];
+          },
+        },
+      ]),
+  ).toThrow(/declares operation address_name more than once/u);
+  expect(
+    () =>
+      new AnalysisProviderRegistry([
+        {
+          ...alpha.provider,
+          capabilities: () => [
+            capability({ ...alpha.provider.identity(), name: "forged" }),
+          ],
+        },
+      ]),
+  ).toThrow(/published mismatched capability provenance/u);
+  expect(
+    () => new AnalysisProviderRegistry([candidate("auto").provider]),
+  ).toThrow(/Invalid analysis provider ID: auto/u);
+});
+
+it("uses one owner readiness snapshot for candidate availability and capabilities", async () => {
+  const base = candidate("alpha").provider;
+  let observed = 0;
+  let capabilityReads = 0;
+  const provider: AnalysisProviderCandidate = {
+    ...base,
+    inspectAvailability: () => {
+      throw new Error("availability must come from the owner snapshot");
+    },
+    capabilities: () => {
+      capabilityReads += 1;
+      return [capability(base.identity())];
+    },
+    inspectReadinessSnapshot: () => {
+      observed += 1;
+      return {
+        availability: {
+          status: "unavailable",
+          code: "runtime_unavailable",
+          reason: "native inspection failed",
+          remediation: "Repair the fixture provider.",
+          diagnostics: { failure_stage: "self-test" },
+        },
+        capabilities: [capability(base.identity())],
+      };
+    },
+  };
+
+  const [status] = await new AnalysisProviderRegistry([provider]).candidates();
+  expect(observed).toBe(1);
+  expect(capabilityReads).toBe(1);
+  expect(status).toMatchObject({
+    availability: {
+      status: "unavailable",
+      code: "runtime_unavailable",
+      diagnostics: { failure_stage: "self-test" },
+    },
+    capabilities: [{ operation: "address_name" }],
+  });
+});
+
+it("reports a missing Linux ps as one candidate's unavailability and keeps the others", async () => {
+  const base = candidate("alpha").provider;
+  const gamma = candidate("gamma").provider;
+  const refused: AnalysisProviderCandidate = {
+    ...base,
+    // Mirrors a provider adapter re-attributing the refusal to its own operation.
+    inspectReadinessSnapshot: () => {
+      throw new AnalysisCapabilityUnavailableError(
+        "process-ownership",
+        "ghidra:inspection",
+        "ps is unavailable",
+        {
+          cause: new LinuxOwnedProcessPrerequisiteError(
+            new Error("spawn ps ENOENT"),
+          ),
+        },
+      );
+    },
+  };
+
+  const statuses = await new AnalysisProviderRegistry([
+    refused,
+    gamma,
+  ]).candidates();
+  expect(statuses).toMatchObject([
+    {
+      provider: { id: "alpha" },
+      availability: {
+        status: "unavailable",
+        code: "runtime_unavailable",
+        reason: expect.stringContaining("spawn ps ENOENT") as unknown,
+        diagnostics: { stage: "ownership_preparation" },
+      },
+      capabilities: [{ operation: "address_name" }],
+    },
+    { provider: { id: "gamma" }, availability: { status: "available" } },
+  ]);
+
+  const selected = await new AnalysisProviderRegistry([refused]).select(
+    DATABASE_TARGET,
+    "alpha",
+  );
+  if (selected.ok) throw new Error("expected the prerequisite refusal");
+  expect(selected.error).toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    providerId: "process-ownership",
+  });
+});
+
+describe("inspection without deep binding", () => {
+  it("retains discovery facts without resolving a deep profile for covered automatic inspection", async () => {
+    const alpha = candidate("alpha", { profile: "error" });
+    const beta = candidate("beta", { profile: "error" });
+    const registry = new AnalysisProviderRegistry(
+      [alpha.provider, beta.provider],
+      "auto",
+      (target) => target === DATABASE_TARGET,
+    );
+    expect(await registry.select(DATABASE_TARGET)).toMatchObject({
+      ok: true,
+      value: {
+        requestedProviderId: "auto",
+        binding: null,
+        candidates: [
+          {
+            provider: { id: "alpha" },
+            selected: false,
+            availability: { status: "available" },
+          },
+          {
+            provider: { id: "beta" },
+            selected: false,
+            availability: { status: "available" },
+          },
+        ],
+      },
+    });
+    expect(alpha.created).toEqual([]);
+    expect(beta.created).toEqual([]);
+  });
+
+  it("keeps explicit request and environment choices even when auxiliary inspection covers the target", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta");
+    const registry = new AnalysisProviderRegistry(
+      [alpha.provider, beta.provider],
+      "beta",
+      () => true,
+    );
+    expect(await registry.select(DATABASE_TARGET)).toMatchObject({
+      ok: true,
+      value: {
+        binding: { identity: { id: "beta" }, selectionSource: "environment" },
+      },
+    });
+    expect(await registry.select(DATABASE_TARGET, "alpha")).toMatchObject({
+      ok: true,
+      value: {
+        binding: { identity: { id: "alpha" }, selectionSource: "request" },
+      },
+    });
+    expect(await registry.select(DATABASE_TARGET, "auto")).toMatchObject({
+      ok: true,
+      value: { binding: null },
+    });
+    expect(await registry.select(DATABASE_TARGET, "missing")).toMatchObject({
+      ok: false,
+      error: { reason: "unknown_provider" },
+    });
+  });
+
+  it("preserves ordinary ambiguity when auxiliary inspection does not cover the target", async () => {
+    const registry = new AnalysisProviderRegistry(
+      [candidate("alpha").provider, candidate("beta").provider],
+      "auto",
+      () => false,
+    );
+    expect(await registry.select(DATABASE_TARGET)).toMatchObject({
+      ok: false,
+      error: { reason: "ambiguous" },
+    });
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      await registry.select(DATABASE_TARGET, undefined, {
+        signal: controller.signal,
+      }),
+    ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  });
+});
+
+describe("analysis provider registry: selection failures", () => {
+  it("rejects an unknown environment preference even when every candidate rejects the target", async () => {
+    const alpha = candidate("alpha");
+    const misconfigured = new AnalysisProviderRegistry(
+      [alpha.provider],
+      "missing",
+    );
+
+    for (const selected of [
+      await misconfigured.select(ARTIFACT_TARGET),
+      await misconfigured.select(ARTIFACT_TARGET, "missing"),
+    ]) {
+      if (selected.ok) throw new Error("expected unknown provider rejection");
+      expect(projectAnalysisError(selected.error)).toMatchObject({
+        details: {
+          selection_reason: "unknown_provider",
+          requested_provider_id: "missing",
+          candidate_ids: ["alpha"],
+        },
+      });
+    }
+  });
+});
+
+describe("analysis provider registry: automatic selection diagnostics", () => {
+  it("retains the selected candidate and every rejected candidate for automatic selection", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta", { available: false });
+    const gamma = candidate("gamma", { available: false, unconfigured: true });
+    const registry = new AnalysisProviderRegistry([
+      gamma.provider,
+      beta.provider,
+      alpha.provider,
+    ]);
+
+    const selected = await registry.select(DATABASE_TARGET);
+    if (!selected.ok) throw selected.error;
+    expect(
+      selected.value.candidates.map(({ provider }) => provider.id),
+    ).toEqual(["alpha", "beta", "gamma"]);
+    expect(selected.value.binding).toMatchObject({
+      identity: { id: "alpha", version: "1" },
+      selectionSource: "auto-single-candidate",
+    });
+    expect(selected.value.candidates).toMatchObject([
+      {
+        provider: { id: "alpha", version: "1" },
+        selected: true,
+        selectionSource: "auto-single-candidate",
+        rejections: [],
+        availability: { status: "available" },
+        targetSupport: { status: "supported" },
+        capabilities: [{ operation: "address_name" }],
+      },
+      {
+        provider: { id: "beta", version: null },
+        selected: false,
+        selectionSource: null,
+        rejections: [
+          {
+            providerId: "beta",
+            origin: "availability",
+            code: "runtime_missing",
+            reason: "beta runtime is unavailable",
+            remediation: "Repair the fixture provider.",
+            diagnostics: { executable_path: "/opt/beta/bin/analyze" },
+          },
+        ],
+      },
+      {
+        provider: { id: "gamma", version: null },
+        selected: false,
+        selectionSource: null,
+        rejections: [
+          {
+            providerId: "gamma",
+            origin: "availability",
+            code: "not_configured",
+            reason: "gamma runtime is unavailable",
+            remediation: "Repair the fixture provider.",
+            diagnostics: { executable_path: "/opt/gamma/bin/analyze" },
+          },
+        ],
+      },
+    ]);
+
+    const repeated = await registry.candidates(DATABASE_TARGET);
+    expect(repeated.map(({ provider }) => provider.id)).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    expect([...alpha.created, ...beta.created, ...gamma.created]).toEqual([]);
+  });
+});
+
+describe("analysis provider registry: explicit selection diagnostics", () => {
+  it("attributes request and environment choices without starting a provider", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta");
+    const registry = new AnalysisProviderRegistry(
+      [beta.provider, alpha.provider],
+      "beta",
+    );
+
+    expect(await registry.select(DATABASE_TARGET)).toMatchObject({
+      ok: true,
+      value: {
+        binding: {
+          identity: { id: "beta" },
+          selectionSource: "environment",
+        },
+        candidates: [
+          {
+            provider: { id: "alpha" },
+            selected: false,
+            selectionSource: null,
+            rejections: [],
+          },
+          {
+            provider: { id: "beta" },
+            selected: true,
+            selectionSource: "environment",
+            rejections: [],
+          },
+        ],
+      },
+    });
+    expect(await registry.select(DATABASE_TARGET, "alpha")).toMatchObject({
+      ok: true,
+      value: {
+        binding: {
+          identity: { id: "alpha" },
+          selectionSource: "request",
+        },
+        candidates: [
+          {
+            provider: { id: "alpha" },
+            selected: true,
+            selectionSource: "request",
+            rejections: [],
+          },
+          {
+            provider: { id: "beta" },
+            selected: false,
+            selectionSource: null,
+            rejections: [],
+          },
+        ],
+      },
+    });
+    expect([...alpha.created, ...beta.created]).toEqual([]);
+  });
+
+  it("keeps explicit selection fail-closed and explains unknown candidates", async () => {
+    const alpha = candidate("alpha", { available: false });
+    const beta = candidate("beta");
+    const registry = new AnalysisProviderRegistry([
+      alpha.provider,
+      beta.provider,
+    ]);
+
+    const selected = await registry.select(DATABASE_TARGET, "alpha");
+    if (selected.ok) throw new Error("Unavailable requested provider bound");
+    if (!(selected.error instanceof ProviderSelectionError))
+      throw selected.error;
+    expect(selected.error).toMatchObject({
+      reason: "provider_unavailable",
+      requestedProviderId: "alpha",
+      candidateIds: ["alpha", "beta"],
+      rejections: [
+        {
+          providerId: "alpha",
+          origin: "availability",
+          code: "runtime_missing",
+          remediation: "Repair the fixture provider.",
+        },
+      ],
+    });
+    expect(selected.error.remediationAction).toBe(
+      "Repair the fixture provider.",
+    );
+
+    expect(projectAnalysisError(selected.error)).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        rejections: [
+          {
+            provider_id: "alpha",
+            code: "runtime_missing",
+            diagnostics: { executable_path: "/opt/alpha/bin/analyze" },
+          },
+        ],
+      },
+    });
+
+    const unknown = await registry.select(DATABASE_TARGET, "missing");
+    if (unknown.ok) throw new Error("Unknown requested provider bound");
+    expect(unknown.error).toBeInstanceOf(ProviderSelectionError);
+    expect(unknown.error).toMatchObject({
+      reason: "unknown_provider",
+      requestedProviderId: "missing",
+      candidateIds: ["alpha", "beta"],
+      rejections: [
+        {
+          providerId: "alpha",
+          origin: "availability",
+          code: "runtime_missing",
+        },
+      ],
+    });
+    expect(projectAnalysisError(unknown.error)).toMatchObject({
+      details: {
+        selection_reason: "unknown_provider",
+        requested_provider_id: "missing",
+        candidate_ids: ["alpha", "beta"],
+      },
+    });
+    const unsupported = await registry.select(ARTIFACT_TARGET, "alpha");
+    if (unsupported.ok) throw new Error("Unsupported requested provider bound");
+    expect(unsupported.error).toBeInstanceOf(ProviderSelectionError);
+    expect(unsupported.error).toMatchObject({
+      reason: "target_unsupported",
+      requestedProviderId: "alpha",
+      rejections: [
+        { providerId: "alpha", code: "runtime_missing" },
+        { providerId: "alpha", code: "target_kind_unsupported" },
+        { providerId: "beta", code: "target_kind_unsupported" },
+      ],
+    });
+    expect([...alpha.created, ...beta.created]).toEqual([]);
+  });
+});
+
+describe("analysis provider registry: rejection diagnostics", () => {
+  it("keeps automatic ambiguity visible with usable and rejected candidates", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta");
+    const gamma = candidate("gamma", { available: false });
+    const ghidra = candidate("ghidra", {
+      available: false,
+      unconfigured: true,
+    });
+    const registry = new AnalysisProviderRegistry([
+      beta.provider,
+      ghidra.provider,
+      gamma.provider,
+      alpha.provider,
+    ]);
+
+    const ambiguous = await registry.select(DATABASE_TARGET);
+    if (ambiguous.ok) throw new Error("Expected automatic selection ambiguity");
+    expect(ambiguous.error).toBeInstanceOf(ProviderSelectionError);
+    expect(ambiguous.error).toMatchObject({
+      reason: "ambiguous",
+      requestedProviderId: "auto",
+      candidateIds: ["alpha", "beta"],
+      rejections: [
+        {
+          providerId: "gamma",
+          origin: "availability",
+          code: "runtime_missing",
+          remediation: "Repair the fixture provider.",
+        },
+        {
+          providerId: "ghidra",
+          origin: "availability",
+          code: "not_configured",
+        },
+      ],
+    });
+    expect(projectAnalysisError(ambiguous.error)).toMatchObject({
+      details: {
+        selection_reason: "ambiguous",
+        candidate_ids: ["alpha", "beta"],
+        rejections: [
+          { provider_id: "gamma", code: "runtime_missing" },
+          { provider_id: "ghidra", code: "not_configured" },
+        ],
+      },
+    });
+    expect(
+      [alpha, beta, gamma, ghidra].flatMap(({ created }) => created),
+    ).toEqual([]);
+  });
+
+  it("keeps unresolved profiles and unavailable candidates in an unbound result", async () => {
+    const unresolved = candidate("alpha", { profile: "missing" });
+    const unavailable = candidate("beta", { available: false });
+    const registry = new AnalysisProviderRegistry([
+      unavailable.provider,
+      unresolved.provider,
+    ]);
+
+    const selected = await registry.select(DATABASE_TARGET);
+    expect(selected).toMatchObject({
+      ok: true,
+      value: {
+        requestedProviderId: "auto",
+        binding: null,
+        candidates: [
+          {
+            provider: { id: "alpha" },
+            selected: false,
+            selectionSource: null,
+            availability: {
+              status: "unavailable",
+              code: "version_unresolved",
+            },
+            rejections: [
+              {
+                providerId: "alpha",
+                origin: "availability",
+                code: "version_unresolved",
+                // doctor cannot check this provider, so it is not offered.
+                remediation: expect.not.stringContaining(
+                  "rea doctor",
+                ) as unknown,
+              },
+            ],
+          },
+          {
+            provider: { id: "beta" },
+            selected: false,
+            selectionSource: null,
+            rejections: [
+              {
+                providerId: "beta",
+                origin: "availability",
+                code: "runtime_missing",
+              },
+            ],
+          },
+        ],
+      },
+    });
+    expect([...unresolved.created, ...unavailable.created]).toEqual([]);
+  });
+});
+
+it("keeps unsupported artifacts unbound for auto and environment selection", async () => {
+  const alpha = candidate("alpha");
+  const registry = new AnalysisProviderRegistry([alpha.provider], "alpha");
+
+  for (const selection of [
+    registry,
+    new AnalysisProviderRegistry([alpha.provider]),
+  ]) {
+    expect(await selection.select(ARTIFACT_TARGET)).toMatchObject({
+      ok: true,
+      value: {
+        binding: null,
+        candidates: [
+          {
+            provider: { id: "alpha" },
+            selected: false,
+            selectionSource: null,
+            targetSupport: {
+              status: "unsupported",
+              code: "target_kind_unsupported",
+            },
+            rejections: [
+              {
+                providerId: "alpha",
+                origin: "target",
+                code: "target_kind_unsupported",
+                reason: expect.stringContaining(
+                  "only accepts analysis databases",
+                ) as unknown,
+                diagnostics: { target_kind: "archive" },
+              },
+            ],
+          },
+        ],
+      },
+    });
+  }
+
+  const explicit = await registry.select(ARTIFACT_TARGET, "alpha");
+  expect(explicit.ok).toBe(false);
+  if (explicit.ok) return;
+  expect(explicit.error).toMatchObject({
+    reason: "target_unsupported",
+    requestedProviderId: "alpha",
+    rejections: [
+      {
+        providerId: "alpha",
+        origin: "target",
+        code: "target_kind_unsupported",
+      },
+    ],
+  });
+  expect(alpha.created).toEqual([]);
+});
+
+describe("analysis provider registry: discovery diagnostics", () => {
+  it("keeps discovery side-effect free and preserves cancellation", async () => {
+    const alpha = candidate("alpha");
+    const beta = candidate("beta");
+    const registry = new AnalysisProviderRegistry([
+      beta.provider,
+      alpha.provider,
+    ]);
+
+    const statuses = await registry.candidates(DATABASE_TARGET);
+    expect(statuses).toMatchObject([
+      {
+        provider: { id: "alpha" },
+        selected: false,
+        selectionSource: null,
+        rejections: [],
+      },
+      {
+        provider: { id: "beta" },
+        selected: false,
+        selectionSource: null,
+        rejections: [],
+      },
+    ]);
+    expect([...alpha.created, ...beta.created]).toEqual([]);
+
+    const controller = new AbortController();
+    const reason = { caller: "diagnostic cancellation" };
+    controller.abort(reason);
+    const cancelled = await registry.select(DATABASE_TARGET, undefined, {
+      signal: controller.signal,
+    });
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect([...alpha.created, ...beta.created]).toEqual([]);
+  });
+});
+
+describe("analysis provider registry: rejection origins", () => {
+  it("distinguishes recorded readiness failures from an unobserved target refusal", async () => {
+    const registry = new AnalysisProviderRegistry([
+      candidate("alpha", { available: false, unconfigured: true }).provider,
+      candidate("gamma", { available: false, unconfigured: true }).provider,
+    ]);
+    const selection = await registry.select(DATABASE_TARGET);
+    if (!selection.ok) throw selection.error;
+    const projected = projectAnalysisError(
+      registry.unboundOperationError("binary_overview", selection.value),
+    );
+    expect(projected.message).toContain(
+      "Provider selection failed local readiness checks. No target-support refusal was reported.",
+    );
+    expect(projected.details).toMatchObject({
+      rejections: [
+        {
+          provider_id: "alpha",
+          origin: "availability",
+          code: "not_configured",
+        },
+        {
+          provider_id: "gamma",
+          origin: "availability",
+          code: "not_configured",
+        },
+      ],
+    });
+  });
+
+  it("reports a configured provider's readiness failure without hiding a ready alternative", async () => {
+    const invalid = candidate("alpha", { available: false });
+    const ready = candidate("beta");
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...invalid.provider,
+        inspectAvailability: () => ({
+          status: "unavailable",
+          code: "open_options_invalid",
+          reason: "Configured registration is invalid",
+          remediation: "Repair the fixture provider.",
+          diagnostics: { registration_path: "/configured/alpha.json" },
+        }),
+      },
+      ready.provider,
+    ]);
+    const selected = await registry.select(DATABASE_TARGET, "alpha");
+    if (selected.ok)
+      throw new Error("Expected the selected provider to refuse");
+    const projected = projectAnalysisError(selected.error);
+    expect(projected.message).toContain("local readiness");
+    expect(projected.message).not.toContain(
+      "No analysis provider is configured",
+    );
+    expect(projected.details).toMatchObject({
+      requested_provider_id: "alpha",
+      candidate_ids: ["alpha", "beta"],
+      rejections: [
+        {
+          provider_id: "alpha",
+          origin: "availability",
+          code: "open_options_invalid",
+          reason: "Configured registration is invalid",
+          diagnostics: { registration_path: "/configured/alpha.json" },
+        },
+      ],
+    });
+    expect((await registry.select(DATABASE_TARGET, "beta")).ok).toBe(true);
+    expect(invalid.created).toEqual([]);
+  });
+
+  it("keeps availability and target origins distinct when both block automatic selection", async () => {
+    const unconfiguredButAdmitting: AnalysisProviderCandidate = {
+      ...candidate("alpha", { available: false, unconfigured: true }).provider,
+      inspectTargetSupport: () => ({
+        status: "supported",
+        code: null,
+        reason: null,
+        diagnostics: { target_kind: "archive" },
+      }),
+    };
+    const refusingTarget: AnalysisProviderCandidate = {
+      ...candidate("beta").provider,
+      inspectTargetSupport: () => ({
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason: "beta refuses archives",
+        diagnostics: { target_kind: "archive" },
+      }),
+    };
+    const mixed = new AnalysisProviderRegistry([
+      unconfiguredButAdmitting,
+      refusingTarget,
+    ]);
+    const mixedSelection = await mixed.select(ARTIFACT_TARGET);
+    expect(mixedSelection.ok).toBe(true);
+    if (mixedSelection.ok) {
+      const projected = projectAnalysisError(
+        mixed.unboundOperationError("binary_overview", mixedSelection.value),
+      );
+      expect(projected.message).toContain(
+        "The selected analysis provider is unavailable",
+      );
+      const { details } = projected;
+      const rejections = details?.rejections as unknown as readonly {
+        origin: string;
+        code: string;
+      }[];
+      expect(rejections).toMatchObject([
+        { origin: "availability", code: "not_configured" },
+        { origin: "target", code: "target_format_unsupported" },
+      ]);
+    }
+  });
+});
+
+describe("analysis provider registry: profile and cleanup failures", () => {
+  it("does not bind an explicitly selected provider whose profiler fails", async () => {
+    const failed = candidate("failed", { profile: "error" });
+    const explicit = await new AnalysisProviderRegistry([
+      failed.provider,
+    ]).select(DATABASE_TARGET, "failed");
+    if (explicit.ok) throw new Error("expected provider selection rejection");
+    expect(explicit.error).toMatchObject({
+      _tag: "ProviderAdapterError",
+      providerId: "failed",
+    });
+  });
+
+  it("aborts automatic selection when a provider reports unconfirmed cleanup", async () => {
+    const ghidra = candidate("ghidra");
+    const alternate = candidate("hopper");
+    const cleanupFailure = new ProviderCleanupError(
+      "ghidra",
+      ["/opt/ghidra/data/languages/x86.ldefs"],
+      { reason: "descriptor close failed" },
+      { operation: "resolve_analysis_profile" },
+    );
+    const provider: AnalysisProviderCandidate = {
+      ...ghidra.provider,
+      resolveAnalysisProfile: () => Promise.resolve(err(cleanupFailure)),
+    };
+
+    const selected = await new AnalysisProviderRegistry([
+      alternate.provider,
+      provider,
+    ]).select(DATABASE_TARGET);
+
+    expect(selected).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "ProviderAdapterError",
+        providerId: "ghidra",
+        cleanupIncomplete: true,
+      },
+    });
+    expect(alternate.created).toEqual([]);
+  });
+
+  it("owns a signal-ignoring profile probe until final completion and joins shutdown", async () => {
+    const alpha = candidate("alpha");
+    let observedSignal: AbortSignal | undefined;
+    const probe = phaseGate();
+    const ignoresCancellation: AnalysisProviderCandidate = {
+      ...alpha.provider,
+      resolveAnalysisProfile: async (target, options) => {
+        observedSignal = options?.signal;
+        await probe.hold();
+        return alpha.provider.resolveAnalysisProfile(target);
+      },
+    };
+    const registry = new AnalysisProviderRegistry([ignoresCancellation]);
+    const controller = new AbortController();
+    const reason = { caller: "profile finalization" };
+    let selected = false;
+    const selecting = registry
+      .select(DATABASE_TARGET, "alpha", { signal: controller.signal })
+      .then((result) => {
+        selected = true;
+        return result;
+      });
+    let closed = false;
+    let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+    await withVerifierCleanup(async () => {
+      await probe.reached(selecting, "profile probe");
+      controller.abort(reason);
+      closing = registry.closeOwnedResources().then((result) => {
+        closed = true;
+        return result;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(selected).toBe(false);
+      expect(closed).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      expect(observedSignal?.aborted).toBe(true);
+      expect(observedSignal?.reason).toBe(reason);
+      probe.release();
+      const result = await selecting;
+      expect(result).toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisCancelledError", cause: reason },
+      });
+      expect(await closing).toEqual(ok(null));
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      expect(alpha.created).toEqual([]);
+    }, [
+      () => {
+        controller.abort(reason);
+        probe.release();
+      },
+      async () => {
+        await Promise.allSettled([selecting, closing]);
+      },
+      async () => {
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      },
+    ]);
+  });
+});
+
+interface CandidateFixture {
+  readonly provider: AnalysisProviderCandidate;
+  readonly created: string[];
+}
+
+const candidate = (
+  id: string,
+  options: {
+    readonly available?: boolean;
+    readonly unconfigured?: boolean;
+    readonly profile?: "resolved" | "missing" | "error";
+  } = {},
+): CandidateFixture => {
+  const identity: ProviderIdentity = {
+    id,
+    name: `${id} provider`,
+    version: null,
+  };
+  const created: string[] = [];
+  const available = options.available ?? true;
+  const provider: AnalysisProviderCandidate = {
+    identity: () => identity,
+    capabilities: () => [capability(identity)],
+    inspectAvailability: (): ProviderAvailability =>
+      available
+        ? {
+            status: "available",
+            code: null,
+            reason: null,
+            diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
+          }
+        : {
+            status: "unavailable",
+            code: options.unconfigured ? "not_configured" : "runtime_missing",
+            reason: `${id} runtime is unavailable`,
+            remediation: "Repair the fixture provider.",
+            diagnostics: { executable_path: `/opt/${id}/bin/analyze` },
+          },
+    inspectTargetSupport: (target): ProviderTargetSupport =>
+      target.kind === "database"
+        ? {
+            status: "supported",
+            code: null,
+            reason: null,
+            diagnostics: { target_kind: target.kind },
+          }
+        : {
+            status: "unsupported",
+            code: "target_kind_unsupported",
+            reason: `${id} only accepts analysis databases in this fixture`,
+            diagnostics: { target_kind: target.kind },
+          },
+    resolveAnalysisProfile: () => {
+      if (options.profile === "error")
+        return Promise.resolve(
+          err(new ProviderAdapterError(id, "resolve_analysis_profile")),
+        );
+      return Promise.resolve(
+        ok({
+          profile:
+            options.profile === "missing"
+              ? null
+              : createAnalysisProfile(
+                  { id, name: identity.name, version: "1" },
+                  { fixture: id },
+                ),
+        }),
+      );
+    },
+    createClient: (_target, profile): AnalysisClient => {
+      created.push(id);
+      const executionIdentity = profile?.provider ?? identity;
+      return {
+        execute: (operation) =>
+          Promise.resolve(
+            ok(
+              createAnalysisExecution(
+                operation === "health" ? null : `${id}:${operation}`,
+                executionIdentity,
+              ),
+            ),
+          ),
+        close: () => Promise.resolve(ok(null)),
+      };
+    },
+  };
+  return { provider, created };
+};
+
+const capability = (provider: ProviderIdentity): CapabilityDescriptor => ({
+  provider,
+  operation: "address_name",
+  available: true,
+  reason: null,
+  effects: {
+    mutatesArtifact: false,
+    launchesProcess: true,
+    mayShowUi: false,
+    mayAccessNetwork: false,
+    mayWriteFilesystem: false,
+    changesPermissions: false,
+    requiresRoot: false,
+  },
+  limitations: [],
+});
+
+describe("analysis provider registry: explicit profile refusals", () => {
+  const reason = "The configured extension supports x86-64 only.";
+  const selectWithRefusal = async (
+    options: ConstructorParameters<typeof AnalysisUnsupportedTargetError>[3],
+  ) => {
+    const refusal = new AnalysisUnsupportedTargetError(
+      "resolve_analysis_profile",
+      DATABASE_TARGET.path,
+      reason,
+      options,
+    );
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...candidate("ghidra").provider,
+        resolveAnalysisProfile: async () => err(refusal),
+      },
+    ]);
+    const selected = await registry.select(DATABASE_TARGET, "ghidra");
+    if (selected.ok) throw new Error("Expected a profile refusal");
+    return { refusal, failure: selected.error };
+  };
+
+  it("keeps a refusing provider's reason, recovery and evidence in the selection failure", async () => {
+    const capturedOutput = {
+      stdout: "",
+      stderr: "x86-64 only",
+      truncated: false,
+    };
+    const partial = {
+      kind: "unretained-evidence",
+      evidence: createEvidence(
+        DATABASE_TARGET,
+        {
+          id: "ghidra",
+          name: "ghidra provider",
+          version: "1",
+        },
+        {
+          operation: "resolve_analysis_profile",
+          parameters: {},
+          result: { extension: "fixture", supported_architectures: ["x86-64"] },
+        },
+      ),
+    } as const;
+    const { refusal, failure } = await selectWithRefusal({
+      remediationAction: "Omit the extension setting for this target.",
+      capturedOutput,
+      diagnostics: { extension: "fixture" },
+      partialObservation: partial,
+    });
+    expect(failure).toBeInstanceOf(ProviderSelectionError);
+    expect(failure.cause).toBe(refusal);
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "capability_unavailable",
+      message: refusal.message,
+      remediation: { action: "Omit the extension setting for this target." },
+      details: {
+        selection_reason: "target_unsupported",
+        requested_provider_id: "ghidra",
+        candidate_ids: ["ghidra"],
+        rejections: [
+          {
+            provider_id: "ghidra",
+            code: "target_format_unsupported",
+            reason,
+          },
+        ],
+        captured_output: capturedOutput,
+        partial_observation: partial,
+        diagnostics: { extension: "fixture" },
+      },
+    });
+  });
+
+  it("returns a refusal with unconfirmed cleanup unchanged", async () => {
+    const { refusal, failure } = await selectWithRefusal({
+      cleanup: { reason: "probe close failed", resources: ["/tmp/probe"] },
+    });
+    expect(failure).toBe(refusal);
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "cleanup_incomplete",
+      details: { cleanup: "incomplete", resources: ["/tmp/probe"] },
+    });
+  });
+});
+describe("profile resolution terminal facts", () => {
+  it.each([false, true])(
+    "preserves a physical profile failure across late caller abort (throws: %s)",
+    async (throws) => {
+      const alpha = candidate("alpha");
+      const controller = new AbortController();
+      const primary = new ProviderAdapterError(
+        "alpha",
+        "resolve_analysis_profile",
+        { cause: new Error("physical profile failure") },
+      );
+      const registry = new AnalysisProviderRegistry([
+        {
+          ...alpha.provider,
+          resolveAnalysisProfile: async () => {
+            controller.abort({ caller: "after physical failure" });
+            if (throws) throw primary;
+            return err(primary);
+          },
+        },
+      ]);
+      const result = await registry.select(DATABASE_TARGET, "alpha", {
+        signal: controller.signal,
+      });
+      expect(result).toEqual(err(primary));
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  );
+
+  it("preserves exact cancellation with cleanup and blocks admission until its owner confirms release", async () => {
+    const alpha = candidate("alpha");
+    const controller = new AbortController();
+    const reason = { caller: "final cleanup" };
+    const primary = new AnalysisCancelledError("resolve_analysis_profile", {
+      cause: reason,
+      cleanup: { reason: "file close rejected", resources: ["profile-file"] },
+    });
+    let attempts = 0;
+    let allowClose = false;
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...alpha.provider,
+        resolveAnalysisProfile: async () => {
+          attempts++;
+          controller.abort(reason);
+          return err(primary);
+        },
+        closeOwnedResources: async () => {
+          if (!allowClose) return err(primary);
+          releaseOwnedCleanup(primary);
+          return ok(null);
+        },
+      },
+    ]);
+    const result = await registry.select(DATABASE_TARGET, "alpha", {
+      signal: controller.signal,
+    });
+    expect(result).toEqual(err(primary));
+    expect(primary.cause).toBe(reason);
+    expect(registry.hasPendingOwnedResources()).toBe(true);
+    expect(await registry.select(DATABASE_TARGET, "alpha")).toEqual(
+      err(primary),
+    );
+    expect(attempts).toBe(1);
+    allowClose = true;
+    expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    expect(primary.cleanupIncomplete).toBe(false);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+  });
+});
+
+describe("automatic profile cleanup ownership", () => {
+  it.each(["alpha", "beta"])(
+    "keeps automatic mixed-child cleanup conjunctive when %s releases first",
+    async (first) => {
+      const alpha = candidate("alpha");
+      const beta = candidate("beta");
+      const controller = new AbortController();
+      const reason = { caller: "mixed profile finalization" };
+      const failures = {
+        alpha: new AnalysisCancelledError("resolve_analysis_profile", {
+          cause: reason,
+          cleanup: { reason: "alpha descriptor", resources: ["alpha-file"] },
+        }),
+        beta: new ProviderCleanupError("beta", ["beta-file"], {
+          reason: "beta descriptor",
+        }),
+      };
+      let entered = 0;
+      let admitChildren: (() => void) | undefined;
+      const admitted = new Promise<void>((resolve) => {
+        admitChildren = resolve;
+      });
+      const released = new Set<string>();
+      const registry = new AnalysisProviderRegistry(
+        [alpha, beta].map((fixture) => {
+          const id = fixture.provider.identity().id as "alpha" | "beta";
+          return {
+            ...fixture.provider,
+            resolveAnalysisProfile: async () => {
+              entered++;
+              if (entered === 2) {
+                controller.abort(reason);
+                admitChildren?.();
+              }
+              await admitted;
+              return err(failures[id]);
+            },
+            closeOwnedResources: async () => {
+              if (!released.has(id)) return err(failures[id]);
+              releaseOwnedCleanup(failures[id]);
+              return ok(null);
+            },
+          };
+        }),
+      );
+      const selecting = registry.select(DATABASE_TARGET, "auto", {
+        signal: controller.signal,
+      });
+      await withVerifierCleanup(async () => {
+        await awaitAcknowledgement(
+          admitted,
+          selecting,
+          "profile children admission",
+        );
+        const result = await selecting;
+        if (result.ok) throw new Error("Mixed failed profiles admitted");
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toEqual([
+          "alpha-file",
+          "beta-file",
+        ]);
+        expect(result.error.diagnostics?.profile_errors).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ provider_id: "alpha" }),
+            expect.objectContaining({ provider_id: "beta" }),
+          ]),
+        );
+        const close1 = await registry.closeOwnedResources();
+        expect(close1.ok).toBe(false);
+        released.add(first);
+        const close2 = await registry.closeOwnedResources();
+        expect(close2.ok).toBe(false);
+        expect(result.error.cleanupIncomplete).toBe(true);
+        expect(result.error.cleanupResources).toEqual([
+          first === "alpha" ? "beta-file" : "alpha-file",
+        ]);
+        expect(close1.ok ? [] : close1.error.cleanupResources).toEqual([
+          first === "alpha" ? "beta-file" : "alpha-file",
+        ]);
+        released.add(first === "alpha" ? "beta" : "alpha");
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+        expect(result.error.cleanupIncomplete).toBe(false);
+        if (close1.ok || close2.ok)
+          throw new Error("Cleanup unexpectedly succeeded");
+        expect(close1.error.cleanupIncomplete).toBe(false);
+        expect(close2.error.cleanupIncomplete).toBe(false);
+        expect(registry.hasPendingOwnedResources()).toBe(false);
+      }, [
+        () => {
+          released.add("alpha");
+          released.add("beta");
+          controller.abort(reason);
+          admitChildren?.();
+        },
+        async () => {
+          await Promise.allSettled([selecting]);
+        },
+        async () => {
+          expect(await registry.closeOwnedResources()).toEqual(ok(null));
+        },
+      ]);
+    },
+  );
+});
+
+it("registers before production and gates fresh selections until shutdown has joined finalization", async () => {
+  const alpha = candidate("alpha");
+  let calls = 0;
+  const finalization = phaseGate();
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...alpha.provider,
+      resolveAnalysisProfile: async (target) => {
+        calls++;
+        if (calls === 1) {
+          await finalization.hold();
+        }
+        return alpha.provider.resolveAnalysisProfile(target);
+      },
+    },
+  ]);
+  const selecting = registry.select(DATABASE_TARGET, "alpha");
+  let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof registry.select> | undefined;
+  await withVerifierCleanup(async () => {
+    await finalization.reached(selecting, "profile finalization");
+    closing = registry.closeOwnedResources();
+    next = registry.select(DATABASE_TARGET, "alpha");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(calls).toBe(1);
+    expect(registry.hasPendingOwnedResources()).toBe(true);
+    finalization.release();
+    expect(await selecting).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
+    expect(await closing).toEqual(ok(null));
+    expect((await next).ok).toBe(true);
+    expect(calls).toBe(2);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+  }, [
+    () => finalization.release(),
+    async () => {
+      await Promise.allSettled([selecting, closing, next]);
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
+});
+
+it("joins cancelled readiness finalization and shutdown before admitting another observation", async () => {
+  const base = candidate("alpha").provider;
+  const readiness = phaseGate();
+  let calls = 0;
+  let observed: AbortSignal | undefined;
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...base,
+      inspectAvailability: async ({
+        signal,
+      }: AnalysisProviderInspectionOptions = {}) => {
+        calls++;
+        if (calls === 1) {
+          observed = signal;
+          await readiness.hold();
+        }
+        return base.inspectAvailability();
+      },
+    },
+  ]);
+  const controller = new AbortController();
+  const reason = { request: "opaque readiness cancellation" };
+  let settled = false;
+  const observing = registry
+    .candidates(undefined, { signal: controller.signal })
+    .catch((cause) => {
+      settled = true;
+      return cause;
+    });
+  let closed = false;
+  let closing: ReturnType<typeof registry.closeOwnedResources> | undefined;
+  let next: ReturnType<typeof registry.candidates> | undefined;
+  await withVerifierCleanup(async () => {
+    await readiness.reached(observing, "readiness observation");
+    controller.abort(reason);
+    closing = registry.closeOwnedResources().then((value) => {
+      closed = true;
+      return value;
+    });
+    next = registry.candidates();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    expect(closed).toBe(false);
+    expect(calls).toBe(1);
+    expect(observed?.reason).toBe(reason);
+    expect(registry.hasPendingOwnedResources()).toBe(true);
+    readiness.release();
+    const failure = await observing;
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure.cause).toBe(reason);
+    expect(await closing).toEqual(ok(null));
+    expect(await next).toMatchObject([
+      {
+        availability: {
+          status: "unknown",
+          diagnostics: { finalization: "in_progress" },
+        },
+      },
+    ]);
+    expect(await registry.candidates()).toHaveLength(1);
+    expect(calls).toBe(2);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+  }, [
+    () => {
+      controller.abort(reason);
+      readiness.release();
+    },
+    async () => {
+      await Promise.allSettled([observing, closing, next]);
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
+});
+
+it.each(["alpha", "beta"])(
+  "releases unflagged and flagged candidate receipts only after their owners confirm close (%s unflagged)",
+  async (unknownOwner) => {
+    const unknown = new ProviderAdapterError(unknownOwner, "close_binary", {
+      userMessage: "cleanup completion unknown",
+    });
+    const tracked = new ProviderCleanupError("rea", ["owned-reader"], {});
+    let released = false;
+    const registry = new AnalysisProviderRegistry(
+      ["alpha", "beta"].map((id) => ({
+        ...candidate(id).provider,
+        closeOwnedResources: async () => {
+          if (!released) return err(id === unknownOwner ? unknown : tracked);
+          if (id !== unknownOwner) releaseOwnedCleanup(tracked);
+          return ok(null);
+        },
+      })),
+    );
+    const closed = await registry.closeOwnedResources();
+    if (closed.ok) throw new Error("Expected incomplete registry close");
+    expect(closed.error.cleanupIncomplete).toBe(true);
+    released = true;
+    expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    expect(tracked.cleanupIncomplete).toBe(false);
+    expect(closed.error.cleanupIncomplete).toBe(false);
+  },
+);
+
+it.each([
+  ["returned", "physical"],
+  ["returned", "cancelled"],
+  ["thrown", "physical"],
+  ["thrown", "cancelled"],
+] as const)(
+  "retains an unflagged %s %s close failure until that candidate confirms completion",
+  async (delivery, kind) => {
+    const reason = { reason: "controlled caller cancellation" };
+    const physical = { reason: "controlled descriptor close failure" };
+    const original =
+      kind === "cancelled"
+        ? new AnalysisCancelledError("close_binary", { cause: reason })
+        : new ProviderAdapterError("alpha", "close_binary", {
+            cause: physical,
+            diagnostics: { reason: "descriptor close failed" },
+          });
+    const alpha = candidate("alpha").provider;
+    let released = false;
+    let inspections = 0;
+    let peerCloses = 0;
+    const registry = new AnalysisProviderRegistry([
+      {
+        ...alpha,
+        inspectAvailability: async (options) => {
+          inspections++;
+          return alpha.inspectAvailability(options);
+        },
+        closeOwnedResources: async () => {
+          if (released) return ok(null);
+          if (delivery === "thrown") throw original;
+          return err(original);
+        },
+      },
+      {
+        ...candidate("beta").provider,
+        closeOwnedResources: async () => {
+          peerCloses++;
+          return ok(null);
+        },
+      },
+    ]);
+    await withVerifierCleanup(async () => {
+      const closed = await registry.closeOwnedResources();
+      if (closed.ok) throw new Error("Expected incomplete candidate close");
+      expect(closed.error).toBeInstanceOf(ProviderCleanupError);
+      expect(closed.error.cause).toBe(original);
+      expect(closed.error.cleanupPrimary).toBe(original);
+      expect(original.cause).toBe(kind === "cancelled" ? reason : physical);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(false);
+      expect(inspections).toBe(0);
+      expect(peerCloses).toBe(2);
+      released = true;
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      expect(closed.error.cleanupIncomplete).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+      expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
+      expect(inspections).toBe(1);
+    }, [
+      async () => {
+        released = true;
+        expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      },
+    ]);
+  },
+);
+
+it("joins every candidate and retains physical failure with exact mixed cleanup owners", async () => {
+  const alpha = candidate("alpha").provider;
+  const beta = candidate("beta").provider;
+  const gamma = candidate("gamma").provider;
+  const observation = phaseGate();
+  const physical = new ProviderAdapterError("alpha", "binary_session", {
+    diagnostics: { reason: "physical observation failed" },
+  });
+  const cleanup = new ProviderCleanupError(
+    "beta",
+    ["beta retained prerequisite"],
+    { reason: "controlled cleanup refusal" },
+  );
+  let releases = 0;
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...alpha,
+      inspectAvailability: async () => {
+        throw physical;
+      },
+    },
+    {
+      ...beta,
+      inspectAvailability: async () => {
+        await observation.hold();
+        throw cleanup;
+      },
+      closeOwnedResources: async () => {
+        releases++;
+        releaseOwnedCleanup(cleanup);
+        return ok(null);
+      },
+    },
+    gamma,
+  ]);
+  let settled = false;
+  const observing = registry.candidates().catch((cause) => {
+    settled = true;
+    return cause;
+  });
+  await withVerifierCleanup(async () => {
+    await observation.reached(observing, "mixed readiness observation");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    observation.release();
+    const failure = await observing;
+    expect(failure.cleanupIncomplete).toBe(true);
+    expect(failure.cleanupResources).toContain("beta retained prerequisite");
+    expect(failure.diagnostics).toMatchObject({
+      readiness_candidates: [
+        { provider: { id: "gamma" }, availability: { status: "available" } },
+      ],
+    });
+    expect(failure.cleanupPrimary).toBe(physical);
+    expect(projectAnalysisError(failure).details).toMatchObject({
+      diagnostics: {
+        readiness_errors: expect.arrayContaining([
+          {
+            provider_id: "alpha",
+            error: expect.objectContaining({ code: "execution_failure" }),
+          },
+          {
+            provider_id: "beta",
+            error: expect.objectContaining({ code: "cleanup_incomplete" }),
+          },
+        ]),
+      },
+    });
+    expect(registry.hasPendingOwnedResources()).toBe(true);
+    expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    expect(releases).toBe(1);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(failure)).toMatchObject({
+      code: "execution_failure",
+      details: { diagnostics: { reason: "physical observation failed" } },
+    });
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+  }, [
+    observation.release,
+    async () => {
+      await observing;
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
+});
+
+it("registers selection before async readiness can race shutdown", async () => {
+  let calls = 0;
+  let observed: AbortSignal | undefined;
+  const base = candidate("alpha").provider;
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...base,
+      inspectAvailability: async ({
+        signal,
+      }: AnalysisProviderInspectionOptions = {}) => {
+        calls++;
+        observed = signal;
+        return base.inspectAvailability();
+      },
+    },
+  ]);
+  const selecting = registry.select(DATABASE_TARGET, "alpha");
+  const closing = registry.closeOwnedResources();
+  const [selected, closed] = await Promise.all([selecting, closing]);
+  expect(selected).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  expect(closed).toEqual(ok(null));
+  expect(calls).toBe(1);
+  expect(observed?.aborted).toBe(true);
+  expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
+  expect(calls).toBe(2);
+  expect(registry.hasPendingOwnedResources()).toBe(false);
+});
+
+it("joins peer cleanup and retains the cause of an opaque close rejection", async () => {
+  const rejection = { reason: "opaque rejection" };
+  let denied = true;
+  const closed: string[] = [];
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...candidate("alpha").provider,
+      closeOwnedResources: async () => {
+        closed.push("alpha");
+        if (denied) throw rejection;
+        return ok(null);
+      },
+    },
+    {
+      ...candidate("beta").provider,
+      closeOwnedResources: async () => {
+        closed.push("beta");
+        return ok(null);
+      },
+    },
+  ]);
+  try {
+    const result = await registry.closeOwnedResources();
+    if (result.ok) throw new Error("Expected retained candidate cleanup");
+    expect(result.error).toBeInstanceOf(ProviderCleanupError);
+    expect(result.error.cause).toBe(rejection);
+    expect(closed).toEqual(["alpha", "beta"]);
+    expect(registry.hasPendingOwnedResources()).toBe(true);
+    denied = false;
+    expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+  } finally {
+    denied = false;
+    await registry.closeOwnedResources();
+  }
+});
+
+it.each(["alpha", "beta"] as const)(
+  "retains each candidate receipt until its own close succeeds (%s first)",
+  async (first) => {
+    const failures = {
+      alpha: new ProviderCleanupError("alpha", ["alpha-reader"], {}),
+      beta: new ProviderCleanupError("beta", ["beta-reader"], {}),
+    };
+    const released = new Set<string>();
+    const calls: string[] = [];
+    const registry = new AnalysisProviderRegistry([
+      ...(["alpha", "beta"] as const).map((id) => ({
+        ...candidate(id).provider,
+        closeOwnedResources: async () => {
+          calls.push(id);
+          if (released.has(id)) return ok(null);
+          if (id === "alpha") throw failures.alpha;
+          return err(failures.beta);
+        },
+      })),
+      {
+        ...candidate("gamma").provider,
+        closeOwnedResources: async () => {
+          calls.push("gamma");
+          return ok(null);
+        },
+      },
+    ]);
+    try {
+      const initial = await registry.closeOwnedResources();
+      if (initial.ok) throw new Error("Expected both retained candidates");
+      expect(calls).toEqual(["alpha", "beta", "gamma"]);
+      expect(initial.error.cleanupResources).toEqual([
+        "alpha-reader",
+        "beta-reader",
+      ]);
+      expect(initial.error.cause).toBeInstanceOf(AggregateError);
+      if (!(initial.error.cause instanceof AggregateError))
+        throw new Error("Expected attributed failures");
+      expect(initial.error.cause.errors).toEqual([
+        failures.alpha,
+        failures.beta,
+      ]);
+      released.add(first);
+      const partial = await registry.closeOwnedResources();
+      if (partial.ok) throw new Error("Expected remaining candidate cleanup");
+      const remaining = first === "alpha" ? "beta" : "alpha";
+      expect(partial.error).toBe(failures[remaining]);
+      expect(failures[first].cleanupIncomplete).toBe(false);
+      expect(failures[remaining].cleanupIncomplete).toBe(true);
+      expect(initial.error.cleanupIncomplete).toBe(true);
+      expect(initial.error.cleanupResources).toEqual([`${remaining}-reader`]);
+      expect(registry.hasPendingOwnedResources()).toBe(true);
+      released.add(remaining);
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+      expect(initial.error.cleanupIncomplete).toBe(false);
+      expect(registry.hasPendingOwnedResources()).toBe(false);
+    } finally {
+      released.add("alpha");
+      released.add("beta");
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    }
+  },
+);
+
+it("does not inspect a new selection after cancellation while its retained candidate cleanup settles", async () => {
+  const base = candidate("alpha").provider;
+  const failure = new ProviderCleanupError("alpha", ["profile-reader"], {});
+  let allowClose = false;
+  let inspections = 0;
+  const cleanupRetry = phaseGate();
+  const registry = new AnalysisProviderRegistry([
+    {
+      ...base,
+      inspectAvailability: () => {
+        inspections++;
+        return base.inspectAvailability();
+      },
+      closeOwnedResources: async () => {
+        if (!allowClose) throw failure;
+        await cleanupRetry.hold();
+        return ok(null);
+      },
+    },
+  ]);
+  const controller = new AbortController();
+  const reason = { request: "cancel while cleanup completes" };
+  let selecting: ReturnType<typeof registry.select> | undefined;
+  await withVerifierCleanup(async () => {
+    expect(await registry.closeOwnedResources()).toEqual(err(failure));
+    allowClose = true;
+    selecting = registry.select(DATABASE_TARGET, "alpha", {
+      signal: controller.signal,
+    });
+    await cleanupRetry.reached(selecting, "candidate cleanup retry");
+    controller.abort(reason);
+    cleanupRetry.release();
+    const result = await selecting;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
+    expect(inspections).toBe(0);
+    expect(failure.cleanupIncomplete).toBe(false);
+    expect(registry.hasPendingOwnedResources()).toBe(false);
+    expect((await registry.select(DATABASE_TARGET, "alpha")).ok).toBe(true);
+    expect(inspections).toBe(1);
+  }, [
+    () => {
+      allowClose = true;
+      cleanupRetry.release();
+    },
+    async () => {
+      await selecting;
+    },
+    async () => {
+      expect(await registry.closeOwnedResources()).toEqual(ok(null));
+    },
+  ]);
+});

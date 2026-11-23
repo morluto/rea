@@ -1,0 +1,59 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  callGraphSession as session,
+  removeCallGraphSessions,
+} from "../../tests/fixtures/idaCallGraph.js";
+
+afterEach(removeCallGraphSessions);
+
+const xrefs = async (more: boolean | undefined) => {
+  const { client, producer } = await session({ callees: [] }, "x86_64");
+  const inner = producer.overrideCall;
+  producer.overrideCall = (name, args) =>
+    name === "xrefs_to"
+      ? [{ xrefs: [], ...(more === undefined ? {} : { more }) }]
+      : inner?.(name, args);
+  try {
+    const result = await client.execute("xrefs", { address: "0x1000" });
+    if (!result.ok) throw result.error;
+    return result.value;
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+};
+
+describe("headless IDA reference coverage", () => {
+  it("reports a capped xrefs read as truncated", async () => {
+    const execution = await xrefs(true);
+
+    expect(execution.referencesTruncated).toBe(true);
+    expect(
+      execution.limitations,
+      "the diagnostic limitation is still reported",
+    ).toContainEqual(
+      expect.stringMatching(/xrefs_to.*cap.*1000.*references.*unknown/iu),
+    );
+  });
+
+  it("reports an explicitly uncapped xrefs read as not truncated", async () => {
+    expect((await xrefs(false)).referencesTruncated).toBe(false);
+  });
+
+  it("reports nothing when the producer does not say whether the read was capped", async () => {
+    expect((await xrefs(undefined)).referencesTruncated).toBeUndefined();
+  });
+
+  it("does not report reference coverage for other operations", async () => {
+    const { client } = await session({ callees: [] }, "x86_64");
+    try {
+      const result = await client.execute("procedure_callees", {
+        procedure: "main",
+      });
+
+      if (!result.ok) throw result.error;
+      expect(result.value.referencesTruncated).toBeUndefined();
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  });
+});

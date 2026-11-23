@@ -1,0 +1,574 @@
+import { buildJavaScriptRouteInventorySteps } from "./javascript/javascriptRouteInventory.js";
+import { completeSemanticSteps } from "./javascript/javascriptSemanticTraversal.js";
+import { RETURNED_REFERENCE_WIDENING_LIMITATION } from "./javascript/javascriptSemanticCoverage.js";
+import type { WebPageInspection } from "./browserObservationSchemas.js";
+import { browserOriginSchema } from "./browserObservation.js";
+import {
+  webBundleAnalysisSchema,
+  type WebBundleAnalysis,
+  type WebBundleCallSite,
+} from "./webBundleAnalysis.js";
+import {
+  createWebBundleAnalysisAccumulator,
+  isIncludedScript,
+  type AnalysisAccumulator,
+  type IncludedScript,
+} from "./webBundleAnalyzerState.js";
+import {
+  webBundleScriptAnalysisSchema,
+  type WebBundleScriptAnalysis,
+} from "./webBundleScriptAnalysis.js";
+import { appendAll } from "./appendAll.js";
+import { compositeKey } from "./unicodeCodePointOrder.js";
+
+export const buildCapturedWebBundleAnalysis = (
+  inspection: WebPageInspection,
+  sourceMaps: WebBundleAnalysis["observations"]["source_maps"],
+  rawResults: readonly WebBundleScriptAnalysis[],
+): WebBundleAnalysis => {
+  const results = rawResults.map((result) =>
+    webBundleScriptAnalysisSchema.parse(result),
+  );
+  const byKey = new Map<string, WebBundleScriptAnalysis>();
+  for (const result of results) {
+    if (byKey.has(result.script_key))
+      throw new TypeError(
+        `Duplicate script analysis result: ${result.script_key}`,
+      );
+    byKey.set(result.script_key, result);
+  }
+  const sourceScripts = inspection.scripts.items.filter(isIncludedScript);
+  const expectedKeys = new Set(
+    sourceScripts.map(({ script_key }) => script_key),
+  );
+  for (const key of byKey.keys())
+    if (!expectedKeys.has(key))
+      throw new TypeError(`Unexpected script analysis result: ${key}`);
+  const orderedResults: WebBundleScriptAnalysis[] = sourceScripts.map(
+    (script) =>
+      byKey.get(script.script_key) ?? {
+        status: "unavailable",
+        script_key: script.script_key,
+        reason: "worker_failure",
+        detail: "No analysis result was returned for this captured script.",
+      },
+  );
+  const unavailableAnalyses = orderedResults.filter(
+    (
+      result,
+    ): result is Extract<
+      WebBundleScriptAnalysis,
+      { readonly status: "unavailable" }
+    > => result.status === "unavailable",
+  );
+  const accumulator = mergeScriptResults(orderedResults);
+  const semanticUnknowns = orderedResults.flatMap((result) =>
+    result.status !== "analyzed" || result.semantic_limits === undefined
+      ? []
+      : result.semantic_limits.map(({ reason, limit }) => ({
+          dimension: "javascript_analysis",
+          reason,
+          limit,
+          remediation: `Increase ${limit.parameter} on the next analysis call.`,
+          affected_script_keys: [result.script_key],
+        })),
+  );
+  const attemptedScripts = orderedResults.filter(
+    (result) =>
+      !(result.status === "unavailable" && result.reason === "not_started"),
+  ).length;
+  const unavailable = inspection.scripts.items
+    .filter((script) => !script.source.included)
+    .map(({ script_key }) => script_key);
+  const unavailableSourceReasons = [
+    ...new Set(
+      inspection.scripts.items.flatMap((script) =>
+        script.source.included ? [] : [script.source.reason],
+      ),
+    ),
+  ].sort();
+  const omittedScripts = captureBudgetOmission(inspection, "scripts");
+  const omittedSourceScripts = captureBudgetOmission(
+    inspection,
+    "script_sources",
+  );
+  const omittedSourceMaps =
+    sourceMaps.status === "not_requested" || sourceMaps.excluded !== undefined
+      ? undefined
+      : captureBudgetOmission(inspection, "source_maps");
+  const sourceMapIncomplete =
+    sourceMaps.status === "partial" || sourceMaps.status === "unavailable";
+  const partial =
+    semanticUnknowns.length > 0 ||
+    accumulator.failedScripts.length > 0 ||
+    accumulator.recoveredScripts.length > 0 ||
+    accumulator.widenedScripts.length > 0 ||
+    unavailable.length > 0 ||
+    unavailableAnalyses.length > 0 ||
+    sourceMapIncomplete ||
+    omittedScripts !== undefined ||
+    omittedSourceScripts !== undefined ||
+    omittedSourceMaps !== undefined;
+  return webBundleAnalysisSchema.parse({
+    route_inventory: completeSemanticSteps(
+      buildJavaScriptRouteInventorySteps(
+        inspection.scripts.items.map((script) => {
+          const result = byKey.get(script.script_key);
+          const analyzed = result?.status === "analyzed" ? result : undefined;
+          return {
+            key: script.script_key,
+            path: null,
+            url: script.url,
+            container_sha256: null,
+            sha256: script.source.included
+              ? script.source.artifact.sha256
+              : null,
+            status:
+              analyzed === undefined || analyzed.parse_status === "failed"
+                ? ("unavailable" as const)
+                : analyzed.parse_status === "recovered"
+                  ? ("partial" as const)
+                  : ("complete" as const),
+            reason: !script.source.included
+              ? script.source.reason
+              : result?.status === "unavailable"
+                ? result.reason
+                : analyzed === undefined
+                  ? "No route syntax result was returned"
+                  : analyzed.parse_status === "failed"
+                    ? "Script parsing failed"
+                    : analyzed.parse_status === "recovered"
+                      ? "Script parsing recovered from errors"
+                      : null,
+            facts: analyzed?.route_facts ?? null,
+          };
+        }),
+        undefined,
+        [
+          ...(omittedScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-records" as const,
+                  count: omittedScripts,
+                  reason: captureBudgetReason("script records", omittedScripts),
+                },
+              ]),
+          ...(omittedSourceScripts === undefined
+            ? []
+            : [
+                {
+                  unit: "script-sources" as const,
+                  count: omittedSourceScripts,
+                  reason: captureBudgetReason(
+                    "script source artifacts",
+                    omittedSourceScripts,
+                  ),
+                },
+              ]),
+        ],
+      ),
+    ),
+    capture: buildCaptureObservation(
+      inspection,
+      sourceScripts,
+      attemptedScripts,
+    ),
+    observations: {
+      chunks: {
+        nodes: sourceScripts.map(chunkNode),
+        edges: accumulator.edges,
+      },
+      routes: accumulator.routes,
+      endpoints: accumulator.endpoints,
+      webmcp_declarations: accumulator.webMcp,
+      source_maps: sourceMaps,
+    },
+    inferences: accumulator.inferences,
+    unknowns: buildUnknowns({
+      semanticUnknowns,
+      unavailable,
+      unavailableSourceReasons,
+      failedScripts: accumulator.failedScripts,
+      recoveredScripts: accumulator.recoveredScripts,
+      widenedScripts: accumulator.widenedScripts,
+      unresolvedEndpoints: accumulator.unresolvedEndpoints,
+      unavailableAnalyses,
+      sourceMaps,
+      omittedScripts,
+      omittedSourceScripts,
+      omittedSourceMaps,
+    }),
+    completeness: buildCompleteness({
+      partial,
+      parsedScripts: accumulator.parsedScripts,
+      parseFailures: accumulator.failedScripts.length,
+      visitedNodes: accumulator.visitedNodes,
+    }),
+    limitations: bundleLimitations(),
+  });
+};
+
+const mergeScriptResults = (
+  results: readonly WebBundleScriptAnalysis[],
+): AnalysisAccumulator => {
+  const accumulator = createWebBundleAnalysisAccumulator();
+  const routeKeys = new Map<string, BundleFinding>();
+  const endpointKeys = new Map<string, BundleFinding>();
+  for (const result of results) {
+    if (result.status === "unavailable") {
+      // A refused script still parsed; its text inferences remain.
+      if (result.partial === undefined) continue;
+      accumulator.parsedScripts += 1;
+      if (result.partial.parse_status === "recovered")
+        accumulator.recoveredScripts.push(result.script_key);
+      appendAll(accumulator.inferences, result.partial.inferences);
+      continue;
+    }
+    accumulator.visitedNodes += result.visited_ast_nodes;
+    if (result.parse_status === "failed") {
+      accumulator.failedScripts.push(result.script_key);
+      continue;
+    }
+    accumulator.parsedScripts += 1;
+    if (result.parse_status === "recovered")
+      accumulator.recoveredScripts.push(result.script_key);
+    if (result.widened_return_references)
+      accumulator.widenedScripts.push(result.script_key);
+    appendAll(accumulator.edges, result.observations.edges);
+    appendDeduplicatedFindings(
+      accumulator.routes,
+      result.observations.routes,
+      routeKeys,
+    );
+    appendDeduplicatedFindings(
+      accumulator.endpoints,
+      result.observations.endpoints,
+      endpointKeys,
+    );
+    appendAll(
+      accumulator.unresolvedEndpoints,
+      result.observations.unresolved_endpoints,
+    );
+    appendAll(accumulator.webMcp, result.observations.webmcp_declarations);
+    appendAll(accumulator.inferences, result.inferences);
+  }
+  return accumulator;
+};
+
+type BundleFinding = AnalysisAccumulator["routes"][number];
+
+/**
+ * Merge per-script findings across scripts by (value, mechanism). The first
+ * occurrence keeps its location; later occurrences are folded into
+ * occurrences/script_keys so no script is silently dropped. Findings that
+ * appear in only one script keep their original shape.
+ */
+const appendDeduplicatedFindings = (
+  target: BundleFinding[],
+  findings: readonly BundleFinding[],
+  seen: Map<string, BundleFinding>,
+): void => {
+  for (const finding of findings) {
+    const key = compositeKey([finding.value, finding.mechanism]);
+    const retained = seen.get(key);
+    if (retained === undefined) {
+      seen.set(key, finding);
+      target.push(finding);
+      continue;
+    }
+    retained.occurrences = (retained.occurrences ?? 1) + 1;
+    if (retained.script_keys === undefined) {
+      retained.script_keys = [
+        retained.location.script_key,
+        finding.location.script_key,
+      ];
+    } else {
+      retained.script_keys.push(finding.location.script_key);
+    }
+  }
+};
+
+const buildCaptureObservation = (
+  inspection: WebPageInspection,
+  sourceScripts: IncludedScript[],
+  attemptedScripts: number,
+) => {
+  const targetOrigin = browserOriginSchema.safeParse(inspection.target.origin);
+  return {
+    target_url: inspection.target.url,
+    target_origin: targetOrigin.success ? targetOrigin.data : null,
+    scripts_observed: inspection.scripts.total,
+    // This preserves the historical meaning: source scripts submitted for
+    // analysis, including worker/deadline failures; explicitly unstarted suffixes
+    // are excluded. Successfully parsed scripts are counted separately below.
+    scripts_analyzed: attemptedScripts,
+    source_artifacts: sourceScripts.map(sourceArtifact),
+  };
+};
+
+const sourceArtifact = (script: IncludedScript) => {
+  if (!script.source.included) throw new TypeError("Filtered source changed");
+  const { text: _text, ...artifact } = script.source.artifact;
+  return { ...artifact, text_available: true };
+};
+
+const chunkNode = (script: IncludedScript) => {
+  if (!script.source.included) throw new TypeError("Filtered source changed");
+  return {
+    script_key: script.script_key,
+    url: script.url,
+    artifact_sha256: script.source.artifact.sha256,
+    bytes: script.source.artifact.bytes,
+  };
+};
+
+interface UnknownsInput {
+  readonly semanticUnknowns: WebBundleAnalysis["unknowns"];
+  readonly unavailable: string[];
+  readonly unavailableSourceReasons: readonly string[];
+  readonly failedScripts: readonly string[];
+  readonly recoveredScripts: readonly string[];
+  readonly widenedScripts: readonly string[];
+  readonly unresolvedEndpoints: readonly WebBundleCallSite[];
+  readonly unavailableAnalyses: readonly Extract<
+    WebBundleScriptAnalysis,
+    { readonly status: "unavailable" }
+  >[];
+  readonly sourceMaps: WebBundleAnalysis["observations"]["source_maps"];
+  readonly omittedScripts: number | null | undefined;
+  readonly omittedSourceScripts: number | null | undefined;
+  readonly omittedSourceMaps: number | null | undefined;
+}
+
+const buildUnknowns = (input: UnknownsInput): WebBundleAnalysis["unknowns"] => [
+  ...input.semanticUnknowns,
+  ...(input.omittedScripts === undefined
+    ? []
+    : [
+        {
+          dimension: "script_inventory",
+          reason: captureBudgetReason("script records", input.omittedScripts),
+          affected_script_keys: [],
+        },
+      ]),
+  ...(input.omittedSourceScripts === undefined
+    ? []
+    : [
+        {
+          dimension: "script_source",
+          reason: captureBudgetReason(
+            "script source artifacts",
+            input.omittedSourceScripts,
+          ),
+          affected_script_keys: [],
+        },
+      ]),
+  ...(input.unavailable.length === 0
+    ? []
+    : [
+        {
+          dimension: "script_source" as const,
+          reason:
+            input.unavailableSourceReasons.length === 0
+              ? "Source artifact was not captured"
+              : `Source artifacts were not captured: ${input.unavailableSourceReasons.join("; ")}`,
+          affected_script_keys: input.unavailable,
+        },
+      ]),
+  ...(input.failedScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "javascript_ast" as const,
+          reason: "One or more source artifacts could not be parsed",
+          affected_script_keys: [...input.failedScripts],
+        },
+      ]),
+  ...(input.unavailableAnalyses.length === 0
+    ? []
+    : groupUnavailableAnalyses(input.unavailableAnalyses).map(
+        ({
+          reason,
+          detail,
+          limit,
+          remediation,
+          refusedPhase,
+          affectedScriptKeys,
+        }) => ({
+          dimension: "javascript_analysis" as const,
+          reason: analysisUnavailableReason(reason, detail),
+          affected_script_keys: affectedScriptKeys,
+          ...(limit === undefined ? {} : { limit }),
+          ...(remediation === undefined ? {} : { remediation }),
+          ...(refusedPhase === undefined
+            ? {}
+            : { refused_phase: refusedPhase }),
+        }),
+      )),
+  ...(input.unresolvedEndpoints.length === 0
+    ? []
+    : [
+        {
+          dimension: "endpoints" as const,
+          reason:
+            "A browser request's endpoint could not be resolved from its URL argument.",
+          affected_script_keys: [
+            ...new Set(
+              input.unresolvedEndpoints.map(
+                ({ location }) => location.script_key,
+              ),
+            ),
+          ],
+          call_sites: [...input.unresolvedEndpoints],
+        },
+      ]),
+  ...(input.widenedScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "javascript_ast" as const,
+          reason: RETURNED_REFERENCE_WIDENING_LIMITATION,
+          affected_script_keys: [...input.widenedScripts],
+        },
+      ]),
+  ...(input.recoveredScripts.length === 0
+    ? []
+    : [
+        {
+          dimension: "javascript_ast" as const,
+          reason:
+            "The parser recovered from errors in one or more source artifacts; findings may be incomplete",
+          affected_script_keys: [...input.recoveredScripts],
+        },
+      ]),
+  ...(input.omittedSourceMaps === undefined
+    ? []
+    : [
+        {
+          dimension: "source_maps" as const,
+          reason: captureBudgetReason(
+            "source-map declarations",
+            input.omittedSourceMaps,
+          ),
+          affected_script_keys: [],
+        },
+      ]),
+  ...(input.sourceMaps.status === "not_requested" ||
+  input.sourceMaps.status === "included"
+    ? []
+    : [
+        {
+          dimension: "source_maps" as const,
+          reason:
+            input.sourceMaps.limitation ??
+            "One or more requested source maps were unavailable or incomplete",
+          affected_script_keys: input.sourceMaps.items
+            .filter(({ status }) => status !== "included")
+            .map(({ script_key }) => script_key)
+            .sort(),
+        },
+      ]),
+];
+
+const captureBudgetOmission = (
+  inspection: WebPageInspection,
+  section: "scripts" | "script_sources" | "source_maps",
+): number | null | undefined => {
+  const exclusions = inspection.completeness.excluded.filter(
+    (exclusion) =>
+      exclusion.section === section &&
+      exclusion.reason === "resource_budget_exhausted" &&
+      exclusion.count !== 0,
+  );
+  if (exclusions.length === 0) return undefined;
+  if (exclusions.some(({ count }) => count === null)) return null;
+  return exclusions.reduce((sum, { count }) => sum + (count ?? 0), 0);
+};
+
+const groupUnavailableAnalyses = (
+  unavailable: UnknownsInput["unavailableAnalyses"],
+): {
+  readonly reason: (typeof unavailable)[number]["reason"];
+  readonly detail: string | undefined;
+  readonly limit: (typeof unavailable)[number]["limit"];
+  readonly remediation: string | undefined;
+  readonly refusedPhase:
+    | NonNullable<(typeof unavailable)[number]["partial"]>["refused_phase"]
+    | undefined;
+  readonly affectedScriptKeys: string[];
+}[] => {
+  // Scripts share an unknown only when their structured recovery agrees too.
+  const groups = new Map<
+    string,
+    {
+      readonly entry: (typeof unavailable)[number];
+      readonly affectedScriptKeys: string[];
+    }
+  >();
+  for (const entry of unavailable) {
+    const key = JSON.stringify([
+      entry.reason,
+      entry.detail ?? null,
+      entry.limit ?? null,
+      entry.remediation ?? null,
+      entry.partial?.refused_phase ?? null,
+    ]);
+    const group = groups.get(key);
+    if (group === undefined)
+      groups.set(key, { entry, affectedScriptKeys: [entry.script_key] });
+    else group.affectedScriptKeys.push(entry.script_key);
+  }
+  return [...groups.values()].map(({ entry, affectedScriptKeys }) => ({
+    reason: entry.reason,
+    detail: entry.detail,
+    limit: entry.limit,
+    remediation: entry.remediation,
+    refusedPhase: entry.partial?.refused_phase,
+    affectedScriptKeys,
+  }));
+};
+
+const analysisUnavailableReason = (
+  reason: UnknownsInput["unavailableAnalyses"][number]["reason"],
+  detail: string | undefined,
+): string =>
+  `Analysis was unavailable for captured scripts (${reason}); findings from those scripts are unknown.${detail === undefined ? "" : ` Worker detail: ${JSON.stringify(detail)}`}`;
+
+const captureBudgetReason = (label: string, count: number | null): string =>
+  count === null
+    ? `Capture omitted an unknown number of ${label} because its resource budget was exhausted.`
+    : `Capture omitted ${String(count)} ${label} because its resource budget was exhausted.`;
+
+interface CompletenessInput {
+  readonly partial: boolean;
+  readonly parsedScripts: number;
+  readonly parseFailures: number;
+  readonly visitedNodes: number;
+}
+
+const buildCompleteness = (
+  input: CompletenessInput,
+): WebBundleAnalysis["completeness"] => ({
+  status: input.partial ? "partial" : "complete",
+  parsed_scripts: input.parsedScripts,
+  parse_failures: input.parseFailures,
+  visited_ast_nodes: input.visitedNodes,
+});
+
+/**
+ * Reported when findings are merged across scripts. Wording may change, but
+ * the limitation itself must stay so callers know the retained location is
+ * the first occurrence only.
+ */
+export const CROSS_SCRIPT_DEDUP_LIMITATION =
+  "Routes and endpoints are deduplicated across scripts by value and mechanism; the retained entry keeps the first occurrence's location, and occurrences and script_keys record the scripts that contained the same finding.";
+
+const bundleLimitations = (): WebBundleAnalysis["limitations"] => [
+  "Static bundle findings are observations or bounded inferences; REA does not execute captured JavaScript.",
+  "Bare string arguments of unbound HTTP-method-named calls are low-confidence endpoint candidates; form, translation, storage and other APIs can use the same syntax. URL-shaped findings still do not prove network execution.",
+  'Endpoint candidates are deduplicated by script, value and detector; basis retains only the first matching source coordinate. They are not a complete call-site inventory or a runtime occurrence count. completeness.status="complete" describes examination of captured source, not a call-site census.',
+  CROSS_SCRIPT_DEDUP_LIMITATION,
+  "String-built routes and endpoints, encrypted configuration, and server-side behavior may remain unknown.",
+  "Page-declared WebMCP metadata is untrusted and is never registered or invoked as an REA tool.",
+];

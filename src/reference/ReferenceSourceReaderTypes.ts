@@ -1,24 +1,34 @@
-import { type BigIntStats } from "node:fs";
+import type { Result } from "../domain/result.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 
-import { type Result } from "../domain/result.js";
+export type ReferenceSourceEntryKind =
+  | "file"
+  | "directory"
+  | "symlink"
+  | "other";
 
-export interface ReferenceSourceLimits {
-  readonly maxBytes: number;
-  readonly maxEntries: number;
-  readonly maxDepth: number;
-  readonly maxPathBytes: number;
-}
+/**
+ * Kind offered to exclusion predicates. `unknown` marks an entry whose
+ * metadata could not be read, so its concrete kind cannot be claimed.
+ */
+export type ReferenceSourceExclusionKind = ReferenceSourceEntryKind | "unknown";
 
 export interface ReferenceSourceReaderOptions {
   readonly signal?: AbortSignal;
-  readonly shouldExclude?: (path: string) => boolean;
+  /** Prepare policy after identity admission and opening, before enumeration; refusal closes the owned handle. */
+  readonly beforeDirectory?: (
+    path: string,
+  ) => Promise<ReferenceSourceResult<undefined>>;
+  readonly shouldExclude?: (
+    path: string,
+    kind: ReferenceSourceExclusionKind,
+  ) => boolean;
 }
 
 export type ReferenceSourceFailureCode =
   | "cancelled"
   | "changed"
   | "io"
-  | "limit"
   | "symlink"
   | "unsupported";
 
@@ -39,6 +49,7 @@ export type ReferenceSourceEntry =
       readonly status: "read";
       readonly kind: "symlink";
       readonly path: string;
+      /** Internal and relative missing targets are resolved from the inventory root. */
       readonly target: string;
       readonly targetState: "internal" | "external" | "missing";
     }
@@ -48,58 +59,37 @@ export type ReferenceSourceEntry =
       readonly path: string;
       readonly code: ReferenceSourceFailureCode;
       readonly message: string;
+      /** Exact filesystem presentation; may contain the selected local root path. */
+      readonly localDiagnostic?: string;
       readonly size?: number;
     };
 
+/** A failure enumerating an already admitted root, separate from its children. */
+export interface ReferenceSourceRootFailure {
+  readonly code: ReferenceSourceFailureCode;
+  readonly message: string;
+}
+
 export interface ReferenceSourceRead {
   readonly root: string;
+  readonly rootFailure?: ReferenceSourceRootFailure;
   readonly entries: readonly ReferenceSourceEntry[];
   readonly bytesRead: number;
-  readonly truncated: boolean;
   /** Node exposes no portable openat traversal; pathname identity is checked around each operation. */
   readonly limitations: readonly string[];
 }
 
 export interface ReferenceSourceReaderError {
   readonly tag: "reference-source-reader";
-  readonly code:
-    | "cancelled"
-    | "invalid-limits"
-    | "invalid-root"
-    | "io"
-    | "unsupported";
+  readonly code: "cancelled" | "invalid-root" | "io" | "unsupported";
   readonly message: string;
+  readonly remediationAction?: string;
+  readonly cleanup?: AnalysisCleanupObservation;
+  /** Exact caller cancellation observed after a distinct failure. */
+  readonly secondaryCancellation?: { readonly cause: unknown };
+  /** Captured entries before failure; this does not establish complete tree coverage. */
+  readonly partial?: ReferenceSourceRead;
+  readonly cause?: unknown;
 }
-
-export type BigStats = BigIntStats;
-
-export type PendingDirectory = {
-  readonly path: string;
-  readonly depth: number;
-};
-
-export type TraversalState = {
-  readonly root: string;
-  readonly rootIdentity: BigStats;
-  readonly limits: ReferenceSourceLimits;
-  readonly signal?: AbortSignal;
-  readonly shouldExclude?: (path: string) => boolean;
-  readonly entries: ReferenceSourceEntry[];
-  readonly pending: PendingDirectory[];
-  bytesRead: number;
-  filesSeen: number;
-  truncated: boolean;
-  stopped: boolean;
-};
-
-export type StableFileRequest = {
-  readonly root: string;
-  readonly rootIdentity: BigStats;
-  readonly absolute: string;
-  readonly path: string;
-  readonly expected: BigStats;
-  readonly remaining: number;
-  readonly signal?: AbortSignal;
-};
 
 export type ReferenceSourceResult<T> = Result<T, ReferenceSourceReaderError>;

@@ -35,15 +35,17 @@ const config = {
       command: "npx",
       args: [
         "-y",
-        JSON.parse(
-          await readFile(
-            resolve(
-              fileURLToPath(new URL("..", import.meta.url)),
-              "package.json",
+        `${
+          JSON.parse(
+            await readFile(
+              resolve(
+                fileURLToPath(new URL("..", import.meta.url)),
+                "package.json",
+              ),
+              "utf8",
             ),
-            "utf8",
-          ),
-        ).name,
+          ).name
+        }@latest`,
         "mcp",
       ],
       env,

@@ -2,39 +2,49 @@ import { enhancedInputSchemas } from "./enhancedInputs.js";
 import { createEvidence } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 
-const bounded = <Item>(items: readonly Item[]) => ({
-  items,
-  total: items.length,
-  returned: items.length,
-  truncated: false,
-  next_offset: null,
-});
-
 const dossier = (text: string) =>
   jsonValueSchema.parse({
     procedure: {
       address: "0x1000",
       name: "main",
+      symbol: {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "imported" as const,
+      },
+      classification: null,
+      body: {
+        available: false,
+        reason: "The fixture omits function-body extent observations.",
+      },
       signature: "int main(void)",
       locals: [],
     },
-    pseudocode: {
-      text,
-      total_chars: [...text].length,
-      returned_chars: [...text].length,
-      truncated: false,
-      next_offset: null,
+    pseudocode: text,
+    assembly: ["ret"],
+    comments: [],
+    callers: [],
+    callees: [],
+    incoming_references: [],
+    outgoing_references: [],
+    referenced_strings: [],
+    referenced_names: [],
+    basic_blocks: [{ start: "0x1000", end: "0x1001", successors: [] }],
+    native_api: null,
+    native_value_flow: null,
+    facet_availability: {
+      pseudocode: { available: true },
+      assembly: { available: true },
+      comments: { available: true },
+      callers: { available: true },
+      callees: { available: true },
+      references: { available: true },
+      strings_names: { available: true },
+      cfg: { available: true },
     },
-    assembly: bounded([]),
-    comments: bounded([]),
-    callers: bounded([]),
-    callees: bounded([]),
-    incoming_references: bounded([]),
-    outgoing_references: bounded([]),
-    referenced_strings: bounded([]),
-    referenced_names: bounded([]),
-    basic_blocks: bounded([{ start: "0x1000", end: "0x1001", successors: [] }]),
-    instruction_scan: { scanned: 1, truncated: false },
+    limitations: ["The fixture omits native API and value-flow observations."],
   });
 
 const observe = (digit: string, text: string) =>
@@ -57,6 +67,7 @@ const observe = (digit: string, text: string) =>
       result: dossier(text),
       confidence: "derived",
       authority: "shipped-artifact",
+      relationshipCoverage: { status: "complete" },
     },
   );
 

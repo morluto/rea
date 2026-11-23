@@ -1,3 +1,8 @@
+import { uniqueSorted } from "./canonicalOrdering.js";
+import {
+  compareUnicodeCodePoints,
+  compositeKey,
+} from "./unicodeCodePointOrder.js";
 import type {
   ReconstructionClaim,
   ReconstructionClaimResult,
@@ -18,18 +23,30 @@ export const reconstructionUnknownHeads = (
   return heads;
 };
 
-/** Find active unknowns that affect a comparison or one of its sources. */
+/** Overall claims include every scoped dimension; individual claims keep their scope. */
 export const reconstructionClaimUnknowns = (
   heads: ReadonlyMap<string, ResidualUnknown>,
   comparisonId: string,
   sourceIds: readonly string[],
+  dimensions?: readonly string[],
 ): ResidualUnknown[] => {
+  const appliesToClaim = (item: ResidualUnknown): boolean => {
+    const scope = item.comparison_conclusion_scope;
+    return (
+      scope === undefined ||
+      (scope.comparison_evidence_id === comparisonId &&
+        (dimensions === undefined ||
+          dimensions.includes("overall") ||
+          scope.dimensions.some((dimension) => dimensions.includes(dimension))))
+    );
+  };
   const evidenceIds = new Set([comparisonId, ...sourceIds]);
   const relevantIds = new Set(
     [...heads.values()]
       .filter(
         (item) =>
           item.status !== "resolved" &&
+          appliesToClaim(item) &&
           [
             ...item.supporting_evidence_ids,
             ...item.contradicting_evidence_ids,
@@ -62,18 +79,15 @@ export const reconstructionClaimUnknowns = (
       return unknown === undefined ? [] : [unknown];
     })
     .sort((left, right) =>
-      left.unknown_id.localeCompare(right.unknown_id, "en"),
+      compareUnicodeCodePoints(left.unknown_id, right.unknown_id),
     );
 };
 
-/** Aggregate and bound deterministic probes for unresolved claims. */
+/** Aggregate deterministic probes for unresolved claims. */
 export const reconstructionProbes = (
   results: readonly ReconstructionClaimResult[],
   heads: ReadonlyMap<string, ResidualUnknown>,
-): {
-  readonly items: ReconstructionVerificationResult["recommended_probes"];
-  readonly truncated: boolean;
-} => {
+): ReconstructionVerificationResult["recommended_probes"] => {
   const output = new Map<
     string,
     {
@@ -91,7 +105,7 @@ export const reconstructionProbes = (
     const probes = unknowns.flatMap(({ recommended_probes: items }) => items);
     const candidates = probes.length > 0 ? probes : [defaultProbe(result.kind)];
     for (const probe of candidates) {
-      const key = `${probe.operation}\0${probe.rationale}`;
+      const key = compositeKey([probe.operation, probe.rationale]);
       const current = output.get(key) ?? {
         ...probe,
         claim_ids: [],
@@ -106,12 +120,12 @@ export const reconstructionProbes = (
     }
   }
   const sorted = [...output.values()].sort((left, right) =>
-    `${left.operation}\0${left.rationale}`.localeCompare(
-      `${right.operation}\0${right.rationale}`,
-      "en",
+    compareUnicodeCodePoints(
+      compositeKey([left.operation, left.rationale]),
+      compositeKey([right.operation, right.rationale]),
     ),
   );
-  return { items: sorted.slice(0, 2_000), truncated: sorted.length > 2_000 };
+  return sorted;
 };
 
 const defaultProbe = (
@@ -127,11 +141,14 @@ const defaultProbe = (
           operation: "analyze_function",
           rationale: "Capture complete function dossiers under equal limits.",
         }
-      : {
-          operation: "inventory_artifact",
-          rationale:
-            "Capture complete artifact inventories under equal limits.",
-        };
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [...new Set(values)].sort((left, right) => left.localeCompare(right, "en"));
+      : kind === "visual"
+        ? {
+            operation: "capture_web_screenshot",
+            rationale:
+              "Capture both visible viewports under the same browser scope.",
+          }
+        : {
+            operation: "inspect_artifact",
+            rationale:
+              "Capture complete artifact inventories under equal limits.",
+          };

@@ -1,278 +1,265 @@
-import { DirectedGraph } from "graphology";
-import { bidirectional } from "graphology-shortest-path/unweighted.js";
 import { z } from "zod";
-
-import { evidenceSchema } from "./evidence.js";
+import {
+  combineRelationshipDiscovery,
+  relationshipCoverageLimitations,
+  type RelationshipDiscoveryStatus,
+} from "./relationshipCoverage.js";
+import {
+  callPathInputSchema,
+  callPathResultSchema,
+  type CallPathResult,
+  type OutputCallPath,
+} from "./callPathSchemas.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import { analysisInputErrorFromIssues } from "./inputIssueProjection.js";
+import { readEvidencePayload } from "./evidenceValidation.js";
+import { nativeAddressInputSchema } from "./native/nativeAddress.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 import {
   parseFunctionEvidence,
   type FunctionSnapshot,
 } from "./functionDossierEvidence.js";
+import { isCallerOnlyIncompleteCoverage } from "./functionCallCoverage.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import { appendAll } from "./appendAll.js";
+import { sameTargetIdentity } from "./targetIdentity.js";
 
-const addressSchema = z.string().regex(/^0x(?:0|[1-9a-f][0-9a-f]*)$/u);
-const inputAddressSchema = z
-  .string()
-  .regex(/^0[xX][0-9a-fA-F]+$/u)
-  .transform((address) => `0x${BigInt(address).toString(16)}`);
-const evidenceIdSchema = z.string().regex(/^ev_[a-f0-9]{64}$/u);
-const evidenceGroupSchema = z.union([
-  evidenceSchema,
-  z.array(evidenceSchema).min(1).max(100),
-]);
-const MAX_EVIDENCE_PAGES = 2_000;
-const MAX_GRAPH_EDGES = 10_000;
-const MAX_PATH_EXPANSIONS = 100_000;
+/** Minimal directed caller-to-callee adjacency for call-path search. */
+class CallGraph {
+  private readonly successors = new Map<string, Set<string>>();
+  private readonly predecessors = new Map<string, Set<string>>();
 
-/** Strict, bounded input for explicit call-path reconstruction. */
-export const callPathInputSchema = z
-  .object({
-    functions: z.array(evidenceGroupSchema).min(1).max(500),
-    start: z.object({ address: inputAddressSchema }).strict(),
-    goal: z.object({ address: inputAddressSchema }).strict(),
-    max_depth: z.number().int().min(0).max(32).default(8),
-    max_paths: z.number().int().min(1).max(100).default(10),
-    offset: z.number().int().min(0).default(0),
-    limit: z.number().int().min(1).max(100).default(100),
-    unknown_registry_approved: z.literal(true).optional(),
-  })
-  .superRefine(({ functions }, context) => {
-    const pages = functions.reduce(
-      (total, group) => total + (Array.isArray(group) ? group.length : 1),
-      0,
-    );
-    if (pages > MAX_EVIDENCE_PAGES)
-      context.addIssue({
-        code: "custom",
-        message: `Call-path Evidence exceeds ${MAX_EVIDENCE_PAGES} pages`,
-        path: ["functions"],
-      });
-  });
+  mergeNode(node: string): void {
+    if (!this.successors.has(node)) this.successors.set(node, new Set());
+    if (!this.predecessors.has(node)) this.predecessors.set(node, new Set());
+  }
 
-const citedNodeSchema = z.object({
-  address: addressSchema,
-  name: z.string().nullable(),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(100),
-});
-const citedEdgeSchema = z.object({
-  source: addressSchema,
-  target: addressSchema,
-  evidence_links: z.array(evidenceIdSchema).min(1).max(100),
-});
-const pathSchema = z.object({
-  hops: z.number().int().min(0),
-  nodes: z.array(citedNodeSchema).min(1).max(33),
-  edges: z.array(citedEdgeSchema).max(32),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(3_300),
-});
+  mergeDirectedEdge(source: string, target: string): void {
+    this.mergeNode(source);
+    this.mergeNode(target);
+    this.successors.get(source)?.add(target);
+    this.predecessors.get(target)?.add(source);
+  }
 
-/** Evidence-cited, bounded directed call-path result. */
-export const callPathResultSchema = z.object({
-  status: z.enum(["found", "not_found", "unknown", "truncated"]),
-  start: addressSchema,
-  goal: addressSchema,
-  shortest_hops: z.number().int().min(0).nullable(),
-  search_scope: z.object({
-    max_depth: z.number().int().min(0).max(32),
-    max_paths: z.number().int().min(1).max(100),
-    exhaustive: z.boolean(),
-  }),
-  explored: z.object({
-    nodes: z.number().int().min(0),
-    edges: z.number().int().min(0),
-    depth_reached: z.number().int().min(0),
-  }),
-  paths: z.object({
-    items: z.array(pathSchema).max(100),
-    offset: z.number().int().min(0),
-    limit: z.number().int().min(1).max(100),
-    total: z.number().int().min(0).nullable(),
-    returned: z.number().int().min(0).max(100),
-    truncated: z.boolean(),
-    lower_bound: z.number().int().min(0),
-    next_offset: z.number().int().min(0).nullable(),
-  }),
-  evidence_links: z.array(evidenceIdSchema).min(1).max(50_000),
-  limitations: z.array(z.string()),
-});
+  hasNode(node: string): boolean {
+    return this.successors.has(node);
+  }
 
-export type CallPathInput = z.infer<typeof callPathInputSchema>;
-export type CallPathResult = z.infer<typeof callPathResultSchema>;
-type OutputPath = z.infer<typeof pathSchema>;
+  outNeighbors(node: string): string[] {
+    return [...(this.successors.get(node) ?? [])];
+  }
+
+  inNeighbors(node: string): string[] {
+    return [...(this.predecessors.get(node) ?? [])];
+  }
+}
+
+/** Shortest remaining distance for every node that can reach the goal. */
+const distancesToGoal = (
+  graph: CallGraph,
+  goal: string,
+): ReadonlyMap<string, number> => {
+  if (!graph.hasNode(goal)) return new Map();
+  const depth = new Map<string, number>([[goal, 0]]);
+  const queue = [goal];
+  for (let index = 0; index < queue.length; index += 1) {
+    const node = queue[index] ?? "";
+    const next = (depth.get(node) ?? 0) + 1;
+    for (const neighbor of graph.inNeighbors(node)) {
+      if (!depth.has(neighbor)) {
+        depth.set(neighbor, next);
+        queue.push(neighbor);
+      }
+    }
+  }
+  return depth;
+};
 
 interface SearchState {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
-  readonly reached: ReadonlyMap<string, number>;
+  /**
+   * Forward-search extent, counted where the search does its work: functions
+   * discovered (including unexpanded terminals), direct-callee edges examined
+   * while expanding non-goal functions, and the greatest discovery depth.
+   */
+  readonly explored: CallPathResult["explored"];
   readonly exhaustive: boolean;
+  readonly discovery: RelationshipDiscoveryStatus;
   readonly limitations: readonly string[];
 }
 
-/** Reconstruct bounded direct-callee paths from explicit analyze_function Evidence. */
-export const buildCallPath = (input: CallPathInput): CallPathResult => {
-  const parsed = callPathInputSchema.parse(input);
-  const snapshots = parseSnapshots(parsed.functions);
-  assertCompatible(snapshots);
-  if (!snapshots.has(parsed.start.address))
-    throw new TypeError(
-      `No analyze_function Evidence was supplied for start ${parsed.start.address}`,
+const callPathEnvelopeSchema = callPathInputSchema.extend({
+  functions: z.array(z.unknown()).min(1),
+});
+
+/** Reconstruct direct-callee paths from explicit analyze_function Evidence. */
+export const buildCallPath = (input: unknown): CallPathResult => {
+  const selected = callPathEnvelopeSchema.safeParse(input);
+  if (!selected.success)
+    throw analysisInputErrorFromIssues(
+      "build_call_path",
+      selected.error.issues,
+      input,
+      { cause: selected.error },
     );
-  const graph = createGraph(snapshots);
+  const parsed = selected.data;
+  const { snapshots, graph } = prepareCallGraph(parsed);
   const search = inspectSearch({
     graph,
     snapshots,
     start: parsed.start.address,
     goal: parsed.goal.address,
-    maxDepth: parsed.max_depth,
   });
-  const shortest =
-    graph.hasNode(parsed.start.address) && graph.hasNode(parsed.goal.address)
-      ? bidirectional(graph, parsed.start.address, parsed.goal.address)
-      : null;
-  const enumeration =
-    shortest === null || shortest.length - 1 > parsed.max_depth
-      ? { paths: [], budgetExhausted: false }
+  const goalDistances = distancesToGoal(graph, parsed.goal.address);
+  const shortestDepth = goalDistances.get(parsed.start.address) ?? null;
+  const paths =
+    shortestDepth === null
+      ? []
       : enumeratePaths({
           graph,
           start: parsed.start.address,
           goal: parsed.goal.address,
-          shortestDepth: shortest.length - 1,
-          maxDepth: parsed.max_depth,
-          limit: parsed.max_paths + 1,
-        });
-  const hasKnownExtraPath = enumeration.paths.length > parsed.max_paths;
-  const capped = hasKnownExtraPath || enumeration.budgetExhausted;
-  const retained = enumeration.paths.slice(0, parsed.max_paths);
-  const paths = retained.map((path) => citePath(path, snapshots));
-  const total = paths.length;
-  const items = paths.slice(parsed.offset, parsed.offset + parsed.limit);
-  const found = paths.length > 0;
-  const exhaustive = search.exhaustive && !capped;
-  const status = callPathStatus({ capped, found, exhaustive });
-  const limitations = [...search.limitations];
-  if (capped)
-    limitations.push(
-      enumeration.budgetExhausted
-        ? `Path enumeration stopped at ${MAX_PATH_EXPANSIONS} expansions`
-        : `Path enumeration stopped at max_paths=${parsed.max_paths}`,
-    );
-  if (!found && shortest !== null && shortest.length - 1 > parsed.max_depth)
-    limitations.push(
-      `The shortest observed path exceeds max_depth=${parsed.max_depth}`,
-    );
-  return callPathResultSchema.parse({
-    status,
+          goalDistances,
+        }).paths.map((path) => citePath(path, snapshots));
+  const shortestHops = paths[0]?.hops;
+  const found = shortestHops !== undefined;
+  const exhaustive = search.exhaustive;
+  const limitations = search.limitations;
+  const resultContext = {
     start: parsed.start.address,
     goal: parsed.goal.address,
-    shortest_hops: found ? (paths[0]?.hops ?? null) : null,
-    search_scope: {
-      max_depth: parsed.max_depth,
-      max_paths: parsed.max_paths,
-      exhaustive,
-    },
-    explored: {
-      nodes: search.reached.size,
-      edges: [...search.reached.keys()].reduce(
-        (count, node) =>
-          count + (graph.hasNode(node) ? graph.outDegree(node) : 0),
-        0,
-      ),
-      depth_reached: Math.max(0, ...search.reached.values()),
-    },
-    paths: {
-      items,
-      offset: parsed.offset,
-      limit: parsed.limit,
-      total: capped ? null : total,
-      returned: items.length,
-      truncated: capped,
-      lower_bound: total + (hasKnownExtraPath ? 1 : 0),
-      next_offset:
-        parsed.offset + items.length < total
-          ? parsed.offset + items.length
-          : null,
-    },
+    explored: search.explored,
     evidence_links: uniqueEvidence(snapshots.values()),
-    limitations: [...new Set(limitations)].sort((left, right) =>
-      left.localeCompare(right),
-    ),
+    limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
+  };
+  const searchScope = {
+    exhaustive,
+    graph: "supplied_evidence" as const,
+    discovery: search.discovery,
+    observed_status: found
+      ? ("found" as const)
+      : exhaustive
+        ? ("not_found" as const)
+        : ("unknown" as const),
+  };
+  if (found)
+    return callPathResultSchema.parse({
+      ...resultContext,
+      status: "found",
+      shortest_hops: shortestHops,
+      search_scope: searchScope,
+      paths,
+    });
+  return callPathResultSchema.parse({
+    ...resultContext,
+    status:
+      exhaustive && search.discovery === "complete" ? "not_found" : "unknown",
+    shortest_hops: null,
+    search_scope: searchScope,
+    paths: [],
   });
 };
 
-const callPathStatus = ({
-  capped,
-  found,
-  exhaustive,
-}: {
-  readonly capped: boolean;
-  readonly found: boolean;
-  readonly exhaustive: boolean;
-}): CallPathResult["status"] => {
-  if (capped) return "truncated";
-  if (found) return "found";
-  return exhaustive ? "not_found" : "unknown";
+const prepareCallGraph = (input: z.infer<typeof callPathEnvelopeSchema>) => {
+  const { snapshots, graph } = parseSnapshots(input.functions);
+  assertCompatible(snapshots);
+  if (!snapshots.has(input.start.address))
+    throw invalidCallPathSelection(
+      ["start", "address"],
+      `No analyze_function Evidence was supplied for start ${input.start.address}`,
+    );
+  return { snapshots, graph };
 };
 
 const parseSnapshots = (
-  groups: readonly z.infer<typeof evidenceGroupSchema>[],
-): Map<string, FunctionSnapshot> => {
+  groups: readonly unknown[],
+): {
+  readonly snapshots: Map<string, FunctionSnapshot>;
+  readonly graph: CallGraph;
+} => {
   const snapshots = new Map<string, FunctionSnapshot>();
-  for (const group of groups) {
-    const snapshot = parseFunctionEvidence(group);
-    const address = normalizeAddress(snapshot.procedure.address);
-    for (const callee of snapshot.collections.callees.items)
-      normalizeAddress(callee.address);
+  const graph = new CallGraph();
+  for (const [index, group] of groups.entries()) {
+    const parsed = parseFunctionEvidence(group, {
+      operation: "build_call_path",
+      path: ["functions", index],
+    });
+    if (!parsed.ok) throw parsed.error;
+    const snapshot = parsed.value;
+    const parsedAddress = readEvidencePayload(
+      nativeAddressInputSchema,
+      snapshot.dossier.procedure.address,
+    );
+    if (!parsedAddress.ok) throw parsedAddress.error;
+    const address = parsedAddress.value;
     if (snapshots.has(address))
-      throw new TypeError(`Duplicate function Evidence for ${address}`);
+      throw invalidCallPathSelection(
+        ["functions", index],
+        `Duplicate function Evidence for ${address}`,
+      );
+    graph.mergeNode(address);
+    for (const callee of snapshot.dossier.callees) {
+      const parsedCallee = readEvidencePayload(
+        nativeAddressInputSchema,
+        callee.address,
+      );
+      if (!parsedCallee.ok) throw parsedCallee.error;
+      graph.mergeDirectedEdge(address, parsedCallee.value);
+    }
     snapshots.set(address, snapshot);
   }
-  return snapshots;
+  return { snapshots, graph };
 };
 
 const assertCompatible = (
   snapshots: ReadonlyMap<string, FunctionSnapshot>,
 ): void => {
-  const first = snapshots.values().next().value as FunctionSnapshot | undefined;
-  if (first === undefined) return;
+  const firstEntry = snapshots.values().next();
+  if (firstEntry.done) return;
+  const first = firstEntry.value;
   for (const snapshot of snapshots.values()) {
+    if (!sameTargetIdentity(snapshot.target, first.target))
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence mixes artifact subjects",
+      );
     if (
-      snapshot.subject.digest.sha256 !== first.subject.digest.sha256 ||
-      snapshot.subject.format !== first.subject.format ||
-      snapshot.subject.architecture !== first.subject.architecture
+      snapshot.evidence.provider.id !== first.evidence.provider.id ||
+      snapshot.evidence.provider.name !== first.evidence.provider.name ||
+      snapshot.evidence.provider.version !== first.evidence.provider.version
     )
-      throw new TypeError("Call-path Evidence mixes artifact subjects");
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence mixes providers",
+      );
+    const firstProfile = first.evidence.analysis_profile;
+    const profile = snapshot.evidence.analysis_profile;
     if (
-      snapshot.provider.id !== first.provider.id ||
-      snapshot.provider.name !== first.provider.name ||
-      snapshot.provider.version !== first.provider.version
+      (firstProfile?.parameters.function_coordinate_context !== undefined ||
+        profile?.parameters.function_coordinate_context !== undefined) &&
+      !functionCoordinateContextsEqual(firstProfile, profile)
     )
-      throw new TypeError("Call-path Evidence mixes providers");
+      throw invalidCallPathSelection(
+        ["functions"],
+        "Call-path Evidence has incompatible or unestablished function coordinate contexts",
+      );
   }
 };
 
-const createGraph = (
-  snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): DirectedGraph => {
-  const graph = new DirectedGraph({ allowSelfLoops: true, multi: false });
-  for (const [address, snapshot] of snapshots) {
-    graph.mergeNode(address);
-    for (const callee of snapshot.collections.callees.items) {
-      const calleeAddress = normalizeAddress(callee.address);
-      graph.mergeNode(calleeAddress);
-      graph.mergeDirectedEdge(address, calleeAddress);
-      if (graph.size > MAX_GRAPH_EDGES)
-        throw new TypeError(
-          `Call graph exceeds ${MAX_GRAPH_EDGES} directed edges`,
-        );
-    }
-  }
-  return graph;
-};
+const invalidCallPathSelection = (
+  path: readonly (string | number)[],
+  message: string,
+): AnalysisInputError =>
+  new AnalysisInputError("build_call_path", { userMessage: message }, [
+    { path, reason: "invalid_value", message },
+  ]);
 
 interface SearchInput {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly snapshots: ReadonlyMap<string, FunctionSnapshot>;
   readonly start: string;
   readonly goal: string;
-  readonly maxDepth: number;
 }
 
 const inspectSearch = ({
@@ -280,45 +267,81 @@ const inspectSearch = ({
   snapshots,
   start,
   goal,
-  maxDepth,
 }: SearchInput): SearchState => {
-  if (!graph.hasNode(start))
-    return {
-      graph,
-      snapshots,
-      reached: new Map(),
-      exhaustive: false,
-      limitations: [
-        `No analyze_function Evidence was supplied for start ${start}`,
-      ],
-    };
   const reached = new Map<string, number>([[start, 0]]);
   const queue = [start];
   const limitations: string[] = [];
+  let incompleteExpandedCoverage = false;
+  let discovery: RelationshipDiscoveryStatus = "complete";
+  let expandedEdges = 0;
+  let depthReached = 0;
   for (let index = 0; index < queue.length; index += 1) {
     const node = queue[index];
     if (node === undefined) continue;
     const depth = reached.get(node) ?? 0;
-    if (node === goal) continue;
+    depthReached = Math.max(depthReached, depth);
     const snapshot = snapshots.get(node);
+    if (snapshot !== undefined) {
+      const coverage = snapshot.evidence.relationship_coverage;
+      for (const limitation of snapshot.limitations)
+        limitations.push(limitation);
+      appendAll(limitations, snapshot.unresolvedCallCaveats);
+      if (coverage !== null) {
+        for (const limitation of relationshipCoverageLimitations(coverage))
+          limitations.push(limitation);
+        for (const diagnostic of coverage.diagnostics ?? [])
+          limitations.push(diagnostic);
+      }
+      // The requested goal is a terminal for this search. Its outgoing edges
+      // cannot add a path to the goal, so its dossier limits are contextual
+      // but do not make the searched start-to-goal closure incomplete.
+      if (node === goal) continue;
+      const discoveryFact = coverage?.discovery?.callees;
+      if (
+        discoveryFact !== undefined &&
+        discoveryFact.status !== "complete" &&
+        discoveryFact.reason !== undefined
+      )
+        limitations.push(
+          `Call discovery for ${node} is ${discoveryFact.status}: ${discoveryFact.reason}`,
+        );
+      discovery = combineRelationshipDiscovery(discovery, coverage, "callees");
+      if (snapshot.unresolvedCallCaveats.length > 0)
+        incompleteExpandedCoverage = true;
+      const callees = snapshot.dossier.facet_availability?.callees;
+      if (callees?.available === false) {
+        limitations.push(callees.reason);
+        incompleteExpandedCoverage = true;
+      }
+      // Explicit, Evidence-bound relationship coverage owns completeness;
+      // generic provider/dossier limitations remain contextual. Evidence from
+      // a provider that reports no relationship coverage keeps the
+      // conservative limitation-based rule.
+      // The search only expands callee edges, so coverage that is unknown
+      // solely because callers are unobservable does not make the searched
+      // callee closure incomplete; the caller caveat stays in limitations.
+      if (
+        coverage === null
+          ? snapshot.limitations.length > 0
+          : coverage.status !== "complete" &&
+            !isCallerOnlyIncompleteCoverage(coverage)
+      )
+        incompleteExpandedCoverage = true;
+    } else if (node === goal) {
+      continue;
+    }
     if (snapshot === undefined) {
+      discovery = combineRelationshipDiscovery(discovery, null, "callees");
       limitations.push(
         `No analyze_function Evidence covers reachable function ${node}`,
       );
+      incompleteExpandedCoverage = true;
       continue;
     }
-    if (!snapshot.collections.callees.complete)
-      limitations.push(
-        `Callee coverage is incomplete for reachable function ${node}`,
-      );
-    const neighbors = graph
-      .outNeighbors(node)
-      .sort((left, right) => left.localeCompare(right));
-    if (depth === maxDepth) {
-      if (neighbors.length > 0)
-        limitations.push(`Search reached max_depth=${maxDepth} at ${node}`);
-      continue;
-    }
+    const neighbors = graph.outNeighbors(node).sort(compareUnicodeCodePoints);
+    // Count only edges this expansion examines; a terminal goal's outgoing
+    // relationships never reach this point and so never count as explored.
+    expandedEdges += neighbors.length;
     for (const neighbor of neighbors)
       if (!reached.has(neighbor)) {
         reached.set(neighbor, depth + 1);
@@ -328,94 +351,83 @@ const inspectSearch = ({
   return {
     graph,
     snapshots,
-    reached,
-    exhaustive: limitations.length === 0,
+    explored: {
+      nodes: reached.size,
+      edges: expandedEdges,
+      depth_reached: depthReached,
+    },
+    exhaustive: !incompleteExpandedCoverage,
+    discovery,
     limitations,
   };
 };
 
 interface EnumerationInput {
-  readonly graph: DirectedGraph;
+  readonly graph: CallGraph;
   readonly start: string;
   readonly goal: string;
-  readonly shortestDepth: number;
-  readonly maxDepth: number;
-  readonly limit: number;
+  readonly goalDistances: ReadonlyMap<string, number>;
 }
 
 const enumeratePaths = ({
   graph,
   start,
   goal,
-  shortestDepth,
-  maxDepth,
-  limit,
+  goalDistances,
 }: EnumerationInput): {
   readonly paths: string[][];
-  readonly budgetExhausted: boolean;
 } => {
   const output: string[][] = [];
-  const state: EnumerationState = {
-    graph,
-    goal,
-    path: [start],
-    visited: new Set([start]),
-    output,
-    limit,
-    expansions: 0,
-    budgetExhausted: false,
+  const path = [start];
+  const neighbors = new Map<string, readonly string[]>();
+  const frame = (node: string): EnumerationFrame => {
+    let candidates = neighbors.get(node);
+    if (candidates === undefined) {
+      const distance = goalDistances.get(node);
+      candidates = graph
+        .outNeighbors(node)
+        .filter(
+          (neighbor) =>
+            distance !== undefined &&
+            goalDistances.get(neighbor) === distance - 1,
+        )
+        .sort(compareUnicodeCodePoints);
+      neighbors.set(node, candidates);
+    }
+    return { neighbors: candidates, nextIndex: 0 };
   };
-  for (
-    let depth = shortestDepth;
-    depth <= maxDepth && output.length < limit;
-    depth += 1
-  )
-    enumerateAtDepth(state, depth);
-  return { paths: output, budgetExhausted: state.budgetExhausted };
-};
-
-interface EnumerationState {
-  readonly graph: DirectedGraph;
-  readonly goal: string;
-  readonly path: string[];
-  readonly visited: Set<string>;
-  readonly output: string[][];
-  readonly limit: number;
-  expansions: number;
-  budgetExhausted: boolean;
-}
-
-const enumerateAtDepth = (state: EnumerationState, remaining: number): void => {
-  const { graph, goal, path, visited, output, limit } = state;
-  state.expansions += 1;
-  if (state.expansions > MAX_PATH_EXPANSIONS) {
-    state.budgetExhausted = true;
-    return;
-  }
-  const current = path.at(-1);
-  if (current === undefined || output.length >= limit) return;
-  if (remaining === 0) {
-    if (current === goal) output.push([...path]);
-    return;
-  }
-  if (current === goal) return;
-  for (const neighbor of graph
-    .outNeighbors(current)
-    .sort((left, right) => left.localeCompare(right))) {
-    if (visited.has(neighbor)) continue;
-    visited.add(neighbor);
+  const pending = [frame(start)];
+  while (pending.length > 0) {
+    const current = pending.at(-1);
+    if (current === undefined) break;
+    if (path.at(-1) === goal) {
+      output.push([...path]);
+      pending.pop();
+      path.pop();
+      continue;
+    }
+    const neighbor = current.neighbors[current.nextIndex];
+    if (neighbor === undefined) {
+      pending.pop();
+      path.pop();
+      continue;
+    }
+    current.nextIndex += 1;
     path.push(neighbor);
-    enumerateAtDepth(state, remaining - 1);
-    path.pop();
-    visited.delete(neighbor);
-    if (output.length >= limit || state.budgetExhausted) return;
+    pending.push(frame(neighbor));
   }
+  return { paths: output };
 };
+
+interface EnumerationFrame {
+  readonly neighbors: readonly string[];
+  nextIndex: number;
+}
 
 const citePath = (
   addresses: readonly string[],
   snapshots: ReadonlyMap<string, FunctionSnapshot>,
-): OutputPath => {
+): OutputCallPath => {
   const edges = addresses.slice(0, -1).map((source, index) => {
     const target = addresses[index + 1];
     if (target === undefined)
@@ -433,7 +445,7 @@ const citePath = (
       (index > 0 ? snapshots.get(addresses[index - 1] ?? "") : undefined);
     return {
       address,
-      name: snapshot?.procedure.name ?? null,
+      name: snapshot?.dossier.procedure.name ?? null,
       evidence_links: snapshotLinks(supporting),
     };
   });
@@ -454,13 +466,10 @@ const citePath = (
 const snapshotLinks = (snapshot: FunctionSnapshot | undefined): string[] => {
   if (snapshot === undefined)
     throw new TypeError("Every call-path claim requires supporting Evidence");
-  return snapshot.evidence.map(({ evidence_id }) => evidence_id);
+  return [snapshot.evidence.evidence_id];
 };
 
 const uniqueEvidence = (snapshots: Iterable<FunctionSnapshot>): string[] =>
   [
     ...new Set([...snapshots].flatMap((snapshot) => snapshotLinks(snapshot))),
-  ].sort((left, right) => left.localeCompare(right));
-
-const normalizeAddress = (input: string): string =>
-  inputAddressSchema.parse(input);
+  ].sort(compareUnicodeCodePoints);

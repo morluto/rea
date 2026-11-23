@@ -1,76 +1,154 @@
 # Repository Guidelines
 
-## Product Direction
+## Product and Authority
 
-REA exposes reverse-engineering tools through a CLI and MCP server. Hopper is its current binary-analysis provider; keep provider-specific code out of the domain and application layers.
+REA is a local-only reverse-engineering tool with shared CLI/MCP workflows. Distinguish observations, derivations, inferences, and unknowns; preserve Evidence provenance and session semantics through both adapters. Provider support and setup live in [README.md](README.md#choosing-a-deep-analysis-provider) and its linked guides.
 
-Prioritize:
+Follow the [contribution scope and fail-closed integration rule](CONTRIBUTING.md#contribution-scope). Do not integrate capabilities while material scope, authority, side-effect, or required verification questions remain unresolved. For new providers or capabilities involving target execution, injection, mutation, or protection recovery, seek the required maintainer scope decision before substantial implementation for integration. Welcome early proposals, small exploratory prototypes, and draft PRs that help resolve questions; they do not authorize integration.
 
-- tool results that distinguish observations, inferences, and unknowns;
-- equivalent behavior through the CLI and MCP;
-- additive, idempotent configuration with backups;
-- end-to-end tests for packaged artifacts and real Hopper claims.
+Ghidra uses ephemeral databases without modifying executable bytes or controlling a GUI; Windows Ghidra P0 has no mutation authority. IDA analysis is read-only; never save or close an attached GUI database.
 
-Installers must not install or upgrade Homebrew, Node.js, npm, or other unrelated software. `rea setup` must print its planned changes and require approval before writing files or installing Hopper.
+Configuration changes must be additive and idempotent, with backups. Installers must not install or upgrade unrelated software, including Homebrew, Node.js, npm, Java, or Ghidra. Ghidra and IDA are bring-your-own. `rea setup` must show its planned changes and require approval before writing files or installing Hopper.
 
-REA is a local-only tool; do not sanitize actionable local diagnostics such as artifact paths, digests, mismatch locations, or analysis metadata, while continuing to redact genuine secrets such as credentials and authorization headers.
+Preserve caller-selected inputs and local evidence, including output, URLs, paths, digests, and metadata. Redact transport authentication credentials and explicitly marked sensitive values; do not infer secrecy from names or text patterns. Do not persist the ambient environment merely because a child inherits it.
 
-## Project Structure & Module Organization
+## Architecture and Cleanup
 
-REA is a layered ESM TypeScript application. Dependencies flow inward: `domain` ← `contracts` ← `hopper` ← `application` ← `server` ← adapters.
+Dependencies flow inward: domain semantics and contracts, provider adapters, shared application workflows, then CLI/MCP adapters. Keep engine protocols and provider-specific code out of domain/application layers. Read the relevant wiring in `src/composition/` when changing composition.
 
-See [docs/architecture.mermaid](docs/architecture.mermaid) for a visual architecture diagram.
+Give each interpretation and resource a clear owner. Consumers must use that owner's parsed facts rather than reinterpret raw source. Preserve identity, omission, uncertainty, and source evidence across boundaries. Retain ownership of resources whose cleanup failed. Reuse `src/process/` supervision and identity primitives; a PID and executable path alone do not establish ownership after exit or reuse.
 
-- `scripts/rea.mjs`: executable dispatcher. Routes only bare `mcp` and `--mcp` to the production stdio server; Incur handles registration utilities and one-shot commands.
-- `src/main.ts`: MCP adapter. Parses config, wires the shared session runtime, starts stdio transport, and owns process-lifetime shutdown.
-- `src/cli.ts`: one-shot CLI adapter for setup, diagnostics, analysis, and decompilation.
-- `src/config.ts`: Zod-validated parsing of environment configuration into `AppConfig`.
-- `src/domain/`: pure, side-effect-free modules. `errors.ts` (tagged error algebra), `result.ts` (`Result`/`ok`/`err`), `hopperValues.ts` (boundary parsers for Hopper JSON), `symbolAnalysis.ts` (Swift/ObjC name parsing).
-- `src/contracts/`: caller-visible schemas for 33 direct, 10 enhanced, 5 native, 2 artifact, and 18 session tools; `enhancedInputs.ts` owns enhanced input parsing.
-- `src/hopper/`: Hopper launch and Unix-socket protocol mechanics. `BridgeLauncher.ts` spawns the Hopper app with the in-process bridge, `HopperClient.ts` correlates request/response over the socket with timeouts and cancellation, `protocol.ts` frames bridge messages.
-- `bridge/hopper_bridge.py`: runs inside Hopper and adapts declared operations to Hopper's public Python API. Hopper's bundled MCP server is not used.
-- `src/application/`: shared CLI/MCP session composition, setup and diagnostics, and enhanced workflows.
-- `src/server/`: MCP request translation. `createServer.ts` assembles the MCP server, `registerOfficialTools.ts`/`registerEnhancedTools.ts` register each tool set, `toolResult.ts` maps `Result` values to MCP content.
-- `tests/`: Vitest suite. `tests/fixtures/` holds the fake launcher and fake Hopper bridge used as production seams.
-- `scripts/verify-real-hopper.mjs`: real-Hopper end-to-end verifier.
-- `scripts/print-mcp-config.mjs`: prints an MCP server config with absolute paths filled in (`npm run config:print -- /path/to/binary`).
+Keep proof of ownership separate from validity, editability, and readiness. Malformed owned data may still be safely removable. Unresolved identity or applicability must remain unknown rather than be treated as absent, foreign, or aligned.
 
-## Build, Test, and Development Commands
+For lifecycle changes, follow [ownership and completion invariants](docs/development/tool-design.md#own-the-lifecycle) and select the applicable [lifecycle regressions](docs/development/testing.md#lifecycle-regressions). Include late handshakes, cancellation during final cleanup, mixed child outcomes, and cleanup retry where those stages exist; active-execution cancellation alone does not cover finalization.
 
-- `npm ci`: install exact lockfile dependencies.
-- `npm run build`: compile `src/` into `dist/`.
-- `npm test`: build, then run the Vitest suite once.
-- `npm run typecheck`: run strict TypeScript checks without emitting files.
-- `npm run lint`: apply oxlint rules (complexity, max-lines, unused vars, and TypeScript-specific checks).
-- `npm run lint:fix`: auto-fix oxlint violations where possible.
-- `npm run format:check`: verify Prettier formatting.
-- `npm run check`: run typecheck, lint, format:check, and tests.
-- `npm run knip`: detect unused files, dependencies, and exports.
-- `npm run jscpd`: detect duplicate code blocks.
-- `npm run scan:todos`: scan for TODO, FIXME, and HACK markers.
-- `npm run verify:hopper`: build and run the real-Hopper verifier with two distinct binaries.
-- `npm run verify:package`: pack and test the CLI, setup transaction, skill, and 68-tool target-free MCP server in an isolated environment.
-- `npm run docs:generate`: generate API documentation from JSDoc comments into `docs/api/` using TypeDoc.
-- `npm run config:print -- /path/to/binary`: print an MCP server config with absolute paths.
-- `HOPPER_TARGET_PATH=/path/to/binary npm start`: launch Hopper and run the built stdio MCP server.
+Before adding complexity for a speculative or vanishingly unlikely race or security edge case, explain the concrete failure mode, likelihood, and complexity cost to the user and get their buy-in. Do not silently expand scope for theoretical robustness.
 
-Pre-commit hooks via Husky run `oxlint` on staged files before every commit. Use `npm run lint:fix` to auto-correct violations locally.
+Check touched code for brittleness during implementation, debugging, review,
+and maintenance. Look for duplicated decisions, unclear ownership, and
+assumptions about state or lifecycle. Trace affected behavior through its
+consumers. Fix the producing representation or ownership rule before adding
+downstream repairs. When interpreting formatted input,
+[normalize once at the owning boundary using a format-aware parser](docs/development/tool-design.md#interpret-boundary-facts-once).
 
-## Configuration & Environment Variables
+Include directly related refactoring in the fix. Passing regressions alone
+cannot establish that the root cause is gone. Remove superseded representations,
+aliases, wrappers, and redundant tests after verifying affected consumers.
+Introduce abstractions only when they remove observed complexity. Explain any
+remaining cleanup and why it remains.
 
-- `HOPPER_TARGET_PATH` (optional): absolute initial binary or `.hop` target. Target-free MCP sessions use `open_binary` instead.
-- `HOPPER_LAUNCHER_PATH` (optional): override the Hopper executable path (defaults to `/Applications/Hopper Disassembler.app/Contents/MacOS/hopper`).
-- `HOPPER_TARGET_KIND` (optional, default `executable`): startup kind for `HOPPER_TARGET_PATH`; dynamic targets are classified from their paths and headers.
-- `HOPPER_LOADER_ARGS_JSON` (optional): JSON array overriding derived Hopper loader arguments for supported executable targets, e.g. `["-l","Mach-O","--aarch64"]`.
+Check sibling paths for the same failure, verify suspected matches with working
+controls, and group findings by root cause.
 
-## Coding Style & Naming Conventions
+Before resolving a review thread, explain the root cause, structural fix,
+validation, and any remaining cleanup.
 
-Use ESM TypeScript, two-space indentation, and Prettier defaults. Keep compiler strictness intact (`strict`, `exactOptionalPropertyTypes`, `noUncheckedIndexedAccess`, `verbatimModuleSyntax`). Use `camelCase` for values/functions, `PascalCase` for classes/types, and `UPPER_SNAKE_CASE` for constants. Parse unknown values at every MCP, environment, and subprocess boundary. Avoid `any`, unchecked casts, non-null assertions, import-time I/O, and floating promises. Exported APIs require concise JSDoc. Model expected failures with the tagged error algebra and `Result`, not broad exception wrappers.
+Parse unknown boundary values and model expected failures with the tagged error algebra and `Result`. Preserve partial facts and meaningful failure reasons. Keep identity and lookup values separate from display formatting; preserve source values and explicit unknowns when normalization loses information. Absolute paths, file URLs, and HTTP paths have different semantics.
 
-## Testing Guidelines
+Validate advertised JSON Schemas after SDK conversion against their declared dialect and actual clients. Bind handlers to named contracts with exact types; catalog ordering must never select an operation or schema.
 
-Name tests `*.test.ts`. Use Vitest and production seams (`tests/fixtures/`) rather than module mocks. Domain tests assert pure behavior; adapter tests use the fake launcher/socket; MCP tests connect with the beta.3 client. Preserve the 33 direct, 10 enhanced, 5 native, 2 artifact, and 18 session tool inventory (68 total). Cover malformed input, cancellation, timeouts, process exit, concurrency, limits, and clean shutdown. Real Hopper claims cannot be replaced by mocks — use `npm run verify:hopper` with two distinct binaries for end-to-end verification.
+## Performance
 
-## Commit & Pull Request Guidelines
+Design analysis workflows and agent interfaces for efficiency from the first
+implementation. Correctness, useful answers, Evidence provenance, caller choices,
+compatibility and safe resource bounds remain required.
 
-Use Conventional Commit subjects because Release Please derives versions and changelogs from them. Examples: `feat: add historical source import`, `fix(process): stop timers after exit`, and `docs: update architecture`. Use `!` or a `BREAKING CHANGE:` footer for breaking changes. Pull request titles must follow the same format because squash merges use the title as the release commit. Pull requests should describe contract or behavior changes, list verification commands, link issues, and include sanitized MCP examples when schemas change. State whether real Hopper verification was performed. Never commit binaries, Hopper documents, credentials, `dist/`, `node_modules/`, or local planning artifacts (e.g. `.codex/`).
+Optimize in this order:
+
+1. Agent tokens and context. Return the smallest sufficient answer with
+   necessary provenance, coverage and limitations. Use task selection,
+   summaries, paging and retained Evidence where supported; honor requested
+   detail and keep complete Evidence accessible. Count the whole task,
+   including schemas, extra calls and retries.
+2. Analysis time. Reuse validated results and shared work. Cache keys must
+   cover result-affecting inputs; define invalidation and lifetime. Validate
+   freshness before reporting cached live state as current.
+3. CPU and memory. Avoid unnecessary work and copies; bound concurrency,
+   retained state and serialization growth.
+
+Reserve performance measurements for changes that target performance or have a
+concrete regression concern. Routine cleanup uses correctness checks; changes
+to helper calls, imports, or representations alone do not require synthetic
+benchmarks. When measurement is warranted, measure representative completed
+tasks and compare equivalent workflows before and after where available. Report
+token usage, elapsed time, CPU time and peak process-family memory. Separate cold
+and warm runs, label estimates, and state unmeasured costs. Fewer bytes alone
+do not establish fewer tokens or faster analysis.
+
+## Development
+
+Treat code as the source of truth for implemented behavior and architecture.
+Keep specs, implementation plans, task lists, ADRs, and architecture diagrams
+in issue or pull request discussions or in local drafts outside Git.
+Use the [documentation directory](docs/README.md) and
+[authoring guide](docs/development/documentation.md) for guides and references.
+
+Use [.nvmrc](.nvmrc) and `package.json#packageManager` for the pinned toolchain. Cursor Cloud may place older Node.js first on `PATH`; environment setup installs the pinned toolchain under `/usr/local/bin`. Prefix `PATH="/usr/local/bin:$PATH"` before `node` and `npm`.
+
+- `npm ci`: install locked dependencies.
+- `npm run build:cached`: build the runtime and packaged skill.
+- `npm run test:local -- PATH...`: source tests without building.
+- `npm run test:focused -- PATH...`: exact tests with their required artifacts.
+- `npm run check:fast`: cached typecheck and lint, plus architecture guards.
+- `npm run docs:check`: validate generated documentation.
+
+Use relevant checks for the change. The complete local gate, `npm run check:pr`, is optional for broad changes or CI diagnosis. See [CONTRIBUTING.md](CONTRIBUTING.md) for development, generated-file ownership, and release conventions.
+
+When changing installers or setup recovery, follow
+[Checking installers and publisher downloads](docs/development/testing.md#checking-installers-and-publisher-downloads).
+
+Coordinate expensive checks across agents. If a test unexpectedly consumes heavy CPU, stop its owned process family and profile a bounded representative case before retrying. Inspect production work, fixture generation, subprocesses, and repeated setup; preserve regression coverage when optimizing. Follow the [test resource guidance](docs/development/testing.md#developer-commands).
+
+`docs/public/product-catalog.json`, `docs/verification/managed-conformance-*.json`, and `skills/` are ignored outputs. Edit source contracts and `.agents/skills/reverse-engineer-anything/`, then regenerate as needed. Never commit binaries, provider project documents, credentials, `dist/`, `node_modules/`, or local planning artifacts.
+
+## Tool and Test Changes
+
+For tool design, follow [docs/development/tool-design.md](docs/development/tool-design.md): start from the analyst question, reuse existing contracts, preserve caller choices, and return useful evidence inline. Limits must follow real format, protocol, authority, or resource constraints. Account for representation expansion before allocation; derive completeness from examined coverage.
+
+Choose the scope of a new limit from [analysis settings, limits, and recovery](docs/reference/limits-and-recovery.md).
+A registered runtime setting may have an optional launch seed. Per-call and
+launch-only controls have their own contracts. Report the effective limit and
+recovery for the control that stopped the work, and document the setting ID
+and `update_analysis_settings` for changes that apply at runtime.
+
+For user- or agent-facing tool problems, prioritize fixing the owning behavior,
+contract, and actionable result or recovery at the point of use. Document the
+result in product docs when explanation is needed. Add skill guidance only for
+workflow judgment or context that the tool cannot reasonably convey; do not use
+a skill as the primary repair for a discoverability or contract defect.
+
+For test changes or provider claims, use [docs/development/testing.md](docs/development/testing.md). Select applicable [boundary regressions](docs/development/testing.md#boundary-regressions) for parser, inventory, snapshot, and projection fixes. Prefer real public CLI/MCP workflows, then production-boundary integration, then producer goldens. Keep module tests for distinct semantics stronger workflows cannot reliably reproduce. Preserve malformed-input, cancellation, cleanup, permission, capacity, and target-identity coverage when pruning. Report unverified coverage explicitly; simulated providers do not establish real-provider behavior.
+
+Use structured facts to test behavior and assert wording when wording is part
+of the contract. Follow [test design and pruning](docs/development/testing.md#test-design-and-pruning)
+and use the [supervised command owner](docs/development/testing.md#verifier-scripts)
+for commands launched by a verifier.
+
+Use Conventional Commit subjects and PR titles as specified under [pull request ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness). Mark breaking changes with `!` or a `BREAKING CHANGE:` footer. Describe behavior changes, relevant validation, and real-provider verification scope.
+
+## Issue Reports
+
+Follow [issue reporting guidance](CONTRIBUTING.md#reporting-issues) and the matching
+issue form. Keep reports concise and cite the smallest useful evidence.
+Distinguish observed results, source-derived reasoning, hypotheses, and proposed
+checks. Never claim runtime reproduction or measurements you did not perform.
+Use `NOT_ENOUGH_INFO` with an explanation for missing narrative answers or evidence.
+Incomplete reports, source-only findings, and early feature or design ideas are
+welcome when their limitations are explicit; a completed diagnosis or fix is not
+required to open an issue.
+
+## Pull Request Readiness
+
+Follow [human ownership and readiness](CONTRIBUTING.md#pull-request-ownership-and-readiness)
+when preparing a PR. Leave human readiness declarations to the human owner.
+
+<!-- BEGIN:turborepo-agent-rules -->
+
+# This is NOT the Turborepo you know
+
+Turborepo configuration, task behavior, and CLI commands can vary between installed versions and may differ from your training data. Resolve the `turbo` package from this file's directory or relevant workspace; in monorepos, it may not be visible from the repository root. For example, run `node -p "require.resolve('turbo/package.json')"` from a workspace that depends on `turbo`.
+
+Read `docs/README.md` inside that installed package first, then read the relevant pages from its `docs/` directory before changing Turborepo configuration or commands. Heed deprecation notices. These bundled docs match the installed package version and are available without network access.
+
+This block is written and re-added by `turbo` before repository-scoped commands when an AI agent is detected. In the Turborepo source repository, its template is defined in `crates/turborepo-cli/src/cli/agent_guidance.rs`. Removing the managed block while updates are enabled means a later qualifying invocation will add it again. Set `"agentGuidance": false` in the root `turbo.json` or `turbo.jsonc` to opt out; this does not remove an existing block. Keep the block committed with your work to avoid an uncommitted change on the next agent invocation.
+<!-- END:turborepo-agent-rules -->

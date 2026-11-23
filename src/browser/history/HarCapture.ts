@@ -1,0 +1,377 @@
+import { captureBudgets } from "./CaptureBudgets.js";
+import { LosslessNumber } from "lossless-json";
+import { parseCaptureJson } from "./CaptureJson.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
+import { isCanonicalBase64 } from "../../domain/stringPatterns.js";
+import type {
+  WebNetworkCapture,
+  WebNetworkCaptureRecord,
+} from "../../domain/webNetworkCapture.js";
+import { CaptureFormatError } from "./CaptureFormatError.js";
+import {
+  CaptureRedaction,
+  captureObject,
+  capturePointer,
+} from "./CaptureRedaction.js";
+import { createHarValidator } from "./HarSchema.js";
+import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { trimTrailing } from "../../kernel/trimEdges.js";
+
+type DecodedCapture = Omit<
+  WebNetworkCapture,
+  "artifact" | "format" | "runtime_attribution" | "limitations"
+>;
+type Projection = Pick<
+  WebNetworkCaptureRecord,
+  "reported" | "numeric_literals" | "binary_fields" | "redactions"
+>;
+
+const validateHarDocument = (raw: unknown) =>
+  createHarValidator()(projectHar(raw, [], "validation").reported);
+
+/** Decode a retained HAR, validating a disposable projection of source facts. */
+export const decodeHarCapture = (
+  text: string,
+  sensitiveValues: readonly string[],
+): DecodedCapture => {
+  const raw = parseCaptureJson(text, "HAR");
+  const adaptations = validateHarDocument(raw);
+  const ipv6Adaptation = adaptations.bracketedIpv6;
+  const timingAdaptation = adaptations.failedRequests;
+  const failedRequests = new Set(timingAdaptation?.entries);
+  const adaptedIpv6Entries = new Set(ipv6Adaptation?.entries);
+  const emptyAddressAdaptation = adaptations.emptyServerAddress;
+  const emptyAddressEntries = new Set(emptyAddressAdaptation?.entries);
+  const ipv6Limitations =
+    ipv6Adaptation === null
+      ? []
+      : [
+          `This capture declares ${ipv6Adaptation.producer} and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.`,
+        ];
+  if (
+    !captureObject(raw) ||
+    !captureObject(raw.log) ||
+    !Array.isArray(raw.log.entries)
+  )
+    throw new CaptureFormatError("malformed", "HAR must contain log.entries.");
+  if (raw.log.version !== "1.2")
+    throw new CaptureFormatError(
+      "unsupported",
+      "Only the pinned HAR 1.2 schema profile is supported.",
+      "/log/version",
+    );
+  const entries = raw.log.entries;
+  const recordsExcluded = ["log", "entries"].some((key) =>
+    sensitiveValues.some((literal) => key.includes(literal)),
+  );
+  const container = projectHar(
+    { ...raw, log: { ...raw.log, entries: null } },
+    sensitiveValues,
+    "container",
+  );
+  const records = entries.map((entry, ordinal): WebNetworkCaptureRecord => {
+    // Validate each original record even when a structural ancestor excludes it.
+    const projected = projectRecordedHarEntry(entry, sensitiveValues);
+    const projection: Projection = recordsExcluded
+      ? {
+          reported: null,
+          numeric_literals: [],
+          binary_fields: [],
+          redactions: [{ pointer: "", reason: "explicit-sensitive-value" }],
+        }
+      : projected;
+    return {
+      ordinal,
+      location: recordsExcluded
+        ? { kind: "unknown", reason: "explicit-sensitive-value" }
+        : { kind: "json-pointer", pointer: `/log/entries/${ordinal}` },
+      ...projection,
+      limitations: [
+        "HAR text without an encoding declaration is producer-decoded Unicode. Unsupported declared body encodings remain opaque; original body bytes remain unknown unless content explicitly uses valid base64. Declared sizes are preserved independently of retained bytes. mitmproxy 12.2.3/12.3.1 SaveHar may report null optional postData.text; that null is retained and omitted only from the upstream validation copy.",
+        ...(adaptedIpv6Entries.has(ordinal) ? ipv6Limitations : []),
+        ...(emptyAddressAdaptation !== null && emptyAddressEntries.has(ordinal)
+          ? [
+              `This capture declares ${emptyAddressAdaptation.producer} and reports an empty serverIPAddress, which its HAR writer emits when a request has no remote address. The empty value is retained; only the validation copy omits the optional field. The server address is unknown. Producer declarations are not authenticated.`,
+            ]
+          : []),
+        ...(timingAdaptation !== null && failedRequests.has(ordinal)
+          ? [
+              `This capture declares ${timingAdaptation.producer} and records a failed request with unavailable timings (-1). The original failure and timing sentinels are retained; only the validation copy substitutes nonnegative timings. Producer declarations are not authenticated.`,
+            ]
+          : []),
+        ...(recordsExcluded
+          ? [
+              "This record's payload and sidecars are excluded because its structural ancestor property was explicitly marked sensitive.",
+            ]
+          : []),
+      ],
+    };
+  });
+  return {
+    decoder: { ...HAR_CAPTURE_PROVIDER_IDENTITY },
+    container: {
+      reported: container.reported,
+      numeric_literals: container.numeric_literals,
+      redactions: container.redactions,
+      records_pointer: recordsExcluded ? null : "/log/entries",
+    },
+    total_records: records.length,
+    records,
+  };
+};
+
+/** Project producer-owned HAR entry facts without pretending another format is a HAR document. */
+export const projectRecordedHarEntry = (
+  value: unknown,
+  sensitiveValues: readonly string[],
+): Projection => projectHar(value, sensitiveValues, "entry");
+
+/** Relative HTTP paths belong only to entries, never similarly named container extensions. */
+const projectHar = (
+  value: unknown,
+  sensitiveValues: readonly string[],
+  scope: "validation" | "container" | "entry",
+): Projection => {
+  const maxDepth = captureBudgets().depth;
+  if (scope === "validation") {
+    const path: string[] = [];
+    const buildPointer = (): string => {
+      let ptr = "";
+      for (let i = 0; i < path.length; i += 1)
+        ptr = capturePointer(ptr, path[i]!);
+      return ptr;
+    };
+    const visitValidation = (item: unknown, depth: number): JsonValue => {
+      if (depth > maxDepth)
+        throw new CaptureFormatError(
+          { name: "nesting-depth", maximum: maxDepth },
+          `HAR exceeds max_nesting_depth (${String(maxDepth)} levels).`,
+          buildPointer(),
+        );
+      if (item instanceof LosslessNumber) return validationNumber(item.value);
+      if (
+        typeof item === "string" ||
+        item === null ||
+        typeof item === "boolean"
+      )
+        return item;
+      if (Array.isArray(item)) {
+        const out = new Array<JsonValue>(item.length);
+        for (let index = 0; index < item.length; index += 1) {
+          path.push(String(index));
+          out[index] = visitValidation(item[index], depth + 1);
+          path.pop();
+        }
+        return out;
+      }
+      if (captureObject(item)) {
+        const out: Record<string, JsonValue> = {};
+        for (const [key, child] of Object.entries(item)) {
+          path.push(key);
+          const projected = visitValidation(child, depth + 1);
+          path.pop();
+          if (key === "__proto__")
+            Object.defineProperty(out, key, {
+              value: projected,
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            });
+          else out[key] = projected;
+        }
+        return out;
+      }
+      throw new CaptureFormatError(
+        "malformed",
+        "HAR parser returned a non-JSON value.",
+        buildPointer(),
+      );
+    };
+    return {
+      reported: visitValidation(value, 0),
+      numeric_literals: [],
+      binary_fields: [],
+      redactions: [],
+    };
+  }
+  const redactor = new CaptureRedaction(
+    sensitiveValues,
+    scope === "entry" ? value : undefined,
+  );
+  const numeric_literals: Projection["numeric_literals"] = [];
+  const binary_fields: Projection["binary_fields"] = [];
+  const projectNumber = (item: LosslessNumber, pointer: string): JsonValue => {
+    const number = redactor.number(item, pointer);
+    if (number === null) return null;
+    numeric_literals.push({
+      pointer,
+      producer_type: "json-number",
+      literal: number.literal,
+    });
+    return number.reported;
+  };
+  const visit = (
+    item: unknown,
+    pointer: string,
+    depth: number,
+    parent?: Readonly<Record<string, unknown>>,
+  ): JsonValue => {
+    if (depth > maxDepth)
+      throw new CaptureFormatError(
+        { name: "nesting-depth", maximum: maxDepth },
+        `HAR exceeds max_nesting_depth (${String(maxDepth)} levels).`,
+        pointer,
+      );
+    if (
+      scope === "entry" &&
+      parent !== undefined &&
+      redactor.harCredential(pointer, parent)
+    )
+      return redactor.credential(pointer);
+    if (item instanceof LosslessNumber) return projectNumber(item, pointer);
+    if (typeof item === "string") {
+      if (
+        scope === "entry" &&
+        pointer === "/response/content/text" &&
+        parent?.encoding === "base64"
+      ) {
+        const { bytes, contentBase64 } = decodeHarBase64(item, pointer);
+        const sha256 = sha256Hex(bytes);
+        const hidden =
+          redactor.sensitiveBytes(bytes) ||
+          sensitiveValues.some(
+            (literal) =>
+              item.includes(literal) ||
+              contentBase64.includes(literal) ||
+              sha256.includes(literal) ||
+              String(bytes.length).includes(literal),
+          );
+        binary_fields.push(
+          hidden
+            ? {
+                pointer,
+                representation: "har-base64-content",
+                state: "redacted",
+                content_base64: null,
+                bytes: null,
+                sha256: null,
+              }
+            : {
+                pointer,
+                representation: "har-base64-content",
+                state: "retained",
+                content_base64: contentBase64,
+                bytes: bytes.length,
+                sha256,
+              },
+        );
+        if (hidden) {
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+          });
+          return null;
+        }
+      }
+      return redactor.text(
+        item,
+        pointer,
+        scope === "entry"
+          ? redactor.harTransportUrl(pointer, parent)
+          : undefined,
+      );
+    }
+    if (item === null || typeof item === "boolean") return item;
+    if (Array.isArray(item))
+      return item.map((child, index) =>
+        visit(child, capturePointer(pointer, String(index)), depth + 1),
+      );
+    if (captureObject(item)) {
+      const checkSensitive = sensitiveValues.length > 0;
+      const out: Record<string, JsonValue> = {};
+      for (const [key, child] of Object.entries(item)) {
+        if (
+          checkSensitive &&
+          sensitiveValues.some((literal) => key.includes(literal))
+        ) {
+          const beforeNumbers = numeric_literals.length;
+          const beforeBinaries = binary_fields.length;
+          const beforeRedactions = redactor.redactions.length;
+          visit(child, capturePointer(pointer, key), depth + 1, item);
+          numeric_literals.splice(beforeNumbers);
+          binary_fields.splice(beforeBinaries);
+          redactor.redactions.splice(beforeRedactions);
+          redactor.redactions.push({
+            pointer,
+            reason: "explicit-sensitive-value",
+            scope: "property-name",
+          });
+          continue;
+        }
+        const value = visit(
+          child,
+          capturePointer(pointer, key),
+          depth + 1,
+          item,
+        );
+        if (key === "__proto__")
+          Object.defineProperty(out, key, {
+            value,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        else out[key] = value;
+      }
+      return out;
+    }
+    throw new CaptureFormatError(
+      "malformed",
+      "HAR parser returned a non-JSON value.",
+      pointer,
+    );
+  };
+  return {
+    reported: visit(value, "", 0),
+    numeric_literals,
+    binary_fields,
+    redactions: redactor.redactions,
+  };
+};
+
+/**
+ * A JSON number lexeme as the validation copy carries it: its nearest double, unless rounding or
+ * overflow erased a fractional part, so the schema's `integer` checks the lexeme, not the double.
+ */
+const validationNumber = (literal: string): number => {
+  const nearest = Number(literal);
+  if (integerLexeme(literal)) return nearest;
+  if (Number.isFinite(nearest) && !Number.isInteger(nearest)) return nearest;
+  return literal.startsWith("-") ? -0.5 : 0.5;
+};
+
+/** Whether a JSON number lexeme denotes an integer, decided from its digits and exponent. */
+const integerLexeme = (literal: string): boolean => {
+  const match = /^-?(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal);
+  if (match === null) return false;
+  const [, whole = "", fraction = "", exponent = "0"] = match;
+  const digits = `${whole}${fraction}`;
+  const significant = trimTrailing(digits, (character) => character === "0");
+  if (significant.length === 0) return true;
+  const trailingZeros = digits.length - significant.length;
+  return Number(exponent) - fraction.length + trailingZeros >= 0;
+};
+
+const decodeHarBase64 = (value: string, pointer: string) => {
+  const compact = value.replace(/[\t\n\r ]/g, "");
+  if (!isCanonicalBase64(compact))
+    throw new CaptureFormatError(
+      "malformed",
+      "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
+      pointer,
+    );
+  // The validated spelling has canonical padding and pad bits. Reuse it for
+  // the sidecar instead of allocating another full-size encoding of the bytes.
+  return { bytes: Buffer.from(compact, "base64"), contentBase64: compact };
+};

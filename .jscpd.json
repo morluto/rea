@@ -1,5 +1,5 @@
 {
-  "threshold": 3,
+  "threshold": 4,
   "reporters": ["consoleFull"],
   "ignore": [
     "node_modules/**",
@@ -7,8 +7,12 @@
     "docs/**",
     ".codex/**",
     ".devin/**",
-    "**/*.test.ts",
-    "tests/fixtures/**"
+    "tests/fixtures/**",
+    "third_party/**",
+    "tests/conformance/**/*.c",
+    "tests/conformance/**/*.m",
+    "tests/conformance/**/*.swift",
+    "tests/conformance/**/*.xib"
   ],
   "gitignore": true,
   "minLines": 5,

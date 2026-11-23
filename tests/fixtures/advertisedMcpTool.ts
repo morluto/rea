@@ -1,0 +1,103 @@
+import { fileIdentity } from "./evidenceSubject.js";
+import {
+  canonicalInputSchema,
+  canonicalOutputSchema,
+  withCanonicalOutputSchema,
+} from "./canonicalOutputSchema.js";
+import type { Client } from "@modelcontextprotocol/client";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { expect } from "vitest";
+import { toolContract } from "../../src/contracts/toolContracts.js";
+import { parseEvidence } from "../../src/domain/evidence.js";
+import type { BinarySession } from "../../src/application/binary/BinarySession.js";
+
+interface AdvertisedSchemaAssertions {
+  readonly errors?: unknown;
+  validateSchema(schema: Record<string, unknown>): boolean | Promise<unknown>;
+  validate(
+    schema: Record<string, unknown>,
+    value: unknown,
+  ): boolean | Promise<unknown>;
+}
+
+/**
+ * The listed input schema, the canonical input schema it presents, and the
+ * canonical output schema a validating client checks replies against;
+ * callers may own file-local preparation.
+ */
+export const advertisedMcpToolSchemas = async (
+  client: Client,
+  name: string,
+  ajv: AdvertisedSchemaAssertions = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+    inlineRefs: false,
+    code: { optimize: false },
+  }),
+) => {
+  const matches = (await client.listTools()).tools.filter(
+    (tool) => tool.name === name,
+  );
+  if (matches.length > 1)
+    throw new Error(`${name} has multiple advertised definitions`);
+  const advertised = matches[0];
+  if (advertised === undefined) throw new Error(`${name} is not advertised`);
+  const inputSchema: Record<string, unknown> = advertised.inputSchema;
+  const canonicalInput = canonicalInputSchema(name);
+  const outputSchema = canonicalOutputSchema(advertised.name);
+  expect(ajv.validateSchema(inputSchema)).toBe(true);
+  expect(ajv.validateSchema(canonicalInput)).toBe(true);
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  return {
+    name: advertised.name,
+    toolDefinition: withCanonicalOutputSchema(advertised),
+    ajv,
+    inputSchema,
+    canonicalInputSchema: canonicalInput,
+    outputSchema,
+  };
+};
+
+/** Call an advertised tool and validate its structured result against its schema. */
+export const callAdvertisedMcpTool = async (
+  client: Client,
+  name: string,
+  args: Record<string, unknown>,
+  validator: AdvertisedSchemaAssertions,
+) => {
+  const schema = await advertisedMcpToolSchemas(client, name, validator);
+  const result = await client.callTool(
+    { name, arguments: args },
+    { toolDefinition: schema.toolDefinition },
+  );
+  expect(result.isError, JSON.stringify(result)).not.toBe(true);
+  expect(
+    schema.ajv.validate(schema.outputSchema, result.structuredContent),
+    JSON.stringify(schema.ajv.errors),
+  ).toBe(true);
+  return result.structuredContent;
+};
+
+/** Keep public output, provenance and session retention checks together. */
+export const assertRecordedMcpEvidence = (
+  response: Awaited<ReturnType<Client["callTool"]>>,
+  name:
+    | "inspect_wasm_artifact"
+    | "inspect_binary_layout"
+    | "inspect_evm_interface"
+    | "inspect_native_exports",
+  session: BinarySession,
+  expected: { readonly artifact: { readonly sha256: string } },
+  confidence: ReturnType<typeof parseEvidence>["confidence"],
+) => {
+  expect(response.isError).not.toBe(true);
+  const parsed = toolContract(name).outputSchema.parse(
+    response.structuredContent,
+  );
+  const evidence = parseEvidence(parsed);
+  expect(evidence.confidence).toBe(confidence);
+  expect(fileIdentity(evidence.subject).sha256).toBe(expected.artifact.sha256);
+  expect(parsed.normalized_result).toEqual(expected);
+  expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+  return evidence;
+};

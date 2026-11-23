@@ -1,0 +1,151 @@
+import {
+  parseFailureAnalysisError,
+  parseLimitConstraint,
+} from "../domain/parseFailureAnalysisError.js";
+import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "./ElectronFuseProviderIdentity.js";
+import {
+  ArtifactReaderFailure,
+  ArtifactFileCleanupFailure,
+  artifactFileCompletion,
+  artifactFileCancellationCause,
+  bindArtifactFileCleanup,
+} from "../resources/index.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
+import { regularFileCancellation } from "../filesystem/OwnedRegularFile.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisAccessDeniedError,
+  AnalysisArtifactChangedError,
+  AnalysisInputError,
+  AnalysisOutputError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
+import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ZodError } from "zod";
+import {
+  RegularFileChangedError,
+  NonRegularFileReadError,
+} from "../filesystem/RegularFile.js";
+import { ElectronFusePathFailure } from "./ElectronFusePath.js";
+import { ElectronFuseResourceFailure } from "./ElectronFuseReader.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+
+const OPERATION = "inspect_electron_fuses";
+
+/** Translate the shared fuse reader without replacing its producing outcome or cleanup owner. */
+export const electronFuseFailure = (
+  cause: unknown,
+  path: string,
+  operation = OPERATION,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined) {
+    const cleanup = new ProviderCleanupError(
+      ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+      cause.cleanup.resources,
+      { reason: cause.cleanup.reason },
+      { operation, cause },
+    );
+    bindArtifactFileCleanup(cause, cleanup);
+    if (cause instanceof ArtifactFileCleanupFailure) {
+      const outcome = cause.fileCleanupFailure.outcome;
+      const cancellation = artifactFileCompletion(cause)?.cancellation;
+      const primary =
+        outcome.kind === "failed"
+          ? electronFuseFailure(outcome.cause, path, operation)
+          : cancellation === undefined
+            ? undefined
+            : cancelledBy(operation, carriedReason(cancellation.reason));
+      if (primary !== undefined)
+        return analysisErrorWithCleanupDependencies(
+          primary,
+          cleanup,
+          operation,
+        );
+    }
+    return cleanup;
+  }
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return cancelledBy(
+      operation,
+      carriedReason(artifactFileCancellationCause(cause)),
+    );
+  const cancellation = regularFileCancellation(cause);
+  if (cancellation !== undefined)
+    return cancelledBy(operation, carriedReason(cancellation.reason));
+  if (cause instanceof ElectronFusePathFailure)
+    return new AnalysisInputError(operation, { cause }, [
+      { path: ["path"], reason: cause.reason, message: cause.message },
+    ]);
+  if (cause instanceof ElectronFuseResourceFailure) {
+    const { name, maximum } = cause.limit;
+    const fileSize = name === "maximum_input_bytes";
+    return parseLimitConstraint(
+      operation,
+      fileSize ? "file-size" : "capacity",
+      cause,
+      {
+        legacyMaximumKey: name,
+        ...fixedAllowanceOptions(
+          fileSize
+            ? "the Electron fuse input allowance"
+            : "The Electron fuse sentinel inventory",
+          fileSize ? "input" : "count",
+          { limit: maximum, unit: fileSize ? "bytes" : "sentinels per slice" },
+        ),
+      },
+    );
+  }
+  const formatFailure = parseFailureAnalysisError(operation, path, cause);
+  if (formatFailure !== undefined) return formatFailure;
+  if (cause instanceof RegularFileChangedError)
+    return new AnalysisArtifactChangedError(operation, path, cause.message, {
+      cause,
+    });
+  if (cause instanceof NonRegularFileReadError)
+    return new AnalysisInputError(operation, { cause }, [
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ]);
+  if (cause instanceof ZodError)
+    return new AnalysisOutputError(
+      operation,
+      "Electron fuse reader produced a report outside its schema.",
+      { cause },
+    );
+  if (cause instanceof Error && "code" in cause) {
+    if (cause.code === "EACCES" || cause.code === "EPERM")
+      return new AnalysisAccessDeniedError(operation, path, cause.code, {
+        cause,
+      });
+    if (
+      ["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"].includes(
+        String(cause.code),
+      )
+    )
+      return new AnalysisInputError(operation, { cause }, [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
+        },
+      ]);
+  }
+  return new ProviderAdapterError(
+    ELECTRON_FUSE_PROVIDER_IDENTITY.id,
+    operation,
+    {
+      cause,
+      diagnostics: {
+        path,
+        reason: errorMessage(cause),
+      },
+    },
+  );
+};

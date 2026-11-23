@@ -1,0 +1,314 @@
+<div align="center">
+
+[English](../../README.md) · [简体中文](README_zh.md) · **繁體中文** · [日本語](README_ja.md) · [한국어](README_ko.md) · [Türkçe](README_tr.md) · [Русский](README_ru.md) · [Tiếng Việt](README_vi.md) · [ไทย](README_th.md) · [Deutsch](README_de.md) · [Español](README_es.md) · [Français](README_fr.md) · [Українська](README_uk.md) · [Polski](README_pl.md) · [Português (Brasil)](README_pt-BR.md) · [العربية](README_ar.md) · [فارسی](README_fa.md) · [Bahasa Indonesia](README_id.md) · [Italiano](README_it.md)
+· [Ελληνικά](README_el.md) · [മലയാളം](README_ml.md) · [Roman Urdu](README_ur-Latn.md) · [Română](README_ro.md) · [Български](README_bg.md)
+
+# REA：逆向一切
+
+### 通過一個 MCP 服務，逆向分析二進位檔案、應用程式和執行階段行為。
+
+**看到喜歡的功能，弄清它的工作原理，深入到二進位層面。**
+
+[![GitHub stars](https://img.shields.io/github/stars/morluto/rea?style=flat-square&logo=github)](https://github.com/morluto/rea/stargazers)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/rea-agents?style=flat-square&label=npm%20downloads)](https://www.npmjs.com/package/rea-agents)
+[![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
+[![Join the REA Discord](https://img.shields.io/badge/Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+[![Follow REA on X](https://img.shields.io/badge/X-000000?style=flat-square&logo=x&logoColor=white)](https://x.com/reatools)
+[![Supported platforms: macOS, Windows, and Linux](https://img.shields.io/badge/macOS%20%7C%20Windows%20%7C%20Linux-4493F8?style=flat-square)](../getting-started/installation.md)
+[![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
+
+**[網站](https://rea.tools/zh-TW/) · [指南](https://rea.tools/zh-TW/guides/) · [案例](https://rea.tools/zh-TW/showcase/)**
+
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="加入 REA 的 Discord 社群" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[快速開始](#快速開始) · [案例](#案例) · [REA 的工作原理](#rea-的工作原理) · [可以分析什麼](#可以分析什麼) · [建立 RL 環境](#build-rl-environments) · [常見問題](#常見問題) · [文件](#文件)
+
+<code>npx rea-agents setup</code>
+
+</div>
+
+> [!IMPORTANT]
+> REA 官方來源： [morluto/rea](https://github.com/morluto/rea), [rea.tools](https://rea.tools/), [rea-agents](https://www.npmjs.com/package/rea-agents) (npm).
+> 請透過這些官方來源提供的安裝與發布連結取得 REA。相似的儲存庫名稱或複製的 README 不能證明下載內容來自官方。
+
+<div align="center">
+
+<br />
+
+<img src="../assets/rea-hopper-analysis.png" alt="REA 在 Hopper 中啟動分析橋，檢查原生二進位檔案" width="1200" />
+
+<br /><br />
+
+<table aria-label="REA 社群">
+<tr>
+<td align="center" width="360">
+  <a href="https://discord.gg/GkcryMnJDM">
+    <img src="../assets/discord.svg" height="42" alt="Discord" /><br />
+    <strong>加入逆向工程社群</strong>
+  </a><br />
+  <sub>Discord · 問答 · 成果分享</sub>
+</td>
+</tr>
+</table>
+
+<br />
+
+</div>
+
+---
+
+在應用中看到一個想加入自己產品的功能？讓 AI 代理用 REA 調查它。即使沒有原始碼，AI 代理也可以檢查應用、解釋功能的工作方式、展示證據，並為你的專案實現類似功能。
+
+REA 將 AI 代理連接到分析工具，用於檢查原生二進位檔案、JavaScript 和 Electron 應用、.NET 程式集以及網站。你也可以在終端中使用同樣的工具。分析在本機執行，結果包含支撐各項結論的證據和相關限制。
+
+設定流程會向 AI 代理註冊 REA，並安裝對應的工作流程指引。原生分析可以使用已有的 Hopper、Ghidra、IDA 或 Kuna；設定流程也可以在你核准後安裝 Hopper。靜態 JavaScript 分析不需要原生分析引擎。
+
+## 快速開始
+
+**[快速開始 · rea.tools](https://rea.tools/zh-TW/get-started/)**
+
+### 設定 AI 代理 (MCP)
+
+安裝 [Node.js 和 npm](../reference/supported-targets.md) 後，在目標專案以外可信任的目錄中執行下列指令。
+
+```bash
+npx rea-agents setup
+```
+
+選擇 AI 代理，檢查計劃中的變更並核准。設定流程會添加 REA 的 MCP 服務和對應的工作流程指引，並備份已有組態。完成後重新啟動 AI 代理。
+
+[安裝與設定](../getting-started/installation.md)
+
+詢問 AI 代理：
+
+```text
+弄清 Notes 應用的搜尋功能如何工作，展示證據，並為我的專案實現類似功能。
+```
+
+把 Notes 替換為目標應用，並描述你想瞭解的功能。
+
+### 使用終端 (CLI)
+
+檢查已解包的 JavaScript/Electron 應用目錄或 ASAR 檔案：
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+結果包含模組、匯入、Electron 邊界及相關證據。將路徑替換為你的目標路徑，例如 Windows 上的 `"D:/apps/example"`。
+
+如果需要經常使用，可以安裝 `rea` 命令：
+
+```bash
+npm install --global rea-agents
+rea --help
+```
+
+原生分析需要先設定分析提供者。原生命令、提供者選擇、快照和腳本用法見 [CLI 與 Evidence 指南](../getting-started/cli.md)。
+
+[Linux 系統需求](../getting-started/installation.md#linux-owned-process-prerequisite)
+
+### 更新 REA
+
+通過 `npm install --global` 或 `bun add --global` 安裝的 CLI 使用：
+
+```bash
+rea update
+```
+
+如果使用 `npx`，通過以下命令更新 AI 代理設定：
+
+```bash
+npx rea-agents@latest setup
+```
+
+[更新與解除安裝](../getting-started/installation.md#diagnose-update-and-remove)
+
+## 案例
+
+<a href="https://rea.tools/zh-TW/showcase/">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../assets/rea-showcases-dark.svg" />
+    <img alt="DX-Ball 聲音平移、Notion 剪貼簿橋接與 TH04 彈幕環案例的插圖" src="../assets/rea-showcases.svg" />
+  </picture>
+</a>
+
+<table>
+<tbody>
+<tr><td>
+<h3>DX-Ball：重建聲像計算</h3>
+<p>沿聲音呼叫追蹤到根據位置計算聲像的輔助函數，檢查指令，將不完整的偽程式碼轉為 C。重建結果通過了 3,205 個原始 x86 測試用例，並復現了編譯後函數的全部 63 個位元組。</p>
+<p><a href="https://rea.tools/zh-TW/showcase/dx-ball/">閱讀案例</a> ·
+<a href="https://github.com/N0zoM1z0/dx-ball">重建專案儲存庫</a></p>
+</td></tr>
+<tr><td>
+<h3>Notion：追蹤 Electron 剪貼簿橋</h3>
+<p>找到渲染處理程序的剪貼簿 API，沿 preload 和 IPC 追蹤到主處理程序，並檢查富格式剪貼簿資料。</p>
+<p><a href="https://rea.tools/zh-TW/showcase/notion/">閱讀案例</a></p>
+</td></tr>
+<tr><td>
+<h3>TH04：恢復 DOS 環形子彈的計算</h3>
+<p>檢查原始 PC-98 遊戲的 16 位指令，恢復固定角度和瞄準角度的計算，並將重建的 C++ 與當年的編譯器輸出進行對比。</p>
+<p><a href="https://rea.tools/zh-TW/showcase/th04/">閱讀案例</a> ·
+<a href="https://github.com/N0zoM1z0/th04">重建專案儲存庫</a></p>
+</td></tr>
+</tbody>
+</table>
+
+如果你用 REA 分析了有趣的目標，我們很想瞭解。歡迎通過 [issue](https://github.com/morluto/rea/issues) 或 [pull request](https://github.com/morluto/rea/pulls) 分享案例，說明目標、你的問題、REA 如何提供幫助，以及你的發現。
+
+## REA 的工作原理
+
+AI 代理通過 MCP 呼叫 REA，檢查目標並追蹤相關程式碼。REA 返回發現及對應證據。AI 代理據此提出後續問題、解釋行為，或編寫並測試實現。CLI 命令使用同樣的工作流程。
+
+![REA 調查流程：AI 代理詢問本地目標的行為，REA 使用分析工具檢查和追蹤目標，AI 代理再利用返回的程式碼、引用和未知項進行解釋、實現與測試。](../../website/public/assets/figures/rea-investigation-flow.svg)
+
+[打開完整尺寸的圖示](../../website/public/assets/figures/rea-investigation-flow.svg)。
+
+<a id="current-status"></a>
+
+## 可以分析什麼
+
+原生二進位檔案 · JavaScript / Electron · 網站 · .NET 程式集 · Android APK · 韌體 · 處理程序行為
+
+[支援的格式與執行需求](../reference/supported-targets.md)
+
+<a id="choosing-a-deep-analysis-provider"></a>
+
+[選擇分析引擎](../reference/supported-targets.md#choosing-a-deep-analysis-provider)
+
+<a id="build-rl-environments"></a>
+
+## 建立 RL 環境
+
+從錄製的網頁工作階段或 Linux 桌面應用程式建立本機環境，讓代理練習任務並檢查結果。
+
+[建立 RL 環境](https://rea.tools/guides/rl-environments/)
+
+## 常見問題
+
+<details>
+<summary><strong>哪些 AI 代理可以使用 REA？</strong></summary>
+
+任何支援本地 MCP 服務的 AI 代理都可以使用。設定流程會設定[受支援的 AI 代理](../getting-started/installation.md#supported-agents)；其他客戶端可通過[手動註冊 MCP](../getting-started/installation.md#mcp-registry) 使用。
+
+</details>
+
+<details>
+<summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 嗎？</strong></summary>
+
+深入的原生分析需要其中一個引擎。靜態 JavaScript 和 .NET 檢查不需要原生分析引擎。設定流程可以在你核准後安裝 Hopper；Ghidra、IDA 和 Kuna 則使用已有安裝。見[提供者設定](../getting-started/installation.md#hopper)。
+
+</details>
+
+<details>
+<summary><strong>需要先啟動 Hopper 嗎？</strong></summary>
+
+REA 會在操作需要時啟動 Hopper。在 macOS 上，首次執行時可能會出現對話框，讓你選擇演示模式或啟用授權。見 [Hopper 啟動與故障排查](../getting-started/installation.md#launcher-paths-and-troubleshooting)。
+
+</details>
+
+<details>
+<summary><strong>從 skills.sh 安裝 skill 有什麼作用？</strong></summary>
+
+skill 為 AI 代理提供調查指引。使用 `npx rea-agents setup` 註冊 REA 的 MCP 服務並安裝對應的指引，然後重新啟動 AI 代理。見[僅安裝 skill](../getting-started/installation.md#skill-only-installation)。
+
+</details>
+
+<details>
+<summary><strong>REA 返回什麼程式碼？</strong></summary>
+
+原生分析返回偽程式碼和組合語言。JavaScript/Electron 分析恢復模組及其關係。AI 代理利用這些發現編寫並測試實現；[案例](#案例)提供了完整示例。
+
+</details>
+
+<details>
+<summary><strong>REA 會上傳我的應用嗎？</strong></summary>
+
+REA 在本機分析目標。AI 代理會接收工具結果，其模型提供商有自己的資料政策。
+
+</details>
+
+<details>
+<summary><strong>遇到錯誤時該怎麼辦？</strong></summary>
+
+先更新；最近的版本可能已經修復了問題。
+
+通過 npm 安裝的 CLI 使用：
+
+```bash
+rea update
+```
+
+通過 `npx` 設定 AI 代理時使用：
+
+```bash
+npx rea-agents@latest setup
+```
+
+如果正在使用 AI 代理，請完成[設定更新](#更新-rea)並重新啟動 AI 代理。重試同一任務。如果問題仍然存在，請[提交 issue](https://github.com/morluto/rea/issues)，附上 REA 版本、目標類型、復現步驟和錯誤輸出。
+
+</details>
+
+## 文件
+
+可以先閱讀網站上的[實操指南](https://rea.tools/zh-TW/guides/)。具體選項、前提條件和結果契約見：
+
+- [安裝與設定](../getting-started/installation.md)：AI 代理註冊、提供者組態、更新和卸載。
+- [就緒檢查與故障排查](../getting-started/installation.md#check-readiness-for-your-task)：診斷特定 AI 代理或分析引擎。
+- [CLI 與 Evidence](../getting-started/cli.md)：命令、提供者選擇、快照、匯入/匯出和退出狀態。
+- [MCP 契約](../reference/mcp-contracts.md)和[AI 代理提示詞](../getting-started/mcp-prompts.md)：工具結果、會話和引導式調查。
+- [工具目錄](../reference/mcp-contracts.md#generated-catalog)：建置時生成的工具、提供者和 CLI 命令清單。
+
+請按照 [SECURITY.md](../../SECURITY.md) 報告漏洞。
+
+## 社群與支援
+
+- **Discord** — 歡迎提問、分享你的研究，加入由五萬多名逆向工程愛好者與開發者組成的社群！ [![Discord](https://img.shields.io/badge/Join%20Discord-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/GkcryMnJDM)
+- **Twitter / X** — 追蹤 [@reatools](https://x.com/reatools) 掌握更新與公告。
+- **意見與建議** — 想要新功能或支援某種檔案格式？歡迎在 [GitHub](https://github.com/morluto/rea/issues) 或 [Discord](https://discord.gg/GkcryMnJDM) 告訴我們。
+
+## Star 歷史
+
+🎉 **GitHub Star 達到 400,000 個，感謝大家！**
+
+感謝每一位使用 REA、報告錯誤、提出功能需求、測試建置和貢獻修復的朋友。
+
+<a href="https://rea.tools/zh-TW/contributors/">
+  <img src="../../website/public/contributors/avatars.png" alt="REA 貢獻者" />
+</a>
+
+<a href="https://www.star-history.com/?repos=morluto%2Frea&amp;type=date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date&amp;theme=dark&amp;legend=top-left" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+    <img alt="REA 的 GitHub Star 歷史" src="https://api.star-history.com/chart?repos=morluto/rea&amp;type=date" />
+  </picture>
+</a>
+
+## 參與貢獻
+
+歡迎幫助改進 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 報告錯誤或建議功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改進程式碼或文件。
+
+開發設定和檢查見 [CONTRIBUTING.md](../../CONTRIBUTING.md)，驗證流程見[測試指南](../development/testing.md)。
+
+## 免責聲明
+
+負責任使用的相關指引請見 [DISCLAIMER.md](../../DISCLAIMER.md)。
+
+REA 用於合法的研究、教育、互通性、軟體保存，以及分析你擁有或獲准檢查的軟體。
+
+本專案對非法或未經授權使用的立場涵蓋所有 REA 版本、分發管道和執行平台；
+每份副本仍適用其隨附的授權。
+
+## 授權條款
+
+[MIT](../../LICENSE)
+
+REA 自行編寫的程式碼採用 MIT 授權；第三方內容保留各自的授權和著作權聲明。
+依賴清單、授權原文及外部工具條款見[第三方聲明](../../THIRD_PARTY_NOTICES.md)。
+
+**使用者須自行合法取得商用工具及所需使用權**，包括 IDA Pro / Hex-Rays 反編譯器、
+Hopper 和 JEB，並遵守各自授權。REA 不提供工具授權、金鑰或啟用權利；試用版和
+展示版也須遵守廠商對使用者、功能、自動化及輸出分享的限制。不得使用破解副本、
+竊取或違規共用金鑰，也不得繞過授權限制。本指引不變更 MIT 或第三方授權。

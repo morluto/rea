@@ -1,37 +1,34 @@
-import { isSecretLikePath } from "../domain/referenceSourceClassification.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
+import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import {
   createHistoricalSourceGraph,
+  historicalSourceInventoryHasPartialFacts,
+  historicalSourceLanguages,
+  historicalSourceManifests,
+  historicalSourceParseFailureKey,
+  historicalSourceRelationshipKey,
   type HistoricalSourceGraph,
   type HistoricalSourceGraphInput,
 } from "../domain/referenceSourceGraph.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { ArtifactResourceScope } from "../resources/index.js";
+import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
 import { readReferenceSource } from "../reference/ReferenceSourceReader.js";
+import type {
+  ReferenceSourceExclusionKind,
+  ReferenceSourceRead,
+  ReferenceSourceReaderError,
+} from "../reference/ReferenceSourceReaderTypes.js";
 import { parseReferenceSourceEntries } from "./ReferenceSourceImportEntries.js";
 import { readReferenceSourceVcs } from "./ReferenceSourceVcsAdapter.js";
-import {
-  type ReferenceSourceImportError,
-  type ReferenceSourceImportOptions,
-} from "./ReferenceSourceImportTypes.js";
-import { prepareReferenceSourceImport } from "./ReferenceSourceImportPolicy.js";
-
-export type {
+import type {
   ReferenceSourceImportError,
   ReferenceSourceImportOptions,
 } from "./ReferenceSourceImportTypes.js";
-
-const compareCodePoints = (left: string, right: string): number => {
-  const leftPoints = [...left].map((value) => value.codePointAt(0) ?? 0);
-  const rightPoints = [...right].map((value) => value.codePointAt(0) ?? 0);
-  const length = Math.min(leftPoints.length, rightPoints.length);
-  for (let index = 0; index < length; index += 1) {
-    const difference = (leftPoints[index] ?? 0) - (rightPoints[index] ?? 0);
-    if (difference !== 0) return difference;
-  }
-  return leftPoints.length - rightPoints.length;
-};
-
-const byCodePoint = (left: string, right: string): number =>
-  compareCodePoints(left, right);
+import {
+  prepareReferenceSourceImport,
+  type PreparedReferenceSourceImport,
+} from "./ReferenceSourceImportPolicy.js";
 
 const failure = (
   code: ReferenceSourceImportError["code"],
@@ -42,15 +39,14 @@ const failure = (
   message,
 });
 
-const cancelled = (): ReferenceSourceImportError =>
-  failure("cancelled", "Reference source import cancelled");
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;
-
-const relationshipKey = (
-  relationship: HistoricalSourceGraphInput["relationships"][number],
-): string =>
-  `${relationship.from_path}\u0000${relationship.to}\u0000${relationship.kind}\u0000${relationship.resolution}\u0000${relationship.parse_state}`;
+const cancelled = (
+  signal: AbortSignal | undefined,
+  partial?: ReferenceSourceRead,
+): ReferenceSourceImportError => ({
+  ...failure("cancelled", "Reference source import cancelled"),
+  ...(signal?.aborted === true ? { cause: signal.reason } : {}),
+  ...(partial === undefined ? {} : { partial }),
+});
 
 const deduplicateRelationships = (
   relationships: HistoricalSourceGraphInput["relationships"],
@@ -58,13 +54,34 @@ const deduplicateRelationships = (
   const seen = new Set<string>();
   const result: HistoricalSourceGraphInput["relationships"] = [];
   for (const relationship of relationships) {
-    const key = relationshipKey(relationship);
+    const key = historicalSourceRelationshipKey(relationship);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(relationship);
   }
   return result;
 };
+
+/** Sort parse failures deterministically while retaining distinct reasons. */
+export const normalizeHistoricalSourceParseFailures = (
+  failures: HistoricalSourceGraphInput["parse_failures"],
+): HistoricalSourceGraphInput["parse_failures"] =>
+  [...failures]
+    .sort((left, right) =>
+      compareUnicodeCodePoints(
+        historicalSourceParseFailureKey(left),
+        historicalSourceParseFailureKey(right),
+      ),
+    )
+    .filter((value, index, array) => {
+      if (index === 0) return true;
+      const previous = array[index - 1];
+      return (
+        previous === undefined ||
+        historicalSourceParseFailureKey(value) !==
+          historicalSourceParseFailureKey(previous)
+      );
+    });
 
 const buildProvenance = (
   options: ReferenceSourceImportOptions,
@@ -74,174 +91,164 @@ const buildProvenance = (
   caller: options.caller,
 });
 
-const deriveLanguages = (
-  entries: HistoricalSourceGraphInput["entries"],
-): string[] =>
-  [
-    ...new Set(
-      entries.flatMap((entry) =>
-        entry.kind === "file" && entry.language !== null
-          ? [entry.language]
-          : [],
-      ),
-    ),
-  ].sort(byCodePoint);
-
-const deriveManifests = (
-  entries: HistoricalSourceGraphInput["entries"],
-): string[] =>
-  entries
-    .flatMap((entry) =>
-      entry.kind === "file" && entry.classifications.includes("manifest")
-        ? [entry.path]
-        : [],
-    )
-    .sort(byCodePoint);
-
-const deriveInventoryState = (
-  input: Pick<
-    HistoricalSourceGraphInput,
-    | "entries"
-    | "relationships"
-    | "parse_failures"
-    | "exclusions"
-    | "limitations"
-  >,
-): "complete" | "partial" | "unknown" => {
-  if (input.limitations.length > 0) return "partial";
-  if (input.exclusions.length > 0) return "partial";
-  if (input.parse_failures.length > 0) return "partial";
-  const partialEntry = input.entries.some(
-    (entry) =>
-      entry.limitations.length > 0 ||
-      (entry.kind === "file" && entry.content_state !== "hashed") ||
-      (entry.kind === "directory" && entry.tree_state !== "enumerated") ||
-      (entry.kind === "symlink" && entry.target_state !== "internal"),
-  );
-  if (partialEntry) return "partial";
-  const partialRelationship = input.relationships.some(
-    ({ parse_state, resolution }) =>
-      parse_state !== "parsed" ||
-      ["unresolved", "unknown"].includes(resolution),
-  );
-  if (partialRelationship) return "partial";
-  return "complete";
-};
-
-const sortAndLimit = (
+const sortExclusions = (
   exclusions: HistoricalSourceGraphInput["exclusions"],
-  maxExclusions: number,
-): HistoricalSourceGraphInput["exclusions"] => {
-  const sorted = [...exclusions].sort((left, right) => {
-    const byPath = byCodePoint(left.path, right.path);
+): HistoricalSourceGraphInput["exclusions"] =>
+  [...exclusions].sort((left, right) => {
+    const byPath = compareUnicodeCodePoints(left.path, right.path);
     if (byPath !== 0) return byPath;
-    return byCodePoint(left.reason, right.reason);
+    const byReason = compareUnicodeCodePoints(left.reason, right.reason);
+    if (byReason !== 0) return byReason;
+    return compareUnicodeCodePoints(
+      "pattern" in left ? left.pattern : "",
+      "pattern" in right ? right.pattern : "",
+    );
   });
-  if (sorted.length <= maxExclusions) return sorted;
-  return sorted.slice(0, maxExclusions);
-};
+
+const createShouldExclude =
+  (
+    exclusions: HistoricalSourceGraphInput["exclusions"],
+    secrets: PreparedReferenceSourceImport["secrets"],
+    ignored: PreparedReferenceSourceImport["ignored"],
+  ): ((path: string, kind: ReferenceSourceExclusionKind) => boolean) =>
+  (path, kind) => {
+    // An entry of unknown kind may be a directory, so directory-only rules
+    // must still exclude it; this fails closed for caller-marked secrets.
+    const patternPaths =
+      kind === "directory"
+        ? [`${path}/`]
+        : kind === "unknown"
+          ? [path, `${path}/`]
+          : [path];
+    const firstMatch = (matcher: Pick<typeof secrets, "test">) => {
+      const results = patternPaths.map((patternPath) =>
+        matcher.test(patternPath),
+      );
+      return results.find(({ ignored }) => ignored) ?? results[0];
+    };
+    const secretMatch = firstMatch(secrets);
+    if (secretMatch?.ignored === true) {
+      if (!secretMatch.rule)
+        throw new Error(`Ignored secret path has no matching rule: ${path}`);
+      exclusions.push({
+        path,
+        entry_kind: kind,
+        reason: "configured-secret",
+        pattern: secretMatch.rule.pattern,
+      });
+      return true;
+    }
+    const match = firstMatch(ignored);
+    if (match?.ignored !== true) return false;
+    if (!match.rule)
+      throw new Error(`Ignored path has no matching rule: ${path}`);
+    const reason = match.rule.mark;
+    if (
+      reason !== "project-ignored" &&
+      reason !== "default-ignored" &&
+      reason !== "caller-excluded"
+    )
+      throw new Error(`Ignored path has unknown rule origin: ${path}`);
+    exclusions.push({
+      path,
+      entry_kind: kind,
+      reason,
+      pattern: match.rule.pattern,
+    });
+    return true;
+  };
 
 /**
  * Import a reference source directory into a committed historical source graph.
  *
  * The import is deterministic, parallel-safe, and never executes source, hooks,
- * git subprocesses, or network requests. Secret-like paths are redacted before
- * they are committed to the graph.
+ * git subprocesses, or network requests. Paths explicitly excluded by the
+ * caller's reference-source policy are omitted from the graph.
  */
 export const importReferenceSource = async (
   options: ReferenceSourceImportOptions,
+  resources: ArtifactResourceScope,
 ): Promise<Result<HistoricalSourceGraph, ReferenceSourceImportError>> => {
-  if (isAborted(options.signal)) return err(cancelled());
-  const prepared = await prepareReferenceSourceImport(options);
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
+  const prepared = await prepareReferenceSourceImport(options, resources);
   if (!prepared.ok) return prepared;
-  const { ignored, limits, root, secrets } = prepared.value;
-  if (isAborted(options.signal)) return err(cancelled());
+  const { ignored, root, secrets } = prepared.value;
+  if (isAborted(options.signal)) return err(cancelled(options.signal));
 
   const exclusions: HistoricalSourceGraphInput["exclusions"] = [];
-  const shouldExclude = (path: string): boolean => {
-    if (isSecretLikePath(path) || secrets.ignores(path)) {
-      exclusions.push({ path, reason: "configured-secret" });
-      return true;
-    }
-    if (ignored.ignores(path)) {
-      exclusions.push({ path, reason: "caller-excluded" });
-      return true;
-    }
-    return false;
-  };
+  const shouldExclude = createShouldExclude(exclusions, secrets, ignored);
 
-  const [readResult, vcs] = await Promise.all([
-    readReferenceSource(root, limits, {
+  const [readResult, vcsResult] = await Promise.all([
+    readReferenceSource(root, resources, {
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       shouldExclude,
+      beforeDirectory: prepared.value.beforeDirectory,
     }),
-    readReferenceSourceVcs(root, options.signal),
+    readReferenceSourceVcs(root, resources, options.signal),
   ]);
 
-  if (!readResult.ok) {
-    const error = readResult.error;
-    if (error.code === "cancelled") return err(cancelled());
+  if (!readResult.ok)
     return err(
-      failure(
-        error.code === "invalid-limits" ? "invalid-limits" : "io",
-        error.message,
+      combineReadFailures(
+        readResult.error,
+        vcsResult.ok ? undefined : vcsResult.error,
+        readResult.error.partial,
       ),
     );
-  }
+  if (!vcsResult.ok)
+    return err(
+      combineReadFailures(vcsResult.error, undefined, readResult.value),
+    );
 
-  if (isAborted(options.signal)) return err(cancelled());
+  const vcs = vcsResult.value;
+
+  if (isAborted(options.signal))
+    return err(cancelled(options.signal, readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, options.signal);
+    parseReferenceSourceEntries(
+      read,
+      exclusions,
+      options.signal,
+      options.memberMutationAllowance,
+    );
 
-  if (isAborted(options.signal)) return err(cancelled());
+  if (isAborted(options.signal)) return err(cancelled(options.signal, read));
 
   const uniqueRelationships = deduplicateRelationships(relationships);
-  const uniqueFailures = [...parseFailures]
-    .sort((left, right) => {
-      const byPath = byCodePoint(left.path, right.path);
-      if (byPath !== 0) return byPath;
-      return byCodePoint(left.parser, right.parser);
-    })
-    .filter((value, index, array) => {
-      if (index === 0) return true;
-      const previous = array[index - 1];
-      if (previous === undefined) return true;
-      return value.path !== previous.path || value.parser !== previous.parser;
-    });
+  const uniqueFailures = normalizeHistoricalSourceParseFailures(parseFailures);
 
   const sortedEntries = [...entries].sort((left, right) =>
-    byCodePoint(left.path, right.path),
+    compareUnicodeCodePoints(left.path, right.path),
   );
-  const sortedExclusions = sortAndLimit(exclusions, limits.maxEntries);
-  const sortedLimitations = [...limitations].sort(byCodePoint);
+  const sortedExclusions = sortExclusions(exclusions);
+  const sortedLimitations = [...limitations].sort(compareUnicodeCodePoints);
 
   const input: HistoricalSourceGraphInput = {
-    schema: "HistoricalSourceGraph/v1",
+    schema: "HistoricalSourceGraph",
     authority: "historical-reference",
     root_alias: "$REFERENCE_ROOT",
-    inventory_state: deriveInventoryState({
+    inventory_state: historicalSourceInventoryHasPartialFacts({
       entries: sortedEntries,
       relationships: uniqueRelationships,
       parse_failures: uniqueFailures,
       exclusions: sortedExclusions,
       limitations: sortedLimitations,
-    }),
+    })
+      ? "partial"
+      : "complete",
     entries: sortedEntries,
     relationships: uniqueRelationships.sort((left, right) =>
-      byCodePoint(relationshipKey(left), relationshipKey(right)),
+      compareUnicodeCodePoints(
+        historicalSourceRelationshipKey(left),
+        historicalSourceRelationshipKey(right),
+      ),
     ),
     parse_failures: uniqueFailures,
     exclusions: sortedExclusions,
-    languages: deriveLanguages(sortedEntries),
-    manifests: deriveManifests(sortedEntries),
+    languages: historicalSourceLanguages(sortedEntries),
+    manifests: historicalSourceManifests(sortedEntries),
     vcs,
     provenance: buildProvenance(options),
     limitations: sortedLimitations,
@@ -249,12 +256,67 @@ export const importReferenceSource = async (
 
   try {
     return ok(createHistoricalSourceGraph(input));
-  } catch (error) {
+  } catch (cause: unknown) {
     return err(
       failure(
         "parse",
-        error instanceof Error ? error.message : "Graph failed validation",
+        cause instanceof Error ? cause.message : "Graph failed validation",
       ),
     );
   }
+};
+
+const combineReadFailures = (
+  inventory: ReferenceSourceReaderError,
+  metadata: ReferenceSourceReaderError | undefined,
+  partial: ReferenceSourceRead | undefined,
+): ReferenceSourceImportError => {
+  const primary =
+    inventory.code === "cancelled" &&
+    metadata !== undefined &&
+    metadata.code !== "cancelled"
+      ? metadata
+      : inventory;
+  const other = primary === inventory ? metadata : inventory;
+  const cleanup = mergeCleanup(primary.cleanup, other?.cleanup);
+  const message =
+    other === undefined || other.code === "cancelled"
+      ? primary.message
+      : `${primary.message}; additional reference failure: ${other.message}`;
+  const cause =
+    other === undefined || other.code === "cancelled"
+      ? primary.cause
+      : new AggregateError(
+          [primary, other],
+          "Reference source inventory and metadata both failed",
+          { cause: primary },
+        );
+  const secondaryCancellation =
+    primary.secondaryCancellation ??
+    other?.secondaryCancellation ??
+    (other?.code === "cancelled" && primary.code !== "cancelled"
+      ? { cause: other.cause }
+      : undefined);
+  return {
+    ...failure(primary.code, message),
+    ...(primary.remediationAction === undefined
+      ? {}
+      : { remediationAction: primary.remediationAction }),
+    ...(cleanup === undefined ? {} : { cleanup }),
+    ...(secondaryCancellation === undefined ? {} : { secondaryCancellation }),
+    ...(partial === undefined ? {} : { partial }),
+    ...(cause === undefined ? {} : { cause }),
+  };
+};
+
+const mergeCleanup = (
+  first: AnalysisCleanupObservation | undefined,
+  second: AnalysisCleanupObservation | undefined,
+): AnalysisCleanupObservation | undefined => {
+  if (first === undefined) return second;
+  if (second === undefined) return first;
+  return {
+    reason: `${first.reason}; ${second.reason}`,
+    resources: [...new Set([...first.resources, ...second.resources])],
+  };
 };

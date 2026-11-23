@@ -1,261 +1,147 @@
-import canonicalize from "canonicalize";
+import {
+  ANALYSIS_EVIDENCE_PREDICATE,
+  evidenceFileTarget,
+  type Evidence,
+} from "./evidence.js";
+import {
+  sameTargetIdentity,
+  type FileTargetIdentity,
+} from "./targetIdentity.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
+import type { EvidenceIntegrityError } from "./evidenceErrors.js";
+import {
+  readEvidence,
+  readEvidencePayload,
+  type EvidenceSourceLocation,
+} from "./evidenceValidation.js";
+import type { JsonValue } from "./jsonValue.js";
+import { err, ok, type Result } from "./result.js";
+import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
+import {
+  functionDossierSchema,
+  type FunctionDossier,
+} from "./native/functionDossier.js";
+import { assessFunctionCallCoverage } from "./functionCallCoverage.js";
+import { functionCoordinateContextsEqual } from "./native/functionCoordinateContext.js";
 
-import { enhancedInputSchemas } from "../contracts/enhancedInputs.js";
-import { parseEvidence, type Evidence } from "./evidence.js";
-import { functionDossierSchema, type FunctionDossier } from "./hopperValues.js";
-
-const MAX_PAGES = 100;
-const MAX_ITEMS = 50_000;
-const MAX_PSEUDOCODE_CHARS = 2_000_000;
-
-const DOSSIER_COLLECTION_FIELDS = [
-  "assembly",
-  "comments",
-  "callers",
-  "callees",
-  "incoming_references",
-  "outgoing_references",
-  "referenced_strings",
-  "referenced_names",
-  "basic_blocks",
-] as const;
-
-type DossierCollectionField = (typeof DOSSIER_COLLECTION_FIELDS)[number];
-type DossierItem<Field extends DossierCollectionField> =
-  FunctionDossier[Field]["items"][number];
-
-export interface FunctionCollection<Item = unknown> {
-  readonly items: readonly Item[];
-  readonly total: number | null;
-  readonly complete: boolean;
-  readonly truncated: boolean;
-}
-
-type FunctionCollections = {
-  readonly [Field in DossierCollectionField]: FunctionCollection<
-    DossierItem<Field>
-  >;
-};
-
-/** Verified, bounded function observation assembled from Evidence pages. */
+/** Complete function observation parsed from one analyze_function Evidence record. */
 export interface FunctionSnapshot {
-  readonly evidence: readonly Evidence[];
-  readonly procedure: FunctionDossier["procedure"];
-  readonly provider: Evidence["provider"];
-  readonly subject: NonNullable<Evidence["subject"]>;
-  readonly pseudocode: {
-    readonly text: string;
-    readonly total: number;
-    readonly complete: boolean;
-    readonly truncated: boolean;
-  };
-  readonly collections: FunctionCollections;
-  readonly instructionScan: FunctionDossier["instruction_scan"];
-  readonly limitations: readonly string[];
-}
-
-interface DossierPage {
-  readonly evidence: Omit<Evidence, "subject"> & {
-    readonly subject: NonNullable<Evidence["subject"]>;
-  };
+  readonly evidence: Evidence;
+  /** The file the function was analysed in, selection included. */
+  readonly target: FileTargetIdentity;
   readonly dossier: FunctionDossier;
-  readonly parameters: ReturnType<
-    typeof enhancedInputSchemas.analyze_function.parse
-  >;
+  readonly limitations: readonly string[];
+  readonly callCoverageBlockers: readonly string[];
+  readonly unresolvedCallCaveats: readonly string[];
+  readonly callCoverageDiagnostics: readonly string[];
+  readonly callDiscoveryLimitations: readonly string[];
+  readonly callDiscoveryStatus: "complete" | "partial" | "unknown";
 }
 
-/** Parse and assemble up to 100 mutually consistent analyze_function pages. */
-export const parseFunctionEvidence = (input: unknown): FunctionSnapshot => {
-  const values = Array.isArray(input) ? input : [input];
-  if (values.length === 0 || values.length > MAX_PAGES)
-    throw new TypeError("Function comparison requires 1 to 100 Evidence pages");
-  const pages = values.map(parsePage);
-  assertPageGroup(pages);
-  const first = pages[0];
-  if (first === undefined)
-    throw new TypeError("Function comparison requires Evidence pages");
-  const pseudocode = mergePseudocode(pages);
-  const collections: FunctionCollections = {
-    assembly: mergeCollection(pages, "assembly"),
-    comments: mergeCollection(pages, "comments"),
-    callers: mergeCollection(pages, "callers"),
-    callees: mergeCollection(pages, "callees"),
-    incoming_references: mergeCollection(pages, "incoming_references"),
-    outgoing_references: mergeCollection(pages, "outgoing_references"),
-    referenced_strings: mergeCollection(pages, "referenced_strings"),
-    referenced_names: mergeCollection(pages, "referenced_names"),
-    basic_blocks: mergeCollection(pages, "basic_blocks"),
-  };
-  return {
-    evidence: pages.map(({ evidence }) => evidence),
-    procedure: first.dossier.procedure,
-    provider: first.evidence.provider,
-    subject: first.evidence.subject,
-    pseudocode,
-    collections,
-    instructionScan: first.dossier.instruction_scan,
-    limitations: [
-      ...new Set(pages.flatMap(({ evidence }) => evidence.limitations)),
-    ].sort((left, right) => left.localeCompare(right)),
-  };
+/** Artifact identity and provider-owned mapping jointly establish coordinate applicability. */
+export type FunctionSnapshotCoordinateContext =
+  | "common"
+  | "cross-artifact"
+  | "unknown";
+
+export const functionSnapshotCoordinateContext = (
+  left: FunctionSnapshot,
+  right: FunctionSnapshot,
+): FunctionSnapshotCoordinateContext => {
+  if (left.target.sha256 !== right.target.sha256) return "cross-artifact";
+  // The same bytes share coordinates only when opened as the same target:
+  // format, architecture and selection (a raw entry point or flash offset).
+  return left.target.architecture !== null &&
+    sameTargetIdentity(left.target, right.target) &&
+    functionCoordinateContextsEqual(
+      left.evidence.analysis_profile,
+      right.evidence.analysis_profile,
+    )
+    ? "common"
+    : "unknown";
 };
 
-const parsePage = (input: unknown): DossierPage => {
-  const evidence = parseEvidence(input);
-  if (evidence.operation !== "analyze_function")
-    throw new TypeError(
-      "Function comparison requires analyze_function Evidence",
-    );
-  if (evidence.subject === null)
-    throw new TypeError("Function comparison requires artifact-bound Evidence");
-  return {
-    evidence: { ...evidence, subject: evidence.subject },
-    dossier: functionDossierSchema.parse(evidence.normalized_result),
-    parameters: enhancedInputSchemas.analyze_function.parse(
-      evidence.parameters,
-    ),
-  };
-};
-
-const assertPageGroup = (pages: readonly DossierPage[]): void => {
-  const first = pages[0];
-  if (first === undefined) return;
-  const invariant = pageInvariant(first);
-  for (const page of pages)
-    if (canonicalJson(pageInvariant(page)) !== canonicalJson(invariant))
-      throw new TypeError(
-        "Function Evidence pages mix subjects, providers, or immutable analysis controls",
-      );
-};
-
-const pageInvariant = (page: DossierPage) => ({
-  subject: {
-    digest: page.evidence.subject?.digest,
-    format: page.evidence.subject?.format,
-    architecture: page.evidence.subject?.architecture,
+/** Parse one complete analyze_function Evidence record for comparison workflows. */
+export const parseFunctionEvidence = (
+  input: unknown,
+  selection: {
+    readonly operation: "compare_functions" | "build_call_path";
+    readonly path: readonly (string | number)[];
   },
-  provider: page.evidence.provider,
-  procedure: page.dossier.procedure,
-  requested_procedure: page.parameters.procedure,
-  include_assembly: page.parameters.include_assembly,
-  max_instructions: page.parameters.max_instructions,
-  instruction_scan: page.dossier.instruction_scan,
-});
-
-const mergePseudocode = (
-  pages: readonly DossierPage[],
-): FunctionSnapshot["pseudocode"] => {
-  const totals = new Set(
-    pages.map(({ dossier }) => dossier.pseudocode.total_chars),
-  );
-  if (totals.size !== 1)
-    throw new TypeError("Function pseudocode pages disagree on total length");
-  const total = pages[0]?.dossier.pseudocode.total_chars ?? 0;
-  if (total > MAX_PSEUDOCODE_CHARS)
-    throw new TypeError("Function pseudocode exceeds comparison limit");
-  const characters = new Map<number, string>();
-  for (const page of pages) {
-    const offset = page.parameters.pseudocode_offset;
-    for (const [index, character] of [
-      ...page.dossier.pseudocode.text,
-    ].entries())
-      mergeIndexed(characters, offset + index, character, "pseudocode");
-    if (characters.size > MAX_PSEUDOCODE_CHARS)
-      throw new TypeError("Function pseudocode exceeds comparison limit");
-  }
-  const complete = hasCompleteRange(characters, total);
-  return {
-    text: orderedValues(characters).join(""),
-    total,
-    complete,
-    truncated: !complete,
-  };
-};
-
-const mergeCollection = <Field extends DossierCollectionField>(
-  pages: readonly DossierPage[],
-  field: Field,
-): FunctionCollection<DossierItem<Field>> => {
-  const totals = new Set(pages.map(({ dossier }) => dossier[field].total));
-  if (totals.size !== 1)
-    throw new TypeError(`Function ${field} pages disagree on total count`);
-  const total = pages[0]?.dossier[field].total ?? null;
-  if (total !== null && total > MAX_ITEMS)
-    throw new TypeError(`Function ${field} exceeds comparison item limit`);
-  const items = new Map<number, DossierItem<Field>>();
-  for (const page of pages) {
-    const offset = collectionOffset(page, field);
-    for (const [index, item] of page.dossier[field].items.entries())
-      mergeIndexed(items, offset + index, item, field);
-    if (items.size > MAX_ITEMS)
-      throw new TypeError(`Function ${field} exceeds comparison item limit`);
-  }
-  const scanLimited =
-    field !== "assembly" && pageDependsOnScan(field)
-      ? pages.some(({ dossier }) => dossier.instruction_scan.truncated)
-      : false;
-  const unavailable =
-    field === "assembly" &&
-    pages.every(({ parameters }) => !parameters.include_assembly);
-  const complete =
-    !scanLimited &&
-    !unavailable &&
-    total !== null &&
-    hasCompleteRange(items, total);
-  return {
-    items: orderedValues(items),
-    total,
-    complete,
-    truncated: scanLimited || (!unavailable && !complete),
-  };
-};
-
-const collectionOffset = (
-  page: DossierPage,
-  field: DossierCollectionField,
-): number =>
-  field === "assembly"
-    ? page.parameters.assembly_offset
-    : page.parameters.collection_offset[field];
-
-const pageDependsOnScan = (field: DossierCollectionField): boolean =>
-  field !== "callers" && field !== "callees";
-
-const mergeIndexed = <Value>(
-  output: Map<number, Value>,
-  index: number,
-  value: Value,
-  field: string,
-): void => {
-  const previous = output.get(index);
-  if (
-    previous !== undefined &&
-    canonicalJson(previous) !== canonicalJson(value)
-  )
-    throw new TypeError(
-      `Function ${field} pages overlap with conflicting data`,
+): Result<FunctionSnapshot, AnalysisInputError | EvidenceIntegrityError> => {
+  const [first] = selection.path;
+  const side: Pick<EvidenceSourceLocation, "side"> =
+    selection.path.length === 1 && (first === "left" || first === "right")
+      ? { side: first }
+      : {};
+  const parsed = readEvidence(input, side);
+  if (!parsed.ok) return parsed;
+  const evidence = parsed.value;
+  const invalidSelection = (
+    message: string,
+    facts?: { readonly expected: JsonValue; readonly observed: JsonValue },
+  ) =>
+    err(
+      new AnalysisInputError(selection.operation, { userMessage: message }, [
+        {
+          path: selection.path,
+          reason: "invalid_value",
+          message,
+          ...facts,
+        },
+      ]),
     );
-  output.set(index, value);
-};
-
-const hasCompleteRange = <Value>(
-  values: ReadonlyMap<number, Value>,
-  total: number,
-): boolean => {
-  if (values.size !== total) return false;
-  for (let index = 0; index < total; index += 1)
-    if (!values.has(index)) return false;
-  return true;
-};
-
-const orderedValues = <Value>(values: ReadonlyMap<number, Value>): Value[] =>
-  [...values.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([, value]) => value);
-
-const canonicalJson = (value: unknown): string => {
-  const encoded = canonicalize(value);
-  if (encoded === undefined)
-    throw new TypeError("Function Evidence could not be canonicalized");
-  return encoded;
+  if (
+    evidence.operation !== "analyze_function" ||
+    evidence.predicate_type !== ANALYSIS_EVIDENCE_PREDICATE
+  ) {
+    const location = selection.path.map(String).join(".");
+    const subject =
+      location === ""
+        ? "supplied Evidence"
+        : selection.path.length === 1
+          ? `${location} Evidence`
+          : `Evidence at ${location}`;
+    return invalidSelection(
+      `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${subject} has operation ${evidence.operation} and predicate ${evidence.predicate_type}.`,
+      {
+        expected: {
+          operation: "analyze_function",
+          predicate_type: ANALYSIS_EVIDENCE_PREDICATE,
+        },
+        observed: {
+          operation: evidence.operation,
+          predicate_type: evidence.predicate_type,
+        },
+      },
+    );
+  }
+  const target = evidenceFileTarget(evidence);
+  if (target === undefined)
+    return invalidSelection(
+      "Function analysis requires artifact-bound Evidence",
+    );
+  const dossier = readEvidencePayload(
+    functionDossierSchema,
+    evidence.normalized_result,
+    { ...side, within: ["normalized_result"] },
+  );
+  if (!dossier.ok) return dossier;
+  const callCoverage = assessFunctionCallCoverage(
+    evidence.relationship_coverage,
+    dossier.value,
+  );
+  return ok({
+    evidence,
+    target,
+    dossier: dossier.value,
+    limitations: [
+      ...new Set([...evidence.limitations, ...dossier.value.limitations]),
+    ].sort((left, right) => compareUnicodeCodePoints(left, right)),
+    callCoverageBlockers: callCoverage.blockers,
+    unresolvedCallCaveats: callCoverage.unresolvedCallCaveats,
+    callCoverageDiagnostics: callCoverage.diagnostics,
+    callDiscoveryLimitations: callCoverage.discoveryLimitations,
+    callDiscoveryStatus: callCoverage.discoveryStatus,
+  });
 };

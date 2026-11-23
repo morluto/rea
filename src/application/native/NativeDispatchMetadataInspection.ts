@@ -1,0 +1,124 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
+import { permitsCapabilityFallback } from "../CapabilityFallback.js";
+import { listNamesFact } from "../../domain/native/nativeOperationFacts.js";
+import {
+  nativeDispatchMetadataResultSchema,
+  inspectNativeDispatchMetadata,
+} from "../../domain/native/objcSwiftMetadata.js";
+import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import { ownedJsonValueSchema } from "../../domain/jsonValue.js";
+import { err, ok } from "../../domain/result.js";
+import { executeFact } from "../AnalysisOperationFacts.js";
+import type { AnalysisOperationPort } from "../../ports/AnalysisProvider.js";
+import type { EnhancedResult } from "../EnhancedToolTypes.js";
+
+/** Source operations for this workflow, shared with capability discovery. */
+export const NATIVE_DISPATCH_METADATA_SOURCES = {
+  binary: "inspect_native_dispatch_metadata",
+  symbols: "list_names",
+} as const;
+
+/** Prefer validated binary metadata, otherwise preserve the bound provider's symbol-only coverage. */
+export const inspectNativeDispatch = async (
+  analysis: AnalysisOperationPort,
+  maxRecords: number,
+  options: {
+    readonly signal?: AbortSignal | undefined;
+    readonly objcClassImportAddresses?: readonly string[] | undefined;
+    readonly objcClassImportAddressesComplete?: boolean | undefined;
+    /** Binary metadata input budget; symbol-only inventories ignore it. */
+    readonly maxInputBytes?: number | undefined;
+  } = {},
+): EnhancedResult => {
+  const {
+    signal,
+    objcClassImportAddresses,
+    objcClassImportAddressesComplete,
+    maxInputBytes,
+  } = options;
+  const input = {
+    max_records: maxRecords,
+    ...(maxInputBytes === undefined ? {} : { max_input_bytes: maxInputBytes }),
+    ...(objcClassImportAddresses === undefined
+      ? {}
+      : {
+          objc_class_import_addresses: [...objcClassImportAddresses],
+          ...(objcClassImportAddressesComplete === undefined
+            ? {}
+            : {
+                objc_class_import_addresses_complete:
+                  objcClassImportAddressesComplete,
+              }),
+        }),
+  };
+  const binaryMetadata = await analysis.execute(
+    NATIVE_DISPATCH_METADATA_SOURCES.binary,
+    input,
+    signal === undefined ? {} : { signal },
+  );
+  if (binaryMetadata.ok) {
+    const parsed = nativeDispatchMetadataResultSchema.safeParse(
+      binaryMetadata.value.result,
+    );
+    if (!parsed.success)
+      return err(
+        new AnalysisOutputError(
+          NATIVE_DISPATCH_METADATA_SOURCES.binary,
+          "Invalid native dispatch metadata",
+          { cause: parsed.error },
+        ).retainPartialObservation(
+          createAnalysisExecutionEvidence(
+            NATIVE_DISPATCH_METADATA_SOURCES.binary,
+            input,
+            binaryMetadata.value,
+            "observed",
+          ),
+        ),
+      );
+    return ok(ownedJsonValueSchema.parse(parsed.data));
+  }
+  if (!permitsCapabilityFallback(binaryMetadata.error))
+    return err(binaryMetadata.error);
+  const names = await executeFact(
+    analysis,
+    listNamesFact,
+    {},
+    signal === undefined ? {} : { signal },
+  );
+  if (!names.ok)
+    return err(
+      names.error.retainSecondaryFailure(binaryMetadata.error, {
+        binary_metadata_failure: projectAnalysisError(binaryMetadata.error),
+      }),
+    );
+  const { execution, fact } = names.value;
+  const result = inspectNativeDispatchMetadata(
+    fact.map((entry) => ({
+      address: entry.address,
+      name: entry.value,
+    })),
+    maxRecords,
+  );
+  if (objcClassImportAddresses !== undefined) {
+    result.objc_class_import_bindings = [];
+    result.objc_class_import_binding_coverage = {
+      facet: "objc_class_import_bindings",
+      status: "unsupported",
+      reason: "Native Mach-O pointer binding inspection is unavailable.",
+      examined: 0,
+      decoded: 0,
+    };
+  }
+  return ok(
+    ownedJsonValueSchema.parse(
+      nativeDispatchMetadataResultSchema.parse({
+        target_sha256: execution.subject?.sha256 ?? null,
+        target_architecture: execution.subject?.architecture ?? null,
+        provider: execution.provider,
+        analysis_profile_digest: execution.analysisProfile?.digest ?? null,
+        result,
+      }),
+    ),
+  );
+};

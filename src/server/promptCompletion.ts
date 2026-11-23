@@ -1,22 +1,22 @@
 import { z } from "zod";
 
-import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
-import type { BinarySessionPort } from "../application/BinarySession.js";
+import { uniqueSorted } from "../domain/canonicalOrdering.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import type { AnalysisOperationPort } from "../ports/AnalysisProvider.js";
+import { parseProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
+import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import type { PromptCompletionKind } from "../contracts/promptContracts.js";
-import { artifactInventoryResultSchema } from "../domain/artifactGraph.js";
-import { parseAddressedPage } from "../domain/hopperValues.js";
-import {
-  processCaptureSchema,
-  validateProcessCapture,
-} from "../domain/processCapture.js";
-
-const COMPLETION_SCAN_LIMIT = 10_000;
-const PROCEDURE_PAGE_SIZE = 500;
-const MAX_COMPLETION_VALUE_LENGTH = 4_096;
+import { listProceduresFact } from "../domain/native/nativeOperationFacts.js";
+import { currentMcpRequestSignal } from "./ErrorEvidenceTransport.js";
+import { parseArtifactInventoryEvidence } from "../domain/artifactInventoryEvidence.js";
+import { EvidenceIntegrityError } from "../domain/evidenceErrors.js";
+import type { Evidence } from "../domain/evidence.js";
 
 const documentListSchema = z.array(z.string().min(1));
 const providerStatusSchema = z.object({
-  providers: z.array(z.object({ id: z.string().min(1) })),
+  analysis_provider_candidates: z.array(
+    z.object({ provider: z.object({ id: z.string().min(1) }) }),
+  ),
 });
 
 interface CompletionContext {
@@ -32,13 +32,12 @@ export interface PromptCompletionSource {
   ): Promise<readonly string[]>;
 }
 
-/** Build bounded live completion over the active provider and session ledger. */
+/** Build live completion over the active provider and session ledger. */
 export const createPromptCompletionSource = (
   analysis: AnalysisOperationPort,
   session?: BinarySessionPort,
 ): PromptCompletionSource => ({
   async complete(kind, value, context) {
-    if (value.length > MAX_COMPLETION_VALUE_LENGTH) return [];
     const candidates = await completionCandidates(
       kind,
       analysis,
@@ -46,9 +45,12 @@ export const createPromptCompletionSource = (
       context,
     );
     const prefix = normalize(value);
-    return uniqueSorted(candidates)
-      .filter((candidate) => normalize(candidate).startsWith(prefix))
-      .slice(0, COMPLETION_SCAN_LIMIT);
+    const matches = candidates.filter(
+      (candidate) =>
+        candidate.length > 0 &&
+        (prefix === "" || normalize(candidate).startsWith(prefix)),
+    );
+    return uniqueSorted(matches);
   },
 });
 
@@ -60,9 +62,13 @@ const completionCandidates = async (
 ): Promise<readonly string[]> => {
   switch (kind) {
     case "document":
-      return documentCandidates(analysis);
+      return documentCandidates(analysis, session);
     case "procedure":
-      return procedureCandidates(analysis, context?.arguments?.document);
+      return procedureCandidates(
+        analysis,
+        session,
+        context?.arguments?.document,
+      );
     case "provider":
       return providerCandidates(session);
     case "evidence":
@@ -77,65 +83,88 @@ const completionCandidates = async (
 
 const documentCandidates = async (
   analysis: AnalysisOperationPort,
+  session: BinarySessionPort | undefined,
 ): Promise<readonly string[]> => {
-  const result = await analysis.execute("list_documents", {});
+  const result = await completionInventoryLookup(
+    analysis,
+    session,
+    "list_documents",
+    {},
+  );
+  if (result === undefined) return [];
   if (!result.ok) return [];
   const parsed = documentListSchema.safeParse(result.value.result);
-  return parsed.success ? parsed.data.slice(0, COMPLETION_SCAN_LIMIT) : [];
+  return parsed.success ? parsed.data : [];
 };
 
 const procedureCandidates = async (
   analysis: AnalysisOperationPort,
+  session: BinarySessionPort | undefined,
   document: string | undefined,
 ): Promise<readonly string[]> => {
-  if (document !== undefined && document.length > MAX_COMPLETION_VALUE_LENGTH)
-    return [];
-  const byAddress = new Map<string, string>();
-  let offset = 0;
-  let exhaustive = false;
-  while (byAddress.size < COMPLETION_SCAN_LIMIT / 2) {
-    const result = await analysis.execute("list_procedures", {
-      offset,
-      limit: PROCEDURE_PAGE_SIZE,
-      ...(document === undefined || document.length === 0 ? {} : { document }),
-    });
-    if (!result.ok) break;
-    const parsed = parseAddressedPage(result.value.result);
-    if (!parsed.ok) break;
-    for (const item of parsed.value.items) {
-      if (byAddress.size >= COMPLETION_SCAN_LIMIT / 2) break;
-      if (!byAddress.has(item.address)) byAddress.set(item.address, item.name);
-    }
-    const nextOffset = parsed.value.nextOffset;
-    if (!parsed.value.hasMore) {
-      exhaustive = true;
-      break;
-    }
-    if (nextOffset === null || nextOffset <= offset) break;
-    offset = nextOffset;
+  const addresses = new Set<string>();
+  // null records proven ambiguity; later rows cannot restore uniqueness.
+  const addressByName = new Map<string, string | null>();
+  const input =
+    document === undefined || document.length === 0 ? {} : { document };
+  const result = await completionInventoryLookup(
+    analysis,
+    session,
+    "list_procedures",
+    input,
+  );
+  if (result === undefined) return [];
+  if (result.ok) {
+    const parsed = listProceduresFact.schema.safeParse(result.value.result);
+    if (parsed.success)
+      for (const { address, value: name } of parsed.data) {
+        addresses.add(address);
+        if (name.length === 0) continue;
+        const previous = addressByName.get(name);
+        addressByName.set(
+          name,
+          previous === undefined || previous === address ? address : null,
+        );
+      }
   }
 
-  const addressesByName = new Map<string, Set<string>>();
-  for (const [address, name] of byAddress) {
-    const addresses = addressesByName.get(name) ?? new Set<string>();
-    addresses.add(address);
-    addressesByName.set(name, addresses);
-  }
-  const candidates = [...byAddress.keys()];
-  if (exhaustive)
-    for (const [name, addresses] of addressesByName)
-      if (addresses.size === 1 && name.length > 0) candidates.push(name);
+  const candidates = [...addresses];
+  for (const [name, address] of addressByName)
+    if (address !== null) candidates.push(name);
   return candidates;
 };
 
-const providerCandidates = (
+const completionInventoryLookup = async (
+  analysis: AnalysisOperationPort,
   session: BinarySessionPort | undefined,
-): readonly string[] => {
+  operation: "list_documents" | "list_procedures",
+  parameters: Readonly<Record<string, JsonValue>>,
+) => {
+  const signal = currentMcpRequestSignal();
+  const options = signal === undefined ? {} : { signal };
+  const result =
+    session === undefined
+      ? await analysis.execute(operation, parameters, options)
+      : await session.executeIfProviderReady(operation, parameters, options);
+  return signal?.aborted === true ? undefined : result;
+};
+
+const providerCandidates = async (
+  session: BinarySessionPort | undefined,
+): Promise<readonly string[]> => {
   if (session === undefined) return [];
-  const parsed = providerStatusSchema.safeParse(session.status());
-  return parsed.success
-    ? parsed.data.providers.map(({ id }) => id).slice(0, COMPLETION_SCAN_LIMIT)
-    : [];
+  const signal = currentMcpRequestSignal();
+  const parsed = providerStatusSchema.safeParse(
+    await session.status({
+      detail: "summary",
+      ...(signal === undefined ? {} : { signal }),
+    }),
+  );
+  if (!parsed.success) return [];
+  const candidates = parsed.data.analysis_provider_candidates.map(
+    ({ provider }) => provider.id,
+  );
+  return ["auto", ...candidates];
 };
 
 const evidenceCandidates = (
@@ -144,38 +173,52 @@ const evidenceCandidates = (
 ): readonly string[] => {
   if (session === undefined) return [];
   const candidates: string[] = [];
-  for (const evidence of session.exportEvidenceBundle().records) {
-    const remaining = COMPLETION_SCAN_LIMIT - candidates.length;
-    candidates.push(...evidenceValues(kind, evidence).slice(0, remaining));
-    if (candidates.length >= COMPLETION_SCAN_LIMIT) break;
-  }
+  for (const evidence of session.immutableEvidenceBundle().records)
+    for (const value of evidenceValues(kind, evidence)) candidates.push(value);
   return candidates;
 };
 
-type LedgerEvidence = ReturnType<
-  BinarySessionPort["exportEvidenceBundle"]
->["records"][number];
-
 const evidenceValues = (
   kind: "evidence" | "capture" | "manifest" | "occurrence",
-  evidence: LedgerEvidence,
+  evidence: Evidence,
 ): readonly string[] => {
   if (kind === "evidence") return [evidence.evidence_id];
   if (kind === "capture")
     return isProcessCaptureEvidence(evidence) ? [evidence.evidence_id] : [];
-  if (evidence.operation !== "inventory_artifact") return [];
-  const inventory = artifactInventoryResultSchema.safeParse(
-    evidence.normalized_result,
-  );
-  if (!inventory.success) return [];
-  if (kind === "manifest") return [inventory.data.manifest.manifest_id];
-  return inventory.data.occurrences.items.map(({ occurrence_id: id }) => id);
+  if (
+    evidence.operation === "inventory_artifact" ||
+    evidence.operation === "inspect_artifact"
+  )
+    return artifactInventoryValues(kind, evidence);
+  return [];
 };
 
-const isProcessCaptureEvidence = (evidence: LedgerEvidence): boolean => {
-  if (evidence.operation !== "capture_process_scenario") return false;
-  const capture = processCaptureSchema.safeParse(evidence.normalized_result);
-  return capture.success && validateProcessCapture(capture.data).length === 0;
+const artifactInventoryValues = (
+  kind: "manifest" | "occurrence",
+  evidence: unknown,
+): readonly string[] => {
+  try {
+    const { inventory } = parseArtifactInventoryEvidence(evidence);
+    return kind === "manifest"
+      ? [inventory.manifest.manifest_id]
+      : inventory.occurrences.map(({ occurrence_id: id }) => id);
+  } catch (cause: unknown) {
+    if (cause instanceof EvidenceIntegrityError) return [];
+    throw cause;
+  }
+};
+
+const isProcessCaptureEvidence = (evidence: Evidence): boolean => {
+  const parsed = parseProcessCaptureEvidence(evidence);
+  if (parsed.ok) return true;
+  switch (parsed.error.kind) {
+    case "wrong-workflow":
+    case "unsupported-provider":
+      return false;
+    case "invalid-evidence":
+    case "invalid-capture":
+      return false;
+  }
 };
 
 const unknownCandidates = (
@@ -186,21 +229,7 @@ const unknownCandidates = (
     : session
         .listUnknowns()
         .filter(({ status }) => status !== "resolved")
-        .map(({ unknown_id: id }) => id)
-        .slice(0, COMPLETION_SCAN_LIMIT);
-
-const uniqueSorted = (values: readonly string[]): string[] =>
-  [
-    ...new Set(
-      values.filter(
-        (value) =>
-          value.length > 0 && value.length <= MAX_COMPLETION_VALUE_LENGTH,
-      ),
-    ),
-  ].sort(compareText);
-
-const compareText = (left: string, right: string): number =>
-  left < right ? -1 : left > right ? 1 : 0;
+        .map(({ unknown_id: id }) => id);
 
 const normalize = (value: string): string =>
   value.normalize("NFKC").toLowerCase();

@@ -1,0 +1,722 @@
+import { boundedList } from "../../domain/boundedList.js";
+import { posix } from "node:path";
+
+import { setImmediate } from "node:timers/promises";
+
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
+
+import { resolveJavaScriptSourceMapReference } from "../../domain/javascript/javascriptSourceMapPaths.js";
+import {
+  inspectLocalSourceMapDeclarations,
+  type LocalSourceMapDeclaration,
+} from "../../domain/sourceMapFormat.js";
+import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type {
+  JavaScriptArtifactFile,
+  JavaScriptArtifactFileSet,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
+import {
+  javaScriptArtifactTextExclusion,
+  javaScriptSemanticSourceExclusion,
+} from "../../domain/javascript/javascriptArtifactFiles.js";
+import type {
+  AnalyzedJavaScriptArtifactFile,
+  JavaScriptArtifactAnalysisFailure,
+  JavaScriptArtifactAnalysisScope,
+  JavaScriptArtifactAnalysis,
+  JavaScriptHtmlInlineScriptsObservation,
+  JavaScriptHtmlScriptObservation,
+  JavaScriptJsonModuleObservation,
+  JavaScriptPackageObservation,
+  JavaScriptSourceMapObservation,
+  JavaScriptSourceMapOriginal,
+} from "./JavaScriptArtifactAnalysisTypes.js";
+import { javascriptArtifactAnalysisScopes } from "./JavaScriptArtifactAnalysisTypes.js";
+import { analyzeJavaScriptJsonModule } from "./JavaScriptJsonModules.js";
+import {
+  JavaScriptJsonDocuments,
+  type JavaScriptJsonDocumentFacts,
+} from "./JavaScriptJsonDocuments.js";
+import { assertJavaScriptAnalysisActive } from "./JavaScriptAnalysisControl.js";
+import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
+import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  ArtifactReaderFailure,
+  translateArtifactFailure,
+} from "../../resources/index.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import {
+  AnalysisResourceConstraintError,
+  AnalysisTimeoutError,
+  cancelledBy,
+  carriedReason,
+} from "../../domain/analysisErrorCore.js";
+import { sha256Hex } from "../../kernel/sha256Hex.js";
+
+interface MutableArtifactAnalysis {
+  readonly jsonDocuments: JavaScriptJsonDocuments;
+  readonly files: AnalyzedJavaScriptArtifactFile[];
+  readonly packages: JavaScriptPackageObservation[];
+  readonly jsonModules: JavaScriptJsonModuleObservation[];
+  readonly htmlScripts: JavaScriptHtmlScriptObservation[];
+  readonly htmlInlineScripts: JavaScriptHtmlInlineScriptsObservation[];
+  readonly sourceMaps: JavaScriptSourceMapObservation[];
+  visitedNodes: number;
+  findings: number;
+  modules: number;
+  parseFailures: number;
+}
+
+/** Analyze sources behind a hard heap boundary, retaining collected facts on interruption. */
+export const analyzeAndAdoptJavaScriptArtifactFiles = async (
+  fileSet: JavaScriptArtifactFileSet,
+  worker: Pick<JavaScriptSourceAnalysisPort, "analyze">,
+  projection: JavaScriptSemanticGraphProjection,
+  beforeFile: (
+    file: JavaScriptArtifactFile,
+    completed: number,
+    total: number,
+  ) => Promise<void>,
+  signal?: AbortSignal,
+  onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
+  preloadPaths: ReadonlySet<string> = new Set(),
+  /** Discovery gaps that may leave a declared preload in its package scope. */
+  preloadLimitations: readonly string[] = [],
+): Promise<{
+  readonly analysis: JavaScriptArtifactAnalysis;
+  readonly interruption: AnalysisError | null;
+}> => {
+  const state = emptyArtifactAnalysis();
+  const sourceIndices: number[] = [];
+  const packageTypeFor = createJavaScriptPackageTypeLookup(
+    fileSet,
+    state.jsonDocuments,
+  );
+  let interruption: AnalysisError | null = null;
+  const selectedFileCount =
+    fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
+  let selectedFileIndex = 0;
+  for (const file of fileSet.source_selection === undefined
+    ? javaScriptAnalysisOrder(fileSet.files)
+    : fileSet.files) {
+    let analysisStarted = false;
+    try {
+      await setImmediate();
+      if (classifyUnavailableSource(file, state, projection)) {
+        if (signal?.aborted === true) {
+          interruption = cancelledBy("analyze_javascript_application", signal);
+          break;
+        }
+        continue;
+      }
+      if (signal?.aborted === true)
+        throw cancelledBy("analyze_javascript_application", signal);
+      await beforeFile(file, selectedFileIndex++, selectedFileCount);
+      analysisStarted = true;
+      if (file.kind !== "javascript" || !file.text.included) {
+        assertJavaScriptAnalysisActive(signal);
+        analyzeArtifactMetadata(file, state, signal);
+        assertJavaScriptAnalysisActive(signal);
+        continue;
+      }
+      const result = await worker.analyze(
+        file,
+        projection.remainingFileCapacity(),
+        signal,
+        onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
+        preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
+          posix.extname(file.path) === ".js"
+          ? "commonjs"
+          : packageTypeFor(file),
+      );
+      const facts = result.ok ? result.value : result.error;
+      for (const revoked of facts.revokedStaticProjections ?? []) {
+        const index = sourceIndices[revoked.sourceIndex];
+        const previous = index === undefined ? undefined : state.files[index];
+        if (previous === undefined)
+          throw new TypeError(
+            "Revoked application projection has no retained source",
+          );
+        state.files[index!] = {
+          ...previous,
+          application_projection_failure: {
+            reason: revoked.error.message,
+            error: projectAnalysisError(revoked.error),
+            limits: revoked.error.reportedLimits,
+          },
+        };
+      }
+      const applicationProjectionFailure = facts.applicationProjectionFailure;
+      if (facts.projection !== null)
+        projection.adoptFileProjection(facts.projection);
+      const error = result.ok ? null : result.error.error;
+      const limits =
+        error instanceof AnalysisResourceConstraintError
+          ? error.reportedLimits
+          : error instanceof AnalysisTimeoutError
+            ? { worker_timeout_ms: error.timeoutMs }
+            : null;
+      const failure: JavaScriptArtifactAnalysisFailure | undefined =
+        error === null
+          ? undefined
+          : {
+              scope: javascriptArtifactAnalysisScopes.javascript,
+              status: "interrupted",
+              reason: `${file.path}: ${error.message}`,
+              error: projectAnalysisError(error),
+              limits,
+            };
+      sourceIndices.push(state.files.length);
+      state.files.push({
+        file,
+        javascript: facts.javascript,
+        semantic: facts.module === null ? null : { ir: facts.module },
+        ...(failure === undefined ? {} : { analysis_failure: failure }),
+        ...(applicationProjectionFailure === undefined
+          ? {}
+          : {
+              application_projection_failure: {
+                reason: applicationProjectionFailure.message,
+                error: projectAnalysisError(applicationProjectionFailure),
+                limits: applicationProjectionFailure.reportedLimits,
+              },
+            }),
+      });
+      const semanticUnavailableReason =
+        failure?.reason ??
+        javaScriptSemanticSourceExclusion(
+          file,
+          facts.javascript?.parse_status ?? null,
+        );
+      if (facts.projection === null && semanticUnavailableReason !== null)
+        projection.recordUnavailableFile(
+          file,
+          semanticUnavailableReason,
+          failure?.limits ?? null,
+          error instanceof AnalysisResourceConstraintError ||
+            error instanceof AnalysisTimeoutError
+            ? "resource-limit"
+            : "incomplete-module",
+        );
+      if (facts.javascript !== null) {
+        state.visitedNodes += facts.javascript.visited_ast_nodes;
+        state.findings +=
+          findingCount(facts.javascript) +
+          (facts.module?.moduleLinks.length ?? 0);
+        state.modules += facts.javascript.bundler_registrations.reduce(
+          (count, item) => count + item.modules.length,
+          0,
+        );
+        if (facts.javascript.parse_status === "failed")
+          state.parseFailures += 1;
+      }
+      if (
+        error !== null &&
+        (!(error instanceof AnalysisResourceConstraintError) ||
+          error.reportedLimits?.parent_result_budget_exhausted === true)
+      ) {
+        interruption = error;
+        break;
+      }
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) interruption = cause;
+      else if (
+        cause instanceof ArtifactReaderFailure &&
+        cause.reason === "cancelled"
+      )
+        interruption = translateArtifactFailure(
+          "analyze_javascript_application",
+          cause,
+        );
+      else if (signal?.aborted === true && cause === signal.reason)
+        interruption = cancelledBy(
+          "analyze_javascript_application",
+          carriedReason(cause),
+        );
+      else throw cause;
+      const scope = javascriptArtifactAnalysisScopes[file.kind];
+      state.files.push({
+        file,
+        javascript: null,
+        semantic: null,
+        ...(scope === null
+          ? {}
+          : {
+              analysis_failure: {
+                scope,
+                status: analysisStarted ? "interrupted" : "not-started",
+                reason: `${file.path}: ${interruption.message}`,
+                error: projectAnalysisError(interruption),
+                limits: null,
+              },
+            }),
+      });
+      projection.recordUnavailableFile(
+        file,
+        interruption.message,
+        null,
+        "incomplete-module",
+      );
+      break;
+    }
+  }
+  if (interruption !== null) {
+    const analyzedPaths = new Set(state.files.map(({ file }) => file.path));
+    const failure = {
+      reason: `Source analysis was interrupted: ${interruption.message}`,
+      error: projectAnalysisError(interruption),
+      limits:
+        interruption instanceof AnalysisResourceConstraintError
+          ? interruption.reportedLimits
+          : interruption instanceof AnalysisTimeoutError
+            ? { worker_timeout_ms: interruption.timeoutMs }
+            : null,
+    };
+    // This interruption has one cause. Share its immutable failure per phase
+    // rather than copying it for every unvisited source in a large bundle.
+    const failures = new Map<
+      JavaScriptArtifactAnalysisScope,
+      JavaScriptArtifactAnalysisFailure
+    >();
+    for (const file of fileSet.files) {
+      if (analyzedPaths.has(file.path)) continue;
+      if (classifyUnavailableSource(file, state, projection)) continue;
+      const scope = javascriptArtifactAnalysisScopes[file.kind];
+      let unavailable = scope === null ? undefined : failures.get(scope);
+      if (scope !== null && unavailable === undefined) {
+        unavailable = { ...failure, scope, status: "not-started" };
+        failures.set(scope, unavailable);
+      }
+      state.files.push({
+        file,
+        javascript: null,
+        semantic: null,
+        ...(unavailable === undefined ? {} : { analysis_failure: unavailable }),
+      });
+      projection.recordUnavailableFile(
+        file,
+        failure.reason,
+        failure.limits,
+        interruption instanceof AnalysisResourceConstraintError ||
+          interruption instanceof AnalysisTimeoutError
+          ? "resource-limit"
+          : "incomplete-module",
+      );
+    }
+  }
+  restoreInventoryOrder(fileSet.files, state.files);
+  return {
+    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
+    interruption,
+  };
+};
+
+/** A source inside an installed dependency package, not the application. */
+const dependencySourcePath = (path: string): boolean =>
+  path.split("/").slice(0, -1).includes("node_modules");
+
+/**
+ * Every source in one analysis charges the same parent result budget, so the
+ * order sources are offered decides which ones keep semantic and application
+ * facts when that budget runs out. Inventory order is lexical, which lets a
+ * large `node_modules` tree spend the budget before first-party entrypoints,
+ * preloads, and Electron windows are examined. Offer application JavaScript
+ * first and dependency JavaScript last; metadata files keep their position.
+ */
+const javaScriptAnalysisOrder = (
+  files: readonly JavaScriptArtifactFile[],
+): JavaScriptArtifactFile[] => {
+  const application: JavaScriptArtifactFile[] = [];
+  const dependencies: JavaScriptArtifactFile[] = [];
+  for (const file of files) {
+    if (file.kind === "javascript" && dependencySourcePath(file.path))
+      dependencies.push(file);
+    else application.push(file);
+  }
+  return [...application, ...dependencies];
+};
+
+/** Analysis order is an admission policy; reported files keep inventory order. */
+const restoreInventoryOrder = (
+  inventory: readonly JavaScriptArtifactFile[],
+  analyzed: AnalyzedJavaScriptArtifactFile[],
+): void => {
+  const positions = new Map(inventory.map((file, index) => [file, index]));
+  const position = ({ file }: AnalyzedJavaScriptArtifactFile): number =>
+    positions.get(file) ?? inventory.length;
+  analyzed.sort((left, right) => position(left) - position(right));
+};
+
+const finalizeArtifactAnalysis = (
+  state: MutableArtifactAnalysis,
+  preloadLimitations: readonly string[],
+): JavaScriptArtifactAnalysis => {
+  return {
+    jsonDocuments: state.jsonDocuments,
+    files: state.files,
+    packages: state.packages,
+    json_modules: state.jsonModules,
+    html_scripts: state.htmlScripts,
+    html_inline_scripts: state.htmlInlineScripts,
+    source_maps: state.sourceMaps,
+    visited_ast_nodes: state.visitedNodes,
+    findings:
+      state.findings +
+      state.htmlScripts.length +
+      state.htmlInlineScripts.reduce(
+        (count, { script_count }) => count + script_count,
+        0,
+      ),
+    modules: state.modules,
+    parse_failures: state.parseFailures,
+    limitations: [
+      "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+      "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      ...state.htmlInlineScripts.map(htmlInlineScriptLimitation),
+      ...state.files.flatMap(
+        ({ analysis_failure, application_projection_failure }) =>
+          [analysis_failure, application_projection_failure].flatMap(
+            (failure) => (failure === undefined ? [] : [failure.reason]),
+          ),
+      ),
+      ...preloadLimitations,
+    ],
+  };
+};
+
+const analyzeArtifactMetadata = (
+  file: JavaScriptArtifactFile,
+  state: MutableArtifactAnalysis,
+  signal: AbortSignal | undefined,
+): void => {
+  addStructuredObservations(file, state);
+  if (file.kind === "html" && file.text.included) {
+    const html = parseHtmlScripts(file.path, file.text.value);
+    // Append without spreading: argument count is bounded by the engine.
+    for (const script of html.scripts) state.htmlScripts.push(script);
+    if (html.inlineScripts !== null)
+      state.htmlInlineScripts.push(html.inlineScripts);
+  }
+  if (file.kind === "source-map")
+    state.sourceMaps.push(parseSourceMap(file, signal));
+  state.files.push({ file, javascript: null, semantic: null });
+};
+
+const classifyUnavailableSource = (
+  file: JavaScriptArtifactFile,
+  state: MutableArtifactAnalysis,
+  projection: JavaScriptSemanticGraphProjection,
+): boolean => {
+  const reason = javaScriptArtifactTextExclusion(file);
+  if (reason === null) return false;
+  state.files.push({ file, javascript: null, semantic: null });
+  projection.recordUnavailableFile(file, reason, null, "incomplete-module");
+  return true;
+};
+
+const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
+  jsonDocuments: new JavaScriptJsonDocuments(),
+  files: [],
+  packages: [],
+  jsonModules: [],
+  htmlScripts: [],
+  htmlInlineScripts: [],
+  sourceMaps: [],
+  visitedNodes: 0,
+  findings: 0,
+  modules: 0,
+  parseFailures: 0,
+});
+
+const addStructuredObservations = (
+  file: JavaScriptArtifactFile,
+  state: MutableArtifactAnalysis,
+): void => {
+  if (file.kind === "package-json")
+    state.packages.push(parsePackage(file, state.jsonDocuments.read(file)));
+  if (file.kind !== "json") return;
+  const json = analyzeJavaScriptJsonModule(file, state.jsonDocuments);
+  state.jsonModules.push(json);
+  if (json.status === "invalid") state.parseFailures += 1;
+};
+
+/**
+ * Node's package scope for a source is its nearest package.json; the lookup
+ * stops at a `node_modules` directory (Node's package scope resolution). Only
+ * a same-container, readable manifest object establishes the type; any other
+ * nearest manifest, including one whose bytes are unavailable, or none in the
+ * inventory, leaves the scope unknown.
+ */
+export const createJavaScriptPackageTypeLookup = (
+  fileSet: JavaScriptArtifactFileSet,
+  jsonDocuments: JavaScriptJsonDocuments,
+): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {
+  const manifests = new Map<string, JavaScriptArtifactFile>();
+  for (const file of fileSet.files)
+    if (posix.basename(file.path) === "package.json")
+      manifests.set(
+        `${file.container_sha256}:${posix.dirname(file.path)}`,
+        file,
+      );
+  const unavailableManifests = new Set(
+    fileSet.unavailable_relevant_files
+      .filter(({ path }) => posix.basename(path) === "package.json")
+      .map(
+        ({ path, container_sha256 }) =>
+          `${container_sha256}:${posix.dirname(path)}`,
+      ),
+  );
+  return (file) => {
+    for (
+      let directory = posix.dirname(file.path);
+      posix.basename(directory) !== "node_modules";
+      directory = posix.dirname(directory)
+    ) {
+      const key = `${file.container_sha256}:${directory}`;
+      if (unavailableManifests.has(key)) return "unknown";
+      const manifest = manifests.get(key);
+      if (manifest !== undefined) {
+        const document = jsonDocuments.read(manifest);
+        if (document.status !== "included" || document.packageFields === null)
+          return "unknown";
+        const type = document.packageFields.type;
+        return type === "module" || type === "commonjs" ? type : "unspecified";
+      }
+      // An unvisited nearer manifest may override an observed ancestor's type.
+      const coverage = fileSet.unanalyzed_files?.coverage;
+      if (coverage !== undefined && coverage.status !== "complete")
+        return "unknown";
+      if (directory === "." || directory === "" || directory === "/") break;
+    }
+    return "unknown";
+  };
+};
+
+const parsePackage = (
+  file: JavaScriptArtifactFile,
+  document: JavaScriptJsonDocumentFacts,
+): JavaScriptPackageObservation => {
+  if (document.status === "unavailable")
+    return unavailablePackage(file, "Package metadata text was unavailable.");
+  if (document.status === "invalid")
+    return invalidPackage(file, "package.json is not valid JSON.");
+  if (document.packageFields === null)
+    return invalidPackage(file, "package.json root is not an object.");
+  const value = document.packageFields;
+  const rendererDeclarations: NonNullable<
+    JavaScriptPackageObservation["renderer_declarations"]
+  > = {};
+  let rendererEntrypoint: JavaScriptPackageObservation["renderer_entrypoint"] =
+    null;
+  for (const field of ["renderer", "browser", "module"] as const) {
+    if (!Object.hasOwn(value, field)) continue;
+    const declaration = value[field];
+    rendererDeclarations[field] =
+      typeof declaration === "string" ? declaration : { status: "non-string" };
+    if (
+      rendererEntrypoint === null &&
+      typeof declaration === "string" &&
+      declaration !== ""
+    )
+      rendererEntrypoint = { field, path: declaration };
+  }
+  return {
+    path: file.path,
+    sha256: file.sha256,
+    status: "included",
+    name: optionalString(value.name),
+    version: optionalString(value.version),
+    main: optionalString(value.main),
+    main_status:
+      value.main === undefined || value.main === ""
+        ? "default"
+        : typeof value.main === "string"
+          ? "declared"
+          : "invalid",
+    main_entrypoint: typeof value.main === "string" ? value.main : "",
+    renderer_declarations: rendererDeclarations,
+    renderer_entrypoint: rendererEntrypoint,
+    limitation: null,
+  };
+};
+
+const invalidPackage = (
+  file: JavaScriptArtifactFile,
+  limitation: string,
+): JavaScriptPackageObservation => ({
+  ...unavailablePackage(file, limitation),
+  status: "invalid",
+});
+
+const unavailablePackage = (
+  file: JavaScriptArtifactFile,
+  limitation: string,
+): JavaScriptPackageObservation & { readonly status: "unavailable" } => ({
+  path: file.path,
+  sha256: file.sha256,
+  status: "unavailable",
+  name: null,
+  version: null,
+  main: null,
+  main_status: "unavailable",
+  main_entrypoint: null,
+  renderer_declarations: null,
+  renderer_entrypoint: null,
+  limitation,
+});
+
+const parseHtmlScripts = (
+  path: string,
+  text: string,
+): {
+  readonly scripts: JavaScriptHtmlScriptObservation[];
+  readonly inlineScripts: JavaScriptHtmlInlineScriptsObservation | null;
+} => {
+  const { scripts, inlineScripts, inlineScriptCount, baseHref } =
+    htmlArtifactReferences(text);
+  return {
+    scripts: scripts.map(({ scriptPath, scriptType, location }) => ({
+      html_path: path,
+      script_path: scriptPath,
+      script_type: scriptType,
+      base_href: baseHref,
+      location,
+    })),
+    inlineScripts:
+      inlineScriptCount === 0
+        ? null
+        : {
+            path,
+            script_count: inlineScriptCount,
+            scripts: inlineScripts.map(({ scriptType, location }) => ({
+              script_type: scriptType,
+              location,
+            })),
+          },
+  };
+};
+
+const parseSourceMap = (
+  file: JavaScriptArtifactFile,
+  signal: AbortSignal | undefined,
+): JavaScriptSourceMapObservation => {
+  if (!file.text.included) return unavailableSourceMap(file);
+  const observed = inspectLocalSourceMapDeclarations(file.text.value, {
+    check: () => assertJavaScriptAnalysisActive(signal),
+  });
+  const sources = collectSourceMapOriginals(file, observed.declarations);
+  const limitations = [
+    ...observed.limitations,
+    ...observed.invalid_sections.map(
+      ({ section_path, reason }) =>
+        `Indexed source-map section at [${section_path.join(",")}]: ${reason}`,
+    ),
+    ...observed.external_sections.map(
+      ({ url }) => `External source-map section URL is not fetched: ${url}`,
+    ),
+  ];
+  if (limitations.length > 0)
+    return {
+      ...invalidSourceMap(file, [...new Set(limitations)].join("; "), sources),
+      ...(observed.external_sections.length === 0
+        ? {}
+        : { external_sections: observed.external_sections }),
+      ...(observed.invalid_sections.length === 0
+        ? {}
+        : { invalid_sections: observed.invalid_sections }),
+    };
+  return {
+    path: file.path,
+    sha256: file.sha256,
+    status: "included",
+    sources,
+    limitation: null,
+  };
+};
+
+const collectSourceMapOriginals = (
+  file: JavaScriptArtifactFile,
+  declarations: readonly LocalSourceMapDeclaration[],
+): JavaScriptSourceMapOriginal[] =>
+  declarations.map(
+    (
+      { sectionPath, sourceIndex, source, root, content },
+      declaration_index,
+    ) => {
+      return {
+        source_index: sourceIndex,
+        declaration_index,
+        reference: resolveJavaScriptSourceMapReference(source, root, file.path),
+        content,
+        content_sha256: content === null ? null : sha256Hex(content),
+        section_path: sectionPath,
+      };
+    },
+  );
+
+/** Name the HTML file and lines whose inline JavaScript was not analyzed. */
+export const htmlInlineScriptLimitation = ({
+  path,
+  script_count: count,
+  scripts,
+}: JavaScriptHtmlInlineScriptsObservation): string => {
+  const listed = boundedList(
+    scripts.map(({ location }) => String(location.start.line)),
+    HTML_INLINE_SCRIPT_LIMITATION_LINES,
+    count - scripts.length,
+  );
+  const lines = listed.items;
+  const unnamed = listed.omitted;
+  const one = count === 1;
+  return `${path} has ${String(count)} inline JavaScript ${one ? "body" : "bodies"} starting at line${one ? "" : "s"} ${lines.join(", ")}${unnamed > 0 ? ` and ${String(unnamed)} more` : ""} that ${one ? "was" : "were"} not analyzed; endpoints, storage, imports and other facts in ${one ? "it" : "them"} are absent from the evidence.`;
+};
+
+// Keep the agent-facing limitation short; the unknown scope keeps the ranges.
+const HTML_INLINE_SCRIPT_LIMITATION_LINES = 10;
+
+const unavailableSourceMap = (
+  file: JavaScriptArtifactFile,
+): JavaScriptSourceMapObservation => {
+  if (file.text.included)
+    throw new TypeError("Expected unavailable source-map text");
+  return {
+    path: file.path,
+    sha256: file.sha256,
+    status: "invalid",
+    sources: [],
+    limitation: "Source-map text could not be decoded as UTF-8.",
+  };
+};
+
+const invalidSourceMap = (
+  file: JavaScriptArtifactFile,
+  limitation: string,
+  sources: readonly JavaScriptSourceMapOriginal[] = [],
+): JavaScriptSourceMapObservation => ({
+  path: file.path,
+  sha256: file.sha256,
+  status: "invalid",
+  sources,
+  limitation,
+});
+
+const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
+  analysis.references.length +
+  analysis.endpoints.length +
+  analysis.storage.length +
+  analysis.role_paths.length +
+  analysis.source_map_urls.length +
+  analysis.bundler_registrations.length +
+  analysis.electron.browser_windows.length +
+  analysis.electron.context_bridge_apis.length +
+  analysis.electron.ipc.length +
+  analysis.electron.sender_validations.length +
+  analysis.electron.utility_processes.length +
+  analysis.electron.native_addon_bindings.length +
+  analysis.electron.protocols.length +
+  (analysis.electron.dynamic_code ?? []).length;
+
+const optionalString = (value: unknown): string | null =>
+  typeof value === "string" && value.length > 0 ? value : null;

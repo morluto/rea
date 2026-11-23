@@ -1,0 +1,177 @@
+import { insideArtifact } from "./artifactRange.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { PeResourcesPort } from "../../ports/binaryDiagnostics/PeResourcesPort.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  inspectPeResourcesInputSchema,
+  peResourcesSchema,
+  type PeResources,
+  type PeResourceIdentity,
+} from "../../domain/native/peResources.js";
+import { peSubjectArchitecture } from "../../domain/peMachine.js";
+import type { Result } from "../../domain/result.js";
+import { executeArtifactInspection } from "../ArtifactInspectionExecution.js";
+
+const OPERATION = "inspect_pe_resources";
+
+/** Shared caller validation, output parsing and Evidence provenance for CLI/MCP. */
+export class PeResourcesService {
+  constructor(readonly provider: PeResourcesPort) {}
+
+  close(): Promise<void> {
+    return this.provider.close?.() ?? Promise.resolve();
+  }
+
+  inspect(
+    rawInput: unknown,
+    options?: ExecutionOptions,
+  ): Promise<Result<Evidence, AnalysisError>> {
+    return executeArtifactInspection(
+      {
+        operation: OPERATION,
+        inputSchema: inspectPeResourcesInputSchema,
+        outputSchema: peResourcesSchema,
+        provider: this.provider,
+        invalidOutputMessage:
+          "PE resource provider returned malformed output or changed artifact identity.",
+        toParameters: (input) => input,
+        validateReport: (report, parameters) =>
+          report.artifact.path === parameters.path &&
+          validReport(
+            report,
+            parameters.max_entries,
+            parameters.max_file_bytes,
+          ),
+        buildEvidence: (value, identity, parameters) => {
+          const architecture = peSubjectArchitecture(
+            value.machine,
+            value.format,
+          );
+          return createEvidence(
+            {
+              path: value.artifact.path,
+              format: "pe",
+              sha256: value.artifact.sha256,
+              ...(architecture === undefined ? {} : { architecture }),
+            },
+            identity,
+            {
+              operation: OPERATION,
+              parameters,
+              result: value,
+              confidence: "observed",
+              limitations: value.limitations,
+              locations: [{ kind: "artifact-path", path: value.artifact.path }],
+            },
+          );
+        },
+      },
+      rawInput,
+      options,
+    );
+  }
+}
+
+/** Check cross-field invariants before provider output becomes public Evidence. */
+const validReport = (
+  report: PeResources,
+  maxEntries: number,
+  maxBytes: number,
+): boolean => {
+  const inside = insideArtifact(report.artifact.bytes);
+  const identityInside = (identity: PeResourceIdentity): boolean =>
+    identity.kind === "id" || inside(identity.location);
+  if (
+    report.artifact.bytes > maxBytes ||
+    report.coverage.resources !== report.resources.length ||
+    report.coverage.examined_entries > maxEntries ||
+    report.coverage.examined_entries !==
+      report.directories.reduce(
+        (sum, item) => sum + item.named_entries + item.id_entries,
+        0,
+      )
+  )
+    return false;
+  if (
+    report.directory === null &&
+    (report.directories.length > 0 || report.resources.length > 0)
+  )
+    return false;
+  if (
+    report.directory !== null &&
+    (!inside(report.directory.location) ||
+      !inside(report.directory.data_directory_location))
+  )
+    return false;
+  if (
+    !report.directories.every(
+      (item) =>
+        inside(item.location) &&
+        item.path.length === item.entry_locations.length &&
+        item.entry_locations.every(inside) &&
+        item.path.every(identityInside),
+    )
+  )
+    return false;
+  if (
+    !report.resources.every(
+      (item, index) =>
+        item.index === index &&
+        inside(item.data_entry_location) &&
+        inside(item.payload.location) &&
+        item.entry_locations.every(inside) &&
+        [item.type, item.name, item.language].every(identityInside),
+    )
+  )
+    return false;
+  return report.icon_groups.every((group) => {
+    const resource = report.resources[group.resource_index];
+    if (
+      resource === undefined ||
+      resource.type.kind !== "id" ||
+      resource.type.id !== 14
+    )
+      return false;
+    return group.images.every(
+      (image) =>
+        inside(image.location) &&
+        image.location.offset >= resource.payload.location.offset &&
+        image.location.offset + image.location.bytes <=
+          resource.payload.location.offset + resource.payload.location.bytes &&
+        image.candidate_resource_indices.every((index) => {
+          const icon = report.resources[index];
+          return (
+            icon !== undefined &&
+            icon.type.kind === "id" &&
+            icon.type.id === 3 &&
+            icon.name.kind === "id" &&
+            icon.name.id === image.resource_id
+          );
+        }) &&
+        (image.same_language_resource_index === null
+          ? image.size_matches === null
+          : image.candidate_resource_indices.includes(
+              image.same_language_resource_index,
+            ) &&
+            sameIdentity(
+              report.resources[image.same_language_resource_index]?.language,
+              resource.language,
+            ) &&
+            image.size_matches ===
+              (report.resources[image.same_language_resource_index]?.payload
+                .location.bytes ===
+                image.declared_bytes)),
+    );
+  });
+};
+
+const sameIdentity = (
+  left: PeResourceIdentity | undefined,
+  right: PeResourceIdentity,
+): boolean =>
+  left?.kind === "id" && right.kind === "id"
+    ? left.id === right.id
+    : left?.kind === "name" &&
+      right.kind === "name" &&
+      left.utf16le_hex === right.utf16le_hex;

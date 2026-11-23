@@ -1,71 +1,66 @@
-import { z } from "zod";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
+import {
+  AnalysisOutputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import { err, type Result } from "../../domain/result.js";
+import {
+  LipoFieldRetentionError,
+  parseLipoOutputResult,
+  type LipoOutput,
+} from "../../domain/apple/lipo.js";
+import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../domain/native/nativeCommandOutput.js";
+import type { NativeCommandCapture } from "../../providers/NativeCommandRunner.js";
 
-const architectureSchema = z.object({
-  name: z.string().min(1),
-  cpu_type: z.string().nullable(),
-  cpu_subtype: z.string().nullable(),
-  file_offset: z.number().int().min(0).nullable(),
-  size: z.number().int().min(0).nullable(),
-  alignment: z.number().int().min(0).nullable(),
-});
-
-export type LipoArchitecture = z.infer<typeof architectureSchema>;
-
-/** Parse `lipo -detailed_info` into deterministic slice metadata. */
-export const parseLipoArchitectures = (output: string): LipoArchitecture[] => {
-  const architectures: LipoArchitecture[] = [];
-  let current: Record<string, string> | undefined;
-  const flush = (): void => {
-    if (current === undefined) return;
-    const name = current.architecture ?? current["Non-fat file"];
-    if (name !== undefined)
-      architectures.push(
-        architectureSchema.parse({
-          name: name.includes(" is architecture: ")
-            ? (name.split(" is architecture: ").at(-1) ?? name)
-            : name,
-          cpu_type: current.cputype ?? null,
-          cpu_subtype: current.cpusubtype ?? null,
-          file_offset: integer(current.offset),
-          size: integer(current.size),
-          alignment: alignment(current.align),
-        }),
-      );
-    current = undefined;
+/** Translate classified parse failure into native command output failure. */
+export const parseLipoCapture = (
+  capture: NativeCommandCapture,
+  operation: "inspect_macho" | "list_architectures",
+  operandPath: string,
+): Result<
+  LipoOutput,
+  AnalysisOutputError | AnalysisResourceConstraintError
+> => {
+  const parsed = parseLipoOutputResult(capture.stdout, operandPath);
+  if (parsed.ok) return parsed;
+  const capturedOutput = {
+    stdout: capture.stdout,
+    stderr: capture.stderr,
+    truncated: false,
+    stdout_bytes: capture.stdoutBytes,
+    stderr_bytes: capture.stderrBytes,
+    exit_code: capture.exitCode,
+    signal: capture.signal,
   };
-  for (const rawLine of output.split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (line.startsWith("Non-fat file:")) {
-      flush();
-      current = { "Non-fat file": line };
-      continue;
-    }
-    if (line.startsWith("architecture ")) {
-      flush();
-      current = { architecture: line.slice("architecture ".length).trim() };
-      continue;
-    }
-    const match = /^(cputype|cpusubtype|offset|size|align)\s+(.+)$/u.exec(line);
-    if (match?.[1] !== undefined && match[2] !== undefined) {
-      current ??= {};
-      current[match[1]] = match[2].trim();
-    }
-  }
-  flush();
-  if (architectures.length === 0)
-    throw new TypeError("lipo output contained no architectures");
-  return architectures;
-};
-
-const integer = (value: string | undefined): number | null => {
-  if (value === undefined) return null;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
-};
-
-const alignment = (value: string | undefined): number | null => {
-  if (value === undefined) return null;
-  const exponent = /2\^(\d+)/u.exec(value)?.[1];
-  if (exponent !== undefined) return 2 ** Number.parseInt(exponent, 10);
-  return integer(value);
+  if (parsed.error instanceof LipoFieldRetentionError)
+    return err(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        parsed.error.message,
+        {
+          maximum_retained_bytes: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES,
+          required_retained_bytes: parsed.error.requiredBytes,
+        },
+        {
+          cause: parsed.error,
+          capturedOutput,
+          ...fixedAllowanceOptions(
+            "The lipo field retention allowance",
+            "capture",
+            { limit: NATIVE_COMMAND_OUTPUT_BUDGET_BYTES, unit: "bytes" },
+          ),
+        },
+      ),
+    );
+  return err(
+    new AnalysisOutputError(
+      operation,
+      "lipo did not produce readable architecture records",
+      {
+        cause: parsed.error,
+        capturedOutput,
+      },
+    ),
+  );
 };

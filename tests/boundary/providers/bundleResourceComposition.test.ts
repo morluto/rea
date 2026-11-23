@@ -1,0 +1,110 @@
+import { unknownTarget } from "../../../src/domain/targetIdentity.js";
+import { projectCliAnalysisResult } from "../../../src/cli/projectCliAnalysisResult.js";
+import { mkdir, writeFile } from "node:fs/promises";
+
+import { join } from "node:path";
+import { build } from "plist";
+import { expect, it } from "vitest";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+
+import { parseConfig } from "../../../src/config/parseConfig.js";
+import type { DirectAnalysisDependencies } from "../../../src/application/DirectAnalysisDependencies.js";
+import { runProviderAnalysis } from "../../../src/application/DirectAnalysis.js";
+import {
+  createArtifactBinarySession,
+  createBinarySession,
+  createManagedBinarySession,
+  createNativeBinarySession,
+  createNativeDispatchBinarySession,
+} from "../../../src/composition/binary.js";
+
+it("routes a CLI app resource path through the resource session and keeps the target identity unknown", async () => {
+  const bundlePath = await createTestTempDirectory("rea-cli-resource-root-");
+  await mkdir(join(bundlePath, "Resources"));
+  await writeFile(
+    join(bundlePath, "Info.plist"),
+    '<?xml version="1.0"?><plist><dict/></plist>',
+  );
+  await writeFile(
+    join(bundlePath, "Resources", "Archive.plist"),
+    build({
+      $archiver: "NSKeyedArchiver",
+      $version: 100000,
+      $objects: ["$null", "sample"],
+      $top: { root: { UID: 1 } },
+    }),
+  );
+  const dependencies: DirectAnalysisDependencies = {
+    readConfiguration: () => parseConfig({}),
+    createBinarySession: (config, logger) =>
+      createBinarySession(config, logger, {}),
+    createNativeDispatchBinarySession: (config, logger) =>
+      createNativeDispatchBinarySession(config, logger, {}),
+    createArtifactBinarySession: () =>
+      createArtifactBinarySession({}, process.platform),
+    createNativeBinarySession: () =>
+      createNativeBinarySession({}, process.platform),
+    createManagedBinarySession,
+  };
+  const result = await runProviderAnalysis(
+    dependencies,
+    bundlePath,
+    "inspect_keyed_archive",
+    { path: "Resources/Archive.plist" },
+  ).then(projectCliAnalysisResult);
+  expect(result).toMatchObject({
+    operation: "inspect_keyed_archive",
+    subject: {
+      identity: unknownTarget("not-observed"),
+      name: null,
+      local_path: null,
+    },
+    normalized_result: {
+      target_sha256: null,
+      resource_root: { canonical_path: bundlePath, executable_sha256: null },
+    },
+  });
+});
+
+it("reports resource capabilities from their providers on supported and unsupported hosts", async () => {
+  const rootPath = await createTestTempDirectory("rea-resource-capabilities-");
+  await writeFile(join(rootPath, "Info.plist"), "<plist><dict/></plist>");
+
+  for (const [platform, expected] of [
+    ["darwin", { plist: true, assets: true }],
+    ["linux", { plist: false, assets: false }],
+  ] as const) {
+    const session = await createArtifactBinarySession({}, platform);
+    const opened = await session.openBundleResources(rootPath);
+    expect(opened.ok, platform).toBe(true);
+    const status = await session.status();
+    const capabilitySets = (
+      status as {
+        capabilities: Array<{
+          groups: Array<{ operations: string[]; available: boolean }>;
+        }>;
+      }
+    ).capabilities;
+    const operationAvailability = new Map(
+      capabilitySets.flatMap(({ groups }) =>
+        groups.flatMap(({ operations, available }) =>
+          operations.map((operation) => [operation, available] as const),
+        ),
+      ),
+    );
+    expect(operationAvailability.get("inspect_plist"), platform).toBe(
+      expected.plist,
+    );
+    expect(operationAvailability.get("inspect_asset_catalog"), platform).toBe(
+      expected.assets,
+    );
+    expect(
+      operationAvailability.get("decode_interface_builder"),
+      platform,
+    ).toBe(true);
+    expect(operationAvailability.get("inspect_keyed_archive"), platform).toBe(
+      true,
+    );
+    await session.close();
+  }
+});

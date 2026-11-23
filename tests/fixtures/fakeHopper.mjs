@@ -1,198 +1,299 @@
 import { createServer } from "node:net";
+import { FAKE_HOPPER_REPLIES, fakeHopperReply } from "./fakeHopperReplies.mjs";
 
-const [socketPath, token, runId] = process.argv.slice(2);
-const enhancedFixtureResult = (method) => {
-  switch (method) {
-    case "list_segments":
+const [
+  socketPath,
+  token,
+  runId,
+  shutdownMode = "acknowledge",
+  diagnosticMode = "quiet",
+  healthMode = "ready",
+  inventoryFailure = "none",
+  advertisedRequestBytes,
+] = process.argv.slice(2);
+const maxRequestBytes =
+  advertisedRequestBytes === undefined
+    ? 16 * 1024 * 1024
+    : Number(advertisedRequestBytes);
+let diagnosticOutputEmitted = false;
+const heldReplies = new Map();
+const sockets = new Set();
+if (process.send !== undefined)
+  process.on("message", (message) => {
+    if (message?.disconnect === true) {
+      for (const socket of sockets) socket.destroy();
+      return;
+    }
+    const reply = heldReplies.get(message?.release);
+    if (reply === undefined) return;
+    heldReplies.delete(message.release);
+    reply();
+  });
+const shutdownResult = () => ({
+  shutdown: true,
+  analysis_stopped: true,
+  document_closed:
+    shutdownMode !== "unconfirmed" && shutdownMode !== "cleanup-required",
+  ...(shutdownMode === "cleanup-required" ? { cleanup_required: true } : {}),
+});
+const emitDiagnosticOutput = () => {
+  if (diagnosticMode === "quiet" || diagnosticOutputEmitted) return;
+  diagnosticOutputEmitted = true;
+  const retainedTokenPrefixBytes = Math.floor(token.length / 2);
+  const preservedMarker = "source=/tmp/local-evidence.bin?cursor=keep&";
+  const fillLength = 8 * 1024 * 1024 - retainedTokenPrefixBytes;
+  const fill = "x".repeat(fillLength - Buffer.byteLength(preservedMarker));
+  process.stderr.write(`${fill}${preservedMarker}`);
+  setImmediate(() => {
+    process.stderr.write(token);
+  });
+};
+const capabilityUnavailableResult = (id) => ({
+  id,
+  error: {
+    code: -32000,
+    message: "fixture API is unavailable",
+    type: "capability_unavailable",
+  },
+});
+const bridgeEventFixtureMessages = (request) => {
+  const progress = {
+    type: "progress",
+    phase: "hopper_bridge",
+    completed: 0,
+    total: 1,
+    message: "Hopper bridge started request",
+  };
+  switch (request.method) {
+    case "wrong_event_id":
+      return [{ id: request.id + 100, event: progress }];
+    case "malformed_event":
       return [
         {
-          name: "__TEXT",
-          start: "0x1000",
-          end: "0x2000",
-          readable: true,
-          writable: false,
-          executable: true,
+          id: request.id,
+          event: {
+            ...progress,
+            completed: 2,
+            message: "invalid progress",
+          },
         },
       ];
-    case "list_documents":
-      return ["fixture"];
-    case "list_procedures":
-      return {
-        items: [{ address: "0x1000", value: "fixture" }],
-        offset: 0,
-        limit: 500,
-        total: 1,
-        next_offset: null,
-        has_more: false,
+    case "remote_error": {
+      const error = {
+        code: -32001,
+        message: "safe fake failure",
+        type: "bridge_exception",
       };
-    case "list_strings":
-      return {
-        items: [{ address: "0x1000", value: "fixture" }],
-        offset: 0,
-        limit: 500,
-        total: 1,
-        next_offset: null,
-        has_more: false,
-      };
-    case "procedure_pseudo_code":
-      return "return 0;";
-    case "analyze_function": {
-      const empty = () => ({
-        items: [],
-        total: 0,
-        returned: 0,
-        truncated: false,
-        next_offset: null,
-      });
-      return {
-        procedure: {
-          address: "0x1000",
-          name: "fixture",
-          signature: null,
-          locals: [],
-        },
-        pseudocode: {
-          text: "return 0;",
-          total_chars: 9,
-          returned_chars: 9,
-          truncated: false,
-          next_offset: null,
-        },
-        assembly: { ...empty(), items: ["ret"], total: 1, returned: 1 },
-        comments: empty(),
-        callers: empty(),
-        callees: empty(),
-        incoming_references: empty(),
-        outgoing_references: empty(),
-        referenced_strings: empty(),
-        referenced_names: empty(),
-        basic_blocks: {
-          ...empty(),
-          items: [{ start: "0x1000", end: "0x1001", successors: [] }],
-          total: 1,
-          returned: 1,
-        },
-        instruction_scan: { scanned: 1, truncated: false },
-      };
+      return [
+        { id: request.id, event: { type: "diagnostic", error } },
+        { id: request.id, error },
+      ];
     }
-    case "search_strings":
-    case "search_procedures":
-      return {
-        items: [
-          { address: "0x1000", value: "fixture", value_truncated: false },
-        ],
-        offset: 0,
-        limit: 100,
-        total: 1,
-        next_offset: null,
-        has_more: false,
-      };
-    case "xrefs":
-      return ["0x1000"];
     default:
       return undefined;
   }
 };
+const sendEchoWithProgress = (send, request) => {
+  send({
+    id: request.id,
+    event: {
+      type: "progress",
+      phase: "hopper_bridge",
+      completed: 0,
+      total: 1,
+      message: "Hopper bridge started request",
+    },
+  });
+  const reply = () => {
+    send({
+      id: request.id,
+      event: {
+        type: "progress",
+        phase: "hopper_bridge",
+        completed: 1,
+        total: 1,
+        message: "Hopper bridge completed request",
+        terminal: true,
+      },
+    });
+    send(
+      { id: request.id, result: request.params ?? {} },
+      request.params?.fragmented === true,
+    );
+  };
+  if (typeof request.params?.gate === "string")
+    heldReplies.set(request.id, reply);
+  else setTimeout(reply, request.params?.delay ?? 0);
+};
 
 const server = createServer((socket) => {
+  sockets.add(socket);
+  socket.once("close", () => sockets.delete(socket));
   socket.on("error", () => undefined);
   socket.setEncoding("utf8");
   let buffer = "";
   const send = (message, fragmented = false) => {
     const line = `${JSON.stringify(message)}\n`;
     if (!fragmented) return socket.write(line);
-    const midpoint = Math.floor(line.length / 2);
-    socket.write(line.slice(0, midpoint));
-    setTimeout(() => socket.write(line.slice(midpoint)), 2);
+    const bytes = Buffer.from(line, "utf8");
+    const unicodeOffset = bytes.indexOf(Buffer.from("雪", "utf8"));
+    const midpoint =
+      unicodeOffset >= 0 ? unicodeOffset + 1 : Math.floor(bytes.length / 2);
+    socket.write(bytes.subarray(0, midpoint));
+    setTimeout(() => socket.write(bytes.subarray(midpoint)), 2);
   };
   socket.on("data", (chunk) => {
     buffer += chunk;
     let newline = buffer.indexOf("\n");
     while (newline >= 0) {
       const request = JSON.parse(buffer.slice(0, newline));
+      process.send?.({
+        id: request.id,
+        method: request.method,
+        params: request.params,
+      });
+      const bridgeEventMessages = bridgeEventFixtureMessages(request);
       buffer = buffer.slice(newline + 1);
       if (request.token !== token) {
         send({ id: request.id, error: { code: -32001, message: "bad token" } });
       } else if (request.method === "health") {
-        send(
-          {
-            id: request.id,
-            result: {
-              name: "REA Hopper bridge",
-              version: "1.0.0",
-              run_id: runId,
+        emitDiagnosticOutput();
+        const reply = () =>
+          send(
+            {
+              id: request.id,
+              result: {
+                name: "REA Hopper bridge",
+                version: "1.0.0",
+                run_id: runId,
+                process_id: process.pid,
+                max_request_bytes: maxRequestBytes,
+              },
             },
-          },
-          true,
-        );
-      } else if (request.method === "shutdown") {
-        send({
-          id: request.id,
-          result: {
-            shutdown: true,
-            analysis_stopped: true,
-            document_closed: true,
-          },
-        });
-        setTimeout(() => server.close(), 2);
+            true,
+          );
+        if (healthMode === "gated") heldReplies.set(request.id, reply);
+        else if (healthMode === "ready") reply();
+        else throw new Error(`Unknown health fixture mode: ${healthMode}`);
+      } else if (
+        request.method === "shutdown" ||
+        request.method === "shutdown_document"
+      ) {
+        if (shutdownMode === "exit-without-ack") process.exit(0);
+        send({ id: request.id, result: shutdownResult() });
+        if (shutdownMode !== "cleanup-required") setTimeout(closeServer, 2);
       } else if (request.method === "hang") {
         // Deliberately leave the request pending.
+      } else if (request.method === "partial_then_wait") {
+        socket.write(`{"id":${request.id},"result":"stale`);
+        process.send?.({ id: request.id, method: "fixture_partial_write" });
       } else if (request.method === "exit") {
         process.exit(7);
       } else if (request.method === "malformed") {
         socket.write("{not-json}\n");
+      } else if (
+        ["valid_then_invalid", "valid_then_invalid_split"].includes(
+          request.method,
+        )
+      ) {
+        const valid = Buffer.from(
+          `${JSON.stringify({ id: request.id, result: "completed" })}\n`,
+        );
+        const invalid = Buffer.concat([
+          Buffer.from(`{"id":${request.id + 1},"result":"`),
+          Buffer.from([0xff]),
+          Buffer.from('"}\n'),
+        ]);
+        if (request.method === "valid_then_invalid")
+          socket.write(Buffer.concat([valid, invalid]));
+        else {
+          socket.write(valid);
+          setTimeout(() => socket.write(invalid), 5);
+        }
+      } else if (request.method === "valid_utf8_end") {
+        socket.end(JSON.stringify({ id: request.id, result: "�雪🦊" }));
+      } else if (request.method === "invalid_utf8_end") {
+        socket.end(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xe2]),
+          ]),
+        );
+      } else if (request.method === "invalid_utf8_split") {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xe2]),
+          ]),
+        );
+        setTimeout(
+          () => socket.write(Buffer.from([0x28, 0xa1, 0x22, 0x7d, 0x0a])),
+          5,
+        );
+      } else if (request.method === "invalid_utf8") {
+        socket.write(
+          Buffer.concat([
+            Buffer.from(`{"id":${request.id},"result":"`),
+            Buffer.from([0xff]),
+            Buffer.from('"}\n'),
+          ]),
+        );
+      } else if (request.method === "unattributed_invalid_request") {
+        // The real bridge answers on reserved id 0 when it cannot read a
+        // request's id, for example a frame that is not JSON.
+        send({
+          id: 0,
+          error: {
+            code: -32000,
+            type: "invalid_request",
+            message: "Invalid bridge request JSON",
+          },
+        });
+      } else if (request.method === "unterminated_reply") {
+        socket.write(
+          `{"id":${request.id},"result":"${"x".repeat(request.params.bytes)}`,
+        );
       } else if (request.method === "wrong_id") {
         send({ id: request.id + 100, result: {} });
-      } else if (request.method === "remote_error") {
+      } else if (bridgeEventMessages !== undefined) {
+        for (const message of bridgeEventMessages) send(message);
+      } else if (request.method === "capability_unavailable") {
+        send(capabilityUnavailableResult(request.id));
+      } else if (
+        inventoryFailure !== "none" &&
+        (request.method === "list_strings" ||
+          request.method === "list_procedures" ||
+          request.method === "search_strings" ||
+          request.method === "search_procedures")
+      ) {
         send({
           id: request.id,
           error: {
-            code: -32001,
-            message: "safe fake failure",
-            type: "bridge_exception",
+            code: -32000,
+            type: inventoryFailure,
+            message: "fixture inventory unavailable",
           },
         });
       } else if (request.method === "current_document") {
         send({ id: request.id, result: "fixture" });
-      } else if (enhancedFixtureResult(request.method) !== undefined) {
-        send({ id: request.id, result: enhancedFixtureResult(request.method) });
-      } else if (request.method === "resolve_containing_procedure") {
+      } else if (Object.hasOwn(FAKE_HOPPER_REPLIES, request.method)) {
         send({
           id: request.id,
-          result: {
-            query_address: request.params.address,
-            found: true,
-            procedure: { address: "0x1000", name: "fixture" },
-          },
-        });
-      } else if (request.method === "procedure_references") {
-        send({
-          id: request.id,
-          result: {
-            procedure: { address: "0x1000", name: "fixture" },
-            direction: request.params.direction ?? "outgoing",
-            references: {
-              items: [],
-              total: 0,
-              returned: 0,
-              truncated: false,
-              next_offset: null,
-            },
-            instructions_scanned: 1,
-            instruction_scan_truncated: false,
-          },
+          result: fakeHopperReply(request.method, request.params ?? {}),
         });
       } else {
-        const delay = request.params?.delay ?? 0;
-        setTimeout(
-          () => send({ id: request.id, result: request.params ?? {} }),
-          delay,
-        );
+        sendEchoWithProgress(send, request);
       }
       newline = buffer.indexOf("\n");
     }
   });
 });
 
-server.listen(socketPath);
-process.on("SIGTERM", () => server.close());
+const closeServer = () =>
+  server.close(() => {
+    if (process.connected) process.disconnect();
+  });
+
+if (diagnosticMode === "noisy_no_socket") emitDiagnosticOutput();
+else server.listen(socketPath);
+process.on("SIGTERM", closeServer);

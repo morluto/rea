@@ -1,0 +1,211 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { describe, expect, it, vi } from "vitest";
+
+import { nativeMacOSCapabilities } from "./NativeMacOSProviderMetadata.js";
+import { NativeMacOSProvider } from "./NativeMacOSProvider.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { ok } from "../domain/result.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  NativeFixtureRunner,
+  nativeMachoTarget,
+  nativeMachoTargetForFile,
+} from "../../tests/fixtures/nativeCommands.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { inspectionImage } from "./NativeMachoInspection.fixture.js";
+
+describe("native dispatch metadata input boundary", () => {
+  it("retains canonical argument failures before attempting target inspection", async () => {
+    const client = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner(),
+      "darwin",
+    ).createClient(nativeMachoTarget("/does-not-exist"));
+    const cases: ReadonlyArray<{
+      parameters: Readonly<Record<string, JsonValue>>;
+      path: string;
+      reason: string;
+    }> = [
+      {
+        parameters: { max_records: null },
+        path: "max_records",
+        reason: "invalid_type",
+      },
+      {
+        parameters: { max_records: "5" },
+        path: "max_records",
+        reason: "invalid_type",
+      },
+      {
+        parameters: { max_records: 0 },
+        path: "max_records",
+        reason: "out_of_range",
+      },
+      {
+        parameters: { max_record: 5 },
+        path: "max_record",
+        reason: "unknown_argument",
+      },
+    ];
+    for (const { parameters, path, reason } of cases) {
+      const result = await client.execute(
+        "inspect_native_dispatch_metadata",
+        parameters,
+      );
+      if (result.ok)
+        throw new Error("Expected invalid dispatch metadata input");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "invalid_request",
+        details: {
+          operation: "inspect_native_dispatch_metadata",
+          issues: [{ path: [path], reason }],
+        },
+      });
+    }
+  });
+
+  it("closes only the native call tracer owned by that client", async () => {
+    const closes = [0, 0];
+    let next = 0;
+    const provider = new NativeMacOSProvider(
+      {},
+      new NativeFixtureRunner(),
+      "darwin",
+      () => {
+        const index = next++;
+        return {
+          trace: async () => {
+            throw new Error("trace is unused in this lifecycle test");
+          },
+          close: async () => {
+            closes[index] = (closes[index] ?? 0) + 1;
+            return ok(null);
+          },
+        };
+      },
+    );
+    const first = provider.createClient(nativeMachoTarget("/first"));
+    const second = provider.createClient(nativeMachoTarget("/second"));
+
+    expect((await first.close()).ok).toBe(true);
+    expect(closes).toEqual([1, 0]);
+    expect((await second.close()).ok).toBe(true);
+    expect(closes).toEqual([1, 1]);
+  });
+});
+
+it.each(["inspect_macho", "list_architectures"] as const)(
+  "retains unreadable lipo output as an output failure for %s",
+  async (operation) => {
+    const root = await createTestTempDirectory("rea-macho-lipo-output-");
+    const path = join(root, "fixture.macho");
+    await writeFile(path, inspectionImage());
+    const runner = new NativeFixtureRunner({
+      lipo: "unrecognized slice record\n",
+    });
+    const run = vi.spyOn(runner, "run");
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      await nativeMachoTargetForFile(path),
+    );
+    try {
+      const result = await client.execute(operation, {});
+      expect(run).toHaveBeenCalledWith(
+        "lipo",
+        ["-detailed_info", path],
+        expect.any(Object),
+      );
+      expect(run).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisOutputError",
+          operation,
+          capturedOutput: {
+            stdout: "unrecognized slice record\n",
+            exit_code: 0,
+          },
+        },
+      });
+    } finally {
+      expect((await client.close()).ok).toBe(true);
+    }
+  },
+);
+
+it("refuses a missing Mach-O source before running lipo", async () => {
+  const root = await createTestTempDirectory("rea-native-lipo-missing-");
+  const runner = new NativeFixtureRunner({
+    lipo: "unrecognized slice record\n",
+  });
+  const run = vi.spyOn(runner, "run");
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    nativeMachoTarget(join(root, "missing")),
+  );
+  try {
+    const result = await client.execute("inspect_macho", {});
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "ProviderAdapterError" },
+    });
+    expect(run).not.toHaveBeenCalled();
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+});
+
+it.each(["inspect_signature", "inspect_macho", "inspect_plist"])(
+  "declares temporary writes and preserves the artifact for %s",
+  (name) => {
+    expect(
+      nativeMacOSCapabilities("darwin").find(
+        ({ operation }) => operation === name,
+      )?.effects,
+    ).toMatchObject({ mayWriteFilesystem: true, mutatesArtifact: false });
+  },
+);
+
+it.each(["before command", "during command"] as const)(
+  "rejects architecture facts when the admitted target changes %s",
+  async (phase) => {
+    const root = await createTestTempDirectory("rea-lipo-target-identity-");
+    const path = join(root, "fixture.macho");
+    const original = inspectionImage();
+    await writeFile(path, original);
+    const target = await nativeMachoTargetForFile(path);
+    const runner = new NativeFixtureRunner({
+      lipo: `Non-fat file: ${path} is architecture: arm64\n`,
+    });
+    const run = runner.run.bind(runner);
+    const capture = vi
+      .spyOn(runner, "run")
+      .mockImplementation(async (...args) => {
+        if (phase === "during command")
+          await writeFile(
+            path,
+            Buffer.concat([original, Buffer.from("changed")]),
+          );
+        return run(...args);
+      });
+    const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+      target,
+    );
+    try {
+      if (phase === "before command")
+        await writeFile(
+          path,
+          Buffer.concat([original, Buffer.from("changed")]),
+        );
+      const result = await client.execute("list_architectures", {});
+      if (result.ok) throw new Error("Expected target identity refusal");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisArtifactChangedError",
+        operation: "list_architectures",
+      });
+      expect(capture).toHaveBeenCalledTimes(phase === "before command" ? 0 : 1);
+    } finally {
+      await client.close();
+    }
+  },
+);

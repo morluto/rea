@@ -5,12 +5,22 @@
  */
 export const PRODUCT_IDENTITY = {
   displayName: "REA",
-  packageName: "rea-agents",
-  packageVersion: "1.1.0",
+  packageName: PACKAGE_METADATA.name,
+  packageSpecifier: `${PACKAGE_METADATA.name}@latest`,
+  registrationPackageSpecifier: `${PACKAGE_METADATA.name}@${PACKAGE_METADATA.version}`,
+  packageVersion: PACKAGE_METADATA.version,
   cliBinary: "rea",
-  mcpCommand: "npx -y rea-agents mcp",
+  mcpCommand: `npx -y ${PACKAGE_METADATA.name}@${PACKAGE_METADATA.version} mcp`,
   mcpServerKey: "rea",
-  skillName: "rea-analysis",
-  skillVersion: "10",
+  skillName: "reverse-engineer-anything",
+  skillVersion: PACKAGE_METADATA.skillVersion,
   configFileName: "rea.json",
 } as const;
+
+/** Exact SDK package identities, distinct from negotiated protocol version. */
+export const SDK_IDENTITY = {
+  server: PACKAGE_METADATA.serverSdkVersion,
+  client_test: PACKAGE_METADATA.clientSdkVersion,
+  core: PACKAGE_METADATA.coreSdkVersion,
+} as const;
+import { PACKAGE_METADATA } from "./generatedPackageMetadata.js";

@@ -1,0 +1,362 @@
+import type { CallRelationshipDirection } from "../contracts/enhancedInputs.js";
+import {
+  CALL_RELATIONSHIP_TRAVERSALS,
+  cleanupStoppedTraversal,
+  readCallRelationships,
+  type CallRelationshipObserver,
+} from "./CallRelationshipTraversal.js";
+import type {
+  AnalysisOperation,
+  ExecutionOptions,
+} from "../ports/AnalysisProvider.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { isAborted, cancelledBy } from "../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
+import {
+  failedWithPartialResult,
+  type EnhancedResult,
+} from "./EnhancedToolTypes.js";
+import { resolveProcedureAddress } from "./ProcedureAddressResolution.js";
+import {
+  combineRelationshipDiscovery,
+  type RelationshipCoverage,
+  type RelationshipDiscoveryStatus,
+} from "../domain/relationshipCoverage.js";
+
+type AnalysisCall = (
+  name: AnalysisOperation,
+  arguments_: Readonly<Record<string, JsonValue>>,
+  signal?: AbortSignal,
+  selectorOrigin?: ExecutionOptions["selectorOrigin"],
+) => Promise<Result<JsonValue, AnalysisError>>;
+
+export interface CallPathTraceInput {
+  readonly start: string;
+  readonly goal?: string | undefined;
+  readonly direction: CallRelationshipDirection;
+  readonly max_depth?: number | undefined;
+  readonly max_nodes?: number | undefined;
+}
+
+interface TraceNode {
+  readonly address: string;
+  readonly depth: number;
+  readonly parent: TraceNode | undefined;
+}
+
+interface TraceState {
+  readonly visited: Map<string, TraceNode>;
+  readonly queue: string[];
+  readonly edges: Map<
+    string,
+    {
+      readonly source_address: string;
+      readonly target_address: string;
+      readonly discovery_depth: number;
+    }
+  >;
+  readonly failures: Array<{
+    readonly address: string;
+    readonly error: ReturnType<typeof projectAnalysisError>;
+  }>;
+  readonly residual: Set<string>;
+  readonly limitations: Set<string>;
+  readonly relationshipCoverage: Map<string, RelationshipCoverage>;
+  discovery: RelationshipDiscoveryStatus;
+  queueIndex: number;
+  traversalPath: string[];
+}
+
+interface AddressExpansion {
+  readonly input: CallPathTraceInput;
+  readonly state: TraceState;
+  readonly address: string;
+  readonly current: TraceNode;
+  readonly signal?: AbortSignal;
+}
+
+interface DiscoveredEdge {
+  readonly address: string;
+  readonly relatedAddress: string;
+  readonly discoveryDepth: number;
+}
+
+/** Trace direct caller/callee relationships until the graph is exhausted or the goal is reached. */
+export const traceCallPath = async (
+  call: AnalysisCall,
+  callRelationship: CallRelationshipObserver,
+  input: CallPathTraceInput,
+  signal?: AbortSignal,
+): EnhancedResult => {
+  const start = await resolveProcedureAddress(call, input.start, signal);
+  if (!start.ok) return start;
+  let goal: string | undefined;
+  if (input.goal !== undefined) {
+    const resolved = await resolveProcedureAddress(call, input.goal, signal);
+    if (!resolved.ok) return resolved;
+    goal = resolved.value;
+  }
+  const resolvedInput: CallPathTraceInput = {
+    start: start.value,
+    ...(goal === undefined ? {} : { goal }),
+    direction: input.direction,
+    ...(input.max_depth === undefined ? {} : { max_depth: input.max_depth }),
+    ...(input.max_nodes === undefined ? {} : { max_nodes: input.max_nodes }),
+  };
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
+  const state = createTraceState(resolvedInput);
+  let expandedNodes = 0;
+  let depthLimited = false;
+  while (
+    state.queueIndex < state.queue.length &&
+    state.traversalPath.length === 0
+  ) {
+    if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
+    const address = state.queue[state.queueIndex];
+    if (address === undefined) break;
+    const current = state.visited.get(address);
+    if (current === undefined) {
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_depth !== undefined &&
+      current.depth >= resolvedInput.max_depth
+    ) {
+      depthLimited = true;
+      state.queueIndex += 1;
+      continue;
+    }
+    if (
+      resolvedInput.max_nodes !== undefined &&
+      expandedNodes >= resolvedInput.max_nodes
+    ) {
+      const remaining = state.queue.length - state.queueIndex;
+      state.discovery = "partial";
+      state.residual.add(
+        `Call path traversal stopped at caller-selected max_nodes ${String(resolvedInput.max_nodes)} with ${String(remaining)} queued procedure(s) unexpanded. Raise or omit max_nodes to search further.`,
+      );
+      break;
+    }
+    state.queueIndex += 1;
+    expandedNodes += 1;
+    const expanded = await expandAddress(callRelationship, {
+      input: resolvedInput,
+      state,
+      address,
+      current,
+      ...(signal === undefined ? {} : { signal }),
+    });
+    if (!expanded.ok) {
+      if (!expanded.error.cleanupIncomplete) return expanded;
+      state.residual.add(
+        cleanupStoppedTraversal(address, state.queue.length - state.queueIndex),
+      );
+      return failedWithPartialResult(
+        expanded.error,
+        projectTrace(resolvedInput, state),
+      );
+    }
+    if (expanded.value) break;
+  }
+  if (
+    depthLimited &&
+    state.traversalPath.length === 0 &&
+    resolvedInput.max_depth !== undefined
+  ) {
+    state.discovery = "partial";
+    state.residual.add(
+      `Call path traversal stopped at caller-selected max_depth ${String(resolvedInput.max_depth)}; deeper call relationships were not expanded. Raise or omit max_depth to search further.`,
+    );
+  }
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
+  return ok(projectTrace(resolvedInput, state));
+};
+
+const createTraceState = (input: CallPathTraceInput): TraceState => ({
+  visited: new Map([
+    [input.start, { address: input.start, depth: 0, parent: undefined }],
+  ]),
+  queue: [input.start],
+  edges: new Map(),
+  failures: [],
+  residual: new Set(),
+  limitations: new Set(),
+  relationshipCoverage: new Map(),
+  discovery: "complete",
+  queueIndex: 0,
+  traversalPath: input.goal === input.start ? [input.start] : [],
+});
+
+const expandAddress = async (
+  call: CallRelationshipObserver,
+  expansion: AddressExpansion,
+): Promise<Result<boolean, AnalysisError>> => {
+  const { input, state, address, current, signal } = expansion;
+  const { relation } = CALL_RELATIONSHIP_TRAVERSALS[input.direction];
+  const read = await readCallRelationships(
+    call,
+    input.direction,
+    address,
+    signal,
+  );
+  if (read.status !== "observed") {
+    state.discovery = combineRelationshipDiscovery(
+      state.discovery,
+      null,
+      relation,
+    );
+  }
+  // A provider failure delivered with cancellation remains the selected outcome.
+  if (
+    read.status === "stopped" ||
+    (read.status === "unavailable" && isAborted(signal))
+  )
+    return err(read.error);
+  if (isAborted(signal)) return err(cancelledBy("trace_call_path", signal));
+  if (read.status !== "observed") {
+    state.failures.push({
+      address,
+      error: projectAnalysisError(read.error),
+    });
+    state.residual.add(
+      `Call relationships were ${read.status} for ${address}.`,
+    );
+    return ok(false);
+  }
+  const { execution, related } = read;
+  for (const limitation of execution.limitations)
+    state.limitations.add(limitation);
+  const coverage = execution.relationshipCoverage ?? {
+    status: "unknown",
+    reason: "Provider did not report relationship coverage.",
+  };
+  state.relationshipCoverage.set(address, coverage);
+  state.discovery = combineRelationshipDiscovery(
+    state.discovery,
+    coverage,
+    relation,
+  );
+  for (const diagnostic of "diagnostics" in coverage &&
+  Array.isArray(coverage.diagnostics)
+    ? coverage.diagnostics
+    : [])
+    state.limitations.add(diagnostic);
+  if (coverage.status === "partial")
+    for (const limitation of coverage.limitations)
+      state.residual.add(
+        `Call relationships for ${address} are limited: ${limitation}`,
+      );
+  else if (coverage.status === "unknown")
+    state.residual.add(
+      `Call relationship coverage is unknown for ${address}: ${coverage.reason}`,
+    );
+  for (const relatedAddress of sortedUniqueAddresses(related)) {
+    recordEdge(input, state, {
+      address,
+      relatedAddress,
+      discoveryDepth: current.depth + 1,
+    });
+    if (state.visited.has(relatedAddress)) continue;
+    const discovered: TraceNode = {
+      address: relatedAddress,
+      depth: current.depth + 1,
+      parent: current,
+    };
+    state.visited.set(relatedAddress, discovered);
+    if (relatedAddress === input.goal) {
+      state.traversalPath = reconstructPath(discovered);
+      return ok(true);
+    }
+    state.queue.push(relatedAddress);
+  }
+  return ok(false);
+};
+
+/** Only the selected goal needs a path; each discovered node owns one parent link. */
+const reconstructPath = (goal: TraceNode): string[] => {
+  const path: string[] = [];
+  for (let node: TraceNode | undefined = goal; node; node = node.parent)
+    path.push(node.address);
+  return path.reverse();
+};
+
+const recordEdge = (
+  input: CallPathTraceInput,
+  state: TraceState,
+  edge: DiscoveredEdge,
+): void => {
+  const sourceAddress =
+    input.direction === "forward" ? edge.address : edge.relatedAddress;
+  const targetAddress =
+    input.direction === "forward" ? edge.relatedAddress : edge.address;
+  const edgeKey = `${sourceAddress}\u0000${targetAddress}`;
+  if (state.edges.has(edgeKey)) return;
+  state.edges.set(edgeKey, {
+    source_address: sourceAddress,
+    target_address: targetAddress,
+    discovery_depth: edge.discoveryDepth,
+  });
+};
+
+const projectTrace = (input: CallPathTraceInput, state: TraceState) => {
+  const observedGoalStatus =
+    input.goal === undefined
+      ? "not_requested"
+      : state.traversalPath.length > 0
+        ? "reached"
+        : state.residual.size > 0
+          ? "unknown"
+          : "not_reached";
+  return {
+    start: input.start,
+    goal: input.goal ?? null,
+    direction: input.direction,
+    goal_status:
+      observedGoalStatus === "not_reached" && state.discovery !== "complete"
+        ? "unknown"
+        : observedGoalStatus,
+    search_scope: {
+      graph: "provider_observed_graph",
+      discovery: state.discovery,
+      observed_goal_status: observedGoalStatus,
+    },
+    nodes: [...state.visited.entries()]
+      .map(([address, { depth }]) => ({ address, depth }))
+      .sort(
+        (left, right) =>
+          left.depth - right.depth ||
+          compareAddress(left.address, right.address),
+      ),
+    edges: [...state.edges.values()].sort(
+      (left, right) =>
+        left.discovery_depth - right.discovery_depth ||
+        compareAddress(left.source_address, right.source_address) ||
+        compareAddress(left.target_address, right.target_address),
+    ),
+    traversal_path: state.traversalPath,
+    failures: state.failures,
+    traversal: {
+      nodes_visited: state.visited.size,
+    },
+    relationship_coverage: Object.fromEntries(
+      [...state.relationshipCoverage.entries()].sort(([left], [right]) =>
+        compareAddress(left, right),
+      ),
+    ),
+    truncated: state.residual.size > 0,
+    residual_unknowns: [...state.residual],
+    limitations: [
+      "Direct provider call relationships may omit unresolved indirect calls.",
+      ...state.limitations,
+    ],
+  };
+};
+
+const compareAddress = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+const sortedUniqueAddresses = (addresses: readonly string[]): string[] =>
+  [...new Set(addresses)].sort(compareAddress);

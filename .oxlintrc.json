@@ -1,27 +1,266 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["typescript", "import", "unicorn", "oxc"],
+  "plugins": ["typescript", "import", "unicorn", "oxc", "vitest"],
   "rules": {
+    "rea/no-buffer-deep-equality": "error",
+    "rea/cancellation-cause": "error",
+    "no-async-promise-executor": "error",
+    "no-unreachable": "error",
+    "no-unsafe-optional-chaining": "error",
+    "no-useless-escape": ["warn", { "allowRegexCharacters": ["-"] }],
     "complexity": ["warn", 20],
     "max-depth": ["warn", 4],
     "max-lines": [
       "warn",
-      { "max": 500, "skipBlankLines": true, "skipComments": true }
+      {
+        "max": 500,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
     ],
     "max-lines-per-function": [
       "warn",
-      { "max": 100, "skipBlankLines": true, "skipComments": true }
+      {
+        "max": 100,
+        "skipBlankLines": true,
+        "skipComments": true
+      }
     ],
     "max-params": ["warn", 4],
     "no-var": "warn",
-    "no-var-requires": "error"
+    "no-var-requires": "error",
+    "typescript/no-import-type-side-effects": "error",
+    "vitest/no-standalone-expect": "off",
+    "vitest/no-conditional-expect": "off",
+    "vitest/expect-expect": "off",
+    "vitest/no-disabled-tests": "off",
+    "vitest/require-mock-type-parameters": "off",
+    "vitest/require-to-throw-message": "off",
+    "import/no-duplicates": [
+      "warn",
+      {
+        "preferInline": false
+      }
+    ],
+    "vitest/valid-expect": [
+      "warn",
+      {
+        "maxArgs": 2
+      }
+    ],
+    "rea/no-evidence-json-preadmission": "error",
+    "rea/no-positional-tool-contract": "error",
+    "rea/no-fixture-root-cleanup": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "warn",
+    "typescript/return-await": ["error", "error-handling-correctness-only"],
+    "typescript/switch-exhaustiveness-check": [
+      "error",
+      {
+        "considerDefaultExhaustiveForUnions": true
+      }
+    ],
+    "rea/no-shared-module-mock": "error"
   },
   "overrides": [
     {
-      "files": ["tests/**/*.ts"],
+      "files": ["scripts/**/*.mjs", "scripts/**/*.js", "scripts/**/*.cjs"],
+      "env": { "node": true, "es2024": true },
+      "rules": { "no-undef": "error" }
+    },
+    {
+      "files": [
+        "scripts/lib/browser-scenario-service-workers-e2e.mjs",
+        "scripts/lib/browser-screenshot-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "globals": {
+        "document": "readonly",
+        "ServiceWorkerContainer": "readonly"
+      }
+    },
+    {
+      "files": ["src/domain/**/*.ts"],
+      "rules": { "rea/no-locale-compare": "error" }
+    },
+    {
+      "files": [
+        "src/domain/**/*.test.ts",
+        "src/domain/**/*.spec.ts",
+        "src/domain/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-locale-compare": "off" }
+    },
+    {
+      "files": [
+        "src/**/*.ts",
+        "scripts/lib/browser-*-e2e.mjs",
+        "scripts/verify-browser-dom-destinations.mjs"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "error" }
+    },
+    {
+      "files": [
+        "src/browser/PlaywrightCdpSession.ts",
+        "src/**/*.test.ts",
+        "src/**/*.fixture.ts"
+      ],
+      "rules": { "rea/no-raw-cdp-session": "off" }
+    },
+    {
+      "files": [
+        "scripts/electron-active-hook*.cjs",
+        "tests/conformance/readiness/electron/*.js",
+        "website/public/examples/notes-electron/*.js"
+      ],
       "rules": {
-        "max-lines-per-function": "off",
-        "max-lines": "off"
+        "no-var-requires": "off"
+      }
+    },
+    {
+      "files": ["src/**/*.ts"],
+      "rules": {
+        "rea/provider-failure-classifier": "error",
+        "rea/typed-resource-refusal": "error",
+        "rea/no-babel-visitor-keys": "error",
+        "rea/no-raw-file-handle-close": "error",
+        "typescript/no-misused-promises": "error"
+      }
+    },
+    {
+      "files": [
+        "tests/**/*.ts",
+        "src/**/*.test.ts",
+        "src/**/*.spec.ts",
+        "src/**/*.fixture.ts"
+      ],
+      "rules": {
+        "rea/provider-failure-classifier": "off",
+        "rea/typed-resource-refusal": "off",
+        "rea/no-babel-visitor-keys": "off",
+        "rea/no-raw-file-handle-close": "off",
+        "max-lines": "off",
+        "max-lines-per-function": [
+          "error",
+          {
+            "max": 150,
+            "skipBlankLines": true,
+            "skipComments": true
+          }
+        ],
+        "typescript/no-misused-promises": "warn"
+      }
+    },
+    {
+      "files": ["src/filesystem/Owned*.ts"],
+      "rules": { "rea/no-raw-file-handle-close": "off" }
+    },
+    {
+      "files": ["src/cli*.ts", "src/cli/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/contracts/toolContracts.js"],
+                "allowTypeImports": true,
+                "message": "CLI startup registers every command without loading the complete tool catalog (tests/boundary/cli/cliStartupImports.test.ts). Import the command's own contract group instead."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["src/domain/javascript/javascriptSemanticTraversal.ts"],
+      "rules": { "rea/no-babel-visitor-keys": "off" }
+    },
+    {
+      "files": ["src/application/**/*.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["**/server/**", "**/cli.*", "**/main.*"],
+                "message": "Service tests must use application ports rather than CLI or MCP entrypoints."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["tests/composition/**/*.test.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/server/**",
+                  "**/cli.*",
+                  "**/main.*",
+                  "node:child_process",
+                  "node:net",
+                  "node:http",
+                  "node:https",
+                  "ws",
+                  "playwright"
+                ],
+                "message": "Composition tests may wire provider-neutral sessions but must not invoke CLI, MCP, process, network, or browser boundaries."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["tests/**/*.test.ts", "src/**/*.test.ts"],
+      "rules": {
+        "vitest/valid-expect": [
+          "warn",
+          {
+            "maxArgs": 2
+          }
+        ],
+        "vitest/valid-expect-in-promise": "error",
+        "vitest/no-focused-tests": "error"
+      }
+    },
+    {
+      "files": ["tests/**/*.ts", "src/**/*.test.ts", "src/**/*.fixture.ts"],
+      "rules": {
+        "rea/project-wait-deadline": "error"
+      }
+    },
+    {
+      "files": [
+        "scripts/lib/http3-capture-assertions.test.mjs",
+        "scripts/lib/http3-verifier-lifecycle.test.mjs"
+      ],
+      "rules": {
+        "typescript/no-floating-promises": [
+          "error",
+          {
+            "allowForKnownSafeCalls": [
+              {
+                "from": "package",
+                "package": "@types/node",
+                "name": "test"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["scripts/fixtures/javascript-recovery/code-split/entry.mjs"],
+      "rules": {
+        "typescript/no-floating-promises": "off"
       }
     }
   ],
@@ -29,5 +268,26 @@
     "node": true,
     "es2023": true
   },
-  "ignorePatterns": ["dist", "node_modules", "docs/api", ".codex", ".devin"]
+  "ignorePatterns": [
+    "dist",
+    "build",
+    "node_modules",
+    "docs/api",
+    "coverage",
+    ".turbo",
+    ".cache",
+    ".codex",
+    ".devin",
+    ".factory",
+    "third_party"
+  ],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "jsPlugins": [
+    {
+      "name": "rea",
+      "specifier": "./scripts/lint/index.mjs"
+    }
+  ]
 }
