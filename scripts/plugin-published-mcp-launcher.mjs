@@ -950,6 +950,34 @@ const allowPendingCancellation = async () => {
   await nextMacrotask();
 };
 
+/**
+ * Own SIGINT/SIGTERM only through startup retained-staging cleanup. Do not
+ * observe stdin here: a ready-cache launch must still deliver client input to
+ * the in-process runtime, and acquisition installs its own stdin cancel later.
+ */
+const observeStartupCleanupCancel = () => {
+  /** @type {{ signal: string, capacityExceeded: false } | undefined} */
+  let cancelled;
+  let released = false;
+  const onSignal = (signal) => {
+    if (cancelled !== undefined) return;
+    cancelled = { signal, capacityExceeded: false };
+  };
+  for (const signal of Object.keys(SIGNAL_EXIT_CODES))
+    process.on(signal, onSignal);
+  return {
+    get cancelled() {
+      return cancelled;
+    },
+    release() {
+      if (released) return;
+      released = true;
+      for (const signal of Object.keys(SIGNAL_EXIT_CODES))
+        process.off(signal, onSignal);
+    },
+  };
+};
+
 const waitForReadyOrLock = async (prefix, lockPath) => {
   /** @type {(() => void) | undefined} */
   let wakeWait;
@@ -1032,6 +1060,11 @@ if (process.exitCode === 1) {
   /** @type {string} */
   let staging;
 
+  // Keep signal cancel owned through retained-staging cleanup retry so a
+  // SIGTERM during rmSync cannot abandon an unmarked tree (marker may already
+  // be gone while sibling files remain). Match install-finalization ownership
+  // for signals only; stdin stays for the ready runtime or later acquisition.
+  const startupCancel = observeStartupCleanupCancel();
   try {
     ensurePrivateCacheRoot();
     // Derive install paths from the admitted physical cache root so lease
@@ -1040,8 +1073,20 @@ if (process.exitCode === 1) {
     lockPath = join(cacheRoot, `${installKey}.lock`);
     staging = join(cacheRoot, `${installKey}.staging-${String(process.pid)}`);
     retryRetainedStagingCleanup();
+    // Yield so a SIGTERM that arrived during sync rmSync can run while this
+    // observer is still installed (Node cannot deliver it until JavaScript yields).
+    await allowPendingCancellation();
+    if (startupCancel.cancelled !== undefined) {
+      applyAcquisitionCancel(startupCancel.cancelled);
+    }
   } catch (cause) {
     refuseUntrustedCache(cause);
+  } finally {
+    startupCancel.release();
+  }
+
+  if (startupCancel.cancelled !== undefined) {
+    process.exit(process.exitCode ?? 0);
   }
 
   if (process.exitCode !== 1) {

@@ -2088,6 +2088,104 @@ it("resolves Windows helpers to absolute System32 paths with a neutral cwd", asy
   }
 });
 
+describe.skipIf(process.platform === "win32")(
+  "startup retained staging cancellation",
+  () => {
+    it("defers SIGTERM through retained staging cleanup retry", async () => {
+      const version = "6.8.0-published-staging-retry-sigterm";
+      const temp = await createLauncherTemp();
+      const staging = join(
+        temp.cacheRoot,
+        `${installKeyFor(version)}.staging-4242`,
+      );
+      await mkdir(temp.cacheRoot, { recursive: true, mode: 0o700 });
+      if (uid !== undefined) await chmod(temp.cacheRoot, 0o700);
+      await mkdir(staging, { recursive: true, mode: 0o700 });
+      await writeFile(join(staging, CLEANUP_OWNER), `999999\n${staging}\n`, {
+        mode: 0o600,
+      });
+      // Enough retained files that real rmSync stays in the startup retry long
+      // enough for SIGTERM to arrive after ownership is installed and before the
+      // tree (and its cleanup-owner marker) finishes disappearing.
+      const partialFiles = 5_000;
+      const probe = join(staging, "partial", "0", "f0");
+      for (let index = 0; index < partialFiles; index += 1) {
+        const dir = join(staging, "partial", String(index % 50));
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        writeFileSync(join(dir, `f${String(index)}`), "x", { mode: 0o600 });
+      }
+      const workspace = await createTestTempDirectory(
+        "rea-published-staging-retry-sigterm-",
+      );
+      const bin = join(workspace, "bin");
+      await mkdir(bin);
+      const npmEntry = join(bin, "npm-cli.cjs");
+      const npmStarted = join(workspace, "npm-started");
+      await writeFile(
+        npmEntry,
+        `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(npmStarted)}, "started", { mode: 0o600 });
+setInterval(() => {}, 1000);
+`,
+      );
+      const { child, closed } = start([version], {
+        ...process.env,
+        ...temp.env,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        npm_execpath: npmEntry,
+      });
+      // Wait until startup retry has begun deleting the retained tree; a signal
+      // before the cancel observer is installed would use the default SIGTERM
+      // disposition and can abandon unmarked residue.
+      const deadline = Date.now() + 15_000;
+      while (child.exitCode === null && Date.now() < deadline) {
+        try {
+          await access(probe);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        } catch {
+          break;
+        }
+      }
+      if (child.exitCode === null) child.kill("SIGTERM");
+      const result = await closed;
+      expect(result.code).toBe(143);
+      expect(result.stdout).toBe("");
+      await expect(access(npmStarted)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      // Cleanup either finished under cancel ownership or re-marked the residue
+      // for a later retry; unmarked leftovers must not remain.
+      const leftover = (await readdir(temp.cacheRoot).catch(() => [])).filter(
+        (name) => stagingNamePattern(version).test(name),
+      );
+      for (const name of leftover) {
+        await access(join(temp.cacheRoot, name, CLEANUP_OWNER));
+      }
+      // Unsignalled control: startup retry clears any still-marked residue.
+      await seedPublishedRuntime(
+        version,
+        "process.stdout.write('control-ok'); process.exit(0);",
+        temp.temporaryRoot,
+      );
+      const control = start([version], {
+        ...process.env,
+        ...temp.env,
+        PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        npm_execpath: npmEntry,
+      });
+      control.child.stdin.end();
+      const controlResult = await control.closed;
+      expect(controlResult.code).toBe(0);
+      expect(controlResult.stdout).toBe("control-ok");
+      const after = (await readdir(temp.cacheRoot).catch(() => [])).filter(
+        (name) => stagingNamePattern(version).test(name),
+      );
+      expect(after).toEqual([]);
+    });
+  },
+);
+
 describe.skipIf(process.platform === "win32")("installer cancellation", () => {
   it("defers SIGTERM through failed-install staging cleanup and lock release", async () => {
     const version = "6.8.0-published-cleanup-finalization-sigterm";
