@@ -31,7 +31,7 @@ import {
   isClientConfigurationCleanupFailure,
   retryClientConfigurationCleanup,
 } from "./ClientConfigurationCleanup.js";
-import { clientConfigurationValuesEqual } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import { ClientConfigurationPublication } from "./ClientConfigurationPublication.js";
 import { withClientConfigurationTransaction } from "./ClientConfigurationTransaction.js";
 import {

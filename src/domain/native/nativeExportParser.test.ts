@@ -6,10 +6,12 @@ import {
   elfAliasedVersionImage,
   peExportImage,
 } from "../../../tests/fixtures/binaryDiagnostics/nativeExports.js";
+import { elfDynamicExportsImage } from "../../../tests/fixtures/binaryDiagnostics/elfDynamicExports.js";
 import * as nativeExportContracts from "./nativeExports.js";
 import { BinaryFormatFailure } from "../binaryContainer.js";
 import {
   parseNativeExports,
+  parseNativeExportsFromHandle,
   parseNativeExportsSteps,
 } from "./nativeExportParser.js";
 
@@ -361,6 +363,13 @@ const peExportNameAcrossSections = (overlapAtRva?: number): Buffer => {
   return bytes;
 };
 
+/** PE rows without their stored RVA, which a separate test pins. */
+const withoutRva = (rows: readonly object[]) =>
+  rows.map((row) => {
+    const { rva: _rva, ...rest } = row as { readonly rva?: number };
+    return rest;
+  });
+
 describe("PE export name coverage", () => {
   it.each([
     ["with no conflicting mapping", undefined],
@@ -518,7 +527,7 @@ describe("PE export directories", () => {
         },
         issues: [],
       });
-      expect(result.exports).toEqual([
+      expect(withoutRva(result.exports)).toEqual([
         {
           name: "Alias",
           ordinal: 5,
@@ -1559,4 +1568,151 @@ describe("ELF sections of a once-only type", () => {
       expect.objectContaining({ name: "stdout", version: "unknown" }),
     ]);
   });
+});
+
+describe("positional native export parser", () => {
+  const inspect = (
+    bytes: Buffer,
+    readRange: (offset: number, length: number) => Promise<Buffer>,
+  ) =>
+    parseNativeExportsFromHandle(
+      { size: bytes.length, readRange },
+      artifact,
+      async () => {},
+    );
+
+  it("reads the shared ELF symbol and version string table once", async () => {
+    const bytes = elfExportImage({
+      symbols: [
+        { name: "defined", version: 2 },
+        { name: "copied", version: 3 },
+      ],
+      versionDefinitions: ["BASE", "LOCAL_1"],
+      versionRequirements: [{ index: 3, name: "EXTERNAL_1" }],
+    });
+    const dynstr = Number(bytes.readBigUInt64LE(40)) + 2 * 64;
+    const offset = Number(bytes.readBigUInt64LE(dynstr + 24));
+    const length = Number(bytes.readBigUInt64LE(dynstr + 32));
+    const readRange = vi.fn(async (start: number, size: number) =>
+      Buffer.from(bytes.subarray(start, start + size)),
+    );
+    const result = await inspect(bytes, readRange);
+    expect(result).toEqual(parse(bytes));
+    expect(result.exports).toMatchObject([
+      { name: "defined", version: { name: "LOCAL_1" } },
+      { name: "copied", version: { name: "EXTERNAL_1" } },
+    ]);
+    expect(
+      readRange.mock.calls.filter(
+        ([start, size]) => start === offset && size === length,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("keeps equal-sized ELF version string tables distinct", async () => {
+    const original = elfExportImage({
+      symbols: [
+        { name: "defined", version: 2 },
+        { name: "copied", version: 3 },
+      ],
+      versionDefinitions: ["BASE", "ORIGINAL"],
+      versionRequirements: [{ index: 3, name: "ORIGINAL" }],
+    });
+    const table = Number(original.readBigUInt64LE(40));
+    const count = original.readUInt16LE(60);
+    const dynstr = table + 2 * 64;
+    const offset = Number(original.readBigUInt64LE(dynstr + 24));
+    const length = Number(original.readBigUInt64LE(dynstr + 32));
+    const copies = Buffer.alloc(length);
+    original.copy(copies, 0, offset, offset + length);
+    copies.write("DISTINCT", copies.indexOf("ORIGINAL"), "latin1");
+    const bytes = Buffer.concat([
+      original,
+      original.subarray(dynstr, dynstr + 64),
+      copies,
+    ]);
+    bytes.writeUInt16LE(count + 1, 60);
+    bytes.writeUInt32LE(count, table + 4 * 64 + 40);
+    bytes.writeBigUInt64LE(
+      BigInt(original.length + 64),
+      table + count * 64 + 24,
+    );
+    const result = await inspect(bytes, async (start, size) => {
+      const destination = Buffer.alloc(size);
+      bytes.copy(destination, 0, start, start + size);
+      return destination;
+    });
+    expect(result.exports).toMatchObject([
+      { name: "defined", version: { name: "DISTINCT" } },
+      { name: "copied", version: { name: "ORIGINAL" } },
+    ]);
+    expect(result.issues).toEqual([]);
+  });
+
+  it.each([
+    ["sysv", 0x300, 8],
+    ["gnu", 0x340, 16],
+  ] as const)(
+    "preserves a physical %s header read failure",
+    async (hash, header, headerBytes) => {
+      const bytes = elfDynamicExportsImage({ hash });
+      const failure = Object.assign(new Error("read failed"), { code: "EIO" });
+      await expect(
+        inspect(bytes, async (start, size) => {
+          if (start === header && size === headerBytes) throw failure;
+          return bytes.subarray(start, start + size);
+        }),
+      ).rejects.toBe(failure);
+    },
+  );
+
+  it("serves nearby short PE names from a bounded window", async () => {
+    const image = peExportImage({
+      functions: [{ rva: 0x3000 }, { rva: 0x3100 }],
+      names: [
+        { name: "first", index: 0 },
+        { name: "second", index: 1 },
+      ],
+    });
+    const bytes = Buffer.concat([image, Buffer.alloc(8192)]);
+    const sectionHeader = 152 + 240;
+    const rawStart = bytes.readUInt32LE(sectionHeader + 20);
+    bytes.writeUInt32LE(bytes.length - rawStart, sectionHeader + 8);
+    bytes.writeUInt32LE(bytes.length - rawStart, sectionHeader + 16);
+    const readRange = vi.fn(async (start: number, size: number) =>
+      bytes.subarray(start, start + size),
+    );
+    expect(await inspect(bytes, readRange)).toEqual(parse(bytes));
+    expect(
+      readRange.mock.calls
+        .filter(([, size]) => size >= 4096)
+        .map(([, size]) => size),
+    ).toEqual([4096]);
+  });
+});
+
+it("reports each PE export's stored RVA, including a forwarder's string RVA", () => {
+  const result = parseNativeExports(
+    peExportImage({
+      ordinalBase: 5,
+      functions: [
+        { rva: 0x2000 },
+        { rva: 0x2010 },
+        null,
+        { forwarder: "OTHER.Target" },
+      ],
+      names: [
+        { name: "Primary", index: 0 },
+        { name: "Forwarded", index: 3 },
+      ],
+    }),
+    artifact,
+  );
+  if (result.format !== "pe") throw new Error("Expected PE exports");
+  // The fixture stores forwarder strings inside the export directory.
+  expect(result.exports.map(({ name, rva }) => [name, rva])).toEqual([
+    ["Primary", 0x2000],
+    [null, 0x2010],
+    ["Forwarded", 0x1100],
+  ]);
 });

@@ -24,7 +24,7 @@ import {
   unifiedAotFixtureImage,
 } from "../../../src/flutter/FlutterBuild.fixture.js";
 import { FlutterBuildProvider } from "../../../src/flutter/FlutterBuildProvider.js";
-import { FlutterBuildAnalysisService } from "../../../src/application/flutter/FlutterBuildAnalysisService.js";
+import { createFlutterBuildAnalysisService } from "../../../src/application/ProviderOperationServices.js";
 import { finishAnalysisCommand } from "../../../src/cli/finishAnalysisCommand.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
@@ -511,7 +511,7 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
     ]);
     const controlProvider = new FlutterBuildProvider();
     onTestFinished(() => controlProvider.close());
-    const control = await new FlutterBuildAnalysisService(
+    const control = await createFlutterBuildAnalysisService(
       controlProvider,
     ).execute(operation, { path });
     if (!control.ok) throw control.error;
@@ -525,7 +525,7 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       controller.abort(reason);
     });
     const provider = new FlutterBuildProvider();
-    const result = await new FlutterBuildAnalysisService(provider).execute(
+    const result = await createFlutterBuildAnalysisService(provider).execute(
       operation,
       { path },
       { signal: controller.signal },
@@ -728,7 +728,7 @@ it("retains failed snapshot cleanup and retries it on close", async () => {
     failing = false;
     await provider.close();
   });
-  const service = new FlutterBuildAnalysisService(provider);
+  const service = createFlutterBuildAnalysisService(provider);
   const result = await finishAnalysisCommand(
     () =>
       service.execute("identify_flutter_build", {
@@ -1818,7 +1818,7 @@ it.each([false, true])(
     const controller = new AbortController();
     const reason = { caller: "cancel during refused cleanup" };
     const controlProvider = new FlutterBuildProvider();
-    const control = await new FlutterBuildAnalysisService(
+    const control = await createFlutterBuildAnalysisService(
       controlProvider,
     ).execute("identify_flutter_build", { path });
     await controlProvider.close();
@@ -2236,7 +2236,7 @@ it("recovers omitted Dart pool strings through selection and per-call admission 
   ]);
   const provider = new FlutterBuildProvider();
   onTestFinished(() => provider.close());
-  const service = new FlutterBuildAnalysisService(provider);
+  const service = createFlutterBuildAnalysisService(provider);
   const inspect = async (pool_policy?: Record<string, unknown>) => {
     const result = await service.execute("inspect_dart_aot", {
       path,

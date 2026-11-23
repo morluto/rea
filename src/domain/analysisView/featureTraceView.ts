@@ -224,16 +224,15 @@ const tracePage = <Shared extends object>(
     items: rows,
     coverage: pageViewCoverage(selection.offset, rows.length, total),
   });
-  const all = () => true;
   if (view.collection === "seed_matches")
     return pageOf(
       view,
-      selectViewRows(result.seed_matches, view, all, (row) => row),
+      selectViewRows(result.seed_matches, view, undefined, (row) => row),
     );
   if (view.collection === "native_handoffs")
     return pageOf(
       view,
-      selectViewRows(result.native_handoffs, view, all, (row) => row),
+      selectViewRows(result.native_handoffs, view, undefined, (row) => row),
     );
   if (view.collection === "paths") {
     const nodes = selected(view.where.node_ids);

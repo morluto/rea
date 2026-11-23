@@ -7,7 +7,7 @@ import { z } from "zod";
 
 import { decode as decodeToon } from "@toon-format/toon";
 import { parse as parseYaml } from "yaml";
-import { parseCliOutputArguments } from "../../../src/cliOutput.js";
+import { parseCliOutputArguments } from "../../../src/cli/cliOutput.js";
 import { registerContractCommand } from "../../../src/cli/contractCommand.js";
 import { createCliResultOutput } from "../../../src/cli/cliResultOutput.js";
 import {

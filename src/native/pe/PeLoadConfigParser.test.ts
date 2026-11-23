@@ -7,6 +7,7 @@ import {
 } from "../../domain/native/peLoadConfig.js";
 import {
   parsePeLoadConfig,
+  parsePeLoadConfigFromHandle,
   parsePeLoadConfigFromImage,
 } from "./PeLoadConfigParser.js";
 import { readPeHardening } from "../hardening/PeHardening.js";
@@ -511,4 +512,39 @@ describe("PE load-config reuse and lazy section indexing", () => {
         ?.state,
     ).toBe("enabled");
   });
+});
+
+it("reads the full callback allowance in bounded windows with the terminator", async () => {
+  const callbackCount = 4096;
+  const bytes = peManySectionsImage(2, callbackCount);
+  const peOffset = bytes.readUInt32LE(60);
+  const callbacksOffset = bytes.readUInt32LE(peOffset + 24 + 60) + 0x100;
+  const artifact = {
+    path: input.path,
+    sha256: "a".repeat(64),
+    bytes: bytes.length,
+  };
+  const reads: Array<{ offset: number; length: number }> = [];
+  const report = await parsePeLoadConfigFromHandle(
+    {
+      size: bytes.length,
+      sha256: artifact.sha256,
+      prefix: bytes.subarray(0, 64),
+      readRange: async (offset, length) => {
+        if (offset >= callbacksOffset) reads.push({ offset, length });
+        return bytes.subarray(offset, offset + length);
+      },
+    },
+    artifact,
+    { ...input, max_callbacks: callbackCount },
+  );
+  expect(report.examined_callbacks).toBe(callbackCount);
+  expect(report.tls?.callback_array_locations).toEqual([
+    { offset: callbacksOffset, bytes: (callbackCount + 1) * 8 },
+  ]);
+  expect(reads).toHaveLength(5);
+  expect(reads.every(({ length }) => length <= 8192)).toBe(true);
+  expect(reads.reduce((sum, { length }) => sum + length, 0)).toBe(
+    (callbackCount + 1) * 8,
+  );
 });

@@ -152,9 +152,12 @@ export const kiloProjectLocation = async (
     layers.push(...ordered);
   } else layers.push(...directoryLayers);
   const inlineConfiguration = kiloInlineConfiguration(kilo.root);
+  if (!inlineConfiguration.ok) throw inlineConfiguration.error;
   return {
     configPath,
     configPaths: layers.map((layer) => layer.path),
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
+    ...(inlineConfiguration.value === undefined
+      ? {}
+      : { inlineConfiguration: inlineConfiguration.value }),
   };
 };

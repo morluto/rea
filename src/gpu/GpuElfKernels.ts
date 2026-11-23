@@ -235,15 +235,22 @@ const attachCudaResources = (
   const registerRows = index.registerFacts.get(symbolKey);
   const registerValues = new Set(registerRows?.keys());
   const sectionRegisters = text.info >>> 24;
-  kernel.registers.physical =
-    registerValues.size === 1
-      ? [...registerValues][0]!
-      : registerValues.size === 0 && sectionRegisters !== 0
-        ? sectionRegisters
-        : null;
-  if (registerValues.size === 1)
+  const singleInfoRegister =
+    registerValues.size === 1 ? [...registerValues][0]! : null;
+  const registerConflict =
+    registerValues.size > 1 ||
+    (singleInfoRegister !== null &&
+      sectionRegisters !== 0 &&
+      singleInfoRegister !== sectionRegisters);
+  if (registerConflict) {
+    kernel.limitations.push(
+      "Conflicting CUDA register declarations; physical count remains unknown",
+    );
+  } else if (singleInfoRegister !== null) {
+    kernel.registers.physical = singleInfoRegister;
     kernel.sources.registers = registerRows!.values().next().value!;
-  else if (sectionRegisters !== 0)
+  } else if (sectionRegisters !== 0) {
+    kernel.registers.physical = sectionRegisters;
     kernel.sources.registers = {
       container_id: source.containerId,
       offset: text.header_offset,
@@ -251,18 +258,9 @@ const attachCudaResources = (
       section_index: text.index,
       section_name: text.name,
     };
-  const registerConflict =
-    registerValues.size > 1 ||
-    (kernel.registers.physical !== null &&
-      sectionRegisters !== 0 &&
-      kernel.registers.physical !== sectionRegisters);
-  if (registerConflict) {
-    kernel.registers.physical = null;
-    kernel.limitations.push(
-      "Conflicting CUDA register declarations; physical count remains unknown",
-    );
   }
   const shared = index.sharedByText.get(text.index) ?? [];
+  const sharedConflict = shared.length > 1;
   kernel.shared_bytes =
     shared.length === 1
       ? gpuCount(shared[0]!.size)
@@ -277,7 +275,12 @@ const attachCudaResources = (
       section_index: shared[0]!.index,
       section_name: shared[0]!.name,
     };
-  return registerConflict ? "partial" : "complete";
+  if (sharedConflict) {
+    kernel.limitations.push(
+      "Conflicting CUDA shared memory declarations; shared byte count remains unknown",
+    );
+  }
+  return registerConflict || sharedConflict ? "partial" : "complete";
 };
 
 const cudaKernels = async (

@@ -1,4 +1,4 @@
-import type { HexRecordsMetadata } from "../artifactFormatMetadata.js";
+import type { HexRecordsMetadata } from "../formatMetadata/firmwareMetadata.js";
 import { err, ok, type Result } from "../result.js";
 import { mergeArenaRuns, type RunConflict } from "./addressRuns.js";
 import type { RegionDecodeFailure, RegionDecoder } from "./regionDecoder.js";

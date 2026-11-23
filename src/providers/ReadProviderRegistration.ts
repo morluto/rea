@@ -1,16 +1,21 @@
 import { errorMessage } from "../kernel/errorMessage.js";
-import { cancelledBy, carriedReason } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  cancelledBy,
+  carriedReason,
+} from "../domain/analysisErrorCore.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
 import { AnalysisCleanupLease } from "../resources/index.js";
 import type { RetainedResourceScope } from "../ports/AnalysisProvider.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { err, type Result } from "../domain/result.js";
+import { err, ok, type Result } from "../domain/result.js";
 import { safeParseUtf8Json } from "../domain/safeJson.js";
 import {
   withOwnedRegularFile,
   regularFileCancellation,
+  RegularFileCancelled,
   RegularFileCleanupFailure,
+  type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import {
   RegularFileOperationCancelled,
@@ -19,7 +24,21 @@ import {
 
 const MAXIMUM_REGISTRATION_BYTES = 65_536;
 
-class RegistrationContentsError extends ConfigurationError {}
+/** Recover a content rejection that the descriptor owner retained through close. */
+const completedRegistrationRejection = (
+  outcome: RegularFileOperationOutcome<unknown>,
+): ConfigurationError | undefined => {
+  if (outcome.kind !== "completed") return undefined;
+  const { value } = outcome;
+  return typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    value.error instanceof ConfigurationError
+    ? value.error
+    : undefined;
+};
 
 /** Read one bounded registration while owning its descriptor through cancellation and final close. */
 export const readProviderRegistration = <Value>(
@@ -44,15 +63,17 @@ export const readProviderRegistration = <Value>(
         ...(cause === undefined ? {} : { cause }),
         settings: [{ setting: format.setting, constraint }],
       });
-    const contentsError = (constraint: string): ConfigurationError =>
-      new RegistrationContentsError(constraint, {
-        settings: [{ setting: format.setting, constraint }],
-      });
     const registrationTooLarge = () =>
-      contentsError(`${format.setting} exceeds the 64 KiB registration size.`);
+      err(
+        configurationError(
+          `${format.setting} exceeds the 64 KiB registration size.`,
+        ),
+      );
     let closeLease: AnalysisCleanupLease | undefined;
     try {
-      const input = await withOwnedRegularFile<unknown>(
+      const input = await withOwnedRegularFile<
+        Result<unknown, ConfigurationError>
+      >(
         path,
         {
           ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -71,7 +92,7 @@ export const readProviderRegistration = <Value>(
         },
         async ({ handle, initial: metadata }) => {
           if (metadata.size > MAXIMUM_REGISTRATION_BYTES)
-            throw registrationTooLarge();
+            return registrationTooLarge();
           const bytes = await readBoundedFileBytes(
             handle,
             MAXIMUM_REGISTRATION_BYTES,
@@ -82,18 +103,19 @@ export const readProviderRegistration = <Value>(
                 new RegularFileOperationCancelled(reason),
             },
           );
-          if (bytes === undefined) throw registrationTooLarge();
+          if (bytes === undefined) return registrationTooLarge();
           const parsed = safeParseUtf8Json(bytes);
           if (!parsed.ok)
-            throw contentsError(
-              `${format.setting} must contain valid UTF-8 JSON.`,
+            return err(
+              configurationError(
+                `${format.setting} must contain valid UTF-8 JSON.`,
+              ),
             );
-          return parsed.value;
+          return ok(parsed.value);
         },
       );
-      return format.parse(input);
+      return input.ok ? format.parse(input.value) : input;
     } catch (cause: unknown) {
-      if (cause instanceof RegistrationContentsError) return err(cause);
       if (cause instanceof NonRegularFileReadError)
         return err(
           configurationError(
@@ -102,7 +124,15 @@ export const readProviderRegistration = <Value>(
           ),
         );
       if (cause instanceof AnalysisCancelledError) throw cause;
-      const cancellation = regularFileCancellation(cause);
+      const rejection =
+        cause instanceof RegularFileCleanupFailure ||
+        cause instanceof RegularFileCancelled
+          ? completedRegistrationRejection(cause.outcome)
+          : undefined;
+      if (cause instanceof RegularFileCancelled && rejection !== undefined)
+        return err(rejection);
+      const cancellation =
+        rejection === undefined ? regularFileCancellation(cause) : undefined;
       if (cancellation !== undefined) {
         if (cause instanceof RegularFileCleanupFailure) {
           const error = cancelledBy(
@@ -126,13 +156,14 @@ export const readProviderRegistration = <Value>(
             ? cause.outcome.cause
             : cause.cleanupCause;
         const primaryMessage =
-          cause.outcome.kind === "failed"
+          rejection?.message ??
+          (cause.outcome.kind === "failed"
             ? primary instanceof ConfigurationError
               ? primary.message
               : primary instanceof NonRegularFileReadError
                 ? `${format.setting} must select a regular JSON file: ${path}`
                 : `Cannot read ${format.label} registration ${path}: ${errorMessage(primary)}`
-            : `Cannot close ${format.label} registration ${path}; provide a readable JSON configuration.`;
+            : `Cannot close ${format.label} registration ${path}; provide a readable JSON configuration.`);
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {

@@ -5,7 +5,7 @@ import {
 import { analysisViewInputError } from "./analysisViewErrors.js";
 import { z } from "zod";
 import type { AnalysisError } from "../analysisErrorBase.js";
-import { createAnalysisViewResultReader } from "./analysisViewParent.js";
+import { parseAnalysisViewResult } from "./analysisViewParent.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import {
@@ -460,15 +460,14 @@ const preview = (record: WebNetworkCaptureRecord, format: string) => {
   };
 };
 
-const readCaptureParent = createAnalysisViewResultReader({
-  safeParse: safeParseOwnedWebNetworkCapture,
-});
-
 /** Authenticate the retained report and its subject at one owning boundary. */
 const parseCaptureParent = (
   parent: AnalysisViewParent,
 ): Result<WebNetworkCapture, AnalysisError> => {
-  const parsed = readCaptureParent(parent);
+  const parsed = parseAnalysisViewResult(
+    { safeParse: safeParseOwnedWebNetworkCapture },
+    parent,
+  );
   if (!parsed.ok) return parsed;
   const report = parsed.value;
   const subject = evidenceFileTarget(parent);

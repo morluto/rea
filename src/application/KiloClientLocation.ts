@@ -5,6 +5,7 @@ import {
 } from "./ClientConfigRoots.js";
 import { present } from "./McpRegistrationLocations.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import { err, ok, type Result } from "../domain/result.js";
 import {
   parseClientConfiguration,
   type ClientInlineConfiguration,
@@ -135,18 +136,20 @@ export const kiloExplicitDirectory = ({
  */
 export const kiloInlineConfiguration = (
   root: ClientRootContext,
-): ClientInlineConfiguration | undefined => {
+): Result<ClientInlineConfiguration | undefined, ConfigurationError> => {
   const text = root.env.KILO_CONFIG_CONTENT;
-  if (!text) return undefined;
+  if (!text) return ok(undefined);
   try {
-    return {
+    return ok({
       origin: "KILO_CONFIG_CONTENT",
       parsed: parseClientConfiguration(text, "kilo"),
-    };
+    });
   } catch (cause: unknown) {
-    throw new ConfigurationError(
-      "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
-      { cause },
+    return err(
+      new ConfigurationError(
+        "KILO_CONFIG_CONTENT cannot be admitted as Kilo configuration. Repair that selected inline configuration; no settings were written.",
+        { cause },
+      ),
     );
   }
 };
@@ -203,48 +206,60 @@ export const kiloDefaultLocation = (
 /**
  * Kilo's user-scope layers as Kilo v7.8.27 loads them, and the file it writes:
  * the last present layer, or `kilo.json` in KILO_CONFIG_DIR when that folder
- * holds none yet.
+ * holds none yet. File-probe and inline-configuration failures are returned
+ * as `ConfigurationError` so one unreadable Kilo folder stays a Kilo row
+ * failure instead of rejecting the whole client table.
  */
 export const kiloGlobalLocation = async (
   context: KiloLocationContext,
-): Promise<KiloGlobalLocation> => {
-  const root = kiloRoot(context);
-  const layers = await observedFiles(root, KILO_GLOBAL_FILES, "global");
-  const explicit = kiloExplicitFile(context);
-  if (explicit !== undefined) {
-    await present(explicit);
-    layers.push({ path: explicit, authority: "global" });
+): Promise<Result<KiloGlobalLocation, ConfigurationError>> => {
+  try {
+    const root = kiloRoot(context);
+    const layers = await observedFiles(root, KILO_GLOBAL_FILES, "global");
+    const explicit = kiloExplicitFile(context);
+    if (explicit !== undefined) {
+      await present(explicit);
+      layers.push({ path: explicit, authority: "global" });
+    }
+    const custom = kiloExplicitDirectory(context);
+    const directories: KiloConfigDirectory[] = [
+      { path: root, authority: "global" },
+      ...(await kiloHomeDirectories(context)),
+    ];
+    if (custom !== undefined)
+      directories.push({ path: custom, authority: "global" });
+    const observed = await directoryFiles(directories, custom);
+    let configPath = observed.at(-1)?.path ?? layers.at(-1)?.path;
+    if (
+      custom !== undefined &&
+      ![...layers, ...observed].some((layer) => dirname(layer.path) === custom)
+    ) {
+      await present(custom);
+      configPath = join(custom, "kilo.json");
+      layers.push(
+        ...(await directoryFiles(directories, custom, {
+          path: configPath,
+          authority: "global",
+        })),
+      );
+    } else layers.push(...observed);
+    configPath ??= join(root, "kilo.json");
+    const inlineConfiguration = kiloInlineConfiguration(context.root);
+    if (!inlineConfiguration.ok) return inlineConfiguration;
+    return ok({
+      configPath,
+      configPaths:
+        layers.length === 0 ? [configPath] : layers.map((layer) => layer.path),
+      ...(inlineConfiguration.value === undefined
+        ? {}
+        : { inlineConfiguration: inlineConfiguration.value }),
+      markerPath: root,
+      discoveryPaths: [kiloExtensionStorage(context.root)],
+    });
+  } catch (cause: unknown) {
+    // The shared probe keeps throwing for the registration path; this
+    // boundary owns the Result contract the client table consumes.
+    if (cause instanceof ConfigurationError) return err(cause);
+    throw cause;
   }
-  const custom = kiloExplicitDirectory(context);
-  const directories: KiloConfigDirectory[] = [
-    { path: root, authority: "global" },
-    ...(await kiloHomeDirectories(context)),
-  ];
-  if (custom !== undefined)
-    directories.push({ path: custom, authority: "global" });
-  const observed = await directoryFiles(directories, custom);
-  let configPath = observed.at(-1)?.path ?? layers.at(-1)?.path;
-  if (
-    custom !== undefined &&
-    ![...layers, ...observed].some((layer) => dirname(layer.path) === custom)
-  ) {
-    await present(custom);
-    configPath = join(custom, "kilo.json");
-    layers.push(
-      ...(await directoryFiles(directories, custom, {
-        path: configPath,
-        authority: "global",
-      })),
-    );
-  } else layers.push(...observed);
-  configPath ??= join(root, "kilo.json");
-  const inlineConfiguration = kiloInlineConfiguration(context.root);
-  return {
-    configPath,
-    configPaths:
-      layers.length === 0 ? [configPath] : layers.map((layer) => layer.path),
-    ...(inlineConfiguration === undefined ? {} : { inlineConfiguration }),
-    markerPath: root,
-    discoveryPaths: [kiloExtensionStorage(context.root)],
-  };
 };

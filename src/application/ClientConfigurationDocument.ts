@@ -43,13 +43,6 @@ import {
   isEmptyClientConfigurationText,
 } from "./ClientConfigurationValues.js";
 
-export { parseClientToml } from "./ClientConfigurationToml.js";
-export {
-  clientConfigurationRecordSchema,
-  clientConfigurationValuesEqual,
-  isEmptyClientConfigurationText,
-} from "./ClientConfigurationValues.js";
-
 export type ClientConfigurationFormat =
   | NonNullable<SetupClient["format"]>
   | "copilot_cli_project";

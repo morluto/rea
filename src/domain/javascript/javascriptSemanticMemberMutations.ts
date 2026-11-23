@@ -2211,7 +2211,9 @@ export function* collectSemanticMemberMutationsSteps(
           reference,
         );
     }
-    for (const [index, reference] of [...iterableReferences].entries()) {
+    const iterableSnapshotLength = iterableReferences.length;
+    for (let index = 0; index < iterableSnapshotLength; index += 1) {
+      const reference = iterableReferences[index]!;
       if (index % 64 === 0) yield;
       if (semanticReferenceSourcesInactive(reference, state)) continue;
       if (reference.iterationOnly) {

@@ -43,6 +43,17 @@ const virtualExtent = (section: Section): number =>
 export const readPeResourceLayout = (bytes: Buffer) =>
   mapPeResourceLayout(readPeImageHeaders(bytes), bytes.length);
 
+/** Header admission and unambiguous file-backed RVA mapping from bounded positional reads. */
+export const readPeResourceLayoutAt = async (
+  prefix: Buffer,
+  fileSize: number,
+  read: PeRangeReader,
+) =>
+  mapPeResourceLayout(
+    await readPeImageHeadersAt(prefix, fileSize, read),
+    fileSize,
+  );
+
 const mapPeResourceLayout = (
   headers: ReturnType<typeof readPeImageHeaders>,
   fileSize: number,

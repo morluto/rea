@@ -16,7 +16,6 @@ import {
 import { err, ok, type Result } from "../domain/result.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import {
-  clientConfigurationValuesEqual,
   effectiveClientServer,
   clientServerListedDisabled,
   clientServerPath,
@@ -31,6 +30,7 @@ import {
   type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import { DISCOVERED_REGISTRATION_SETTINGS } from "./SetupRegistrationEnvironment.js";
 import { registrationEnvironmentProposal } from "./UserConfigurationLocation.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";

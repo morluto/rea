@@ -313,23 +313,21 @@ export const classifyFatContainerIdentity = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   sliceHeaderAt: (offset: number) => number | null | undefined,
 ): FatContainerIdentity => {
-  const hasKnownCpu = header.slices.some(({ cpuType }) =>
-    KNOWN_MACHO_CPU_TYPES.includes(cpuType),
-  );
   const invalidRange = header.rangeIssues.find(
     (issue): issue is FatSliceRangeIssue => issue !== null,
   );
   // Preserve the existing malformed-range result for recognized CPU tables;
   // a valid CPU declaration by itself does not establish a Mach-O image.
-  if (hasKnownCpu && invalidRange !== undefined)
+  if (
+    invalidRange !== undefined &&
+    header.slices.some(({ cpuType }) => KNOWN_MACHO_CPU_TYPES.includes(cpuType))
+  )
     return { state: "malformed", ...invalidRange };
-  const validRanges = header.slices.filter(
-    (_slice, index) => header.rangeIssues[index] === null,
-  );
   const missingHeaders: number[] = [];
   let observedMachO = false;
   let observedNonMachO = false;
-  for (const slice of validRanges) {
+  for (const [index, slice] of header.slices.entries()) {
+    if (header.rangeIssues[index] !== null) continue;
     if (slice.size < 4) {
       observedNonMachO = true;
       continue;
@@ -355,22 +353,16 @@ export const classifyFatContainerEvidence = (
   header: Extract<FatContainerHeader, { readonly state: "parsed" }>,
   prefix: Uint8Array,
   sliceHeadersByOffset?: ReadonlyMap<number, MachoHeaderPrefixFacts>,
-): FatContainerIdentity =>
-  classifyFatContainerIdentity(header, (offset) => {
+): FatContainerIdentity => {
+  const reader = machoReader(prefix, false);
+  // The classifier requests magic only from a valid range of at least four
+  // bytes. An alias declaration at this offset cannot narrow that range.
+  return classifyFatContainerIdentity(header, (offset) => {
     if (sliceHeadersByOffset?.has(offset))
       return sliceHeadersByOffset.get(offset)?.magic;
-    const slice = header.slices.find(
-      (candidate) => candidate.offset === offset,
-    );
-    if (slice === undefined || offset >= prefix.byteLength) return undefined;
-    const available = Math.max(
-      0,
-      Math.min(slice.size, prefix.byteLength - offset, 12),
-    );
-    return readMachoHeaderPrefixFacts(
-      prefix.subarray(offset, offset + available),
-    ).magic;
+    return offset <= prefix.byteLength - 4 ? reader.u32(offset) : undefined;
   });
+};
 
 /**
  * A malformed table is conclusive after a capped JVM scan only if one
