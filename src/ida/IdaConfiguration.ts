@@ -17,6 +17,7 @@ import {
   withOwnedRegularFile,
   regularFileCancellation,
   RegularFileCleanupFailure,
+  type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import {
   RegularFileOperationCancelled,
@@ -290,18 +291,21 @@ export const readIdaConfiguration = (
         );
       }
       if (cause instanceof RegularFileCleanupFailure) {
+        // A size rejection is a completed outcome holding a rejected Result,
+        // so the close failure must keep that primary reason, not replace it.
         const primary =
           cause.outcome.kind === "failed"
             ? cause.outcome.cause
-            : cause.cleanupCause;
+            : (completedRegistrationRejection(cause.outcome) ??
+              cause.cleanupCause);
         const primaryMessage =
-          cause.outcome.kind === "failed"
-            ? primary instanceof ConfigurationError
-              ? primary.message
-              : primary instanceof NonRegularFileReadError
+          primary instanceof ConfigurationError
+            ? primary.message
+            : cause.outcome.kind === "failed"
+              ? primary instanceof NonRegularFileReadError
                 ? `REA_IDA_MCP_CONFIG must select a regular JSON file: ${path}`
                 : `Cannot read IDA MCP registration ${path}: ${errorMessage(primary)}`
-            : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
+              : `Cannot close IDA MCP registration ${path}; provide a readable JSON configuration.`;
         const error = new ConfigurationError(primaryMessage, {
           cause,
           cleanup: {
@@ -338,6 +342,22 @@ const registrationTooLarge = (): ConfigurationError =>
   idaConfigurationError(
     "REA_IDA_MCP_CONFIG exceeds the 64 KiB registration size.",
   );
+
+/** Recognize the size rejection carried by a completed read whose close failed. */
+const completedRegistrationRejection = (
+  outcome: RegularFileOperationOutcome<unknown>,
+): ConfigurationError | undefined => {
+  if (outcome.kind !== "completed") return undefined;
+  const value: unknown = outcome.value;
+  return typeof value === "object" &&
+    value !== null &&
+    "ok" in value &&
+    value.ok === false &&
+    "error" in value &&
+    value.error instanceof ConfigurationError
+    ? value.error
+    : undefined;
+};
 
 /**
  * Name the registration key that sets an IDA request or readiness deadline.
