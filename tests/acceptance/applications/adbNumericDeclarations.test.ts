@@ -27,6 +27,7 @@ const createNumericAdbFixture = async () => {
     binary,
     `#!${process.execPath}
 const args = process.argv.slice(2);
+if (args.length === 1 && args[0] === 'start-server') process.exit(0);
 if (args.length === 1 && args[0] === 'version') {
   console.log('Android Debug Bridge version 1.0.41\\nVersion 34.0.5-fixture\\nInstalled as ' + process.argv[1]);
   process.exit(0);

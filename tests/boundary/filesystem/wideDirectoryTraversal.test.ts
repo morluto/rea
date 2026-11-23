@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -24,7 +24,7 @@ const missingChildren = (paths: Iterable<string>): string[] => {
 const traverse = async (
   root: string,
   maximumEntries: number,
-  stopAfter?: { readonly entries: number; readonly reason: Error },
+  onEntry?: (path: string, controller: AbortController) => void | Promise<void>,
 ): Promise<{ readonly paths: string[]; readonly failure: unknown }> => {
   const reader = new DirectoryArtifactReader(root);
   const controller = new AbortController();
@@ -34,8 +34,8 @@ const traverse = async (
       maximumEntries,
     })) {
       paths.push(entry.path);
-      if (paths.length === stopAfter?.entries)
-        controller.abort(stopAfter.reason);
+      const observation = onEntry?.(entry.path, controller);
+      if (observation !== undefined) await observation;
     }
     return { paths, failure: undefined };
   } catch (failure: unknown) {
@@ -53,26 +53,46 @@ describe("directory traversal of a parent wider than call arguments allow", () =
   beforeAll(async () => {
     workspace = await createTestWorkspace("rea-wide-directory-");
     root = await workspace.mkdir("tree");
-    for (const name of childNames()) mkdirSync(join(root, name));
+    const names = childNames();
+    const batchSize = 64;
+    for (let offset = 0; offset < names.length; offset += batchSize) {
+      await Promise.all(
+        names
+          .slice(offset, offset + batchSize)
+          .map((name) => mkdir(join(root, name))),
+      );
+    }
   });
   afterAll(async () => {
     if (workspace !== undefined) await removeTestWorkspace(workspace.root);
   });
 
   it("schedules the artifact reader's children within the selected entry budget", async () => {
-    // Cancel once the parent listing is complete. The next cancellation
-    // checkpoint follows scheduling its children for descent.
-    const reason = new Error("Stop after the wide parent listing");
-    const listed = await traverse(root, CHILD_DIRECTORIES, {
-      entries: CHILD_DIRECTORIES,
-      reason,
+    const reason = new Error("Stop after visiting a scheduled child");
+    let marker: string | undefined;
+    const listed = await traverse(
+      root,
+      CHILD_DIRECTORIES + 1,
+      (path, controller) => {
+        if (marker === undefined) {
+          // Populate the first observed child so native directory order does not
+          // require walking every scheduled directory to witness descent.
+          marker = `${path}/probe.txt`;
+          return writeFile(join(root, marker), "scheduled child");
+        }
+        if (path === marker) controller.abort(reason);
+        return undefined;
+      },
+    ).finally(async () => {
+      if (marker !== undefined) await rm(join(root, marker), { force: true });
     });
     expect(listed.failure).toBeInstanceOf(ArtifactReaderFailure);
     expect(listed.failure).toMatchObject({
       reason: "cancelled",
       cause: reason,
     });
-    expect(listed.paths).toHaveLength(CHILD_DIRECTORIES);
+    expect(listed.paths).toHaveLength(CHILD_DIRECTORIES + 1);
+    expect(listed.paths.at(-1)).toBe(marker);
     expect(missingChildren(listed.paths)).toEqual([]);
 
     // A smaller selected allowance stays a typed refusal at its actual bound.

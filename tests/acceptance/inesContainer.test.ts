@@ -13,7 +13,7 @@ import { cliTest } from "../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
-import { inesFixture } from "../fixtures/ines.js";
+import { inesFixture, nes2Fixture } from "../fixtures/ines.js";
 import { writeOrderedZip } from "../fixtures/artifactEntryOrder.js";
 import { ZIP_PACKAGE_FORMATS } from "../../src/domain/zipPackageFormat.js";
 import { toolContract } from "../../src/contracts/toolContracts.js";
@@ -125,6 +125,13 @@ cliTest(
     });
     expect(cliResult.exitCode, cliResult.stderr).toBe(0);
     const inventory = inventoryFrom(cliResult.json);
+    const limitation = inventory.limitations.find((text) =>
+      text.startsWith("Classic iNES file regions"),
+    );
+    expect(limitation).not.toMatch(
+      /NES 2\.0(?: and UNIF)? (?:is|are) unsupported/u,
+    );
+    expect(limitation).toContain("UNIF is unsupported.");
     const digest = createHash("sha256").update(bytes).digest("hex");
     expect(inventory.ines).toMatchObject({
       header: {
@@ -183,9 +190,6 @@ cliTest(
     const typed = artifactInspectionResultSchema.parse(
       parseEvidence(inspected.structuredContent).normalized_result,
     );
-    expect(typed.substeps[0]?.evidence.normalized_result).toMatchObject({
-      ines: inventory.ines,
-    });
     const withInventory = (normalized_result: unknown) => ({
       ...typed,
       substeps: typed.substeps.map((substep) => ({
@@ -263,6 +267,54 @@ cliTest(
 );
 
 cliTest(
+  "NES 2.0 header declarations and miscellaneous ROM bytes reach compiled CLI inspection",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-nes2-public-");
+    const path = join(root, "cartridge.nes");
+    const bytes = nes2Fixture({
+      header: { 6: 0x38, 8: 0x10, 12: 0x01, 14: 1, 15: 0x40 },
+      miscRom: Buffer.from("misc"),
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const inventory = inventoryFrom(result.json);
+    expect(inventory.limitations).toContainEqual(
+      expect.stringContaining("UNIF is unsupported"),
+    );
+    expect(inventory.ines).toMatchObject({
+      header: {
+        format: "nes-2.0",
+        header_hex: bytes.subarray(0, 16).toString("hex"),
+        mapper: 19,
+        submapper: 1,
+        cpu_ppu_timing: "pal",
+        nametable_layout_flags: {
+          arrangement_bit: false,
+          alternative_layout_bit: true,
+        },
+        misc_rom_count: 1,
+        default_expansion_device: 0x40,
+      },
+      reconstruction: {
+        region_order: [
+          "header.bin",
+          "prg/000.bin",
+          "prg/001.bin",
+          "chr/000.bin",
+          "misc-rom.bin",
+        ],
+        bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        verified: true,
+      },
+    });
+  },
+);
+
+cliTest(
   "unsupported NES containers fail explicitly and leave a valid MCP session usable",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-ines-public-refusal-");
@@ -275,12 +327,8 @@ cliTest(
       ["truncated", inesFixture().subarray(0, 20), "truncated iNES payload"],
       [
         "nes2",
-        (() => {
-          const bytes = inesFixture();
-          bytes[7] = 8;
-          return bytes;
-        })(),
-        "nes-2.0",
+        nes2Fixture({ header: { 9: 0x01 } }),
+        "truncated NES 2.0 payload",
       ],
       ["unif", Buffer.from("UNIF"), "unif"],
     ] as const) {

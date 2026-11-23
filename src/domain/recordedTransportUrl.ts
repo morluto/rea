@@ -194,3 +194,27 @@ export const recordedPathSegments = (
   }
   return result;
 };
+
+/** Exclude only transport userinfo while retaining the remaining recorded URL spelling. */
+export const redactRecordedTransportUrl = (
+  value: string | null,
+): {
+  readonly url: string | null;
+  readonly url_credentials_redacted: boolean;
+} => {
+  if (value === null) return { url: null, url_credentials_redacted: false };
+  // Interpret leading padding for credentials while keeping it in the observation.
+  const candidate = value.trimStart();
+  const { credentials } = parseRecordedTransportUrl(candidate);
+  if (credentials === null)
+    return { url: value, url_credentials_redacted: false };
+  if (credentials === "ambiguous")
+    return { url: null, url_credentials_redacted: true };
+  const padding = value.length - candidate.length;
+  return {
+    url:
+      value.slice(0, padding + credentials.start) +
+      value.slice(padding + credentials.end),
+    url_credentials_redacted: true,
+  };
+};

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { passing, pointerOf, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -22,13 +23,16 @@ const PNG = (tail: string) =>
 const LAYER = "/root/children/[name=page]/children/[name=layer]";
 
 describe("draftTaskFiles for items placed by their own position", () => {
-  it("checks a note added to a layer by its text and the notes' count, guards each kept note, and leaves the rendered preview out", () => {
-    const before = notebook(PNG("AAAA"), ...NOTES);
-    const after = notebook(PNG("BBBB"), ...NOTES, [
+  it("checks a moved note and the count, keeping stable sibling text within the draft limit", () => {
+    const kept = [...NOTES, ["120.5", "P".repeat(DRAFT_VIEW_CHARS)]] as const;
+    const tooLong = ["130.5", "Q".repeat(DRAFT_VIEW_CHARS + 1)] as const;
+    const saveTime = ["150.5", "2026-11-07T10:12:00Z"] as const;
+    const note = "Quiz on Friday: bring a calculator";
+    const before = notebook(PNG("AAAA"), ...kept, tooLong, saveTime);
+    const after = notebook(PNG("BBBB"), ...kept, tooLong, saveTime, [
       "156.5",
-      "Quiz on Friday: bring a calculator",
+      note,
     ]);
-
     const file = xmlDraft(before, after);
 
     expect(file.suggested).toEqual([
@@ -36,7 +40,7 @@ describe("draftTaskFiles for items placed by their own position", () => {
         kind: "member_count",
         file: FILE,
         pointer: `${LAYER}/children`,
-        matching: "[name=text][>text()=Quiz on Friday: bring a calculator]",
+        matching: `[name=text][>text()=${note}]`,
         at_least: 1,
       },
       {
@@ -44,11 +48,11 @@ describe("draftTaskFiles for items placed by their own position", () => {
         file: FILE,
         pointer: `${LAYER}/children`,
         matching: "[name=text]",
-        equals: 4,
+        equals: 7,
       },
     ]);
     expect(file.guards).toEqual(
-      NOTES.map(([, value]) => ({
+      kept.map(([, value]) => ({
         kind: "member_count",
         file: FILE,
         pointer: `${LAYER}/children`,
@@ -60,26 +64,18 @@ describe("draftTaskFiles for items placed by their own position", () => {
       file.values.find(({ pointer }) => pointer.includes("[name=preview]"))
         ?.note,
     ).toBe("view_state");
-    // Another user places the note elsewhere, and the app renders another preview.
-    const elsewhere = notebook(
-      PNG("CCCC"),
-      ["300.2", "Quiz on Friday: bring a calculator"],
-      ...NOTES,
-    );
+    const resaved = (text: string) =>
+      notebook(PNG("CCCC"), ["300.2", text], ...kept, tooLong, [
+        "150.5",
+        "2026-11-07T11:12:00Z",
+      ]);
     expect(
-      passing(FILE, xml(elsewhere), [...file.suggested, ...file.guards]).every(
-        Boolean,
-      ),
-    ).toBe(true);
+      passing(FILE, xml(resaved(note)), [...file.suggested, ...file.guards]),
+    ).toEqual([true, true, true, true, true, true]);
     expect(passing(FILE, xml(before), file.suggested)).toEqual([false, false]);
-    const wrong = notebook(PNG("CCCC"), ...NOTES, [
-      "156.5",
-      "Do not Quiz on Friday: bring a calculator",
-    ]);
-    expect(passing(FILE, xml(wrong), file.suggested)[0]).toBe(false);
-    expect(file.suggested.map(pointerOf)).not.toContain(
-      "/root/children/[name=preview]",
-    );
+    expect(
+      passing(FILE, xml(resaved(`Do not ${note}`)), file.suggested),
+    ).toEqual([false, true]);
   });
 
   it("checks a text whose runs carry x and y by the text, not as notes placed on the page", () => {

@@ -1,9 +1,9 @@
 """Source-owned tests for the LLDB bridge's bounded retention helpers."""
 
-from io import BytesIO
 import importlib.util
 import json
 import os
+from pathlib import Path
 import sys
 import tempfile
 import types
@@ -298,34 +298,23 @@ class NativeTraceBudgetTests(unittest.TestCase):
         self.assertEqual(result["status"], "target-integrity-error")
         self.assertIs(result["target_process_created"], False)
 
-    def test_journal_checks_exact_byte_budget_before_writing(self):
-        record = {"kind": "other-stop", "reason": "signal"}
-        encoded_size = len((tracer.json.dumps(record) + "\n").encode("utf-8"))
-        stream = BytesIO()
-        journal = tracer._ObservationJournal(stream, max_bytes=encoded_size - 1)
-        self.assertFalse(journal.append(record))
-        self.assertEqual(stream.getvalue(), b"")
-        self.assertEqual(journal.bytes, 0)
-
-    def test_journal_appends_each_row_once_and_flushes_it(self):
-        class CountingStream(BytesIO):
-            writes = 0
-            flushes = 0
-
-            def write(self, value):
-                self.writes += 1
-                return super().write(value)
-
-            def flush(self):
-                self.flushes += 1
-                return super().flush()
-
-        stream = CountingStream()
-        journal = tracer._ObservationJournal(stream, max_bytes=4096)
-        journal.append({"kind": "event", "event": {"sequence": 0}})
-        journal.append({"kind": "other-stop", "reason": "signal"})
-        self.assertEqual((stream.writes, stream.flushes), (2, 2))
-        self.assertEqual(journal.bytes, len(stream.getvalue()))
+    def test_journal_flushes_complete_rows_within_its_exact_byte_budget(self):
+        first = {"kind": "event", "event": {"sequence": 0}}
+        last = {"kind": "event", "event": {"sequence": 1}}
+        too_large = {"kind": "event", "event": {"sequence": 10}}
+        expected = "".join(json.dumps(row) + "\n" for row in (first, last)).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "observations.jsonl"
+            with path.open("wb") as stream:
+                journal = tracer._ObservationJournal(stream, max_bytes=len(expected))
+                self.assertTrue(journal.append(first))
+                prefix = path.read_bytes()
+                self.assertEqual([json.loads(line) for line in prefix.splitlines()], [first])
+                self.assertFalse(journal.append(too_large))
+                self.assertEqual(path.read_bytes(), prefix)
+                self.assertTrue(journal.append(last))
+                self.assertEqual(path.read_bytes(), expected)
+                self.assertEqual(journal.bytes, len(expected))
 
     def test_aggregate_trace_budget_uses_the_selected_admission(self):
         limits = {"trace_bytes": 100, "trace_frames": 10}
@@ -387,16 +376,14 @@ class NativeTraceBudgetTests(unittest.TestCase):
             capture = os.path.join(directory, "stdout.capture")
             sink = tracer._OutputPipe(fifo, capture, 5)
             sink.start()
-            sink.mark_launched()
-            writer = os.open(fifo, os.O_WRONLY)
             try:
-                for index in range(100):
-                    chunk = (b"hello world" if index == 0 else b"x" * 4096)
-                    os.write(writer, chunk)
+                with open(fifo, "wb", buffering=0) as writer:
+                    sink.mark_launched()
+                    for index in range(100):
+                        chunk = b"hello world" if index == 0 else b"x" * 4096
+                        writer.write(chunk)
             finally:
-                os.close(writer)
-            sink.drain()
-            sink.close(expected_exit=True)
+                sink.close(expected_exit=True)
             with open(capture, "rb") as retained:
                 self.assertEqual(retained.read(), b"hello")
             self.assertEqual(sink.bytes, 11 + 99 * 4096)

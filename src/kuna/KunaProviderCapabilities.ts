@@ -116,7 +116,10 @@ export const kunaCapabilities = (
         }
       : {}),
     ...(operation === "procedure_pseudo_code"
-      ? { independentDecompile: true as const }
+      ? {
+          independentDecompile: true as const,
+          callDestinationDecompile: true as const,
+        }
       : {}),
     ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)

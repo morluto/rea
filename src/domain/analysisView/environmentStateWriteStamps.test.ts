@@ -10,7 +10,7 @@ import type { FieldRule } from "./environmentStateWriteRules.js";
 import {
   envelopeOf,
   nestedClockValue,
-  pinnedQuery,
+  validatePinnedQuery,
   sameQuery,
   stampProblem,
   storedRestamp,
@@ -55,32 +55,6 @@ const ruleFor = (
 ): FieldRule | undefined => rules.find((rule) => rule.field === field);
 
 describe("values an update stamps without being sent them", () => {
-  it("stamps the acting user on a modified-by field its created-by counterpart already names", () => {
-    const result = explainUpdate(
-      updated(
-        {
-          id: "42",
-          name: "Draft",
-          createdByName: "Rea Admin",
-          modifiedByName: null,
-        },
-        {
-          id: "42",
-          name: "Final",
-          createdByName: "Rea Admin",
-          modifiedByName: "Rea Admin",
-        },
-        { name: "Final" },
-      ),
-    );
-    expect(result.unexplained).toEqual([]);
-    expect(ruleFor(result.rules, "modifiedByName")).toEqual({
-      field: "modifiedByName",
-      rule: "stamp",
-      value: "Rea Admin",
-    });
-  });
-
   it("stamps no field that only shares a name's ending with one holding the value, nor one naming what the call sent", () => {
     const loose = explainUpdate(
       updated(
@@ -209,59 +183,45 @@ describe("values an update stamps without being sent them", () => {
 });
 
 describe("the acting user's paired fields and same-second clocks", () => {
-  it("stamps the id beside the name naming the acting user, as the recorded pair shows them", () => {
-    const result = explainUpdate(
+  it("stamps the acting name and a matching ID when the recording shows both", () => {
+    const actor = "Rea Admin";
+    const before = {
+      id: "42",
+      name: "Draft",
+      createdByName: actor,
+      modifiedByName: null,
+    };
+    const after = { ...before, name: "Final", modifiedByName: actor };
+    const body = { name: "Final" };
+    const nameStamp = { field: "modifiedByName", rule: "stamp", value: actor };
+
+    const nameOnly = explainUpdate(updated(before, after, body));
+    expect(nameOnly.unexplained).toEqual([]);
+    expect(nameOnly.rules).toContainEqual(nameStamp);
+
+    const paired = { ...before, createdById: "u1" };
+    const matching = explainUpdate(
       updated(
-        {
-          id: "42",
-          name: "A",
-          createdById: "u1",
-          createdByName: "Rea Admin",
-          modifiedByName: null,
-        },
-        {
-          id: "42",
-          name: "B",
-          createdById: "u1",
-          createdByName: "Rea Admin",
-          modifiedByName: "Rea Admin",
-          modifiedById: "u1",
-        },
-        { name: "B" },
+        paired,
+        { ...after, createdById: "u1", modifiedById: "u1" },
+        body,
       ),
     );
-    expect(result.rules).toContainEqual({
+    expect(matching.rules).toContainEqual(nameStamp);
+    expect(ruleFor(matching.rules, "modifiedById")).toEqual({
       field: "modifiedById",
       rule: "stamp",
       value: "u1",
     });
-    expect(result.rules).toContainEqual({
-      field: "modifiedByName",
-      rule: "stamp",
-      value: "Rea Admin",
-    });
-    // An id the creator's counterpart does not hold names someone else, so it is not the acting user's.
+
     const other = explainUpdate(
       updated(
-        {
-          id: "42",
-          name: "A",
-          createdById: "u1",
-          createdByName: "Rea Admin",
-          modifiedByName: null,
-        },
-        {
-          id: "42",
-          name: "B",
-          createdById: "u1",
-          createdByName: "Rea Admin",
-          modifiedByName: "Rea Admin",
-          modifiedById: "u2",
-        },
-        { name: "B" },
+        paired,
+        { ...after, createdById: "u1", modifiedById: "u2" },
+        body,
       ),
     );
-    expect(other.rules.map((rule) => rule.field)).not.toContain("modifiedById");
+    expect(ruleFor(other.rules, "modifiedById")).toBeUndefined();
   });
 
   it("names the unsent whole-second clocks an update left in its own second, and no finer or creation one", () => {
@@ -308,16 +268,16 @@ describe("clocks an update sends back unchanged", () => {
   });
 
   it("stores as sent a finer clock, and both of two clocks a whole object sent back", () => {
-    const finer = "2026-03-04T05:05:59.4970762Z";
+    const finer = "2026-03-04T05:06:00.000000001Z";
     const echoed = explainUpdate(
       updated(
-        { id: "42", title: "Item", DateCreated: finer },
-        { id: "42", title: "Item (edited)", DateCreated: finer },
-        { title: "Item (edited)", DateCreated: finer },
+        { id: "42", title: "Item", updated_at: finer },
+        { id: "42", title: "Item (edited)", updated_at: finer },
+        { title: "Item (edited)", updated_at: finer },
       ),
     );
-    expect(ruleFor(echoed.rules, "DateCreated")).toEqual({
-      field: "DateCreated",
+    expect(ruleFor(echoed.rules, "updated_at")).toEqual({
+      field: "updated_at",
       rule: "echo",
     });
     const second = "2026-03-04T05:06:00.000Z";
@@ -588,17 +548,15 @@ describe("call shapes", () => {
     expect(sameQuery("?source=html&b=2", "b=2&source=html")).toBe(true);
     expect(sameQuery(null, "")).toBe(true);
     expect(sameQuery("a=1&a=2", "a=1&a=2")).toBe(false);
-    // A call that leaves a pinned parameter out takes the recorded value; another value or parameter is refused.
     const recorded = "?source=html";
-    expect(pinnedQuery(recorded, new Map())).toEqual({
-      ok: true,
-      value: new Map([["source", "html"]]),
-    });
-    expect(pinnedQuery(recorded, new Map([["source", "markdown"]]))).toEqual({
+    expect(validatePinnedQuery(recorded, new Map()).ok).toBe(true);
+    expect(
+      validatePinnedQuery(recorded, new Map([["source", "markdown"]])),
+    ).toEqual({
       ok: false,
       error: "takes only the query its recording sent (source=html).",
     });
-    expect(pinnedQuery(null, new Map([["page", "2"]])).ok).toBe(false);
+    expect(validatePinnedQuery(null, new Map([["page", "2"]])).ok).toBe(false);
   });
 });
 

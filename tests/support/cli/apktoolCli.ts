@@ -1,7 +1,7 @@
-import { Cli } from "incur";
+import type { RequestAnalysisPort } from "../../../src/ports/AnalysisProvider.js";
+import { createCommandCli } from "./commandCli.js";
 import pino from "pino";
 
-import type { ApktoolResourceAnalysisPort } from "../../../src/application/apktool/ApktoolResourceAnalysisPort.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { registerApktoolCommands } from "../../../src/cli/apktoolCommands.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
@@ -11,7 +11,7 @@ import { serveInProcessCli } from "./serveInProcessCli.js";
 
 export const invokeApktoolCli = async (argv: readonly string[]) => {
   const requests: ApktoolRequest[] = [];
-  const provider: ApktoolResourceAnalysisPort = {
+  const provider: RequestAnalysisPort<ApktoolRequest> = {
     async inspectAvailability() {
       throw new Error("unexpected provider probe");
     },
@@ -26,7 +26,7 @@ export const invokeApktoolCli = async (argv: readonly string[]) => {
       );
     },
   };
-  const cli = Cli.create("rea", { sync: false });
+  const cli = createCommandCli();
   registerApktoolCommands(cli, pino({ level: "silent" }), {}, provider);
   presentOmittableDefaults(cli);
 

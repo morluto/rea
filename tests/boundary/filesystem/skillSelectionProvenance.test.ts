@@ -1,5 +1,5 @@
 import { HOST_PLATFORM } from "../../../src/platform/HostPlatform.js";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
@@ -14,18 +14,20 @@ import {
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-it("uses the same Hermes root for sticky selection and named profile resolution", async () => {
+it("reads sticky selection from the override root instead of the native home", async () => {
   const home = await createTestTempDirectory("rea-hermes-nested-root-");
   const native = join(home, ".hermes");
   const nested = join(native, "nested");
-  const profile = join(native, "profiles", "coder");
-  await mkdir(profile, { recursive: true });
-  await mkdir(nested);
-  await writeFile(join(profile, "config.yaml"), "version: 1\n");
+  const nativeProfile = join(native, "profiles", "coder");
+  const nestedProfile = join(nested, "profiles", "other");
+  await mkdir(nativeProfile, { recursive: true });
+  await mkdir(nestedProfile, { recursive: true });
+  await writeFile(join(nativeProfile, "config.yaml"), "version: 1\n");
+  await writeFile(join(nestedProfile, "config.yaml"), "version: 1\n");
   await writeFile(join(native, "active_profile"), "coder\n");
   await writeFile(join(nested, "active_profile"), "other\n");
   expect(resolveHermesClientHome(home, "linux", { HERMES_HOME: nested })).toBe(
-    profile,
+    nestedProfile,
   );
   expect(
     clientSkillDirectories(
@@ -34,7 +36,13 @@ it("uses the same Hermes root for sticky selection and named profile resolution"
       { HERMES_HOME: nested },
       HOST_PLATFORM.platform,
     ).directories,
-  ).toEqual([{ client: "hermes", directory: join(profile, "skills") }]);
+  ).toEqual([{ client: "hermes", directory: join(nestedProfile, "skills") }]);
+  // A selection the override root names but does not contain stays
+  // unresolved instead of falling back to the native home's profile.
+  await rm(nestedProfile, { recursive: true });
+  expect(() =>
+    resolveHermesClientHome(home, "linux", { HERMES_HOME: nested }),
+  ).toThrow('Saved Hermes profile "other"');
 });
 
 it("retains an explicitly selected missing Hermes profile as unresolved without writing elsewhere", async () => {

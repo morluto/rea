@@ -46,6 +46,7 @@ export const analysisClientFailureContext = (
   return {
     cause,
     ...(cause.limit === undefined ? {} : { limit: cause.limit }),
+    ...(cause.related === undefined ? {} : { related: cause.related }),
     ...(cause.continuingCallerGuidance === undefined
       ? {}
       : { continuingCallerGuidance: cause.continuingCallerGuidance }),

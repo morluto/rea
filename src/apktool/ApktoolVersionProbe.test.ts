@@ -152,8 +152,12 @@ it("keeps unresolved probe cleanup typed when the launcher overflows its output"
   ]);
 
   // Both provider entry points report the unresolved processes as cleanup.
+  const command =
+    process.platform === "win32"
+      ? "C:\\opt\\apktool\\apktool"
+      : "/opt/apktool/apktool";
   const provider = new ApktoolProvider({
-    environment: { REA_APKTOOL_COMMAND: "/opt/apktool/apktool" },
+    environment: { REA_APKTOOL_COMMAND: command },
   });
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(overflow());
   await expect(provider.inspectAvailability()).rejects.toMatchObject({

@@ -38,32 +38,8 @@ const expectPeInputFailureAcrossAdapters = async (input: {
   });
   const response = await call({ path });
   expect(response.isError).toBe(true);
+  expect(response.structuredContent).toBeUndefined();
   expect(parseMcpToolError(response)).toEqual({ error: result.json });
-};
-
-const expectPePaddingFailureAcrossAdapters = async (input: {
-  readonly cli: TestCli;
-  readonly call: PeResourceCall;
-  readonly path: string;
-}) => {
-  const { cli, call, path } = input;
-  const fixture = peResourceFixture();
-  const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
-  fixture.bytes.writeUInt32LE(
-    0x2000 + virtualSize,
-    fixture.dataOffsets[0] ?? 0,
-  );
-  fixture.bytes.writeUInt32LE(4, (fixture.dataOffsets[0] ?? 0) + 4);
-  await writeFile(path, fixture.bytes);
-  const cliResult = await cli.run({
-    arguments: ["inspect-pe-resources", path, "--json"],
-  });
-  expect(cliResult.exitCode).not.toBe(0);
-  const mcpResult = await call({ path });
-  expect(mcpResult.isError).toBe(true);
-  expect(peResourcesSchema.safeParse(mcpResult.structuredContent).success).toBe(
-    false,
-  );
 };
 
 const expectPeInputFailuresAcrossAdapters = async (input: {
@@ -81,10 +57,23 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
   truncated.bytes.writeUInt16LE(0xffff, directory + 12);
   truncated.bytes.writeUInt16LE(2, directory + 14);
   await writeFile(truncatedPath, truncated.bytes);
+
+  const paddingPath = join(root, "raw-padding.exe");
+  const padding = peResourceFixture();
+  const data = padding.dataOffsets[0];
+  if (data === undefined) throw new Error("Missing padding fixture data entry");
+  padding.bytes.writeUInt32LE(
+    0x2000 + padding.bytes.readUInt32LE(padding.sectionAt + 8),
+    data,
+  );
+  padding.bytes.writeUInt32LE(4, data + 4);
+  await writeFile(paddingPath, padding.bytes);
+
   for (const [path, reason] of [
     [join(root, "missing.exe"), "invalid_value"],
     [malformedPath, "invalid_format"],
     [truncatedPath, "invalid_format"],
+    [paddingPath, "invalid_format"],
   ] as const)
     await expectPeInputFailureAcrossAdapters({
       cli,
@@ -96,108 +85,45 @@ const expectPeInputFailuresAcrossAdapters = async (input: {
 
 const contract = toolContract("inspect_pe_resources");
 
-const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
-  readonly cli: TestCli;
-  readonly call: PeResourceCall;
-  readonly root: string;
-}): Promise<void> => {
-  const { cli, call, root } = input;
-  for (const plus of [false, true]) {
-    for (const [index, identities] of [
-      { type: 10, name: 1, language: "AB" },
-      { type: "AB", name: 1, language: 1033 },
-    ].entries()) {
-      const fixture = peResourceFixture(
-        plus,
-        [{ ...identities, payload: Buffer.from("opaque resource") }],
-        65536,
-        2,
-      );
-      const path = join(root, `word-aligned-${plus}-${index}.exe`);
-      await writeFile(path, fixture.bytes);
-      const result = await cli.run({
-        arguments: ["inspect-pe-resources", path, "--json"],
-      });
-      expect(result.exitCode, result.stderr).toBe(0);
-      const evidence = contract.outputSchema.parse(result.json);
-      const report = peResourcesSchema.parse(evidence.normalized_result);
-      expect(report.coverage).toMatchObject({
-        status: "complete",
-        resources: 1,
-      });
-      expect(report.resources[0]?.data_entry_location).toEqual({
-        offset: fixture.dataOffsets[0],
-        bytes: 16,
-      });
-      expect(report.resources[0]?.payload.sha256).toBe(
-        createHash("sha256").update("opaque resource").digest("hex"),
-      );
-      const response = await call({ path });
-      expect(response.isError).not.toBe(true);
-      expect(
-        contract.outputSchema.parse(response.structuredContent)
-          .normalized_result,
-      ).toEqual(evidence.normalized_result);
-      expect(Buffer.compare(await readFile(path), fixture.bytes)).toBe(0);
-    }
-  }
-};
-
-const expectPeMappingOwnershipAcrossAdapters = async (
+const expectPeResourceNameExtentsAcrossAdapters = async (
   cli: TestCli,
   call: PeResourceCall,
   root: string,
 ): Promise<void> => {
-  for (const { name, payloadRva, payloadBytes, section, expectedOffset } of [
-    {
-      name: "empty-header",
-      payloadRva: 0x300,
-      payloadBytes: 0,
-      section: null,
-      expectedOffset: 0x300,
-    },
-    {
-      name: "header-section-collision",
-      payloadRva: 0x300,
-      payloadBytes: 0,
-      section: { rva: 0x300, bytes: 4 },
-      expectedOffset: null,
-    },
-    {
-      name: "empty-section-in-header",
-      payloadRva: 0x300,
-      payloadBytes: 4,
-      section: { rva: 0x301, bytes: 0 },
-      expectedOffset: 0x300,
-    },
-    {
-      name: "empty-section-in-resources",
-      payloadRva: null,
-      payloadBytes: 4,
-      section: { rva: 0x2001, bytes: 0 },
-      expectedOffset: "original",
-    },
-  ]) {
-    const fixture = peResourceFixture(false, [
-      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
-    ]);
-    const data = fixture.dataOffsets[0] ?? 0;
-    let bytes = fixture.bytes;
-    const originalPayloadOffset = bytes.readUInt32LE(data) - 0x1c00;
-    if (payloadRva !== null) bytes.writeUInt32LE(payloadRva, data);
-    bytes.writeUInt32LE(payloadBytes, data + 4);
-    if (section !== null) {
-      bytes.writeUInt16LE(2, 0x86);
-      const at = fixture.sectionAt + 40;
-      bytes.writeUInt32LE(section.bytes, at + 8);
-      bytes.writeUInt32LE(section.rva, at + 12);
-      bytes.writeUInt32LE(section.bytes, at + 16);
-      bytes.writeUInt32LE(bytes.length, at + 20);
-      bytes = Buffer.concat([bytes, Buffer.alloc(section.bytes)]);
+  const payload = Buffer.from("text");
+  const retainedName = "Evidence".repeat(5_000);
+  for (const backed of [false, true]) {
+    const fixture = peResourceFixture(
+      false,
+      [
+        ...Array.from({ length: 38 }, (_, index) => ({
+          type: 10,
+          name: retainedName,
+          language: index + 1,
+          payload,
+        })),
+        {
+          type: 11,
+          name: backed ? "S".repeat(65_535) : "SECOND",
+          language: 1033,
+          payload,
+        },
+      ],
+      256 * 1024,
+    );
+    if (!backed) {
+      const resourceRoot = fixture.directoryOffsets[0];
+      const nameDirectory = fixture.directoryOffsets.at(-2);
+      if (resourceRoot === undefined || nameDirectory === undefined)
+        throw new Error("Missing fixture resource directory");
+      const nameOffset =
+        fixture.bytes.readUInt32LE(nameDirectory + 16) & 0x7fff_ffff;
+      // Only the length changes. The declared name cannot fit in the resource interval.
+      fixture.bytes.writeUInt16LE(65_535, resourceRoot + nameOffset);
     }
-    const path = join(root, `${name}.exe`);
-    await writeFile(path, bytes);
-    if (expectedOffset === null) {
+    const path = join(root, `resource-name-backed-${backed}.exe`);
+    await writeFile(path, fixture.bytes);
+    if (!backed) {
       await expectPeInputFailureAcrossAdapters({
         cli,
         call,
@@ -209,31 +135,124 @@ const expectPeMappingOwnershipAcrossAdapters = async (
     const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
     });
-    expect(result.exitCode, name).toBe(0);
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "memory",
+        reported_limits: {
+          boundary: "pe_resource_metadata_bytes",
+          maximum: 8 * 1024 * 1024,
+          maximum_metadata_bytes: 8 * 1024 * 1024,
+        },
+      },
+    });
+    const response = await call({ path });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response)).toEqual({ error: result.json });
+  }
+};
+
+const expectPeWordAlignedRecordsAcrossAdapters = async (input: {
+  readonly cli: TestCli;
+  readonly call: PeResourceCall;
+  readonly root: string;
+}): Promise<void> => {
+  const { cli, call, root } = input;
+  for (const { plus, identities } of [
+    { plus: false, identities: { type: 10, name: 1, language: "AB" } },
+    { plus: true, identities: { type: "AB", name: 1, language: 1033 } },
+  ]) {
+    const payload = Buffer.from("opaque resource");
+    const fixture = peResourceFixture(
+      plus,
+      [{ ...identities, payload }],
+      65536,
+      2,
+    );
+    const expectedOffset = fixture.dataOffsets[0];
+    if (expectedOffset === undefined) throw new Error("Missing PE data entry");
+    expect(expectedOffset % 4).toBe(2);
+    if (typeof identities.type === "string")
+      expect(fixture.directoryOffsets.some((offset) => offset % 4 === 2)).toBe(
+        true,
+      );
+    const path = join(root, `word-aligned-${plus}.exe`);
+    await writeFile(path, fixture.bytes);
+    const result = await cli.run({
+      arguments: ["inspect-pe-resources", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = contract.outputSchema.parse(result.json);
+    const report = peResourcesSchema.parse(evidence.normalized_result);
+    expect(report.coverage).toMatchObject({ status: "complete", resources: 1 });
+    expect(report.resources[0]?.data_entry_location).toEqual({
+      offset: expectedOffset,
+      bytes: 16,
+    });
+    expect(report.resources[0]?.payload.sha256).toBe(
+      createHash("sha256").update(payload).digest("hex"),
+    );
+    const response = await call({ path });
+    expect(response.isError).not.toBe(true);
+    expect(
+      contract.outputSchema.parse(response.structuredContent).normalized_result,
+    ).toEqual(evidence.normalized_result);
+    expect((await readFile(path)).equals(fixture.bytes)).toBe(true);
+  }
+};
+
+const expectPeMappingOwnershipAcrossAdapters = async (
+  cli: TestCli,
+  call: PeResourceCall,
+  root: string,
+): Promise<void> => {
+  for (const collision of [false, true]) {
+    const fixture = peResourceFixture(false, [
+      { type: 10, name: 1, language: 1033, payload: Buffer.from("DATA") },
+    ]);
+    const data = fixture.dataOffsets[0];
+    if (data === undefined) throw new Error("Missing PE data entry");
+    let bytes = fixture.bytes;
+    bytes.writeUInt32LE(0x300, data);
+    bytes.writeUInt32LE(0, data + 4);
+    if (collision) {
+      bytes.writeUInt16LE(2, 0x86);
+      const at = fixture.sectionAt + 40;
+      bytes.writeUInt32LE(4, at + 8);
+      bytes.writeUInt32LE(0x300, at + 12);
+      bytes.writeUInt32LE(4, at + 16);
+      bytes.writeUInt32LE(bytes.length, at + 20);
+      bytes = Buffer.concat([bytes, Buffer.alloc(4)]);
+    }
+    const path = join(root, `empty-header-collision-${collision}.exe`);
+    await writeFile(path, bytes);
+    if (collision) {
+      await expectPeInputFailureAcrossAdapters({
+        cli,
+        call,
+        path,
+        reason: "invalid_format",
+      });
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+      continue;
+    }
+    const result = await cli.run({
+      arguments: ["inspect-pe-resources", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const response = await call({ path });
-    expect(response.isError, name).not.toBe(true);
+    expect(response.isError).not.toBe(true);
     const mcp = contract.outputSchema.parse(response.structuredContent);
     expect(mcp.subject).toEqual(evidence.subject);
     expect(mcp.evidence_id).toBe(evidence.evidence_id);
     expect(mcp.normalized_result).toEqual(evidence.normalized_result);
     expect(evidence.normalized_result).toMatchObject({
       coverage: { status: "complete", resources: 1 },
-      resources: [
-        {
-          payload: {
-            location: {
-              offset:
-                expectedOffset === "original"
-                  ? originalPayloadOffset
-                  : expectedOffset,
-              bytes: payloadBytes,
-            },
-          },
-        },
-      ],
+      resources: [{ payload: { location: { offset: 0x300, bytes: 0 } } }],
     });
-    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
   }
 };
 
@@ -242,29 +261,20 @@ const expectPeInventoriesAcrossAdapters = async (
   call: PeResourceCall,
   root: string,
 ): Promise<void> => {
-  for (const [plus, empty] of [
-    [false, false],
-    [true, false],
-    [false, true],
-    [true, true],
-  ]) {
+  for (const plus of [false, true]) {
     const fixture = peResourceFixture(plus);
     const virtualSize = fixture.bytes.readUInt32LE(fixture.sectionAt + 8);
-    if (empty) {
-      fixture.bytes.writeUInt32LE(0x2000 + virtualSize, fixture.dataOffsets[0]);
-      fixture.bytes.writeUInt32LE(0, (fixture.dataOffsets[0] ?? 0) + 4);
-    }
-    const path = join(
-      root,
-      `resource${plus ? "64" : "32"}${empty ? "-empty" : ""}.exe`,
-    );
+    const secondIcon = fixture.dataOffsets[1];
+    if (secondIcon === undefined)
+      throw new Error("Missing second icon data entry");
+    fixture.bytes.writeUInt32LE(0x2000 + virtualSize, secondIcon);
+    fixture.bytes.writeUInt32LE(0, secondIcon + 4);
+    const path = join(root, `resource${plus ? "64" : "32"}.exe`);
     await writeFile(path, fixture.bytes);
-    const invocation = {
+    const result = await cli.run({
       arguments: ["inspect-pe-resources", path, "--json"],
-    };
-    // Keep an independent public-wrapper process for both PE32 and PE32+.
-    // The empty-payload variants reuse only compiled-command startup.
-    const result = await (empty ? cli.run(invocation) : cli.run(invocation));
+      freshProcess: true,
+    });
     expect(result.exitCode).toBe(0);
     const evidence = contract.outputSchema.parse(result.json);
     const report = peResourcesSchema.parse(evidence.normalized_result);
@@ -278,16 +288,18 @@ const expectPeInventoriesAcrossAdapters = async (
       status: "complete",
       resources: 5,
     });
+    expect(report.artifact).toEqual({
+      path,
+      sha256: createHash("sha256").update(fixture.bytes).digest("hex"),
+      bytes: fixture.bytes.length,
+    });
     expect(report.resources[0]?.payload.sha256).toBe(
-      createHash("sha256")
-        .update(empty ? "" : "ICON")
-        .digest("hex"),
+      createHash("sha256").update("ICON").digest("hex"),
     );
-    if (empty)
-      expect(report.resources[0]?.payload.location).toEqual({
-        offset: 0x400 + virtualSize,
-        bytes: 0,
-      });
+    expect(report.resources[1]?.payload).toMatchObject({
+      location: { offset: 0x400 + virtualSize, bytes: 0 },
+      sha256: createHash("sha256").update("").digest("hex"),
+    });
     expect(
       report.resources.find(({ name }) => name.kind === "name")?.name,
     ).toMatchObject({ kind: "name", name: "7", utf16le_hex: "3700" });
@@ -467,11 +479,7 @@ cliTest(
       root,
     });
     await expectPeMappingOwnershipAcrossAdapters(cli, call, root);
-    await expectPePaddingFailureAcrossAdapters({
-      cli,
-      call,
-      path: join(root, "raw-padding.exe"),
-    });
+    await expectPeResourceNameExtentsAcrossAdapters(cli, call, root);
     await expectPeInputFailuresAcrossAdapters({
       cli,
       call,

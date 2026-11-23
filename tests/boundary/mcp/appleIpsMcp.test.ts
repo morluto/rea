@@ -5,6 +5,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 import { appleIpsSchema } from "../../../src/domain/native/appleIps.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { createAppleIpsService } from "../../../src/composition/binaryDiagnostics/appleIps.js";
+import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { appleIpsBytes } from "../../fixtures/binaryDiagnostics/appleIps.js";
@@ -28,25 +30,29 @@ it("advertises and validates IPS facts and failures through production stdio MCP
   const root = await createTestTempDirectory("rea-apple-ips-mcp-");
   const path = join(root, "report.ips");
   await writeFile(path, appleIpsBytes());
-  expect(ajv.validate(inputSchema, { path, max_integer_text_bytes: 1 })).toBe(
-    true,
-  );
-  const constrained = await call("inspect_apple_ips", {
-    path,
-    max_integer_text_bytes: 1,
-  });
+  const selected = { path, max_integer_text_bytes: 1 };
+  expect(ajv.validate(inputSchema, selected)).toBe(true);
+  const constrained = await call("inspect_apple_ips", selected);
   expect(constrained.isError).toBe(true);
-  expect(parseMcpToolError(constrained).error).toMatchObject({
+  const { error } = parseMcpToolError(constrained);
+  expect(error).toMatchObject({
     code: "resource_constraint",
-    remediation: {
-      action: expect.stringContaining(
-        "Raise max_integer_text_bytes on the next call",
-      ),
-    },
     details: {
+      resource: "capacity",
+      reason: expect.stringContaining(path),
       reported_limits: { boundary: "integer_text", maximum: 1 },
     },
   });
+  const service = createAppleIpsService();
+  const refusal = await service
+    .inspect(selected)
+    .finally(() => service.close());
+  if (refusal.ok)
+    throw new Error("Expected the selected integer budget to refuse");
+  expect(error.remediation.action).toContain("max_integer_text_bytes");
+  expect(error.remediation.action).toBe(
+    analysisErrorRemediationAction(refusal.error),
+  );
   const response = await call("inspect_apple_ips", { path });
   expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
   const evidence = parseEvidence(response.structuredContent);

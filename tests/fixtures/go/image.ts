@@ -2,6 +2,25 @@ import { dosMz } from "../../../src/domain/binaryTarget.fixture.js";
 import { lstat, symlink } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  readGoBinaryImageFromHandle,
+  type ReadGoBinaryImageOptions,
+} from "../../../src/go/GoBinaryImage.js";
+import type { NativeByteSource } from "../../../src/domain/native/nativeSectionDirectory.js";
+
+export const goByteSource = (bytes: Buffer) =>
+  ({
+    size: bytes.length,
+    prefix: bytes.subarray(0, 4096),
+    readRange: async (offset, length) =>
+      bytes.subarray(offset, offset + length),
+  }) satisfies NativeByteSource;
+
+export const readGoFixture = (
+  bytes: Buffer,
+  options?: ReadGoBinaryImageOptions,
+) => readGoBinaryImageFromHandle(goByteSource(bytes), options, async () => {});
+
 /** Actual filesystem paths that fail before Go artifact acquisition begins. */
 export const createGoBinaryPathFailureFixture = async (
   root: string,
@@ -317,9 +336,11 @@ export const createGoSplitElfFixture = (
 };
 
 /** Many file-backed ELF loads sharing a small input, without any metadata marker. */
-export const createGoOverlappingElfFixture = (duplicate = false): Buffer => {
-  const count = 257;
-  const size = 1024 * 1024;
+export const createGoOverlappingElfFixture = ({
+  duplicate = false,
+  count = 257,
+  size = 1024 * 1024,
+} = {}): Buffer => {
   const dataStart = 65536;
   const bytes = Buffer.alloc(dataStart + size + count * 16);
   createGoBinaryFixture({ sectionless: true, omitBuildInfo: true }).bytes.copy(

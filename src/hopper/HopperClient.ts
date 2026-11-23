@@ -15,6 +15,7 @@ import { AnalysisCleanupRelease } from "../domain/analysisCleanupRelease.js";
 import {
   analysisErrorWithCloseRejection,
   analysisErrorWithCloseRejections,
+  withInheritedCleanupOwnership,
 } from "../domain/analysisErrorCleanup.js";
 import { analysisClientFailureContext } from "../providers/AnalysisClientFailure.js";
 import {
@@ -22,7 +23,7 @@ import {
   OwnerCancellation,
 } from "../domain/analysisErrorCore.js";
 import {
-  hopperBridgeReplyContracts,
+  hopperReplySchemas,
   parseHopperReply,
   type HopperBridgeReplyContracts,
   type ValueKeepingContracts,
@@ -32,6 +33,7 @@ import {
   type HopperServerInfo,
 } from "./HopperReplyContracts.js";
 import {
+  hopperAppleEventsAuthorizationRejection,
   hopperCancelledBySignal,
   type HopperCancelledError,
   type HopperError,
@@ -282,7 +284,7 @@ export class HopperClient<
     // typed refusal per method (see #typedReply), never a throw.
     this.#contracts =
       options.replyContracts ??
-      (hopperBridgeReplyContracts as unknown as Contracts &
+      (hopperReplySchemas as unknown as Contracts &
         ValueKeepingContracts<Contracts>);
     this.#options = {
       ...options,
@@ -839,11 +841,7 @@ export class HopperClient<
       source.safeMessage,
       analysisClientFailureContext(source, "hopper", name),
     );
-    return err(
-      source.cleanupIncomplete
-        ? failure.bindCleanupDependencies([source])
-        : failure,
-    );
+    return err(withInheritedCleanupOwnership(failure, source));
   }
 
   /** Stop the bridge and report whether every owned resource was verified clean. */
@@ -1212,10 +1210,7 @@ export class HopperClient<
     ) {
       this.#resources.shutdownConfirmed = true;
       return new HopperStartError({
-        launchRejection: {
-          boundary: "apple_events_authorization",
-          reason: "not_authorized",
-        },
+        launchRejection: hopperAppleEventsAuthorizationRejection,
         launcherFailure,
       });
     }
@@ -1307,7 +1302,7 @@ export class HopperClient<
         bridgeRequestOversizeError(
           method,
           requestLimit.value,
-          measured,
+          { bytesAtLeast: measured },
           "Hopper",
         ),
       );

@@ -1,4 +1,4 @@
-import { Cli } from "incur";
+import { createCommandCli } from "../../support/cli/commandCli.js";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import type { FileHandle } from "node:fs/promises";
@@ -170,7 +170,7 @@ const serveInspection = async (
   vi.mocked(createSqliteDatabaseService).mockReturnValue(
     new SqliteDatabaseService(provider),
   );
-  const cli = Cli.create("rea-sqlite-cleanup-test", { sync: false });
+  const cli = createCommandCli();
   registerSqliteCommands(cli, silentLogger, {});
   let stdout = "";
   await cli.serve(["inspect-sqlite-database", path, "--json"], {

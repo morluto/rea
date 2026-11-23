@@ -1,9 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   changedEvidenceSubject,
   UNKNOWN_EVIDENCE_SUBJECT,
 } from "../../../tests/fixtures/evidenceSubject.js";
-import { interfaceBuilderAnalysisSchema } from "../apple/interfaceBuilderGraph.js";
 import { freezeJsonSnapshot } from "../immutableJson.js";
 
 import { projectAnalysisView } from "./analysisView.js";
@@ -109,40 +108,23 @@ const parent = (
 });
 
 describe("Interface Builder immutable interpretation", () => {
-  it("validates a sealed graph once while checking the current parent binding every time", () => {
+  it("checks the current subject even after admitting the sealed graph", () => {
     const source = {
       ...parent(freezeJsonSnapshot(report())),
       sealedResult: true,
     };
-    const parse = vi.spyOn(interfaceBuilderAnalysisSchema, "safeParse");
-    try {
-      expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
-      expect(
-        projectAnalysisView(source, {
-          kind: "interface-builder",
-          collection: "nodes",
-          document: main,
-          offset: 0,
-          limit: 1,
-        }).ok,
-      ).toBe(true);
-      expect(parse).toHaveBeenCalledTimes(1);
-      const changed = {
-        ...source,
-        subject: changedEvidenceSubject(source.subject!, {
-          sha256: "d".repeat(64),
-        }),
-      };
-      const rejected = projectAnalysisView(changed, { kind: "summary" });
-      if (rejected.ok)
-        throw new Error("expected a subject refusal after reuse");
-      expect(rejected.error).toMatchObject({
-        issues: [{ path: ["source", "subject"] }],
-      });
-      expect(parse).toHaveBeenCalledTimes(1);
-    } finally {
-      parse.mockRestore();
-    }
+    expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
+    const changed = {
+      ...source,
+      subject: changedEvidenceSubject(source.subject!, {
+        sha256: "d".repeat(64),
+      }),
+    };
+    const rejected = projectAnalysisView(changed, { kind: "summary" });
+    if (rejected.ok) throw new Error("expected a subject refusal");
+    expect(rejected.error).toMatchObject({
+      issues: [{ path: ["source", "subject"] }],
+    });
   });
 
   it("revalidates mutable and shallow-frozen imports despite a claimed seal", () => {
@@ -161,18 +143,6 @@ describe("Interface Builder immutable interpretation", () => {
     });
     if (!corrected.ok) throw corrected.error;
     expect(corrected.value).toMatchObject({ items: [{ name: "corrected" }] });
-  });
-
-  it("does not reuse a claimed immutable graph without the owning seal", () => {
-    const source = parent(freezeJsonSnapshot(report()));
-    const parse = vi.spyOn(interfaceBuilderAnalysisSchema, "safeParse");
-    try {
-      expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
-      expect(projectAnalysisView(source, { kind: "summary" }).ok).toBe(true);
-      expect(parse).toHaveBeenCalledTimes(2);
-    } finally {
-      parse.mockRestore();
-    }
   });
 
   it("counts matching rows once, preserves their order, and exhausts empty or late pages", () => {

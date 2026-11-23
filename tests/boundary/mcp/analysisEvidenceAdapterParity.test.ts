@@ -11,11 +11,9 @@ import {
   CLI_REGISTRATION_ORDER,
 } from "../../../src/cli/cliCommandRegistrations.js";
 import { createCliShell } from "../../../src/cli/cliShell.js";
-import type { ContractCliDescription } from "../../../src/cli/contractCliDescription.js";
-import {
-  contractCommandDescriptions,
-  routedCommandDescriptions,
-} from "../../../src/cli/contractCommand.js";
+import type { ContractCliDescription } from "../../../src/cli/contractCliDescriptionTypes.js";
+import { registeredContractDescriptions } from "../../support/cli/commandCli.js";
+import { createArtifactBinarySession } from "../../../src/composition/binary.js";
 import { bindDirectAnalysis } from "../../../src/composition/directAnalysis.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "../../../src/contracts/artifactToolContracts.js";
@@ -28,6 +26,7 @@ import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import { ok } from "../../../src/domain/result.js";
 import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
 import { createTestProviderRouter } from "../../fixtures/binarySession.js";
 import {
   minimalContractInput,
@@ -36,21 +35,21 @@ import {
 import { minimalMachoImage } from "../../fixtures/nativeHeaders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { serveInProcessCli } from "../../support/cli/serveInProcessCli.js";
+import { ownArtifactSession } from "../../support/mcp/artifactSession.js";
 import { mcpTest } from "../../support/mcp/mcpFixture.js";
 
 /**
  * One call, two adapters: every analysis operation the CLI exposes runs once
  * through the CLI command tree and once through the MCP server, over the same
- * simulated provider and target. Both must deliver the same Evidence, or the
+ * provider and target. Both must deliver the same Evidence, or the
  * same failure.
  *
- * KNOWN_DIFFERENCES records how main differs today. The W2 invoke path
- * removes them; when a change removes one, delete its entry. An entry never
- * grows. The CLI-only `caller_input_path` is the declared exception: it is
- * checked to carry the caller's spelling, then left out of the comparison.
+ * KNOWN_DIFFERENCES records the exact Evidence and failure fields where the
+ * adapters still differ. Both adapters must retain the caller’s exact spelling.
  *
- * Simulated providers return the smallest result each contract admits, so
- * this checks adapter composition, not real provider behavior.
+ * Simulated providers use authored results where the JSON Schema cannot
+ * express the complete runtime contract. Archive cases use the production
+ * artifact reader over a small ZIP fixture.
  */
 
 /** JSON paths, under `evidence.` or `failure.`, where CLI and MCP differ. */
@@ -68,26 +67,37 @@ const KNOWN_DIFFERENCES: Readonly<Record<string, readonly string[]>> = {
       "inspect_keyed_archive",
       "inspect_asset_catalog",
       "trace_dylib_resolution",
+      "observe_native_ui",
+      "capture_native_ui_scenario",
+      "extract_artifact",
     ].map((name) => [
       name,
       ["evidence.evidence_id", "evidence.parameters.input_path"],
     ]),
   ),
+  ...Object.fromEntries(
+    [
+      "inspect_managed_artifact",
+      "inspect_managed_members",
+      "inspect_managed_native_boundaries",
+    ].map((name) => [
+      name,
+      [
+        "evidence.evidence_id",
+        "evidence.parameters.input_path",
+        "evidence.parameters.path",
+      ],
+    ]),
+  ),
+  // The MCP inspection records the delivery detail in Evidence parameters.
+  inspect_artifact: [
+    "evidence.evidence_id",
+    "evidence.parameters.detail",
+    "evidence.parameters.input_path",
+  ],
   // `DirectAnalysis` shapes CLI failures in the application layer and adds
   // an `error: "Analysis failed"` marker MCP does not send.
   trace_native_ui_action: ["failure.error"],
-  // MCP checks the result against the contract output schema; the CLI
-  // delivers Evidence whose result that schema refuses.
-  read_bytes: ["outcome"],
-  observe_native_ui: ["outcome"],
-  capture_native_ui_scenario: ["outcome"],
-  inspect_artifact: ["outcome"],
-  extract_artifact: ["outcome"],
-  // MCP runs managed operations in the composition's own managed session,
-  // not the session's provider route, so it never reaches this provider.
-  inspect_managed_artifact: ["outcome"],
-  inspect_managed_members: ["outcome"],
-  inspect_managed_native_boundaries: ["outcome"],
 };
 
 /** Inputs a one-shot CLI call needs that MCP takes from session state. */
@@ -100,8 +110,61 @@ const INPUT_OVERRIDES: Readonly<
 
 const PROVIDER = { id: "fixture", name: "Fixture", version: "1" } as const;
 
+/** Valid replies for contracts with relationships absent from JSON Schema. */
+const nativeUiResult = {
+  target_sha256: "a".repeat(64),
+  initial: {
+    window: {
+      pid: 123,
+      window_id: 456,
+      executable: "/fixture",
+      launch_time: 0,
+      title: "Fixture",
+    },
+    nodes: [],
+    truncated: false,
+    screenshot: null,
+    gaps: [],
+  },
+  steps: [],
+  restore: "leave-as-is",
+  limitations: [],
+} satisfies JsonValue;
+
+const authoredResults = new Map<string, JsonValue>([
+  [
+    "read_bytes",
+    {
+      address: "0x1000",
+      requested_bytes: 16,
+      returned_bytes: 1,
+      bytes_hex: "ab",
+      complete: false,
+    },
+  ],
+  ["observe_native_ui", nativeUiResult],
+  [
+    "capture_native_ui_scenario",
+    {
+      ...nativeUiResult,
+      steps: [
+        {
+          index: 0,
+          kind: "wait",
+          before: nativeUiResult.initial,
+          after: nativeUiResult.initial,
+          outcome: "completed",
+          reason: null,
+        },
+      ],
+    },
+  ],
+]);
+
 const results = new Map<string, JsonValue | undefined>();
 const resultFor = (operation: string): JsonValue | undefined => {
+  const authored = authoredResults.get(operation);
+  if (authored !== undefined) return authored;
   if (!results.has(operation)) {
     const contract = TOOL_CONTRACTS.find(({ name }) => name === operation);
     results.set(
@@ -144,20 +207,17 @@ const registrations = await Promise.all(
 );
 
 /** A fresh CLI command tree over the simulated provider. */
-const createCli = () =>
+const createCli = (runWith = dependencies) =>
   createCliShell({
     selectedEnvironment: { REA_LOG_LEVEL: "silent" },
-    createAnalysis: () => bindDirectAnalysis(dependencies),
+    createAnalysis: () => bindDirectAnalysis(runWith),
     registrations,
   });
 
 /** The first CLI command that runs each contract (descriptions only). */
-const inventory = createCli();
+const { commands: descriptions } = registeredContractDescriptions(createCli());
 const commands = new Map<string, ContractCliDescription>();
-for (const description of [
-  ...contractCommandDescriptions(inventory),
-  ...routedCommandDescriptions(inventory),
-])
+for (const description of descriptions)
   if (!commands.has(description.contract.name))
     commands.set(description.contract.name, description);
 
@@ -273,37 +333,36 @@ const isObject = (
 ): value is Readonly<Record<string, JsonValue>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+const evidenceOutcome = (value: unknown, target: string): Outcome => {
+  if (!isObject(value)) throw new Error("Expected an Evidence response object");
+  expect(value.caller_input_path).toBe(target);
+  expect(value.caller_input_paths).toBeUndefined();
+  return { outcome: "evidence", evidence: value };
+};
+
 const cliOutcome = (
   served: { readonly stdout: string; readonly exitCode: number },
   target: string,
 ): Outcome => {
   const value = parseJson(served.stdout);
-  if (served.exitCode !== 0) return { outcome: "failure", failure: value };
-  if (!isObject(value)) throw new Error(`CLI printed ${served.stdout}`);
-  // The CLI keeps the caller's spelling; MCP selected the target on open.
-  const {
-    caller_input_path: callerInputPath,
-    caller_input_paths: callerInputPaths,
-    ...evidence
-  } = value;
-  expect(callerInputPath).toBe(target);
-  expect(callerInputPaths).toBeUndefined();
-  return { outcome: "evidence", evidence };
+  return served.exitCode !== 0
+    ? { outcome: "failure", failure: value }
+    : evidenceOutcome(value, target);
 };
 
-const mcpOutcome = (called: {
-  readonly isError?: unknown;
-  readonly structuredContent?: unknown;
-  readonly content?: unknown;
-}): Outcome => {
+const mcpOutcome = (
+  called: {
+    readonly isError?: unknown;
+    readonly structuredContent?: unknown;
+    readonly content?: unknown;
+  },
+  target: string,
+): Outcome => {
+  if (called.isError !== true)
+    return evidenceOutcome(called.structuredContent, target);
   const [first] = Array.isArray(called.content) ? called.content : [];
   const text =
     isObject(first) && typeof first.text === "string" ? first.text : "";
-  if (called.isError !== true)
-    return {
-      outcome: "evidence",
-      evidence: called.structuredContent as JsonValue,
-    };
   const value = parseJson(text);
   return {
     outcome: "failure",
@@ -343,14 +402,31 @@ mcpTest.for(
   OPERATIONS.map((operation) => [operation.contract.name, operation] as const),
 )(
   "%s returns the same Evidence through the CLI and MCP",
-  async ([name, { contract, description }], { mcp }) => {
+  async ([name, { contract, description }], { mcp, onTestFinished }) => {
     const directory = await createTestTempDirectory("rea-adapter-parity-");
-    await writeFile(join(directory, "fixture"), minimalMachoImage(64));
-    // A non-canonical spelling shows whose path each adapter records.
+    const realArtifact =
+      name === "inspect_artifact" || name === "extract_artifact";
+    if (realArtifact)
+      await writeOrderedZip(join(directory, "fixture"), ["member.txt"]);
+    else await writeFile(join(directory, "fixture"), minimalMachoImage(64));
+    // Both adapters select the same file through the same noncanonical spelling.
     const target = `${directory}/./fixture`;
-    const input = callInput(contract, description, directory, target);
+    const input = {
+      ...callInput(contract, description, directory, target),
+      ...(name === "extract_artifact"
+        ? { output_root: join(directory, "extracted") }
+        : {}),
+    };
+    const cli = createCli(
+      realArtifact
+        ? {
+            ...dependencies,
+            createArtifactBinarySession: () => createArtifactBinarySession({}),
+          }
+        : dependencies,
+    );
     const cliResult = cliOutcome(
-      await serveInProcessCli(createCli(), argvFor(description, target, input)),
+      await serveInProcessCli(cli, argvFor(description, target, input)),
       target,
     );
     // Each adapter writes caller-selected outputs into a fresh location.
@@ -361,9 +437,13 @@ mcpTest.for(
         value.startsWith(`${directory}/`)
       )
         await rm(value, { recursive: true, force: true });
+    const mcpSession = realArtifact
+      ? await createArtifactBinarySession({})
+      : session();
+    if (realArtifact) ownArtifactSession(mcpSession, onTestFinished);
     const client = await mcp.connect(
       createServer(
-        { kind: "session", session: session() },
+        { kind: "session", session: mcpSession },
         { environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT } },
       ),
     );
@@ -374,14 +454,16 @@ mcpTest.for(
     expect(opened.isError, JSON.stringify(opened.content)).not.toBe(true);
     const mcpResult = mcpOutcome(
       await client.callTool({ name, arguments: input }),
+      target,
     );
+    if (realArtifact || authoredResults.has(name)) {
+      expect(cliResult.outcome, JSON.stringify(cliResult)).toBe("evidence");
+      expect(mcpResult.outcome, JSON.stringify(mcpResult)).toBe("evidence");
+    }
     const found = differences(
       cliResult as unknown as JsonValue,
       mcpResult as unknown as JsonValue,
     );
-    // A differing outcome is one difference, not every field of both sides.
-    expect(
-      cliResult.outcome === mcpResult.outcome ? found : ["outcome"],
-    ).toEqual(KNOWN_DIFFERENCES[name] ?? []);
+    expect(found).toEqual(KNOWN_DIFFERENCES[name] ?? []);
   },
 );

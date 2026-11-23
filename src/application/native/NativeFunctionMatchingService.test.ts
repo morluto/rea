@@ -6,6 +6,7 @@ import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatchi
 import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import { DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES } from "../../domain/analysisResourceLimits.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
@@ -90,47 +91,6 @@ it("retains transitive provenance without treating dependencies as native observ
   });
 });
 
-it("keeps symbol origin unknown when supplied metadata describes a different same-address alias", async () => {
-  const left = unqualifiedInventory("1", [
-    { address: "0x10", value: "reported_name" },
-  ]);
-  const right = unqualifiedInventory("2", [
-    { address: "0x20", value: "reported_name" },
-  ]);
-  const alias = createEvidence(
-    nativeMatchingTarget("1"),
-    nativeMatchingProvider,
-    {
-      operation: "list_names",
-      parameters: {},
-      result: [
-        {
-          address: "0x10",
-          value: "other_alias",
-          symbol: {
-            primary: false,
-            dynamic: false,
-            external: false,
-            type: "function",
-            source: "user_defined",
-          },
-        },
-      ],
-    },
-  );
-  const { report } = await compare({ left, right, left_observations: [alias] });
-  expect(report.summary.matched).toBe(0);
-  const member = report.matches
-    .flatMap((match) => match.left)
-    .find((value) => value.address === "0x10");
-  expect(member?.limitations).toContainEqual(
-    expect.stringMatching(
-      /symbol origin unavailable.*exact-name matching is unavailable.*complete body bytes remain eligible/iu,
-    ),
-  );
-  expect(member?.evidence_links).toContain(alias.evidence_id);
-});
-
 it("preserves contradictory symbol origins from inventory/name facts or multiple name observations, independently of byte correspondence", async () => {
   const observe = (operation: string, generated: boolean) =>
     createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
@@ -157,11 +117,11 @@ it("preserves contradictory symbol origins from inventory/name facts or multiple
     [observe("list_procedures", false), [observe("list_names", true)]],
     [observe("list_procedures", true), [observe("list_names", false)]],
     [
-      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      unqualifiedInventory("1", [{ address: "0x10", value: "same_name" }]),
       [observe("list_names", false), observe("list_names", true)],
     ],
     [
-      nativeMatchingInventory("1", [{ address: "0x10", value: "same_name" }]),
+      unqualifiedInventory("1", [{ address: "0x10", value: "same_name" }]),
       [observe("list_names", true), observe("list_names", false)],
     ],
   ] as const) {
@@ -685,37 +645,86 @@ it("composes consistent overlapping and partial byte reads without losing comple
   });
 });
 
-it("does not use generated symbols and preserves literal named FUN_ symbols when producer metadata proves their origin", async () => {
+it("pairs proven literal symbols and preserves unknown or generated origins", async () => {
   const entries = [
     { address: "0x10", value: "FUN_10" },
-    { address: "0x20", value: "apparently_named" },
+    { address: "0x20", value: "dynamic_name" },
+    { address: "0x30", value: "default_name" },
+    { address: "0x40", value: "EntryPoint" },
+    { address: "0x50", value: "reported_name" },
   ];
+  const named = (
+    address: string,
+    value: string,
+    source: "user_defined" | "analysis" | "default",
+    dynamic = false,
+  ) => ({
+    address,
+    value,
+    symbol: {
+      primary: true,
+      dynamic,
+      external: false,
+      type: "function",
+      source,
+    },
+  });
+  const alias = named("0x50", "other_alias", "user_defined");
   const names = (side: "1" | "2") =>
     createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
       operation: "list_names",
       parameters: {},
-      result: entries.map((entry, i) => ({
-        ...entry,
-        symbol: {
-          primary: true,
-          dynamic: i === 1,
-          external: false,
-          type: "function",
-          source: i === 0 ? "user_defined" : "default",
-        },
-      })),
+      result: [
+        named("0x10", "FUN_10", "user_defined"),
+        named("0x20", "dynamic_name", "analysis", true),
+        named("0x30", "default_name", "default"),
+        ...(side === "1"
+          ? [{ ...alias, symbol: { ...alias.symbol, primary: false } }]
+          : []),
+      ],
     });
+  const leftNames = names("1");
+  const rightNames = names("2");
   const { report } = await compare({
     left: unqualifiedInventory("1", entries),
     right: unqualifiedInventory("2", entries),
-    left_observations: [names("1")],
-    right_observations: [names("2")],
+    left_observations: [leftNames],
+    right_observations: [rightNames],
   });
-  expect(report.summary.matched).toBe(1);
-  expect(report.matches[0]?.left[0]?.name).toBe("FUN_10");
-  expect(report.matches[0]?.left[0]?.evidence_links).toContain(
-    names("1").evidence_id,
+  expect(report.summary).toEqual({
+    matched: 1,
+    only_left: 4,
+    only_right: 4,
+    unresolved: 0,
+  });
+  expect(report.matches.find(({ state }) => state === "matched")).toMatchObject(
+    {
+      basis: "exact-symbol",
+      left: [
+        {
+          name: "FUN_10",
+          evidence_links: expect.arrayContaining([leftNames.evidence_id]),
+        },
+      ],
+      right: [
+        {
+          name: "FUN_10",
+          evidence_links: expect.arrayContaining([rightNames.evidence_id]),
+        },
+      ],
+    },
   );
+  const leftMembers = report.matches.flatMap(({ left }) => left);
+  for (const name of ["EntryPoint", "reported_name"]) {
+    expect(leftMembers.find((member) => member.name === name)).toMatchObject({
+      limitations: expect.arrayContaining([
+        "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
+      ]),
+    });
+  }
+  expect(
+    leftMembers.find(({ name }) => name === "reported_name")?.evidence_links,
+  ).toContain(leftNames.evidence_id);
 });
 
 it("assigns source authentication, role selection, context, and lookup failures to their owning boundary", async () => {
@@ -961,7 +970,9 @@ it("matches 20,000 retained Ghidra-shaped rows per side and refuses an oversized
   if (!refused.ok)
     expect(refused.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { maximum_bytes: 96 * 1024 * 1024 },
+      reportedLimits: {
+        maximum_bytes: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+      },
       retryable: false,
     });
 });
@@ -1013,7 +1024,10 @@ it("enforces the caller-resolved representation allowance and names its setting"
   expect(refused.ok).toBe(false);
   if (!refused.ok)
     expect(refused.error).toMatchObject({
-      limit: { effective_value: 96 * 1024 * 1024, source: "default" },
+      limit: {
+        effective_value: DEFAULT_NATIVE_MATCHING_REPRESENTATION_BYTES,
+        source: "default",
+      },
     });
   const raised = await matchNativeFunctions(large, {
     representationAllowance: {
@@ -1288,25 +1302,3 @@ it.each(["left_observations", "right_observations"] as const)(
     expect(restored.report.summary.matched).toBe(1);
   },
 );
-
-it("does not propose exact-symbol correspondence from unqualified EntryPoint labels", async () => {
-  const { report } = await compare({
-    left: unqualifiedInventory("1", [{ address: "0x10", value: "EntryPoint" }]),
-    right: unqualifiedInventory("2", [
-      { address: "0x20", value: "EntryPoint" },
-    ]),
-  });
-  expect(report.summary.matched).toBe(0);
-  expect(
-    report.matches.flatMap((match) => [...match.left, ...match.right]),
-  ).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        name: "EntryPoint",
-        limitations: expect.arrayContaining([
-          "Symbol origin unavailable; exact-name matching is unavailable. Independent complete body bytes remain eligible.",
-        ]),
-      }),
-    ]),
-  );
-});

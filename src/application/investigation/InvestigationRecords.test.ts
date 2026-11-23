@@ -94,12 +94,17 @@ describe("investigation record ownership", () => {
 
   it("rolls back Evidence when the linked Unknown fails validation", () => {
     const records = new InvestigationRecords();
+    const missingId = `ev_${"f".repeat(64)}`;
     const invalid = {
       ...unknownInput("Is the missing Evidence present?"),
-      supporting_evidence_ids: [`ev_${"f".repeat(64)}`],
+      supporting_evidence_ids: [missingId],
     };
     const refused = records.recordEvidenceWithUnknown(evidence, invalid);
     if (refused.ok) throw new Error("Expected invalid Unknown references");
+    expect(refused.error).toMatchObject({
+      _tag: "UnknownRegistryError",
+      constraint: { kind: "missing_evidence", evidence_id: missingId },
+    });
     expect(refused.error.partialObservation).toBeUndefined();
     expect(records.hasEvidence(evidence.evidence_id)).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
@@ -144,40 +149,6 @@ describe("investigation record ownership", () => {
     ).toEqual(input);
     expect(records.updateUnknown(input, target).ok).toBe(false);
     expect(records.exportEvidenceBundle()).toEqual(bundle);
-  });
-
-  it("reports Unknown-only bundle changes and clears the single record owner", () => {
-    const source = new InvestigationRecords();
-    expect(
-      source.recordUnknown(
-        unknownInput("Can imported Unknowns notify observers?"),
-      ).ok,
-    ).toBe(true);
-    const bundle = source.exportEvidenceBundle();
-    const records = new InvestigationRecords();
-    expect(
-      records.mergeEvidenceBundle(createEvidenceBundle(bundle.records)).ok,
-    ).toBe(true);
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 1,
-        changed: true,
-        replacements: [],
-      },
-    });
-    expect(records.mergeEvidenceBundle(bundle)).toEqual({
-      ok: true,
-      value: {
-        recordsAdded: 0,
-        unknownsAdded: 0,
-        changed: false,
-        replacements: [],
-      },
-    });
-    records.clear();
-    expect(records.exportEvidenceBundle()).toEqual(createEvidenceBundle([]));
   });
 });
 

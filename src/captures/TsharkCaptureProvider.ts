@@ -188,7 +188,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       );
       const command = selectedCommand.resolvedPath;
       await access(command, constants.X_OK);
-      const toolSnapshot = await this.#resources.read(
+      const toolSnapshot = await this.#resources.hash(
         command,
         64 * 1024 * 1024,
         options?.signal,
@@ -204,7 +204,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
       );
       const limiter = selectedLimiter.resolvedPath;
       await access(limiter, constants.X_OK);
-      const limiterIdentity = await this.#resources.read(
+      const limiterIdentity = await this.#resources.hash(
         limiter,
         64 * 1024 * 1024,
         options?.signal,
@@ -279,9 +279,9 @@ export class TsharkCaptureProvider implements PacketCapturePort {
             operation,
             {
               diagnostics: {
-                exit_code: output.exitCode ?? null,
-                stdout: output.stdout.text,
-                stderr: output.stderr.text,
+                exit_code: capturedOutput.exit_code ?? null,
+                stdout: capturedOutput.stdout,
+                stderr: capturedOutput.stderr,
               },
             },
           );
@@ -395,7 +395,7 @@ export class TsharkCaptureProvider implements PacketCapturePort {
         phase = "integrity";
         resourcePath = snapshotPath;
         if (
-          (await this.#resources.read(snapshotPath, limits.input_bytes))
+          (await this.#resources.hash(snapshotPath, limits.input_bytes))
             .sha256 !== selected.sha256
         )
           throw new AnalysisArtifactChangedError(
