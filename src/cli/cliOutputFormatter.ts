@@ -157,7 +157,7 @@ const formatDocument = (
   value: unknown,
   format: "toon" | "json" | "yaml" | "jsonl",
 ): string => {
-  if (value === null || value === undefined) return "";
+  if (value === undefined) return "";
   switch (format) {
     case "json":
       return formatJson(value);
@@ -398,7 +398,7 @@ const markdownHeading = (path: readonly string[]): string =>
 const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
 
 /** Encode edge spacing that Markdown can represent as character references. */
-export const encodeMarkdownTableCell = (value: string): string => {
+const encodeMarkdownTableCell = (value: string): string => {
   const escaped = escapeTableCell(value);
   let start = 0;
   let end = escaped.length;
@@ -486,7 +486,7 @@ const formatMarkdown = (
   value: unknown,
   path: readonly string[] = [],
 ): string => {
-  if (value == null && path.length === 0) return "";
+  if (value === undefined) return "";
   if (isScalar(value)) {
     if (path.length === 0) return escapeMarkdownText(String(value));
     return `${markdownHeading(path)}${escapeMarkdownText(String(value))}`;

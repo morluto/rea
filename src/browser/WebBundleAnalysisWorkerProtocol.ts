@@ -3,7 +3,7 @@ import { javaScriptSemanticPrecisionSchema } from "../domain/javascript/javascri
 import { z } from "zod";
 import { JAVASCRIPT_STATIC_FACT_BYTES } from "../domain/javascript/javascriptAnalysisResourceControls.js";
 import { digestSchema } from "../domain/digests.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema } from "../domain/jsonValue.js";
 import { WEB_RUNTIME_LIMITS } from "../domain/webRuntime.js";
 import { webPageInspectionSchema } from "../domain/browserObservationSchemas.js";
 import { webBundleEndpointLiteralAdmissionSchema } from "../domain/webBundleEndpointLiteralBudget.js";
@@ -82,7 +82,7 @@ export const webBundleWorkerMessageSchema = z.discriminatedUnion("kind", [
     ...identity,
     reason: z.enum(["input", "resource", "output", "io"]),
     /** Limits a typed resource refusal reported, such as a fixed work allowance. */
-    limits: z.record(z.string(), jsonValueSchema).exactOptional(),
+    limits: z.record(z.string(), ownedJsonValueSchema).exactOptional(),
     message: z.string(),
   }),
 ]);

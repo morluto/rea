@@ -23,7 +23,7 @@ import {
   ArtifactResourceScope,
   readStableArtifact,
 } from "../resources/index.js";
-import { jsonParts } from "../domain/jsonSerialization.js";
+import { bufferedJsonParts, jsonParts } from "../domain/jsonSerialization.js";
 import type { IncludedScript } from "../domain/webBundleAnalyzerState.js";
 import {
   webBundleScriptAnalysisSchema,
@@ -91,10 +91,13 @@ export const serveWebBundleAnalysisWorker = async (
     for (;;) {
       const next = await requests.next();
       if (next.done) break;
-      if (!next.value.ok)
+      if (!next.value.ok) {
+        if (next.value.error._tag === "ControlLineMalformedUtf8")
+          throw new TypeError("Web bundle worker request is not valid UTF-8");
         throw new RangeError(
           "Web bundle worker request exceeds its byte budget",
         );
+      }
       const raw: unknown = JSON.parse(next.value.value);
       const request = webBundleWorkerRequestSchema.parse(raw);
       const continueServing = await analyzeJob(
@@ -211,7 +214,7 @@ const analyzeJob = async (
       resources,
       undefined,
       async (handle) => {
-        for (const part of jsonParts(result)) {
+        for (const part of bufferedJsonParts(jsonParts(result))) {
           const chunk = Buffer.from(part);
           bytes += chunk.length;
           if (bytes > request.result_budget_bytes)

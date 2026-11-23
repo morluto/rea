@@ -36,17 +36,25 @@ decoded as `normal`, as specified.
 file offset, size, and type byte. Root-folder, volume, and file-entry items
 are decoded when those layouts match documented shell-item headers, including
 the 8.3 short name on a file entry. Every other item is `raw` with a SHA-256
-of its payload. Unknown items are not guessed.
+of its payload. An invalid item extent, missing TerminalID, or bytes after the
+TerminalID make coverage partial. Earlier items remain available, and parsing
+resumes at the declared end of the list when that extent fits the file.
 
 `link_info` reports volume drive type, serial, label, local base path, and
 common network relative link names, with Unicode variants when the header
 declares them. ANSI strings use a byte-preserving Latin1 projection; the
 original system ANSI code page is unobserved.
+LinkInfo header sizes `0x1D` through `0x23` make coverage partial. The report
+retains the stored header size, readable ANSI fields, and following sections.
 
 `string_data` reports name, relative path, working directory, command-line
 arguments, and icon location according to `LinkFlags`, each with encoding,
 `CountCharacters`, byte length, and the decoded value. `IsUnicode` selects
-UTF-16LE; otherwise the Latin1 projection is used.
+UTF-16LE, with a Latin1 projection for ANSI. A stored count above 260 makes
+coverage partial for name, relative path, working directory, or icon location.
+The report retains readable values and following fields. Command-line arguments
+are exempt from that format limit and count toward the retained string budget.
+[MS-SHLLINK StringData](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-shllink/17b69472-0f34-4bcf-b290-eccdb8de224b)
 
 `extra_data` enumerates every block: signature, size, and offset.
 `EnvironmentVariableDataBlock` and `IconEnvironmentDataBlock` expose ANSI and
@@ -55,7 +63,13 @@ birth-droid GUIDs. Version-1 UUID MAC and timestamp values are labelled
 `evidence_kind: "derived"`. `KnownFolderDataBlock` and `SpecialFolderDataBlock`
 keep their folder identifiers. `ConsoleFEDataBlock` keeps the code page.
 `PropertyStoreDataBlock` and unrecognized signatures stay raw with SHA-256.
-Unknown signatures are listed and are not dropped.
+Decoded fixed-size blocks with a mismatched length retain raw payload hashes
+and make coverage partial. Later blocks remain readable when the declared
+block extent fits the file.
+When `HasExpString`, `HasDarwinID`, `HasExpIcon`, or `RunWithShimLayer`
+declares a block, the terminal record lets REA report a missing block and mark
+coverage partial. If parsing stops before the terminal, an unseen block remains
+unknown.
 
 `observations` are derived only from those documented fields: whether
 arguments are present, argument character length, target extension, whether
@@ -67,6 +81,24 @@ as ANSI when the system code page can represent it. An ANSI path with non-ASCII
 bytes is therefore not compared with a Unicode icon location, or the reverse,
 because the code page is unobserved. This workflow does not emit verdicts
 about intent.
+
+Two ANSI paths can also remain incomparable. Multibyte trail bytes can look
+like ASCII letters or backslashes, so the Latin1 projection cannot safely
+undergo Unicode case folding or path normalization. Exact stored byte spellings
+can establish equality; a byte-identical prefix followed by ASCII filename
+tails can still establish equality or difference. Other opaque ANSI comparisons
+remain unknown. LinkInfo joins involving non-ASCII ANSI parts retain an unknown
+full-path identity; a known suffix extension can still be reported. Non-ASCII
+ANSI extension text stays unknown rather than becoming a guessed Unicode
+extension. Raw fields and artifact identity are preserved. The code page in a
+ConsoleFE block describes the console and does not establish the original
+system ANSI encoding for these paths.
+
+The target extension stays unknown when a LinkInfo or environment target is
+unreadable, or when parsing stops before a declared environment block is found.
+An independently established full-path match still gives
+`false` for `icon_location_differs_from_target`. Without such a match, the
+comparison remains unknown.
 
 A missing optional section is observed absence of that structure. It is not
 proof the shortcut never carried that data in another container.
@@ -80,9 +112,15 @@ LinkInfo, and ExtraData are limited to 64 KiB by default (1 MiB maximum).
 Malformed `HeaderSize` or `LinkCLSID`, and exhausted budgets, fail without
 partial success. Truncation after a valid header, ExtraData size overruns, and
 odd Unicode lengths return partial coverage with `coverage.failing_offset`.
-A LinkInfo offset that points outside its structure is reported at the
-offset field itself, so every issue offset lies inside the file.
+A LinkInfo, VolumeID, or network-name string offset that points inside its
+structure header or outside its structure is reported at the offset field.
+A `LinkInfoHeaderSize` below 0x1C does not shrink the mandatory 28-byte
+header, so an offset in that header is still reported at the offset field
+and the path stays unreadable.
 Coverage is never `complete` when issues are present.
+A PropertyStoreDataBlock shorter than 12 bytes or a ShimDataBlock shorter than
+136 bytes makes coverage partial. The report retains the block's signature,
+size, and payload digest and continues to following blocks.
 
 The selected path must be a regular file. Symbolic links are rejected.
 UNC paths and other host-prefixed device paths, such as `\\server\share\a.lnk`

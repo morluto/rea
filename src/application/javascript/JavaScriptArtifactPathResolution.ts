@@ -1305,15 +1305,20 @@ const hasContainerDirectory = (
     )
   )
     return true;
-  // Inventory has files rather than directory entries. An admitted descendant
-  // establishes a package directory even without package.json.
+  // An admitted file can establish a directory without an explicit entry.
+  // Use the inventory's prefix range when available to avoid walking every
+  // analyzed file for each package searched along the ancestor chain.
   const prefix = `${candidate}/`;
-  for (const [path, file] of input.files)
+  const indexedPaths = input.unanalyzedFiles?.filePathsBelow?.(candidate);
+  for (const path of indexedPaths ?? input.files.keys()) {
+    if (indexedPaths === undefined && !path.startsWith(prefix)) continue;
+    const file = input.files.get(path);
     if (
-      path.startsWith(prefix) &&
+      file !== undefined &&
       admitsRuntimeContainer(input, path, file.container_sha256)
     )
       return true;
+  }
   const container = crossesRuntimeArchiveBoundary(input, `${candidate}/`)
     ? undefined
     : input.files.get(input.sourcePath)?.container_sha256;
@@ -1698,8 +1703,11 @@ const resolveFileCandidates = (
   return null;
 };
 
+const ASAR_SEGMENT_PATTERN = /\.asar\//iu;
+
 /** Classify the extension as inventory does; retain exact archive occurrence bytes. */
 const runtimeArchiveRoot = (path: string): string | undefined => {
+  if (!ASAR_SEGMENT_PATTERN.test(path)) return undefined;
   const components = path.split("/");
   const archive = components.findLastIndex(
     (component, index) =>
@@ -2067,16 +2075,39 @@ const selectExportTarget = (
  * built-in resolver that owns installed-package imports and requires. The
  * supported Node runtimes also activate "module-sync" for both loaders.
  */
+const EXPORT_CONDITIONS_DEFAULT: ReadonlySet<string> = new Set([
+  "node",
+  "node-addons",
+  "module-sync",
+  "default",
+]);
+const EXPORT_CONDITIONS_BY_KIND = new Map<string, ReadonlySet<string>>([
+  [
+    "import",
+    new Set(["node", "node-addons", "module-sync", "import", "default"]),
+  ],
+  [
+    "require",
+    new Set(["node", "node-addons", "module-sync", "require", "default"]),
+  ],
+  [
+    "compiler-dependent",
+    new Set([
+      "node",
+      "node-addons",
+      "module-sync",
+      "compiler-dependent",
+      "default",
+    ]),
+  ],
+]);
+
 const packageExportConditions = (
   moduleKind: ResolveArtifactPathInput["moduleKind"],
 ): ReadonlySet<string> =>
-  new Set([
-    "node",
-    "node-addons",
-    "module-sync",
-    ...(moduleKind === undefined ? [] : [moduleKind]),
-    "default",
-  ]);
+  moduleKind === undefined
+    ? EXPORT_CONDITIONS_DEFAULT
+    : (EXPORT_CONDITIONS_BY_KIND.get(moduleKind) ?? EXPORT_CONDITIONS_DEFAULT);
 
 const notFoundCandidate = (): Extract<
   CandidateResolution,

@@ -11,7 +11,7 @@ import {
   type DesktopApplication,
 } from "../desktopApplication.js";
 import { analysisViewInputError } from "./analysisViewErrors.js";
-import { parseAnalysisViewResult } from "./analysisViewParent.js";
+import { createAnalysisViewResultReader } from "./analysisViewParent.js";
 import {
   completeWithinViewCoverage,
   pageViewCoverage,
@@ -144,7 +144,9 @@ type DesktopCollection = z.infer<typeof desktopViewRequestSchema>["collection"];
 type DesktopViewRow = DesktopApplication[DesktopCollection][number];
 
 // Only immutable authenticated parent objects are reused. They are not live filesystem caches.
-const validatedParents = new WeakSet<object>();
+const readDesktopApplication = createAnalysisViewResultReader(
+  desktopApplicationSchema,
+);
 export const projectDesktopApplicationView = (
   parent: AnalysisViewParent,
   admitted: AdmittedView,
@@ -163,28 +165,9 @@ export const projectDesktopApplicationView = (
         },
       ]),
     );
-  const key =
-    typeof parent.normalizedResult === "object" &&
-    parent.normalizedResult !== null
-      ? parent.normalizedResult
-      : undefined;
-  const reusable =
-    parent.sealedResult === true && key !== undefined && Object.isFrozen(key);
-  let report =
-    reusable && validatedParents.has(key)
-      ? (key as DesktopApplication)
-      : undefined;
-  if (report === undefined) {
-    const parsed = parseAnalysisViewResult(desktopApplicationSchema, parent);
-    if (!parsed.ok) return parsed;
-    report = parsed.value;
-    if (reusable) {
-      // The schema has no coercions or transforms. Borrow the validated frozen
-      // owner value instead of retaining a second unaccounted copy of its files.
-      report = key as DesktopApplication;
-      validatedParents.add(key);
-    }
-  }
+  const parsed = readDesktopApplication(parent);
+  if (!parsed.ok) return parsed;
+  const report = parsed.value;
   const subject = evidenceFileTarget(parent);
   if (
     subject === undefined ||

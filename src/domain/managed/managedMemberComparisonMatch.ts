@@ -48,13 +48,11 @@ interface Ambiguous<Item> {
 
 /** A declared type's tagged observed nominal digest; null when unresolved. */
 type DeclaredName = readonly ["nominal-name-sha256", string] | null;
-type DeclaredNameOf = (item: Method | Field) => DeclaredName;
 const keyIdentity = (
   item: Method | Field,
-  declared: DeclaredNameOf,
+  declaringType: DeclaredName,
   kind: "method" | "field",
 ) => {
-  const declaringType = declared(item);
   const signatureId = signatureIdentity(item.signature);
   return {
     identity: digestCanonicalValue(
@@ -73,7 +71,7 @@ const keyIdentity = (
   };
 };
 
-const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
+const keyMethod = (item: Method, declared: DeclaredName): Keyed<Method> => ({
   item,
   ...keyIdentity(item, declared, "method"),
   exactKey:
@@ -121,7 +119,7 @@ const keyMethod = (item: Method, declared: DeclaredNameOf): Keyed<Method> => ({
       : null,
 });
 
-const keyField = (item: Field, declared: DeclaredNameOf): Keyed<Field> => ({
+const keyField = (item: Field, declared: DeclaredName): Keyed<Field> => ({
   item,
   ...keyIdentity(item, declared, "field"),
   exactKey:
@@ -512,46 +510,52 @@ export const keyMembers = (
 } => {
   const declared = (
     inspection: ManagedMemberInspection,
-    names: ReadonlyMap<string, string | null>,
-  ): DeclaredNameOf => {
+    side: ManagedComparisonScope["left"],
+  ): ((item: Method | Field) => DeclaredName) => {
     return (item) => {
-      if (!inspection.nesting_read) return null;
-      const digest = names.get(item.declaring_type_token ?? "");
+      if (!inspection.nesting_read || side.emptyMemberNames.has(item))
+        return null;
+      const digest = side.names.get(item.declaring_type_token ?? "");
       return digest == null ? null : ["nominal-name-sha256", digest];
     };
   };
-  const declaredLeft = declared(left.result, scope.left.names);
-  const declaredRight = declared(right.result, scope.right.names);
+  const declaredLeft = declared(left.result, scope.left);
+  const declaredRight = declared(right.result, scope.right);
+  const matchable = {
+    inLeft: (item: Method | Field) =>
+      !scope.right.emptyMemberNames.has(item) && scope.inLeft(item),
+    inRight: (item: Method | Field) =>
+      !scope.left.emptyMemberNames.has(item) && scope.inRight(item),
+  };
   return {
     methodMatches: matchObserved(
       left.result.methods,
       right.result.methods,
-      scope,
+      matchable,
       (a, b) =>
         matchMethods(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete" &&
+          scope.left.metadataComplete &&
+            scope.right.metadataComplete &&
             hasCompleteMethodRows(left.result) &&
             hasCompleteMethodRows(right.result),
         ),
-      (item) => keyMethod(item, declaredLeft),
-      (item) => keyMethod(item, declaredRight),
+      (item) => keyMethod(item, declaredLeft(item)),
+      (item) => keyMethod(item, declaredRight(item)),
     ),
     fieldMatches: matchObserved(
       left.result.fields,
       right.result.fields,
-      scope,
+      matchable,
       (a, b) =>
         matchFields(
           a,
           b,
-          left.result.metadata.status === "complete" &&
-            right.result.metadata.status === "complete",
+          scope.left.metadataComplete && scope.right.metadataComplete,
         ),
-      (item) => keyField(item, declaredLeft),
-      (item) => keyField(item, declaredRight),
+      (item) => keyField(item, declaredLeft(item)),
+      (item) => keyField(item, declaredRight(item)),
     ),
   };
 };

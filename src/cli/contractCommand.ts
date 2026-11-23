@@ -32,22 +32,23 @@ import {
   describeContractCommand,
   describeContractDocumentCommand,
   type CliDocumentProjection,
-  type DocumentContract,
-  type ContractCliDocumentDescription,
-  type CliContractProjection,
   describeOperationChoices,
-  type CliEvidenceDeliveryChoice,
-  type CliOptionShape,
-  type CliOptionValues,
-  type ContractCliDescription,
-  type ContractCliEvidenceTargets,
-  type ContractCliSessionTarget,
-  type ContractField,
-  type ProjectedContract,
-  type CliCheckedJsonInputs,
-  type CliJsonInputCheck,
   withoutDefault,
 } from "./contractCliDescription.js";
+import type {
+  DocumentContract,
+  CliContractProjection,
+  CliEvidenceDeliveryChoice,
+  CliOptionShape,
+  CliOptionValues,
+  ContractCliDescription,
+  ContractCliEvidenceTargets,
+  ContractCliSessionTarget,
+  ContractField,
+  ProjectedContract,
+  CliCheckedJsonInputs,
+  CliJsonInputCheck,
+} from "./contractCliDescriptionTypes.js";
 import {
   cliDeliveredEvidence,
   recordCliResultControls,
@@ -59,7 +60,6 @@ import {
   projectCliInputFields,
 } from "./projectCliAnalysisResult.js";
 import {
-  cliCommands,
   contractDescriptionOperations,
   distinctOperations,
   registerCliCommand,
@@ -216,13 +216,15 @@ const callerSpellings = (
  */
 export const inspectWithService =
   (
-    service: () => EvidenceInspectionService,
+    service: () =>
+      | EvidenceInspectionService
+      | Promise<EvidenceInspectionService>,
     providerId: string,
     primary = "path",
   ) =>
-  (input: unknown, context: ContractCommandContext) => {
+  async (input: unknown, context: ContractCommandContext) => {
     const spellings = callerSpellings(context, primary);
-    const owned = service();
+    const owned = await service();
     return finishCliEvidenceCommand(
       spellings.path,
       () => owned.inspect(input, { signal: context.signal }),
@@ -500,13 +502,18 @@ export const analyzeWithService =
  * path.
  */
 export const deliverWithService =
-  (service: () => EvidenceInspectionService, providerId: string) =>
-  (input: unknown, context: ContractCommandContext) => {
+  (
+    service: () =>
+      | EvidenceInspectionService
+      | Promise<EvidenceInspectionService>,
+    providerId: string,
+  ) =>
+  async (input: unknown, context: ContractCommandContext) => {
     const spellings = callerSpellings(context);
     const { delivery } = context;
     if (delivery === undefined)
       throw new Error(`${context.operation} does not declare evidenceDelivery`);
-    const owned = service();
+    const owned = await service();
     return deliverCliAnalysisEvidence({
       callerInputPath: spellings.path,
       ...(spellings.others === undefined
@@ -555,14 +562,6 @@ const commandPositionals = (
   ...description.parameters.filter(({ positional }) => positional),
   ...description.cliPositionals,
 ];
-
-/** Commands registered on this CLI through `registerContractCommand`. */
-export const contractCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "contract" ? [source.description] : [],
-  );
 
 const commandOptions = (description: ContractCliDescription): z.ZodType => {
   const object = z.object(
@@ -673,7 +672,7 @@ export const registerContractCommand = <
           logCliCommand(logger, description.command, async () => {
             const options = selected.admitDeliveryOptions(values);
             if (!options.ok) return projectAnalysisError(options.error);
-            const read = await readJsonInputs(selected, values, signal);
+            const read = await readJsonInputs(selected, options.value, signal);
             if (!read.ok) return read.error;
             const admitted = selected.admit(read.value);
             // Admission and handler issues alike name renamed fields by CLI key.
@@ -869,16 +868,85 @@ const commandShape = (description: ContractCliDescription) => ({
   ),
 });
 
-const schemaSignature = (schema: z.ZodType): string =>
-  JSON.stringify(z.toJSONSchema(schema, { unrepresentable: "any" }));
+const schemaSignatures = new WeakMap<z.ZodType, string>();
 
-/** Route descriptions of commands registered through `registerRoutedCommand`. */
-export const routedCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "routed" ? source.descriptions : [],
+const schemaSignature = (schema: z.ZodType): string => {
+  const cached = schemaSignatures.get(schema);
+  if (cached !== undefined) return cached;
+  const serialized = JSON.stringify(
+    z.toJSONSchema(schema, { unrepresentable: "any" }),
   );
+  schemaSignatures.set(schema, serialized);
+  return serialized;
+};
+
+const simpleSchemasIdentical = (left: z.ZodType, right: z.ZodType): boolean => {
+  if (left === right) return true;
+  if (
+    z.globalRegistry.get(left) !== undefined ||
+    z.globalRegistry.get(right) !== undefined
+  )
+    return false;
+  const leftDef = left._zod.def as unknown as Readonly<Record<string, unknown>>;
+  const rightDef = right._zod.def as unknown as Readonly<
+    Record<string, unknown>
+  >;
+  if (leftDef.type !== rightDef.type) return false;
+  switch (leftDef.type) {
+    case "boolean":
+    case "string":
+      return (
+        (leftDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined &&
+        (rightDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined
+      );
+    case "number":
+      return (
+        leftDef.format === undefined &&
+        rightDef.format === undefined &&
+        (leftDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined &&
+        (rightDef.checks as readonly unknown[] | undefined)?.length ===
+          undefined
+      );
+    case "literal": {
+      const leftValues = leftDef.values as readonly unknown[];
+      const rightValues = rightDef.values as readonly unknown[];
+      return (
+        leftValues.length === rightValues.length &&
+        leftValues.every((value, index) => Object.is(value, rightValues[index]))
+      );
+    }
+    case "enum": {
+      const leftEntries = Object.entries(
+        leftDef.entries as Record<string, string | number>,
+      );
+      const rightEntries = rightDef.entries as Record<string, string | number>;
+      return (
+        leftEntries.length === Object.keys(rightEntries).length &&
+        leftEntries.every(
+          ([key, value]) =>
+            Object.hasOwn(rightEntries, key) &&
+            Object.is(rightEntries[key], value),
+        )
+      );
+    }
+    case "optional":
+    case "nullable":
+    case "readonly":
+      return simpleSchemasIdentical(
+        leftDef.innerType as z.ZodType,
+        rightDef.innerType as z.ZodType,
+      );
+    default:
+      return false;
+  }
+};
+
+const schemasAgree = (left: z.ZodType, right: z.ZodType): boolean =>
+  simpleSchemasIdentical(left, right) ||
+  schemaSignature(left) === schemaSignature(right);
 
 /**
  * Register one CLI command whose input chooses the contract input it runs,
@@ -920,20 +988,18 @@ export const registerRoutedCommand = (
   const owners = new Map<string, CliCommandRoute>();
   for (const [index, shape] of shapes.entries()) {
     if (
-      shape.args.length !== args.length ||
-      shape.args.some(
-        ([key, schema], position) =>
-          key !== args[position]![0] ||
-          schemaSignature(schema) !== schemaSignature(args[position]![1]),
-      )
+      index > 0 &&
+      (shape.args.length !== args.length ||
+        shape.args.some(
+          ([key, schema], position) =>
+            key !== args[position]![0] ||
+            !schemasAgree(schema, args[position]![1]),
+        ))
     )
       throw new Error(`${name} routes take different arguments`);
     for (const [key, schema] of Object.entries(shape.options)) {
       const shared = options.get(key);
-      if (
-        shared !== undefined &&
-        schemaSignature(shared) !== schemaSignature(schema)
-      )
+      if (shared !== undefined && !schemasAgree(shared, schema))
         throw new Error(`${name} routes disagree on --${key}`);
       options.set(key, schema);
       owners.set(key, routes[index]!);
@@ -999,7 +1065,7 @@ export const registerRoutedCommand = (
             if (!options.ok) return projectAnalysisError(options.error);
             const read = await readJsonInputs(
               description,
-              shared.value,
+              options.value,
               signal,
               ownJsonInputs(description, sharedJson),
             );
@@ -1115,14 +1181,6 @@ export interface ContractDocumentContext<
    */
   readonly opening: Readonly<Record<string, unknown>>;
 }
-
-/** Commands registered on this CLI through `registerContractDocumentCommand`. */
-export const contractDocumentCommandDescriptions = (
-  cli: CliInstance,
-): readonly ContractCliDocumentDescription[] =>
-  cliCommands(cli).flatMap(({ source }) =>
-    source.kind === "document" ? [source.description] : [],
-  );
 
 /**
  * A document field the projection omits or takes as an option is refused

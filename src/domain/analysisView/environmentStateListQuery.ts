@@ -538,7 +538,8 @@ const mergeRoles = (
         ]);
       continue;
     }
-    if (active.every((role) => JSON.stringify(role) === JSON.stringify(first)))
+    const firstJson = JSON.stringify(first);
+    if (active.every((role) => JSON.stringify(role) === firstJson))
       merged.push([name, first!]);
   }
   return Object.fromEntries(merged);

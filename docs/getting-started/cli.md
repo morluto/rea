@@ -55,6 +55,14 @@ relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
 is supported by the command.
 
+For a numeric option whose `--schema` also accepts decimal strings, the string
+branch carries the same numeric range as the integer branch, so a client that
+validates raw argv text rejects out-of-range tokens. Leading zeros remain
+decimal: `--row-limit=0001` means one row, while `--row-limit=0` is invalid. A
+lower bound is still published when the option has no upper bound, so only the
+ceiling stays open. Refinements that are not a range, such as requiring a
+power-of-two entropy block size, stay parser-only.
+
 For example, a 334 MB Obsidian application Evidence file yields a summary view
 of about 10 KB. Replace the view with
 `{"kind": "page", "collection": "modules", "offset": 0, "limit": 32}` for a
@@ -374,6 +382,16 @@ rea extract-artifact ./firmware.bin --json
 See [U-Boot uImage](../uimage.md) for verified CRCs, physical component ranges,
 unknown names, resource limits and retained views. Compressed bytes stay stored.
 
+Inspect an Android A/B OTA `payload.bin` (CrAU v2) without applying the update:
+
+```sh
+rea inspect-artifact ./payload.bin --detail summary --evidence_output payload.json --json
+rea extract-artifact ./payload.bin --json
+```
+
+See [Android OTA update payloads](../guides/firmware/android-ota-payload.md) for manifest
+facts, signature counting, REPLACE/ZERO reconstruction and delta limits.
+
 `inspect-artifact` and `extract-artifact` also read ZIP members compressed with
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
@@ -382,6 +400,13 @@ reported as a resource limit (`reason: limit`, `boundary: memory`), rather than
 as archive corruption. The cap cannot be raised at runtime: recompress with a
 window of at most 128 MiB, or decompress externally before retrying.
 Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+
+Extraction verifies each written file before publishing the output. REA syncs
+the file, reopens it, and checks its size and SHA-256 against the bytes it wrote.
+Each file adds filesystem work, so archives with many small files can take
+longer to extract even when their total size is modest. If you only need the
+archive inventory, run `rea inspect-artifact <path> --json` to get it without
+writing an extracted tree.
 
 Inventory and extract UF2 or DfuSe regions:
 
@@ -402,6 +427,17 @@ rea extract-artifact ./boot.itb --json
 
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
+
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
 
 Inspect local model declarations without loading weights:
 
@@ -487,8 +523,8 @@ Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 rea inspect-elf-notes /absolute/path/to/program --json
 ```
 
-The workflow reports note owners, types, descriptor hashes, and GNU build-id
-or ABI-tag fields when those descriptors match. A missing note table is
+The workflow reports note owners, types, descriptor hashes, and supported
+GNU, Linux CORE, Android, and FDO metadata fields. A missing note table is
 observed absence of those declarations. See [ELF note tables](../elf-notes.md).
 
 Inspect DWARF compile units without executing the image:
@@ -619,6 +655,30 @@ The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](../erlang-beam.md).
 
+Inspect a Maven POM or Gradle module-metadata file without running Maven or
+Gradle, resolving a tree, or contacting a repository:
+
+```bash
+rea inspect-maven-gradle-metadata /absolute/path/to/pom.xml --json
+rea inspect-maven-gradle-metadata /absolute/path/to/demo-1.2.3.module --json
+```
+
+The workflow reports coordinates as spelled, dependency and
+dependencyManagement rows, BOM or platform notes, Gradle variants, and
+unresolved property or parent references. See
+[Maven POM and Gradle module metadata](../maven-gradle-metadata.md).
+
+Inspect a NuGet `.nupkg` without restoring the package or contacting a feed:
+
+```bash
+rea inspect-nuget-nupkg /absolute/path/to/Demo.Package.1.2.3.nupkg --json
+```
+
+The workflow reports package identity, license and repository fields as present,
+dependency groups with version ranges, and a ZIP contents inventory with
+path-derived folder roles. Missing or malformed `.nuspec` members still return
+the inventory with limitations. See [NuGet packages](../guides/managed/nuget-nupkg.md).
+
 Complete `rea decompile --json` Evidence can be saved and inspected through
 `inspect-analysis-view` with an inline source and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
@@ -704,7 +764,9 @@ entries record a refused kind, format, architecture, or role. An availability-on
 message describes the recorded rejections without claiming that every provider
 is unconfigured or that target support is known.
 For Hopper, Ghidra, IDA, JADX, and Kuna, run
-`rea doctor --provider ID --json` to diagnose the selected engine. Other adapters,
+`rea doctor --provider ID --json` to diagnose the selected engine;
+`--provider desktop_build` checks the desktop application build host instead of
+an analysis engine. Other adapters,
 such as `pwntools-elf`, report their configuration requirements directly and are
 not accepted by `doctor --provider`. See
 [task readiness](installation.md#check-readiness-for-your-task) and
@@ -865,6 +927,16 @@ the original observation through `evidence_links` and reports that the
 provider was not rerun. The original and its available source records remain
 in the investigation bundle.
 
+### Use snapshot Evidence in file-based workflows
+
+Open the matching target with the saved provider and analysis profile, supplying
+the snapshot as `snapshot_path` to `open_binary`. Then call
+`export_evidence_bundle` in that MCP session. Use the resulting standalone
+Evidence bundle with file-based comparison or inspection. When a reader
+recognizes a snapshot in an Evidence file slot, its diagnostic identifies
+the observed artifact kind. Restoring the snapshot validates its contents and
+checks its binding to the target, provider and profile.
+
 ## Import, export and compare Evidence
 
 Evidence records retain artifact identity, source locations, observations,
@@ -892,6 +964,10 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
+If a selected file looks like an analysis snapshot, comparison reports the
+wrong artifact kind. Follow the [snapshot Evidence workflow](#use-snapshot-evidence-in-file-based-workflows)
+to export its Evidence for comparison.
+
 `--record_pairs` accepts an inline JSON array or the path to a local JSON
 file containing that array, matching MCP `compare_bundles.record_pairs`. For a
 file, use `rea compare left.json right.json --record_pairs pairs.json --json`.
@@ -900,6 +976,20 @@ one-sided membership remains unknown; REA does not infer correspondence from
 position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
+
+To discover records in a saved bundle without returning their payloads, page
+its metadata with `inspect-evidence-bundle`:
+
+```bash
+rea inspect-evidence-bundle '{"path":"/absolute/path/to/evidence/bundle.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --json
+```
+
+For paging defaults, continuation, ordering and counts, see the
+[retained Evidence discovery contract](../reference/mcp-contracts.md#tool-results).
+Use a discovered `evidence_id` with `detail: "records"` to read that complete
+record, or with `inspect-analysis-view` for a supported projection. The command
+still reads and authenticates the complete selected bundle before producing the
+metadata page.
 
 Atomic Evidence output stages on the selected destination's filesystem. If the
 OS pathname ceiling prevents its internal staging name, REA retries in a shorter
@@ -942,6 +1032,10 @@ The JSON workflow commands supporting this option are:
 For `inspect-analysis-view`, the request's source reference selects a parent
 from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
+An `evidence-file` source accepts a standalone Evidence record or a bundle.
+When either file input resembles an analysis snapshot, the error identifies
+the snapshot. Follow the [snapshot Evidence workflow](#use-snapshot-evidence-in-file-based-workflows)
+to export session Evidence.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
 `compare-managed-members` keeps its two assembly paths and the
@@ -1435,7 +1529,20 @@ descendants in other process groups that inherited its run token. If that
 cleanup cannot be confirmed, the report keeps its earlier checks and adds a
 failed `cleanup` check with the reason and retained run identifier.
 
-The default terminal format is TOON. Use `--json` when saving results for a
+The default terminal format is TOON. Complete TOON results are validated
+before stdout receives the document. Large results use a private file in the
+system temporary directory until delivery finishes and need free space there.
+If closing or removing that stage fails, CLI shutdown retains and retries its
+cleanup in order. The reported cleanup failure preserves any original formatting
+or temporary-storage refusal. SIGINT/SIGTERM remain owned through staging,
+delivery and cleanup: pending I/O settles before further writes stop and the
+stage is removed.
+A document can exceed the runtime's string limit when each encoded line fits.
+Staging limits the encoded text kept in memory. The TOON encoder still
+normalizes the input tree before yielding lines, so working memory also
+depends on the size of the input and the longest encoded line.
+Token counting and token windows still require a complete formatted string.
+Use `--json` to stream the result without TOON staging or to save it for a
 JSON consumer. Valued output flags (`--format`, `--filter-output`,
 `--token-limit`, `--token-offset`) accept `--flag value` or `--flag=value`; a
 missing value fails with `MISSING_OUTPUT_VALUE` before the command runs.

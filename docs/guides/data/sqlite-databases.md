@@ -95,14 +95,19 @@ the selected limit, returned count and whether more rows were observed.
 Rows are read in a stated unique order reported as `rows.order`: `rowid` for
 rowid tables, and `primary_key` for `WITHOUT ROWID` tables, reusing the
 primary-key index's own direction and declared collation. `rows.row_offset`
-reports the rows skipped before the window and `rows.next_row_offset` the offset
-to request for the following page; it is `null` once the window reaches the end.
-Pass `row_offset` (CLI `--row-offset`, requires `table`, default 0) to skip into
-a table rather than repeating earlier rows. A table that declares all of
-`rowid`, `_rowid_` and `oid` as columns and has no primary key reports
-`order: "unspecified"` and refuses a non-zero `row_offset`, because the skipped
-prefix would be arbitrary. Pages compose only while the reported database and
-WAL SHA-256 match; re-inspecting a changed snapshot restarts the sequence.
+reports the rows skipped before the window. Pass `rows.next_row_offset` as the
+next `row_offset` (CLI `--row-offset`, requires `table`, default 0) to continue
+an ordered sample. A `null` next offset means there is no next page. Check
+`rows.truncated` to distinguish an exhausted window from an unordered sample
+with more rows. If columns shadow all three
+built-in names (`rowid`, `_rowid_`, and `oid`), REA can use a declared
+[`INTEGER PRIMARY KEY` rowid alias](https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key),
+even when that column is outside the requested projection. A separately
+indexed key, including inline `INTEGER PRIMARY KEY DESC`, does not name the
+rowid. With no usable order, the first sample reports `order: "unspecified"`
+and a non-zero `row_offset` is refused. Pages compose only while the reported
+database and WAL SHA-256 match; re-inspecting a changed snapshot restarts the
+sequence.
 View, virtual-table and shadow-table row reads are unsupported.
 
 SQLite integers are decimal strings so every signed 64-bit value survives JSON

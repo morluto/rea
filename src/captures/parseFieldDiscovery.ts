@@ -51,9 +51,9 @@ export const parseFieldDiscovery = (
     )
       continue;
     if (
-      ![name, abbreviation, ...(tag === "F" ? [columns[7] ?? ""] : [])].some(
-        matches,
-      )
+      !matches(name) &&
+      !matches(abbreviation) &&
+      (tag !== "F" || !matches(columns[7] ?? ""))
     )
       continue;
     matching++;

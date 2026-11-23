@@ -37,7 +37,8 @@ const HOPPER_CLASSIFICATIONS = {
 const hopperRemoteClassification = (
   diagnosticType: HopperDiagnosticType,
 ): AnalysisErrorClassification =>
-  diagnosticType === "invalid_request"
+  diagnosticType === "invalid_request" ||
+  diagnosticType === "selector_not_found"
     ? { code: "invalid_request", category: "invalid_input" }
     : {
         code: "execution_failure",
@@ -93,11 +94,13 @@ const RESTART_UNREACHABLE_HOPPER = `${RESTART_OWNED_PROVIDER} close_binary prese
 const RERUN_HOPPER_INVOCATION =
   "Review the reported Hopper state and resolve any incomplete cleanup before rerunning the command.";
 
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE =
-  "macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the com.apple.security.automation.apple-events entitlement before macOS will prompt for permission.";
+/** Hardened-runtime entitlement macOS requires before an Apple Events prompt. */
+const HOPPER_APPLE_EVENTS_ENTITLEMENT_ID =
+  "com.apple.security.automation.apple-events" as const;
 
-const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION =
-  "Allow the application that starts REA under System Settings > Privacy & Security > Automation. If the client lacks the com.apple.security.automation.apple-events entitlement, ask the client developer to add it or start REA from a client macOS can authorize, such as Terminal. Retrying from the same unauthorized client will not succeed until authorization changes.";
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_MESSAGE = `macOS denied permission to send Apple Events to Hopper. A hardened-runtime application starting REA requires the ${HOPPER_APPLE_EVENTS_ENTITLEMENT_ID} entitlement before macOS will prompt for permission.`;
+
+const HOPPER_APPLE_EVENTS_AUTHORIZATION_REMEDIATION = `Allow the application that macOS identifies as responsible for REA under System Settings > Privacy & Security > Automation. Some MCP clients, including Claude Desktop, disclaim responsibility so macOS attributes the request to the REA runtime (such as node), which cannot be authorized by changing the client's Automation setting. In that case start REA from a client macOS can authorize, such as Claude Code or Terminal. If the responsible client lacks the ${HOPPER_APPLE_EVENTS_ENTITLEMENT_ID} entitlement, ask its developer to add it. Retrying from the same unauthorized client will not succeed until authorization changes.`;
 
 export class HopperTimeoutError extends HopperError {
   readonly _tag = providerErrorTag("HopperTimeoutError");
@@ -237,12 +240,16 @@ export class HopperProtocolError extends HopperError {
   }
 }
 
-export type HopperDiagnosticType =
-  | "remote"
-  | "authorization"
-  | "invalid_request"
-  | "capability_unavailable"
-  | "bridge_exception";
+export const HOPPER_DIAGNOSTIC_TYPES = [
+  "remote",
+  "authorization",
+  "invalid_request",
+  "selector_not_found",
+  "capability_unavailable",
+  "bridge_exception",
+] as const;
+
+export type HopperDiagnosticType = (typeof HOPPER_DIAGNOSTIC_TYPES)[number];
 
 /** Hopper's JSON-RPC endpoint returned an expected remote error response. */
 export interface HopperRemoteErrorContext extends AnalysisErrorOptions {
@@ -286,17 +293,28 @@ export class HopperRemoteError extends HopperError {
   }
 
   override ownPresentation(): AnalysisErrorOwnPresentation {
+    const lookupMiss = this.diagnosticType === "selector_not_found";
     return {
       ...hopperRemoteClassification(this.diagnosticType),
       message: `Hopper ${this.operation ?? "analysis"} failed (${String(this.code)}, ${this.diagnosticType}): ${this.safeMessage}`,
-      remediation:
-        this.diagnosticType === "invalid_request"
+      remediation: lookupMiss
+        ? "Choose an observed name or address from the current Hopper document. For procedures, use CLI rea search <path> . --kind procedures --mode regex --provider hopper or MCP list_procedures. For other symbols, use list_names."
+        : this.diagnosticType === "invalid_request"
           ? "Correct the reported address, document, or arguments and retry."
           : "Review the Hopper diagnostic details and correct the request or target; run `rea doctor` if the provider itself is failing. Repeating the unchanged request is not expected to succeed.",
       details: {
         stage: "analysis",
         provider_code: this.code,
         diagnostic_type: this.diagnosticType,
+        ...(lookupMiss
+          ? {
+              related_operations: [
+                "list_procedures",
+                "search_procedures",
+                "list_names",
+              ],
+            }
+          : {}),
         ...(this.operation === undefined ? {} : { operation: this.operation }),
         ...(this.requestId === undefined ? {} : { request_id: this.requestId }),
       },
@@ -487,13 +505,43 @@ export type HopperLaunchRejection =
   | {
       /**
        * macOS refused the launcher's Apple Event. The helper's stderr does not
-       * show whether the responsible client lacks an Automation grant or the
-       * hardened-runtime Apple Events entitlement. Another launch from that
-       * same client cannot succeed until authorization changes.
+       * show whether the responsible client lacks an Automation grant, lacks
+       * the hardened-runtime Apple Events entitlement, or disclaimed TCC
+       * responsibility so macOS attributed the event to the REA runtime.
+       * Another launch from that same client cannot succeed until
+       * authorization changes.
        */
       readonly boundary: "apple_events_authorization";
       readonly reason: "not_authorized";
+      /**
+       * The helper did not observe which process is responsible. Recovery
+       * covers an authorizable client and a client that disclaims TCC
+       * responsibility.
+       */
+      readonly responsibility: "client_or_disclaimed_runtime";
+      /** System Settings > Privacy & Security > Automation. */
+      readonly settings_pane: "privacy_security_automation";
+      /**
+       * Entitlement a hardened-runtime responsible process needs before macOS
+       * prompts.
+       */
+      readonly entitlement_id: typeof HOPPER_APPLE_EVENTS_ENTITLEMENT_ID;
     };
+
+/**
+ * The one Apple Events denial REA can recognize. The helper does not identify
+ * the responsible process, so these facts stay constant for that denial.
+ */
+export const hopperAppleEventsAuthorizationRejection = {
+  boundary: "apple_events_authorization",
+  reason: "not_authorized",
+  responsibility: "client_or_disclaimed_runtime",
+  settings_pane: "privacy_security_automation",
+  entitlement_id: HOPPER_APPLE_EVENTS_ENTITLEMENT_ID,
+} as const satisfies Extract<
+  HopperLaunchRejection,
+  { readonly boundary: "apple_events_authorization" }
+>;
 
 /** Recognize the Apple Events refusal that the same client cannot retry. */
 export const hopperAppleEventsAuthorizationDenied = (
@@ -563,14 +611,6 @@ export class HopperStartError extends HopperError {
   }
 }
 
-const HOPPER_DIAGNOSTIC_TYPES = {
-  remote: true,
-  authorization: true,
-  invalid_request: true,
-  capability_unavailable: true,
-  bridge_exception: true,
-} as const satisfies Record<HopperDiagnosticType, true>;
-
 /** Hopper's rows in the generated error catalogue. */
 export const hopperErrorCatalogue =
   (): readonly AnalysisErrorCatalogueEntry[] => [
@@ -589,11 +629,11 @@ export const hopperErrorCatalogue =
       "",
       HOPPER_CLASSIFICATIONS.protocol,
     ),
-    ...Object.keys(HOPPER_DIAGNOSTIC_TYPES).map((diagnosticType) =>
+    ...HOPPER_DIAGNOSTIC_TYPES.map((diagnosticType) =>
       catalogueRow(
         providerErrorTag("HopperRemoteError"),
         `diagnostic_type=${diagnosticType}`,
-        hopperRemoteClassification(diagnosticType as HopperDiagnosticType),
+        hopperRemoteClassification(diagnosticType),
       ),
     ),
     catalogueRow(

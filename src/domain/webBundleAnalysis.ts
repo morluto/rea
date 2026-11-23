@@ -310,6 +310,10 @@ const findingSchema = z.object({
   value: z.string(),
   mechanism: z.string(),
   location: sourceLocationSchema,
+  /** Present only when the same finding was merged across scripts. */
+  occurrences: z.int().min(1).exactOptional(),
+  /** Script keys that contained the finding, in first-occurrence order. */
+  script_keys: z.array(z.string()).exactOptional(),
 });
 
 const originalSourceSchema = z.object({
@@ -354,7 +358,7 @@ const responseIdentitySchema = z.object({
   representation: z.literal("fetch-response-body-bytes"),
 });
 
-const sourceMapSchema = z.union([
+const sourceMapSchema = z.discriminatedUnion("status", [
   z.object({
     ...sourceMapContextShape,
     ...parsedSourceMapShape,

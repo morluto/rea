@@ -4,13 +4,12 @@ import assert from "node:assert/strict";
 import {
   requireMcpOperationResult,
   requireMcpOutput,
+  requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
@@ -24,6 +23,7 @@ import {
   completeVerifierRun,
 } from "./lib/verifier-run.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import {
   VerifierFixture,
   withVerifierFixture,
@@ -93,6 +93,8 @@ const expected = {
   near: address(fixture.near_offset),
   far: address(fixture.far_offset),
 };
+// The CLI shares one command owner, created before the lane starts a tool.
+const commands = await createVerifierCommands();
 const transport = new StdioClientTransport({
   command: process.execPath,
   args: [entrypoint, "mcp"],
@@ -123,12 +125,11 @@ workspaceFixture.releaseAfter(async () => {
     "Owned Ghidra runtime survived close",
   );
   verifierRun = await completeVerifierRun(run);
-  if (process.platform !== "win32") {
-    assert.equal(verifierRun.process_lineage.status, "verified");
-    assert.deepEqual(verifierRun.process_lineage.descendants, []);
-  }
+  // Windows has no retained Job Object lease, so lineage observation is unavailable.
+  if (!windows) assertVerifierCleanupComplete(verifierRun.process_lineage);
 });
 await withVerifierFixture(workspaceFixture, async () => {
+  let failure;
   try {
     await client.connect(transport);
     connected = true;
@@ -227,7 +228,23 @@ await withVerifierFixture(workspaceFixture, async () => {
       name: "address_to_file_offset",
       arguments: { address: "0x80000" },
     });
-    assert.equal(noSource.isError, true);
+    // address_unmapped is a well-formed address with no memory block.
+    const noSourceError = requireMcpToolError(noSource);
+    assert.partialDeepStrictEqual(noSourceError, {
+      code: "invalid_request",
+      details: {
+        operation: "address_to_file_offset",
+        related_operations: ["inspect_native_load_image"],
+        issues: [
+          {
+            path: ["address"],
+            reason: "invalid_value",
+            observed: { address: "0x80000", file_mapping: "unmapped" },
+          },
+        ],
+        diagnostics: { remote_code: "address_unmapped" },
+      },
+    });
     const procedures = await call("list_procedures");
     assert.ok(
       Array.isArray(procedures),
@@ -527,13 +544,30 @@ await withVerifierFixture(workspaceFixture, async () => {
   } catch (error) {
     if (stderr.trim())
       process.stderr.write(`DOS verifier MCP diagnostics:\n${stderr}\n`);
-    throw error;
+    failure = error;
+  } finally {
+    try {
+      await workspaceFixture.closeEarly([() => commands.close()]);
+    } catch (cause) {
+      failure =
+        failure === undefined
+          ? cause
+          : new AggregateError(
+              [failure, cause],
+              "DOS verification and command cleanup both failed",
+            );
+    }
+  }
+  if (failure !== undefined) {
+    workspaceFixture.retain(
+      `DOS verification failed; retained workspace: ${workspace}`,
+    );
+    throw failure;
   }
 });
 assert.ok(report, "No DOS proof report was produced");
 verifierRun = await completeVerifierRun(run);
-// Windows provider jobs are verified by their native owners, as in the 6502 lane.
-if (!windows) assertVerifierCleanupComplete(verifierRun.process_lineage);
+// The release already required a verified lineage. This later observation is the report.
 process.stdout.write(
   `${JSON.stringify({ verifier_run: verifierRun, ...report, cleanup: "complete" })}\n`,
 );
@@ -610,7 +644,7 @@ async function evidenceCall(name, arguments_) {
   return evidence;
 }
 async function cliEvidence(command, procedure, options = []) {
-  const { stdout } = await promisify(execFile)(
+  const { stdout } = await commands.exec(
     process.execPath,
     [
       entrypoint,

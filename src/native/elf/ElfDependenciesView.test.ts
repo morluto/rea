@@ -1,7 +1,6 @@
 import { expect, it } from "vitest";
 import { readElfDependenciesSteps } from "./ElfDependencyParser.js";
 import { elfDependencyFixture } from "./ElfDependencies.fixture.js";
-import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { digestCanonicalValue } from "../../domain/canonicalDigest.js";
 import { projectAnalysisView } from "../../domain/analysisView/analysisView.js";
 import type { AnalysisViewParent } from "../../domain/analysisView/analysisViewParent.js";
@@ -86,7 +85,7 @@ it("pages GNU version requirements independently of definition rows", () => {
     project(report, {
       kind: "elf-dependencies",
       collection: "versions",
-      names: ["GLIBC_2.34"],
+      names: ["GLIBC_2.34", "GLIBCXX_3.4.29"],
       fields: ["file", "name", "index"],
     }),
   ).toMatchObject({
@@ -97,8 +96,15 @@ it("pages GNU version requirements independently of definition rows", () => {
         name: "GLIBC_2.34",
         index: 3,
       },
+      {
+        source_index: 2,
+        file: "libstdc++.so.6",
+        name: "GLIBCXX_3.4.29",
+        index: 4,
+      },
     ],
-    coverage: { total: 1 },
+    dependencies: { version_count: 3 },
+    coverage: { total: 2 },
   });
 });
 
@@ -128,7 +134,6 @@ it("keeps import library@version identity through selected fields", () => {
 
 it("returns a summary without row bodies and a stable view digest", () => {
   const report = reportOf();
-  freezeJsonSnapshot(report);
   const viewed = project(report, { kind: "summary" });
   expect(viewed).toMatchObject({
     kind: "summary",
@@ -136,26 +141,28 @@ it("returns a summary without row bodies and a stable view digest", () => {
     summary: {
       needed_count: 3,
       import_count: 5,
+      version_count: 3,
+      version_definitions: { status: "present" },
+      definition_count: 1,
+      derived_maximum_count: 2,
       coverage: { status: "complete" },
     },
   });
-  expect(viewed).not.toHaveProperty("items");
+  for (const omitted of [
+    "items",
+    "summary.needed",
+    "summary.imports",
+    "summary.version_requirements",
+    "summary.derived_version_maxima",
+    "summary.version_definitions.names",
+  ])
+    expect(viewed).not.toHaveProperty(omitted);
   const { view_digest, ...content } = viewed;
   expect(view_digest).toBe(digestCanonicalValue(content, "Analysis view"));
 });
 
 it("pages version definitions and derived maxima instead of repeating them", () => {
   const report = reportOf();
-  const summary = project(report, { kind: "summary" });
-  expect(summary).toMatchObject({
-    summary: {
-      version_definitions: { status: "present" },
-      definition_count: report.version_definitions.names.length,
-      derived_maximum_count: report.derived_version_maxima.length,
-    },
-  });
-  expect(summary).not.toHaveProperty("summary.derived_version_maxima");
-  expect(summary).not.toHaveProperty("summary.version_definitions.names");
   expect(
     project(report, {
       kind: "elf-dependencies",

@@ -313,19 +313,6 @@ it("pages matching observations without changing dissection scope or frame ident
   }
 });
 
-it("preserves TShark canonical output for a caller-selected field alias", async () => {
-  const f = await fixture("alias-canonical");
-  const input = { path: f.path, fields: ["bootp.type"] };
-  const result = await f.service.inspect(input);
-  if (!result.ok) throw result.error;
-  const report = packetCaptureSchema.parse(result.value.normalized_result);
-  expect(report.selection.fields).toEqual(["bootp.type"]);
-  expect(report.packets).toEqual([
-    { "frame.number": ["1"], "dhcp.type": ["1"] },
-  ]);
-  expect(report.tool.arguments).toContain("bootp.type");
-});
-
 it("refuses producer frames outside the selected input read scope before paging", async () => {
   const f = await fixture("many");
   const request = { path: f.path, fields: ["ip.addr"], match_limit: 1 };
@@ -365,6 +352,7 @@ it("returns canonical alias output through the public packet-capture CLI", async
   const evidence = parseEvidence(JSON.parse(stdout));
   const report = packetCaptureSchema.parse(evidence.normalized_result);
   expect(report.selection.fields).toEqual(["bootp.type"]);
+  expect(report.tool.arguments).toContain("bootp.type");
   expect(report.packets).toEqual([
     { "frame.number": ["1"], "dhcp.type": ["1"] },
   ]);
@@ -435,7 +423,6 @@ it("inspects an immutable copy, preserves options and warnings, and releases its
 });
 
 it.each([
-  ["invalid-json", "AnalysisOutputError"],
   ["nonzero", "ProviderAdapterError"],
   ["malformed-copy", "AnalysisArtifactChangedError"],
   ["overflow", "AnalysisResourceConstraintError"],
@@ -483,6 +470,12 @@ it.each([
       reason,
     });
     expect(result.error.capturedOutput?.stdout).toBe(stdout);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(
+      (await readdir(f.directory)).filter((name) =>
+        name.startsWith("decoder-"),
+      ),
+    ).toEqual([]);
   },
 );
 

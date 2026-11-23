@@ -1,31 +1,39 @@
 import { expect, it, vi } from "vitest";
 
-import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
+import {
+  startFakeCdpBrowser,
+  type FakeOptions,
+} from "../../tests/fixtures/fakeCdpBrowser.js";
 import { CdpConnection } from "./CdpConnection.js";
 import { PlaywrightScenarioServiceWorkers } from "./PlaywrightScenarioServiceWorkers.js";
 
-it.each(["duplicate", "malformed duplicates", "missing"])(
-  "releases an opened browser socket before rejecting service-worker target discovery: %s",
-  async (kind) => {
+it.each([
+  {
+    kind: "duplicate",
+    targetInfos: [
+      { targetId: "target", type: "page", url: "https://allowed.test/" },
+      { targetId: "target", type: "page", url: 42 },
+    ],
+  },
+  {
+    kind: "malformed duplicates",
+    targetInfos: [
+      { targetId: "target", type: "page" },
+      { targetId: "target", type: "page", url: 42 },
+    ],
+  },
+  { kind: "missing", targetInfos: [] },
+  {
+    kind: "duplicates with unconfirmed cleanup",
+    targetInfos: [{ targetId: "target" }, { targetId: "target" }],
+    refuseClose: true,
+  },
+])(
+  "rejects $kind before attachment and releases the discovery socket",
+  async ({ kind, targetInfos, refuseClose }) => {
     const browser = await startFakeCdpBrowser({
       commandResult: ({ method }) =>
-        method === "Target.getTargets"
-          ? {
-              targetInfos:
-                kind === "missing"
-                  ? []
-                  : [
-                      {
-                        targetId: "target",
-                        type: "page",
-                        ...(kind === "duplicate"
-                          ? { url: "https://allowed.test/" }
-                          : {}),
-                      },
-                      { targetId: "target", type: "page", url: 42 },
-                    ],
-            }
-          : undefined,
+        method === "Target.getTargets" ? { targetInfos } : undefined,
     });
     const policy = new PlaywrightScenarioServiceWorkers(
       {
@@ -38,88 +46,78 @@ it.each(["duplicate", "malformed duplicates", "missing"])(
       browser.browserWebSocketUrl,
       "target",
     );
+    const close = refuseClose
+      ? vi
+          .spyOn(CdpConnection.prototype, "close")
+          .mockRejectedValueOnce(new Error("socket close failed"))
+      : undefined;
+    const discoveryFailure =
+      kind === "missing"
+        ? { reason: "target_not_found" }
+        : {
+            reason: "invalid_endpoint_response",
+            detail: expect.stringContaining("ambiguous"),
+          };
     try {
-      await expect(policy.initialize()).rejects.toMatchObject({
-        reason:
-          kind === "missing" ? "target_not_found" : "invalid_endpoint_response",
-        ...(kind === "missing"
-          ? {}
-          : { detail: expect.stringContaining("ambiguous") }),
-      });
+      const failure = await policy
+        .initialize()
+        .catch((cause: unknown) => cause);
+      if (refuseClose) {
+        expect(failure).toMatchObject({
+          cleanupIncomplete: true,
+          cleanupPrimary: discoveryFailure,
+        });
+        expect(browser.activeConnectionCount()).toBe(1);
+        await policy.close();
+        expect(failure).toMatchObject({ cleanupIncomplete: false });
+      } else {
+        expect(failure).toMatchObject(discoveryFailure);
+      }
       await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-      await policy.close();
       expect(browser.commands.map(({ method }) => method)).toEqual([
         "Browser.getVersion",
         "Target.getTargets",
       ]);
     } finally {
-      await policy.close();
-      await browser.close();
+      close?.mockRestore();
+      await policy.close().finally(() => browser.close());
     }
   },
 );
 
-it("retains ownership and retries socket cleanup after ambiguous service-worker discovery", async () => {
+const startPolicyFixture = async (
+  wire: Pick<FakeOptions, "commandEvents" | "eventsBeforeReply"> = {},
+) => {
   const browser = await startFakeCdpBrowser({
-    commandResult: ({ method }) =>
-      method === "Target.getTargets"
-        ? { targetInfos: [{ targetId: "target" }, { targetId: "target" }] }
-        : undefined,
-  });
-  const policy = new PlaywrightScenarioServiceWorkers(
-    {
-      frames: () => [],
-      isClosed: () => false,
-      mainFrame: () => {
-        throw new Error("No frame mutation expected");
-      },
+    ...wire,
+    commandResult: ({ method }) => {
+      switch (method) {
+        case "Page.addScriptToEvaluateOnNewDocument":
+          return { identifier: "policy-script" };
+        case "Runtime.evaluate":
+          return { result: { type: "object", value: null } };
+        case "Target.setAutoAttach":
+        case "Page.removeScriptToEvaluateOnNewDocument":
+          return {};
+        default:
+          return undefined;
+      }
     },
-    browser.browserWebSocketUrl,
-    "target",
-  );
-  const cleanupFailure = new Error("socket close failed");
-  const close = vi
-    .spyOn(CdpConnection.prototype, "close")
-    .mockRejectedValueOnce(cleanupFailure);
-  try {
-    await expect(policy.initialize()).rejects.toMatchObject({
-      cleanupIncomplete: true,
-    });
-    await policy.close();
-    expect(close).toHaveBeenCalledTimes(2);
-    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
-    expect(browser.commands.map(({ method }) => method)).toEqual([
-      "Browser.getVersion",
-      "Target.getTargets",
-    ]);
-  } finally {
-    close.mockRestore();
-    await policy.close();
-    await browser.close();
-  }
-});
-
-it("reports a malformed target event the policy listener rejected at the next policy check", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandResult: ({ method }) =>
-      method === "Page.addScriptToEvaluateOnNewDocument"
-        ? { identifier: "policy-script" }
-        : method === "Runtime.evaluate"
-          ? { result: { type: "object", value: null } }
-          : method === "Target.setAutoAttach" ||
-              method === "Page.removeScriptToEvaluateOnNewDocument"
-            ? {}
-            : undefined,
   });
   const policy = new PlaywrightScenarioServiceWorkers(
     {
       frames: () => [],
       isClosed: () => false,
-      mainFrame: () => ({}) as never,
+      mainFrame: () => ({ evaluate: async () => null }) as never,
     },
     browser.browserWebSocketUrl,
     "allowed-page",
   );
+  return { browser, policy };
+};
+
+it("reports a malformed target event the policy listener rejected at the next policy check", async () => {
+  const { browser, policy } = await startPolicyFixture();
   try {
     await policy.initialize();
     await policy.assertBlocked();
@@ -137,15 +135,17 @@ it("reports a malformed target event the policy listener rejected at the next po
         reason: "protocol_error",
         cause: expect.objectContaining({ reason: "protocol_error" }),
       });
-    // Cleanup still runs on the failed connection in its grace period.
+    // The failed connection remains available to remove future installation
+    // before restoring the current realm and detaching.
+    const beforeClose = browser.commands.length;
     await policy.close();
-    expect(browser.commands.map(({ method }) => method)).toEqual(
-      expect.arrayContaining([
-        "Page.removeScriptToEvaluateOnNewDocument",
-        "Runtime.evaluate",
-        "Target.detachFromTarget",
-      ]),
-    );
+    expect(
+      browser.commands.slice(beforeClose).map(({ method }) => method),
+    ).toEqual([
+      "Page.removeScriptToEvaluateOnNewDocument",
+      "Runtime.evaluate",
+      "Target.detachFromTarget",
+    ]);
     await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   } finally {
     await policy.close().catch(() => undefined);
@@ -159,23 +159,7 @@ it("reports a malformed target event the policy listener rejected at the next po
 it.each(["the policy session detaches", "the policy socket closes"] as const)(
   "reports a lost policy connection as soon as %s",
   async (loss) => {
-    const browser = await startFakeCdpBrowser({
-      commandResult: ({ method }) =>
-        method === "Page.addScriptToEvaluateOnNewDocument"
-          ? { identifier: "policy-script" }
-          : method === "Target.setAutoAttach"
-            ? {}
-            : undefined,
-    });
-    const policy = new PlaywrightScenarioServiceWorkers(
-      {
-        frames: () => [],
-        isClosed: () => false,
-        mainFrame: () => ({}) as never,
-      },
-      browser.browserWebSocketUrl,
-      "allowed-page",
-    );
+    const { browser, policy } = await startPolicyFixture();
     try {
       await policy.initialize();
       expect(() => policy.assertConnected()).not.toThrow();
@@ -213,16 +197,7 @@ it.each(["the policy session detaches", "the policy socket closes"] as const)(
 );
 
 it("does not report its own policy session detachment during cleanup as a loss", async () => {
-  const browser = await startFakeCdpBrowser({
-    commandResult: ({ method }) =>
-      method === "Page.addScriptToEvaluateOnNewDocument"
-        ? { identifier: "policy-script" }
-        : method === "Runtime.evaluate"
-          ? { result: { type: "object", value: null } }
-          : method === "Target.setAutoAttach" ||
-              method === "Page.removeScriptToEvaluateOnNewDocument"
-            ? {}
-            : undefined,
+  const { browser, policy } = await startPolicyFixture({
     commandEvents: (command) =>
       command.method === "Target.detachFromTarget"
         ? [
@@ -237,19 +212,11 @@ it("does not report its own policy session detachment during cleanup as a loss",
         : undefined,
     eventsBeforeReply: ["Target.detachFromTarget"],
   });
-  const policy = new PlaywrightScenarioServiceWorkers(
-    {
-      frames: () => [],
-      isClosed: () => false,
-      mainFrame: () => ({}) as never,
-    },
-    browser.browserWebSocketUrl,
-    "allowed-page",
-  );
   try {
     await policy.initialize();
     await policy.close();
     expect(() => policy.assertConnected()).not.toThrow();
+    await expect.poll(() => browser.activeConnectionCount()).toBe(0);
   } finally {
     await policy.close().catch(() => undefined);
     await browser.close();

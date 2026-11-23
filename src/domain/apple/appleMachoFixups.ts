@@ -1,3 +1,4 @@
+import { BinaryReader } from "../binaryContainer.js";
 import {
   isHostLimitFailure,
   malformedInput,
@@ -242,7 +243,7 @@ interface ChainedImportEntry {
 }
 
 const chainedImportEntry = (
-  bytes: Buffer,
+  reader: BinaryReader,
   base: number,
   end: number,
   header: ChainedImportTable,
@@ -266,29 +267,29 @@ const chainedImportEntry = (
     throw malformedInput("macho", "Chained import index is outside the table");
   const at = base + header.offset + index * size;
   if (header.format === 3) {
-    const word = bytes.readBigUInt64LE(at);
+    const word = reader.word(at, 64);
     const encodedOrdinal = Number(bits(word, 0, 16));
     return {
       nameOffset: Number(bits(word, 32, 32)),
       ordinal:
         encodedOrdinal > 0xfff0 ? encodedOrdinal - 0x10000 : encodedOrdinal,
       weak: bits(word, 16, 1) === 1n,
-      addend: bytes.readBigInt64LE(at + 8),
+      addend: reader.i64(at + 8),
     };
   }
-  const word = bytes.readUInt32LE(at);
+  const word = reader.u32(at);
   const encodedOrdinal = word & 0xff;
   return {
     nameOffset: word >>> 9,
     ordinal: encodedOrdinal > 0xf0 ? encodedOrdinal - 0x100 : encodedOrdinal,
     weak: ((word >>> 8) & 1) === 1,
-    addend: header.format === 2 ? BigInt(bytes.readInt32LE(at + 4)) : 0n,
+    addend: header.format === 2 ? BigInt(reader.i32(at + 4)) : 0n,
   };
 };
 
 const readImport = (
   data: {
-    readonly bytes: Buffer;
+    readonly reader: BinaryReader;
     readonly base: number;
     readonly end: number;
     readonly dylibs: FixupCommands["dylibs"];
@@ -296,10 +297,10 @@ const readImport = (
   header: ChainedImportTable,
   index: number,
 ): Import => {
-  const { bytes, base, end, dylibs } = data;
-  const entry = chainedImportEntry(bytes, base, end, header, index);
+  const { reader, base, end, dylibs } = data;
+  const entry = chainedImportEntry(reader, base, end, header, index);
   return {
-    ...cString(bytes, base + header.symbols + entry.nameOffset, end),
+    ...cString(reader.bytes, base + header.symbols + entry.nameOffset, end),
     binding_source: "chained",
     library_ordinal: entry.ordinal,
     ...libraryFacts(entry.ordinal, dylibs),
@@ -389,7 +390,7 @@ interface ChainedPageSource {
 
 /** Parse one physical page; a failed tail retains established locations. */
 const readChainedPage = (
-  bytes: Buffer,
+  reader: BinaryReader,
   source: ChainedPageSource,
 ): ChainedPage => {
   let locations = new Uint8Array(0);
@@ -413,7 +414,7 @@ const readChainedPage = (
     while (true) {
       locations[at >>> 3] = (locations[at >>> 3] ?? 0) | (1 << (at & 7));
       lastOffset = at;
-      const raw = bytes.readBigUInt64LE(source.offset + at);
+      const raw = reader.word(source.offset + at, 64);
       const next = Number(bits(raw, 51, generic ? 12 : 11)) * (generic ? 4 : 8);
       if (next === 0) break;
       if (at + next + 8 > source.size)
@@ -433,7 +434,7 @@ const readChainedPage = (
 
 /** Validate one `LC_DYLD_CHAINED_FIXUPS` header and its import table. */
 const chainedFixupsHeader = (
-  bytes: Buffer,
+  reader: BinaryReader,
   base: number,
   size: number,
 ): { readonly startsOffset: number; readonly imports: ChainedImportTable } => {
@@ -443,16 +444,16 @@ const chainedFixupsHeader = (
     base < 0 ||
     !Number.isSafeInteger(size) ||
     size < 28 ||
-    end > bytes.length
+    end > reader.bytes.length
   )
     throw malformedInput("macho", "Chained fixup header exceeds the target");
-  if (bytes.readUInt32LE(base) !== 0)
+  if (reader.u32(base) !== 0)
     throw unsupportedInput("macho", "Unsupported chained fixup header version");
   const imports = {
-    offset: bytes.readUInt32LE(base + 8),
-    symbols: bytes.readUInt32LE(base + 12),
-    count: bytes.readUInt32LE(base + 16),
-    format: bytes.readUInt32LE(base + 20),
+    offset: reader.u32(base + 8),
+    symbols: reader.u32(base + 12),
+    count: reader.u32(base + 16),
+    format: reader.u32(base + 20),
   };
   const importSize = imports.format === 3 ? 16 : imports.format === 2 ? 8 : 4;
   const importTableEnd = base + imports.offset + imports.count * importSize;
@@ -471,12 +472,12 @@ const chainedFixupsHeader = (
       "macho",
       "Chained import table exceeds the fixup data",
     );
-  if (bytes.readUInt32LE(base + 24) !== 0)
+  if (reader.u32(base + 24) !== 0)
     throw unsupportedInput(
       "macho",
       "Compressed chained-fixup symbol names are not supported",
     );
-  return { startsOffset: bytes.readUInt32LE(base + 4), imports };
+  return { startsOffset: reader.u32(base + 4), imports };
 };
 
 /**
@@ -486,10 +487,11 @@ const chainedFixupsHeader = (
 export const chainedImportNames = (
   fixups: Buffer,
 ): readonly (string | null)[] => {
-  const { imports } = chainedFixupsHeader(fixups, 0, fixups.length);
+  const reader = new BinaryReader(fixups, true, "macho");
+  const { imports } = chainedFixupsHeader(reader, 0, fixups.length);
   const names: (string | null)[] = [];
   for (let index = 0; index < imports.count; index++) {
-    const entry = chainedImportEntry(fixups, 0, fixups.length, imports, index);
+    const entry = chainedImportEntry(reader, 0, fixups.length, imports, index);
     const { symbol } = cString(
       fixups,
       imports.symbols + entry.nameOffset,
@@ -529,15 +531,16 @@ const chainedFixups = (
   binds: BindFacts,
 ): PointerFixups => {
   const { bytes, segments, dylibs, baseAddress } = image;
+  const reader = new BinaryReader(bytes, true, "macho");
   const base = range.offset;
   const end = range.offset + range.size;
   const { startsOffset, imports: importHeader } = chainedFixupsHeader(
-    bytes,
+    reader,
     base,
     range.size,
   );
   const imports = (index: number) =>
-    readImport({ bytes, base, end, dylibs }, importHeader, index);
+    readImport({ reader, base, end, dylibs }, importHeader, index);
   const starts = base + startsOffset;
   const startsEnd = base + importHeader.offset;
   const requireStartsRange = (at: number, size: number): void => {
@@ -548,7 +551,7 @@ const chainedFixups = (
       );
   };
   requireStartsRange(starts, 4);
-  const segmentCount = bytes.readUInt32LE(starts);
+  const segmentCount = reader.u32(starts);
   if (segmentCount > segments.length)
     throw malformedInput(
       "macho",
@@ -588,7 +591,7 @@ const chainedFixups = (
     const retain =
       cachedPages.size < maximumCachedPages &&
       Math.ceil(Math.max(source.size, 0) / 8) <= remainingLocationBytes;
-    const facts = readChainedPage(bytes, source);
+    const facts = readChainedPage(reader, source);
     if (retain) {
       remainingLocationBytes -= facts.locations.byteLength;
       cachedPages.set(key, facts);
@@ -596,7 +599,7 @@ const chainedFixups = (
     return facts;
   };
   for (let index = 0; index < segmentCount; index++) {
-    const infoOffset = bytes.readUInt32LE(starts + 4 + index * 4);
+    const infoOffset = reader.u32(starts + 4 + index * 4);
     if (infoOffset === 0) continue;
     const segment = segments[index];
     if (segment === undefined)
@@ -606,9 +609,9 @@ const chainedFixups = (
       );
     const info = starts + infoOffset;
     requireStartsRange(info, 22);
-    const infoSize = bytes.readUInt32LE(info);
-    const pageSize = bytes.readUInt16LE(info + 4);
-    const pageCount = bytes.readUInt16LE(info + 20);
+    const infoSize = reader.u32(info);
+    const pageSize = reader.u16(info + 4);
+    const pageCount = reader.u16(info + 20);
     if (infoSize < 22 + pageCount * 2)
       throw malformedInput(
         "macho",
@@ -620,14 +623,14 @@ const chainedFixups = (
         "macho",
         "Chained page size must be 4096 or 16384 bytes",
       );
-    if (bytes.readBigUInt64LE(info + 8) !== segment.address - baseAddress)
+    if (reader.word(info + 8, 64) !== segment.address - baseAddress)
       throw malformedInput(
         "macho",
         "Chained segment offset disagrees with its Mach-O layout",
       );
     ranges.push({
       segment,
-      format: bytes.readUInt16LE(info + 6),
+      format: reader.u16(info + 6),
       pageSize,
       pageCount,
       pageStarts: info + 22,
@@ -668,7 +671,7 @@ const chainedFixups = (
     }
     let complete = true;
     for (let page = 0; page < chain.pageCount; page++) {
-      const start = bytes.readUInt16LE(chain.pageStarts + page * 2);
+      const start = reader.u16(chain.pageStarts + page * 2);
       if (start === 0xffff) continue;
       const facts = pageFacts(chain, page, start);
       if (facts.failure !== undefined) {
@@ -809,7 +812,7 @@ const chainedFixups = (
               Number(address - chain.segment.address),
               (page) => {
                 if (page >= chain.pageCount) return null;
-                const start = bytes.readUInt16LE(chain.pageStarts + page * 2);
+                const start = reader.u16(chain.pageStarts + page * 2);
                 return start === 0xffff
                   ? null
                   : queryPageFacts(chain, page, start);
@@ -834,7 +837,7 @@ const chainedFixups = (
       const page = Math.floor(within / chain.pageSize);
       if (page >= chain.pageCount)
         return legacyBind ?? legacyRebase ?? rawPointer();
-      const start = bytes.readUInt16LE(chain.pageStarts + page * 2);
+      const start = reader.u16(chain.pageStarts + page * 2);
       if (start === 0xffff) return legacyBind ?? legacyRebase ?? rawPointer();
       if (POINTER_FORMATS[chain.format] === undefined)
         return {
@@ -1098,6 +1101,41 @@ function* readRebaseStreamSteps(
   }
 }
 
+const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Fast path for range checks over `[low, high]`: when every address in the
+ * closed interval belongs unambiguously to one segment and stays within safe
+ * integer file offsets, return its base file offset at `low`. Otherwise return
+ * `null` to fall back to per-slot `legacyRebaseState`.
+ */
+const singleLegacySegmentFileBase = (
+  segments: readonly Segment[],
+  low: bigint,
+  high: bigint,
+): number | null => {
+  let owner: Segment | undefined;
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i]!;
+    const segEnd = segment.address + segment.size;
+    // Any segment overlapping [low, high + REBASE_POINTER_SIZE) could map a
+    // slot in [low, high].
+    if (high < segment.address || low + REBASE_POINTER_SIZE > segEnd) continue;
+    if (owner !== undefined) return null;
+    owner = segment;
+  }
+  if (owner === undefined) return null;
+  if (
+    low < owner.address ||
+    high + REBASE_POINTER_SIZE > owner.address + owner.size
+  )
+    return null;
+  const lowMapped = BigInt(owner.offset) + (low - owner.address);
+  const highMapped = BigInt(owner.offset) + (high - owner.address);
+  if (lowMapped < 0n || highMapped > MAX_SAFE_INTEGER_BIGINT) return null;
+  return Number(lowMapped);
+};
+
 /** Read loader-owned membership without interpreting a stored pointer word. */
 const legacyRebaseState = (
   segments: readonly Segment[],
@@ -1116,7 +1154,7 @@ const legacyRebaseState = (
         reason: `Ambiguous segments map legacy rebase pointer location 0x${address.toString(16)}`,
       };
     const mapped = BigInt(segment.offset) + relative;
-    if (mapped < 0n || mapped > BigInt(Number.MAX_SAFE_INTEGER))
+    if (mapped < 0n || mapped > MAX_SAFE_INTEGER_BIGINT)
       return {
         kind: "unsupported",
         reason: "Legacy rebase file offset exceeds the safe integer range",
@@ -1577,17 +1615,35 @@ const hasUnresolvedLegacyBytes = (
     )
       return true;
   if (binds.index.exhausted) return true;
-  if (rebases.membership !== null)
-    for (let slot = first; slot < end; slot++) {
-      const state = legacyRebaseState(segments, rebases.membership, slot);
-      // Text rebases own four bytes; conflicting kinds may include a pointer.
-      if (
-        typeof state !== "number" ||
-        state === REBASE_CONFLICT ||
-        (state === REBASE_NON_POINTER && slot + 4n > address)
-      )
-        return true;
+  if (rebases.membership !== null && first < end) {
+    const baseOffset = singleLegacySegmentFileBase(segments, first, end - 1n);
+    if (baseOffset !== null) {
+      const count = Number(end - first);
+      for (let delta = 0; delta < count; delta += 1) {
+        const fileOffset = baseOffset + delta;
+        const state =
+          ((rebases.membership[Math.floor(fileOffset / 4)] ?? 0) >>
+            ((fileOffset % 4) * 2)) &
+          3;
+        if (
+          state === REBASE_CONFLICT ||
+          (state === REBASE_NON_POINTER && delta > 3)
+        )
+          return true;
+      }
+    } else {
+      for (let slot = first; slot < end; slot++) {
+        const state = legacyRebaseState(segments, rebases.membership, slot);
+        // Text rebases own four bytes; conflicting kinds may include a pointer.
+        if (
+          typeof state !== "number" ||
+          state === REBASE_CONFLICT ||
+          (state === REBASE_NON_POINTER && slot + 4n > address)
+        )
+          return true;
+      }
     }
+  }
   return false;
 };
 
@@ -1611,14 +1667,29 @@ const hasPartialLegacyPointerWrite = (
       return true;
   }
   if (binds.index.exhausted) return true;
-  if (rebases.membership !== null)
-    for (let at = low; at <= high; at += 1n) {
-      const state = legacyRebaseState(segments, rebases.membership, at);
-      if (typeof state !== "number" || state === REBASE_CONFLICT) return true;
-      if (state === REBASE_NON_POINTER && at + 4n > address) return true;
-      if (state === REBASE_POINTER && at !== address && at + 8n > address)
-        return true;
+  if (rebases.membership !== null) {
+    const baseOffset = singleLegacySegmentFileBase(segments, low, high);
+    if (baseOffset !== null) {
+      for (let delta = 0; delta <= 14; delta += 1) {
+        const fileOffset = baseOffset + delta;
+        const state =
+          ((rebases.membership[Math.floor(fileOffset / 4)] ?? 0) >>
+            ((fileOffset % 4) * 2)) &
+          3;
+        if (state === REBASE_CONFLICT) return true;
+        if (state === REBASE_NON_POINTER && delta > 3) return true;
+        if (state === REBASE_POINTER && delta !== 7) return true;
+      }
+    } else {
+      for (let at = low; at <= high; at += 1n) {
+        const state = legacyRebaseState(segments, rebases.membership, at);
+        if (typeof state !== "number" || state === REBASE_CONFLICT) return true;
+        if (state === REBASE_NON_POINTER && at + 4n > address) return true;
+        if (state === REBASE_POINTER && at !== address && at + 8n > address)
+          return true;
+      }
     }
+  }
   return false;
 };
 
@@ -1629,6 +1700,18 @@ export function* parsePointerFixupsSteps(
   segments: readonly Segment[],
   baseAddress: bigint,
 ): Generator<void, PointerFixups, void> {
+  // Fixup offsets are relative to the declared segment base. These decoders
+  // currently require the backed bytes to begin at that base.
+  if (
+    (commands.chained !== null ||
+      commands.rebases.length > 0 ||
+      commands.binds.length > 0) &&
+    segments.some(({ declaredAddress }) => declaredAddress !== undefined)
+  )
+    throw unsupportedInput(
+      "macho",
+      "Mach-O pointer fixups with leading segment zero-fill are unsupported",
+    );
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
   const rebases = yield* parseLegacyRebasesSteps(image, commands.rebases);
   const binds = yield* parseLegacyBindsSteps(image, commands.binds);

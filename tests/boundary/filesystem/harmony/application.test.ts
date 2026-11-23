@@ -656,24 +656,52 @@ describe("HarmonyOS manifest path rules", () => {
   });
 
   it.each([
-    { paths: ["a/module.json", "z/config.json"] },
-    { paths: ["a/config.json", "z/module.json"] },
-  ])("keeps Stage precedence for $paths", async ({ paths }) => {
-    const path = await writeApplicationZip(
-      "rea-harmony-mixed-model-",
-      "Both.hap",
-      paths.map((path) => ({ path, content: "{}" })),
-    );
-    const projection = requireDeterministicProjection(
-      projectHarmonyApplicationEvidence,
-      await inventoryApplicationPackage(path),
-      harmonyApplicationProjectionResultSchema,
-    );
-    expect(projection.packaging_model).toBe("stage");
-    expect(
-      projection.components.manifests.map(({ path }) => path).sort(),
-    ).toEqual(paths.toSorted());
-  });
+    {
+      paths: ["module.json", "config.json"],
+      model: "stage",
+      manifests: ["config.json", "module.json"],
+      unclassified: [],
+    },
+    {
+      paths: ["docs/module.json", "config.json"],
+      model: "fa",
+      manifests: ["config.json"],
+      unclassified: ["docs/module.json"],
+    },
+    {
+      paths: ["docs/config.json", "docs/module.json", "docs/pack.info"],
+      model: "unknown",
+      manifests: [],
+      unclassified: ["docs/config.json", "docs/module.json", "docs/pack.info"],
+    },
+    {
+      paths: ["./module.json", "config.json"],
+      model: "fa",
+      manifests: ["config.json"],
+      unclassified: ["module.json"],
+    },
+  ])(
+    "uses exact root manifest names for $paths",
+    async ({ paths, model, manifests, unclassified }) => {
+      const path = await writeApplicationZip(
+        "rea-harmony-mixed-model-",
+        "Both.hap",
+        paths.map((path) => ({ path, content: "{}" })),
+      );
+      const projection = requireDeterministicProjection(
+        projectHarmonyApplicationEvidence,
+        await inventoryApplicationPackage(path),
+        harmonyApplicationProjectionResultSchema,
+      );
+      expect(projection.packaging_model).toBe(model);
+      expect(
+        projection.components.manifests.map(({ path }) => path).sort(),
+      ).toEqual(manifests);
+      expect(
+        projection.unclassified_components.map(({ path }) => path).sort(),
+      ).toEqual(unclassified);
+    },
+  );
 
   it.each([
     { name: "module.json", model: "stage" },

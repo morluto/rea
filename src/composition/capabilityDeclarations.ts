@@ -1,4 +1,5 @@
 // oxlint-disable max-lines -- Keep the exhaustive static provenance bindings together; this table has no execution or host-availability logic.
+import { UEFI_PROVIDER_IDENTITY } from "../uefi/UefiProviderIdentity.js";
 import type { ProviderIdentity } from "../ports/AnalysisProvider.js";
 import type {
   TOOL_CONTRACTS,
@@ -62,6 +63,7 @@ import {
 import { ELECTRON_FUSE_PROVIDER_IDENTITY } from "../electron/ElectronFuseProviderIdentity.js";
 import { ERLANG_BEAM_PROVIDER_IDENTITY } from "../erlang/ErlangBeamProviderIdentity.js";
 import { V8_CODE_CACHE_PROVIDER_IDENTITY } from "../v8/V8CodeCacheProviderIdentity.js";
+import { MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY } from "../java/MavenGradleMetadataProviderIdentity.js";
 import { EVMOLE_PROVIDER_IDENTITY } from "../evm/EvmoleProviderIdentity.js";
 import {
   BINWALK_PROVIDER_IDENTITY,
@@ -97,6 +99,7 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "../native/NativeMacosProviderIde
 import { PWNTOOLS_PROVIDER_IDENTITY } from "../native/pwntools/PwntoolsProviderIdentity.js";
 import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 import { PCAP_PROVIDER_IDENTITY } from "../pcap/PcapProviderIdentity.js";
+import { NUGET_NUPKG_PROVIDER_IDENTITY } from "../nuget/NugetNupkgProviderIdentity.js";
 import { PYTHON_PYC_PROVIDER_IDENTITY } from "../python/PythonPycProviderIdentity.js";
 import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "../rizin/RizinDebuggerProviderIdentity.js";
 import { RIZIN_PROVIDER_IDENTITY } from "../rizin/RizinProviderIdentity.js";
@@ -314,6 +317,11 @@ export const CAPABILITY_DECLARATIONS = {
       providerBinding(UNBLOB_PROVIDER_IDENTITY, ["extract_firmware"]),
     ],
   },
+  uefiAnalysis: {
+    providers: [
+      providerBinding(UEFI_PROVIDER_IDENTITY, { group: "UEFI_TOOL_CONTRACTS" }),
+    ],
+  },
   flutter: {
     providers: [
       providerBinding(FLUTTER_PROVIDER_IDENTITY, {
@@ -498,6 +506,13 @@ export const CAPABILITY_DECLARATIONS = {
       }),
     ],
   },
+  nugetNupkg: {
+    providers: [
+      providerBinding(NUGET_NUPKG_PROVIDER_IDENTITY, {
+        group: "NUGET_NUPKG_TOOL_CONTRACTS",
+      }),
+    ],
+  },
   releaseExposure: {
     providers: [
       providerBinding(RELEASE_EXPOSURE_PROVIDER, {
@@ -509,6 +524,13 @@ export const CAPABILITY_DECLARATIONS = {
     providers: [
       providerBinding(V8_CODE_CACHE_PROVIDER_IDENTITY, {
         group: "V8_CODE_CACHE_TOOL_CONTRACTS",
+      }),
+    ],
+  },
+  mavenGradleMetadata: {
+    providers: [
+      providerBinding(MAVEN_GRADLE_METADATA_PROVIDER_IDENTITY, {
+        group: "MAVEN_GRADLE_METADATA_TOOL_CONTRACTS",
       }),
     ],
   },

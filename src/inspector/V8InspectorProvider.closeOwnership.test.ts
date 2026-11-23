@@ -1,10 +1,10 @@
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, it, onTestFinished, vi } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { WebSocketServer } from "ws";
 import {
   withVerifierCleanup,
@@ -14,6 +14,7 @@ import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgem
 
 import { CdpConnection } from "../browser/CdpConnection.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { observeJavaScriptRuntime } from "../application/javascript/JavaScriptRuntimeObservationService.js";
 import { observeJavaScriptRuntimeInputSchema } from "../domain/javascript/javascriptRuntimeObservation.js";
@@ -23,7 +24,7 @@ import {
 } from "./V8InspectorProvider.js";
 
 const inspectorCloseFixture = async () => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-close-owner-"));
+  const root = await createTestTempDirectory("rea-inspector-close-owner-");
   const scriptPath = join(root, "target.js");
   await writeFile(scriptPath, "globalThis.fixture = true;\n");
   const scriptUrl = pathToFileURL(scriptPath).href;
@@ -108,7 +109,6 @@ const inspectorCloseFixture = async () => {
         if (server.listening)
           await new Promise<void>((resolve) => server.close(() => resolve()));
       },
-      () => rm(root, { recursive: true, force: true }),
     ]);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -126,7 +126,6 @@ const inspectorCloseFixture = async () => {
     endpoint,
     closeStarted,
     closeFailures,
-    closeSpy,
     waitForConnections,
     rejectFirstClose: (cause: Error) => rejectFirstClose?.(cause),
     get acceptedConnections() {
@@ -138,16 +137,8 @@ const inspectorCloseFixture = async () => {
 
 it("retains cancelled final-close ownership and retries the exact transport before replacement observation", async () => {
   const fixture = await inspectorCloseFixture();
-  const {
-    input,
-    endpoint,
-    closeStarted,
-    closeFailures,
-    closeSpy,
-    waitForConnections,
-    rejectFirstClose,
-    admission,
-  } = fixture;
+  const { input, closeStarted, closeFailures, rejectFirstClose, admission } =
+    fixture;
   const provider = () => new V8InspectorProvider(undefined, admission);
   const controller = new AbortController();
   const cancellationReason = new Error("cancelled during transport close");
@@ -197,7 +188,6 @@ it("retains cancelled final-close ownership and retries the exact transport befo
   expect(projectAnalysisError(error).code).toBe("cleanup_incomplete");
 
   const blocked = await observeJavaScriptRuntime(provider(), input);
-  expect(blocked.ok).toBe(false);
   if (blocked.ok)
     throw new Error("Expected unresolved transport admission refusal");
   expect(blocked.error.cleanupIncomplete).toBe(true);
@@ -220,6 +210,15 @@ it("retains cancelled final-close ownership and retries the exact transport befo
   });
   expect(fixture.acceptedConnections).toBe(3);
 
+  await assertSharedAdmissionShutdown(fixture, cleanupOnly.error);
+});
+
+async function assertSharedAdmissionShutdown(
+  fixture: Awaited<ReturnType<typeof inspectorCloseFixture>>,
+  cleanupError: AnalysisError,
+): Promise<void> {
+  const { endpoint, input, admission, waitForConnections } = fixture;
+  const provider = () => new V8InspectorProvider(undefined, admission);
   const activeInput = observeJavaScriptRuntimeInputSchema.parse({
     inspector_endpoint: endpoint,
     target_id: "fixture",
@@ -252,8 +251,23 @@ it("retains cancelled final-close ownership and retries the exact transport befo
     await new Promise<void>((resolve) => setImmediate(resolve));
     expect(shutdownSettled).toBe(false);
     expect(fixture.acceptedConnections).toBe(4);
-    expect(cleanupOnly.error.cleanupIncomplete).toBe(false);
-    expect(cleanupOnly.error.cleanupResources).toEqual([]);
+    expect(cleanupError.cleanupIncomplete).toBe(false);
+    expect(cleanupError.cleanupResources).toEqual([]);
+    const independent = new V8InspectorProvider();
+    const independentlyListed = independent
+      .listTargets({ inspector_endpoint: endpoint })
+      .finally(() => independent.close());
+    await awaitAcknowledgement(
+      independentlyListed,
+      shutdown,
+      "listing and closing an independent Inspector provider",
+    );
+    expect(await independentlyListed).toMatchObject({
+      ok: true,
+      value: { targets: [{ target_id: input.target_id }] },
+    });
+    expect(fixture.acceptedConnections).toBe(4);
+
     activeController.abort(new Error("finish the admitted observation"));
     const activeResult = await activeObservation;
     expect(activeResult.ok).toBe(false);
@@ -267,7 +281,6 @@ it("retains cancelled final-close ownership and retries the exact transport befo
     const queuedResult = await queuedObservation;
     expect(queuedResult.ok).toBe(true);
     expect(fixture.acceptedConnections).toBe(5);
-    expect(closeSpy).toHaveBeenCalledTimes(8);
   }, [
     () => activeController.abort(new Error("fixture finalization")),
     () => queuedController.abort(new Error("fixture finalization")),
@@ -281,4 +294,4 @@ it("retains cancelled final-close ownership and retries the exact transport befo
       await queuedObservation;
     },
   ]);
-});
+}

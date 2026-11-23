@@ -61,7 +61,10 @@ import {
   AnalysisError,
   type AnalysisPartialObservation,
 } from "../domain/analysisErrorBase.js";
-import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import {
+  analysisErrorWithCleanupFailure,
+  providerCleanupErrorFromFailures,
+} from "../domain/analysisErrorCleanup.js";
 import {
   AnalysisInputError,
   cancelledBy,
@@ -168,15 +171,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
       const typed = failures.filter(
         (failure): failure is AnalysisError => failure instanceof AnalysisError,
       );
-      throw new ProviderCleanupError(
+      throw providerCleanupErrorFromFailures(
         CDP_BROWSER_PROVIDER_IDENTITY.id,
-        typed.flatMap((failure) => failure.cleanupResources),
-        { reason: "Browser transport and analyzer cleanup remain incomplete" },
-        {
-          operation: "analyze_web_bundle",
-          cause: new AggregateError(failures),
-        },
-      ).bindCleanupDependencies(typed);
+        typed,
+        "Browser transport and analyzer cleanup remain incomplete",
+        { operation: "analyze_web_bundle", causes: failures },
+      );
     }
   }
 

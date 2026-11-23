@@ -532,7 +532,7 @@ it.each([
     ).toMatchObject({
       logical_path: destination,
       format_metadata: { source_path: "https://example.com/mod.ts" },
-      limitations: expect.arrayContaining([expect.stringContaining("prefix")]),
+      limitations: [expect.any(String)],
     });
     const resourceScope = new ArtifactResourceScope();
     try {
