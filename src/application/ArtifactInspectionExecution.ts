@@ -9,11 +9,7 @@ import type {
   ProviderIdentity,
 } from "../ports/AnalysisProvider.js";
 import { parseAnalysisInput } from "./AnalysisInput.js";
-import {
-  projectRetainedAnalysis,
-  requireAnalysisViewRetention,
-  type AnalysisViewRetention,
-} from "./analysisView/AnalysisViewService.js";
+import type { AnalysisViewRetention } from "./analysisView/AnalysisViewService.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
 
 /** Provider boundary for a single-operation artifact inspection. */
@@ -71,8 +67,18 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
   );
   if (!input.ok) return input;
   const retainedView = spec.selectRetainedView?.(input.value);
-  if (retainedView !== undefined) {
-    const ready = requireAnalysisViewRetention(spec.operation, retention);
+  const view =
+    retainedView === undefined
+      ? undefined
+      : {
+          request: retainedView,
+          service: await import("./analysisView/AnalysisViewService.js"),
+        };
+  if (view !== undefined) {
+    const ready = view.service.requireAnalysisViewRetention(
+      spec.operation,
+      retention,
+    );
     if (!ready.ok) return ready;
   }
   const parameters = spec.toParameters(input.value);
@@ -87,6 +93,10 @@ export const executeArtifactInspection = async <TInput, TParameters, TReport>(
     spec.buildEvidence(checked.data, spec.provider.identity, parameters),
     options?.signal,
   );
-  if (!completed.ok || retainedView === undefined) return completed;
-  return projectRetainedAnalysis(completed.value, retention, retainedView);
+  if (!completed.ok || view === undefined) return completed;
+  return view.service.projectRetainedAnalysis(
+    completed.value,
+    retention,
+    view.request,
+  );
 };
