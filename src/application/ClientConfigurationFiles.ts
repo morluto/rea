@@ -6,12 +6,12 @@ import {
   clientServerRowsReplace,
   effectiveClientServer,
   parseClientConfiguration,
-  clientConfigurationValuesEqual,
   type ClientConfigurationDocument,
   type ClientConfigurationFormat,
   type ClientInlineConfiguration,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import type { SetupClient } from "./SupportedClients.js";
 import {
   ClientRegistrationEnvironmentShapeError,

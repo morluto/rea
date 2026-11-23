@@ -10,11 +10,11 @@ import {
   pythonPycFixture,
   pythonPycHeader,
 } from "./PythonPyc.fixture.js";
+import { parsePythonPyc } from "./PythonPycParser.js";
 import {
   emptyPythonPycWork,
-  parsePythonPyc,
   type PythonPycWork,
-} from "./PythonPycParser.js";
+} from "./PycReportProjection.js";
 import { ParseFailureError } from "../domain/parseFailure.js";
 
 const parserLimit = (name: string) =>

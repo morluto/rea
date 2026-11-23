@@ -6,6 +6,7 @@ import {
   unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
+  Reader,
   Uint8ArrayReader,
   Uint8ArrayWriter,
   ZipReader,
@@ -24,7 +25,13 @@ import {
   zipEntryPath,
   zipListingCoverage,
 } from "../resources/index.js";
-import { parseXmlDocument } from "../domain/xmlDocument.js";
+import {
+  isXmlElement,
+  parseXmlDocument,
+  xmlChildElements,
+  xmlChildrenNamed,
+  xmlFirstChildNamed,
+} from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
 import { hasZipSignature } from "../domain/zipPackageFormat.js";
 import {
@@ -55,61 +62,6 @@ const BASE_LIMITATIONS = [
   "Dependency version ranges are recorded as spelled in the .nuspec; restore results are unknown.",
   "Directory ZIP markers are omitted from contents; only file members are listed.",
 ] as const;
-
-const isElement = (node: Node | null): node is Element =>
-  node !== null && node.nodeType === 1;
-
-const childElements = (element: Element): Element[] => {
-  const children: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  )
-    if (isElement(child)) children.push(child);
-  return children;
-};
-
-const childrenNamed = (
-  element: Element,
-  local: string,
-  namespace?: string,
-): Element[] => {
-  const matches: Element[] = [];
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isElement(child) &&
-      child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
-    )
-      matches.push(child);
-  }
-  return matches;
-};
-
-const firstNamed = (
-  element: Element,
-  local: string,
-  namespace?: string,
-): Element | undefined => {
-  for (
-    let child = element.firstChild;
-    child !== null;
-    child = child.nextSibling
-  ) {
-    if (
-      isElement(child) &&
-      child.localName === local &&
-      (namespace === undefined || (child.namespaceURI ?? "") === namespace)
-    )
-      return child;
-  }
-  return undefined;
-};
 
 const nonempty = (value: string | null | undefined): string | null => {
   if (value === null || value === undefined) return null;
@@ -143,10 +95,10 @@ const indexedMetadataText = (
   metadata: Element,
   name: string,
 ): string | null => {
-  for (const child of childElements(metadata)) {
+  for (const child of xmlChildElements(metadata)) {
     if (
       child.localName?.toLowerCase() !== name ||
-      childElements(child).length > 0
+      xmlChildElements(child).length > 0
     )
       continue;
     const text = child.textContent ?? "";
@@ -162,7 +114,7 @@ const indexedMetadataText = (
       return null;
     for (
       let scope: Node | null = child;
-      isElement(scope);
+      isXmlElement(scope);
       scope = scope.parentNode
     ) {
       const space = scope.getAttribute("xml:space");
@@ -301,7 +253,7 @@ const opcManifestTargets = (
   }
   const root = parsed.value.documentElement;
   if (
-    !isElement(root) ||
+    !isXmlElement(root) ||
     root.localName !== "Relationships" ||
     root.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE
   ) {
@@ -311,7 +263,7 @@ const opcManifestTargets = (
     return [];
   }
   const targets = new Map<string, OpcManifestTarget>();
-  for (const relationship of childrenNamed(root, "Relationship")) {
+  for (const relationship of xmlChildrenNamed(root, "Relationship")) {
     if (relationship.namespaceURI !== OPC_RELATIONSHIP_NAMESPACE) continue;
     const type = attribute(relationship, "Type");
     if (type !== NUGET_MANIFEST_RELATIONSHIP) continue;
@@ -366,12 +318,12 @@ const parseDependencies = (
 ): NugetNupkg["dependency_groups"] => {
   // NuspecReader walks every <dependencies> element, with one decision about
   // groups across all of them.
-  const containers = childrenNamed(metadata, "dependencies", namespace);
+  const containers = xmlChildrenNamed(metadata, "dependencies", namespace);
   const groups = containers.flatMap((container) =>
-    childrenNamed(container, "group", namespace),
+    xmlChildrenNamed(container, "group", namespace),
   );
   const ungrouped = containers.flatMap((container) =>
-    childrenNamed(container, "dependency", namespace),
+    xmlChildrenNamed(container, "dependency", namespace),
   );
   const readDependency = (
     element: Element,
@@ -388,7 +340,7 @@ const parseDependencies = (
     element: Element,
   ): NugetNupkg["dependency_groups"][number] => ({
     target_framework: attribute(element, "targetFramework"),
-    dependencies: childrenNamed(element, "dependency", namespace).map(
+    dependencies: xmlChildrenNamed(element, "dependency", namespace).map(
       readDependency,
     ),
   });
@@ -438,11 +390,11 @@ const parseNuspecDocument = (
     return empty;
   }
   const root = parsed.value.documentElement;
-  if (!isElement(root) || root.localName !== "package") {
+  if (!isXmlElement(root) || root.localName !== "package") {
     limitations.push("The selected .nuspec root element is not package.");
     return empty;
   }
-  const metadata = firstNamed(root, "metadata");
+  const metadata = xmlFirstChildNamed(root, "metadata");
   if (metadata === undefined) {
     limitations.push("The selected .nuspec has no metadata element.");
     return empty;
@@ -451,14 +403,18 @@ const parseNuspecDocument = (
   // Authors and description come from its local-name metadata index.
   const metadataNamespace = metadata.lookupNamespaceURI("") ?? "";
   const metadataText = (local: string): string | null => {
-    const element = firstNamed(metadata, local, metadataNamespace);
+    const element = xmlFirstChildNamed(metadata, local, metadataNamespace);
     return element === undefined ? null : elementText(element);
   };
-  const licenseElement = firstNamed(metadata, "license", metadataNamespace);
+  const licenseElement = xmlFirstChildNamed(
+    metadata,
+    "license",
+    metadataNamespace,
+  );
   const licenseType = licenseElement
     ? attribute(licenseElement, "type")?.toLowerCase()
     : undefined;
-  const repositoryElement = firstNamed(
+  const repositoryElement = xmlFirstChildNamed(
     metadata,
     "repository",
     metadataNamespace,
@@ -558,24 +514,75 @@ const findNuspec = (
   return { member: undefined, source: undefined };
 };
 
+/** Random-access source over one verified .nupkg descriptor. */
+export interface NugetNupkgRandomAccessSource {
+  readonly prefix: Uint8Array;
+  readonly size: number;
+  readonly readRange: (offset: number, length: number) => Promise<Uint8Array>;
+}
+
+class RandomAccessZipReader extends Reader<undefined> {
+  readonly #source: NugetNupkgRandomAccessSource;
+  readonly #path: string;
+
+  constructor(source: NugetNupkgRandomAccessSource, path: string) {
+    super(undefined);
+    this.#source = source;
+    this.#path = path;
+    this.size = source.size;
+  }
+
+  override async readUint8Array(
+    index: number,
+    length: number,
+  ): Promise<Uint8Array> {
+    const readBytes = Math.min(length, this.size - index);
+    if (readBytes < 0)
+      throw new ArtifactReaderFailure(
+        "format",
+        `ZIP archive is malformed: read at ${String(index)} extends beyond the ${String(this.size)}-byte archive`,
+      );
+    const bytes = await this.#source.readRange(index, readBytes);
+    if (bytes.length !== readBytes)
+      throw new ArtifactReaderFailure(
+        "integrity",
+        `ZIP source ended before its admitted extent: ${this.#path}`,
+        { integrityCheck: "read-coverage" },
+      );
+    return bytes;
+  }
+}
+
 /** Decode one bounded NuGet .nupkg without restore, execution, or network. */
 export const parseNugetNupkg = async (
-  bytes: Uint8Array,
+  source: Uint8Array | NugetNupkgRandomAccessSource,
   artifact: { path: string; sha256: string; bytes: number },
   input: InspectNugetNupkgInput,
   signal?: AbortSignal,
 ): Promise<NugetNupkg> => {
-  if (bytes.length !== artifact.bytes)
+  const isBuffer = source instanceof Uint8Array;
+  const sourceLength = isBuffer ? source.length : source.size;
+  if (sourceLength !== artifact.bytes)
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected artifact length disagrees with the retained bytes.",
     );
-  if (!hasZipSignature(bytes))
+  const signatureBytes = isBuffer ? source : source.prefix;
+  if (!hasZipSignature(signatureBytes))
     throw malformedInput(
       NUGET_NUPKG_FORMAT,
       "Selected file is not a ZIP archive (NuGet .nupkg).",
     );
-  const reader = new ZipReader(new Uint8ArrayReader(bytes), ZIP_READER_OPTIONS);
+  const reader = new ZipReader(
+    isBuffer
+      ? new Uint8ArrayReader(source)
+      : new RandomAccessZipReader(source, artifact.path),
+    ZIP_READER_OPTIONS,
+  );
+  const readLocalRange: (at: number, length: number) => Promise<Uint8Array> =
+    isBuffer
+      ? (at, length) => Promise.resolve(source.subarray(at, at + length))
+      : (at, length) => source.readRange(at, length);
   const limitations: string[] = [...BASE_LIMITATIONS];
   const zipAbort = signal === undefined ? undefined : new AbortController();
   const zipSignal = zipAbort?.signal;
@@ -632,7 +639,7 @@ export const parseNugetNupkg = async (
               dataDescriptor: entry.bitFlag?.dataDescriptor ?? false,
             })),
             directoryOffset,
-            (at, length) => Promise.resolve(bytes.subarray(at, at + length)),
+            readLocalRange,
           ),
     );
     limitations.push(...listing.limitations);

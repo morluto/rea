@@ -1057,6 +1057,25 @@ describe("ReleaseExposureReader package carrier identity", () => {
   );
 });
 
+it("names audit_release_exposure in recovery for a missing artifact", async () => {
+  const root = await createTestTempDirectory("rea-release-exposure-missing-");
+  const reader = new ReleaseExposureReader();
+  try {
+    const result = await reader.inspect(
+      { path: join(root, "missing.asar") },
+      undefined,
+      ignoreText,
+    );
+    if (result.ok) throw new Error("Expected a missing artifact refusal.");
+    expect(projectAnalysisError(result.error).recovery).toEqual({
+      kind: "inspect_input_contract",
+      operation: "audit_release_exposure",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
 describe("ReleaseExposureReader package cleanup", () => {
   it.each(["completed scan", "changed artifact", "late cancellation"] as const)(
     "retains failed package cleanup after %s",

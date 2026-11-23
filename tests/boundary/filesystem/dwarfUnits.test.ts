@@ -1,7 +1,7 @@
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createDwarfUnitsService } from "../../../src/composition/binaryDiagnostics.js";
+import { createDwarfUnitsService } from "../../../src/composition/binaryDiagnostics/dwarfUnits.js";
 import { elfImage } from "../../../src/native/dwarf/DwarfUnits.fixture.js";
 import { AnalysisUnsupportedTargetError } from "../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";

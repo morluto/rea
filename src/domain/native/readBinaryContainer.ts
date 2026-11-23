@@ -9,10 +9,19 @@ import {
   readFatHeaderPrefix,
   readMachoHeaderPrefixFacts,
 } from "../apple/machoContainer.js";
-import { readElfImage, readElfImageCooperative } from "./elfImage.js";
+import { readUniversalMachoImageFromReader } from "../apple/machoImageSelection.js";
+import {
+  readElfImage,
+  readElfImageCooperative,
+  readElfImageFromReader,
+} from "./elfImage.js";
+import type { NativeByteSource } from "./nativeSectionDirectory.js";
 import type { ZstandardFramePause } from "../compression/zstandardExactFrame.js";
-import { readPeImage } from "./peImage.js";
-import { readMachoImage } from "../apple/machoImage.js";
+import { readPeImage, readPeImageFromReader } from "./peImage.js";
+import {
+  readMachoImage,
+  readMachoImageFromReader,
+} from "../apple/machoImage.js";
 
 /** Identify an ELF, PE, or thin Mach-O image and its file sections. */
 export const readBinaryContainer = (
@@ -32,6 +41,48 @@ export const readBinaryContainerCooperative = async (
   hasElfMagic(bytes)
     ? readElfImageCooperative(bytes, operation, pause)
     : readNonElfContainer(bytes);
+
+/** Stream ELF, PE, or thin Mach-O headers and sections over a range reader. */
+export const readBinaryContainerFromReader = async (
+  source: NativeByteSource,
+  operation: string,
+  pause: ZstandardFramePause,
+): Promise<BinaryContainer> => {
+  const probeLength = Math.min(source.size, 64);
+  const prefix =
+    source.prefix !== undefined && source.prefix.length >= probeLength
+      ? source.prefix.subarray(0, probeLength)
+      : probeLength === 0
+        ? Buffer.alloc(0)
+        : await source.readRange(0, probeLength);
+  if (hasElfMagic(prefix))
+    return readElfImageFromReader(source, operation, pause);
+  if (prefix.subarray(0, 2).equals(Buffer.from("MZ")))
+    return readPeImageFromReader({
+      size: source.size,
+      prefix: source.prefix ?? prefix,
+      readRange: source.readRange,
+    });
+  if (prefix.length >= 4) {
+    const fatPrefix = readFatHeaderPrefix(prefix);
+    if (fatPrefix.state === "incomplete" || fatPrefix.state === "parsed") {
+      const fat = await readUniversalMachoImageFromReader(source);
+      if (!fat.ok)
+        throw new BinaryFormatFailure("malformed", fat.error.message);
+      if (fat.value !== null)
+        throw new BinaryFormatFailure(
+          "unsupported",
+          "Universal/fat Mach-O containers require selecting a thin slice",
+        );
+    }
+    if (readMachoHeaderPrefixFacts(prefix).format !== null)
+      return readMachoImageFromReader(source);
+  }
+  throw new BinaryFormatFailure(
+    "unsupported",
+    "Only ELF, PE, and thin Mach-O native images are supported",
+  );
+};
 
 const readNonElfContainer = (bytes: Buffer): BinaryContainer => {
   if (bytes.subarray(0, 2).equals(Buffer.from("MZ"))) return readPeImage(bytes);

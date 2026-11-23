@@ -450,17 +450,22 @@ export class BinaryReader {
   table(offset: bigint, count: number, width: number, label: string): number {
     const size = BigInt(count) * BigInt(width);
     const range = this.fileRange(offset, size, label);
-    if (size > 16n * 1024n * 1024n)
-      throw new BinaryResourceFailure(
-        "structure",
-        16 * 1024 * 1024,
-        `${label} exceeds the 16 MiB structural decoding budget`,
-        "structure",
-        "bytes",
-      );
+    requireBinaryTableBudget(size, label);
     return range.offset;
   }
 }
+
+/** Reject oversized structural tables before reading their bytes. */
+export const requireBinaryTableBudget = (size: bigint, label: string): void => {
+  if (size > 16n * 1024n * 1024n)
+    throw new BinaryResourceFailure(
+      "structure",
+      16 * 1024 * 1024,
+      `${label} exceeds the 16 MiB structural decoding budget`,
+      "structure",
+      "bytes",
+    );
+};
 
 /** Admit a declared file span, or mark it unbacked when it leaves the file. */
 export const declaredFileRange = (
@@ -719,6 +724,8 @@ export const createFileMappingIndex = (
     prefix,
     readCString: (bytes, address, maximumBytes) =>
       readMappedString(bytes, access, address, maximumBytes),
+    readCStringFromReader: (readPrefix, address, maximumBytes) =>
+      readMappedStringFromReader(readPrefix, access, address, maximumBytes),
   };
 };
 
@@ -737,6 +744,12 @@ export interface FileMappingIndex {
     address: bigint,
     maximumBytes: number,
   ) => Buffer;
+  /** Supply a nonempty prefix within each requested file range. */
+  readonly readCStringFromReader: (
+    readPrefix: (offset: number, maximum: number) => Promise<Buffer>,
+    address: bigint,
+    maximumBytes: number,
+  ) => Promise<Buffer>;
 }
 
 interface MappedStringAccess {
@@ -804,6 +817,50 @@ const readMappedString = (
     }
     chunks.push(chunk);
     length += size;
+  }
+  throw binaryStringReadLimit(maximumBytes);
+};
+
+const readMappedStringFromReader = async (
+  readPrefix: (offset: number, maximum: number) => Promise<Buffer>,
+  access: MappedStringAccess,
+  address: bigint,
+  maximumBytes: number,
+): Promise<Buffer> => {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  while (length <= maximumBytes) {
+    const cursor = address + BigInt(length);
+    const mapping = access.mappingAt(cursor);
+    if (mapping === undefined) {
+      access.offset(cursor, 1);
+      throw new BinaryMappingFailure(
+        "unmapped",
+        "String range is not file mapped",
+      );
+    }
+    const size = Math.min(
+      maximumBytes + 1 - length,
+      Number(mapping.address + BigInt(mapping.size) - cursor),
+    );
+    const offset = mapping.offset + Number(cursor - mapping.address);
+    const chunk = await readPrefix(offset, size);
+    if (chunk.length === 0 || chunk.length > size)
+      throw new BinaryFormatFailure(
+        "truncated",
+        "Mapped string reader did not supply an admitted byte prefix",
+      );
+    const terminator = chunk.indexOf(0);
+    const consumed = terminator < 0 ? chunk.length : terminator + 1;
+    access.offset(cursor, consumed);
+    if (terminator >= 0) {
+      const tail = chunk.subarray(0, terminator);
+      if (chunks.length === 0) return tail;
+      chunks.push(tail);
+      return Buffer.concat(chunks, length + terminator);
+    }
+    chunks.push(chunk);
+    length += chunk.length;
   }
   throw binaryStringReadLimit(maximumBytes);
 };

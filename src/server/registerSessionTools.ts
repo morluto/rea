@@ -89,31 +89,18 @@ export const registerSessionTools = (
       }
     },
   });
-  const closeServer = server.close.bind(server);
-  server.close = async () => {
-    const results = await Promise.allSettled([
-      closeServer(),
-      processResources.close(),
-    ]);
-    const failures = results.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [],
-    );
-    if (failures.length > 0)
-      throw new AggregateError(failures, "REA session cleanup failed");
-  };
-  const previousOnclose = server.server.onclose;
-  server.server.onclose = () => {
-    try {
-      previousOnclose?.();
-    } finally {
-      void processResources.close().catch((cause: unknown) => {
-        logger.error(
-          { error: errorMessage(cause) },
-          "Process capture cleanup failed during server shutdown",
-        );
-      });
-    }
-  };
+  server.registerCloseHook(() => processResources.close(), {
+    failureMessage: "REA session cleanup failed",
+    alwaysAggregate: true,
+  });
+  server.registerTransportCloseHook(() => {
+    void processResources.close().catch((cause: unknown) => {
+      logger.error(
+        { error: errorMessage(cause) },
+        "Process capture cleanup failed during server shutdown",
+      );
+    });
+  });
   registerServiceTools(
     server,
     {

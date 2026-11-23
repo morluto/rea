@@ -314,7 +314,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
       module.registerAdvancedBrowserCommands(context.cli, context.logger),
   ),
   browserScenario: plain(
-    () => import("../cliBrowserScenarioCommands.js"),
+    () => import("./browserScenarioCommands.js"),
     (module, context) =>
       module.registerBrowserScenarioCommands(
         context.cli,
@@ -369,7 +369,7 @@ export const CLI_COMMAND_REGISTRATIONS = {
       module.registerAnalysisViewCommands(context.cli, context.logger),
   ),
   evidence: plain(
-    () => import("../cliEvidenceCommands.js"),
+    () => import("./evidenceCommands.js"),
     (module, context) =>
       module.registerEvidenceCommands(context.cli, context.logger),
   ),

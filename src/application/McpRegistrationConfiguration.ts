@@ -3,7 +3,6 @@ import type { ClientRegistrationCommand } from "../domain/clientRegistrationComm
 import { PRODUCT_IDENTITY } from "../identity.js";
 import type { Result } from "../domain/result.js";
 import {
-  clientConfigurationValuesEqual,
   clientServerPath,
   clientServerForEdit,
   legacyClientServerPath,
@@ -13,6 +12,7 @@ import {
   withClientServers,
   type ClientConfigurationDocument,
 } from "./ClientConfigurationDocument.js";
+import { clientConfigurationValuesEqual } from "./ClientConfigurationValues.js";
 import {
   admitClientConfigurationCandidate,
   clientConfigurationForWrite,

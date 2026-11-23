@@ -2,16 +2,10 @@ import { basename } from "node:path";
 import { producerLimitControl } from "../domain/producerResourceLimits.js";
 import { RUST_BINARY_PROVIDER_IDENTITY } from "./RustBinaryProviderIdentity.js";
 import {
-  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
   projectArtifactCloseFailure,
-  readerIntegrityFailure,
-  type StableArtifactSnapshot,
-  readStableArtifact,
+  withStableArtifactHandle,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
-  artifactFileCancellationCause,
   assertArtifactReadActive,
   yieldArtifactRead,
   ArtifactResourceScope,
@@ -19,13 +13,13 @@ import {
 } from "../resources/index.js";
 import type { ExecutionOptions } from "../ports/AnalysisProvider.js";
 import type { RustBinaryPort } from "../ports/rust/RustBinaryPort.js";
-import { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../providers/offlineArtifactFailure.js";
 import {
   RUST_AUDITABLE_FORMAT_VERSIONS,
   rustBinarySchema,
@@ -37,11 +31,10 @@ import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
-  readRustBinaryImage,
-  readRustBinaryImageCooperative,
+  readRustBinaryImageFromHandle,
   type RustBinaryImage,
 } from "./RustBinaryImage.js";
-import { requireSelectedNativeImage } from "../domain/apple/machoSliceSelection.js";
+import { requireSelectedNativeImageFromReader } from "../domain/apple/machoSliceSelection.js";
 import {
   RUST_AUDITABLE_FORMAT,
   RUST_AUDITABLE_GRAPH_LIMIT,
@@ -53,7 +46,6 @@ import {
 import { MAX_WASM_SECTIONS, WASM_FORMAT } from "./RustWasmImage.js";
 import {
   isParseLimit,
-  parseFailureAnalysisError,
   parseLimitConstraint,
 } from "../domain/parseFailureAnalysisError.js";
 
@@ -67,6 +59,7 @@ import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js"
 import { errorMessage } from "../kernel/errorMessage.js";
 
 const OPERATION = "inspect_rust_binary";
+const HEADER_PREFIX_BYTES = 4096;
 
 /** Stable in-process dependency inspection without subprocesses, temporary files, or a Rust toolchain. */
 export class RustBinaryProvider implements RustBinaryPort {
@@ -90,7 +83,9 @@ export class RustBinaryProvider implements RustBinaryPort {
     input: InspectRustBinaryInput,
     options?: ExecutionOptions,
   ): Promise<Result<RustBinary, AnalysisError>> {
-    let snapshot: StableArtifactSnapshot | undefined;
+    let snapshot:
+      | { readonly sha256: string; readonly bytes: number }
+      | undefined;
     const selectedLimits = rustProducerLimitsSchema.safeParse(
       input.producer_limits === undefined ? {} : input.producer_limits,
     );
@@ -108,74 +103,80 @@ export class RustBinaryProvider implements RustBinaryPort {
     const limits = resolveRustProducerLimits(selectedLimits.data);
     try {
       return await this.#resources.run(async () => {
-        snapshot = await readStableArtifact(
+        const parsedData = await withStableArtifactHandle(
           input.path,
           limits.input_bytes,
-          options?.signal,
-          undefined,
-          this.#resources,
-        );
-        assertArtifactReadActive(options?.signal);
-        const selected = requireSelectedNativeImage(
-          OPERATION,
-          input.path,
-          snapshot.bytes,
-          input.architecture,
-        );
-        const image = inFile(
-          options?.signal === undefined
-            ? readRustBinaryImage(
-                selected.bytes,
-                input.max_rustc_hashes,
-                limits.output_bytes,
-              )
-            : await readRustBinaryImageCooperative(
-                selected.bytes,
-                input.max_rustc_hashes,
-                limits.output_bytes,
-                () => yieldArtifactRead(options.signal),
-              ),
-          selected.fileOffset,
-        );
-        const report: RustBinary = {
-          format: image.format,
-          architecture: image.architecture,
-          bits: image.bits,
-          byte_order: image.byte_order,
-          auditable_metadata: image.auditable_metadata,
-          rustc_commit: image.rustc_commit,
-          artifact: {
-            path: input.path,
-            file_name: basename(input.path),
-            sha256: snapshot.sha256,
-            bytes: snapshot.bytes.length,
+          {
+            signal: options?.signal,
+            resourceScope: this.#resources,
+            retainBytes: (size) => Math.min(size, HEADER_PREFIX_BYTES),
+            onIdentity: (observed) => {
+              snapshot = observed;
+            },
           },
-          ...(selected.selection === null
-            ? {}
-            : { selected_slice: selected.selection }),
-          limitations: [
-            ...limitationsFor(image),
-            `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
-            ...selected.limitations,
-          ],
-        };
-        if (
-          !fitCompilerPathsWithinReport(
-            report,
-            limits.output_bytes,
-            rustcLimitation(image.rustc_commit, image.format),
-          )
-        )
-          throw outputLimit(input.path, limits.output_bytes);
-        const parsed = rustBinarySchema.safeParse(report);
-        if (!parsed.success)
-          throw new AnalysisOutputError(
-            OPERATION,
-            "Rust reader produced an invalid dependency report.",
-            { cause: parsed.error },
-          );
-        assertArtifactReadActive(options?.signal);
-        return ok(parsed.data);
+          async (handle) => {
+            assertArtifactReadActive(options?.signal);
+            const selected = await requireSelectedNativeImageFromReader(
+              OPERATION,
+              input.path,
+              {
+                size: handle.size,
+                prefix: handle.prefix,
+                readRange: (offset, length) => handle.readRange(offset, length),
+              },
+              input.architecture,
+            );
+            const image = inFile(
+              await readRustBinaryImageFromHandle(
+                selected.source,
+                input.max_rustc_hashes,
+                limits.output_bytes,
+                () => yieldArtifactRead(options?.signal),
+              ),
+              selected.fileOffset,
+            );
+            const report: RustBinary = {
+              format: image.format,
+              architecture: image.architecture,
+              bits: image.bits,
+              byte_order: image.byte_order,
+              auditable_metadata: image.auditable_metadata,
+              rustc_commit: image.rustc_commit,
+              artifact: {
+                path: input.path,
+                file_name: basename(input.path),
+                sha256: handle.sha256,
+                bytes: handle.size,
+              },
+              ...(selected.selection === null
+                ? {}
+                : { selected_slice: selected.selection }),
+              limitations: [
+                ...limitationsFor(image),
+                `Selected producer_limits.input_bytes=${String(limits.input_bytes)} and output_bytes=${String(limits.output_bytes)} bytes; compressed/inflated dependency parser limits remain independent.`,
+                ...selected.limitations,
+              ],
+            };
+            if (
+              !fitCompilerPathsWithinReport(
+                report,
+                limits.output_bytes,
+                rustcLimitation(image.rustc_commit, image.format),
+              )
+            )
+              throw outputLimit(input.path, limits.output_bytes);
+            const parsed = rustBinarySchema.safeParse(report);
+            if (!parsed.success)
+              throw new AnalysisOutputError(
+                OPERATION,
+                "Rust reader produced an invalid dependency report.",
+                { cause: parsed.error },
+              );
+            assertArtifactReadActive(options?.signal);
+            return parsed.data;
+          },
+        );
+        return ok(parsedData);
       });
     } catch (cause: unknown) {
       return err(failureFor(cause, input.path, limits, snapshot));
@@ -229,9 +230,7 @@ const outputLimit = (path: string, maxOutputBytes: number) =>
 const RUST_RESOURCE_GUARD_LIMITATION =
   "Default input and complete-report admission are 256 MiB and 8 MiB; producer_limits.input_bytes/output_bytes select larger or smaller values for the next call without restart. Independent parser guards bound the compressed dependency stream to 1 MiB and inflated JSON to the smaller of 8 MiB and 64 times the consumed compressed-stream length. Report admission applies before package schema cloning, graph objects, or reverse-edge allocation.";
 
-const limitationsFor = (
-  image: ReturnType<typeof readRustBinaryImage>,
-): string[] => [
+const limitationsFor = (image: RustBinaryImage): string[] => [
   "Embedded dependency metadata is file content. It does not authenticate package names, versions, sources, or the compiler that produced the binary.",
   `Only the .dep-v0 dependency section and compiler path strings in ${compilerPathSource(image.format)} are inspected. Functions, types, and runtime behavior are not recovered.`,
   ...(image.format === "wasm"
@@ -288,7 +287,7 @@ const compilerPathSource = (format: RustBinary["format"]): string =>
   format === "wasm" ? "the WebAssembly data section" : "read-only data";
 
 const rustcLimitation = (
-  commit: ReturnType<typeof readRustBinaryImage>["rustc_commit"],
+  commit: RustBinaryImage["rustc_commit"],
   format: RustBinary["format"],
 ): string[] => {
   const source = compilerPathSource(format);
@@ -375,76 +374,99 @@ const fitCompilerPathsWithinReport = (
   return Buffer.byteLength(JSON.stringify(report)) <= maxOutputBytes;
 };
 
-const failureForPrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  limits: RustProducerLimits,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (cause instanceof BinaryResourceFailure)
-    return parseLimitConstraint(OPERATION, "memory", cause, {
-      path,
-      legacyMaximumKey: "maximum_bytes",
-      ...fixedAllowanceOptions(
-        "This native container parser allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      ),
-    });
-  if (isParseLimit(cause, RUST_AUDITABLE_FORMAT)) {
-    const { name, maximum } = cause.failure.limit;
-    if (name === RUST_AUDITABLE_GRAPH_LIMIT)
-      return parseLimitConstraint(OPERATION, "transport", cause, {
-        path,
-        legacyMaximumKey: "maximum_output_bytes",
-        retryable: false,
-        remediationAction: `Increase producer_limits.output_bytes above ${String(maximum)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
-        limit: producerLimitControl(
-          "output_bytes",
-          maximum,
-          RUST_PRODUCER_DEFAULTS.output_bytes,
-        ),
-      });
-    return parseLimitConstraint(OPERATION, "memory", cause, {
-      path,
-      legacyMaximumKey: "maximum_bytes",
-      ...fixedAllowanceOptions(
-        "This Rust dependency parser allowance",
-        "parser",
-        {
-          limit: maximum,
-          unit: "bytes",
-        },
-      ),
-    });
-  }
-  if (isParseLimit(cause, WASM_FORMAT))
-    return parseLimitConstraint(OPERATION, "cpu", cause, {
-      path,
-      ...fixedAllowanceOptions(
-        "The WebAssembly section-walk allowance",
-        "work",
-        { limit: cause.failure.limit.maximum, unit: "sections" },
-      ),
-    });
-  return (
-    parseFailureAnalysisError(OPERATION, path, cause) ??
-    artifactFailure(facts, path, limits)
-  );
-};
-
 const failureFor = (
   cause: unknown,
   path: string,
   limits: RustProducerLimits,
-  snapshot?: StableArtifactSnapshot,
+  snapshot?: { readonly sha256: string; readonly bytes: number },
 ): AnalysisError => {
-  const primary = failureForPrimary(
-    artifactFilePrimaryFacts(cause),
-    path,
-    limits,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: RUST_BINARY_PROVIDER_IDENTITY.id,
+      operation: OPERATION,
+      path,
+      description: "artifact",
+      recognise: (failure, origin) => {
+        if (failure instanceof BinaryResourceFailure)
+          return parseLimitConstraint(OPERATION, "memory", failure, {
+            path,
+            legacyMaximumKey: "maximum_bytes",
+            ...fixedAllowanceOptions(
+              "This native container parser allowance",
+              "parser",
+              binaryResourceCeiling(failure),
+            ),
+          });
+        if (isParseLimit(failure, RUST_AUDITABLE_FORMAT)) {
+          const { name, maximum } = failure.failure.limit;
+          if (name === RUST_AUDITABLE_GRAPH_LIMIT)
+            return parseLimitConstraint(OPERATION, "transport", failure, {
+              path,
+              legacyMaximumKey: "maximum_output_bytes",
+              retryable: false,
+              remediationAction: `Increase producer_limits.output_bytes above ${String(maximum)} bytes on the next call; no restart is required. Compressed/inflated dependency parser and transport limits remain independent.`,
+              limit: producerLimitControl(
+                "output_bytes",
+                maximum,
+                RUST_PRODUCER_DEFAULTS.output_bytes,
+              ),
+            });
+          return parseLimitConstraint(OPERATION, "memory", failure, {
+            path,
+            legacyMaximumKey: "maximum_bytes",
+            ...fixedAllowanceOptions(
+              "This Rust dependency parser allowance",
+              "parser",
+              {
+                limit: maximum,
+                unit: "bytes",
+              },
+            ),
+          });
+        }
+        if (isParseLimit(failure, WASM_FORMAT))
+          return parseLimitConstraint(OPERATION, "cpu", failure, {
+            path,
+            ...fixedAllowanceOptions(
+              "The WebAssembly section-walk allowance",
+              "work",
+              { limit: failure.failure.limit.maximum, unit: "sections" },
+            ),
+          });
+        if (
+          origin === "owned-or-classified" &&
+          failure instanceof ArtifactReaderFailure &&
+          failure.reason === "limit"
+        )
+          return new AnalysisResourceConstraintError(
+            OPERATION,
+            "file-size",
+            failure.message,
+            { maximum_input_bytes: limits.input_bytes },
+            {
+              cause: failure,
+              retryable: false,
+              remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call; no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
+              limit: producerLimitControl(
+                "input_bytes",
+                limits.input_bytes,
+                RUST_PRODUCER_DEFAULTS.input_bytes,
+              ),
+            },
+          );
+        return undefined;
+      },
+      unclassified: (failure) =>
+        new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
+          cause: failure,
+          diagnostics: {
+            path,
+            reason: errorMessage(failure),
+          },
+        }),
+    }),
   );
   return projectStableArtifactFailure(
     cause,
@@ -454,68 +476,4 @@ const failureFor = (
     OPERATION,
     snapshot,
   );
-};
-
-const artifactFailure = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  limits: RustProducerLimits,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  )
-    return artifactReaderFailure(cause, path, limits);
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    path,
-    "artifact",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
-const artifactReaderFailure = (
-  cause: ArtifactReaderFailure,
-  path: string,
-  limits: RustProducerLimits,
-): AnalysisError => {
-  if (cause.reason === "integrity")
-    return readerIntegrityFailure(OPERATION, path, cause);
-  if (cause.reason === "cancelled")
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
-  if (cause.reason === "limit")
-    return new AnalysisResourceConstraintError(
-      OPERATION,
-      "file-size",
-      cause.message,
-      { maximum_input_bytes: limits.input_bytes },
-      {
-        cause,
-        retryable: false,
-        remediationAction: `Increase producer_limits.input_bytes above ${String(limits.input_bytes)} bytes on the next inspect_rust_binary call; no restart is required. Select the same complete artifact, without truncating its bytes. Report, dependency parser and host memory limits remain independent.`,
-        limit: producerLimitControl(
-          "input_bytes",
-          limits.input_bytes,
-          RUST_PRODUCER_DEFAULTS.input_bytes,
-        ),
-      },
-    );
-  if (cause.reason === "path")
-    return stableArtifactInputFailure(cause, OPERATION);
-  return new ProviderAdapterError(RUST_BINARY_PROVIDER_IDENTITY.id, OPERATION, {
-    cause,
-    diagnostics: { path, reason: cause.message },
-  });
 };

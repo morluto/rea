@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
-import { registerBrowserScenarioCommands } from "../../../src/cliBrowserScenarioCommands.js";
+import { registerBrowserScenarioCommands } from "../../../src/cli/browserScenarioCommands.js";
 import { BROWSER_SCENARIO_START_STEP_ID } from "../../../src/domain/browserScenarioValues.js";
 
 const serveJson = async (

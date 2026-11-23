@@ -16,6 +16,7 @@ import {
 import { createHarValidator } from "./HarSchema.js";
 import { HAR_CAPTURE_PROVIDER_IDENTITY } from "./CaptureProviderIdentities.js";
 import { sha256Hex } from "../../kernel/sha256Hex.js";
+import { trimTrailing } from "../../kernel/trimEdges.js";
 
 type DecodedCapture = Omit<
   WebNetworkCapture,
@@ -235,8 +236,7 @@ const projectHar = (
         pointer === "/response/content/text" &&
         parent?.encoding === "base64"
       ) {
-        const bytes = decodeHarBase64(item, pointer);
-        const contentBase64 = bytes.toString("base64");
+        const { bytes, contentBase64 } = decodeHarBase64(item, pointer);
         const sha256 = sha256Hex(bytes);
         const hidden =
           redactor.sensitiveBytes(bytes) ||
@@ -357,13 +357,13 @@ const integerLexeme = (literal: string): boolean => {
   if (match === null) return false;
   const [, whole = "", fraction = "", exponent = "0"] = match;
   const digits = `${whole}${fraction}`;
-  const significant = digits.replace(/0+$/, "");
-  if (/^0*$/.test(significant)) return true;
+  const significant = trimTrailing(digits, (character) => character === "0");
+  if (significant.length === 0) return true;
   const trailingZeros = digits.length - significant.length;
   return Number(exponent) - fraction.length + trailingZeros >= 0;
 };
 
-const decodeHarBase64 = (value: string, pointer: string): Buffer => {
+const decodeHarBase64 = (value: string, pointer: string) => {
   const compact = value.replace(/[\t\n\r ]/g, "");
   if (!isCanonicalBase64(compact))
     throw new CaptureFormatError(
@@ -371,5 +371,7 @@ const decodeHarBase64 = (value: string, pointer: string): Buffer => {
       "HAR content declares base64 but its text is not valid canonical base64 (ASCII whitespace is allowed).",
       pointer,
     );
-  return Buffer.from(compact, "base64");
+  // The validated spelling has canonical padding and pad bits. Reuse it for
+  // the sidecar instead of allocating another full-size encoding of the bytes.
+  return { bytes: Buffer.from(compact, "base64"), contentBase64: compact };
 };
