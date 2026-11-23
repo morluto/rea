@@ -2,7 +2,7 @@ import { fileIdentity } from "../../fixtures/evidenceSubject.js";
 import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics.js";
+import { createKernelModuleService } from "../../../src/composition/binaryDiagnostics/kernelModule.js";
 import {
   compressedKernelModuleContainer,
   kernelModuleFixture,

@@ -9,7 +9,7 @@ import {
   primaryAnalysisError,
   resolvedAnalysisError,
 } from "../../../src/domain/analysisErrorBase.js";
-import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics.js";
+import { createElfDebugLinkService } from "../../../src/composition/binaryDiagnostics/elfDebugLink.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   ELF_DEBUG_LINK_CANDIDATE_BUDGET_LIMITATION,
