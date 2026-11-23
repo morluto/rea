@@ -209,7 +209,6 @@ const listingPagingFields = {
   limit: z
     .int()
     .positive()
-    .max(10_000)
     .optional()
     .describe("Maximum number of entries to return; omit to return all"),
   offset: z

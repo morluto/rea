@@ -36,13 +36,11 @@ export const pageListingItems = <T>(
   readonly limitations: readonly string[];
 } => {
   const offset = paging.offset ?? 0;
-  const sliced =
-    paging.limit === undefined
-      ? offset === 0
-        ? [...items]
-        : items.slice(offset)
-      : items.slice(offset, offset + paging.limit);
-  const truncated = offset > 0 || sliced.length < items.length;
+  const sliced = items.slice(
+    offset,
+    paging.limit === undefined ? undefined : offset + paging.limit,
+  );
+  const truncated = sliced.length < items.length;
   const limitations = truncated
     ? [
         `Returned ${String(sliced.length)} of ${String(items.length)} ${label} (offset ${String(offset)}${paging.limit === undefined ? "" : `, limit ${String(paging.limit)}`}); adjust offset or limit to read remaining entries.`,
