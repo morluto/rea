@@ -213,5 +213,40 @@ cliTest(
     expect(descending.at(-1)).toBe("lib");
     expect(ascending[0]).toBe("assets.txt");
     expect(ascending.at(-1)).toBe("lib");
+
+    // Compressed size ranks repetitive text below incompressible bytes even
+    // though its declared size is larger.
+    let state = 0x2545f491;
+    const noise = Uint8Array.from({ length: 1024 }, () => {
+      state = (Math.imul(state, 1_103_515_245) + 12_345) >>> 0;
+      return state >>> 24;
+    });
+    const stored = await inventoryOf(
+      cli,
+      "rea-inventory-compressed-cli-",
+      async (writer) => {
+        await writer.add("text.txt", new TextReader("x".repeat(4096)));
+        await writer.add("noise.bin", new Uint8ArrayReader(noise));
+        await writer.add("empty/", undefined, { directory: true });
+      },
+    );
+    const by = async (field: "declared_size" | "compressed_size") =>
+      paths(
+        await stored.view({
+          fields: ["logical_path", field],
+          path_globs: ["**"],
+          order_by: { field, direction: "descending" },
+        }),
+      );
+    expect(await by("declared_size")).toEqual([
+      "text.txt",
+      "noise.bin",
+      "empty",
+    ]);
+    expect(await by("compressed_size")).toEqual([
+      "noise.bin",
+      "text.txt",
+      "empty",
+    ]);
   },
 );
