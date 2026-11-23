@@ -6,6 +6,8 @@ import {
   resolvedRegularFile,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
+import { ParseFailureError } from "../domain/parseFailure.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
@@ -110,6 +112,28 @@ const afterValidation = async <T>(
   }
 };
 
+const verifyStableArtifactRead = async (
+  path: string,
+  fileSystem: StableArtifactFileSystem,
+  file: FileHandle,
+  initial: BigIntStats,
+  count: number,
+): Promise<void> => {
+  const after = await file.stat({ bigint: true });
+  const current = await afterValidation(path, "during read", () =>
+    fileSystem.lstat(path),
+  );
+  if (
+    [after, current].some((stat) => !sameRegularFileState(initial, stat)) ||
+    BigInt(count) !== initial.size
+  )
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact changed during read: ${path}`,
+      { integrityCheck: "container-identity" },
+    );
+};
+
 const DEFAULT_STREAM_CHUNK_BYTES = 65536;
 const SNAPSHOT_READ_CHUNK_BYTES = 1048576;
 const EOF_PROBE_BYTES = 4096;
@@ -157,29 +181,6 @@ const assertOpenedAdmitted = async (
       { integrityCheck: "container-identity" },
     );
   return initial;
-};
-
-/** Reject replacement or in-place change after `count` bytes were streamed. */
-const assertUnchangedAfterRead = async (
-  path: string,
-  file: FileHandle,
-  fileSystem: StableArtifactFileSystem,
-  initial: BigIntStats,
-  count: number,
-) => {
-  const after = await file.stat({ bigint: true });
-  const current = await afterValidation(path, "during read", () =>
-    fileSystem.lstat(path),
-  );
-  if (
-    [after, current].some((stat) => !sameRegularFileState(initial, stat)) ||
-    BigInt(count) !== initial.size
-  )
-    throw new ArtifactReaderFailure(
-      "integrity",
-      `Artifact changed during read: ${path}`,
-      { integrityCheck: "container-identity" },
-    );
 };
 
 /**
@@ -263,6 +264,91 @@ export const streamStableArtifact = async (
   });
 };
 
+/** Verified random-access handle for one streamed stable artifact. */
+export interface StableArtifactHandle {
+  readonly sha256: string;
+  readonly size: number;
+  readonly prefix: Buffer;
+  /** Read a verified positional byte range from the open descriptor. */
+  readonly readRange: (offset: number, length: number) => Promise<Buffer>;
+}
+
+/** Options for {@link withStableArtifactHandle}. */
+export interface StableArtifactHandleOptions<Value = unknown> {
+  /** Bytes to retain from the start of the file, given its admitted size. */
+  readonly retainBytes: (size: number) => number;
+  /** Maximum streaming hash chunk size in bytes; defaults to 65536. */
+  readonly chunkBytes?: number | undefined;
+  readonly signal?: AbortSignal | undefined;
+  readonly fileSystem?: StableArtifactFileSystem;
+  readonly resourceScope?: ArtifactResourceScope | undefined;
+  /** Called once whole-file hashing and stability verification complete, before `useFile`. */
+  readonly onIdentity?: (identity: {
+    readonly sha256: string;
+    readonly bytes: number;
+  }) => void;
+  /** Called after the parsed result passes the final identity check, before closing. */
+  readonly onVerifiedResult?: (value: Value) => void;
+}
+
+/**
+ * Stream one bounded regular file to verify its identity and SHA-256 without
+ * buffering the whole file, then run `useFile` with random-access reads on the
+ * same open descriptor and re-verify file stability before closing.
+ */
+export const withStableArtifactHandle = async <Value>(
+  path: string,
+  maximumBytes: number,
+  options: StableArtifactHandleOptions<Value>,
+  useFile: (handle: StableArtifactHandle) => Promise<Value>,
+): Promise<Value> => {
+  const chunkBytes = options.chunkBytes ?? DEFAULT_STREAM_CHUNK_BYTES;
+  if (!Number.isSafeInteger(chunkBytes) || chunkBytes <= 0)
+    throw new ArtifactReaderFailure(
+      "format",
+      `Artifact read chunk size must be a positive integer: ${String(chunkBytes)}`,
+    );
+  const fileSystem = options.fileSystem ?? FILE_SYSTEM;
+  return readStableArtifactChunks({
+    path,
+    maximumBytes,
+    chunkBytes,
+    signal: options.signal,
+    fileSystem,
+    resourceScope: options.resourceScope,
+    retainBytes: options.retainBytes,
+    onChunk: undefined,
+    complete: async (prefix, sha256, size, initial, file) => {
+      options.onIdentity?.({ sha256, bytes: size });
+      const verifyState = () =>
+        verifyStableArtifactRead(path, fileSystem, file, initial, size);
+      const value = await useFile({
+        sha256,
+        size,
+        prefix,
+        readRange: (offset, length) =>
+          readFileHandleRange(file, offset, length, () =>
+            assertArtifactReadActive(options.signal),
+          ),
+      }).catch(async (cause: unknown) => {
+        // Format findings can reflect bytes rewritten during parsing. Keep
+        // independent physical I/O, cancellation, and decoder failures primary.
+        if (
+          (cause instanceof ParseFailureError && cause.kind !== "limit") ||
+          (cause instanceof ArtifactReaderFailure && cause.reason === "format")
+        )
+          await verifyState();
+        throw cause;
+      });
+      await verifyState();
+      options.onVerifiedResult?.(value);
+      // The descriptor owner records this verified completion before checking
+      // finalization cancellation, so cleanup errors can retain the value.
+      return value;
+    },
+  });
+};
+
 const readStableArtifactChunks = async <Value>(options: {
   readonly path: string;
   readonly maximumBytes: number;
@@ -277,7 +363,8 @@ const readStableArtifactChunks = async <Value>(options: {
     sha256: string,
     size: number,
     state: BigIntStats,
-  ) => Value;
+    file: FileHandle,
+  ) => Value | Promise<Value>;
 }): Promise<Value> => {
   const {
     path,
@@ -374,9 +461,9 @@ const readStableArtifactChunks = async <Value>(options: {
         hash.update(chunk);
         if (onChunk !== undefined) await onChunk(chunk);
       }
-      await assertUnchangedAfterRead(path, file, fileSystem, initial, count);
+      await verifyStableArtifactRead(path, fileSystem, file, initial, count);
       assertArtifactReadActive(signal);
-      return complete(bytes, hash.digest("hex"), count, initial);
+      return complete(bytes, hash.digest("hex"), count, initial, file);
     },
   );
 };
@@ -468,7 +555,7 @@ export const readStableArtifactRanges = async <T>(
           );
         hash.update(value);
       }
-      await assertUnchangedAfterRead(path, file, fileSystem, initial, count);
+      await verifyStableArtifactRead(path, fileSystem, file, initial, count);
       // A cancellation from here on is reported by the descriptor owner, which
       // keeps this completed read so the caller can still name the source.
       return { result, sha256: hash.digest("hex"), bytes: size };

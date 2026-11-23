@@ -112,9 +112,12 @@ export {
   readStableArtifact,
   readStableArtifactRanges,
   streamStableArtifact,
+  withStableArtifactHandle,
 } from "./readStableArtifact.js";
 export type {
   StableArtifactFileSystem,
+  StableArtifactHandle,
+  StableArtifactHandleOptions,
   StableArtifactSnapshot,
   StableArtifactStream,
   StableArtifactStreamOptions,

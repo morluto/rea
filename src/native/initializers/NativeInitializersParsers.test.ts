@@ -1776,15 +1776,21 @@ describe("Unreadable symbol names", () => {
 describe("Mach-O fixup sources", () => {
   it("yields and cancels while expanding legacy rebase runs", async () => {
     const bytes = machoArm64LegacyRebaseInitializers();
+    // Clear the three initializer section type flags so later slot scanning
+    // cannot deliver the abort if rebase expansion fails to yield.
+    for (const flags of [256 + 64, 336 + 64, 416 + 64])
+      bytes.writeUInt32LE(0, flags);
     const run = Buffer.from([0x11, 0x21, 0, 0x60, 0x80, 0x10]);
     const stream = Buffer.concat([
-      ...Array.from({ length: 12 }, () => run),
+      ...Array.from({ length: 3 }, () => run),
       Buffer.from([0]),
     ]);
     stream.copy(bytes, 0x3300);
     bytes.writeUInt32LE(stream.length, 548);
+    await expect(read(bytes)).resolves.toMatchObject({ entries: [] });
     const controller = new AbortController();
-    setImmediate(() => controller.abort(new Error("cancel during rebase")));
+    const reason = new Error("cancel during rebase");
+    setImmediate(() => controller.abort(reason));
     await expect(
       readNativeInitializers(
         bytes,
@@ -1792,12 +1798,16 @@ describe("Mach-O fixup sources", () => {
         { path: "/artifacts/image", offset: 0, limit: 64 },
         controller.signal,
       ),
-    ).rejects.toThrow(ArtifactReaderFailure);
+    ).rejects.toMatchObject({
+      reason: "cancelled",
+      cancellation: { reason },
+    });
   });
 
   it("keeps both initializer slots unresolved when a legacy bind crosses their boundary", async () => {
     const bytes = machoArm64LegacyRebaseInitializers();
     const bind = Buffer.from([
+      0x30, // SET_DYLIB_SPECIAL_IMM self
       0x40,
       ...Buffer.from("_foo\0"),
       0x51,

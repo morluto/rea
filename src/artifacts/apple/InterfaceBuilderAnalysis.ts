@@ -40,6 +40,7 @@ import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeNibArchive,
   nibCollectionMembers,
+  trimTrailingNul,
   type NibArchiveDocument,
 } from "./NibArchive.js";
 import {
@@ -677,7 +678,7 @@ const projectNibArchive = (
 ) => {
   const unexaminedSources: NibUnexaminedSource[] = [];
   for (const object of archive.objects) {
-    const name = object.class_name.replace(/\0+$/u, "");
+    const name = trimTrailingNul(object.class_name);
     if (
       name === "UINib" &&
       ["UINib.archiveData", "archiveData"].some((key) =>
@@ -701,7 +702,7 @@ const projectNibArchive = (
   const normalizeClassName = (value: string): string => {
     const known = normalizedClassNames.get(value);
     if (known !== undefined) return known;
-    const normalized = value.replace(/\0+$/u, "");
+    const normalized = trimTrailingNul(value);
     normalizedClassNames.set(value, normalized);
     return normalized;
   };

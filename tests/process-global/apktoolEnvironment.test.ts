@@ -4,7 +4,7 @@ import { afterEach, expect, it, onTestFinished, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import { ApktoolProvider } from "../../src/apktool/ApktoolProvider.js";
-import { ApktoolResourceAnalysisService } from "../../src/application/apktool/ApktoolResourceAnalysisService.js";
+import { createApktoolResourceAnalysisService } from "../../src/application/ProviderOperationServices.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -77,7 +77,7 @@ it.skipIf(process.platform === "win32")(
     const provider = new ApktoolProvider();
     onTestFinished(() => provider.close());
     vi.stubEnv("REA_APKTOOL_COMMAND", command);
-    const result = await new ApktoolResourceAnalysisService(provider).execute(
+    const result = await createApktoolResourceAnalysisService(provider).execute(
       "inspect_apktool_client",
       {},
     );

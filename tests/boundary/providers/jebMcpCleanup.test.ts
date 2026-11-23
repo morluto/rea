@@ -10,7 +10,7 @@ import {
   AnalysisProtocolError,
   AnalysisCancelledError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { JebAnalysisService } from "../../../src/application/jeb/JebAnalysisService.js";
+import { createJebAnalysisService } from "../../../src/application/ProviderOperationServices.js";
 import {
   startJebMcpFixture,
   jebPrimaryResponses,
@@ -165,7 +165,7 @@ it("retains completed JEB Evidence when the caller aborts after the tool returns
     environment: { REA_JEB_MCP_URL: fixture.endpoint },
   });
   await withVerifierCleanup(async () => {
-    const service = new JebAnalysisService(provider);
+    const service = createJebAnalysisService(provider);
     const result = await service.execute(
       "inspect_jeb_client",
       {},

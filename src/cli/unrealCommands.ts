@@ -3,11 +3,11 @@ import type { Logger } from "pino";
 import { createUnrealPakService } from "../composition/unreal.js";
 import { UNREAL_TOOL_CONTRACTS } from "../contracts/unreal/unrealToolContracts.js";
 import { contractNamed } from "./contractCliDescription.js";
+import { registerContractCommand } from "./contractCommand.js";
 import {
   deliverWithService,
-  registerContractCommand,
   type EvidenceInspectionService,
-} from "./contractCommand.js";
+} from "./contractCommandRunners.js";
 import type { CliInstance } from "./types.js";
 
 /** CLI and MCP share inspection; one-shot summaries preserve a complete Evidence file. */

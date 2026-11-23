@@ -1,10 +1,11 @@
-import { isUtf8 } from "node:buffer";
-import { createHash } from "node:crypto";
+import {
+  RELEASE_EXPOSURE_AUDIT_OPERATION as OPERATION,
+  releaseExposureFailure,
+} from "./releaseExposure/releaseExposureFailures.js";
 import type { Dirent } from "node:fs";
 import { lstat, mkdtemp, opendir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import type { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type {
@@ -25,25 +26,30 @@ import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
   type ArtifactResourceOwner,
-  artifactFileCancellationCause,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   readStableArtifact,
+  withStableArtifactHandle,
+  type StableArtifactHandle,
   projectArtifactCloseFailure,
-  projectStableArtifactFailure,
   readerIntegrityFailure,
   hashStableRootArtifactHandle,
-  openRootArtifact,
-  releaseRootArtifact,
-  asarHeaderAdmissionRecovery,
   createAsarHeaderSignatureProbe,
 } from "../resources/index.js";
 import {
-  decodeDeclaredText,
+  asReadFailure,
+  fitAllowance,
+  overAllowance,
+  readDiskMember,
+  readSpan,
+  readStreamBounded,
+  rethrowReadFailure,
+  withMemberDescriptor,
+  type ExpectedMemberDigest,
+  type MemberRead,
+} from "./releaseExposure/memberIo.js";
+import {
   decodeMemberText,
   declaresTextEncoding,
-  getCachedTextDecoder,
-  hasNonUtf8Nul,
   type MemberText,
 } from "./releaseExposure/memberTextDecoding.js";
 import {
@@ -62,41 +68,48 @@ import {
 } from "./releaseExposure/memberClassification.js";
 import { nodeShebang } from "./releaseExposure/nodeShebang.js";
 import {
-  InternalInvariantError,
-  invariantViolation,
-} from "../domain/internalInvariant.js";
+  diskPath,
+  entryPath,
+  hasExtractableAncestor,
+  packageAncestor,
+  type InventoryOccurrence,
+} from "./releaseExposure/occurrencePaths.js";
+import {
+  hasVisibleNonMapPrefix,
+  isSourceMapJsonObject,
+  mapText,
+  mayHaveSourceMapPrefix,
+  mayHaveSourceMapText,
+  namedMapReference,
+  parsesAsSourceMap,
+  type SourceMapReference,
+} from "./releaseExposure/sourceMapDetection.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
 } from "../config/asarHeaderAdmission.js";
-import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { ArtifactTraversalObservation } from "./ArtifactTraversalObservation.js";
 import { classifyEmbeddedExecutablePackage } from "./inventory/classify.js";
 import { inventoryArtifactInScope } from "./inventory/ArtifactInventory.js";
 import { createArtifactReader } from "./createArtifactReader.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import {
-  AnalysisAccessDeniedError,
   AnalysisInputError,
-  AnalysisResourceConstraintError,
   cancelledBy,
-  carriedReason,
 } from "../domain/analysisErrorCore.js";
 import type {
   ArtifactInventoryResult,
   ArtifactOccurrence,
 } from "../domain/artifactGraph.js";
-import { inspectPeCodeViewFromBuffer } from "../domain/binaryTarget.js";
+import {
+  inspectPeCodeViewFromBuffer,
+  inspectPeCodeViewFromReader,
+} from "../domain/binaryTarget.js";
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
-import type {
-  ArtifactAdmissionLimit,
-  ArtifactIntegrityCheck,
-} from "../domain/artifactOperationError.js";
+import type { ArtifactIntegrityCheck } from "../domain/artifactOperationError.js";
 import { observeMzWindowsHeader } from "../domain/dosMz.js";
 import { evidenceSubjectFormatSchema } from "../domain/evidenceSubject.js";
-import { byteOrderMarkEncoding } from "../domain/textByteOrderMark.js";
-import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { RELEASE_EXPOSURE_PROVIDER } from "../domain/investigationProviders.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { analysisErrorWithCleanupDependencies } from "../domain/analysisErrorCleanup.js";
@@ -123,31 +136,17 @@ import {
 } from "../domain/releaseExposure.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
-import { readFileHandleRange } from "../filesystem/readFileHandleRange.js";
-import {
-  isSelectedRegularFileError,
-  RegularFileChangedError,
-  sameRegularFileState,
-  type StableRegularFileDescriptor,
-} from "../filesystem/RegularFile.js";
-import { sourceMapJsonText } from "../domain/sourceMapEnvelope.js";
 import {
   hasScheme,
   htmlUrlText,
   stripQueryAndFragment,
 } from "../domain/artifactPathSyntax.js";
-import { parseJsonWithDuplicatePolicy } from "../domain/jsonDuplicateMember.js";
-import {
-  inspectSourceMap,
-  inspectSourceMapSourceContent,
-} from "../domain/sourceMapFormat.js";
+import { inspectSourceMapSourceContent } from "../domain/sourceMapFormat.js";
 import { htmlArtifactReferences } from "../domain/javascript/htmlArtifactReferences.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { addSourceMapDirectives } from "../domain/javascript/javascriptStaticAnalysisCalls.js";
 import { createJavaScriptAnalysisAccumulator } from "../domain/javascript/javascriptStaticAnalysisState.js";
-import { errorMessage } from "../kernel/errorMessage.js";
 
-const OPERATION = "audit_release_exposure";
 const SIBLING_LIST_LIMIT = 4096;
 const CONTAINER_LIST_LIMIT = 4096;
 const OPEN_CONTAINER_LIMIT = 8;
@@ -199,46 +198,14 @@ const SCAN_INTERRUPTED =
   "The member scan stopped on unfinished cleanup. Members it did not reach are unknown.";
 const SCAN_CANCELLED =
   "The member scan was cancelled. Members it did not reach are unknown.";
-/** Decoded representation bound for one binary plist text member. */
-/** Bytes of a member that decide how its NULs are read. */
-/** One header byte in this many being NUL is too many for UTF-8 text. */
 const PE_MEMBER_NAME = /\.(?:dll|exe|sys)$/iu;
 const JAVASCRIPT_MEMBER_NAME = /\.(?:[cm]?[jt]s|[jt]sx)$/iu;
 /** Markup that `htmlArtifactReferences` reads for scripts. SVG can carry them too. */
 const SCRIPT_PAGE_NAME = /\.(?:html?|svg)$/iu;
 
 type NativeFormat = "elf" | "mach-o" | "mach-o-universal" | "pe";
-type InventoryOccurrence = ArtifactInventoryResult["occurrences"][number];
 
-/** One read attempt. Allowance and read failure are different facts. */
-type MemberRead =
-  | { readonly kind: "bytes"; readonly bytes: Buffer }
-  | { readonly kind: "over_allowance"; readonly prefix: Buffer | null }
-  | { readonly kind: "unread" };
 type ReadMember = (budget: number) => Promise<MemberRead>;
-
-/** Interpretation is separate from the member's source path. */
-interface SourceMapReference {
-  readonly location: string;
-  readonly kind: "javascript-source-map" | "possible-linker-map";
-  readonly genericName?: boolean;
-  readonly occurrence?: object;
-}
-
-const namedMapReference = (
-  logical: string,
-  location: string,
-  occurrence?: object,
-): SourceMapReference => ({
-  location,
-  genericName:
-    logical.toLowerCase().endsWith(".map") &&
-    !isJavaScriptSourceMapName(logical),
-  ...(occurrence === undefined ? {} : { occurrence }),
-  kind: isJavaScriptSourceMapName(logical)
-    ? "javascript-source-map"
-    : "possible-linker-map",
-});
 
 interface OpenContainer {
   readonly path: string;
@@ -1090,14 +1057,6 @@ const shaOf = (
     ? undefined
     : nodeSha.get(occurrence.artifact_id);
 
-const overAllowance = (bytes: Buffer): MemberRead => ({
-  kind: "over_allowance",
-  prefix: bytes.subarray(0, MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
-});
-
-const fitAllowance = (bytes: Buffer, budget: number): MemberRead =>
-  bytes.length <= budget ? { kind: "bytes", bytes } : overAllowance(bytes);
-
 const examineSelectedFile = async (
   state: ScanState,
   input: ConsumeInput,
@@ -1468,55 +1427,6 @@ const noteUnreadMap = (
   noteUncertainLinkerMap(state, map);
 };
 
-/**
- * A map's text in the encoding its byte order mark names, or null for one this
- * reader does not decode, which leaves the map unresolved. Unmarked bytes are
- * read as UTF-8, as a source map is.
- */
-const mapText = (bytes: Buffer): MemberText | null => {
-  const encoding = byteOrderMarkEncoding(bytes);
-  if (encoding === null)
-    return { text: bytes.toString("utf8"), complete: isUtf8(bytes) };
-  if (encoding === "utf-32") return null;
-  return decodeDeclaredText(bytes, encoding);
-};
-
-const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
-  const encoding = byteOrderMarkEncoding(prefix);
-  if (encoding === "utf-32") return true;
-  try {
-    const text = new TextDecoder(encoding ?? "utf-8", { fatal: true }).decode(
-      prefix,
-      { stream: true },
-    );
-    return mayHaveSourceMapText(text);
-  } catch (cause) {
-    if (!(cause instanceof TypeError)) throw cause;
-    return !hasVisibleNonMapPrefix(
-      getCachedTextDecoder(encoding ?? "utf-8", false).decode(prefix),
-    );
-  }
-};
-
-const mayHaveSourceMapText = (decoded: string): boolean => {
-  const text = sourceMapJsonText(decoded).trimStart();
-  return text.length === 0 || text.startsWith("{");
-};
-
-/** A visible ASCII non-JSON prefix remains evidence even if later text is lossy. */
-const hasVisibleNonMapPrefix = (text: string): boolean => {
-  const envelope = text.startsWith(")]}'");
-  if (envelope && !/[\r\n]/u.test(text)) return false;
-  const first = sourceMapJsonText(text).trimStart().charCodeAt(0);
-  // A leading ')' without a complete envelope may still begin one.
-  return (
-    first >= 0x21 &&
-    first <= 0x7e &&
-    first !== 0x7b &&
-    (envelope || first !== 0x29)
-  );
-};
-
 const readSourceMap = (
   state: ScanState,
   map: SourceMapReference,
@@ -1593,18 +1503,7 @@ const scriptHoldsMap = (
     !isScriptTarget(state, member.location)
   )
     return false;
-  const decoded = parseJsonWithDuplicatePolicy(
-    sourceMapJsonText(text),
-    "last-wins",
-  );
-  if (!decoded.ok) return false;
-  const parsed = decoded.value;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    return false;
-  return (
-    "version" in parsed &&
-    ("mappings" in parsed || "sources" in parsed || "sections" in parsed)
-  );
+  return isSourceMapJsonObject(text);
 };
 
 /**
@@ -2373,6 +2272,33 @@ const noteUnresolvedPe = (
   return true;
 };
 
+const recordPdbResult = (
+  state: ScanState,
+  parsed: ReturnType<typeof inspectPeCodeViewFromBuffer>,
+  imagePath: string,
+): void => {
+  if (!parsed.ok) {
+    state.pdbFailed += 1;
+    pushLimitation(state, `${imagePath}: ${parsed.error.message}`);
+  } else if (parsed.value !== undefined) {
+    const record = parsed.value;
+    if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
+    else if (
+      state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
+      !state.pdbPathBytes.some(
+        ({ image_path, bytes_hex }) =>
+          image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
+      )
+    )
+      state.pdbPathBytes.push({
+        image_path: imagePath,
+        bytes_hex: record.pdbPathBytesHex,
+        encoding: "unknown",
+      });
+    pushSample(state.pdbImagePaths, imagePath);
+  }
+};
+
 const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
   const header = observeMzWindowsHeader(bytes);
   if (header.state !== "declared" || header.signature !== "PE") {
@@ -2381,27 +2307,51 @@ const readPdb = (state: ScanState, bytes: Buffer, imagePath: string): void => {
   }
   state.pdbExamined += 1;
   try {
-    const parsed = inspectPeCodeViewFromBuffer(bytes, header.offset);
-    if (!parsed.ok) {
-      state.pdbFailed += 1;
-      pushLimitation(state, `${imagePath}: ${parsed.error.message}`);
-    } else if (parsed.value !== undefined) {
-      const record = parsed.value;
-      if (record.pdbPath !== null) pushSample(state.pdbPaths, record.pdbPath);
-      else if (
-        state.pdbPathBytes.length < MAX_RELEASE_EXPOSURE_SAMPLES &&
-        !state.pdbPathBytes.some(
-          ({ image_path, bytes_hex }) =>
-            image_path === imagePath && bytes_hex === record.pdbPathBytesHex,
-        )
-      )
-        state.pdbPathBytes.push({
-          image_path: imagePath,
-          bytes_hex: record.pdbPathBytesHex,
-          encoding: "unknown",
-        });
-      pushSample(state.pdbImagePaths, imagePath);
-    }
+    recordPdbResult(
+      state,
+      inspectPeCodeViewFromBuffer(bytes, header.offset),
+      imagePath,
+    );
+  } catch {
+    state.pdbFailed += 1;
+  }
+};
+
+const readPdbFromHandle = async (
+  state: ScanState,
+  handle: StableArtifactHandle,
+  imagePath: string,
+): Promise<void> => {
+  const readRange: StableArtifactHandle["readRange"] = (offset, length) =>
+    offset >= 0 && length >= 0 && offset + length <= handle.prefix.length
+      ? Promise.resolve(handle.prefix.subarray(offset, offset + length))
+      : handle.readRange(offset, length);
+  let header = observeMzWindowsHeader(handle.prefix, handle.size);
+  if (header.state === "signature-needed") {
+    const sigLength = Math.min(4, handle.size - header.offset);
+    const sigBytes =
+      sigLength > 0
+        ? await readRange(header.offset, sigLength)
+        : Buffer.alloc(0);
+    header = observeMzWindowsHeader(handle.prefix, handle.size, {
+      offset: header.offset,
+      bytes: sigBytes,
+    });
+  }
+  if (header.state !== "declared" || header.signature !== "PE") {
+    state.pdbFailed += 1;
+    return;
+  }
+  state.pdbExamined += 1;
+  try {
+    recordPdbResult(
+      state,
+      await inspectPeCodeViewFromReader(
+        { size: handle.size, readRange },
+        header.offset,
+      ),
+      imagePath,
+    );
   } catch {
     state.pdbFailed += 1;
   }
@@ -2419,20 +2369,24 @@ const examinePdb = async (
   }
   state.pdbAttempts += 1;
   try {
-    const snapshot = await readStableArtifact(
+    await withStableArtifactHandle(
       filePath,
       maxFileBytes,
-      signal,
-      undefined,
-      resources,
+      {
+        retainBytes: (size) => Math.min(size, 4096),
+        signal,
+        resourceScope: resources,
+      },
+      async (handle) => {
+        if (expectedSha256 !== undefined && handle.sha256 !== expectedSha256)
+          throw new ArtifactReaderFailure(
+            "integrity",
+            `Member changed during acquisition: ${filePath}`,
+            { integrityCheck: "member-identity" },
+          );
+        await readPdbFromHandle(state, handle, filePath);
+      },
     );
-    if (expectedSha256 !== undefined && snapshot.sha256 !== expectedSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Member changed during acquisition: ${filePath}`,
-        { integrityCheck: "member-identity" },
-      );
-    readPdb(state, snapshot.bytes, filePath);
   } catch (cause) {
     rethrowReadFailure(cause);
     state.pdbFailed += 1;
@@ -2507,6 +2461,7 @@ const readOccurrence = async (
         Math.min(located.length, budget),
         state,
         input,
+        (message) => pushLimitation(state, message),
       );
       if (bytes === null) return { kind: "unread" };
       return located.length > budget
@@ -2524,6 +2479,7 @@ const readOccurrence = async (
     shaOf(occurrence, nodeSha),
     state,
     input,
+    (message) => pushLimitation(state, message),
   );
 };
 
@@ -2531,35 +2487,6 @@ type EmbeddedPackageProbe =
   | { readonly kind: "package"; readonly format: PackageFormat }
   | { readonly kind: "absent" }
   | { readonly kind: "unreadable" };
-
-/**
- * Own one member descriptor. A failed close stays retained by the resource
- * scope, and the primary failure survives it.
- */
-const withMemberDescriptor = async <T>(
-  filePath: string,
-  { resources, signal }: ScanContext,
-  use: (source: StableRegularFileDescriptor) => Promise<T>,
-): Promise<T> => {
-  const source = await openRootArtifact(filePath, resources, signal);
-  let settled: Result<T, unknown>;
-  try {
-    settled = ok(await use(source));
-  } catch (cause) {
-    settled = err(asReadFailure(cause));
-  }
-  await releaseRootArtifact(
-    filePath,
-    source.owner,
-    resources,
-    settled.ok
-      ? { kind: "completed", digest: null }
-      : { kind: "failed", cause: settled.error },
-    signal,
-  );
-  if (!settled.ok) throw settled.error;
-  return settled.value;
-};
 
 const embeddedPackageFormat = async (
   filePath: string,
@@ -3042,203 +2969,6 @@ const readEntryBytes = async (
   return readStreamBounded(stream, budget, state, signal, expected);
 };
 
-/** An inventoried digest the member's complete bytes must still match. */
-interface ExpectedMemberDigest {
-  readonly sha256: string;
-  readonly changed: string;
-}
-
-const readStreamBounded = async (
-  stream: Readable,
-  budget: number,
-  state: ScanState,
-  signal: AbortSignal | undefined,
-  expected?: ExpectedMemberDigest,
-): Promise<MemberRead> => {
-  const chunks: Buffer[] = [];
-  const hash = expected === undefined ? undefined : createHash("sha256");
-  let total = 0;
-  let overBudget = false;
-  let failure: unknown;
-  try {
-    for await (const chunk of stream) {
-      if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-      const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(piece);
-      total += piece.length;
-      state.memberBytesRead += piece.length;
-      if (total > budget) {
-        overBudget = true;
-        break;
-      }
-      hash?.update(piece);
-    }
-    // The digest covers the whole member, so it is only checked when the
-    // member ended within the allowance. A member past the allowance is never
-    // read further to finish the hash: it stays over_allowance, unverified.
-    if (
-      !overBudget &&
-      expected !== undefined &&
-      hash !== undefined &&
-      hash.digest("hex") !== expected.sha256
-    )
-      throw new ArtifactReaderFailure("integrity", expected.changed, {
-        integrityCheck: "member-identity",
-      });
-  } catch (cause) {
-    failure = cause;
-  }
-  let closeFailure: unknown;
-  try {
-    stream.destroy();
-  } catch (cause) {
-    closeFailure = cause;
-  }
-  if (failure !== undefined && closeFailure !== undefined)
-    throw new AggregateError(
-      [failure, closeFailure],
-      "Member read and stream close both failed.",
-    );
-  if (closeFailure !== undefined) throw closeFailure;
-  if (failure !== undefined) throw failure;
-  const bytes = Buffer.concat(chunks);
-  return overBudget ? overAllowance(bytes) : { kind: "bytes", bytes };
-};
-
-const readSpan = async (
-  filePath: string,
-  offset: number,
-  length: number,
-  state: ScanState,
-  context: ScanContext,
-): Promise<Buffer | null> => {
-  const { signal } = context;
-  if (
-    !Number.isSafeInteger(offset) ||
-    offset < 0 ||
-    !Number.isSafeInteger(length) ||
-    length < 0 ||
-    !Number.isSafeInteger(offset + length)
-  )
-    return null;
-  try {
-    return await withMemberDescriptor(
-      filePath,
-      context,
-      async ({ handle, initial }) => {
-        const observed = await handle.stat();
-        if (!sameRegularFileState(initial, observed))
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Artifact changed before read: ${filePath}`,
-            { integrityCheck: "member-identity" },
-          );
-        if (offset + length > observed.size) return null;
-        // Charge bytes as they arrive, so a read that fails after partial
-        // progress still counts what it consumed against the allowance.
-        let charged = 0;
-        const bytes = await readFileHandleRange(
-          handle,
-          offset,
-          length,
-          (bytesRead) => {
-            state.memberBytesRead += bytesRead - charged;
-            charged = bytesRead;
-            if (signal?.aborted) throw cancelledBy(OPERATION, signal);
-          },
-        );
-        const after = await handle.stat();
-        if (!sameRegularFileState(initial, after))
-          throw new ArtifactReaderFailure(
-            "integrity",
-            `Artifact changed during read: ${filePath}`,
-            { integrityCheck: "member-identity" },
-          );
-        state.memberBytesRead += bytes.length - charged;
-        return bytes;
-      },
-    );
-  } catch (cause) {
-    rethrowReadFailure(cause);
-    pushLimitation(state, `Could not read ${filePath}.`);
-    return null;
-  }
-};
-
-const readDiskMember = async (
-  filePath: string,
-  maxBytes: number,
-  expectedSha256: string | undefined,
-  state: ScanState,
-  context: ScanContext,
-): Promise<MemberRead> => {
-  try {
-    const snapshot = await readStableArtifact(
-      filePath,
-      maxBytes,
-      context.signal,
-      undefined,
-      context.resources,
-    );
-    if (expectedSha256 !== undefined && snapshot.sha256 !== expectedSha256)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Member changed during acquisition: ${filePath}`,
-        { integrityCheck: "member-identity" },
-      );
-    return { kind: "bytes", bytes: snapshot.bytes };
-  } catch (cause) {
-    rethrowReadFailure(cause);
-    if (cause instanceof ArtifactReaderFailure && cause.reason === "limit")
-      return {
-        kind: "over_allowance",
-        prefix: await readSpan(
-          filePath,
-          0,
-          Math.min(maxBytes, MAX_RELEASE_EXPOSURE_MEMBER_PROBE_BYTES),
-          state,
-          context,
-        ),
-      };
-    pushLimitation(state, `Could not read ${filePath}.`);
-    return { kind: "unread" };
-  }
-};
-
-/**
- * A file that changed while being read is a changed release member, unless the
- * caller is reading the selected artifact itself.
- */
-const asReadFailure = (
-  cause: unknown,
-  integrityCheck: ArtifactIntegrityCheck = "member-identity",
-): unknown =>
-  cause instanceof RegularFileChangedError
-    ? new ArtifactReaderFailure("integrity", cause.message, {
-        cause,
-        integrityCheck,
-      })
-    : cause;
-
-/**
- * A read that left cleanup unfinished is never a skipped member, whatever its
- * reason: only the error tells the caller a descriptor is still retained.
- */
-const rethrowReadFailure = (
-  cause: unknown,
-  integrityCheck?: ArtifactIntegrityCheck,
-): void => {
-  const failure = asReadFailure(cause, integrityCheck);
-  if (failure instanceof AnalysisError) throw failure;
-  if (
-    failure instanceof ArtifactReaderFailure &&
-    (failure.reason === "cancelled" ||
-      failure.reason === "integrity" ||
-      failure.cleanup !== undefined)
-  )
-    throw failure;
-};
-
 /**
  * List the parent directory up to the sibling allowance. The stream stops at
  * the allowance, so a very large directory costs no more than the limit.
@@ -3334,7 +3064,14 @@ const classifySiblingMap = async (
   input: ConsumeInput,
 ): Promise<void> => {
   const { hasSlot, bytes } = chargeMapRead(state);
-  const loaded = await readDiskMember(sibling, bytes, undefined, state, input);
+  const loaded = await readDiskMember(
+    sibling,
+    bytes,
+    undefined,
+    state,
+    input,
+    (message) => pushLimitation(state, message),
+  );
   if (loaded.kind === "unread") {
     state.skippedCompanions += 1;
     return;
@@ -3368,81 +3105,6 @@ const classifySiblingMap = async (
   )
     state.skippedCompanions += 1;
   else noteLinkerMapGuess(state, sibling);
-};
-
-const parsesAsSourceMap = (bytes: Buffer): boolean => {
-  const text = mapText(bytes);
-  if (text === null || !text.complete) return false;
-  try {
-    inspectSourceMap(text.text);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const diskPath = (
-  input: ConsumeInput,
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): string | null => {
-  if (hasExtractableAncestor(occurrence, byId, formatOf)) return null;
-  if (
-    occurrence.source_path !== undefined &&
-    occurrence.source_path.length > 0 &&
-    isAbsolute(occurrence.source_path)
-  )
-    return occurrence.source_path;
-  if (!input.directory) {
-    if (occurrence.parent_occurrence_id === null) return input.path;
-    return null;
-  }
-  if (occurrence.logical_path.split("/").includes("..")) return null;
-  if (occurrence.logical_path.length === 0 || occurrence.logical_path === ".")
-    return input.path;
-  const source = occurrence.source_path;
-  return appendCallerPath(
-    input.path,
-    source !== undefined && logicalPathNfc(source) === occurrence.logical_path
-      ? source
-      : occurrence.logical_path,
-  );
-};
-
-const packageAncestor = (
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): InventoryOccurrence | undefined => {
-  const seen = new Set<string>();
-  let parentId = occurrence.parent_occurrence_id;
-  while (parentId !== null) {
-    if (seen.has(parentId)) return undefined;
-    seen.add(parentId);
-    const parent = byId.get(parentId);
-    if (parent === undefined) return undefined;
-    if (EXTRACTABLE.has(formatOf(parent))) return parent;
-    parentId = parent.parent_occurrence_id;
-  }
-  return undefined;
-};
-
-const hasExtractableAncestor = (
-  occurrence: InventoryOccurrence,
-  byId: Map<string, InventoryOccurrence>,
-  formatOf: (occurrence: InventoryOccurrence) => string,
-): boolean => packageAncestor(occurrence, byId, formatOf) !== undefined;
-
-const entryPath = (
-  occurrence: InventoryOccurrence,
-  parent: InventoryOccurrence,
-): string => {
-  const logical = occurrence.logical_path;
-  const parentLogical = parent.logical_path;
-  if (parentLogical.length === 0 || parentLogical === ".") return logical;
-  const prefix = `${parentLogical}/`;
-  return logical.startsWith(prefix) ? logical.slice(prefix.length) : logical;
 };
 
 /**
@@ -3492,140 +3154,3 @@ const pushSample = (samples: string[], value: string): void => {
 const pushLimitation = (state: ScanState, message: string): void => {
   if (!state.limitations.retains(message)) state.limitations.push(message);
 };
-
-const fileSizeRecovery = (maxFileBytes: number) =>
-  maxFileBytes >= MAX_RELEASE_EXPOSURE_FILE_BYTES
-    ? fixedAllowanceOptions("The release exposure input allowance", "input", {
-        limit: MAX_RELEASE_EXPOSURE_FILE_BYTES,
-        unit: "bytes",
-      })
-    : {
-        retryable: false as const,
-        remediationAction: `Raise max_file_bytes above ${String(maxFileBytes)} bytes or select a smaller artifact. The ceiling is ${String(MAX_RELEASE_EXPOSURE_FILE_BYTES)} bytes.`,
-      };
-
-/**
- * The header admission is its own bound, not the selected-file ceiling, so
- * max_file_bytes cannot repair it. The recovery names the shared setting the
- * composition threaded into this reader.
- */
-const asarHeaderAdmissionFailure = (
-  cause: ArtifactReaderFailure,
-  admission: ArtifactAdmissionLimit,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
-    OPERATION,
-    "capacity",
-    admission.requiredBytes === undefined
-      ? `An ASAR header/index exceeds ${String(admission.maximumBytes)} bytes.`
-      : `An ASAR header/index of ${String(admission.requiredBytes)} bytes exceeds ${String(admission.maximumBytes)} bytes.`,
-    {
-      asar_max_header_bytes: admission.maximumBytes,
-      ...(admission.requiredBytes === undefined
-        ? {}
-        : { required_header_bytes: admission.requiredBytes }),
-    },
-    {
-      cause,
-      retryable: false,
-      remediationAction: asarHeaderAdmissionRecovery(admission),
-      limit: {
-        ...analysisSettingLimit(
-          "asar.max_header_bytes",
-          admission.maximumBytes,
-          admission.source,
-        ),
-        ...(admission.requiredBytes === undefined
-          ? {}
-          : { required_value: admission.requiredBytes }),
-      },
-    },
-  );
-
-const releaseExposureLimitFailure = (
-  cause: ArtifactReaderFailure,
-  maxFileBytes: number,
-): AnalysisResourceConstraintError =>
-  cause.admission === undefined
-    ? new AnalysisResourceConstraintError(
-        OPERATION,
-        "file-size",
-        cause.message,
-        { max_file_bytes: maxFileBytes },
-        { cause, ...fileSizeRecovery(maxFileBytes) },
-      )
-    : asarHeaderAdmissionFailure(cause, cause.admission);
-
-const releaseExposureFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError => {
-  const { cause, origin } = facts;
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "integrity"
-  )
-    return readerIntegrityFailure(OPERATION, path, cause);
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure &&
-    cause.reason === "cancelled"
-  )
-    return cancelledBy(
-      OPERATION,
-      carriedReason(artifactFileCancellationCause(cause)),
-    );
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return releaseExposureLimitFailure(cause, maxFileBytes);
-    if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
-  }
-  if (cause instanceof Error && "code" in cause) {
-    if (cause.code === "EACCES" || cause.code === "EPERM")
-      return new AnalysisAccessDeniedError(OPERATION, path, cause.code, {
-        cause,
-      });
-    if (isSelectedRegularFileError(cause))
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_value",
-          message: `Selected artifact could not be read (${String(cause.code)}): ${path}.`,
-        },
-      ]);
-  }
-  return new ProviderAdapterError(RELEASE_EXPOSURE_PROVIDER.id, OPERATION, {
-    cause,
-    diagnostics: {
-      path,
-      reason: errorMessage(cause),
-    },
-  });
-};
-
-const releaseExposureFailure = (
-  cause: unknown,
-  path: string,
-  maxFileBytes: number,
-): AnalysisError =>
-  projectStableArtifactFailure(
-    cause,
-    releaseExposureFailurePrimary(
-      artifactFilePrimaryFacts(cause),
-      path,
-      maxFileBytes,
-    ),
-    path,
-    RELEASE_EXPOSURE_PROVIDER.id,
-    OPERATION,
-  );

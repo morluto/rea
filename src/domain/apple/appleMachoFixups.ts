@@ -189,14 +189,14 @@ const symbolName = (bytes: Buffer): SymbolName => {
     : { symbol: null, symbol_bytes_base64: name.bytes_base64 };
 };
 
-const cString = (bytes: Buffer, offset: number, end: number): SymbolName => {
-  const stop = bytes.indexOf(0, offset);
-  if (offset < 0 || offset >= end || stop < 0 || stop >= end)
+const chainedSymbolName = (pool: Buffer, offset: number): SymbolName => {
+  const stop = pool.indexOf(0, offset);
+  if (offset >= pool.length || stop < 0)
     throw malformedInput(
       "macho",
       "Fixup symbol name is outside the symbol pool",
     );
-  return symbolName(bytes.subarray(offset, stop));
+  return symbolName(pool.subarray(offset, stop));
 };
 
 const resolvedBind = (
@@ -226,108 +226,69 @@ const sameImport = (left: Import, right: Import): boolean =>
   left.weak === right.weak &&
   left.addend === right.addend;
 
-/** Validated location of a chained-fixup import table and its symbol pool. */
+/** Absolute locations admitted by the chained-fixup header. */
 interface ChainedImportTable {
   readonly offset: number;
   readonly count: number;
-  readonly format: number;
+  readonly format: 1 | 2 | 3;
+  readonly entrySize: number;
   readonly symbols: number;
 }
 
-/** One import-table record before its library ordinal is resolved. */
-interface ChainedImportEntry {
-  readonly nameOffset: number;
-  readonly ordinal: number;
-  readonly weak: boolean;
-  readonly addend: bigint;
-}
-
-const chainedImportEntry = (
+const chainedImportIdentity = (
   reader: BinaryReader,
-  base: number,
-  end: number,
-  header: ChainedImportTable,
+  table: ChainedImportTable,
   index: number,
-): ChainedImportEntry => {
-  const size = header.format === 3 ? 16 : header.format === 2 ? 8 : 4;
-  if (header.format < 1 || header.format > 3)
-    throw unsupportedInput(
-      "macho",
-      `Unsupported chained import format ${header.format}`,
-    );
-  if (
-    !Number.isSafeInteger(header.count) ||
-    base + header.offset + header.count * size > end
-  )
-    throw malformedInput(
-      "macho",
-      "Chained import table exceeds the fixup data",
-    );
-  if (index < 0 || index >= header.count)
+) => {
+  if (index < 0 || index >= table.count)
     throw malformedInput("macho", "Chained import index is outside the table");
-  const at = base + header.offset + index * size;
-  if (header.format === 3) {
-    const word = reader.word(at, 64);
-    const encodedOrdinal = Number(bits(word, 0, 16));
-    return {
-      nameOffset: Number(bits(word, 32, 32)),
-      ordinal:
-        encodedOrdinal > 0xfff0 ? encodedOrdinal - 0x10000 : encodedOrdinal,
-      weak: bits(word, 16, 1) === 1n,
-      addend: reader.i64(at + 8),
-    };
-  }
+  const at = table.offset + index * table.entrySize;
   const word = reader.u32(at);
-  const encodedOrdinal = word & 0xff;
   return {
-    nameOffset: word >>> 9,
-    ordinal: encodedOrdinal > 0xf0 ? encodedOrdinal - 0x100 : encodedOrdinal,
-    weak: ((word >>> 8) & 1) === 1,
-    addend: header.format === 2 ? BigInt(reader.i32(at + 4)) : 0n,
+    at,
+    word,
+    nameOffset: table.format === 3 ? reader.u32(at + 4) : word >>> 9,
   };
 };
 
 const readImport = (
-  data: {
-    readonly reader: BinaryReader;
-    readonly base: number;
-    readonly end: number;
-    readonly dylibs: FixupCommands["dylibs"];
-  },
-  header: ChainedImportTable,
+  reader: BinaryReader,
+  table: ChainedImportTable,
+  pool: Buffer,
+  dylibs: FixupCommands["dylibs"],
   index: number,
 ): Import => {
-  const { reader, base, end, dylibs } = data;
-  const entry = chainedImportEntry(reader, base, end, header, index);
+  const { at, word, nameOffset } = chainedImportIdentity(reader, table, index);
+  const wide = table.format === 3;
+  const ordinalMask = wide ? 0xffff : 0xff;
+  const encodedOrdinal = word & ordinalMask;
+  const ordinal =
+    encodedOrdinal > ordinalMask - 15
+      ? encodedOrdinal - ordinalMask - 1
+      : encodedOrdinal;
   return {
-    ...cString(reader.bytes, base + header.symbols + entry.nameOffset, end),
+    ...chainedSymbolName(pool, nameOffset),
     binding_source: "chained",
-    library_ordinal: entry.ordinal,
-    ...libraryFacts(entry.ordinal, dylibs),
-    weak: entry.weak,
-    addend: entry.addend,
+    library_ordinal: ordinal,
+    ...libraryFacts(ordinal, dylibs),
+    weak: (word & (wide ? 0x10000 : 0x100)) !== 0,
+    addend: wide
+      ? reader.i64(at + 8)
+      : table.format === 2
+        ? BigInt(reader.i32(at + 4))
+        : 0n,
   };
 };
 
 /** Decode one raw chained pointer for its segment's pointer format. */
-export const decodeChainedPointer = (
+const decodeChainedPointer = (
   raw: bigint,
   format: number,
   baseAddress: bigint,
-  imports: readonly Import[] | ((index: number) => Import),
+  readImport: (index: number) => Import,
 ): DecodedPointer => {
-  const bind = (ordinal: bigint, addend: bigint): DecodedPointer => {
-    const target =
-      typeof imports === "function"
-        ? imports(Number(ordinal))
-        : imports[Number(ordinal)];
-    if (target === undefined)
-      throw malformedInput(
-        "macho",
-        `Chained bind ordinal ${ordinal} has no import`,
-      );
-    return resolvedBind(target, addend);
-  };
+  const bind = (ordinal: bigint, addend: bigint): DecodedPointer =>
+    resolvedBind(readImport(Number(ordinal)), addend);
   if (format === 2 || format === 6) {
     if (bits(raw, 63, 1) === 1n)
       return bind(bits(raw, 0, 24), bits(raw, 24, 8));
@@ -449,24 +410,23 @@ const chainedFixupsHeader = (
     throw malformedInput("macho", "Chained fixup header exceeds the target");
   if (reader.u32(base) !== 0)
     throw unsupportedInput("macho", "Unsupported chained fixup header version");
-  const imports = {
-    offset: reader.u32(base + 8),
-    symbols: reader.u32(base + 12),
-    count: reader.u32(base + 16),
-    format: reader.u32(base + 20),
-  };
-  const importSize = imports.format === 3 ? 16 : imports.format === 2 ? 8 : 4;
-  const importTableEnd = base + imports.offset + imports.count * importSize;
-  if (imports.format < 1 || imports.format > 3)
+  const format = reader.u32(base + 20);
+  if (format !== 1 && format !== 2 && format !== 3)
     throw unsupportedInput(
       "macho",
-      `Unsupported chained import format ${imports.format}`,
+      `Unsupported chained import format ${format}`,
     );
+  const imports = {
+    offset: base + reader.u32(base + 8),
+    symbols: base + reader.u32(base + 12),
+    count: reader.u32(base + 16),
+    format,
+    entrySize: format === 3 ? 16 : format === 2 ? 8 : 4,
+  } satisfies ChainedImportTable;
   if (
-    imports.offset < 28 ||
-    imports.symbols < imports.offset ||
-    importTableEnd > base + imports.symbols ||
-    base + imports.symbols > end
+    imports.offset < base + 28 ||
+    imports.offset + imports.count * imports.entrySize > imports.symbols ||
+    imports.symbols > end
   )
     throw malformedInput(
       "macho",
@@ -489,15 +449,11 @@ export const chainedImportNames = (
 ): readonly (string | null)[] => {
   const reader = new BinaryReader(fixups, true, "macho");
   const { imports } = chainedFixupsHeader(reader, 0, fixups.length);
+  const pool = fixups.subarray(imports.symbols);
   const names: (string | null)[] = [];
   for (let index = 0; index < imports.count; index++) {
-    const entry = chainedImportEntry(reader, 0, fixups.length, imports, index);
-    const { symbol } = cString(
-      fixups,
-      imports.symbols + entry.nameOffset,
-      fixups.length,
-    );
-    names.push(symbol);
+    const { nameOffset } = chainedImportIdentity(reader, imports, index);
+    names.push(chainedSymbolName(pool, nameOffset).symbol);
   }
   return names;
 };
@@ -539,10 +495,11 @@ const chainedFixups = (
     base,
     range.size,
   );
+  const pool = bytes.subarray(importHeader.symbols, end);
   const imports = (index: number) =>
-    readImport({ reader, base, end, dylibs }, importHeader, index);
+    readImport(reader, importHeader, pool, dylibs, index);
   const starts = base + startsOffset;
-  const startsEnd = base + importHeader.offset;
+  const startsEnd = importHeader.offset;
   const requireStartsRange = (at: number, size: number): void => {
     if (at < base + 28 || at > startsEnd - size)
       throw malformedInput(
@@ -1016,14 +973,19 @@ function* readRebaseStreamSteps(
     )
       throw malformedInput("macho", "Rebase location exceeds the source file");
     const fact = type === 1 ? REBASE_POINTER : REBASE_NON_POINTER;
-    const admitted =
-      count < BigInt(index.workRemaining) ? count : BigInt(index.workRemaining);
-    for (let indexOffset = 0n; indexOffset < admitted; indexOffset++) {
-      const fileOffset = Number(firstFileOffset + indexOffset * stride);
+    const budget = BigInt(index.workRemaining);
+    const admitted = count < budget ? count : budget;
+    // Every emitted offset fits the Buffer. A stride between two admitted
+    // offsets fits too. Keep the post-run cursor in uint64 arithmetic.
+    const fileStride = admitted > 1n ? Number(stride) : 0;
+    const visitsToMark = Number(admitted);
+    let fileOffset = Number(firstFileOffset);
+    for (let visit = 0; visit < visitsToMark; visit++) {
       markRebaseLocation(index, fileOffset, fact, bytes.length);
+      fileOffset += fileStride;
       if (++visits % 4096 === 0) yield;
     }
-    index.workRemaining -= Number(admitted);
+    index.workRemaining -= visitsToMark;
     if (admitted < count)
       throw malformedInput(
         "macho",
@@ -1237,10 +1199,10 @@ const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
 /** Registers of the `LC_DYLD_INFO` bind state machine. */
 interface BindState {
   type: number;
-  ordinal: number;
+  ordinal: number | undefined;
   ordinalFailure: string | null;
   segmentIndex: number;
-  symbol: SymbolName;
+  symbol: SymbolName | undefined;
   weak: boolean;
   addend: bigint;
   address: bigint;
@@ -1248,13 +1210,13 @@ interface BindState {
 
 /** Apply a bind opcode that sets a register; false when the opcode is not one. */
 const setBindRegister = (
-  image: FixupImage,
-  stream: { readonly cursor: { at: number }; readonly end: number },
+  segments: readonly Segment[],
+  bytes: Buffer,
+  cursor: { at: number },
   state: BindState,
   byte: number,
 ): boolean => {
-  const { bytes } = image;
-  const { cursor, end } = stream;
+  const end = bytes.length;
   const immediate = byte & 0x0f;
   switch (byte & 0xf0) {
     case 0x10:
@@ -1279,8 +1241,7 @@ const setBindRegister = (
       return true;
     case 0x40: {
       const stop = bytes.indexOf(0, cursor.at);
-      if (stop < 0 || stop >= end)
-        throw truncatedInput("macho", "Unterminated bind symbol");
+      if (stop < 0) throw truncatedInput("macho", "Unterminated bind symbol");
       state.symbol = symbolName(bytes.subarray(cursor.at, stop));
       state.weak = (immediate & 0x1) !== 0;
       cursor.at = stop + 1;
@@ -1293,7 +1254,7 @@ const setBindRegister = (
       state.addend = sleb(bytes, cursor, end);
       return true;
     case 0x70: {
-      const segment = image.segments[immediate];
+      const segment = segments[immediate];
       if (segment === undefined)
         throw malformedInput("macho", "Bind segment index is out of range");
       state.segmentIndex = immediate;
@@ -1316,17 +1277,20 @@ function* readBindStreamSteps(
   range: FixupCommands["binds"][number],
   binds: BindRun[],
 ): Generator<void, void, void> {
-  const { bytes } = image;
-  const end = range.offset + range.size;
-  if (end > bytes.length)
+  const fileEnd = range.offset + range.size;
+  if (fileEnd > image.bytes.length)
     throw malformedInput("macho", "Bind opcodes exceed the target");
-  const cursor = { at: range.offset };
+  // A non-owning view keeps both operands and symbol scans inside the command.
+  const bytes = image.bytes.subarray(range.offset, fileEnd);
+  const end = bytes.length;
+  const cursor = { at: 0 };
   const state: BindState = {
     type: range.stream === "lazy" ? 1 : 0,
-    ordinal: 0,
+    // Weak streams supply dyld's special weak-lookup ordinal implicitly.
+    ordinal: range.stream === "weak" ? -3 : undefined,
     ordinalFailure: null,
     segmentIndex: -1,
-    symbol: { symbol: "" },
+    symbol: undefined,
     weak: false,
     addend: 0n,
     address: 0n,
@@ -1359,11 +1323,19 @@ function* readBindStreamSteps(
     try {
       if (state.ordinalFailure !== null)
         throw malformedInput("macho", state.ordinalFailure);
-      const resolvedLibrary = libraryFacts(state.ordinal, image.dylibs);
+      const { ordinal, symbol } = state;
+      if (symbol === undefined)
+        throw malformedInput("macho", "Legacy bind has no selected symbol");
+      if (ordinal === undefined)
+        throw malformedInput(
+          "macho",
+          "Legacy bind has no selected library ordinal",
+        );
+      const resolvedLibrary = libraryFacts(ordinal, image.dylibs);
       const imported: Import = {
-        ...state.symbol,
+        ...symbol,
         binding_source: range.stream,
-        library_ordinal: state.ordinal,
+        library_ordinal: ordinal,
         ...(range.stream === "weak" ? { library: null } : resolvedLibrary),
         weak: state.weak,
         addend: state.addend,
@@ -1426,7 +1398,7 @@ function* readBindStreamSteps(
   while (cursor.at < end) {
     if (++opcodes % 4096 === 0) yield;
     const byte = bytes[cursor.at++] ?? 0;
-    if (setBindRegister(image, { cursor, end }, state, byte)) continue;
+    if (setBindRegister(image.segments, bytes, cursor, state, byte)) continue;
     switch (byte & 0xf0) {
       case 0x00:
         // DONE separates lazy-bind entries; other streams end here.
@@ -1565,26 +1537,30 @@ function* parseLegacyBindsSteps(
       failures.push(`${stream.stream} bind opcodes: ${errorMessage(cause)}`);
     }
   }
+  // Applicability is complete when every write location is known, even if
+  // an individual binding target could not be decoded.
   const complete = failures.length === 0;
   const issues = failures.map((message) =>
     issue("pointer_fixups", "bind_stream_decode_failed", message),
   );
   for (const run of runs) {
-    if (run.binding.kind !== "unsupported" || run.binding.binding === undefined)
-      continue;
+    const { binding } = run;
+    if (binding.kind !== "unsupported") continue;
     issues.push(
       issue(
         "pointer_fixups",
-        run.type !== 1
-          ? "non_pointer_bind"
-          : run.binding.binding.symbol === null
-            ? "bind_symbol_text_unavailable"
-            : "bind_library_text_unavailable",
-        run.binding.reason,
+        binding.binding === undefined
+          ? "bind_target_unresolved"
+          : run.type !== 1
+            ? "non_pointer_bind"
+            : binding.binding.symbol === null
+              ? "bind_symbol_text_unavailable"
+              : "bind_library_text_unavailable",
+        binding.reason,
         `0x${run.start.toString(16)}`,
       ),
     );
-    failures.push(run.binding.reason);
+    failures.push(binding.reason);
   }
   return {
     index: indexBindRuns(runs, image.bytes.length),

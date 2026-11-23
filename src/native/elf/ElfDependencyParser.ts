@@ -18,6 +18,11 @@ import {
 import { validateElfSectionTableFields } from "../../domain/elfDeclaredRanges.js";
 import { readElfFixedHeader } from "../../domain/elfFixedHeader.js";
 import {
+  readElfGnuHashSymbolCountSteps,
+  readElfHashSymbolCountSteps,
+  type ElfHashCountSteps,
+} from "../../domain/elfHashSymbolCount.js";
+import {
   admitElfLoadSegment,
   elfLoadSpans,
   readElfProgramHeader,
@@ -27,19 +32,14 @@ import { readElfRawTableDeclarations } from "../../domain/elfRawTableDeclaration
 import { readElfSectionHeader } from "../../domain/elfSectionHeader.js";
 import {
   elfStringTableText,
-  observeElfStringTableEntry,
+  observeElfStringTableWindow,
 } from "../../domain/elfStringTable.js";
 import {
   ELF_SYMBOL_TRUNCATED_MESSAGE,
   elfSymbolSize,
   readElfSymbolFieldsAt,
 } from "../../domain/elfSymbol.js";
-import {
-  readElfGnuHashSymbolCount,
-  readElfHashSymbolCount,
-  type ElfHashWordReader,
-} from "../../domain/elfHashSymbolCount.js";
-import { err, ok } from "../../domain/result.js";
+import { err, ok, type Result } from "../../domain/result.js";
 import {
   DF_1_FLAG_BITS,
   DF_FLAG_BITS,
@@ -318,8 +318,9 @@ class DynamicStrings {
   readonly #retained: Budget;
 
   constructor(
-    readonly table: { readonly bytes: Buffer; readonly offset: number } | null,
+    readonly table: LocatedTable | null,
     readonly limit: number,
+    readonly window: ElfWindowReader,
   ) {
     this.#scanned = new Budget(limit);
     this.#retained = new Budget(limit);
@@ -341,7 +342,7 @@ class DynamicStrings {
       if (value !== null) this.#charge("retained", value.length);
   }
 
-  read(offset: number): CString {
+  *read(offset: number): ElfDependencySteps<CString> {
     if (this.table === null)
       return { state: "table-unavailable", name: null, location: null };
     const cached = this.#cache.get(offset);
@@ -349,18 +350,32 @@ class DynamicStrings {
       this.retain(cached.name);
       return cached;
     }
-    const observed = observeElfStringTableEntry(
-      this.table.bytes,
-      offset,
-      ELF_STRING_SCAN_BYTES,
+    const remaining = this.table.size - offset;
+    if (offset < 0 || remaining <= 0)
+      return { state: "outside", name: null, location: null };
+    const at = this.table.offset + offset;
+    const first = yield* this.window.readPrefix(
+      at,
+      Math.min(remaining, WINDOW_READ_BYTES),
+      "DT_STRTAB",
     );
+    let observed = observeElfStringTableWindow(first, remaining);
+    if (observed.state === "truncated" && observed.scanLimited) {
+      const bytes = yield* this.window.readSlice(
+        at,
+        Math.min(remaining, ELF_STRING_SCAN_BYTES),
+        "DT_STRTAB",
+      );
+      observed = observeElfStringTableWindow(bytes, remaining);
+    }
     this.#charge("scanned", observed.examinedBytes);
     let entry: CString;
-    if (observed.state === "outside")
-      entry = { state: "outside", name: null, location: null };
-    else if (observed.state === "truncated")
+    if (observed.state !== "terminated")
       entry = {
-        state: observed.scanLimited ? "scan-limit" : "unterminated",
+        state:
+          observed.state === "truncated" && observed.scanLimited
+            ? "scan-limit"
+            : "unterminated",
         name: null,
         location: this.table.offset + offset,
       };
@@ -377,17 +392,17 @@ class DynamicStrings {
   }
 }
 
-const searchPath = (
+const searchPath = function* (
   strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   location: string,
-): {
+): ElfDependencySteps<{
   raw: string;
   entries: string[];
   tokens: ReturnType<typeof elfSearchPathTokens>;
-} | null => {
-  const observed = strings.read(offset);
+} | null> {
+  const observed = yield* strings.read(offset);
   if (observed.name === null) {
     issues.push({
       code: "name_unreadable",
@@ -571,41 +586,166 @@ const tableFromMappedVersym = (
     : { offset, size, location: { offset, bytes: size } };
 };
 
-/**
- * Reads hash-table words from file bytes `[base, end)`. File mapping stays
- * here; `elfHashSymbolCount.ts` owns the DT_HASH and DT_GNU_HASH layouts.
- */
-const hashWords =
-  (reader: BinaryReader, base: number, end: number): ElfHashWordReader =>
-  (offset) => {
-    const at = base + offset;
-    return offset >= 0 && at + 4 <= Math.min(end, reader.bytes.length)
-      ? ok(reader.u32(at))
-      : err("extends past its mapped bytes");
-  };
+const WINDOW_READ_BYTES = 4096;
 
-const sysvSymbolCountAt = (
-  reader: BinaryReader,
-  header: number,
-  limit: number,
-): number | null => {
-  const count = readElfHashSymbolCount(hashWords(reader, header, limit));
-  return count.ok ? count.value : null;
+/** Random-access source for streaming ELF dependency inspection without buffering the whole image. */
+export interface ElfDependencyByteSource {
+  readonly size: number;
+  readonly prefix: Buffer;
+  readRange(offset: number, length: number): Promise<Buffer>;
+}
+
+type ElfDependencyStep =
+  | { readonly kind: "yield" }
+  | { readonly kind: "read"; readonly offset: number; readonly length: number };
+
+type ElfDependencySteps<T> = Generator<
+  ElfDependencyStep,
+  T,
+  Buffer | undefined
+>;
+
+const checkElfRange = (
+  fileSize: number,
+  offset: number,
+  size: number,
+  label: string,
+): void => {
+  if (
+    !Number.isSafeInteger(offset) ||
+    !Number.isSafeInteger(size) ||
+    offset < 0 ||
+    size < 0 ||
+    offset > fileSize
+  )
+    throw new BinaryFormatFailure(
+      "malformed",
+      `${label} range is truncated or outside the file`,
+      {
+        format: "elf",
+        field: label,
+        ...(Number.isSafeInteger(offset) ? { offset } : {}),
+      },
+    );
+  if (size > fileSize - offset)
+    throw new BinaryFormatFailure(
+      "truncated",
+      `${label} range is truncated or outside the file`,
+      { format: "elf", offset, field: label },
+    );
 };
 
-/**
- * Resolve hash-table words through one PT_LOAD index. A read can require
- * the mapped prefix as well as the word, including adjacent consistently
- * mapped segments.
- */
-const mappedHashWords = (
-  reader: BinaryReader,
+const readElfRange = function* (
+  fileSize: number,
+  offset: number,
+  size: number,
+  label: string,
+): ElfDependencySteps<Buffer> {
+  checkElfRange(fileSize, offset, size, label);
+  if (size === 0) return Buffer.alloc(0);
+  return (yield { kind: "read", offset, length: size }) as Buffer;
+};
+
+interface ElfWindowReader {
+  readonly fileSize: number;
+  readonly little: boolean;
+  readSlice(
+    offset: number,
+    size: number,
+    label: string,
+  ): ElfDependencySteps<Buffer>;
+  readPrefix(
+    offset: number,
+    maximum: number,
+    label: string,
+  ): ElfDependencySteps<Buffer>;
+  u16(offset: number): ElfDependencySteps<number>;
+  u32(offset: number): ElfDependencySteps<number>;
+}
+
+const createElfWindowReader = (
+  fileSize: number,
+  little: boolean,
+): ElfWindowReader => {
+  let windowStart = 0;
+  let windowBytes: Buffer = Buffer.alloc(0);
+  let windowReader = new BinaryReader(windowBytes, little, "elf");
+  const ensureWindow = function* (
+    offset: number,
+    size: number,
+    label: string,
+  ): ElfDependencySteps<number> {
+    checkElfRange(fileSize, offset, size, label);
+    if (size === 0) return 0;
+    if (
+      offset >= windowStart &&
+      offset + size <= windowStart + windowBytes.length
+    )
+      return offset - windowStart;
+    const fetchSize = Math.min(
+      Math.max(size, WINDOW_READ_BYTES),
+      fileSize - offset,
+    );
+    windowStart = offset;
+    windowBytes = (yield {
+      kind: "read",
+      offset,
+      length: fetchSize,
+    }) as Buffer;
+    windowReader = new BinaryReader(windowBytes, little, "elf");
+    return 0;
+  };
+  const readSlice = function* (
+    offset: number,
+    size: number,
+    label: string,
+  ): ElfDependencySteps<Buffer> {
+    const rel = yield* ensureWindow(offset, size, label);
+    return size === 0 ? Buffer.alloc(0) : windowBytes.subarray(rel, rel + size);
+  };
+  return {
+    fileSize,
+    little,
+    readSlice,
+    *readPrefix(offset, maximum, label): ElfDependencySteps<Buffer> {
+      const rel = yield* ensureWindow(offset, 1, label);
+      return windowBytes.subarray(rel, rel + maximum);
+    },
+    *u16(offset: number): ElfDependencySteps<number> {
+      const rel = yield* ensureWindow(offset, 2, "16-bit field");
+      return windowReader.u16(rel);
+    },
+    *u32(offset: number): ElfDependencySteps<number> {
+      const rel = yield* ensureWindow(offset, 4, "32-bit field");
+      return windowReader.u32(rel);
+    },
+  };
+};
+
+type HashWordStepReader = (
+  offset: number,
+) => ElfDependencySteps<Result<number, string>>;
+
+const hashWordsStep = (
+  window: ElfWindowReader,
+  base: number,
+  end: number,
+): HashWordStepReader =>
+  function* (offset) {
+    const at = base + offset;
+    if (offset < 0 || at + 4 > Math.min(end, window.fileSize))
+      return err("extends past its mapped bytes");
+    return ok(yield* window.u32(at));
+  };
+
+const mappedHashWordsStep = (
+  window: ElfWindowReader,
   mappings: IndexedElfLoadMappings,
   address: bigint,
   coverage: "word" | "prefix" = "word",
-): ElfHashWordReader => {
+): HashWordStepReader => {
   const index = mappings.index();
-  return (offset) => {
+  return function* (offset) {
     if (offset < 0) return err("precedes its table");
     const start = coverage === "prefix" ? 0 : offset;
     const relative = offset - start;
@@ -617,37 +757,46 @@ const mappedHashWords = (
         return err("is not mapped by PT_LOAD");
       throw cause;
     }
-    return at + 4 <= reader.bytes.length
-      ? ok(reader.u32(at))
-      : err("is not mapped by PT_LOAD");
+    if (at + 4 > window.fileSize) return err("is not mapped by PT_LOAD");
+    return ok(yield* window.u32(at));
   };
 };
 
-// With every bucket empty the table hashes nothing, and its first-symbol
-// index does not bound the unhashed imports: GNU ld writes 1 there for any
-// image with no hashable exports. The shared reader returns null for that.
-const gnuSymbolCount = function* (
-  read: ElfHashWordReader,
-  bits: 32 | 64,
-): Generator<void, number | null, void> {
-  const result = yield* readElfGnuHashSymbolCount(
-    read,
-    bits === 64 ? 8 : 4,
-    MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-  );
-  if (result.ok) return result.value;
-  if (result.error.kind === "budget")
+const readHashCount = function* (
+  steps: ElfHashCountSteps<number | null>,
+  read: HashWordStepReader,
+): ElfDependencySteps<number | null> {
+  const checkpoint = ok(0);
+  let next = steps.next();
+  while (!next.done) {
+    if (next.value === undefined) {
+      yield { kind: "yield" };
+      next = steps.next(checkpoint);
+    } else next = steps.next(yield* read(next.value));
+  }
+  const count = next.value;
+  if (count.ok) return count.value;
+  if (count.error.kind === "budget")
     throw decodeLimit(
       "elf-dependencies",
-      `${result.error.label} exceeds the fixed ELF dependency decoding allowance.`,
+      `${count.error.label} exceeds the fixed ELF dependency decoding allowance.`,
       {
         name: "gnu_hash_entries",
         maximum: MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
-        required: result.error.count,
+        required: count.error.count,
       },
     );
   return null;
 };
+
+const readGnuHashCount = (read: HashWordStepReader, bits: 32 | 64) =>
+  readHashCount(
+    readElfGnuHashSymbolCountSteps(
+      bits === 64 ? 8 : 4,
+      MAX_INSPECT_ELF_DEPENDENCY_IMPORTS,
+    ),
+    read,
+  );
 
 const locateVersionTable = (
   mappings: IndexedElfLoadMappings,
@@ -710,12 +859,18 @@ const emptyInventory = (
 });
 
 /** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports from one ELF image. */
-export const readElfDependenciesSteps = function* (
-  bytes: Buffer,
+const parseElfDependenciesCore = function* (
+  fileSize: number,
   artifact: Artifact,
   input: InspectElfDependenciesInput,
-): Generator<void, ElfDependencies, void> {
-  const fixed = readElfFixedHeader(bytes);
+): ElfDependencySteps<ElfDependencies> {
+  const headerBytes = yield* readElfRange(
+    fileSize,
+    0,
+    Math.min(fileSize, 64),
+    "ELF header",
+  );
+  const fixed = readElfFixedHeader(headerBytes, fileSize);
   if (!fixed.ok) return fail(fixed.error);
   const header = fixed.value;
   const type = header.type;
@@ -729,7 +884,7 @@ export const readElfDependenciesSteps = function* (
     );
   if (type !== ET_EXEC && type !== ET_DYN)
     fail(`ELF type ${String(type)} is not a loadable ET_EXEC or ET_DYN image.`);
-  const raw = readElfRawTableDeclarations(bytes, header);
+  const raw = readElfRawTableDeclarations(headerBytes, header);
   if (!raw.ok) return fail(raw.error.message);
   const sectionTable = validateElfSectionTableFields(raw.value);
   if (!sectionTable.ok) return fail(sectionTable.error);
@@ -752,7 +907,8 @@ export const readElfDependenciesSteps = function* (
       "ELF extended numbering is unsupported.",
     );
   const bits = header.elfClass;
-  const reader = new BinaryReader(bytes, header.byteOrder === "little", "elf");
+  const little = header.byteOrder === "little";
+  const window = createElfWindowReader(fileSize, little);
   const identity = {
     format: (bits === 64 ? "elf64" : "elf32") as "elf32" | "elf64",
     byte_order: header.byteOrder,
@@ -764,19 +920,21 @@ export const readElfDependenciesSteps = function* (
   if (phnum === 0) fail("ELF image has no program headers.");
   if (phentsize < (bits === 64 ? 56 : 32))
     fail("ELF program header width is invalid.");
-  reader.range(phoff, phnum * phentsize, "ELF program headers");
+  const programHeaders = yield* readElfRange(
+    fileSize,
+    phoff,
+    phnum * phentsize,
+    "ELF program headers",
+  );
   const fileBacked: FileMapping[] = [];
   const zeroFills: ZeroFillMapping[] = [];
   let interp: Range | null = null;
   let dynamic: Range | null = null;
   for (let index = 0; index < phnum; index += 1) {
     const parsedProgram = readElfProgramHeader(
-      bytes.subarray(
-        phoff + index * phentsize,
-        phoff + index * phentsize + phentsize,
-      ),
+      programHeaders.subarray(index * phentsize, index * phentsize + phentsize),
       bits,
-      reader.little,
+      little,
     );
     if (!parsedProgram.ok) return fail(parsedProgram.error.message);
     const program = parsedProgram.value;
@@ -794,7 +952,8 @@ export const readElfDependenciesSteps = function* (
     const admitted = admitElfLoadSegment(program, bits);
     if (!admitted.ok) return fail(admitted.error.message);
     const range = fileRange(program.offset, program.fileSize, "PT_LOAD");
-    if (range.bytes > 0) reader.range(range.offset, range.bytes, "PT_LOAD");
+    if (range.bytes > 0)
+      checkElfRange(fileSize, range.offset, range.bytes, "PT_LOAD");
     const spans = elfLoadSpans(program);
     if (spans.fileBacked !== undefined) fileBacked.push(spans.fileBacked);
     if (spans.zeroFill !== undefined) zeroFills.push(spans.zeroFill);
@@ -807,10 +966,15 @@ export const readElfDependenciesSteps = function* (
       (mappingIndex ??= createFileMappingIndex(fileBacked, zeroFills)),
   };
   const issues: ElfDependencyIssue[] = [];
-  const interpreter = parseInterpreter(reader, interp, issues);
+  const interpreter = yield* parseInterpreter(fileSize, interp, issues);
   if (dynamic === null)
     return emptyInventory(artifact, identity, interpreter, issues);
-  const table = reader.range(dynamic.offset, dynamic.bytes, "PT_DYNAMIC");
+  const table = yield* readElfRange(
+    fileSize,
+    dynamic.offset,
+    dynamic.bytes,
+    "PT_DYNAMIC",
+  );
   const unique = new Map<bigint, number>();
   const addresses = new Map<bigint, bigint>();
   const neededEntries: {
@@ -819,7 +983,7 @@ export const readElfDependenciesSteps = function* (
   }[] = [];
   const walked = walkElfDynamicTable<never>(
     table,
-    { bits, littleEndian: reader.little },
+    { bits, littleEndian: little },
     UNIQUE_DYNAMIC_TAGS,
     ({ tag, value, offset, singleton }) => {
       if (tag === DT_NEEDED) {
@@ -858,9 +1022,9 @@ export const readElfDependenciesSteps = function* (
       location: hex(dynamic.offset),
       message: "Dynamic segment is not terminated by DT_NULL",
     });
-  const sectionFacts = readSections(
-    bytes,
-    reader,
+  const sectionFacts = yield* readSections(
+    fileSize,
+    little,
     bits,
     shoff,
     shnum,
@@ -944,12 +1108,7 @@ export const readElfDependenciesSteps = function* (
       stringSection?.address === strtab);
   const dynstrTable = ambiguousStrings
     ? null
-    : (tableFromSection(
-        dynstrSection,
-        bytes.length,
-        "Dynamic string",
-        issues,
-      ) ??
+    : (tableFromSection(dynstrSection, fileSize, "Dynamic string", issues) ??
       (mappedStrings?.ok === true
         ? {
             offset: mappedStrings.value,
@@ -968,41 +1127,34 @@ export const readElfDependenciesSteps = function* (
         ? "ELF dynamic string table has ambiguous file mappings"
         : "Dynamic string table could not be located from section headers or DT_STRTAB",
     });
+  if (dynstrTable !== null)
+    checkElfRange(fileSize, dynstrTable.offset, dynstrTable.size, "DT_STRTAB");
   const dynstr = new DynamicStrings(
-    dynstrTable === null
-      ? null
-      : {
-          bytes: reader.range(
-            dynstrTable.offset,
-            dynstrTable.size,
-            "DT_STRTAB",
-          ),
-          offset: dynstrTable.offset,
-        },
-    bytes.length,
+    dynstrTable,
+    fileSize,
+    createElfWindowReader(fileSize, little),
   );
-  const needed: ElfDependencyNeeded[] = neededEntries.map(
-    ({ nameOffset, sourceOffset }, index) => {
-      const observed = dynstr.read(nameOffset);
-      const name =
-        observed.name === null || observed.name.length === 0
-          ? null
-          : observed.name;
-      if (name === null)
-        issues.push({
-          code: "name_unreadable",
-          location: hex(observed.location ?? sourceOffset),
-          message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
-        });
-      return { index, name, name_offset: nameOffset };
-    },
-  );
+  const needed: ElfDependencyNeeded[] = [];
+  for (const [index, { nameOffset, sourceOffset }] of neededEntries.entries()) {
+    const observed = yield* dynstr.read(nameOffset);
+    const name =
+      observed.name === null || observed.name.length === 0
+        ? null
+        : observed.name;
+    if (name === null)
+      issues.push({
+        code: "name_unreadable",
+        location: hex(observed.location ?? sourceOffset),
+        message: unreadDynamicString("DT_NEEDED", observed, nameOffset),
+      });
+    needed.push({ index, name, name_offset: nameOffset });
+  }
   const sonameOffset = unique.get(DT_SONAME);
   const soname =
     sonameOffset === undefined
       ? null
       : {
-          name: namedString(dynstr, sonameOffset, issues, "DT_SONAME"),
+          name: yield* namedString(dynstr, sonameOffset, issues, "DT_SONAME"),
           name_offset: sonameOffset,
         };
   const rpathOffset = unique.get(DT_RPATH);
@@ -1010,11 +1162,11 @@ export const readElfDependenciesSteps = function* (
   const rpath =
     rpathOffset === undefined
       ? null
-      : searchPath(dynstr, rpathOffset, issues, "DT_RPATH");
+      : yield* searchPath(dynstr, rpathOffset, issues, "DT_RPATH");
   const runpath =
     runpathOffset === undefined
       ? null
-      : searchPath(dynstr, runpathOffset, issues, "DT_RUNPATH");
+      : yield* searchPath(dynstr, runpathOffset, issues, "DT_RUNPATH");
   const flagsRaw = unique.get(DT_FLAGS);
   const flags1Raw = unique.get(DT_FLAGS_1);
   const versionNames = new Map<
@@ -1022,9 +1174,8 @@ export const readElfDependenciesSteps = function* (
     { name: string | null; file: string | null }
   >();
   let examinedVersions = 0;
-  const versionRequirements = parseVerneed(
-    reader,
-    bytes,
+  const versionRequirements = yield* parseVerneed(
+    window,
     mappings,
     dynstr,
     verneedSection,
@@ -1043,9 +1194,8 @@ export const readElfDependenciesSteps = function* (
       );
     },
   );
-  const versionDefinitions = parseVerdef(
-    reader,
-    bytes,
+  const versionDefinitions = yield* parseVerdef(
+    window,
     mappings,
     dynstr,
     verdefSection,
@@ -1083,7 +1233,7 @@ export const readElfDependenciesSteps = function* (
       message: ".dynsym sh_entsize does not match the ELF class symbol size",
     });
   const symbolCount = yield* locateSymbolCount(
-    reader,
+    window,
     mappings,
     dynsymSection,
     hashSection,
@@ -1095,12 +1245,12 @@ export const readElfDependenciesSteps = function* (
   );
   const symbolBytes = symbolCount === null ? 0 : symbolCount * symbolEntrySize;
   const dynsymTable =
-    tableFromSection(dynsymSection, bytes.length, "Dynamic symbol", issues) ??
+    tableFromSection(dynsymSection, fileSize, "Dynamic symbol", issues) ??
     (symbolCount === null
       ? null
       : tableFromVirtual(mappings, addresses.get(DT_SYMTAB), symbolBytes));
   const versymTable =
-    tableFromSection(versymSection, bytes.length, "GNU versym", issues) ??
+    tableFromSection(versymSection, fileSize, "GNU versym", issues) ??
     (symbolCount === null
       ? null
       : tableFromMappedVersym(mappings, addresses.get(DT_VERSYM), symbolCount));
@@ -1143,9 +1293,9 @@ export const readElfDependenciesSteps = function* (
       location: hex(versymSlots.offset),
       message: `GNU versym table holds ${String(versymSlots.count)} of ${String(symbolCount)} dynamic symbol slots; later slots were not read`,
     });
-  const imports = parseImports(
-    reader,
-    bytes,
+  const imports = yield* parseImports(
+    fileSize,
+    little,
     header.machine,
     bits,
     dynsymTable,
@@ -1197,13 +1347,38 @@ export const readElfDependenciesSteps = function* (
   };
 };
 
-const namedString = (
+/** Decode PT_DYNAMIC, GNU versions, and undefined .dynsym imports positionally over a handle. */
+export const parseElfDependenciesFromHandle = async (
+  source: ElfDependencyByteSource,
+  artifact: Artifact,
+  input: InspectElfDependenciesInput,
+  onYield: () => Promise<void>,
+): Promise<ElfDependencies> => {
+  const steps = parseElfDependenciesCore(source.size, artifact, input);
+  let next = steps.next();
+  while (!next.done) {
+    const step = next.value;
+    if (step.kind === "yield") {
+      await onYield();
+      next = steps.next(undefined);
+    } else {
+      const slice =
+        step.offset + step.length <= source.prefix.length
+          ? source.prefix.subarray(step.offset, step.offset + step.length)
+          : await source.readRange(step.offset, step.length);
+      next = steps.next(slice);
+    }
+  }
+  return next.value;
+};
+
+const namedString = function* (
   strings: DynamicStrings,
   offset: number,
   issues: ElfDependencyIssue[],
   label: string,
-): string | null => {
-  const observed = strings.read(offset);
+): ElfDependencySteps<string | null> {
+  const observed = yield* strings.read(offset);
   if (observed.name === null || observed.name.length === 0) {
     issues.push({
       code: "name_unreadable",
@@ -1215,11 +1390,11 @@ const namedString = (
   return observed.name;
 };
 
-const parseInterpreter = (
-  reader: BinaryReader,
+const parseInterpreter = function* (
+  fileSize: number,
   interp: Range | null,
   issues: ElfDependencyIssue[],
-): ElfDependencies["interpreter"] => {
+): ElfDependencySteps<ElfDependencies["interpreter"]> {
   if (interp === null) return { status: "absent", path: null, location: null };
   if (interp.bytes === 0) {
     issues.push({
@@ -1230,8 +1405,14 @@ const parseInterpreter = (
     return { status: "unreadable", path: null, location: interp };
   }
   try {
-    const body = reader.range(interp.offset, interp.bytes, "PT_INTERP");
-    const observed = observeElfStringTableEntry(body, 0, ELF_STRING_SCAN_BYTES);
+    checkElfRange(fileSize, interp.offset, interp.bytes, "PT_INTERP");
+    const body = yield* readElfRange(
+      fileSize,
+      interp.offset,
+      Math.min(interp.bytes, ELF_STRING_SCAN_BYTES),
+      "PT_INTERP",
+    );
+    const observed = observeElfStringTableWindow(body, interp.bytes);
     if (observed.state !== "terminated") {
       issues.push({
         code: "name_unreadable",
@@ -1264,27 +1445,29 @@ const parseInterpreter = (
   }
 };
 
-const readSections = (
-  bytes: Buffer,
-  reader: BinaryReader,
+const readSections = function* (
+  fileSize: number,
+  little: boolean,
   bits: 32 | 64,
   shoff: number,
   shnum: number,
   shentsize: number,
-): SectionFacts[] => {
+): ElfDependencySteps<SectionFacts[]> {
   if (shnum === 0) return [];
   if (shentsize < (bits === 64 ? 64 : 40))
     fail("ELF section header width is invalid.");
-  reader.range(shoff, shnum * shentsize, "ELF section headers");
+  const sectionHeaders = yield* readElfRange(
+    fileSize,
+    shoff,
+    shnum * shentsize,
+    "ELF section headers",
+  );
   const found: SectionFacts[] = [];
   for (let index = 0; index < shnum; index += 1) {
     const parsed = readElfSectionHeader(
-      bytes.subarray(
-        shoff + index * shentsize,
-        shoff + index * shentsize + shentsize,
-      ),
+      sectionHeaders.subarray(index * shentsize, index * shentsize + shentsize),
       bits,
-      reader.little,
+      little,
     );
     if (!parsed.ok) return fail(parsed.error.message);
     const section = parsed.value;
@@ -1308,7 +1491,7 @@ const readSections = (
 };
 
 const locateSymbolCount = function* (
-  reader: BinaryReader,
+  window: ElfWindowReader,
   mappings: IndexedElfLoadMappings,
   dynsym: SectionFacts | undefined,
   hash: SectionFacts | undefined,
@@ -1317,24 +1500,26 @@ const locateSymbolCount = function* (
   bits: 32 | 64,
   entrySize: number,
   issues: ElfDependencyIssue[],
-): Generator<void, number | null, void> {
+): ElfDependencySteps<number | null> {
   const hashAddress = tags.get(DT_HASH);
-  const dynamicCount = (coverage: "word" | "prefix" = "word") => {
+  const dynamicCount = function* (
+    coverage: "word" | "prefix" = "word",
+  ): ElfDependencySteps<number | null> {
     if (hashAddress === undefined) return null;
-    const count = readElfHashSymbolCount(
-      mappedHashWords(reader, mappings, hashAddress, coverage),
+    return yield* readHashCount(
+      readElfHashSymbolCountSteps(),
+      mappedHashWordsStep(window, mappings, hashAddress, coverage),
     );
-    return count.ok ? count.value : null;
   };
   if (
     dynsym !== undefined &&
     entrySize > 0 &&
     dynsym.size % entrySize === 0 &&
-    sectionInsideFile(dynsym, reader.bytes.length)
+    sectionInsideFile(dynsym, window.fileSize)
   ) {
     const sectionCount = dynsym.size / entrySize;
     // Displacing a usable section requires the full mapped DT_HASH span.
-    const declaredCount = dynamicCount("prefix");
+    const declaredCount = yield* dynamicCount("prefix");
     if (declaredCount === null) return sectionCount;
     if (sectionCount > declaredCount)
       issues.push({
@@ -1345,17 +1530,19 @@ const locateSymbolCount = function* (
     return declaredCount;
   }
   const sectionHash =
-    hashSectionInFile(hash, reader.bytes.length, ".hash", issues) &&
-    hash.size >= 8
-      ? sysvSymbolCountAt(reader, hash.offset, hash.offset + hash.size)
+    hashSectionInFile(hash, window.fileSize, ".hash", issues) && hash.size >= 8
+      ? yield* readHashCount(
+          readElfHashSymbolCountSteps(),
+          hashWordsStep(window, hash.offset, hash.offset + hash.size),
+        )
       : null;
-  const count = sectionHash ?? dynamicCount();
+  const count = sectionHash ?? (yield* dynamicCount());
   if (count !== null) return count;
   const sectionGnu =
-    hashSectionInFile(gnuHash, reader.bytes.length, ".gnu.hash", issues) &&
+    hashSectionInFile(gnuHash, window.fileSize, ".gnu.hash", issues) &&
     gnuHash.size >= 16
-      ? yield* gnuSymbolCount(
-          hashWords(reader, gnuHash.offset, gnuHash.offset + gnuHash.size),
+      ? yield* readGnuHashCount(
+          hashWordsStep(window, gnuHash.offset, gnuHash.offset + gnuHash.size),
           bits,
         )
       : null;
@@ -1364,8 +1551,8 @@ const locateSymbolCount = function* (
     sectionGnu ??
     (gnuAddress === undefined
       ? null
-      : yield* gnuSymbolCount(
-          mappedHashWords(reader, mappings, gnuAddress),
+      : yield* readGnuHashCount(
+          mappedHashWordsStep(window, mappings, gnuAddress),
           bits,
         ));
   if (gnu !== null) return gnu;
@@ -1400,9 +1587,8 @@ const followVersionLink = (
   return offset + link;
 };
 
-const parseVerneed = (
-  reader: BinaryReader,
-  bytes: Buffer,
+const parseVerneed = function* (
+  window: ElfWindowReader,
   mappings: IndexedElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
@@ -1411,10 +1597,10 @@ const parseVerneed = (
   issues: ElfDependencyIssue[],
   versionNames: Map<number, { name: string | null; file: string | null }>,
   chargeVersion: () => void,
-): ElfDependencies["version_requirements"] => {
+): ElfDependencySteps<ElfDependencies["version_requirements"]> {
   const table = locateVersionTable(
     mappings,
-    bytes.length,
+    window.fileSize,
     section,
     address,
     "GNU version requirements",
@@ -1461,23 +1647,28 @@ const parseVerneed = (
     }
   };
   try {
-    reader.range(table.offset, Math.min(table.size, 16), "GNU verneed");
+    checkElfRange(
+      window.fileSize,
+      table.offset,
+      Math.min(table.size, 16),
+      "GNU verneed",
+    );
     let offset = 0;
     for (let record = 0; record < count; record += 1) {
       if (offset + 16 > table.size)
         fail("GNU version requirement chain leaves its table");
       chargeVersion();
       const at = table.offset + offset;
-      const revision = reader.u16(at);
+      const revision = yield* window.u16(at);
       if (revision !== 1)
         fail(
           `GNU version requirement revision ${String(revision)} is unsupported`,
         );
-      const auxiliaryCount = reader.u16(at + 2);
-      const fileOffset = reader.u32(at + 4);
-      const auxiliaryOffset = reader.u32(at + 8);
-      const next = reader.u32(at + 12);
-      const file = namedString(dynstr, fileOffset, issues, "vn_file");
+      const auxiliaryCount = yield* window.u16(at + 2);
+      const fileOffset = yield* window.u32(at + 4);
+      const auxiliaryOffset = yield* window.u32(at + 8);
+      const next = yield* window.u32(at + 12);
+      const file = yield* namedString(dynstr, fileOffset, issues, "vn_file");
       if (auxiliaryCount > 0 && auxiliaryOffset < 16)
         fail(
           "GNU version requirement auxiliary chain starts inside its header",
@@ -1491,12 +1682,12 @@ const parseVerneed = (
           fail("GNU version requirement auxiliary chain leaves its table");
         chargeVersion();
         const auxAt = table.offset + auxiliary;
-        const hash = reader.u32(auxAt);
-        const flags = reader.u16(auxAt + 4);
-        const index = reader.u16(auxAt + 6) & 0x7fff;
-        const nameOffset = reader.u32(auxAt + 8);
-        const auxiliaryNext = reader.u32(auxAt + 12);
-        const name = namedString(dynstr, nameOffset, issues, "vna_name");
+        const hash = yield* window.u32(auxAt);
+        const flags = yield* window.u16(auxAt + 4);
+        const index = (yield* window.u16(auxAt + 6)) & 0x7fff;
+        const nameOffset = yield* window.u32(auxAt + 8);
+        const auxiliaryNext = yield* window.u32(auxAt + 12);
+        const name = yield* namedString(dynstr, nameOffset, issues, "vna_name");
         versions.push({
           name,
           hash,
@@ -1544,9 +1735,8 @@ const parseVerneed = (
   }
 };
 
-const parseVerdef = (
-  reader: BinaryReader,
-  bytes: Buffer,
+const parseVerdef = function* (
+  window: ElfWindowReader,
   mappings: IndexedElfLoadMappings,
   dynstr: DynamicStrings,
   section: SectionFacts | undefined,
@@ -1554,10 +1744,10 @@ const parseVerdef = (
   declaredCount: number | undefined,
   issues: ElfDependencyIssue[],
   chargeVersion: () => void,
-): ElfDependencies["version_definitions"] => {
+): ElfDependencySteps<ElfDependencies["version_definitions"]> {
   const table = locateVersionTable(
     mappings,
-    bytes.length,
+    window.fileSize,
     section,
     address,
     "GNU version definitions",
@@ -1599,21 +1789,21 @@ const parseVerdef = (
         fail("GNU version definition chain leaves its table");
       chargeVersion();
       const at = table.offset + offset;
-      const revision = reader.u16(at);
+      const revision = yield* window.u16(at);
       if (revision !== 1)
         fail(
           `GNU version definition revision ${String(revision)} is unsupported`,
         );
-      const flags = reader.u16(at + 2);
-      const index = reader.u16(at + 4) & 0x7fff;
-      const auxiliaryCount = reader.u16(at + 6);
-      const aux = reader.u32(at + 12);
-      const next = reader.u32(at + 16);
+      const flags = yield* window.u16(at + 2);
+      const index = (yield* window.u16(at + 4)) & 0x7fff;
+      const auxiliaryCount = yield* window.u16(at + 6);
+      const aux = yield* window.u32(at + 12);
+      const next = yield* window.u32(at + 16);
       if (auxiliaryCount === 0)
         fail("GNU version definition has no name entry");
       if (aux < 20 || offset + aux + 8 > table.size)
         fail("GNU version definition name entry leaves its table");
-      const nameOffset = reader.u32(table.offset + offset + aux);
+      const nameOffset = yield* window.u32(table.offset + offset + aux);
       // The first auxiliary record names the definition; the rest name its
       // parents. Walk them all so a count and link mismatch is reported.
       let auxiliary = offset + aux;
@@ -1624,13 +1814,13 @@ const parseVerdef = (
         auxiliary = followVersionLink(
           "GNU version definition auxiliary",
           auxiliary,
-          reader.u32(table.offset + auxiliary + 4),
+          yield* window.u32(table.offset + auxiliary + 4),
           8,
           item + 1 < auxiliaryCount,
         );
       }
       names.push({
-        name: namedString(dynstr, nameOffset, issues, "vda_name"),
+        name: yield* namedString(dynstr, nameOffset, issues, "vda_name"),
         index,
         base: (flags & VER_FLG_BASE) !== 0,
       });
@@ -1663,9 +1853,9 @@ const parseVerdef = (
 const SPARC_MACHINES: ReadonlySet<number> = new Set([2, 18, 43]);
 const STT_SPARC_REGISTER = 13;
 
-const parseImports = (
-  reader: BinaryReader,
-  bytes: Buffer,
+const parseImports = function* (
+  fileSize: number,
+  little: boolean,
   machine: number,
   bits: 32 | 64,
   dynsym: LocatedTable | null,
@@ -1679,7 +1869,7 @@ const parseImports = (
   >,
   maxImports: number,
   issues: ElfDependencyIssue[],
-): ElfDependencyImport[] => {
+): ElfDependencySteps<ElfDependencyImport[]> {
   if (dynsym === null || declaredCount === null) return [];
   // The count can come from a hash table while the located table is a shorter
   // section; bytes past the table belong to its neighbors, not to .dynsym.
@@ -1699,8 +1889,14 @@ const parseImports = (
       symbolCount,
     );
   const imports: ElfDependencyImport[] = [];
+  let dynsymBytes: Buffer;
   try {
-    reader.range(dynsym.offset, symbolCount * entrySize, ".dynsym");
+    dynsymBytes = yield* readElfRange(
+      fileSize,
+      dynsym.offset,
+      symbolCount * entrySize,
+      ".dynsym",
+    );
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) {
       issues.push({
@@ -1716,7 +1912,8 @@ const parseImports = (
   if (versym !== null) {
     const slotCount = Math.min(symbolCount, versym.count);
     try {
-      versymBytes = reader.range(
+      versymBytes = yield* readElfRange(
+        fileSize,
         versym.offset,
         slotCount * GNU_VERSYM_SLOT_BYTES,
         "GNU versym",
@@ -1731,12 +1928,11 @@ const parseImports = (
     }
   }
   const versymReader =
-    versymBytes === null
-      ? null
-      : new BinaryReader(versymBytes, reader.little, "elf");
+    versymBytes === null ? null : new BinaryReader(versymBytes, little, "elf");
   for (let index = 1; index < symbolCount; index += 1) {
-    const at = dynsym.offset + index * entrySize;
-    const parsed = readElfSymbolFieldsAt(bytes, at, bits, reader.little);
+    const rel = index * entrySize;
+    const at = dynsym.offset + rel;
+    const parsed = readElfSymbolFieldsAt(dynsymBytes, rel, bits, little);
     if (parsed === null) {
       issues.push({
         code: "malformed_entry",
@@ -1755,7 +1951,7 @@ const parseImports = (
       "Undefined dynamic symbols",
       "max_imports",
     );
-    const name = namedString(
+    const name = yield* namedString(
       dynstr,
       parsed.name_offset,
       issues,
