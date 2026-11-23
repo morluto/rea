@@ -1,4 +1,7 @@
-import { DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE } from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
+import {
+  DEFAULT_JAVASCRIPT_MEMBER_MUTATION_ALLOWANCE,
+  isJavaScriptMemberMutationRefusal,
+} from "../../domain/javascript/javascriptSemanticWorkAllowance.js";
 import { resolveJavaScriptSemanticPrecision } from "../../domain/javascript/javascriptSemanticPrecision.js";
 import type {
   JavaScriptSourceAnalysisLimits,
@@ -179,8 +182,21 @@ class ScopeJavaScriptSourceAnalysis implements JavaScriptSourceAnalysisPort {
   analyze(
     ...args: Parameters<JavaScriptSourceAnalysisPort["analyze"]>
   ): ReturnType<JavaScriptSourceAnalysisPort["analyze"]> {
+    const purpose = args[5];
     return this.worker.analyze(...args).then((result) => {
-      if (!result.ok) this.#failed = true;
+      // Preload discovery skips a source whose member-mutation allowance the
+      // worker refused and reported; the normal pass recomputes and reports
+      // it. That refusal leaves the process healthy, so the worker can still
+      // park and keep the static checkpoints discovery retained. canReuse
+      // still checks the process before parking.
+      if (
+        !result.ok &&
+        !(
+          purpose === "preload-discovery" &&
+          isJavaScriptMemberMutationRefusal(result.error.error)
+        )
+      )
+        this.#failed = true;
       return result;
     });
   }
