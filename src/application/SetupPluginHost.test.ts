@@ -556,6 +556,26 @@ it("keeps a non-default XDG_CONFIG_HOME on the direct registration path", async 
   expect(result.doctor.scope.plugin_clients).toBeUndefined();
 });
 
+it("uses direct registration without standalone Node when a non-default XDG_CONFIG_HOME needs the locator", async () => {
+  const f = fixture();
+  f.base.ghidra = "/custom/ghidra";
+  f.node(undefined);
+  withConfigHomeFallback(f, "/custom/config");
+  const result = await runSetup(
+    f.setupOptions,
+    f.host(true, { GHIDRA_INSTALL_DIR: "/custom/ghidra" }),
+  );
+  expect(result.status).toBe("ready");
+  expect(result.remediation ?? "").not.toMatch(/Node/iu);
+  expect(f.mutations()).toEqual([]);
+  expect(f.base.configurations).toBe(1);
+  expect(f.base.configuredProviderEnvironments[0]).toMatchObject({
+    XDG_CONFIG_HOME: "/custom/config",
+    GHIDRA_INSTALL_DIR: "/custom/ghidra",
+  });
+  expect(result.doctor.scope.plugin_clients).toBeUndefined();
+});
+
 it("guides repair when an installed plugin cannot preserve XDG_CONFIG_HOME", async () => {
   const f = fixture();
   f.installed(true, true);

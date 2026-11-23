@@ -116,7 +116,8 @@ class PluginSetupHost {
   }
   private configHomeRepairGuidance = (configHome: string): string =>
     `REA settings are stored under XDG_CONFIG_HOME=${configHome}. The installed plugin does not record that location for desktop clients that omit it. Remove the REA plugin and rerun setup so direct registration can preserve the config location, or export XDG_CONFIG_HOME=${configHome} in the desktop client environment.`;
-  private inspectPluginRoute = async (id: string): Promise<ClientRoute> => {
+  /** Inventory and support only; does not check the plugin Node prerequisite. */
+  private inventoryPluginRoute = async (id: string): Promise<ClientRoute> => {
     const commands: Readonly<Record<string, "codex" | "claude" | "cursor">> = {
       codex: "codex",
       claude_code: "claude",
@@ -163,9 +164,6 @@ class PluginSetupHost {
       return { mode: "blocked", remediation: state.remediation };
     if (!this.pluginRequested(id, state))
       return { mode: "direct", recheckPlugin: () => manager.inspect() };
-    const runtimeFailure = await manager.inspectRuntime();
-    if (runtimeFailure !== undefined)
-      return { mode: "blocked", remediation: runtimeFailure };
     return {
       mode: "plugin",
       manager,
@@ -173,12 +171,23 @@ class PluginSetupHost {
       enabled: state?.enabled ?? false,
     };
   };
+  /** Inventory plus the Node prerequisite for a route that will install a plugin. */
+  private inspectPluginRoute = async (id: string): Promise<ClientRoute> => {
+    const selected = await this.inventoryPluginRoute(id);
+    if (selected.mode !== "plugin") return selected;
+    const runtimeFailure = await selected.manager.inspectRuntime();
+    if (runtimeFailure !== undefined)
+      return { mode: "blocked", remediation: runtimeFailure };
+    return selected;
+  };
   private inspectRoute = async (id: string): Promise<ClientRoute> => {
     // Explicit direct setup must not launch a client that can migrate its settings.
     if (!this.options.preferPlugins) return { mode: "direct" };
     const configHome = this.configHomeFallback;
     if (configHome !== undefined) {
-      const selected = await this.inspectPluginRoute(id);
+      // Inventory only: Node is a plugin prerequisite, not required for direct
+      // registration that preserves a non-default config home under Bun.
+      const selected = await this.inventoryPluginRoute(id);
       if (selected.mode === "plugin" && selected.installed)
         return {
           mode: "blocked",
