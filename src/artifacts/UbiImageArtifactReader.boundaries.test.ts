@@ -611,61 +611,6 @@ it("retries past a dividing 64 KiB EC header when a CRC-valid static VID needs 1
   }
 });
 
-it("retries past a dividing small EC header whose PEB count exceeds the ceiling", async () => {
-  const wide = { pebSize: 128 * 1024, dataOffset: 4096 };
-  const smallCandidate = 8 * 1024;
-  const lebBytes = wide.pebSize - wide.dataOffset;
-  const records = [
-    {
-      id: 0,
-      name: "rootfs",
-      type: "dynamic" as const,
-      reservedPebs: 1,
-      alignment: lebBytes,
-      dataPad: 0,
-    },
-  ];
-  const rootfsData = Buffer.alloc(lebBytes, 0x52);
-  ubiImage([{ kind: "free" }], wide)
-    .subarray(0, 64)
-    .copy(rootfsData, smallCandidate - wide.dataOffset);
-  const rootfsLeb = {
-    kind: "leb" as const,
-    volId: 0,
-    lnum: 0,
-    data: rootfsData,
-    sqnum: 2n,
-  };
-  const path = await fixture(
-    ubiImage([rootfsLeb, ...ubiLayoutPebs(records, wide)], wide),
-  );
-  // Extend to the smallest 128 KiB-aligned size where the 8 KiB candidate
-  // exceeds UBI_MAX_PEBS while the 128 KiB grid stays under it.
-  const pebCount =
-    Math.floor((UBI_MAX_PEBS * smallCandidate) / wide.pebSize) + 1;
-  const fileSize = pebCount * wide.pebSize;
-  expect(fileSize % smallCandidate).toBe(0);
-  expect(fileSize / smallCandidate).toBeGreaterThan(UBI_MAX_PEBS);
-  expect(pebCount).toBeLessThanOrEqual(UBI_MAX_PEBS);
-  await truncate(path, fileSize);
-  const reader = new UbiImageArtifactReader(path);
-  try {
-    const volumes = await entries(reader);
-    expect(reader.formatMetadata()).toMatchObject({
-      peb_size: 131_072,
-      peb_count: pebCount,
-    });
-    expect(volumes).toMatchObject([
-      { path: "volumes/rootfs", declaredSize: lebBytes },
-    ]);
-    const reconstructed = await buffer(await reader.open(volumes[0]!));
-    expect(reconstructed.length).toBe(lebBytes);
-    expect(reconstructed.equals(rootfsData)).toBe(true);
-  } finally {
-    await reader.close();
-  }
-});
-
 it("refuses a retry that would swallow neighboring eraseblock boundaries inside layout PEBs", async () => {
   const g = { pebSize: 64 * 1024, dataOffset: 4096 };
   const records = [

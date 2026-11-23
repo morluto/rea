@@ -10,6 +10,7 @@ import {
   UBI_IMAGE_LIMITATIONS,
   UBI_LAYOUT_VOLUME_ID,
   UBI_MAX_PEB_BYTES,
+  UBI_MAX_PEBS,
   type UbiImage,
   type UbiImageParseError,
 } from "./ubiImage.js";
@@ -1609,6 +1610,65 @@ describe("erase-counter headers no eraseblock could begin at", () => {
         volumes: [{ extractRefusal: null, mappedLebCount: 2 }],
       },
     });
+  });
+});
+
+it("retries past a dividing small EC header whose PEB count exceeds the ceiling", async () => {
+  const wide = { pebSize: 128 * 1024, dataOffset: 128 };
+  const smallCandidate = 512;
+  const lebBytes = wide.pebSize - wide.dataOffset;
+  const records = [
+    {
+      id: 0,
+      name: "rootfs",
+      type: "dynamic" as const,
+      reservedPebs: 1,
+      alignment: lebBytes,
+      dataPad: 0,
+    },
+  ];
+  const rootfsData = Buffer.alloc(lebBytes, 0x52);
+  ubiImage([{ kind: "free" }], wide)
+    .subarray(0, 64)
+    .copy(rootfsData, smallCandidate - wide.dataOffset);
+  const rootfsLeb = {
+    kind: "leb" as const,
+    volId: 0,
+    lnum: 0,
+    data: rootfsData,
+    sqnum: 2n,
+  };
+  const bytes = ubiImage([rootfsLeb, ...ubiLayoutPebs(records, wide)], wide);
+  // Extend to the smallest 128 KiB-aligned size where the 512-byte candidate
+  // exceeds UBI_MAX_PEBS while the 128 KiB grid stays under it.
+  const pebCount =
+    Math.floor((UBI_MAX_PEBS * smallCandidate) / wide.pebSize) + 1;
+  const fileSize = pebCount * wide.pebSize;
+  expect(fileSize % smallCandidate).toBe(0);
+  expect(fileSize / smallCandidate).toBeGreaterThan(UBI_MAX_PEBS);
+  expect(pebCount).toBeLessThanOrEqual(UBI_MAX_PEBS);
+  // Model the zero-filled tail without issuing file reads across the small grid.
+  const zeroes = Buffer.alloc(wide.pebSize);
+  const parsed = await parseUbiImage(fileSize, (offset, length) => {
+    if (offset >= bytes.length) return zeroes.subarray(0, length);
+    const prefix = bytes.subarray(offset, offset + length);
+    return prefix.length === length
+      ? prefix
+      : Buffer.concat([prefix, zeroes.subarray(0, length - prefix.length)]);
+  });
+  expect(parsed).toMatchObject({
+    ok: true,
+    value: {
+      geometry: { pebSize: wide.pebSize, pebCount },
+      volumes: [
+        {
+          name: "rootfs",
+          dataBytes: lebBytes,
+          extractRefusal: null,
+          ranges: [{ offset: wide.dataOffset, length: lebBytes }],
+        },
+      ],
+    },
   });
 });
 
