@@ -10,7 +10,6 @@ import { BinaryReader } from "../binaryContainer.js";
 
 /** Little-endian magic `0xED26FF3A` from AOSP `sparse_format.h`. */
 export const ANDROID_SPARSE_MAGIC = 0xed26ff3a;
-export const ANDROID_SPARSE_MAGIC_BYTES = Buffer.from([0x3a, 0xff, 0x26, 0xed]);
 export const ANDROID_SPARSE_MAJOR_VERSION = 1;
 export const ANDROID_SPARSE_FILE_HEADER_BYTES = 28;
 export const ANDROID_SPARSE_CHUNK_HEADER_BYTES = 12;
