@@ -1,10 +1,9 @@
+import { canonicalOutputSchema } from "./canonical-output-schema.mjs";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { copyFile, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 import {
@@ -40,15 +39,19 @@ export async function verifyHopperBoundaryContracts(
       ajv.validateSchema(tool.inputSchema),
       `${tool.name} input schema`,
     );
-    assert.ok(tool.outputSchema, `${tool.name} omitted its output schema`);
     assert.ok(
-      ajv.validateSchema(tool.outputSchema),
+      canonicalOutputSchema(tool.name),
+      `${tool.name} omitted its output schema`,
+    );
+    assert.ok(
+      ajv.validateSchema(canonicalOutputSchema(tool.name)),
       `${tool.name} output schema`,
     );
     validators.set(
       tool.name,
-      (tool.outputSchema?.$id && ajv.getSchema(tool.outputSchema.$id)) ||
-        ajv.compile(tool.outputSchema),
+      (canonicalOutputSchema(tool.name)?.$id &&
+        ajv.getSchema(canonicalOutputSchema(tool.name).$id)) ||
+        ajv.compile(canonicalOutputSchema(tool.name)),
     );
   }
   let successfulCalls = 0;
@@ -398,7 +401,16 @@ export async function verifyHopperBoundaryContracts(
 }
 
 /** Prove actual document disposal and shared CLI/MCP behavior on disposable copies. */
-export async function verifyHopperLifecycleAndCli(client, options, targets) {
+export async function verifyHopperLifecycleAndCli(
+  client,
+  options,
+  targets,
+  commands,
+) {
+  if (commands === undefined)
+    throw new Error(
+      "Hopper boundary verification requires the supervised command owner",
+    );
   const directory = await realpath(
     await mkdtemp(join(tmpdir(), "hopper-boundary-")),
   );
@@ -410,15 +422,22 @@ export async function verifyHopperLifecycleAndCli(client, options, targets) {
       await client.callTool({ name, arguments: args }, options),
       name,
     );
-  const cli = promisify(execFile);
-  const runCli = (args) => {
-    const pending = cli(process.execPath, args, {
-      timeout: 180_000,
-      maxBuffer: 1_048_576,
-    });
-    if (pending.child.pid !== undefined)
-      targets.ownedProcessIds.add(pending.child.pid);
-    return pending;
+  // Non-zero CLI exits keep the execFile-shaped code and stdout the refusal
+  // assertion reads. The process itself belongs to the command owner.
+  const runCli = async (args) => {
+    try {
+      return await commands.exec(process.execPath, args, {
+        timeout: 180_000,
+        maxBuffer: 1_048_576,
+      });
+    } catch (error) {
+      if (error?.name !== "VerifierCommandExitError") throw error;
+      const failed = new Error(error.message, { cause: error });
+      failed.code = error.code;
+      failed.stdout = error.snapshot.stdout.text;
+      failed.stderr = error.snapshot.stderr.text;
+      throw failed;
+    }
   };
   try {
     await copyFile(targets.primary, primary);

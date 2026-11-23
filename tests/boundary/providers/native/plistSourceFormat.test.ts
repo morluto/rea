@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, onTestFinished } from "vitest";
@@ -12,7 +12,7 @@ import {
   NativeCommandFailure,
   type NativeCommandOptions,
   type NativeCommandRunner,
-} from "../../../../src/native/CommandRunner.js";
+} from "../../../../src/providers/NativeCommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
 import {
   NativeFixtureRunner,
@@ -26,6 +26,7 @@ const XML =
 const DATA = { $plist_type: "data", base64: "3q2+7w==" };
 
 class PlistSourceRunner extends NativeFixtureRunner {
+  #operand: string | undefined;
   constructor(
     private readonly path: string,
     description: string,
@@ -37,9 +38,17 @@ class PlistSourceRunner extends NativeFixtureRunner {
 
   override async run(tool: string, arguments_: readonly string[]) {
     const result = await super.run(tool, arguments_);
+    if (tool === "file") {
+      this.#operand = arguments_[1];
+      if (this.#operand === undefined) throw new Error("Missing plist operand");
+      expect(this.#operand).not.toBe(this.path);
+      expect(
+        (await readFile(this.#operand)).equals(await readFile(this.path)),
+      ).toBe(true);
+    }
     if (!result.ok || tool !== "plutil") return result;
     if (arguments_[0] === "-lint") {
-      expect(arguments_).toEqual(["-lint", "--", this.path]);
+      expect(arguments_).toEqual(["-lint", "--", this.#operand]);
       return ok({ ...result.value, stdout: "", stdoutBytes: 0 });
     }
     const format = arguments_[1];
@@ -50,7 +59,7 @@ class PlistSourceRunner extends NativeFixtureRunner {
       "-o",
       "-",
       "--",
-      this.path,
+      this.#operand,
     ]);
     if (!this.xmlFallback) return result;
     const json = format === "json";
@@ -249,13 +258,13 @@ const inspectConvertedPlist = async (
   const commands = [
     {
       tool: "file",
-      arguments: ["-b", path],
+      arguments: ["-b", "$PLIST"],
       acceptNonZero: false,
       output: ok("ASCII text\n"),
     },
     ...conversions.map(({ format, output }) => ({
       tool: "plutil",
-      arguments: ["-convert", format, "-o", "-", "--", path],
+      arguments: ["-convert", format, "-o", "-", "--", "$PLIST"],
       acceptNonZero: format === "json",
       output,
     })),
@@ -300,7 +309,17 @@ const inspectConvertedPlist = async (
     { path, native_command_timeout_ms: 1234 },
     { signal },
   );
-  expect(observed).toEqual(
+  const operand = observed[0]?.arguments.at(-1);
+  expect(operand).toBeDefined();
+  expect(operand).not.toBe(path);
+  expect(
+    observed.map((command) => ({
+      ...command,
+      arguments: command.arguments.map((argument) =>
+        argument === operand ? "$PLIST" : argument,
+      ),
+    })),
+  ).toEqual(
     commands.map((command) => ({
       tool: command.tool,
       arguments: command.arguments,

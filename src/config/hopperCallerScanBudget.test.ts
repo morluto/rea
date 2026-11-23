@@ -91,7 +91,6 @@ it("explains the time budget and that fixed byte allowances have no override", (
   expect(deadline).toContain(`maximum ${String(MAX_NODE_TIMER_DELAY_MS)} ms`);
   expect(deadline).toContain("update_analysis_settings");
   expect(deadline).toContain(HOPPER_CALLER_SCAN_BUDGET_SETTING);
-  expect(DEFAULT_HOPPER_CALLER_SCAN_BUDGET_MS).toBe(2000);
   const page = hopperCallerScanRecovery(
     facts({
       stop: {

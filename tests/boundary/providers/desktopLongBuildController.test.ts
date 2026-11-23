@@ -5,10 +5,11 @@ import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
-import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
 import { BuildComputerLongRuns } from "../../../src/desktop/BuildComputerLongRuns.js";
-import type { ControlledComputer } from "../../../src/desktop/BuildComputerController.js";
+import type { ControlledComputer } from "../../../src/ports/BuildComputerControl.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { testWaitDeadline, waitFor } from "../../support/testWait.js";
 
 const execute = promisify(execFile);
 
@@ -23,7 +24,8 @@ import os, signal, sys, time
 signal.signal(signal.SIGINT, lambda *_: sys.exit(130))
 if sys.argv[1] == "wait":
     open(sys.argv[2], "w").close()
-    time.sleep(30)
+    while not os.path.exists(sys.argv[3]):
+        time.sleep(0.02)
 print(os.environ.get("AGENTENV_CONTROL_TOKEN", "no token"))
 `,
     { mode: 0o755 },
@@ -81,28 +83,40 @@ it("runs a long-budget export through bounded controller calls and publishes its
 it("stops and joins the real supervised command when the caller cancels", async () => {
   const { computer, home } = await computerWithRea();
   const ready = join(home, "ready");
+  const release = join(home, "release");
+  const cancellation = new Error("cancelled");
   const controller = new AbortController();
   const owner = new BuildComputerLongRuns(computer);
   const run = owner
-    .run(["wait", ready], {
+    .run(["wait", ready, release], {
       work: ".rea-build",
       stdout: ".rea-build/out.json",
-      timeoutS: 7080,
+      timeoutS: Math.floor(testWaitDeadline() / 1000),
       signal: controller.signal,
     })
     .catch((error: unknown) => error);
-  const until = Date.now() + 5000;
-  while (
-    Date.now() < until &&
-    !(await access(ready).then(
-      () => true,
-      () => false,
-    ))
-  )
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  await expect(access(ready)).resolves.toBeUndefined();
-  controller.abort(new Error("cancelled"));
-  const failure = await run;
-  expect(failure).toBeInstanceOf(AnalysisCancelledError);
-  expect(owner.cleanupResources).toEqual([]);
+  const started = waitFor(async () => {
+    if (!controller.signal.aborted) await access(ready);
+  });
+  try {
+    await awaitAcknowledgement(started, run, "the guest command's start");
+    controller.abort(cancellation);
+    await expect(run).resolves.toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: cancellation,
+      diagnostics: {
+        completed_command: { exit_code: 130, settled: true, cancelled: true },
+      },
+    });
+    expect(owner.cleanupResources).toEqual([]);
+  } finally {
+    controller.abort(cancellation);
+    // Only open the guest's normal exit path after observing the cancellation.
+    try {
+      await writeFile(release, "");
+    } finally {
+      await Promise.allSettled([started, run]);
+      expect(await owner.release()).toMatchObject({ verified: true });
+    }
+  }
 });

@@ -1,7 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, join, relative, sep } from "node:path";
+import { availableParallelism } from "node:os";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { z } from "zod";
 
 const require = createRequire(import.meta.url);
@@ -70,23 +72,81 @@ const run = (
   return result;
 };
 
+const parseChangedLintFiles = () => {
+  const raw = process.env.CI_TYPED_LINT_FILES;
+  if (raw === undefined)
+    throw new Error("CI_TYPED_LINT_FILES is required for typed-lint-changed");
+  const files = z.array(z.string().min(1)).nullable().parse(JSON.parse(raw));
+  if (files === null) return null;
+  for (const file of files) {
+    const normalized = normalize(file);
+    if (
+      file.includes("\0") ||
+      isAbsolute(file) ||
+      normalized === ".." ||
+      normalized.startsWith(`..${sep}`)
+    )
+      throw new Error(`Invalid changed file path for typed lint: ${file}`);
+    if (!statSync(file, { throwIfNoEntry: false })?.isFile())
+      throw new Error(
+        `Changed file missing from the typed lint checkout: ${file}`,
+      );
+  }
+  return files;
+};
+
 try {
   await mkdir(reportRoot, { recursive: true });
-  if (mode === "lint" || mode === "typed-lint") {
-    const typed = mode === "typed-lint";
+  const changed = mode === "typed-lint-changed";
+  const changedFiles = changed ? parseChangedLintFiles() : null;
+  if (changedFiles?.length === 0) {
+    await rm(join(reportRoot, "typed-oxlint.json"), { force: true });
+    console.log("Typed lint: 0 changed files to check.");
+  } else if (mode === "lint" || mode === "typed-lint" || changed) {
+    const typed = mode !== "lint";
     const reportPath = join(
       reportRoot,
       typed ? "typed-oxlint.json" : "oxlint.json",
     );
     await rm(reportPath, { force: true });
+    if (changedFiles === null && changed)
+      console.log(
+        "Changed file list exceeds the CI output limit. Running full typed lint.",
+      );
+    const hasExplicitThreads = extraArguments.some(
+      (argument) =>
+        argument === "--threads" || argument.startsWith("--threads="),
+    );
+    const configuredThreads = Number(process.env.REA_OXLINT_THREADS);
+    // Match vitest.config.ts runner concurrency so untyped oxlint does not
+    // saturate every host core on shared developer or agent machines.
+    const defaultUntypedThreads = Math.min(
+      process.env.GITHUB_ACTIONS === "true" ? 4 : 2,
+      availableParallelism(),
+    );
+    const untypedThreads =
+      Number.isSafeInteger(configuredThreads) && configuredThreads > 0
+        ? configuredThreads
+        : defaultUntypedThreads;
     const result = run(
       "oxlint",
       "bin/oxlint",
       [
-        ...(typed ? ["--type-aware", "--threads", "1"] : []),
-        ...extraArguments,
+        ...(typed
+          ? ["--type-aware", "--threads", "1"]
+          : hasExplicitThreads
+            ? []
+            : ["--threads", String(untypedThreads)]),
+        ...(changed ? [] : extraArguments),
         "--format",
         "json",
+        ...(changedFiles === null
+          ? []
+          : [
+              "--no-error-on-unmatched-pattern",
+              "--",
+              ...changedFiles.map((file) => `./${file}`),
+            ]),
       ],
       typed
         ? {
@@ -172,7 +232,9 @@ try {
     console.log(`Full diagnostics: ${reportPath}; npm run jscpd:details`);
     process.exitCode = result.status;
   } else {
-    throw new Error("Expected lint, typed-lint or duplicates");
+    throw new Error(
+      "Expected lint, typed-lint, typed-lint-changed or duplicates",
+    );
   }
 } catch (cause) {
   console.error(cause instanceof Error ? cause.message : String(cause));

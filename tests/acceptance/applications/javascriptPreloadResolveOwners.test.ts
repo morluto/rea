@@ -1,3 +1,6 @@
+import { posix } from "node:path";
+import { runInNewContext } from "node:vm";
+
 import { expect } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -122,5 +125,84 @@ cliTest.for(
           }),
         }),
       ]);
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps unproven source-directory compositions unknown through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-electron-path-base-");
+    const expressions = [
+      'path.join("prefix",__dirname,"decoy.cjs")',
+      'path.join(__dirname,__dirname,"decoy.cjs")',
+      'path.join(__dirname,path.join(__dirname,"decoy.cjs"))',
+      'path.join(__dirname,"control.cjs")',
+    ];
+    const runtime = expressions.map((expression) =>
+      runInNewContext(expression, { path: posix, __dirname: "/target/app" }),
+    );
+    expect(runtime).toEqual([
+      "prefix/target/app/decoy.cjs",
+      "/target/app/target/app/decoy.cjs",
+      "/target/app/target/app/decoy.cjs",
+      "/target/app/control.cjs",
+    ]);
+    await writeFixtureFiles(root, {
+      "package.json": JSON.stringify({ main: "main.cjs" }),
+      "main.cjs": `const path=require('node:path');
+const {BrowserWindow,utilityProcess}=require('electron');
+${expressions.map((expression) => `new BrowserWindow({webPreferences:{preload:${expression}}});utilityProcess.fork(${expression});`).join("\n")}`,
+      "decoy.cjs": "throw new Error('Incorrect directory composition');",
+      "prefix/decoy.cjs": "throw new Error('Incorrect directory composition');",
+      "control.cjs": "throw new Error('Static fixture must never execute');",
+    });
+    const { graph, statistics } = await analyzeJavaScriptDirectory(
+      surface,
+      cli,
+      root,
+    );
+    expect(statistics.parse_failures).toBe(0);
+    const windows = graph.nodes.filter(({ kind }) => kind === "browser-window");
+    expect(
+      windows
+        .map(({ observations }) => observations[0]?.properties.preload_path)
+        .sort((left, right) => Number(left === null) - Number(right === null)),
+    ).toEqual(["control.cjs", null, null, null]);
+    expect(graph.coverage.status).toBe("partial");
+    const utilities = graph.nodes.filter(
+      ({ kind }) => kind === "electron-utility",
+    );
+    expect(utilities).toHaveLength(4);
+    const declaredUtilities = utilities.flatMap(({ observations }) =>
+      observations
+        .filter(({ properties }) => "module_path" in properties)
+        .map(({ properties }) => properties),
+    );
+    expect(
+      declaredUtilities
+        .map(({ module_path }) => module_path)
+        .sort((left, right) => Number(left === null) - Number(right === null)),
+    ).toEqual(["control.cjs", null, null, null]);
+    expect(
+      declaredUtilities
+        .filter(({ module_path }) => module_path === null)
+        .map(({ module_expression }) => module_expression),
+    ).toEqual(expect.arrayContaining(expressions.slice(0, 3)));
+    const associations = graph.edges.filter(
+      ({ evidence }) =>
+        evidence.extractor.operation === "associate-browser-window-preload",
+    );
+    expect(
+      associations.map(({ properties }) => properties.resolved_path),
+    ).toEqual(["control.cjs"]);
+    const utilityIds = new Set(utilities.map(({ node_id }) => node_id));
+    expect(
+      graph.edges
+        .filter(
+          ({ source_node_id, relation }) =>
+            utilityIds.has(source_node_id) && relation === "maps_to",
+        )
+        .map(({ properties }) => properties.resolved_path),
+    ).toEqual(["control.cjs"]);
   },
 );

@@ -2,10 +2,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect } from "vitest";
+import { phaseArrival } from "../../support/lifecycleHarness.js";
 import { z } from "zod";
 
-import { createDeferred } from "../../fixtures/binarySession.js";
-import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   createCliSessionFrameReader,
@@ -55,20 +54,15 @@ process.stdout.write = (chunk, ...arguments_) => {
     child.stderr.on("data", (chunk: Buffer) => {
       stderr += chunk.toString("utf8");
     });
-    const ready = createDeferred<void>();
+    const workerReady = phaseArrival();
     child.stdout.on(
       "data",
       createCliSessionFrameReader((value: unknown) => {
         const frame = z.object({ ready: z.boolean() }).parse(value);
-        if (frame.ready) ready.resolve();
+        if (frame.ready) workerReady.arrive();
       }),
     );
-    await awaitAcknowledgement(
-      ready.promise,
-      closed,
-      "CLI worker startup",
-      15_000,
-    );
+    await workerReady.reached(closed, "CLI worker startup");
     child.stdin.end(
       encodeCliSessionFrame({
         id: 1,
@@ -198,5 +192,20 @@ processTest(
       { ready: true },
       expect.objectContaining({ id: 1, fatal: true, exitCode: 1 }),
     ]);
+  },
+);
+
+processTest(
+  "reports an incomplete request frame when the input ends",
+  async ({ processes }) => {
+    const complete = encodeCliSessionFrame({ id: 1 });
+    for (const input of [complete.subarray(0, 2), complete.subarray(0, -1)]) {
+      const result = await processes.run(process.execPath, [worker], { input });
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.signal).toBeNull();
+      expect(result.stderr).toContain(
+        "CLI session ended with an incomplete frame",
+      );
+    }
   },
 );

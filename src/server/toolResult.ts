@@ -3,10 +3,10 @@ import { isNativeInventoryOperation } from "../domain/native/nativeInventory.js"
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { ToolResultDelivery } from "./ToolResultDelivery.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../domain/analysisView/analysisViewErrors.js";
-import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisView.js";
+import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisViewRequest.js";
 import { smallerBatchDecompileSelection } from "../domain/analysisView/batchDecompileView.js";
 import type { Evidence } from "../domain/evidence.js";
-import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
 
 /** Compose native Evidence continuation with the selected, parsed response budget. */
 export const createToolResultDelivery = (
@@ -47,7 +47,7 @@ const continuationOf = (
   return {
     continuation: {
       name: INSPECT_ANALYSIS_VIEW_OPERATION,
-      arguments: jsonValueSchema.parse(input.data),
+      arguments: ownedJsonValueSchema.parse(input.data),
     },
   };
 };

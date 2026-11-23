@@ -57,6 +57,12 @@ would read a different row sequence (names it treats as invalid or truncates,
 ordinal 0, descriptors without functions, or tables its bounds and import
 symbol cap truncate). Delay-load issues do not withhold the hash.
 
+Import inspection uses a forensic file-backed RVA mapping that can include raw
+alignment bytes beyond a section's `VirtualSize`. The hash compatibility check
+compares the consumed spans with pefile's section selection and raw read bounds.
+A matching hash describes that on-disk import stream.
+[pefile 2024.8.26 section mapping](https://github.com/erocarrera/pefile/blob/v2024.8.26/pefile.py#L1104-L1201)
+
 A missing import directory is observed absence of that table. It is not proof
 the image never imported APIs through another table or overlay.
 

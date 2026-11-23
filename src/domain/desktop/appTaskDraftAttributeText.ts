@@ -1,3 +1,4 @@
+import { escapeJsonPointerToken } from "../jsonPointer.js";
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
@@ -9,8 +10,8 @@ import { isIdentifyingAttribute, isNameLikeKey } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import {
   elementText,
-  escapeToken,
   isXmlElement,
+  lastSelectorOf,
   resolvePointer,
 } from "./viewPointer.js";
 
@@ -25,10 +26,6 @@ const isFormattingAttribute = (key: string) =>
 /** The element a member of `children` sits in; none for the root. */
 const parentOf = (pointer: string): string | undefined =>
   /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
-
-/** Whether a pointer's last step names its element by an attribute, as `[name=PAGEOBJECT][@ANNAME=Headline]`. */
-const namedByAttribute = (pointer: string) =>
-  (pointer.split("/").at(-1) ?? "").includes("[@");
 
 /** An element's text from its text nodes, or from an attribute's values, at a pointer in a view. */
 const textAt = (
@@ -133,16 +130,14 @@ export const attributeTextCheck = (
     isStamp(value)
   )
     return undefined;
-  let at = parentOf(owner);
-  for (
-    let climbed = 1;
-    at !== undefined && !namedByAttribute(at) && climbed < MAX_CLIMB;
-    climbed += 1
-  )
-    at = parentOf(at);
-  if (at === undefined || parentOf(at) === undefined || !namedByAttribute(at))
+  let ancestor = parentOf(owner);
+  for (let climbed = 1; ancestor !== undefined; climbed += 1) {
+    if (lastSelectorOf(ancestor).some(({ prefix }) => prefix === "@")) break;
+    if (climbed === MAX_CLIMB) return undefined;
+    ancestor = parentOf(ancestor);
+  }
+  if (ancestor === undefined || parentOf(ancestor) === undefined)
     return undefined;
-  const ancestor = at;
   const after = textAt(ends.final, ancestor, key);
   return holdsRuns(context, ancestor, key) &&
     context.named(ancestor) &&
@@ -185,7 +180,7 @@ export const textAttributes = (
     ...change.removed.flatMap((pointer) => own(ends.baseline, pointer)),
   ].filter(
     ({ owner, key }) =>
-      noise(`${owner}/attributes/${escapeToken(key)}`) === undefined,
+      noise(`${owner}/attributes/${escapeJsonPointerToken(key)}`) === undefined,
   );
 };
 

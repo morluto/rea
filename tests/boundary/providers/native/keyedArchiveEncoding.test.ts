@@ -14,9 +14,9 @@ it.each(["utf8", "utf8-bom", "utf16le", "utf16be", "binary"] as const)(
   async (encoding) => {
     const root = await createTestTempDirectory("rea-keyed-encoding-");
     const xml = await nativeFixture("archive-xml-encoding/archive.xml");
-    const utf16 = Buffer.from(xml.replace("UTF-8", "UTF-16"), "utf16le");
     // The binary builder emits type-8 records for UID; CF$UID is XML's convention.
     const binarySource = xml.replaceAll("<key>CF$UID</key>", "<key>UID</key>");
+    const utf16 = Buffer.from(xml.replace("UTF-8", "UTF-16"), "utf16le");
     const bytes =
       encoding === "utf8"
         ? Buffer.from(xml)
@@ -67,8 +67,6 @@ it.each(["utf8-as-utf16", "utf16-as-utf8"] as const)(
   async (kind) => {
     const root = await createTestTempDirectory("rea-keyed-encoding-");
     const xml = await nativeFixture("archive-xml-encoding/archive.xml");
-    // The binary builder emits type-8 records for UID; CF$UID is XML's convention.
-    const binarySource = xml.replaceAll("<key>CF$UID</key>", "<key>UID</key>");
     const bytes =
       kind === "utf8-as-utf16"
         ? Buffer.from(xml.replace("UTF-8", "UTF-16"))

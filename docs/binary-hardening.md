@@ -44,7 +44,8 @@ and debug directory presence, not signature validity or debug content. A
 directory whose address and size disagree is `unknown`.
 
 Mach-O rows read `MH_PIE`, `MH_ALLOW_STACK_EXECUTION`, `MH_NO_HEAP_EXECUTION`,
-an `__RESTRICT` segment, `LC_CODE_SIGNATURE` presence, encryption from the
+a `__restrict` section in an `__RESTRICT` segment (dyld ignores the segment
+without that section), `LC_CODE_SIGNATURE` presence, encryption from the
 existing encryption reader, the arm64e subtype, and a stack-protector import.
 `hardened_runtime` is `unknown` with `next_probe` `inspect_signature`.
 CodeDirectory flags stay with that tool.

@@ -44,6 +44,29 @@ const parseFunctionValueFixture = (
   return parsed.ok ? { ok: true as const, value: parsed.value.value } : parsed;
 };
 
+it("names the failing fields when a function reply or its envelope misses its contract", () => {
+  const dossier = ghidraFunctionDossier() as Record<string, JsonValue>;
+  const envelope = parseGhidraFunctionResult("analyze_function", {
+    value: dossier,
+    limitations: "none",
+  });
+  expect(envelope.ok ? undefined : envelope.error.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({ path: ["limitations"], code: "invalid_type" }),
+    ]),
+  });
+
+  const reply = parseGhidraFunctionResult("analyze_function", {
+    value: { ...dossier, pseudocode: 7 },
+    limitations: [],
+  });
+  expect(reply.ok ? undefined : reply.error.diagnostics).toMatchObject({
+    contract_issues: expect.arrayContaining([
+      expect.objectContaining({ path: ["pseudocode"], received: "number" }),
+    ]),
+  });
+});
+
 describe("Ghidra unresolved call locations", () => {
   it("rejects a noncanonical unresolved call site rather than retaining unverifiable location evidence", () => {
     expect(
@@ -238,92 +261,69 @@ describe("Ghidra relationship metadata validation", () => {
       }),
     ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
   });
-  it.each([...observationOperations])(
-    "requires the function-observation limitations envelope for %s",
-    (operation) => {
-      expect(parseGhidraFunctionResult(operation, null)).toMatchObject({
-        ok: false,
-        error: { _tag: "AnalysisOutputError" },
-      });
-    },
-  );
-
-  it("preserves a named function-observation limitation", () => {
-    expect(
-      parseGhidraFunctionResult("procedure_pseudo_code", "void f() {}"),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-    const limitation =
-      "Ghidra marks a call to external __tls_get_addr terminal; return behavior is not independently verified.";
-    expect(
-      parseGhidraFunctionResult("procedure_pseudo_code", {
-        value: "void f() {}",
-        limitations: [limitation],
-      }),
-    ).toEqual({
-      ok: true,
-      value: { value: "void f() {}", limitations: [limitation] },
-    });
-  });
-
-  it("preserves handler-region limitations on procedure references", () => {
-    const limitation =
-      "Ghidra Listing shows a Borland/Delphi-style SEH frame registration at 0x401008 (push 0x4010a0 followed by fs-segment stack chaining); handler 0x4010a0 lies outside this procedure's body, so callees, strings, and cross-references may omit the handler region.";
-    const parsed = parseGhidraFunctionResult("procedure_references", {
-      value: {
-        procedure: ghidraFunctionIdentity(),
+  const identity = ghidraFunctionIdentity();
+  it.each([
+    ["analyze_function", ghidraFunctionDossier()],
+    ["procedure_assembly", "RET"],
+    ["procedure_callees", ["0x402000"]],
+    ["procedure_callers", ["0x401000"]],
+    [
+      "procedure_info",
+      {
+        name: identity.name,
+        entrypoint: identity.address,
+        signature: null,
+        locals: [],
+        basicblock_count: 1,
+        length: identity.body.total_bytes,
+        classification: identity.classification,
+        body: identity.body,
+      },
+    ],
+    ["procedure_pseudo_code", "void f() {}"],
+    [
+      "procedure_references",
+      {
+        procedure: identity,
         direction: "outgoing",
         references: [ghidraReferenceEdge()],
         reference_kinds_available: true,
         unresolved_calls: [],
       },
-      limitations: [limitation],
-    });
-    expect(parsed).toEqual({
-      ok: true,
-      value: {
-        value: {
-          procedure: ghidraFunctionIdentity(),
-          direction: "outgoing",
-          references: [ghidraReferenceEdge()],
-          reference_kinds_available: true,
-          unresolved_calls: [],
-        },
-        limitations: [limitation],
-      },
-    });
-    expect(
-      parseGhidraFunctionResult("procedure_references", {
-        procedure: ghidraFunctionIdentity(),
-        direction: "outgoing",
-        references: [],
-        reference_kinds_available: true,
-        unresolved_calls: [],
-      }),
-    ).toMatchObject({ ok: false, error: { _tag: "AnalysisOutputError" } });
-  });
-
-  it.each(["procedure_callees", "procedure_callers"] as const)(
-    "requires the function-observation envelope to carry terminal-call limitations for %s",
-    (operation) => {
-      // A bare address list is the pre-fix bridge shape; without the envelope
-      // a truncated function body reports no warning, so it must be rejected.
-      expect(parseGhidraFunctionResult(operation, ["0x2000"])).toMatchObject({
+    ],
+    [
+      "read_function_instructions",
+      { procedure: identity, instructions: ["RET"], limitations: [] },
+    ],
+  ] satisfies ReadonlyArray<[GhidraFunctionOperation, JsonValue]>)(
+    "requires a limitations envelope around a valid %s value",
+    (operation, value) => {
+      expect(
+        parseGhidraFunctionResult(operation, { value, limitations: [] }).ok,
+      ).toBe(true);
+      expect(parseGhidraFunctionResult(operation, value)).toMatchObject({
         ok: false,
         error: { _tag: "AnalysisOutputError" },
       });
-      const limitation =
-        "Ghidra Listing reports a terminal call at 0x401000 to 0x402000 abort; fallthrough is excluded by Ghidra's flow model.";
-      expect(
-        parseGhidraFunctionResult(operation, {
-          value: ["0x2000"],
-          limitations: [limitation],
-        }),
-      ).toEqual({
-        ok: true,
-        value: { value: ["0x2000"], limitations: [limitation] },
-      });
     },
   );
+  it("requires the pseudocode envelope when the producer observed no source", () => {
+    expect(
+      parseGhidraFunctionResult("procedure_pseudo_code", {
+        value: null,
+        limitations: ["The producer did not supply pseudocode."],
+      }),
+    ).toMatchObject({
+      ok: true,
+      value: {
+        value: null,
+        limitations: ["The producer did not supply pseudocode."],
+      },
+    });
+    expect(parseGhidraFunctionResult("procedure_pseudo_code", null).ok).toBe(
+      false,
+    );
+  });
 });
 
 describe("Ghidra reference and value-flow completeness", () => {

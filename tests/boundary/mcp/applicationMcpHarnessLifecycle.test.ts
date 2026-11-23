@@ -2,8 +2,9 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it, vi } from "vitest";
+import { phaseGate } from "../../support/lifecycleHarness.js";
 
-import type { AnalysisClient } from "../../../src/application/AnalysisProvider.js";
+import type { AnalysisClient } from "../../../src/ports/AnalysisProvider.js";
 import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { err, ok } from "../../../src/domain/result.js";
 import {
@@ -12,10 +13,10 @@ import {
 } from "../../fixtures/applicationMcpHarness.js";
 import {
   createCacheProvider,
-  createDeferred,
   createTestBinarySession,
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { releaseOwnedCleanup } from "../../support/cleanupRelease.js";
 
 const failureLeaves = (reason: unknown): unknown[] =>
   reason instanceof AggregateError
@@ -64,14 +65,12 @@ it("reports a failed session close, joins concurrent attempts and retries the re
   const failure = new ProviderCleanupError("fixture", ["binary-owner"], {
     reason: "controlled binary close denial",
   });
-  const entered = createDeferred<void>();
-  const release = createDeferred<void>();
+  const providerClose = phaseGate();
   let allowClose = false;
   const closeProvider = vi.fn(async () => {
-    entered.resolve();
-    await release.promise;
+    await providerClose.hold();
     if (!allowClose) return err(failure);
-    failure.resolveCleanup();
+    releaseOwnedCleanup(failure);
     return ok(null);
   });
   let harness: ApplicationMcpHarness | undefined;
@@ -80,11 +79,11 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     harness = acquired.harness;
     const closing = harness.close();
     const outcome = closing.catch((reason: unknown) => reason);
-    await entered.promise;
+    await providerClose.reached(outcome, "provider close");
     const concurrent = harness.close();
     const concurrentOutcome = concurrent.catch((reason: unknown) => reason);
     expect(closeProvider).toHaveBeenCalledTimes(1);
-    release.resolve();
+    providerClose.release();
     const reason: unknown = await outcome;
     expect(reason).toBeInstanceOf(AggregateError);
     if (!(reason instanceof AggregateError))
@@ -108,7 +107,7 @@ it("reports a failed session close, joins concurrent attempts and retries the re
     expect(closeProvider).toHaveBeenCalledTimes(2);
   } finally {
     allowClose = true;
-    release.resolve();
+    providerClose.release();
     await harness?.close();
   }
 });
@@ -122,7 +121,7 @@ it("preserves independent MCP provider and session close failures and releases e
   let allowAdbClose = false;
   const closeBinary = vi.fn(async () => {
     if (!allowBinaryClose) return err(binaryFailure);
-    binaryFailure.resolveCleanup();
+    releaseOwnedCleanup(binaryFailure);
     return ok(null);
   });
   const closeAdb = vi.fn(async () => {

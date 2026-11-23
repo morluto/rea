@@ -12,7 +12,7 @@ export const ptxFixture = `// Producer-shaped static PTX; portable tests do not 
 ret;
 }
 `;
-export interface ElfFixtureSection {
+interface ElfFixtureSection {
   name: string;
   type?: number;
   flags?: bigint;
@@ -210,6 +210,17 @@ export const cubinFixture = (
   }
   return result;
 };
+/** Wrap stored metadata in an AMDGPU ELF note. */
+export const amdDescriptorNoteFixture = (metadata: Buffer): Buffer => {
+  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
+  note.writeUInt32LE(7, 0);
+  note.writeUInt32LE(metadata.length, 4);
+  note.writeUInt32LE(32, 8);
+  note.write("AMDGPU\0", 12);
+  metadata.copy(note, 20);
+  return note;
+};
+
 /** One producer-shaped AMDGPU MessagePack note, composable with later notes. */
 export const amdNoteFixture = (
   hidden = false,
@@ -241,13 +252,7 @@ export const amdNoteFixture = (
       ],
     }),
   );
-  const note = Buffer.alloc(20 + Math.ceil(metadata.length / 4) * 4);
-  note.writeUInt32LE(7, 0);
-  note.writeUInt32LE(metadata.length, 4);
-  note.writeUInt32LE(32, 8);
-  note.write("AMDGPU\0", 12);
-  metadata.copy(note, 20);
-  return note;
+  return amdDescriptorNoteFixture(metadata);
 };
 export const amdFixture = (
   hidden = false,
@@ -264,8 +269,24 @@ export const amdFixture = (
     },
   ]);
 };
+/**
+ * One final LZ4 literal sequence, the block form CUDA's 0x2000 profile stores.
+ * A single sequence is valid LZ4: separate sequences need an intervening match.
+ */
+const lz4LiteralBlock = (data: Buffer): Buffer => {
+  const head = [Math.min(data.length, 15) << 4];
+  if (data.length >= 15) {
+    let extra = data.length - 15;
+    while (extra >= 255) {
+      head.push(255);
+      extra -= 255;
+    }
+    head.push(extra);
+  }
+  return Buffer.concat([Buffer.from(head), data]);
+};
 export const cudaFixture = (
-  compression: "none" | "zstd" | "legacy" = "none",
+  compression: "none" | "zstd" | "lz4" | "legacy" = "none",
   entries: { kind: number; target: number; bytes: Buffer; flags?: number }[] = [
     { kind: 1, target: 80, bytes: Buffer.from(ptxFixture) },
     { kind: 2, target: 90, bytes: cubinFixture({ architecture: 90 }) },
@@ -278,13 +299,19 @@ export const cudaFixture = (
           ? zstdCompressSync(bytes)
           : compression === "legacy"
             ? deflateSync(bytes)
-            : bytes,
+            : compression === "lz4"
+              ? lz4LiteralBlock(bytes)
+              : bytes,
+      // CUDA tags each supported profile with its own flag bit; 0x2000 alone is
+      // the LZ4 profile and 0x1000 alone stays an unsupported declaration.
       compressionFlag =
         compression === "zstd"
           ? 0x8000n
           : compression === "legacy"
             ? 0x1000n
-            : 0n;
+            : compression === "lz4"
+              ? 0x2000n
+              : 0n;
     const result = Buffer.alloc(64 + Math.ceil(data.length / 8) * 8);
     result.writeUInt16LE(kind, 0);
     result.writeUInt16LE(0x101, 2);
@@ -313,21 +340,33 @@ export const cudaFixture = (
 export const hipFixture = (
   payload = amdFixture(),
   targetId = "hipv4-amdgcn-amd-amdhsa--gfx900",
+  siblings: readonly { readonly id: string; readonly bytes: Buffer }[] = [],
 ): Buffer => {
-  const ids = ["host-x86_64-unknown-linux", targetId];
-  const headers = ids.map((id) => Buffer.alloc(24 + Buffer.byteLength(id)));
-  const start = 32 + headers.reduce((total, row) => total + row.length, 0);
-  for (let index = 0; index < headers.length; index++) {
+  const entries = [
+    { id: "host-x86_64-unknown-linux", bytes: Buffer.alloc(0) },
+    { id: targetId, bytes: payload },
+    ...siblings,
+  ];
+  const headers = entries.map(({ id }) =>
+    Buffer.alloc(24 + Buffer.byteLength(id)),
+  );
+  let offset = 32 + headers.reduce((total, row) => total + row.length, 0);
+  for (const [index, { id, bytes }] of entries.entries()) {
     const row = headers[index]!;
-    row.writeBigUInt64LE(BigInt(start));
-    row.writeBigUInt64LE(index === 0 ? 0n : BigInt(payload.length), 8);
-    row.writeBigUInt64LE(BigInt(Buffer.byteLength(ids[index]!)), 16);
-    row.write(ids[index]!, 24);
+    row.writeBigUInt64LE(BigInt(offset));
+    row.writeBigUInt64LE(BigInt(bytes.length), 8);
+    row.writeBigUInt64LE(BigInt(Buffer.byteLength(id)), 16);
+    row.write(id, 24);
+    offset += bytes.length;
   }
   const head = Buffer.alloc(32);
   head.write("__CLANG_OFFLOAD_BUNDLE__");
-  head.writeBigUInt64LE(2n, 24);
-  return Buffer.concat([head, ...headers, payload]);
+  head.writeBigUInt64LE(BigInt(entries.length), 24);
+  return Buffer.concat([
+    head,
+    ...headers,
+    ...entries.map(({ bytes }) => bytes),
+  ]);
 };
 /** Representation recognition only; these bytes do not establish valid LLVM IR. */
 export const llvmBitcodeFixture = (wrapped = false): Buffer => {

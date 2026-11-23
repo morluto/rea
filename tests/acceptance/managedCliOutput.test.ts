@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -7,7 +7,74 @@ import { expect } from "vitest";
 import { elf, thinMach } from "../../src/domain/binaryTarget.fixture.js";
 import { buildManagedPeFixture } from "../../src/dotnet/ManagedPe.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
-import { cliTest, runFileCli } from "../support/cli/cliFixture.js";
+import { cliTest } from "../support/cli/cliFixture.js";
+
+cliTest(
+  "returns partial Evidence when managed table declarations conflict",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-managed-cli-table-conflict-",
+    );
+    const path = join(root, "fixture.dll");
+    await writeFile(
+      path,
+      buildManagedPeFixture({ competingTableStream: "distinct" }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-managed-members", path, "--full-output", "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      data: {
+        normalized_result: {
+          metadata: {
+            status: "partial",
+            version: "v4.0.30319",
+            table_row_counts: {},
+          },
+          methods: [],
+          method_rows: null,
+          coverage: {
+            state: "unavailable",
+            issues: [
+              { code: "unsupported-metadata", scope: "metadata.tables" },
+            ],
+          },
+        },
+      },
+    });
+  },
+);
+
+cliTest(
+  "delivers a managed artifact summary beside its complete Evidence bundle",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-managed-cli-delivery-");
+    const path = join(root, "fixture.dll");
+    await writeFile(path, buildManagedPeFixture());
+    const destination = join(root, "artifact.json");
+    const result = await cli.run({
+      arguments: [
+        "inspect-managed-artifact",
+        path,
+        "--detail",
+        "summary",
+        "--evidence_output",
+        destination,
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const bytes = await readFile(destination);
+    expect(result.json).toMatchObject({
+      evidence_bundle: { path: destination, bytes: bytes.length },
+      summary: { operation: "inspect_analysis_view" },
+    });
+    expect(JSON.parse(bytes.toString())).toMatchObject({
+      records: [{ operation: "inspect_managed_artifact" }],
+    });
+  },
+);
 
 cliTest(
   "recovers the same managed artifact through decimal CLI budgets and retains caller choices",
@@ -28,8 +95,20 @@ cliTest(
     expect(refused.exitCode).toBe(1);
     expect(refused.json).toMatchObject({
       code: "resource_constraint",
-      details: { reported_limits: { max_snapshot_bytes: bytes.length - 1 } },
+      details: {
+        reported_limits: { max_snapshot_bytes: bytes.length - 1 },
+        // The provider names the field; the CLI adds the flag that sets it.
+        limit: {
+          control_kind: "parameter",
+          parameter: "max_snapshot_bytes",
+          effective_value: bytes.length - 1,
+          cli_flag: "--max-snapshot-bytes",
+        },
+      },
     });
+    expect(
+      JSON.stringify((refused.json as { remediation: unknown }).remediation),
+    ).not.toContain("--");
     const admitted = ["--max-snapshot-bytes", String(bytes.length)];
     const partial = await cli.run({
       arguments: [
@@ -37,19 +116,36 @@ cliTest(
         ...admitted,
         "--max-metadata-representation-bytes",
         "1",
+        "--full-output",
         "--json",
       ],
     });
     expect(partial.exitCode, partial.stderr).toBe(0);
     expect(partial.json).toMatchObject({
-      parameters: {
-        max_snapshot_bytes: bytes.length,
-        max_metadata_representation_bytes: 1,
+      data: {
+        parameters: {
+          max_snapshot_bytes: bytes.length,
+          max_metadata_representation_bytes: 1,
+        },
+        normalized_result: {
+          coverage: {
+            state: "partial",
+            issues: [
+              expect.objectContaining({
+                code: "resource-limit",
+                limit: expect.objectContaining({
+                  parameter: "max_metadata_representation_bytes",
+                }),
+              }),
+            ],
+          },
+        },
       },
-      normalized_result: {
-        coverage: {
-          state: "partial",
-          issues: [expect.objectContaining({ code: "resource-limit" })],
+      // The CLI names its option for the recorded control outside the result.
+      meta: {
+        cli_controls: {
+          max_metadata_representation_bytes:
+            "--max-metadata-representation-bytes",
         },
       },
     });
@@ -65,7 +161,7 @@ cliTest(
     expect(complete.exitCode, complete.stderr).toBe(0);
     expect(complete.json).toMatchObject({
       subject: {
-        digest: { sha256: createHash("sha256").update(bytes).digest("hex") },
+        identity: { sha256: createHash("sha256").update(bytes).digest("hex") },
       },
       parameters: {
         max_snapshot_bytes: bytes.length,
@@ -157,7 +253,7 @@ cliTest(
           ilBody: Buffer.concat([Buffer.from([(il.length << 2) | 2]), il]),
         }),
       );
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode, result.stderr).toBe(0);
@@ -546,7 +642,7 @@ cliTest(
       });
       const path = join(root, `virtual-${virtualSectionSize}.dll`);
       await writeFile(path, bytes);
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: ["inspect-managed-members", path, "--json"],
       });
       expect(result.exitCode).toBe(0);
@@ -647,7 +743,7 @@ cliTest(
       "inspect-managed-members",
       "inspect-managed-native-boundaries",
     ]) {
-      const result = await runFileCli(cli, {
+      const result = await cli.run({
         arguments: [command, path, "--json"],
       });
       expect(result.exitCode).toBe(1);
@@ -682,7 +778,7 @@ cliTest(
         "inspect-managed-members",
         "inspect-managed-native-boundaries",
       ]) {
-        const result = await runFileCli(cli, {
+        const result = await cli.run({
           arguments: [command, path, "--json"],
         });
         expect(result.exitCode).not.toBe(0);

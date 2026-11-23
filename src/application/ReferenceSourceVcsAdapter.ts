@@ -1,12 +1,16 @@
+import { decodeStrictUtf8 } from "../domain/strictUtf8.js";
+import { isAborted } from "../domain/analysisErrorCore.js";
 import fs from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import {
   locateReferenceSourceGitDirectory,
   ReferenceSourceGitDirectoryCancelled,
 } from "./ReferenceSourceGitDirectory.js";
 import { err, ok, type Result } from "../domain/result.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import {
+  type ArtifactResourceScope,
+  ArtifactReaderFailure,
+} from "../resources/index.js";
 import {
   RegularFileCleanupFailure,
   regularFileCancellation,
@@ -15,9 +19,10 @@ import {
   readRegularFile,
   RegularFileReadFailure,
   retryRegularFileCleanup,
-} from "./RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
+} from "../process/RegularFileRead.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import { errorMessage } from "../kernel/errorMessage.js";
+import { referenceSourceResourceFailure } from "../reference/ReferenceSourceFailureBuilders.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -71,8 +76,8 @@ const resolveSourceVcs = async (
 ): Promise<ReferenceSourceVcsInfo> => {
   // isomorphic-git is loaded on first use so CLI and MCP startup skip it.
   const { resolveRef } = await import("isomorphic-git");
-  let failedRead: { readonly cause: unknown } | undefined;
-  const cleanupFailures: ArtifactReaderFailure[] = [];
+  let firstReadFailure: { readonly cause: unknown } | undefined;
+  const probeFailures: ArtifactReaderFailure[] = [];
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
       return await readRegularFile(path, {
@@ -99,6 +104,7 @@ const resolveSourceVcs = async (
               : cause;
           // The Git directory owner interprets absence of optional metadata.
           if (errorCode(physical) === "ENOENT") throw physical;
+          firstReadFailure ??= { cause: physical };
           throw new ArtifactReaderFailure(
             "io",
             `Git metadata could not be read safely: ${errorMessage(physical)}`,
@@ -116,7 +122,7 @@ const resolveSourceVcs = async (
         cancellation === undefined &&
         errorCode(retry.outcome.cause) !== "ENOENT"
       )
-        failedRead ??= { cause: retry.outcome.cause };
+        firstReadFailure ??= { cause: retry.outcome.cause };
       if (
         retry.cleanup === undefined &&
         retry.outcome.kind === "failed" &&
@@ -138,9 +144,18 @@ const resolveSourceVcs = async (
     }
   };
   const readMetadataText = async (path: string): Promise<string> =>
-    (await readMetadataBytes(path)).toString("utf8");
-  const throwCleanupFailures = (primary: unknown): never => {
-    const observations = cleanupFailures.flatMap((failure) =>
+    decodeStrictUtf8(await readMetadataBytes(path), "preserve");
+  const throwProbeFailures = (first: ArtifactReaderFailure): never => {
+    // A descriptor close refusal is still owned, but it does not stand in for
+    // a physical read failure from another Git probe.
+    const fallback =
+      probeFailures.find((failure) => failure.reason !== "cancelled") ?? first;
+    const primary =
+      firstReadFailure?.cause ??
+      (fallback.reason === "cancelled"
+        ? fallback
+        : (fallback.cause ?? fallback));
+    const observations = probeFailures.flatMap((failure) =>
       failure.cleanup === undefined ? [] : [failure.cleanup],
     );
     throw new ArtifactReaderFailure(
@@ -150,7 +165,7 @@ const resolveSourceVcs = async (
       `Git metadata could not be read safely: ${errorMessage(primary)}`,
       {
         cause: new AggregateError(
-          [primary, ...cleanupFailures],
+          [primary, ...probeFailures],
           "Git metadata reads and cleanup failed",
           { cause: primary },
         ),
@@ -188,7 +203,8 @@ const resolveSourceVcs = async (
         if (path === undefined)
           throw new TypeError("Git metadata path is required");
         try {
-          const bytes = await readMetadataBytes(path);
+          // Keep filesystem reads and cleanup resources in host spelling.
+          const bytes = await readMetadataBytes(path.replaceAll("/", sep));
           const encoding =
             typeof options === "string"
               ? options
@@ -202,11 +218,9 @@ const resolveSourceVcs = async (
             throw new TypeError("Unsupported Git metadata text encoding");
           return bytes.toString(encoding);
         } catch (cause: unknown) {
-          if (cause instanceof ArtifactReaderFailure) {
-            cleanupFailures.push(cause);
-            if (cause.reason !== "cancelled")
-              failedRead ??= { cause: cause.cause ?? cause };
-          } else if (errorCode(cause) !== "ENOENT") failedRead ??= { cause };
+          if (cause instanceof ArtifactReaderFailure) probeFailures.push(cause);
+          else if (errorCode(cause) !== "ENOENT")
+            firstReadFailure ??= { cause };
           throw cause;
         }
       },
@@ -220,15 +234,15 @@ const resolveSourceVcs = async (
     try {
       head = await resolveRef({ fs: referenceFs, dir: root, ...options });
     } catch (cause: unknown) {
-      if (cleanupFailures.length > 0)
-        throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0] ?? cause);
-      if (failedRead !== undefined) throw failedRead.cause;
+      const [first] = probeFailures;
+      if (first !== undefined) throwProbeFailures(first);
+      if (firstReadFailure !== undefined) throw firstReadFailure.cause;
       throw cause;
     }
-    if (cleanupFailures.length > 0)
-      throwCleanupFailures(failedRead?.cause ?? cleanupFailures[0]);
+    const [first] = probeFailures;
+    if (first !== undefined) throwProbeFailures(first);
     signal?.throwIfAborted();
-    if (failedRead !== undefined) throw failedRead.cause;
+    if (firstReadFailure !== undefined) throw firstReadFailure.cause;
     return head;
   };
   let locations;
@@ -279,8 +293,3 @@ const errorCode = (cause: unknown): string | undefined =>
   typeof cause === "object" && cause !== null && "code" in cause
     ? String(cause.code)
     : undefined;
-
-const errorMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);
-
-const isAborted = (signal?: AbortSignal): boolean => signal?.aborted === true;

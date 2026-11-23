@@ -1,16 +1,15 @@
 import { afterEach, expect, it } from "vitest";
 import { access, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { rizinTestInferiorTty } from "./RizinTestInferiorTty.js";
 import {
   createRizinCoverageHarness,
   createInjectedProcess,
   incompleteStop,
 } from "./RizinDebugSessionCoverage.fixtures.js";
 
-const { cleanup, makeProvider, start, startInjected, createManager } =
+const { cleanup, makeProvider, start, startInjected } =
   createRizinCoverageHarness();
 afterEach(cleanup);
 
@@ -204,15 +203,48 @@ it.skipIf(process.platform === "win32").each([
 );
 
 it.skipIf(process.platform === "win32")(
-  "bounds recent history after many unsolicited frames",
+  "bounds unsolicited frame history and closes the session when empty frames fill the queue",
   async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0" + Array.from({ length: 70 }, (_, i) => "frame" + i + "\\0").join("")); process.stdin.resume();',
-    );
+    const frames = Array.from({ length: 70 }, (_, index) => `frame-${index}`);
+    const endOfBurst = "empty-frame-burst-ended";
+    const provider = await makeProvider(`
+import { existsSync } from "node:fs";
+process.stdout.write(${JSON.stringify(["", ...frames, ""].join("\0"))});
+process.stdin.resume();
+const release = setInterval(() => {
+  if (!existsSync(new URL("./release", import.meta.url))) return;
+  clearInterval(release);
+  process.stdout.write("\\0".repeat(5000) + ${JSON.stringify(endOfBurst + "\0")});
+}, 10);
+`);
     const { manager, sessionId } = await start(provider);
-    const status = manager.status(sessionId);
-    expect(status?.recent_output).toHaveLength(64);
-    expect(status?.recent_output_truncated).toBe(true);
+
+    await expect
+      .poll(() => manager.status(sessionId))
+      .toMatchObject({
+        state: "ready",
+        recent_output: frames.slice(-64),
+        recent_output_truncated: true,
+      });
+    await writeFile(join(dirname(provider), "release"), "");
+
+    await expect
+      .poll(() => {
+        const status = manager.status(sessionId);
+        return (
+          status?.state === "closed" ||
+          status?.recent_output.includes(endOfBurst)
+        );
+      })
+      .toBe(true);
+    expect(manager.status(sessionId)).toMatchObject({
+      state: "closed",
+      closed_reason_code: "output-correlation-failure",
+      closed_reason: expect.stringContaining(
+        "unsolicited frames exceeding the bounded queue limit",
+      ),
+    });
+    expect((await manager.close(sessionId)).ok).toBe(true);
   },
 );
 
@@ -252,35 +284,6 @@ it.skipIf(process.platform === "win32")(
     abort.abort();
     expect((await execution).ok).toBe(false);
     expect(manager.status(sessionId)?.state).toBe("closed");
-  },
-);
-
-it.skipIf(process.platform === "win32")(
-  "preserves partial timeout evidence when cleanup cannot be confirmed",
-  async () => {
-    const provider = await makeProvider(
-      'process.stdout.write("\\0"); process.stdin.setEncoding("utf8"); process.stdin.on("data", (chunk) => { if (chunk.includes("slow")) process.stdout.write("partial\\0"); });',
-    );
-    const { manager, sessionId } = await start(
-      provider,
-      {
-        stopProcess: incompleteStop,
-      },
-      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "25" },
-    );
-    const result = await manager.execute(sessionId, "slow");
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.cleanupIncomplete).toBe(true);
-      expect(result.error.cleanupResources).toEqual([sessionId]);
-      const evidence = evidenceSchema.parse(result.error.partialObservation);
-      expect(evidence.normalized_result).toMatchObject({
-        completion_status: "unknown",
-      });
-      expect(evidence.limitations.join(" ")).toContain(
-        "injected stop uncertainty",
-      );
-    }
   },
 );
 

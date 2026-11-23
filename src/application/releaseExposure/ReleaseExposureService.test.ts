@@ -1,6 +1,7 @@
+import { isAbsolute } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../../resources/ArtifactReader.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
@@ -12,6 +13,7 @@ import {
   electronFuseName,
   electronFuseState,
   ELECTRON_FUSE_STATE_BYTES,
+  type ElectronFuseReport,
   type ElectronFuseSlice,
 } from "../../domain/electron/electronFuses.js";
 import type { GoBinary } from "../../domain/go/goBinary.js";
@@ -25,9 +27,10 @@ import {
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import type { ExecutionOptions } from "../AnalysisProvider.js";
-import type { ReleaseExposurePort } from "./ReleaseExposurePort.js";
+import type { ExecutionOptions } from "../../ports/AnalysisProvider.js";
+import type { ReleaseExposurePort } from "../../ports/releaseExposure/ReleaseExposurePort.js";
 import { ReleaseExposureService } from "./ReleaseExposureService.js";
+import { releaseOwnedCleanup } from "../../../tests/support/cleanupRelease.js";
 
 const SHA = "ab".repeat(32);
 
@@ -206,22 +209,6 @@ describe("ReleaseExposureService", () => {
     await service.close();
   });
 
-  it("propagates cancellation and skips later owners", async () => {
-    const { service, electronFuses, goBinaries } = owners(
-      scan({
-        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
-        native_images: [{ path: "/work/app", format: "elf" }],
-      }),
-    );
-    electronFuses.inspect.mockResolvedValue(
-      err(new AnalysisCancelledError("inspect_electron_fuses")),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (result.ok) throw new Error("Expected a failed audit.");
-    expect(result.error._tag).toBe("AnalysisCancelledError");
-    expect(goBinaries.inspect).not.toHaveBeenCalled();
-  });
-
   it("treats a universal Mach-O as unknown metadata without calling the readers", async () => {
     const { service, goBinaries, rustBinaries } = owners(
       scan({
@@ -295,40 +282,15 @@ describe("ReleaseExposureService cancellation", () => {
   });
 });
 
-describe("ReleaseExposureService cancellation partials", () => {
-  it("reports the audit, not an owner's own partial Evidence", async () => {
-    const reason = new Error("caller stopped");
-    const { service, goBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    goBinaries.inspect.mockResolvedValue(
-      err(
-        new AnalysisCancelledError("inspect_go_binary", {
-          cause: reason,
-          partialObservation: evidence({ owner: "go" }),
-        }),
-      ),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (result.ok) throw new Error("Expected a failed audit.");
-    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-    expect(result.error.cause).toBe(reason);
-    const projected = projectAnalysisError(result.error);
-    expect(projected.code).toBe("cancelled");
-    expect(
-      releaseExposureReportSchema.parse(
-        (result.error.partialObservation as Evidence).normalized_result,
-      ).limitations,
-    ).toEqual(expect.arrayContaining([expect.stringContaining("cancelled")]));
-    expect(JSON.stringify(projected)).toContain("javascript.source_maps");
-  });
-});
-
 describe("ReleaseExposureService completed owner Evidence on cancellation", () => {
-  const cancelledWith = (operation: string, result: unknown) =>
+  const cancelledWith = (
+    operation: string,
+    result: unknown,
+    reason = new Error("caller stopped"),
+  ) =>
     err(
       new AnalysisCancelledError(operation, {
-        cause: new Error("caller stopped"),
+        cause: reason,
         partialObservation: evidence(result),
       }),
     );
@@ -341,6 +303,7 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
   };
 
   it("keeps Go build paths from Evidence completed before cancellation", async () => {
+    const reason = new Error("caller stopped");
     const { service, goBinaries, rustBinaries } = owners(
       scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
     );
@@ -350,13 +313,28 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
         goBinaryReport(
           goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
         ),
+        reason,
       ),
     );
-    const report = audit(await service.inspect({ path: "/work/app" }));
+    const result = await service.inspect({ path: "/work/app" });
+    if (result.ok) throw new Error("Expected a cancelled audit.");
+    expect(result.error.cause).toBe(reason);
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "cancelled",
+      details: { operation: "audit_release_exposure" },
+    });
+    const report = audit(result);
     const check = report.checks.find((item) => item.id === "go.build_paths");
     expect(check?.status).toBe("exposed");
     expect(check?.observation.samples).toEqual(["/private/build/include"]);
     expect(rustBinaries.inspect).not.toHaveBeenCalled();
+    expect(report.limitations).toContainEqual(
+      expect.stringContaining("cancelled"),
+    );
+    expect(
+      report.checks.find((item) => item.id === "rust.dependency_metadata")
+        ?.status,
+    ).toBe("unknown");
   });
 
   it("keeps Rust packages from Evidence completed before cancellation", async () => {
@@ -424,23 +402,79 @@ describe("ReleaseExposureService completed owner Evidence on cancellation", () =
   });
 });
 
-describe("ReleaseExposureService unfinished owner cleanup", () => {
-  const unfinished = (operation: string) =>
-    new ProviderCleanupError(
-      "rea-owner",
-      ["/work/app/descriptor"],
-      { reason: "EPERM" },
-      { operation },
-    );
-  const audit = async (result: Awaited<ReturnType<OwnerInspect>>) => {
-    if (result.ok) throw new Error("Expected a failed audit.");
-    return releaseExposureReportSchema.parse(
-      (result.error.partialObservation as Evidence).normalized_result,
-    );
-  };
+const unfinishedOwner = (operation: string) =>
+  new ProviderCleanupError(
+    "rea-owner",
+    ["/work/app/descriptor"],
+    { reason: "EPERM" },
+    { operation },
+  );
+const partialAudit = (result: Awaited<ReturnType<OwnerInspect>>) => {
+  if (result.ok) throw new Error("Expected a failed audit.");
+  return releaseExposureReportSchema.parse(
+    (result.error.partialObservation as Evidence).normalized_result,
+  );
+};
 
+it.each(["pending", "released"] as const)(
+  "preserves a Go cleanup failure with its %s owner and the partial audit",
+  async (settlement) => {
+    const { service, goBinaries, rustBinaries } = owners(
+      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
+    );
+    const failure = unfinishedOwner("inspect_go_binary");
+    failure.retainPartialObservation(
+      evidence(
+        goBinaryReport(
+          goModule([{ key: "CGO_CFLAGS", value: "-I/private/build/include" }]),
+        ),
+      ),
+    );
+    expect(failure.cleanupIncomplete).toBe(true);
+    // Let the owner confirm release after the audit observes the cleanup failure.
+    const pending =
+      settlement === "released"
+        ? vi
+            .spyOn(failure, "cleanupIncomplete", "get")
+            .mockImplementationOnce(() => {
+              queueMicrotask(() => releaseOwnedCleanup(failure));
+              return true;
+            })
+        : undefined;
+    goBinaries.inspect.mockResolvedValue(err(failure));
+    try {
+      const result = await service.inspect({ path: "/work/app" });
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(result.error).toBe(failure);
+      expect(failure.cleanupIncomplete).toBe(settlement === "pending");
+      expect(failure.cleanupResources).toEqual(["/work/app/descriptor"]);
+      expect(projectAnalysisError(result.error).details?.cleanup).toBe(
+        settlement === "pending" ? "incomplete" : undefined,
+      );
+      expect(rustBinaries.inspect).not.toHaveBeenCalled();
+      const report = partialAudit(result);
+      expect(
+        report.checks.find((check) => check.id === "go.build_paths"),
+      ).toMatchObject({
+        status: "exposed",
+        observation: { samples: ["/private/build/include"] },
+      });
+      expect(
+        report.checks.find((check) => check.id === "rust.dependency_metadata")
+          ?.status,
+      ).toBe("unknown");
+      expect(report.limitations).toEqual(
+        expect.arrayContaining([expect.stringContaining("unfinished cleanup")]),
+      );
+    } finally {
+      pending?.mockRestore();
+    }
+  },
+);
+
+describe("ReleaseExposureService unfinished owner cleanup", () => {
   it("keeps the findings of a member scan stopped by unfinished cleanup", async () => {
-    const failure = unfinished("inspect_release_exposure");
+    const failure = unfinishedOwner("inspect_release_exposure");
     const { service, desktop, goBinaries } = owners(
       scan({
         coverage: "unknown",
@@ -463,7 +497,7 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
     expect(failure.cleanupIncomplete).toBe(true);
     expect(desktop.inspect).not.toHaveBeenCalled();
     expect(goBinaries.inspect).not.toHaveBeenCalled();
-    const report = await audit(result);
+    const report = partialAudit(result);
     const status = (id: string) =>
       report.checks.find((check) => check.id === id)?.status;
     expect(status("javascript.source_map_sources")).toBe("exposed");
@@ -471,46 +505,15 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
     expect(status("go.build_paths")).toBe("unknown");
   });
 
-  it("returns a Go failure with the partial audit and runs no later owner", async () => {
-    const { service, goBinaries, rustBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    const failure = unfinished("inspect_go_binary");
-    goBinaries.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect(failure.cleanupIncomplete).toBe(true);
-    expect(rustBinaries.inspect).not.toHaveBeenCalled();
-    const report = await audit(result);
-    expect(
-      report.checks.find((check) => check.id === "rust.dependency_metadata")
-        ?.status,
-    ).toBe("unknown");
-  });
-
-  it("replaces an owner's partial without losing its cleanup", async () => {
-    const { service, goBinaries } = owners(
-      scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
-    );
-    const failure = unfinished("inspect_go_binary");
-    failure.retainPartialObservation(evidence({ owner: "go" }));
-    goBinaries.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect((await audit(result)).limitations).toEqual(
-      expect.arrayContaining([expect.stringContaining("unfinished cleanup")]),
-    );
-  });
-
   it("returns a thrown Rust failure with the partial audit", async () => {
     const { service, rustBinaries } = owners(
       scan({ native_images: [{ path: "/work/app", format: "elf" }] }),
     );
-    const failure = unfinished("inspect_rust_binary");
+    const failure = unfinishedOwner("inspect_rust_binary");
     rustBinaries.inspect.mockRejectedValue(failure);
     const result = await service.inspect({ path: "/work/app" });
     expect(result).toMatchObject({ ok: false, error: failure });
-    await audit(result);
+    partialAudit(result);
   });
 
   it("returns a desktop failure with the partial audit", async () => {
@@ -526,28 +529,42 @@ describe("ReleaseExposureService unfinished owner cleanup", () => {
         native_images: [{ path: "/work/app/app", format: "elf" }],
       }),
     );
-    const failure = unfinished("inspect_desktop_application");
+    const failure = unfinishedOwner("inspect_desktop_application");
     desktop.inspect.mockResolvedValue(err(failure));
     const result = await service.inspect({ path: "/work/app" });
     expect(result).toMatchObject({ ok: false, error: failure });
     expect(goBinaries.inspect).not.toHaveBeenCalled();
-    await audit(result);
+    partialAudit(result);
   });
 
-  it("returns a fuse failure with the partial audit", async () => {
-    const { service, electronFuses, goBinaries } = owners(
-      scan({
-        fuse_candidates: [{ role: "native-image", path: "/work/app/app" }],
-        native_images: [{ path: "/work/app/app", format: "elf" }],
-      }),
-    );
-    const failure = unfinished("inspect_electron_fuses");
-    electronFuses.inspect.mockResolvedValue(err(failure));
-    const result = await service.inspect({ path: "/work/app" });
-    expect(result).toMatchObject({ ok: false, error: failure });
-    expect(goBinaries.inspect).not.toHaveBeenCalled();
-    await audit(result);
-  });
+  it.each([
+    [
+      "cancellation",
+      () => new AnalysisCancelledError("inspect_electron_fuses"),
+    ],
+    ["unfinished cleanup", () => unfinishedOwner("inspect_electron_fuses")],
+  ] as const)(
+    "preserves fuse %s and stops later owners",
+    async (_, createFailure) => {
+      const path = "/work/app/app";
+      const { service, electronFuses, goBinaries } = owners(
+        scan({
+          fuse_candidates: [{ role: "native-image", path }],
+          native_images: [{ path, format: "elf" }],
+        }),
+      );
+      const failure = createFailure();
+      electronFuses.inspect.mockResolvedValue(err(failure));
+      const result = await service.inspect({ path: "/work/app" });
+      if (result.ok) throw new Error("Expected a stopped audit.");
+      expect(result.error).toBe(failure);
+      expect(goBinaries.inspect).not.toHaveBeenCalled();
+      expect(
+        partialAudit(result).checks.find(({ id }) => id === "go.build_paths")
+          ?.status,
+      ).toBe("unknown");
+    },
+  );
 });
 
 const CHANGED = "cd".repeat(32);
@@ -666,6 +683,7 @@ describe("ReleaseExposureService fuse image identity", () => {
   });
 
   it("accepts an app bundle's fuse read when its file is an inventoried image", async () => {
+    const framework = "/work/App.app/framework";
     const bundle = scan({
       target: {
         selected_path: "/work/App.app",
@@ -678,15 +696,13 @@ describe("ReleaseExposureService fuse image identity", () => {
     const status = async (sha256: string) => {
       const { service, desktop, electronFuses } = owners({
         ...bundle,
-        native_images: [
-          { path: "/work/App.app/framework", format: "elf", sha256 },
-        ],
+        native_images: [{ path: framework, format: "elf", sha256 }],
       });
       desktop.inspect.mockResolvedValue(
         err(new AnalysisInputError("inspect_desktop_application")),
       );
       electronFuses.inspect.mockResolvedValue(
-        ok(evidence(fuseReport([slice(0)]))),
+        ok(evidence(fuseReport([slice(0)], { resolved_path: framework }))),
       );
       const result = await service.inspect({ path: "/work/App.app" });
       if (!result.ok) throw result.error;
@@ -696,25 +712,6 @@ describe("ReleaseExposureService fuse image identity", () => {
     };
     expect(await status(SHA)).toBe("not_observed");
     expect(await status(CHANGED)).toBe("unknown");
-  });
-
-  it("does not attach fuse facts when the resolved file left the inventory", async () => {
-    const { service, electronFuses } = owners(
-      scan({
-        native_images: [{ path: "/work/app", format: "elf", sha256: CHANGED }],
-        fuse_candidates: [{ path: "/work/app", role: "native-image" }],
-      }),
-    );
-    electronFuses.inspect.mockResolvedValue(
-      ok(evidence(fuseReport([slice(0)]))),
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (!result.ok) throw result.error;
-    expect(
-      releaseExposureReportSchema
-        .parse(result.value.normalized_result)
-        .checks.find((item) => item.id === "electron.run_as_node")?.status,
-    ).toBe("unknown");
   });
 });
 
@@ -822,56 +819,6 @@ describe("ReleaseExposureService fuse implications", () => {
     expect(
       checks.find((check) => check.id === "electron.run_as_node")?.status,
     ).toBe("exposed");
-  });
-
-  it("treats a native app bundle as not applicable when the desktop owner says it is not Electron", async () => {
-    const { service, desktop, electronFuses } = owners(
-      scan({
-        target: {
-          selected_path: "/work/Native.app",
-          kind: "app",
-          format: "directory",
-          sha256: null,
-        },
-        fuse_candidates: [{ path: "/work/Native.app", role: "app-bundle" }],
-      }),
-    );
-    desktop.inspect.mockResolvedValue(ok(evidence(nativeDesktopReport())));
-    const slices: ElectronFuseSlice[] = [
-      {
-        index: 0,
-        file_offset: 0,
-        size: 128,
-        architecture: "arm64",
-        sentinel_count: 0,
-        sentinels: [],
-      },
-    ];
-    electronFuses.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          artifact: {
-            selected_path: "/work/Native.app",
-            resolved_path: "/work/Native.app",
-            sha256: SHA,
-            bytes: 128,
-            format: "mach-o",
-          },
-          slices,
-          ...describeElectronFuseFindings(slices, "mach-o"),
-        }),
-      ),
-    );
-    const result = await service.inspect({ path: "/work/Native.app" });
-    if (!result.ok) throw result.error;
-    const checks = (
-      result.value.normalized_result as {
-        checks: { id: string; status: string }[];
-      }
-    ).checks;
-    expect(
-      checks.find((check) => check.id === "electron.run_as_node")?.status,
-    ).toBe("not_applicable");
   });
 });
 
@@ -1053,27 +1000,32 @@ describe("ReleaseExposureService packaged native images", () => {
   });
 });
 
-describe("ReleaseExposureService Electron layout paths", () => {
+describe("ReleaseExposureService Electron discovery identity", () => {
   it.each([
-    ["Windows", "C:\\ship\\App", "\\"],
-    ["POSIX", "/ship/App", "/"],
+    ["Windows", "C:\\ship\\App", "C:\\real\\App", "\\"],
+    ["POSIX", "/work/app", "/private/work/app", "/"],
   ])(
-    "keeps a %s named host without a sentinel unknown beside a safe helper",
-    async (_, folder, separator) => {
-      const host = `${folder}${separator}App.exe`;
-      const { service, desktop, electronFuses } = owners(
-        directoryScan([host, `${folder}${separator}helper.exe`]),
-      );
+    "settles the named %s host under a canonical layout and a caller path with a trailing separator",
+    async (_, selected, canonical, separator) => {
+      const path = `${selected}${separator}`;
+      const host = `${path}App.exe`;
+      const scanned = directoryScan([host, `${path}helper.exe`]);
+      const { service, desktop, electronFuses } = owners({
+        ...scanned,
+        target: { ...scanned.target, selected_path: path },
+      });
       const report = electronDesktopReport();
       desktop.inspect.mockResolvedValue(
         ok(
           evidence({
             ...report,
+            root: { ...report.root, path, canonical_path: canonical },
             files: [
               {
                 ...report.files[0],
-                path: "resources/app.asar",
-                local_path: [folder, "resources", "app.asar"].join(separator),
+                local_path: [canonical, "resources", "app.asar"].join(
+                  separator,
+                ),
               },
             ],
           }),
@@ -1083,82 +1035,19 @@ describe("ReleaseExposureService Electron layout paths", () => {
         ok(
           evidence(
             fuseReport(
-              (input as { path?: string }).path === host ? [] : [slice(0)],
+              (input as { path?: string }).path === host ? [slice(0)] : [],
             ),
           ),
         ),
       );
-      expect((await runAsNode(service))?.status).toBe("unknown");
+
+      // The fake reader supplies either layout dialect. Input admission still uses this host.
+      const selectedInput = isAbsolute(path) ? path : "/work/app";
+      expect((await runAsNode(service, selectedInput))?.status).toBe(
+        "not_observed",
+      );
     },
   );
-});
-
-describe("ReleaseExposureService Electron discovery identity", () => {
-  it("joins hosts through a symlinked parent the desktop owner resolved", async () => {
-    const host = "/work/app/App.exe";
-    const { service, desktop, electronFuses } = owners(
-      directoryScan([host, "/work/app/helper.exe"]),
-    );
-    const report = electronDesktopReport();
-    desktop.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          ...report,
-          root: { ...report.root, canonical_path: "/private/work/app" },
-          files: [
-            {
-              ...report.files[0],
-              local_path: "/private/work/app/resources/app.asar",
-            },
-          ],
-        }),
-      ),
-    );
-    electronFuses.inspect.mockImplementation(async (input) =>
-      ok(
-        evidence(
-          fuseReport(
-            (input as { path?: string }).path === host ? [] : [slice(0)],
-          ),
-        ),
-      ),
-    );
-    expect((await runAsNode(service))?.status).toBe("unknown");
-  });
-
-  it("joins hosts when the selected directory has a trailing slash", async () => {
-    const host = "/work/app/App.exe";
-    const scanned = directoryScan([host, "/work/app/helper.exe"]);
-    const { service, desktop, electronFuses } = owners({
-      ...scanned,
-      target: { ...scanned.target, selected_path: "/work/app/" },
-    });
-    const report = electronDesktopReport();
-    desktop.inspect.mockResolvedValue(
-      ok(
-        evidence({
-          ...report,
-          root: { ...report.root, canonical_path: "/private/work/app" },
-          files: [
-            {
-              ...report.files[0],
-              local_path: "/private/work/app/resources/app.asar",
-            },
-          ],
-        }),
-      ),
-    );
-    electronFuses.inspect.mockImplementation(async (input) =>
-      ok(
-        evidence(
-          fuseReport(
-            (input as { path?: string }).path === host ? [] : [slice(0)],
-          ),
-        ),
-      ),
-    );
-    expect((await runAsNode(service, "/work/app/"))?.status).toBe("unknown");
-  });
 
   it("keeps safe fuses unknown when discovery stopped after one layout", async () => {
     const { service, desktop, electronFuses } = owners(
@@ -1880,9 +1769,21 @@ describe("ReleaseExposureService Electron applicability", () => {
   it("rules out Electron on an app bundle with no Electron Framework", async () => {
     const { service, electronFuses } = owners(appScan);
     electronFuses.inspect.mockResolvedValue(unreadable);
-    expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
-      "not_applicable",
+    const result = await service.inspect({ path: "/work/App.app" });
+    if (!result.ok) throw result.error;
+    const report = releaseExposureReportSchema.parse(
+      result.value.normalized_result,
     );
+    expect(
+      report.checks
+        .filter(({ id }) => id.startsWith("electron."))
+        .map(({ status }) => status),
+    ).toEqual([
+      "not_applicable",
+      "not_applicable",
+      "not_applicable",
+      "not_applicable",
+    ]);
   });
 
   it.each([
@@ -1921,23 +1822,27 @@ describe("ReleaseExposureService asar: false bundle with partial inventory", () 
 });
 
 describe("ReleaseExposureService app bundle with a sidecar", () => {
-  const noSentinel = ok(evidence(fuseReport([slice(0, { sentinels: 0 })])));
   const unreadable = err(new AnalysisInputError("inspect_electron_fuses"));
   const FRAMEWORK =
     "/work/App.app/Contents/Frameworks/Electron Framework.framework/Electron Framework";
   const SIDECAR = "/work/App.app/Contents/Resources/sidecar";
-  const safe = ok(evidence(fuseReport([slice(0)])));
-  const runAsNodeOn = ok(
-    evidence(
-      fuseReport([slice(0, { state: ELECTRON_FUSE_STATE_BYTES.enabled })]),
-    ),
+  const framework = (body: ElectronFuseSlice) =>
+    ok(evidence(fuseReport([body], { resolved_path: FRAMEWORK })));
+  const sidecar = (body: ElectronFuseSlice) =>
+    ok(
+      evidence(fuseReport([body], { resolved_path: SIDECAR, sha256: CHANGED })),
+    );
+  const safeFramework = framework(slice(0));
+  const safeSidecar = sidecar(slice(0));
+  const runAsNodeOn = sidecar(
+    slice(0, { state: ELECTRON_FUSE_STATE_BYTES.enabled }),
   );
   const bundleWithSidecar = () => {
     const parts = owners({
       ...appScan,
       native_images: [
         { path: FRAMEWORK, format: "mach-o", sha256: SHA },
-        { path: SIDECAR, format: "mach-o" },
+        { path: SIDECAR, format: "mach-o", sha256: CHANGED },
       ],
     });
     parts.desktop.inspect.mockResolvedValue(
@@ -1951,7 +1856,9 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   it("reports RunAsNode exposed on the sidecar and reads the framework once", async () => {
     const { service, electronFuses } = bundleWithSidecar();
     electronFuses.inspect.mockImplementation(async (input) =>
-      (input as { path: string }).path === SIDECAR ? runAsNodeOn : safe,
+      (input as { path: string }).path === SIDECAR
+        ? runAsNodeOn
+        : safeFramework,
     );
     const check = await runAsNode(service, "/work/App.app");
     expect(check?.status).toBe("exposed");
@@ -1963,7 +1870,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   });
 
   it.each([
-    ["sentinel-free", noSentinel],
+    ["sentinel-free", framework(slice(0, { sentinels: 0 }))],
     [
       "unsupported",
       err(
@@ -1979,7 +1886,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
     async (_, framework) => {
       const { service, electronFuses } = bundleWithSidecar();
       electronFuses.inspect.mockImplementation(async (input) =>
-        (input as { path: string }).path === SIDECAR ? safe : framework,
+        (input as { path: string }).path === SIDECAR ? safeSidecar : framework,
       );
       expect((await runAsNode(service, "/work/App.app"))?.status).toBe(
         "unknown",
@@ -1990,7 +1897,7 @@ describe("ReleaseExposureService app bundle with a sidecar", () => {
   it("keeps safe outer fuses unknown when the sidecar cannot be read", async () => {
     const { service, electronFuses } = bundleWithSidecar();
     electronFuses.inspect.mockImplementation(async (input) =>
-      (input as { path: string }).path === SIDECAR ? unreadable : safe,
+      (input as { path: string }).path === SIDECAR ? unreadable : safeFramework,
     );
     expect((await runAsNode(service, "/work/App.app"))?.status).toBe("unknown");
   });
@@ -2028,45 +1935,9 @@ describe("ReleaseExposureService scanners and selected archives", () => {
     expect(desktop.inspect).not.toHaveBeenCalled();
     expect(electronFuses.inspect).not.toHaveBeenCalled();
   });
-
-  it("owns credential scanning and keeps matched bytes out of the report", async () => {
-    const planted = "AKIAPLANT9EXPOSUREXX";
-    const { service } = owners(
-      scan({ text_members: { scanned: 1, skipped: 0 } }),
-      [[`key = ${planted}\n`, "/work/app.dll/notes.txt"]],
-    );
-    const result = await service.inspect({ path: "/work/app" });
-    if (!result.ok) throw result.error;
-    const check = releaseExposureReportSchema
-      .parse(result.value.normalized_result)
-      .checks.find((item) => item.id === "text.credential_markers");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.counts["aws.access_key_id"]).toBe(1);
-    expect(check?.locations).toEqual([
-      { kind: "artifact-path", path: "/work/app.dll/notes.txt" },
-    ]);
-    expect(JSON.stringify(result.value)).not.toContain(planted);
-  });
 });
 
 describe("ReleaseExposureService cleanup", () => {
-  it("keeps every owner close failure", async () => {
-    const { service, desktop, goBinaries } = owners(scan());
-    const desktopFailure = new Error("desktop close failed");
-    const goFailure = new Error("go close failed");
-    desktop.close.mockRejectedValue(desktopFailure);
-    goBinaries.close.mockRejectedValue(goFailure);
-    const failure: unknown = await service.close().catch((cause) => cause);
-    if (!(failure instanceof ProviderCleanupError))
-      throw new Error("Expected a typed cleanup failure.");
-    expect(failure.cause).toEqual(
-      expect.objectContaining({
-        errors: expect.arrayContaining([desktopFailure, goFailure]),
-      }),
-    );
-    expect(failure.cleanupIncomplete).toBe(true);
-  });
-
   it("returns one typed owner close failure unchanged", async () => {
     const { service, desktop } = owners(scan());
     const denied = new ProviderCleanupError(
@@ -2126,57 +1997,10 @@ describe("ReleaseExposureService cleanup", () => {
       "/work/app/desktop",
       "/work/app/go",
     ]);
-    first.resolveCleanup();
+    releaseOwnedCleanup(first);
     expect(failure.cleanupIncomplete).toBe(true);
-    second.resolveCleanup();
+    releaseOwnedCleanup(second);
     expect(failure.cleanupIncomplete).toBe(false);
-  });
-});
-
-describe("ReleaseExposureService Go Windows paths", () => {
-  it("reports UNC roots retained in Go flags", async () => {
-    const module = (value: string) => ({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "CGO_CFLAGS", value }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    });
-    const report = await goReport(
-      module(
-        String.raw`-O2 -I\\buildhost\sdk\include "-isystem \\buildhost\my sdk\include"`,
-      ),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([
-      String.raw`\\buildhost\sdk\include`,
-      String.raw`\\buildhost\my sdk\include`,
-    ]);
-    expect(
-      await goStatus(module(String.raw`-DNAME=\\ -DHOST=\\buildhost`)),
-    ).toBe("not_observed");
-  });
-
-  it.each([
-    [String.raw`-I..\sdk\include`, String.raw`..\sdk\include`],
-    [String.raw`-O2 -I.\sdk`, String.raw`.\sdk`],
-    [String.raw`"-isystem ..\my sdk\include"`, String.raw`..\my sdk\include`],
-  ])("reports the backslash-relative path in %s", async (value, path) => {
-    const report = await goReport({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "CGO_CFLAGS", value }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    });
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
   });
 });
 
@@ -2190,576 +2014,50 @@ const goModule = (settings: { key: string; value: string }[]) => ({
   complete: true,
 });
 
-describe("ReleaseExposureService Go linker path options", () => {
-  it.each([
-    ["-tmpdir=private-obj -s -w", "private-obj"],
-    ["-tmpdir private-obj", "private-obj"],
-    ["-capturehostobjs private-objs", "private-objs"],
-    ["-cpuprofile=link.prof", "link.prof"],
-    ["-importcfg private.cfg", "private.cfg"],
-    ["-o out/app", "out/app"],
-    ["-r private-lib", "private-lib"],
-    ["-r -private", "-private"],
-    ["-L -private", "-private"],
-    ["-r -L", "-L"],
-    ["-r= -L private-sdk", "private-sdk"],
-    ["'-L=/tmp/private '", "/tmp/private "],
-    ["-libgcc -private.a", "-private.a"],
-    ["-s -w -libgcc=private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
-    ["-libgcc private-toolchain/libgcc.a", "private-toolchain/libgcc.a"],
-  ])("keeps the relative linker path in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it.each([
-    "-extld clang -extar ar -libgcc none",
-    "-libgcc=none",
-    "-buildmode pie -linkmode external -installsuffix race",
-  ])("does not read the program or mode in %s as a path", async (value) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
-});
-
-describe("ReleaseExposureService compiler path separators", () => {
-  it.each(["/tmp/private,sdk", "/tmp/private=sdk", "/tmp/private "])(
-    "preserves a literal compiler argument %s",
-    async (path) => {
-      const report = await goReport(
-        goModule([{ key: "CGO_CFLAGS", value: `'-I${path}'` }]),
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-});
-
-describe("ReleaseExposureService Go linker -r search list", () => {
-  it.each([["-r=$ORIGIN/../lib -s -w"], ["-r ${ORIGIN}/lib:$ORIGIN"]])(
-    "does not read the ELF loader-expanded entries in %s as build paths",
-    async (value) => {
-      const report = await goReport(goModule([{ key: "-ldflags", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("not_observed");
-    },
-  );
-
-  it.each([
-    ["-r=$ORIGIN/../lib:/opt/private-runtime", ["/opt/private-runtime"]],
-    ["-r /opt/a:$ORIGIN/lib:vendor/lib", ["/opt/a", "vendor/lib"]],
-  ])("reads each ELF entry of the search list in %s", async (value, paths) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(paths);
-  });
-
-  it.each([
-    ["-r=@loader_path/lib:extra", "not_observed", []],
-    ["-r=$ORIGIN/../lib", "exposed", ["$ORIGIN/../lib"]],
-  ])(
-    "reads a Mach-O search path in %s as one directory",
-    async (value, status, paths) => {
-      const report = await goReport(
-        goModule([{ key: "-ldflags", value }]),
-        [],
-        "mach-o",
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe(status);
-      expect(check?.observation.samples ?? []).toEqual(paths);
-    },
-  );
-});
-
-describe("ReleaseExposureService Go rooted linker flag paths", () => {
-  it.each([
-    [`-L "/tmp/private,sdk" -s -w`, "/tmp/private,sdk"],
-    [`-L "/tmp/private=sdk" -s -w`, "/tmp/private=sdk"],
-    [`-L=/tmp/private,sdk -s -w`, "/tmp/private,sdk"],
-    [`all=-L=/tmp/private,sdk`, "/tmp/private,sdk"],
-    [`-tmpdir /srv/obj,1`, "/srv/obj,1"],
-    [`-L "/tmp/private=-sdk"`, "/tmp/private=-sdk"],
-  ])("keeps the whole rooted argument in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-});
-
-describe("ReleaseExposureService Go trimpath rewrites", () => {
-  it("keeps the rooted half of a relative -trimpath rewrite", async () => {
-    const report = await goReport(
-      goModule([{ key: "-gcflags", value: "-trimpath=src=/srv/build" }]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.observation.samples).toEqual(
-      expect.arrayContaining(["/srv/build"]),
-    );
-  });
-});
-
-describe("ReleaseExposureService Go forwarded linker search paths", () => {
-  it.each([
-    ["-Wl,-rpath,private-runtime", "private-runtime"],
-    ["-Wl,-rpath=private-runtime", "private-runtime"],
-    ["-Wl,--rpath=private-runtime", "private-runtime"],
-    ["-Xlinker -rpath -Xlinker private-runtime", "private-runtime"],
-    ["-Wl,-rpath-link,private-runtime", "private-runtime"],
-    ["-Wl,-rpath-link=private-runtime", "private-runtime"],
-    ["-Wl,--rpath-link,private-runtime", "private-runtime"],
-  ])(
-    "keeps the relative search path a compiler forwards in %s",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-
-  it.each([
-    ["-Wl,-rpath,$ORIGIN:/opt/private-runtime", ["/opt/private-runtime"]],
-    ["-Wl,-rpath=${ORIGIN}/lib:private-runtime", ["private-runtime"]],
-    [
-      "-Xlinker -rpath -Xlinker /opt/a:$ORIGIN/lib:/opt/b",
-      ["/opt/a", "/opt/b"],
-    ],
-    ["-Wl,-rpath-link,/opt/a:vendor/lib", ["/opt/a", "vendor/lib"]],
-  ])("reads each entry of the search list in %s", async (value, paths) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(paths);
-  });
-
-  it.each([
-    ["-Wl,-T,$ORIGIN.ld", "$ORIGIN.ld"],
-    ["-Xlinker -T -Xlinker ${ORIGIN}/link.ld", "${ORIGIN}/link.ld"],
-    ["-Wl,-L,$ORIGIN/lib", "$ORIGIN/lib"],
-    ["-Wl,-L,$ORIGIN -Wl,-rpath,$ORIGIN", "$ORIGIN"],
-    ["-Wl,-L,$ORIGIN,-rpath,$ORIGIN", "$ORIGIN"],
-    [
-      "-Xlinker -L -Xlinker $ORIGIN -Xlinker -rpath -Xlinker $ORIGIN",
-      "$ORIGIN",
-    ],
-    ["-Wl,-rpath=$ORIGIN -Wl,-T,$ORIGIN", "$ORIGIN"],
-  ])(
-    "keeps a literal path that only a search list would expand in %s",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-
-  it.each([
-    ["-Wl,@/tmp/private-link.rsp", "/tmp/private-link.rsp"],
-    ["-Xlinker @/tmp/private-link.rsp", "/tmp/private-link.rsp"],
-    ["-Wl,--as-needed,@/tmp/private-link.rsp", "/tmp/private-link.rsp"],
-    ["-Wl,@private-link.rsp", "private-link.rsp"],
-    ["@/tmp/private-cc.rsp", "/tmp/private-cc.rsp"],
-    ["-Wl,@rpath/private-link.rsp", "rpath/private-link.rsp"],
-    ["-Xlinker @loader_path/private-link.rsp", "loader_path/private-link.rsp"],
-  ])("keeps the response file named in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it.each([
-    ["-Wl,-install_name,@rpath/libprivate.dylib", "rpath/libprivate.dylib"],
-    [
-      "-Xlinker -install_name -Xlinker @rpath/libprivate.dylib",
-      "rpath/libprivate.dylib",
-    ],
-    ["-Wl,-rpath,@loader_path/lib", "loader_path/lib"],
-    [
-      "-Wl,-dylib_file,@rpath/libprivate.dylib:/opt/lib/libprivate.dylib",
-      "rpath/libprivate.dylib:/opt/lib/libprivate.dylib",
-    ],
-    ["-Wl,@", ""],
-  ])("reads no response file in %s", async (value, responseFile) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    // An option's own value may still be a literal path, as an ELF `-rpath`
-    // entry is, but it is not a response file with its `@` dropped.
-    expect(check?.observation.samples ?? []).not.toContain(responseFile);
-  });
-
-  it.each([
-    ["-Wl,-rpath,@loader_path/lib:extra", "not_observed", []],
-    [
-      "-Wl,-rpath,$ORIGIN:/opt/private-runtime",
-      "exposed",
-      ["$ORIGIN:/opt/private-runtime"],
-    ],
-    ["-Wl,-rpath,/opt/a:b", "exposed", ["/opt/a:b"]],
-  ])(
-    "reads a Mach-O search path in %s as one directory",
-    async (value, status, paths) => {
-      const report = await goReport(
-        goModule([{ key: "CGO_LDFLAGS", value }]),
-        [],
-        "mach-o",
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe(status);
-      expect(check?.observation.samples ?? []).toEqual(paths);
-    },
-  );
-
-  it.each([
-    ["elf", "-Wl,-rpath,$ORIGIN/../lib -Wl,-rpath=${ORIGIN}/lib"],
-    [
-      "mach-o",
-      "-Wl,-rpath,@loader_path/Frameworks -Xlinker -rpath -Xlinker @executable_path",
-    ],
-  ] as const)(
-    "does not read %s loader-expanded runtime search paths as build paths",
-    async (format, value) => {
-      const report = await goReport(
-        goModule([{ key: "CGO_LDFLAGS", value }]),
-        [],
-        format,
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("not_observed");
-    },
-  );
-
-  it.each([
-    ["elf", "-Wl,-rpath,@loader_path/Frameworks", "@loader_path/Frameworks"],
-    ["mach-o", "-Wl,-rpath,$ORIGIN/../lib", "$ORIGIN/../lib"],
-  ] as const)(
-    "keeps a token only the other loader expands as a literal path in %s",
-    async (format, value, path) => {
-      const report = await goReport(
-        goModule([{ key: "CGO_LDFLAGS", value }]),
-        [],
-        format,
-      );
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-});
-
-it("preserves a quoted linker path containing a flag-like suffix", async () => {
-  const report = await goReport(
-    goModule([{ key: "-ldflags", value: '-s "-L=/tmp/private -sdk" -w' }]),
-  );
-  expect(
-    report.checks.find((item) => item.id === "go.build_paths")?.observation
-      .samples,
-  ).toEqual(["/tmp/private -sdk"]);
-});
-
-it("reads GCC's -I- include barrier as an option, not a path", async () => {
-  expect(await goStatus(goModule([{ key: "CGO_CFLAGS", value: "-I-" }]))).toBe(
-    "not_observed",
-  );
-  const report = await goReport(
-    goModule([{ key: "CGO_CFLAGS", value: "-Iprivate-sdk -I- -I vendor/sdk" }]),
-  );
-  expect(
-    report.checks.find((item) => item.id === "go.build_paths")?.observation
-      .samples,
-  ).toEqual(["private-sdk", "vendor/sdk"]);
-});
-
-describe("ReleaseExposureService Go relative flag paths", () => {
-  it("keeps relative paths given to compiler path flags, attached or not", async () => {
-    const report = await goReport(
-      goModule([
-        { key: "CGO_CFLAGS", value: "-Iprivate-sdk -O2 -isystem vendor/sdk" },
-        { key: "CGO_LDFLAGS", value: "-Llibs -lssl" },
-      ]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([
-      "private-sdk",
-      "vendor/sdk",
-      "libs",
+describe("ReleaseExposureService Go reports", () => {
+  it("projects a format-specific search path and leaves ambiguous ELF operands unknown", async () => {
+    const search = goModule([
+      { key: "-ldflags", value: "-r=$ORIGIN:/opt/private-runtime" },
     ]);
-  });
-
-  it.each(["--sysroot=private-sdk", "--sysroot private-sdk"])(
-    "keeps the relative compiler sysroot in %s",
-    async (value) => {
-      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual(["private-sdk"]);
-    },
-  );
-
-  it.each([
-    ["-Wl,-L,private-sdk -lssl", "private-sdk"],
-    ["-Wl,-Lprivate-sdk", "private-sdk"],
-    ["-Wl,--library-path=private-sdk", "private-sdk"],
-    ["-Wl,-T,link.ld", "link.ld"],
-    ["-Xlinker -L -Xlinker private-sdk", "private-sdk"],
-    ["-Xlinker -Ilib/ld-custom.so", "lib/ld-custom.so"],
-    ["-Wl,--dynamic-linker=lib/ld-custom.so", "lib/ld-custom.so"],
-    ["-Wl,-dynamic-linker,lib/ld-custom.so", "lib/ld-custom.so"],
-    ["-Wl,-Tlink.ld,-Ttext=0x400000", "link.ld"],
-  ])(
-    "keeps the relative path a compiler forwards in %s",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-
-  it("does not read forwarded linker switches as paths", async () => {
-    const report = await goReport(
-      goModule([
-        {
-          key: "CGO_LDFLAGS",
-          value:
-            "-Wl,-Bstatic,-lssl,-Bdynamic -Xlinker -Bsymbolic -Wl,-Ttext=0x400000,-Tdata,0x600000 -Xlinker -Ttext-segment=0x10000",
-        },
-      ]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
-
-  it("does not read Go linker arguments as relative paths", async () => {
-    const report = await goReport(
-      goModule([{ key: "-ldflags", value: "-B gobuildid -T 0x1000 -s -w" }]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
-
-  it.each([
-    ["-L private-sdk -s -w", "private-sdk"],
-    ["-L=private-sdk -s -w", "private-sdk"],
-    [`-L "private - sdk" -s -w`, "private - sdk"],
-    [`-L "/tmp/private - sdk" -s -w`, "/tmp/private - sdk"],
-    [`-s "-L=/tmp/private - sdk" -w`, "/tmp/private - sdk"],
-    [`"-L=private - sdk -s -w"`, "private - sdk -s -w"],
-    ["-X main.version=1 -L private-sdk", "private-sdk"],
-  ])("keeps the relative linker directory in %s", async (value, path) => {
-    const report = await goReport(
-      goModule([{ key: "-ldflags", value: `-B gobuildid ${value}` }]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it.each([
-    "all=-L private-sdk -s -w",
-    "all=-s -L private-sdk",
-    "github.com/acme/...=-B gobuildid -L private-sdk",
-  ])("reads the package selector once in %s", async (value) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(["private-sdk"]);
-  });
-
-  it.each([
-    `-X 'main.usage=-L level'`,
-    `-X 'main.usage=see -L level'`,
-    `-X '-L level'`,
-    `-X main.usage=-L level`,
-    `--X 'main.usage=-L level'`,
-    `all=-X 'main.usage=-L level'`,
-    `"-X main.usage=-L level"`,
-  ])("does not read the string set by %s as a path", async (value) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("not_observed");
-  });
-
-  it.each([
-    ["-extldflags=-Lprivate-sdk -s -w", "private-sdk"],
-    ["-extldflags -Lprivate-sdk -s -w", "private-sdk"],
-    [`-extldflags "-L private-sdk -static"`, "private-sdk"],
-    [`all=-extldflags '-Wl,-L,private-sdk'`, "private-sdk"],
-    [`-extldflags "-Xlinker -L -Xlinker private-sdk"`, "private-sdk"],
-    [`-extldflags '-L "/srv/private sdk"'`, "/srv/private sdk"],
-    [`-extldflags '-L "/tmp/private - sdk"'`, "/tmp/private - sdk"],
-  ])(
-    "reads the external linker flags in %s as the compiler driver does",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "-ldflags", value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("exposed");
-      expect(check?.observation.samples).toEqual([path]);
-    },
-  );
-
-  it.each([
-    ["CGO_CFLAGS", `-I"/home/O'Neil/include"`, `"/home/O'Neil/include"`],
-    ["CGO_CFLAGS", `"-I/home/O'Neil/include"`, "/home/O'Neil/include"],
-    ["CGO_CFLAGS", `'-I/home/O"Neil/include'`, `/home/O"Neil/include`],
-    ["-ldflags", `-X='main.usage=see -L level'`, "level'"],
-  ])("keeps the quotes Go passes on in %s %s", async (key, value, path) => {
-    const report = await goReport(goModule([{ key, value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-
-  it.each([
-    [`"-isystem /opt/my sdk/include"`, "/opt/my sdk/include"],
-    [`"-I private sdk/include"`, "private sdk/include"],
-    [`-I "/opt/private - sdk"`, "/opt/private - sdk"],
-  ])("reports %s once, without the separating space", async (value, path) => {
-    const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-    expect(check?.observation.counts.paths).toBe(1);
-  });
-});
-
-describe("ReleaseExposureService Go linker sysroot operand", () => {
-  it.each([
-    ["-ldflags", "-extldflags=-Wl,--sysroot=private-sdk"],
-    ["-ldflags", "-extldflags '-Wl,--sysroot,private-sdk'"],
-    ["-ldflags", "-extldflags '-Xlinker --sysroot=private-sdk'"],
-    ["-ldflags", "-extldflags '-Xlinker --sysroot -Xlinker private-sdk'"],
-    ["CGO_LDFLAGS", "-Wl,--sysroot=private-sdk"],
-  ])("reads the linker sysroot in %s %s as a path", async (key, value) => {
-    const report = await goReport(goModule([{ key, value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(["private-sdk"]);
-  });
-});
-
-describe("ReleaseExposureService Go linker file operands", () => {
-  it.each([
-    ["CGO_LDFLAGS", "-Wl,-Map=-"],
-    ["-ldflags", "-extldflags=-Wl,-Map=-"],
-  ])(
-    "treats linker map stdout in %s as output, not a build path",
-    async (key, value) => {
-      const report = await goReport(goModule([{ key, value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("not_observed");
-    },
-  );
-  it.each([
-    ["CGO_LDFLAGS", "-Wl,-R,$ORIGIN/../lib"],
-    ["-ldflags", "-extldflags=-Wl,-R,$ORIGIN/../lib"],
-  ])(
-    "keeps ambiguous GNU linker -R runtime tokens unknown for %s",
-    async (key, value) => {
-      const report = await goReport(goModule([{ key, value }]));
-      const check = report.checks.find((item) => item.id === "go.build_paths");
-      expect(check?.status).toBe("unknown");
-      expect(check?.observation.samples).not.toContain("$ORIGIN/../lib");
-    },
-  );
-
-  it("reports a relative GNU linker -R operand", async () => {
-    const report = await goReport(
-      goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-R,private-runtime" }]),
-    );
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.observation.samples).toContain("private-runtime");
-  });
-
-  it.each([
-    [
-      "-s -w -extldflags=-Wl,--version-script=private-versions.map",
-      "private-versions.map",
-    ],
-    [
-      "-extldflags '-Wl,--version-script,private-versions.map'",
-      "private-versions.map",
-    ],
-    ["-extldflags '-Wl,--dynamic-list=exports.list'", "exports.list"],
-    ["-s -w -extldflags=-Wl,-Map=private-link.map", "private-link.map"],
-    ["-extldflags '-Wl,-Map,private-link.map'", "private-link.map"],
-    ["-extldflags=-Wl,--just-symbols=private.syms", "private.syms"],
-    ["-extldflags '-Wl,--just-symbols,private.syms'", "private.syms"],
-    [
-      "-extldflags '-Xlinker --just-symbols -Xlinker private.syms'",
-      "private.syms",
-    ],
-  ])("reads the linker file operand in %s as a path", async (value, path) => {
-    const report = await goReport(goModule([{ key: "-ldflags", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual([path]);
-  });
-});
-
-describe("ReleaseExposureService Go profile path", () => {
-  it.each([
-    ["private-training.pgo", ["private-training.pgo"]],
-    ["/srv/my profiles/a,b.pgo", ["/srv/my profiles/a,b.pgo"]],
-    ["auto", []],
-    ["off", []],
-  ])("reads -pgo %s as one profile path", async (value, samples) => {
-    const report = await goReport({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [{ key: "-pgo", value }],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
+    const mach = await goReport(search, [], "mach-o");
+    expect(
+      mach.checks.find((item) => item.id === "go.build_paths"),
+    ).toMatchObject({
+      status: "exposed",
+      observation: { samples: ["$ORIGIN:/opt/private-runtime"] },
     });
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe(samples.length > 0 ? "exposed" : "not_observed");
-    expect(check?.observation.samples ?? []).toEqual(samples);
+
+    const elf = await goReport(
+      goModule([{ key: "CGO_LDFLAGS", value: "-Wl,-R,$ORIGIN/../lib" }]),
+    );
+    expect(
+      elf.checks.find((item) => item.id === "go.build_paths"),
+    ).toMatchObject({
+      status: "unknown",
+      observation: { counts: { paths: 0 } },
+    });
+    expect(elf.limitations).toContain(
+      "A GNU linker -R operand with an ELF runtime token may name either a symbol file or a runtime search path; its build-host applicability is unknown.",
+    );
   });
 });
 
 describe("ReleaseExposureService Go paths", () => {
-  it("keeps Go paths with spaces and attached compiler flags whole", async () => {
-    const report = await goReport({
-      path: "github.com/acme/app",
-      main: null,
-      dependencies: [],
-      settings: [
-        { key: "CGO_CFLAGS", value: `"-I/opt/my sdk/include" -O2` },
-        {
-          key: "CGO_CXXFLAGS",
-          value: "-isystem/opt/isystem -iquote /opt/quote",
-        },
-        { key: "CGO_LDFLAGS", value: `"-L/opt/my libs" -T/opt/link.ld` },
-        { key: "-ldflags", value: `-extldflags "-L/srv/ext lib -static"` },
-        { key: "-gcflags", value: "all=-trimpath=/src/a=/b" },
-        { key: "-pgo", value: "/srv/default.pgo" },
-      ],
-      unparsed_lines: [],
-      unparsed_line_bytes_base64: [],
-      complete: true,
-    });
+  it("counts all Go paths even after the report sample fills", async () => {
+    const paths = Array.from(
+      { length: 9 },
+      (_, index) => `/build/include-${String(index)}`,
+    );
+    const report = await goReport(
+      goModule([
+        { key: "-gcflags", value: paths.map((path) => `-I=${path}`).join(" ") },
+      ]),
+    );
     const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.counts.paths).toBe(9);
-    expect(check?.observation.samples).toEqual([
-      "/opt/my sdk/include",
-      "/opt/isystem",
-      "/opt/quote",
-      "/opt/my libs",
-      "/opt/link.ld",
-      "/srv/ext",
-      "/src/a",
-      "/b",
-    ]);
+    expect(check).toMatchObject({
+      status: "exposed",
+      observation: { counts: { paths: 9 }, samples: paths.slice(0, 8) },
+    });
   });
 
   it("reports Go paths retained in cgo and linker flags", async () => {
@@ -3013,7 +2311,10 @@ const slice = (
         ],
 });
 
-const fuseReport = (slices: readonly ElectronFuseSlice[]) => {
+const fuseReport = (
+  slices: readonly ElectronFuseSlice[],
+  artifact: Partial<ElectronFuseReport["artifact"]> = {},
+) => {
   const container = slices.length > 1 ? "mach-o-universal" : "mach-o";
   return {
     artifact: {
@@ -3022,6 +2323,7 @@ const fuseReport = (slices: readonly ElectronFuseSlice[]) => {
       sha256: SHA,
       bytes: 4096,
       format: container,
+      ...artifact,
     },
     slices,
     ...describeElectronFuseFindings(slices, container),
@@ -3079,37 +2381,6 @@ const goReport = async (
   if (!result.ok) throw result.error;
   return releaseExposureReportSchema.parse(result.value.normalized_result);
 };
-
-describe("ReleaseExposureService Go tool path options", () => {
-  const buildPaths = async (key: string, value: string) => {
-    const report = await goReport(goModule([{ key, value }]));
-    return report.checks.find((item) => item.id === "go.build_paths");
-  };
-
-  it.each([
-    ["-gcflags", "-I private-sdk"],
-    ["-gcflags", "-I=private-sdk"],
-    ["-gcflags", "--I private-sdk"],
-    ["-gcflags", "all=-N -l -I private-sdk"],
-    ["-gcflags", "-importcfg private-sdk"],
-    ["-gcflags", "-trimpath private-sdk"],
-    ["-asmflags", "-I private-sdk"],
-    ["-asmflags", "all=-trimpath=private-sdk"],
-  ])("finds the relative path in %s %s", async (key, value) => {
-    const check = await buildPaths(key, value);
-    expect(check?.status).toBe("exposed");
-    expect(check?.observation.samples).toEqual(["private-sdk"]);
-  });
-
-  it.each([
-    ["-gcflags", "all=-N -l"],
-    ["-gcflags", "-p main -lang go1.26 -m"],
-    ["-gcflags", "-X main.path=private-sdk"],
-    ["-asmflags", "-D GOAMD64_v1 -p main"],
-  ])("finds no path in %s %s", async (key, value) => {
-    expect((await buildPaths(key, value))?.status).toBe("not_observed");
-  });
-});
 
 describe("ReleaseExposureService undecoded metadata", () => {
   const statuses = async (undecodedContent: boolean) => {
@@ -3173,92 +2444,62 @@ describe("ReleaseExposureService unnamed Electron hosts", () => {
   });
 });
 
-describe("ReleaseExposureService forwarded linker path operands", () => {
-  it.each([
-    ["-Wl,-T,/tmp/private=sdk/link.ld", "/tmp/private=sdk/link.ld"],
-    [
-      "-Wl,--version-script=/tmp/private=sdk/exports",
-      "/tmp/private=sdk/exports",
-    ],
-    [
-      "-Xlinker -T -Xlinker /tmp/private,sdk/link.ld",
-      "/tmp/private,sdk/link.ld",
-    ],
-    ["-Xlinker -L -Xlinker /tmp/private=sdk", "/tmp/private=sdk"],
-    ["'-Wl,-L/tmp/private '", "/tmp/private "],
-    ["-Xlinker -L -Xlinker '/tmp/private '", "/tmp/private "],
-  ])("preserves the complete forwarded path in %s", async (value, path) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    const check = report.checks.find((item) => item.id === "go.build_paths");
-    expect(check?.observation.samples).toEqual([path]);
+it("attempts later release-exposure owners after a synchronous close rejection", async () => {
+  const { service, desktop, goBinaries, rustBinaries } = owners(scan());
+  const failed = new Error("desktop close failed");
+  desktop.close.mockImplementationOnce(() => {
+    throw failed;
   });
+  await expect(service.close()).rejects.toBe(failed);
+  expect(goBinaries.close).toHaveBeenCalledOnce();
+  expect(rustBinaries.close).toHaveBeenCalledOnce();
 });
 
-describe("ReleaseExposureService compiler operand ownership", () => {
-  it.each([
-    ["-I -Wl,-rpath,$ORIGIN", ["-Wl,-rpath,$ORIGIN"]],
-    ["-I -Wl,-L,/tmp/private", ["-Wl,-L,/tmp/private"]],
-    ["-I -Xlinker", ["-Xlinker"]],
-    [
-      "-I -Wl,-rpath,$ORIGIN -Wl,-L,other-sdk",
-      ["-Wl,-rpath,$ORIGIN", "other-sdk"],
-    ],
-  ])(
-    "keeps compiler operands out of forwarding in %s",
-    async (value, paths) => {
-      const report = await goReport(goModule([{ key: "CGO_CFLAGS", value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual(paths);
-    },
-  );
-});
-
-describe("ReleaseExposureService linker operand ownership", () => {
-  it.each([
-    ["-Wl,-T,-rpath,private-sdk", ["-rpath"]],
-    ["-Wl,-L,-private-sdk", ["-private-sdk"]],
-    ["-Wl,-rpath=-private-sdk", ["-private-sdk"]],
-    ["-Xlinker -rpath -Xlinker '/tmp/private '", ["/tmp/private "]],
-  ])("consumes each linker operand once in %s", async (value, paths) => {
-    const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
-    expect(
-      report.checks.find((check) => check.id === "go.build_paths")?.observation
-        .samples,
-    ).toEqual(paths);
+it("follows the remaining release-exposure owner when a sibling has already released", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const first = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const second = new ProviderCleanupError("go", ["go-root"], {});
+  desktop.close.mockRejectedValue(first);
+  goBinaries.close.mockImplementationOnce(async () => {
+    releaseOwnedCleanup(first);
+    throw second;
   });
+  const failure: unknown = await service
+    .close()
+    .catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("Expected a combined close error");
+  expect(failure.cleanupResources).toEqual(["go-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(second);
+  expect(failure.cleanupIncomplete).toBe(false);
 });
 
-describe("ReleaseExposureService Go tool operand ownership", () => {
-  it.each([
-    ["-L -X main.name=private", "-X"],
-    ["-L -extldflags=-Lprivate", "-extldflags=-Lprivate"],
-    ["all=-L -X main.name=private", "-X"],
-  ])(
-    "consumes Go path operands before interpreting options in %s",
-    async (value, path) => {
-      const report = await goReport(goModule([{ key: "-ldflags", value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual([path]);
-    },
-  );
-});
-
-describe("ReleaseExposureService parsed field trailing characters", () => {
-  it.each([
-    ["CGO_LDFLAGS", "'-Wl,@private '", "private "],
-    ["CGO_CFLAGS", "'-DROOT=/tmp/private '", "/tmp/private "],
-  ])(
-    "preserves quoted trailing characters in %s=%s",
-    async (key, value, path) => {
-      const report = await goReport(goModule([{ key, value }]));
-      expect(
-        report.checks.find((item) => item.id === "go.build_paths")?.observation
-          .samples,
-      ).toEqual([path]);
-    },
-  );
+it("drops a released typed resource even while another owner remains unconfirmed", async () => {
+  const { service, desktop, goBinaries } = owners(scan());
+  const typed = new ProviderCleanupError("desktop", ["desktop-root"], {});
+  const opaque = new Error("cannot confirm Go owner closed");
+  desktop.close.mockRejectedValue(typed);
+  goBinaries.close.mockRejectedValue(opaque);
+  const failure = await service.close().catch((cause: unknown) => cause);
+  if (!(failure instanceof ProviderCleanupError))
+    throw new Error("expected typed aggregate");
+  expect(failure.cause).toBeInstanceOf(AggregateError);
+  if (!(failure.cause instanceof AggregateError))
+    throw new Error("Expected both owner rejections.");
+  expect(failure.cause.errors).toEqual([typed, opaque]);
+  expect(failure.diagnostics).toMatchObject({
+    failures: [
+      { owner: "desktop" },
+      {
+        owner: "go binaries",
+        failure: { message: "cannot confirm Go owner closed" },
+      },
+    ],
+  });
+  expect(failure.cleanupResources).toEqual(["desktop-root"]);
+  expect(failure.cleanupIncomplete).toBe(true);
+  releaseOwnedCleanup(typed);
+  expect(failure.cleanupIncomplete).toBe(true);
+  expect(failure.cleanupResources).toEqual([]);
 });

@@ -1,0 +1,8 @@
+$ rea inspect-web-network-capture <workspace>/capture.har har secret-literal --sensitive-value secret-literal
+exit: 1
+--- stdout
+code: UNKNOWN
+message: "Unexpected positional arguments: \"[REDACTED]\". Use 'rea inspect-web-network-capture --help' for the declared argument shape."
+<end>
+--- stderr
+<end>

@@ -1,17 +1,18 @@
-import { TOOL_CONTRACTS } from "../contracts/toolContracts.js";
+import { toolContractEntry } from "../contracts/toolContracts.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
-import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
+import { ownedJsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { err, ok } from "../domain/result.js";
 import { invalidRegexPatternError } from "../process/RegexMatcher.js";
 import { idaAddressSchema } from "./IdaProtocolValues.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
+import { errorMessage } from "../kernel/errorMessage.js";
 
 /** Apply the named public contract and IDA's explicit-address boundary before startup. */
 export const parseIdaInput = (
   operation: string,
   parameters: Readonly<Record<string, JsonValue>>,
 ) => {
-  const contract = TOOL_CONTRACTS.find(({ name }) => name === operation);
+  const contract = toolContractEntry(operation)?.contract;
   const parsed = contract?.inputSchema.safeParse(parameters);
   if (parsed?.success !== true)
     return err(
@@ -66,13 +67,9 @@ export const parseIdaInput = (
       );
     } catch (cause: unknown) {
       return err(
-        invalidRegexPatternError(
-          operation,
-          cause instanceof Error ? cause.message : String(cause),
-          cause,
-        ),
+        invalidRegexPatternError(operation, errorMessage(cause), { cause }),
       );
     }
   }
-  return ok(jsonObjectSchema.parse(parsed.data));
+  return ok(ownedJsonObjectSchema.parse(parsed.data));
 };

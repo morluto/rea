@@ -6,8 +6,10 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
 
 import { createServer } from "../../../src/server/createServer.js";
-import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { createAnalysisExecution } from "../../../src/ports/AnalysisProvider.js";
 import { ok } from "../../../src/domain/result.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const analysis = {
   execute: async () =>
@@ -23,7 +25,7 @@ const writeRizin = async (directory: string, output: string): Promise<void> => {
 };
 
 it("uses the server-selected environment unless a provider environment overrides it", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-env-"));
+  const directory = await createTestTempDirectory("rea-reverse-env-");
   const selectedPath = join(directory, "selected");
   const overridePath = join(directory, "override");
   const artifactPath = join(directory, "sample.bin");
@@ -34,51 +36,50 @@ it("uses the server-selected environment unless a provider environment overrides
     writeFile(artifactPath, "fixture"),
   ]);
 
-  try {
-    for (const scenario of [
+  for (const scenario of [
+    {
+      environment: selectedPath,
+      expected: "selected environment",
+    },
+    {
+      environment: selectedPath,
+      provider: overridePath,
+      expected: "provider override",
+    },
+  ]) {
+    const server = createServer(
+      { kind: "fixed", analysis },
       {
-        environment: selectedPath,
-        expected: "selected environment",
+        environment: { ...process.env, PATH: scenario.environment },
+        ...(scenario.provider === undefined
+          ? {}
+          : {
+              providerEnvironment: {
+                ...process.env,
+                PATH: scenario.provider,
+              },
+            }),
       },
-      {
-        environment: selectedPath,
-        provider: overridePath,
-        expected: "provider override",
-      },
-    ]) {
-      const server = createServer(
-        { kind: "fixed", analysis },
-        {
-          environment: { ...process.env, PATH: scenario.environment },
-          ...(scenario.provider === undefined
-            ? {}
-            : {
-                providerEnvironment: {
-                  ...process.env,
-                  PATH: scenario.provider,
-                },
-              }),
-        },
-      );
-      const client = new Client({ name: "reverse-env-test", version: "1" });
-      const [clientTransport, serverTransport] =
-        InMemoryTransport.createLinkedPair();
-      try {
-        await server.connect(serverTransport);
-        await client.connect(clientTransport);
-        const result = await client.callTool({
-          name: "execute_rizin_command",
-          arguments: { path: artifactPath, command: "iI" },
-        });
-        expect(result.isError).not.toBe(true);
-        expect(result.structuredContent).toMatchObject({
-          raw_result: { stdout: `${scenario.expected}\n` },
-        });
-      } finally {
-        await Promise.all([client.close(), server.close()]);
-      }
+    );
+    const client = new Client(
+      { name: "reverse-env-test", version: "1" },
+      { jsonSchemaValidator: createMcpSchemaValidation() },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "execute_rizin_command",
+        arguments: { path: artifactPath, command: "iI" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        raw_result: { stdout: `${scenario.expected}\n` },
+      });
+    } finally {
+      await Promise.all([client.close(), server.close()]);
     }
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 });

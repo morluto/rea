@@ -308,7 +308,7 @@ const cases = [
   },
   {
     name: "local main module receiver",
-    load: 'const require={main:{require(){}}};require.main.require("../shared/window.cjs");',
+    load: '{const require={main:{require(){}}};require.main.require("../shared/window.cjs");}',
     possible: false,
   },
   {

@@ -103,9 +103,12 @@ it("preserves cancellation during payload CRC admission", async () => {
       ),
     ).toBe(true);
   } finally {
-    await reader.close();
-    reads.mockRestore();
-    await admitted.handle.close();
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 
@@ -149,9 +152,12 @@ it("admits a multi-image count before scanning the remaining payload", async () 
       results.reduce((sum, result) => sum + result.bytesRead, 0),
     ).toBeLessThanOrEqual(UIMAGE_HEADER_SIZE + UIMAGE_MULTI_TABLE_WINDOW);
   } finally {
-    await reader.close();
-    reads.mockRestore();
-    await admitted.handle.close();
+    try {
+      await reader.close();
+    } finally {
+      reads.mockRestore();
+      await admitted.handle.close();
+    }
   }
 });
 

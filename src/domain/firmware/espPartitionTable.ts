@@ -53,7 +53,13 @@ export interface EspPartition {
 
 export interface EspPartitionTableMd5 {
   readonly status: "valid" | "invalid" | "absent";
+  /** Byte offset of the MD5 entry from the start of the table, or null when absent. */
   readonly entryOffset: number | null;
+  /**
+   * Partition entries that follow the MD5 record and are outside its digest.
+   * Zero when the record is absent or every partition entry precedes it.
+   */
+  readonly entriesAfterChecksum: number;
   readonly stored: string | null;
   readonly computed: string | null;
 }
@@ -95,7 +101,10 @@ const partition = (
  * over the entries before it, and a terminator whose magic, type and subtype
  * are all `0xFF`. A structural fault means the bytes are not a table. An MD5
  * mismatch or a second MD5 entry, which the bootloader rejects, is reported
- * as an integrity fact so that the declared entries stay visible. ESP-IDF
+ * as an integrity fact so that the declared entries stay visible. Partition
+ * entries after the MD5 record stay in the table. The digest covers only the
+ * entries before it; `entriesAfterChecksum` counts the later ones, and a
+ * limitation names that count and the record's table-relative offset. ESP-IDF
  * accepts a table with no partition entries, but REA requires one before
  * the terminator, so that neither erased flash nor a lone MD5 entry is read
  * as a table.
@@ -108,9 +117,11 @@ export const decodeEspPartitionTable = (
   let md5: EspPartitionTableMd5 = {
     status: "absent",
     entryOffset: null,
+    entriesAfterChecksum: 0,
     stored: null,
     computed: null,
   };
+  let partitionsAfterMd5 = 0;
   for (let slot = 0; slot < MAX_ENTRIES; slot += 1) {
     const at = slot * ENTRY_BYTES;
     const entry = bytes.subarray(at, at + ENTRY_BYTES);
@@ -120,6 +131,7 @@ export const decodeEspPartitionTable = (
       );
     const magic = u16(entry, 0);
     if (magic === PARTITION_MAGIC) {
+      if (md5.entryOffset !== null) partitionsAfterMd5 += 1;
       partitions.push(partition(entry, partitions.length, at));
       continue;
     }
@@ -138,6 +150,7 @@ export const decodeEspPartitionTable = (
       md5 = {
         status: stored === computed ? "valid" : "invalid",
         entryOffset: at,
+        entriesAfterChecksum: 0,
         stored,
         computed,
       };
@@ -150,8 +163,22 @@ export const decodeEspPartitionTable = (
     const terminator =
       magic === END_MAGIC && entry[2] === END_TYPE && entry[3] === END_TYPE;
     // An MD5 entry is not a partition: a table declares at least one.
-    if (terminator && partitions.length > 0)
-      return ok({ partitions, md5, length: at + ENTRY_BYTES, limitations });
+    if (terminator && partitions.length > 0) {
+      const reported: EspPartitionTableMd5 = {
+        ...md5,
+        entriesAfterChecksum: partitionsAfterMd5,
+      };
+      if (reported.entryOffset !== null && reported.entriesAfterChecksum > 0)
+        limitations.push(
+          `${String(reported.entriesAfterChecksum)} partition entries after the MD5 record at table-relative offset ${offsetText(reported.entryOffset)} are outside its checksum coverage.`,
+        );
+      return ok({
+        partitions,
+        md5: reported,
+        length: at + ENTRY_BYTES,
+        limitations,
+      });
+    }
     return err(
       slot === 0 && magic === END_MAGIC
         ? "the first entry is empty"
