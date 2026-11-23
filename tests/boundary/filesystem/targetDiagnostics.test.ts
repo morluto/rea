@@ -86,10 +86,16 @@ it("identifies the directory opening constraint and gives the direct analysis ro
     details: {
       path: await realpath(directory),
       constraint: "directory_requires_file",
-      related_operations: ["analyze_javascript_application"],
+      related_operations: [
+        "inspect_desktop_application",
+        "audit_release_exposure",
+        "analyze_javascript_application",
+      ],
     },
   });
   expect(projected.message).toContain("analyze_javascript_application");
+  expect(projected.message).toContain("inspect_desktop_application");
+  expect(projected.message).not.toContain("open_binary");
   expect(projected.message).not.toContain("rea analyze");
   expect(projected.remediation.action).toContain("input_path");
   expect(projected.remediation.action).not.toContain("rea analyze");
