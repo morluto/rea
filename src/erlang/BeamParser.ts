@@ -163,19 +163,13 @@ const frameRows = (payload: Buffer, width: number, label: string) => {
   return { reader, count, rowBytes, trailingBytes: payload.length - bytesRead };
 };
 
-const parseRows = ({
-  reader,
-  count,
-  rowBytes,
-}: ReturnType<typeof frameRows>): number[][] => {
-  const rows: number[][] = [];
-  for (let index = 0; index < count; index += 1) {
-    const row: number[] = [];
-    const start = 4 + index * rowBytes;
-    for (let fieldOffset = 0; fieldOffset < rowBytes; fieldOffset += 4)
-      row.push(reader.u32(start + fieldOffset));
-    rows.push(row);
-  }
+const mapRows = <Row>(
+  { reader, count, rowBytes }: ReturnType<typeof frameRows>,
+  project: (reader: BinaryReader, start: number) => Row,
+): Row[] => {
+  const rows: Row[] = [];
+  for (let index = 0; index < count; index += 1)
+    rows.push(project(reader, 4 + index * rowBytes));
   return rows;
 };
 
@@ -307,35 +301,45 @@ export const parseErlangBeam = (
   const exports =
     exportTable === null
       ? null
-      : parseRows(exportTable).map((row) => ({
-          function_index: row[0]!,
-          function: atomAt(atoms, row[0]!),
-          arity: row[1]!,
-          label: row[2]!,
-        }));
+      : mapRows(exportTable, (reader, start) => {
+          const functionIndex = reader.u32(start);
+          return {
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 4),
+            label: reader.u32(start + 8),
+          };
+        });
   const imports =
     importTable === null
       ? null
-      : parseRows(importTable).map((row) => ({
-          module_index: row[0]!,
-          module: atomAt(atoms, row[0]!),
-          function_index: row[1]!,
-          function: atomAt(atoms, row[1]!),
-          arity: row[2]!,
-        }));
+      : mapRows(importTable, (reader, start) => {
+          const moduleIndex = reader.u32(start);
+          const functionIndex = reader.u32(start + 4);
+          return {
+            module_index: moduleIndex,
+            module: atomAt(atoms, moduleIndex),
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 8),
+          };
+        });
   // A four-byte zero count remains a decoded, explicitly empty table.
   const lambdas =
     lambdaTable === null
       ? null
-      : parseRows(lambdaTable).map((row) => ({
-          function_index: row[0]!,
-          function: atomAt(atoms, row[0]!),
-          arity: row[1]!,
-          label: row[2]!,
-          index: row[3]!,
-          free_vars: row[4]!,
-          old_unique: row[5]!,
-        }));
+      : mapRows(lambdaTable, (reader, start) => {
+          const functionIndex = reader.u32(start);
+          return {
+            function_index: functionIndex,
+            function: atomAt(atoms, functionIndex),
+            arity: reader.u32(start + 4),
+            label: reader.u32(start + 8),
+            index: reader.u32(start + 12),
+            free_vars: reader.u32(start + 16),
+            old_unique: reader.u32(start + 20),
+          };
+        });
   const codeChunk = payloads.get("Code");
   const code =
     codeChunk === undefined
