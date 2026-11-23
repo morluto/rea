@@ -1,5 +1,13 @@
 import { deflateSync, zstdCompressSync } from "node:zlib";
 
+import type { ElfNoteByteSource } from "./ElfNoteParser.js";
+
+export const elfNoteByteSource = (bytes: Buffer): ElfNoteByteSource => ({
+  size: bytes.length,
+  prefix: bytes.subarray(0, 4096),
+  readRange: async (offset, length) => bytes.subarray(offset, offset + length),
+});
+
 const concat = (...parts: Buffer[]): Buffer => Buffer.concat(parts);
 
 const alignTo = (value: number, alignment: number): number =>

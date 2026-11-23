@@ -1204,27 +1204,6 @@ const decodeElfNoteStepsFromSource = async <T>(
   return next.value;
 };
 
-/** Decode PT_NOTE and SHT_NOTE tables from one in-memory ELF image. */
-export const parseElfNotes = (
-  bytes: Buffer,
-  artifact: ElfNotes["artifact"],
-  input: InspectElfNotesInput,
-): ElfNotes =>
-  decodeElfNoteSteps(bytes, projectElfNoteSteps(bytes.length, artifact, input));
-
-/** Same note decode as parseElfNotes, with cooperative section-name decoding. */
-export const parseElfNotesCooperative = (
-  bytes: Buffer,
-  artifact: ElfNotes["artifact"],
-  input: InspectElfNotesInput,
-  pause: ZstandardFramePause,
-): Promise<ElfNotes> =>
-  decodeElfNoteStepsCooperative(
-    bytes,
-    projectElfNoteSteps(bytes.length, artifact, input),
-    (request) => decodeElfSectionNameRequestCooperative(request, pause),
-  );
-
 /** Decode PT_NOTE and SHT_NOTE tables positionally over a bounded file handle. */
 export const parseElfNotesFromHandle = (
   source: ElfNoteByteSource,
