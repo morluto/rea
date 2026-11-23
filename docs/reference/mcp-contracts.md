@@ -159,9 +159,11 @@ its reader finishes, is `unknown` with a limitation naming the reader format;
 a complete traversal of one container never covers another.
 ZIP members are listed from the central directory. Coverage is `complete` only
 when its records account for every byte before the directory (a well-formed
-APK signing block is accounted for); otherwise coverage is `unknown` and a
-limitation gives the unaccounted bytes, which may hold local entries the
-directory does not list.
+APK signing block is accounted for, as is all-zero alignment padding between
+the last accounted member and that block or the directory). A local file
+header needs the `PK\x03\x04` signature, so an all-zero gap cannot hold an
+unlisted entry. Otherwise coverage is `unknown`, and a limitation gives the
+unaccounted bytes, which may hold local entries the directory does not list.
 An extent must fit before the directory and agree with the local header's
 size or deferred-size mode, including local Zip64 sizes. A deferred extent
 requires a matching data descriptor. Conflicting or unreadable extent claims

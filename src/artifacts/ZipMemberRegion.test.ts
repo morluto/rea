@@ -8,7 +8,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type { ArtifactReaderTraversal } from "../resources/ArtifactReader.js";
 import { scanReader } from "./inventory/scanReader.js";
-import { accountZipMemberRegion } from "../domain/zip/zipMemberRegion.js";
+import {
+  accountZipMemberRegion,
+  type ZipLocalRecord,
+} from "../domain/zip/zipMemberRegion.js";
 import { BinaryReader } from "../domain/binaryContainer.js";
 import { ZipArtifactReader, zipListingCoverage } from "../resources/index.js";
 
@@ -23,6 +26,15 @@ const member = (name: string, listed = true): Member => ({
   name,
   data: Buffer.from(`${name} bytes`),
   listed,
+});
+
+const recordOf = (entry: Member, offset: number): ZipLocalRecord => ({
+  offset,
+  compressedSize: entry.data.length,
+  uncompressedSize: entry.data.length,
+  crc32: crc32(entry.data),
+  zip64: false,
+  dataDescriptor: false,
 });
 
 const localEntry = ({ name, data }: Member, flags = 0): Buffer => {
@@ -217,7 +229,9 @@ describe("ZIP listing coverage against the member region", () => {
       ),
     ).toMatchObject({ unaccountedBytes: 0, unaccountedRanges: 0 });
     // With room for a signed layout, the unsigned layout still matches.
-    const padded = Buffer.concat([bytes, Buffer.alloc(4)]);
+    // The extra bytes are non-zero, so they are a real gap rather than
+    // alignment padding before the directory.
+    const padded = Buffer.concat([bytes, Buffer.alloc(4, 0x7f)]);
     expect(
       await accountZipMemberRegion(records, padded.length, async (at, length) =>
         padded.subarray(at, at + length),
@@ -715,5 +729,181 @@ describe("ZIP listing coverage from the central directory", () => {
     } finally {
       await reader.close();
     }
+  });
+});
+
+const readBytes =
+  (bytes: Uint8Array) =>
+  async (at: number, length: number): Promise<Uint8Array> =>
+    bytes.subarray(at, at + length);
+
+describe("ZIP trailing alignment padding", () => {
+  it("keeps a jar-like archive with no signing block and no gap complete", async () => {
+    expect((await list(zip([member("a.txt")]))).coverage).toEqual([complete]);
+  });
+
+  it("accounts for all-zero alignment padding before an APK signing block", async () => {
+    const padding = Buffer.alloc(694);
+    const gap = Buffer.concat([padding, apkSigningBlock()]);
+    const entry = member("a.txt");
+    const local = localEntry(entry);
+    const bytes = Buffer.concat([local, gap]);
+    expect(
+      await accountZipMemberRegion(
+        [recordOf(entry, 0)],
+        bytes.length,
+        readBytes(bytes),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 0,
+      unaccountedRanges: 0,
+      zeroPadding: { offset: local.length, length: padding.length },
+    });
+    expect((await list(zip([entry], { gap }))).coverage).toEqual([complete]);
+  });
+
+  it("accounts for all-zero alignment padding before the central directory", async () => {
+    const padding = Buffer.alloc(16);
+    const entry = member("a.txt");
+    const local = localEntry(entry);
+    const bytes = Buffer.concat([local, padding]);
+    expect(
+      await accountZipMemberRegion(
+        [recordOf(entry, 0)],
+        bytes.length,
+        readBytes(bytes),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 0,
+      unaccountedRanges: 0,
+      zeroPadding: { offset: local.length, length: padding.length },
+    });
+    expect((await list(zip([entry], { gap: padding }))).coverage).toEqual([
+      complete,
+    ]);
+  });
+
+  it("leaves a non-zero gap before an APK signing block unknown", async () => {
+    const padding = Buffer.alloc(8);
+    padding[3] = 1;
+    const gap = Buffer.concat([padding, apkSigningBlock()]);
+    expect((await list(zip([member("a.txt")], { gap }))).coverage).toEqual([
+      unaccounted(padding.length, 1, A_ENTRY_BYTES),
+    ]);
+  });
+
+  it("leaves a non-zero gap before the central directory unknown", async () => {
+    const gap = Buffer.from([0, 0, 1, 0]);
+    expect((await list(zip([member("a.txt")], { gap }))).coverage).toEqual([
+      unaccounted(gap.length, 1, A_ENTRY_BYTES),
+    ]);
+  });
+
+  it("accounts for zero padding after a data descriptor and before a signing block", async () => {
+    const entry = member("a.txt");
+    const local = localEntry(entry, 0x8);
+    const descriptor = Buffer.alloc(16);
+    descriptor.writeUInt32LE(0x08074b50, 0);
+    descriptor.writeUInt32LE(crc32(entry.data), 4);
+    descriptor.writeUInt32LE(entry.data.length, 8);
+    descriptor.writeUInt32LE(entry.data.length, 12);
+    const padding = Buffer.alloc(12);
+    const bytes = Buffer.concat([
+      local,
+      descriptor,
+      padding,
+      apkSigningBlock(),
+    ]);
+    expect(
+      await accountZipMemberRegion(
+        [{ ...recordOf(entry, 0), dataDescriptor: true }],
+        bytes.length,
+        readBytes(bytes),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 0,
+      unaccountedRanges: 0,
+      unverifiedExtents: 0,
+      zeroPadding: {
+        offset: local.length + descriptor.length,
+        length: padding.length,
+      },
+    });
+  });
+
+  it("accounts for all-zero padding larger than one read window", async () => {
+    const entry = member("a.txt");
+    const local = localEntry(entry);
+    const padding = Buffer.alloc(64 * 1024 + 8);
+    const bytes = Buffer.concat([local, padding, apkSigningBlock()]);
+    expect(
+      await accountZipMemberRegion(
+        [recordOf(entry, 0)],
+        bytes.length,
+        readBytes(bytes),
+      ),
+    ).toMatchObject({
+      unaccountedBytes: 0,
+      unaccountedRanges: 0,
+      zeroPadding: { offset: local.length, length: padding.length },
+    });
+  });
+});
+
+describe("ZIP gaps that stay unaccounted", () => {
+  it("does not treat all-zero bytes between listed members as trailing padding", async () => {
+    const first = member("a.txt");
+    const second = member("b.txt");
+    const localA = localEntry(first);
+    const padding = Buffer.alloc(8);
+    const localB = localEntry(second);
+    const bytes = Buffer.concat([localA, padding, localB]);
+    const account = await accountZipMemberRegion(
+      [recordOf(first, 0), recordOf(second, localA.length + padding.length)],
+      bytes.length,
+      readBytes(bytes),
+    );
+    expect(account).toMatchObject({
+      unaccountedBytes: padding.length,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: localA.length,
+    });
+    expect(account.zeroPadding).toBeUndefined();
+  });
+
+  it("does not treat a short read of a zero gap as padding", async () => {
+    const entry = member("a.txt");
+    const local = localEntry(entry);
+    const bytes = Buffer.concat([local, Buffer.alloc(8)]);
+    const account = await accountZipMemberRegion(
+      [recordOf(entry, 0)],
+      bytes.length,
+      async (at, length) => bytes.subarray(at, at + Math.min(length, 4)),
+    );
+    expect(account).toMatchObject({
+      unaccountedBytes: 8,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: local.length,
+    });
+    expect(account.zeroPadding).toBeUndefined();
+  });
+
+  it("does not treat a zero prefix of a non-zero gap as padding", async () => {
+    const entry = member("a.txt");
+    const local = localEntry(entry);
+    const padding = Buffer.alloc(64 * 1024 + 8);
+    padding[64 * 1024 + 2] = 0x20;
+    const bytes = Buffer.concat([local, padding]);
+    const account = await accountZipMemberRegion(
+      [recordOf(entry, 0)],
+      bytes.length,
+      readBytes(bytes),
+    );
+    expect(account).toMatchObject({
+      unaccountedBytes: padding.length,
+      unaccountedRanges: 1,
+      firstUnaccountedOffset: local.length,
+    });
+    expect(account.zeroPadding).toBeUndefined();
   });
 });

@@ -21,6 +21,12 @@ export interface ZipLocalRecord {
   readonly dataDescriptor: boolean;
 }
 
+/** All-zero alignment padding that cannot hold a local file header. */
+interface ZipZeroPadding {
+  readonly offset: number;
+  readonly length: number;
+}
+
 /** What the central directory's records leave unexplained before the directory. */
 export interface ZipMemberRegionAccount {
   readonly unaccountedBytes: number;
@@ -30,6 +36,12 @@ export interface ZipMemberRegionAccount {
   readonly unlocatedHeaders: number;
   /** Extents not corroborated by their local header or required descriptor. */
   readonly unverifiedExtents: number;
+  /**
+   * All-zero bytes between the last accounted member and the APK Signing
+   * Block, or the central directory when that block is absent. Absent when
+   * that gap is empty or contains any other byte.
+   */
+  readonly zeroPadding: ZipZeroPadding | undefined;
 }
 
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
@@ -45,7 +57,9 @@ const READ_WINDOW_BYTES = 64 * 1024;
 /**
  * Account for every byte before the central directory with the local records
  * the directory lists. Unaccounted bytes may hold local entries the central
- * directory omits, so a listing built from it cannot claim them.
+ * directory omits, so a listing built from it cannot claim them. All-zero
+ * alignment padding after the last accounted member is not such a gap: a
+ * local file header starts with PK\x03\x04.
  */
 export const accountZipMemberRegion = async (
   records: readonly ZipLocalRecord[],
@@ -83,6 +97,7 @@ export const accountZipMemberRegion = async (
   let firstUnaccountedOffset: number | undefined;
   let unlocatedHeaders = 0;
   let unverifiedExtents = 0;
+  let zeroPadding: ZipZeroPadding | undefined;
   let localSizeOffset: number | undefined;
   let localSize: bigint | undefined;
   // Distinct well-formed local headers have disjoint extra fields. Bound the
@@ -99,7 +114,10 @@ export const accountZipMemberRegion = async (
     new BinaryReader(Buffer.from(await read(offset, length)), true, "zip");
   let cursor = 0;
   let descriptor: ZipLocalRecord | undefined;
-  const gap = async (end: number) => {
+  const gap = async (
+    end: number,
+    options?: { readonly classifyZeroPadding?: boolean },
+  ) => {
     if (end < cursor) return;
     if (descriptor !== undefined) {
       const bytes = await dataDescriptorBytes(descriptor, cursor, end, view);
@@ -109,6 +127,17 @@ export const accountZipMemberRegion = async (
     descriptor = undefined;
     const size = end - cursor;
     if (size <= 0) return;
+    // Only the gap after the last member is alignment padding. A local file
+    // header needs PK\x03\x04, so an all-zero range there cannot hide an
+    // unlisted entry. A zero gap between members stays unaccounted.
+    if (
+      options?.classifyZeroPadding === true &&
+      (await rangeIsAllZero(read, cursor, end))
+    ) {
+      zeroPadding = { offset: cursor, length: size };
+      cursor = end;
+      return;
+    }
     unaccountedBytes += size;
     unaccountedRanges += 1;
     firstUnaccountedOffset ??= cursor;
@@ -161,14 +190,34 @@ export const accountZipMemberRegion = async (
     )
       unverifiedExtents += 1;
   }
-  await gap(await apkSigningBlockStart(cursor, directoryOffset, view));
+  await gap(await apkSigningBlockStart(cursor, directoryOffset, view), {
+    classifyZeroPadding: true,
+  });
   return {
     unaccountedBytes,
     unaccountedRanges,
     firstUnaccountedOffset,
     unlocatedHeaders,
     unverifiedExtents,
+    zeroPadding,
   };
+};
+
+/** True when every byte in `[start, end)` was read and is zero. */
+const rangeIsAllZero = async (
+  read: (offset: number, length: number) => Promise<Uint8Array>,
+  start: number,
+  end: number,
+): Promise<boolean> => {
+  for (let offset = start; offset < end;) {
+    const length = Math.min(READ_WINDOW_BYTES, end - offset);
+    const bytes = await read(offset, length);
+    // A short read does not prove the unread tail is zero.
+    if (bytes.length < length) return false;
+    if (bytes.subarray(0, length).some((byte) => byte !== 0)) return false;
+    offset += length;
+  }
+  return true;
 };
 
 /** The local compressed size, including its conditional Zip64 extra-field slot. */
