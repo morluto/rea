@@ -1,27 +1,19 @@
 import {
   projectArtifactCloseFailure,
-  projectOwnedArtifactIdentityFailure,
-  projectSelectedArtifactFileFailure,
   projectStableArtifactFailure,
-  stableArtifactInputFailure,
-  ArtifactReaderFailure,
   withStableArtifactHandle,
   yieldArtifactRead,
   artifactFilePrimaryFacts,
-  type ArtifactFilePrimaryFacts,
   ArtifactResourceScope,
 } from "../../resources/index.js";
-import {
-  parseFailureAnalysisError,
-  parseLimitConstraint,
-} from "../../domain/parseFailureAnalysisError.js";
-import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
-import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { parseLimitConstraint } from "../../domain/parseFailureAnalysisError.js";
 import {
   projectZstandardFrameAllowance,
   ZstandardFrameAllowanceError,
 } from "../../domain/compression/zstandardFrameAllowance.js";
 import { decodeLimit } from "../../domain/parseFailure.js";
+import { classifyProviderFailure } from "../../providers/classifyProviderFailure.js";
+import { offlineArtifactFailureDialect } from "../../providers/offlineArtifactFailure.js";
 import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { DWARF_UNITS_PROVIDER } from "../../domain/investigationProviders.js";
 import {
@@ -269,91 +261,66 @@ const inputBudgetRemediation = (input: InspectDwarfUnitsInput): string =>
     ? `The image exceeds the ${String(MAX_INSPECT_DWARF_UNITS_FILE_BYTES)}-byte input ceiling this operation accepts; select a smaller artifact.`
     : `Raise max_file_bytes above ${String(input.max_file_bytes)} bytes or select a smaller artifact; the limit is the caller-selected input read budget.`;
 
-const dwarfUnitsFailurePrimary = (
-  facts: ArtifactFilePrimaryFacts,
-  input: InspectDwarfUnitsInput,
-) => {
-  const { cause, origin } = facts;
-  if (cause instanceof ZstandardFrameAllowanceError)
-    return projectZstandardFrameAllowance(OPERATION, cause);
-  if (origin === "owned-or-classified" && cause instanceof AnalysisError)
-    return cause;
-  if (cause instanceof DwarfSectionAllowanceFailure)
-    return parseLimitConstraint(
-      OPERATION,
-      "memory",
-      cause,
-      fixedAllowanceOptions(DWARF_DECOMPRESSED_SECTION_ALLOWANCE, "parser", {
-        limit: cause.failure.limit.maximum,
-        unit: "bytes",
-      }),
-    );
-  if (cause instanceof BinaryResourceFailure)
-    return parseLimitConstraint(
-      OPERATION,
-      "memory",
-      cause,
-      fixedAllowanceOptions(
-        "The native structural decoding allowance",
-        "parser",
-        binaryResourceCeiling(cause),
-      ),
-    );
-  const formatFailure = parseFailureAnalysisError(OPERATION, input.path, cause);
-  if (formatFailure !== undefined) return formatFailure;
-  const identityFailure = projectOwnedArtifactIdentityFailure(
-    facts,
-    OPERATION,
-    input.path,
-  );
-  if (identityFailure !== undefined) return identityFailure;
-  if (
-    origin === "owned-or-classified" &&
-    cause instanceof ArtifactReaderFailure
-  ) {
-    if (cause.reason === "limit")
-      return parseLimitConstraint(
-        OPERATION,
-        "file-size",
-        decodeLimit(
-          "dwarf",
-          cause.message,
-          { name: "max_file_bytes", maximum: input.max_file_bytes },
-          { cause },
-        ),
-        { retryable: false, remediationAction: inputBudgetRemediation(input) },
-      );
-    if (cause.reason === "path" || cause.reason === "format")
-      return stableArtifactInputFailure(cause, OPERATION);
-  }
-  const fileFailure = projectSelectedArtifactFileFailure(
-    cause,
-    OPERATION,
-    input.path,
-    "ELF, Mach-O or PE image",
-  );
-  if (fileFailure !== undefined) return fileFailure;
-  return new ArtifactOperationError(
-    OPERATION,
-    origin === "owned-or-classified" && cause instanceof ArtifactReaderFailure
-      ? cause.reason
-      : "io",
-    undefined,
-    cause instanceof Error
-      ? cause.message
-      : "DWARF compile-unit inspection failed.",
-    { cause },
-  );
-};
-
 const dwarfUnitsFailure = (
   cause: unknown,
   input: InspectDwarfUnitsInput,
   snapshot: { readonly sha256: string; readonly bytes: number } | undefined,
 ) => {
-  const primary = dwarfUnitsFailurePrimary(
-    artifactFilePrimaryFacts(cause),
-    input,
+  const facts = artifactFilePrimaryFacts(cause);
+  const primary = classifyProviderFailure(
+    facts.cause,
+    offlineArtifactFailureDialect(facts, {
+      providerId: DWARF_UNITS_PROVIDER.id,
+      operation: OPERATION,
+      path: input.path,
+      description: "ELF, Mach-O or PE image",
+      fallbackMessage: "DWARF compile-unit inspection failed.",
+      recognise: (failure) => {
+        if (failure instanceof ZstandardFrameAllowanceError)
+          return projectZstandardFrameAllowance(OPERATION, failure);
+        if (failure instanceof DwarfSectionAllowanceFailure)
+          return parseLimitConstraint(
+            OPERATION,
+            "memory",
+            failure,
+            fixedAllowanceOptions(
+              DWARF_DECOMPRESSED_SECTION_ALLOWANCE,
+              "parser",
+              {
+                limit: failure.failure.limit.maximum,
+                unit: "bytes",
+              },
+            ),
+          );
+        if (failure instanceof BinaryResourceFailure)
+          return parseLimitConstraint(
+            OPERATION,
+            "memory",
+            failure,
+            fixedAllowanceOptions(
+              "The native structural decoding allowance",
+              "parser",
+              binaryResourceCeiling(failure),
+            ),
+          );
+        return undefined;
+      },
+      fileSize: (failure) =>
+        parseLimitConstraint(
+          OPERATION,
+          "file-size",
+          decodeLimit(
+            "dwarf",
+            failure.message,
+            { name: "max_file_bytes", maximum: input.max_file_bytes },
+            { cause: failure },
+          ),
+          {
+            retryable: false,
+            remediationAction: inputBudgetRemediation(input),
+          },
+        ),
+    }),
   );
   return projectStableArtifactFailure(
     cause,
