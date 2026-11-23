@@ -3644,6 +3644,54 @@ it("omits empty ExposedPorts and Volumes keys with a finding", async () => {
   ]);
 });
 
+it("reports non-object ExposedPorts and Volumes member values while keeping declared keys", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-key-values-");
+  const written = await writeOciImageLayoutFixture(root, {
+    config: {
+      exposedPorts: { "80/tcp": false, "443/tcp": {} },
+      volumes: { "/data": 7 },
+    },
+  });
+  const report = await inspectLayout(root);
+  expect(report.images[0]).toMatchObject({
+    exposed_ports: ["80/tcp", "443/tcp"],
+    volumes: ["/data"],
+  });
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `Config ${written.configDigest} config.ExposedPorts has 1 member whose value is not a JSON object, first at "80/tcp"; it is kept as declared.`,
+    `Config ${written.configDigest} config.Volumes has 1 member whose value is not a JSON object, first at "/data"; it is kept as declared.`,
+  ]);
+  expect(
+    report.findings.every((finding) => finding.kind === "malformed_blob_json"),
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+});
+
+it("reports plural and bounded non-object config key defects after empty-key defects", async () => {
+  const root = await createTestTempDirectory("rea-oci-config-key-plural-");
+  const longPort = `${"8".repeat(70)}/tcp`;
+  const written = await writeOciImageLayoutFixture(root, {
+    config: {
+      exposedPorts: { "": null, [longPort]: null, "80/tcp": "open" },
+      volumes: { "/a": [], "/b": {} },
+    },
+  });
+  const report = await inspectLayout(root);
+  expect(report.images[0]).toMatchObject({
+    exposed_ports: [longPort, "80/tcp"],
+    volumes: ["/a", "/b"],
+  });
+  expect(report.findings.map((finding) => finding.message)).toEqual([
+    `Config ${written.configDigest} config.ExposedPorts has an empty key; it is omitted.`,
+    `Config ${written.configDigest} config.ExposedPorts has 2 members whose value is not a JSON object, first at (a ${String(longPort.length)}-character name); they are kept as declared.`,
+    `Config ${written.configDigest} config.Volumes has 1 member whose value is not a JSON object, first at "/a"; it is kept as declared.`,
+  ]);
+  expect(
+    report.findings.every((finding) => finding.kind === "malformed_blob_json"),
+  ).toBe(true);
+  expect(report.coverage.status).toBe("partial");
+});
+
 it("reports empty annotation and label keys as written", async () => {
   const root = await createTestTempDirectory("rea-oci-empty-annotation-");
   await writeOciImageLayoutFixture(root, {

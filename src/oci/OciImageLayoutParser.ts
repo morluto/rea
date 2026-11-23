@@ -235,7 +235,7 @@ class BlobOversize extends Error {
 }
 
 /**
- * A bounded description of a repeated JSON member name. The name is untrusted
+ * A bounded description of a JSON member name. The name is untrusted
  * and can be as long as the blob, so a long one is named by length only.
  */
 const describeMemberName = (name: string): string =>
@@ -644,8 +644,11 @@ const CONFIG_FACTS_BASE_BYTES =
     NULL_JSON_BYTES;
 
 /**
- * Keys of a config set such as ExposedPorts. An empty key names nothing, so
- * it is omitted and reported as a defect instead of becoming an empty fact.
+ * Keys of a config set such as ExposedPorts or Volumes. An empty key names
+ * nothing, so it is omitted and reported as a defect instead of becoming an
+ * empty fact. OCI defines these sets as objects whose member values are JSON
+ * objects (`{}`); nonempty keys with non-object values are still kept as
+ * declared and reported as a defect.
  */
 const configKeys = (
   value: unknown,
@@ -660,15 +663,25 @@ const configKeys = (
   }
   const named: string[] = [];
   let hasEmpty = false;
-  for (const key of Object.keys(value)) {
+  let invalidValues = 0;
+  let firstInvalidKey: string | undefined;
+  for (const [key, entry] of Object.entries(value)) {
     if (key === "") {
       hasEmpty = true;
       continue;
+    }
+    if (!isRecord(entry)) {
+      invalidValues += 1;
+      if (firstInvalidKey === undefined) firstInvalidKey = key;
     }
     chargeArrayItem(charge, named.length, jsonStringBytes(key));
     named.push(key);
   }
   if (hasEmpty) defects.push(`${label} has an empty key; it is omitted`);
+  if (invalidValues > 0 && firstInvalidKey !== undefined)
+    defects.push(
+      `${label} has ${String(invalidValues)} member${invalidValues === 1 ? "" : "s"} whose value is not a JSON object, first at ${describeMemberName(firstInvalidKey)}; ${invalidValues === 1 ? "it is" : "they are"} kept as declared`,
+    );
   return named;
 };
 
