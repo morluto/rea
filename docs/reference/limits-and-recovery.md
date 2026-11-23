@@ -103,22 +103,24 @@ limits still apply, and these fields do not raise parser, protocol or transport
 limits. Each operation accepts only the fields it enforces; any other key is
 rejected.
 
-| Field                 | Bounds                                                                                       |
-| --------------------- | -------------------------------------------------------------------------------------------- |
-| `input_bytes`         | The selected input copied for the producer                                                   |
-| `output_bytes`        | Retained producer output (combined stdout and stderr where no `diagnostic_bytes` is offered) |
-| `diagnostic_bytes`    | Retained diagnostic (stderr) output                                                          |
-| `command_timeout_ms`  | Wall-clock deadline for each owned command                                                   |
-| `address_space_bytes` | The producer's address-space ceiling                                                         |
-| `file_bytes`          | The largest file the producer may write                                                      |
-| `cpu_seconds`         | The producer's CPU time                                                                      |
+| Field                 | Bounds                                                                                                                               |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `input_bytes`         | The selected input copied for the producer                                                                                           |
+| `output_bytes`        | Retained producer output: combined stdout and stderr where no `diagnostic_bytes` is offered; the reply file for pwntools and EVM     |
+| `diagnostic_bytes`    | Retained process diagnostics; for pwntools, stdout and stderr combined. A stdout overflow is raised here, not through `output_bytes` |
+| `command_timeout_ms`  | Wall-clock deadline for each owned command                                                                                           |
+| `address_space_bytes` | The producer's address-space ceiling                                                                                                 |
+| `file_bytes`          | The largest file the producer may write                                                                                              |
+| `cpu_seconds`         | The producer's CPU time                                                                                                              |
 
-| Operations                                                                                              | Fields and defaults                                                                                                                                                                           |
-| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `inspect_packet_capture`, `inspect_packet_fields`, `decode_signal_recording`, `inspect_signal_decoders` | `input_bytes` 32 MiB, `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                    |
-| `inspect_binary_layout`, `inspect_recorded_crash` (pwntools)                                            | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
-| `inspect_evm_interface`                                                                                 | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
-| `inspect_rust_binary`                                                                                   | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
+| Operations                                                   | Fields and defaults                                                                                                                                                                           |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inspect_packet_capture`, `decode_signal_recording`          | `input_bytes` 32 MiB, `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                    |
+| `inspect_packet_fields`                                      | No `input_bytes`; `output_bytes` 32 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                       |
+| `inspect_signal_decoders`                                    | No `input_bytes`; `output_bytes` 4 MiB, `command_timeout_ms` 30000, `address_space_bytes` 1 GiB, `file_bytes` 64 MiB, `cpu_seconds` 30                                                        |
+| `inspect_binary_layout`, `inspect_recorded_crash` (pwntools) | `input_bytes` 32 MiB (or `REA_PWNTOOLS_MAX_INPUT_BYTES`), `output_bytes` 64 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes`, `cpu_seconds` 30 |
+| `inspect_evm_interface`                                      | `input_bytes` 4 MiB, `output_bytes` 16 MiB, `diagnostic_bytes` 1 MiB, `address_space_bytes` 3 GiB, `file_bytes` follows `output_bytes` (16 MiB), `cpu_seconds` 30                             |
+| `inspect_rust_binary`                                        | `input_bytes` 256 MiB, `output_bytes` 8 MiB                                                                                                                                                   |
 
 The pwntools and EVM operations take their wall-clock deadline from a separate
 argument (`pwntools_timeout_ms`, `timeout_ms`) instead of `command_timeout_ms`.
@@ -127,7 +129,12 @@ inherited OS ceiling can appear as `0`. When pwntools or Rust work exhausts a
 budget, `details.limit` carries `control_kind: "parameter"`,
 `parameter: "producer_limits.<field>"`, `minimum: 1` and
 `applies_at: "next_call"`, as described under [failure and retry](#failure-and-retry);
-the other producers name the field to raise in their remediation.
+the other producers name the field to raise in their remediation. One
+exception: when a pwntools input exceeds its admission ceiling, even one
+selected through `producer_limits.input_bytes`, `details.limit` is the
+registered `pwntools.max_input_bytes` setting limit (with `update_mode` and
+`applies_at: "next_operation"`), and the remediation names both that setting
+and `producer_limits.input_bytes`.
 
 The same accepted policy must reach acquisition, parsing, worker requests,
 serialization, cached-result admission and generated consumers where those
