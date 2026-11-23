@@ -204,6 +204,7 @@ export const fetchWebSourceMaps = async (
       prefetchSourceMap(request, input, operationSignal, host),
     );
   };
+  let outcome: Result<WebSourceMaps, AnalysisError> | undefined;
   try {
     for (const [index, request] of requests.entries()) {
       // A started prefetch carries retained-cleanup ownership; admitting it
@@ -264,8 +265,8 @@ export const fetchWebSourceMaps = async (
       signal?.aborted === true &&
       (cause === signal.reason || cause === callerAbort)
     )
-      return err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
-    if (cause instanceof AnalysisError) {
+      outcome = err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
+    else if (cause instanceof AnalysisError) {
       if (
         signal?.aborted === true &&
         cause.cause !== signal.reason &&
@@ -276,52 +277,78 @@ export const fetchWebSourceMaps = async (
         )
       )
         cause.retainSecondaryFailure(cancelledBy("analyze_web_bundle", signal));
-      return err(retainCompleted(cause));
-    }
-    if (signal?.aborted === true)
-      return err(
+      outcome = err(retainCompleted(cause));
+    } else if (signal?.aborted === true)
+      outcome = err(
         retainCompleted(
           new ProviderAdapterError("rea-cdp-browser", "analyze_web_bundle", {
             cause,
           }).retainSecondaryFailure(cancelledBy("analyze_web_bundle", signal)),
         ),
       );
-    if (isSourceMapLimit(cause))
+    else if (isSourceMapLimit(cause))
       limitation = sourceMapOutputLimitation(
         requests.length - items.length,
         limits,
       );
     else throw cause;
   } finally {
+    // Abort first so started-but-unadmitted fetches lose their deadline and
+    // caller-abort coverage before those controls are removed.
+    if (prefetches.size > 0)
+      operationController.abort(
+        new Error("Source-map operation finished before admission."),
+      );
     clearTimeout(timeout);
     signal?.removeEventListener("abort", abortFromCaller);
-    // Responses fetched ahead but never admitted stay owned until cancelled;
-    // their cleanup settles asynchronously and must not block this return.
-    for (const pending of prefetches.values()) {
-      void pending
-        .then(async (prefetched) => {
-          if (!prefetched.consumed && prefetched.fetched !== undefined)
-            await cancelUnreadResponse(
-              prefetched.fetched.response,
-              prefetched.fetched.fetchedUrl,
-              new Error("Source-map fetch was not admitted."),
-              operationSignal,
-            );
-        })
-        .catch(() => undefined);
+  }
+  if (outcome === undefined)
+    outcome =
+      signal?.aborted === true
+        ? err(retainCompleted(cancelledBy("analyze_web_bundle", signal)))
+        : ok(
+            webSourceMapsSchema.parse({
+              status: sourceMapsStatus(items, limitation !== undefined),
+              requested: requests.length,
+              processed: items.length,
+              items,
+              ...(limitation === undefined ? {} : { limitation }),
+            }),
+          );
+  // Bind sibling cleanup: fetches started by lookahead but never admitted
+  // still own pending responses or cleanup, which the returned result tracks.
+  const siblingFailures: AnalysisError[] = [];
+  for (const pending of prefetches.values()) {
+    const prefetched = await pending.catch(() => undefined);
+    if (prefetched === undefined || prefetched.consumed) continue;
+    if (prefetched.failure instanceof SourceMapPendingFetch)
+      siblingFailures.push(prefetched.failure.failure);
+    else if (prefetched.fetched !== undefined) {
+      try {
+        await cancelUnreadResponse(
+          prefetched.fetched.response,
+          prefetched.fetched.fetchedUrl,
+          new Error("Source-map fetch was not admitted."),
+          operationSignal,
+        );
+      } catch (cause: unknown) {
+        if (cause instanceof SourceMapResponseCleanup)
+          siblingFailures.push(cause.failure);
+      }
     }
   }
-  if (signal?.aborted === true)
-    return err(retainCompleted(cancelledBy("analyze_web_bundle", signal)));
-  return ok(
-    webSourceMapsSchema.parse({
-      status: sourceMapsStatus(items, limitation !== undefined),
-      requested: requests.length,
-      processed: items.length,
-      items,
-      ...(limitation === undefined ? {} : { limitation }),
-    }),
-  );
+  if (siblingFailures.length > 0) {
+    if (outcome.ok) {
+      const [primary, ...rest] = siblingFailures;
+      const failure = retainCompleted(primary!);
+      for (const extra of rest) failure.retainSecondaryFailure(extra);
+      outcome = err(failure);
+    } else {
+      for (const failure of siblingFailures)
+        outcome.error.retainSecondaryFailure(failure);
+    }
+  }
+  return outcome;
 };
 
 const sourceMapOutputLimitation = (

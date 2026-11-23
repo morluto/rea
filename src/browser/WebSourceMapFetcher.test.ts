@@ -39,26 +39,45 @@ it("fetches ahead with bounded concurrency but admits in request order", async (
     });
   let active = 0;
   let maxActive = 0;
-  const requests = [0, 1, 2].map((index) => ({
+  const started: number[] = [];
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const requests = [0, 1, 2, 3, 4, 5].map((index) => ({
     ...request,
     scriptKey: `scr_${String(index + 1).repeat(64)}`,
     declaredUrl: `https://app.example.test/map${index}.js.map`,
     fetchUrl: `https://app.example.test/map${index}.js.map`,
   }));
-  const result = await fetchWebSourceMaps(requests, approvedInput, undefined, {
+  const pending = fetchWebSourceMaps(requests, approvedInput, undefined, {
     fetch: async (url) => {
+      const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
+      started.push(index);
       active += 1;
       maxActive = Math.max(maxActive, active);
       // Later requests finish first; admission must still be in request order.
-      const index = Number(/map(\d)/.exec(String(url))?.[1] ?? 0);
-      await new Promise((resolve) => setTimeout(resolve, (2 - index) * 5));
+      if (index === 0) await firstGate;
+      else
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, 2 - index) * 5),
+        );
       active -= 1;
       return new Response(mapText(`map${index}`), { status: 200 });
     },
   });
+  // The four-request lookahead cap holds while admission is gated on map0.
+  await expect.poll(() => started.length).toBe(4);
+  expect(started).not.toContain(4);
+  releaseFirst();
+  const result = await pending;
   if (!result.ok) throw result.error;
   expect(maxActive).toBeGreaterThan(1);
+  expect(maxActive).toBeLessThanOrEqual(4);
   expect(result.value.items.map((item) => item.status)).toEqual([
+    "included",
+    "included",
+    "included",
     "included",
     "included",
     "included",
@@ -73,6 +92,9 @@ it("fetches ahead with bounded concurrency but admits in request order", async (
     ["https://app.example.test/map0.js"],
     ["https://app.example.test/map1.js"],
     ["https://app.example.test/map2.js"],
+    ["https://app.example.test/map3.js"],
+    ["https://app.example.test/map4.js"],
+    ["https://app.example.test/map5.js"],
   ]);
 });
 
