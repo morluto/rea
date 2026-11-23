@@ -1,3 +1,4 @@
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { wasmArtifactModule } from "../composition/wasm.js";
@@ -7,7 +8,6 @@ import type { CliInstance } from "./types.js";
 import {
   inspectWithService,
   registerContractCommand,
-  registerContractDocumentCommand,
 } from "./contractCommand.js";
 import {
   evidenceBundleOption,

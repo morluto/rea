@@ -2,7 +2,7 @@ import type { Logger } from "pino";
 import type { Evidence } from "../domain/evidence.js";
 import type { CliInstance } from "./types.js";
 import { COMPARE_STATIC_AND_OBSERVED_ENDPOINTS_TOOL_CONTRACT } from "../contracts/staticObservedEndpointsToolContract.js";
-import { registerContractDocumentCommand } from "./contractCommand.js";
+import { registerContractDocumentCommand } from "./contractDocumentCommand.js";
 import {
   evidenceBundleOption,
   runEvidenceInputCommand,

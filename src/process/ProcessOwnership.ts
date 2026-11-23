@@ -1072,6 +1072,7 @@ const createOwnedCleanupPlan = async (
               : { sampledProcessGroupIds: [...sampledProcessGroupIds] }),
           },
           exitSettlement,
+          relationSnapshot.identities,
         )
       : { owned: [], failures: [], unverified: [], identities: new Map() };
   const listedPids = new Set(processes.map(({ pid }) => pid));
@@ -1738,6 +1739,7 @@ const scanTokenOwnedProcesses = async (
   captureBaseline: ProcessOwnershipBaseline | undefined,
   relation: OwnershipSweepRelation | undefined,
   exitSettlement: ProcessExitSettlementBudget,
+  initialIdentities?: ReadonlyMap<number, ProcessIdentityObservation>,
 ): Promise<TokenOwnedProcessScan> => {
   if (host.processIdentities !== undefined)
     return scanWithOwnershipEvidence(
@@ -1747,6 +1749,7 @@ const scanTokenOwnedProcesses = async (
       captureBaseline,
       relation,
       exitSettlement,
+      initialIdentities,
     );
 
   const candidates = processes;
@@ -1840,6 +1843,7 @@ const scanWithOwnershipEvidence = async (
   captureBaseline: ProcessOwnershipBaseline | undefined,
   relation: OwnershipSweepRelation | undefined,
   exitSettlement: ProcessExitSettlementBudget,
+  initialIdentities?: ReadonlyMap<number, ProcessIdentityObservation>,
 ): Promise<TokenOwnedProcessScan> => {
   const evidenceOwner =
     relation === undefined
@@ -1865,10 +1869,22 @@ const scanWithOwnershipEvidence = async (
     (captureBaseline ?? []).map(({ pid, identity }) => [pid, identity]),
   );
   const retainedPids = new Set(evidenceOwner.candidates.map(({ pid }) => pid));
-  const firstIdentities = await readNativeProcessIdentityMap(
-    observationRows,
-    host,
-  );
+  let firstIdentities: ReadonlyMap<number, ProcessIdentityObservation>;
+  if (initialIdentities !== undefined && initialIdentities.size > 0) {
+    const missingRows = observationRows.filter(
+      ({ pid }) => !initialIdentities.has(pid),
+    );
+    if (missingRows.length === 0) {
+      firstIdentities = initialIdentities;
+    } else {
+      const fetched = await readNativeProcessIdentityMap(missingRows, host);
+      const merged = new Map(initialIdentities);
+      for (const [pid, observation] of fetched) merged.set(pid, observation);
+      firstIdentities = merged;
+    }
+  } else {
+    firstIdentities = await readNativeProcessIdentityMap(observationRows, host);
+  }
   const candidates = observationRows.filter((process) => {
     if (retainedPids.has(process.pid)) return true;
     if (!baseline.has(process.pid)) return true;

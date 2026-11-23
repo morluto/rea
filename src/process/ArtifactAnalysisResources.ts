@@ -6,6 +6,7 @@ import {
   type CleanupFailedRead,
   ArtifactResourceScope,
   readStableArtifact,
+  streamStableArtifact,
 } from "../resources/index.js";
 import {
   AnalysisError,
@@ -191,6 +192,25 @@ export class ArtifactAnalysisResources {
     );
   }
 
+  /** Stream-hash a bounded regular file without buffering its full bytes in heap. */
+  async hash(
+    path: string,
+    maximumBytes: number,
+    signal?: AbortSignal,
+  ): Promise<{ readonly bytes: number; readonly sha256: string }> {
+    if (this.readArtifact === readStableArtifact) {
+      const streamed = await streamStableArtifact(path, maximumBytes, {
+        retainBytes: () => 0,
+        onChunk: () => undefined,
+        signal,
+        resourceScope: this.#artifacts.scope,
+      });
+      return { bytes: streamed.size, sha256: streamed.sha256 };
+    }
+    const snapshot = await this.read(path, maximumBytes, signal);
+    return { bytes: snapshot.bytes.byteLength, sha256: snapshot.sha256 };
+  }
+
   /** Admit a selected input and classify its physical failure before later stages. */
   async readSelectedArtifact(input: SelectedArtifactRead) {
     const operation = this.#artifacts.operation;
@@ -236,7 +256,7 @@ export class ArtifactAnalysisResources {
   ) {
     const read = async (path: string) => {
       try {
-        return await this.read(path, 64 * 1024 * 1024);
+        return await this.hash(path, 64 * 1024 * 1024);
       } catch (cause: unknown) {
         throw this.classify(cause, {
           kind: "integrity",
